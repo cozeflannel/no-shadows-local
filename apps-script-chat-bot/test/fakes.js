@@ -255,6 +255,10 @@ class FakeVertex {
     // (payload) => the temp check's lines (TempCheck.gs TC_SCHEMA_: {summary, negativity_drivers, themes}); null: answered
     // like any other schema ({ok: true}), which the bot reads as no answer (the write-up goes out without them)
     this.tempCheck = null;
+    // (payload) => the watch alerts' AI pre-read (WatchAlerts.gs pwPreReadSchema_: {watch_posts: [{ref, summary,
+    // about_google, product, other_products, exposure_tag, sensitive_topics, story, same_story_as}]}); null: answered like
+    // any other schema ({ok: true}), which the bot reads as no pre-read (the cards go out from the listening data alone)
+    this.watchPreRead = null;
     this.fail = null;                               // (payload) => {code, body} | null
     // (payload) => the web searches behind the answer (groundingMetadata: {webSearchQueries, groundingChunks}) | null
     this.grounding = null;
@@ -272,6 +276,7 @@ class FakeVertex {
     else if (props.early_detection_call && typeof this.earlyDetection === 'function') result = this.earlyDetection(payload);  // EarlyDetection.gs
     else if (props.stream_call && typeof this.triage === 'function') result = this.triage(payload);  // OtherAlerts.gs
     else if (props.negativity_drivers && typeof this.tempCheck === 'function') result = this.tempCheck(payload);  // TempCheck.gs
+    else if (props.watch_posts && typeof this.watchPreRead === 'function') result = this.watchPreRead(payload);  // WatchAlerts.gs
     else if (props.can_answer) result = this.teamAnswer(payload);
     else if (props.answer) result = { answer: this.answer(payload) };
     else if (props.synopsis) result = { synopsis: this.synopsis(payload) };

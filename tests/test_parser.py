@@ -78,3 +78,15 @@ def test_detection_needs_labels_and_a_signal():
     chatter = "Alert Name: test\nhello"
     human = ChatMessage(text=chatter, sender=ChatUser(name="Pat"))
     assert not detect(CFG, human, parse(CFG, chatter))[0]
+
+
+def test_bots_own_cards_are_never_burson_alerts():
+    """Watch alert and Early Detection cards carry Product / Exposure Tag / Sensitive Topic lines, yet stay the bot's own."""
+    taxonomy = (
+        "*Product:* Waymo\n*Exposure Tag:* Product - Product failures - physical safety issues (P1)\n"
+        "*Sensitive Topic:* None\n*KOF:* No\n*Author:* FOX 29\n*Summary:* A federal investigation into a Waymo recall.\n"
+    )
+    for head in ("\U0001f52d *Watch alert \u00b7 Google brand safety (all)*", "\U0001f6a8 *Early Detection Alert* \U0001f6a8"):
+        text = f"{head}\n*Link:* https://x.com/someone/status/1234567890123\n{taxonomy}"
+        verdict = detect(CFG, ChatMessage(text=text, sender=ChatUser(name="Zapier")), parse(CFG, text))
+        assert verdict == (False, "bot own card")

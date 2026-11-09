@@ -484,8 +484,9 @@ const PW_SOURCE_SQL_ = {
     const risk = `NOT (REGEXP_CONTAINS(${tag}, r"${BQ_BSIP_POSITIVE_TAG_RX_}") OR ${tag} IN ('functional use case', ''))`;
     const eng = 'IFNULL(engagement_likes, 0) + IFNULL(engagement_comments, 0) + IFNULL(engagement_shares, 0)';
     const json = path => `JSON_VALUE(payload, '${path}')`;
+    const cls = field => `JSON_QUERY(payload, '$.detail.classification.${field}')`;
     return [
-      `INSERT INTO pw_new (${PW_NEW_COLS_}, why)`,
+      `INSERT INTO pw_new (${PW_NEW_COLS_}, why, tax)`,
       'WITH win AS (',
       '  SELECT post_url,',
       '    MIN(received_at) AS first_seen,',
@@ -498,7 +499,11 @@ const PW_SOURCE_SQL_ = {
       `    ANY_VALUE(${json('$.detail.classification.issue_name')}) AS issue,`,
       `    LOGICAL_OR(${json('$.detail.classification.is_issue_new')} = 'true') AS issue_new,`,
       `    ANY_VALUE(${json('$.detail.classification.summary')}) AS summary,`,
-      `    STRING_AGG(DISTINCT SUBSTR(${json('$.detail.post.snippet.text')}, 1, 500), ' | ' LIMIT 3) AS snippets`,
+      `    STRING_AGG(DISTINCT SUBSTR(${json('$.detail.post.snippet.text')}, 1, 500), ' | ' LIMIT 3) AS snippets,`,
+      // Pendulum's own classification of the post, newest first: its products, smart tag, Sensitive Topics and the
+      // influencer (KOF) lists its author is on, for the watch alert's card (WatchAlerts.gs pwTaxOf_)
+      `    ARRAY_AGG(TO_JSON_STRING(JSON_OBJECT('p', ${cls('brand_classification_names')}, 't', ${json('$.detail.classification.smart_tag_name')},`,
+      `      's', ${cls('secondary_tag_names')}, 'k', ${cls('influencer_list_names')})) ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS tax`,
       `  FROM ${PW_SONAR_RAW_}`,
       `  WHERE received_at > ${since} AND received_at <= ${until} AND post_url IS NOT NULL`,
       `    AND ${englishLangSql_(json('$.detail.post.language'))}`,
@@ -523,11 +528,12 @@ const PW_SOURCE_SQL_ = {
       `  WHERE w.risk_tag AND (w.followers >= ${PW_MIN_FOLLOWERS_} OR w.eng >= ${PW_MIN_ENGAGEMENT_})`,
       ')',
       "SELECT 'sonar', ROW_NUMBER() OVER (ORDER BY CASE why WHEN 'broke out' THEN 0 WHEN 'grew' THEN 1 ELSE 2 END, followers DESC),",
-      '  post_url, platform, author, followers, eng, posted, first_seen, issue, issue_new, summary,',
+      '  post_url, platform, author, followers, eng, posted, first_seen, issue, issue_new,',
+      "  COALESCE(NULLIF(TRIM(summary), ''), SUBSTR(TRIM(snippets), 1, 400)) AS summary,",
       "  SUBSTR(CONCAT('Summary: ', IFNULL(summary, ''), '\\nPost text: ', IFNULL(snippets, ''),",
       "    CASE why WHEN 'grew' THEN '\\nIt was small when first seen today and has grown since.'",
       "      WHEN 'broke out' THEN CONCAT('\\nIt is breaking out: ', CAST(eng AS STRING), ' engagements now, up from ',",
-      "        CAST(IFNULL(eng_before, 0) AS STRING), ' earlier today.') ELSE '' END), 1, " + PW_TEXT_CHARS_ + '), why',
+      "        CAST(IFNULL(eng_before, 0) AS STRING), ' earlier today.') ELSE '' END), 1, " + PW_TEXT_CHARS_ + '), why, tax',
       'FROM cand',
       `WHERE why IS NOT NULL AND (posted IS NULL OR posted >= TIMESTAMP_SUB(${until}, ` +
         `INTERVAL IF(why = 'new', ${PW_NEW_HOURS_}, ${PW_GROWTH_HOURS_}) HOUR));`,
@@ -585,13 +591,14 @@ const PW_SOURCE_SQL_ = {
     const from = 'TIMESTAMP_MILLIS(@bmie_from)';
     const sample = `ABS(MOD(FARM_FINGERPRINT(url), 100)) < ${PW_SAMPLE_PCT_}`;  // MOD first: ABS of the smallest INT64 overflows
     return [
-      `INSERT INTO pw_new (${PW_NEW_COLS_}, why)`,
+      `INSERT INTO pw_new (${PW_NEW_COLS_}, why, tax)`,
       "SELECT 'bmie', ROW_NUMBER() OVER (ORDER BY CASE why WHEN 'brand-safety query' THEN 0 WHEN 'sample' THEN 2 WHEN 'skipped' THEN 9",
       '    ELSE 1 END, IFNULL(followers, 0) DESC),',
       '  url, ' + pwNetSql_('net') + ', author, followers, eng, posted, first_seen,',
       "  CONCAT('Brandwatch: ', IFNULL(q, '')), CAST(NULL AS BOOL), SUBSTR(snippet, 1, 400),",
       "  SUBSTR(CONCAT('Post text: ', IFNULL(snippet, ''), IF(IFNULL(kof, '') = '', '', CONCAT('\\nKOF: ', kof)),",
-      `    IF(IFNULL(product, '') = '', '', CONCAT('\\nProduct: ', product))), 1, ${PW_TEXT_CHARS_}), why`,
+      `    IF(IFNULL(product, '') = '', '', CONCAT('\\nProduct: ', product))), 1, ${PW_TEXT_CHARS_}), why,`,
+      "  TO_JSON_STRING(JSON_OBJECT('p', product, 'kv', kof)) AS tax",
       'FROM (',
       "  SELECT m.*, CASE WHEN full_q THEN 'brand-safety query' WHEN neg THEN 'negative' WHEN kof_author THEN 'KOF author'",
       `      WHEN risk THEN 'risk words' WHEN ${sample} THEN 'sample' ELSE 'skipped' END AS why`,
@@ -657,13 +664,14 @@ const PW_SOURCE_SQL_ = {
   // feed's follower and engagement counts are mostly empty (all zeros, or 500/500/500/2000, means unmeasured: NULL here,
   // so Gemini reads "unknown", never 0). KOF first, then the measured engagements, then the newest
   story: () => [
-    `INSERT INTO pw_new (${PW_NEW_COLS_})`,
+    `INSERT INTO pw_new (${PW_NEW_COLS_}, tax)`,
     "SELECT 'story', ROW_NUMBER() OVER (ORDER BY IF(UPPER(IFNULL(alert_type, '')) = 'KOF', 0, 1), IFNULL(eng, 0) DESC, ingestion_time DESC),",
     `  url, ${pwNetSql_('platform')}, author, SAFE_CAST(follower_count AS INT64), eng, post_time, ingestion_time,`,
     "  CONCAT('DSD story selection', IF(IFNULL(alert_type, '') = '', '', CONCAT(' \u00b7 ', alert_type)),",
     "    IF(IFNULL(query_name, '') = '', '', CONCAT(' \u00b7 ', query_name))), CAST(NULL AS BOOL), SUBSTR(snippet, 1, 400),",
     "  SUBSTR(CONCAT('Post text: ', snippet, IF(IFNULL(alert_type, '') = '', '', CONCAT('\\nBrandwatch alert: ', alert_type,",
-    `    IF(UPPER(alert_type) = 'KOF', ' (a key opinion former)', '')))), 1, ${PW_TEXT_CHARS_})`,
+    `    IF(UPPER(alert_type) = 'KOF', ' (a key opinion former)', '')))), 1, ${PW_TEXT_CHARS_}),`,
+    "  TO_JSON_STRING(JSON_OBJECT('kv', IF(UPPER(IFNULL(alert_type, '')) = 'KOF', 'Brandwatch KOF alert', CAST(NULL AS STRING)))) AS tax",
     'FROM (',
     '  SELECT *, IF((likes = 500 AND shares = 500 AND comments = 500 AND total_engagements = 2000)',
     '    OR IFNULL(total_engagements, 0) = 0, NULL, total_engagements) AS eng',
@@ -769,13 +777,13 @@ function pwAiSql_(srcs, structs, topics) {
     '  SUBSTR(IFNULL(s.summary, \'\'), 1, 400) AS summary, ROUND(s.impact, 1) AS impact, s.bar,',
     `  AI.CLASSIFY(s.txt, [${topics.map(t => `'${t}'`).join(', ')}]) AS topic,`,
     '  CAST(NULL AS INT64) AS found, CAST(NULL AS INT64) AS checked, CAST(NULL AS INT64) AS newest_ms, CAST(NULL AS INT64) AS mod_ms,',
-    '  CAST(NULL AS STRING) AS err, CAST(NULL AS STRING) AS detail',
+    '  CAST(NULL AS STRING) AS err, CAST(NULL AS STRING) AS detail, s.tax AS tax',
     `FROM scored s WHERE s.impact >= GREATEST(1, s.bar - ${PW_NEAR_})`,
     'UNION ALL',
     "SELECT 'src', c.source, CAST(NULL AS STRING), CAST(NULL AS INT64), CAST(NULL AS STRING), CAST(NULL AS STRING), CAST(NULL AS STRING),",
     '  CAST(NULL AS STRING), CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS STRING),',
     '  CAST(NULL AS BOOL), CAST(NULL AS STRING), CAST(NULL AS FLOAT64), CAST(NULL AS FLOAT64), CAST(NULL AS STRING),',
-    '  IFNULL(f.found, 0), IFNULL(f.checked, 0), f.newest_ms, x.mod_ms, x.err, d.detail',
+    '  IFNULL(f.found, 0), IFNULL(f.checked, 0), f.newest_ms, x.mod_ms, x.err, d.detail, CAST(NULL AS STRING)',
     'FROM caps c LEFT JOIN found f USING (source) LEFT JOIN src x USING (source) LEFT JOIN detail d USING (source)',
     'ORDER BY kind, impact DESC',
   ];
@@ -823,7 +831,7 @@ function pwSql_(laneKey, watches, o) {
   }
   lines.push(`CREATE TEMP TABLE pw_new (source STRING, rk INT64, post_url STRING, platform STRING, author STRING, ` +
     'followers INT64, eng INT64, posted TIMESTAMP, first_seen TIMESTAMP, issue STRING, issue_new BOOL, summary STRING, txt STRING, ' +
-    'why STRING);');
+    'why STRING, tax STRING);');
   lines.push('CREATE TEMP TABLE pw_src (source STRING, mod_ms INT64, err STRING);');
   if (gated) {
     const i = gated.bq.lastIndexOf('.');
@@ -1247,8 +1255,10 @@ function pwDetections_(results, have, floor, queue) {
     row[PW_COL_.issue - 1] = pwCell_(r.issue, 200);
     row[PW_COL_.isNew - 1] = r.issue_new === true ? 'Yes' : '';
     row[PW_COL_.summary - 1] = pwCell_(r.summary, 400);
+    // the listening tool's own classification (Sonar, BMIE, DSD), kept on a queued flag's key for its card
+    const tax = queue && atBar && r.tax && typeof pwTaxOf_ === 'function' ? pwTaxOf_(r.tax) : null;
     row[PW_COL_.key - 1] = JSON.stringify(Object.assign({ k: key, w: watch, s: seen, b: atBar ? 1 : 0 },
-      queue && atBar ? { a: 'q', br: Number(r.bar), sc: isFinite(impact) ? impact : 0 } : {}));
+      queue && atBar ? { a: 'q', br: Number(r.bar), sc: isFinite(impact) ? impact : 0 } : {}, tax ? { x: tax } : {}));
     if (queue && atBar) out.queued++;
     out.rows.push(row);
   });
@@ -1756,7 +1766,8 @@ function runProactiveWatch_(ss, runStart, opts) {
     }
     if (opts && opts.control) {
       try {
-        writeWatchAlertsNote_(opts.control, pwAlertsNoteText_(dest || { choice: '' }, out.alerts, true, pwAlertDay_(0)));
+        writeWatchAlertsNote_(opts.control, pwAlertsNoteText_(dest || { choice: '' }, out.alerts, true, pwAlertDay_(0),
+          pwAlertDayGrouped_()));
       } catch (e) {
         console.error('could not write C35 (Watch alerts): ' + ((e && e.message) || e));
       }

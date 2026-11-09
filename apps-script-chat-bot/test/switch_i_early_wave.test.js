@@ -338,7 +338,7 @@ module.exports = H => {
     eq([t.g.props.has('ED_ALERT_QUEUE'), Array.from(t.g.props.keys()).filter(k => /^ED_ALERT_Q_/.test(k))], [false, []]);
     eq(edQueries(calls).length, 3);  // reviewing the queue reads nothing more from BigQuery
     // every card was posted only after its review: each one's copy in the analyst space has the review note in its thread
-    const fwd = t.chat.botPosts(TRIAGED).filter(p => !p.threadReply && /Early Detection Alert:/.test(p.text));
+    const fwd = t.chat.botPosts(TRIAGED).filter(p => !p.threadReply && /Early Detection Alert/.test(p.text));
     eq(fwd.length, 5);
     fwd.forEach(c => assert.ok(t.chat.botPosts(TRIAGED).some(p => p.threadReply && p.thread.name === c.thread.name &&
       /Early Detection Review/.test(p.text)), c.text));
@@ -505,24 +505,34 @@ module.exports = H => {
     const rows = t.bot.sheetBackend_(t.sheet()).loadAlerts().filter(r => r.ingested === 'Early detection');
     eq(rows.length, 3);
 
-    // The escalated cluster's card: Gemini's headline, the call and the spread, its story with ONLY the signal's posts
-    // linked inline (a made-up link and a post it never had stay plain words), what the web says with its source, next
-    // steps, every post as a link, and the driver post's photo under it
+    // The escalated cluster's card: the siren header, Gemini's headline on its own line, the SLRR lines, its story with
+    // ONLY the signal's posts linked inline (a made-up link and a post it never had stay plain words), next steps, what
+    // the web says with its source, the call and the activity in words, every post as a link, and the driver post's photo
     const story = ordered[0].text;
-    eq(story.split('\n').slice(0, 2), [
-      '\ud83d\udea8 *Early Detection Alert: Pixel 9 owners say the overnight update froze the emergency dialer* \ud83d\udea8',
-      '*\ud83d\udce6 Social Alert (early build-up)* \u00b7 9 accounts on X, Reddit, Owned Social \u00b7 7:42 AM\u20137:55 AM ET']);
+    eq(story.split('\n').slice(0, 7), [
+      '\ud83d\udea8 *Early Detection Alert* \ud83d\udea8',
+      '*Pixel 9 owners say the overnight update froze the emergency dialer*',
+      '*Product:* Pixel, Android (Android OS & Google TV)',
+      '*Exposure Tag:* Product - Dangerous results (e.g. medical/legal) (P0)',
+      '*Sensitive Topic:* None',
+      '*KOF:* No (9 small, non-KOF accounts)',
+      '']);
     [`<${CLUSTER_URL}|frozen on the call screen>`, `<${REDDIT_URL}|hangs for 30 seconds>`,
       '<https://www.instagram.com/p/DBabc123/|if anyone else sees it>', 'A made-up link and a post it never had stay plain.',
       `\u2022 *Web:* No news coverage or official Pixel support statement yet. (<${GROUNDING_URI}|support.google.com>)`,
       '1. Size it with the Temp Check query in the thread and re-check in 2 hours\n2. Send the Social Alert draft',
+      '\u2022 *Call:* \ud83d\udce6 Social Alert (early build-up): Cross-platform reports of emergency dialer freezing pose a concrete safety-critical product regression\n',
+      '\u2022 *Activity:* 9 small accounts on X, Reddit and Owned Social posted about this 11 times between 7:42 AM and 7:55 AM ET\n',
       `\u2022 *Posts:* <${CLUSTER_URL}|@pixelowner1> (X) \u00b7 <${REDDIT_URL}|@u_droidcommuter> (Reddit) \u00b7 <https://www.instagram.com/p/DBabc123/|@westcoast_dad> (Instagram)`,
     ].forEach(x => assert.ok(story.includes(x), x + '\n' + story));
-    assert.ok(!/\(P\d\)/.test(story), story);
+    assert.ok(!/\(P\d\)/.test(story.replace(/^\*Exposure Tag:\*.*$/m, '')), story);  // no leftover post refs
     assert.ok(!/https?:\/\//.test(story.replace(/<https?:\/\/[^|>\s]+\|[^>]*>/g, '')), 'every link is a <url|text> link');
     eq((ordered[0].attachment || []).map(a => a.contentType), ['image/jpeg']);
     // No AI story (the other two reviews gave none): a plain one from the posts, still every post linked
-    assert.ok(ordered[2].text.startsWith('\ud83d\udea8 *Early Detection Alert: 9 accounts posting \u201cCasual mentions of pixel art wallpaper packs\u201d* \ud83d\udea8\n*\u274c Dismissed*'), ordered[2].text);
+    assert.ok(ordered[2].text.startsWith('\ud83d\udea8 *Early Detection Alert* \ud83d\udea8\n*9 accounts posting \u201cCasual mentions of pixel art wallpaper packs\u201d*\n*Product:* '), ordered[2].text);
+    assert.ok(ordered[2].text.includes('\n*Exposure Tag:* None (not a Google brand-safety issue)\n*Sensitive Topic:* None\n*KOF:* No (9 small, non-KOF accounts)\n\n'), ordered[2].text);
+    // a dismissal says what it means (no action needed) and why, apart from how far the chatter spread
+    assert.ok(ordered[2].text.includes('\n\u2022 *Call:* \u274c Dismissed (no action needed): Off-brand pixel-art homonym unrelated to Google Pixel devices\n\u2022 *Activity:* 9 small accounts on '), ordered[2].text);
     assert.ok(ordered[2].text.includes(`A typical post: \u201cCheck out my retro pixel art wallpaper pack for desktop setups!\u201d (<${NOISE_URL}|@astrofan9>).`), ordered[2].text);
     assert.ok(ordered[2].text.includes('1. No action: Off-brand pixel-art homonym unrelated to Google Pixel devices.'), ordered[2].text);
     for (const c of ordered) {
@@ -610,7 +620,7 @@ module.exports = H => {
     t.poll();
 
     const triagedPosts = t.chat.botPosts(TRIAGED);
-    const fwdCard = triagedPosts.find(m => !m.threadReply && m.text.includes('Early Detection Alert:'));
+    const fwdCard = triagedPosts.find(m => !m.threadReply && m.text.includes('*Early Detection Alert*'));
     assert.ok(fwdCard, 'card forwarded to TRIAGED analyst space');
     const threadNotes = triagedPosts.filter(m => m.threadReply && m.thread.name === fwdCard.thread.name);
     assert.ok(threadNotes.some(m => m.text.includes('*Early Detection Review: \ud83d\udce6 Social Alert (early build-up)*')));
@@ -668,34 +678,55 @@ module.exports = H => {
       web: { sources: [{ title: 'support.google.com', uri: GROUNDING_URI }, { title: 'plain http', uri: 'http://insecure.testing.test/a' }] } };
     const text = B.edStoryCardText_(ed, d, NOW);
     eq(text.split('\n'), [
-      '\ud83d\udea8 *Early Detection Alert: Pixel 9 owners say the overnight update froze the emergency dialer* \ud83d\udea8',
-      '*\ud83d\udc4d Monitor build-up* \u00b7 9 accounts on X, Reddit, Owned Social \u00b7 7:42 AM\u20137:55 AM ET',
+      '\ud83d\udea8 *Early Detection Alert* \ud83d\udea8',
+      '*Pixel 9 owners say the overnight update froze the emergency dialer*',
+      '*Product:* Brand',
+      '*Exposure Tag:* None identified',
+      '*Sensitive Topic:* None',
+      '*KOF:* No (9 small, non-KOF accounts)',
+      '',
       `Nine small accounts said the dialer <${CLUSTER_URL}|froze> after the update; one says the call button <${REDDIT_URL}|hangs>.`,
       '1. Re-check in 2 hours',
       '2. Escalate if <https://www.instagram.com/p/DBabc123/|more owners> report it',
       `\u2022 *Web:* No coverage yet. (<${GROUNDING_URI}|support.google.com>)`,
+      '\u2022 *Call:* \ud83d\udc4d Monitor build-up: Worth watching',
+      '\u2022 *Activity:* 9 small accounts on X, Reddit and Owned Social posted about this 11 times between 7:42 AM and 7:55 AM ET',
       `\u2022 *Posts:* <${CLUSTER_URL}|@pixelowner1> (X) \u00b7 <${REDDIT_URL}|@u_droidcommuter> (Reddit) \u00b7 <https://www.instagram.com/p/DBabc123/|@westcoast_dad> (Instagram)`,
     ]);
     const parsed = B.edParseCard_(text, []);
     eq([parsed.headline, parsed.url], ['Pixel 9 owners say the overnight update froze the emergency dialer', CLUSTER_URL]);
+    // a card in the older one-line header still reads
+    eq(B.edParseCard_(`\ud83d\udea8 *Early Detection Alert: Pixel dialer freeze* \ud83d\udea8\n*Link:* ${CLUSTER_URL}`, []).headline, 'Pixel dialer freeze');
     eq(B.outboxGuardHits_(text, { terms: ['SLRR Triaged Alerts', 'AAQAaLn375E'] }), []);
     eq(B.guardHits_(text, { terms: ['SLRR Triaged Alerts', 'AAQAaLn375E'] }), []);
     assert.ok(!B.detectAlert_(text, B.parseAlert_(text), 'Lucas Hammonds'));
+    // the SLRR lines: the review's confident view (all its products); an unconfirmed tag says how sure; no review: not assessed
+    const tax = (fields, slrr) => B.edTaxonomyLines_(ed, { fields, rev: { slrr } });
+    eq(tax({ product: 'Pixel', other_products: ['Android (Android OS & Google TV)'], exposure_tag: 'Product - Dangerous results (e.g. medical/legal)',
+      priority: 'P0', risk_tags: ['Child Safety'] }, { is: true, tag: 'Product - Dangerous results (e.g. medical/legal)', priority: 'P0',
+      confidence: 0.9, topics: ['Child Safety'] }), ['*Product:* Pixel, Android (Android OS & Google TV)',
+      '*Exposure Tag:* Product - Dangerous results (e.g. medical/legal) (P0)', '*Sensitive Topic:* Child Safety', '*KOF:* No (9 small, non-KOF accounts)']);
+    eq(tax({ product: 'Photos', priority: 'P2' }, { is: true, tag: 'Product - Privacy & security concerns', priority: 'P1', confidence: 0.6, topics: [] })[1],
+      '*Exposure Tag:* Product - Privacy & security concerns (P1, unconfirmed: 60% sure)');
+    eq(B.edTaxonomyLines_(ed, { disposition: 'monitor', basis: 'failed' }).slice(1, 3),
+      ['*Exposure Tag:* not assessed (the AI review was unavailable)', '*Sensitive Topic:* not assessed (the AI review was unavailable)']);
 
     // The bot's rules changed Gemini's call (already alerted): the card's steps say what that call means, never Gemini's
     // "send a Social Alert" under a ❌
     const repeat = Object.assign({}, d, { disposition: 'dismiss', basis: 'repeat', rev: Object.assign({}, d.rev, { disposition: 'escalate' }),
       why: 'already alerted as a known issue (QA-4228, "AI Mode Teen Safety Lawsuit")' });
     const repeatText = B.edStoryCardText_(ed, repeat, NOW);
-    assert.ok(repeatText.includes('*\u274c Already alerted* \u00b7 9 accounts'), repeatText);
+    assert.ok(repeatText.includes('\n\u2022 *Call:* \u274c Already alerted: already alerted as a known issue (QA-4228, "AI Mode Teen Safety Lawsuit")\n'), repeatText);
     assert.ok(repeatText.includes('1. No new Social Alert: already alerted as a known issue (QA-4228, "AI Mode Teen Safety Lawsuit").\n'), repeatText);
-    const unsure = B.edCardSteps_({ disposition: 'monitor', basis: 'low_confidence', why: 'May be a regression (70% sure, so an analyst decides)',
+    const unsure = B.edCardSteps_({ disposition: 'monitor', basis: 'low_confidence', why: 'May be a regression (70% sure, so a person decides)',
       rev: { disposition: 'escalate' } }, { steps: ['Send the Social Alert to Comms'] });
-    eq(unsure, ['You decide on the Social Alert: May be a regression (70% sure, so an analyst decides).', 'Send the Social Alert to Comms']);
+    eq(unsure, ['You decide on the Social Alert: May be a regression (70% sure, so a person decides).', 'Send the Social Alert to Comms']);
 
     // No AI review: a plain headline, story and next step from the posts themselves
-    const plain = B.edStoryCardText_(ed, { disposition: 'monitor', basis: 'failed', why: 'AI review unavailable, so flagged for analyst review' }, NOW);
-    assert.ok(plain.startsWith('\ud83d\udea8 *Early Detection Alert: 9 accounts posting \u201cMultiple users report Pixel 9 emergency dialer freezing after overnig\u2026\u201d* \ud83d\udea8\n*\ud83d\udc4d Needs a human look* \u00b7 '), plain);
+    const plain = B.edStoryCardText_(ed, { disposition: 'monitor', basis: 'failed', why: 'AI review unavailable, so a person makes the call' }, NOW);
+    assert.ok(plain.startsWith('\ud83d\udea8 *Early Detection Alert* \ud83d\udea8\n*9 accounts posting \u201cMultiple users report Pixel 9 emergency dialer freezing after overnig\u2026\u201d*\n*Product:* '), plain);
+    assert.ok(plain.includes('\n*Exposure Tag:* not assessed (the AI review was unavailable)\n'), plain);
+    assert.ok(plain.includes('\n\u2022 *Call:* \ud83d\udc4d Needs a human look: AI review unavailable, so a person makes the call\n'), plain);
     assert.ok(plain.includes(`9 small accounts on X, Reddit, Owned Social posted about this 11 times. A typical post: \u201cOvernight update froze the emergency dialer screen completely on my phone.\u201d (<${CLUSTER_URL}|@pixelowner1>, <${REDDIT_URL}|@u_droidcommuter>, <https://www.instagram.com/p/DBabc123/|@westcoast_dad>).`), plain);
     assert.ok(plain.includes('1. Read the posts below and make the call: the AI review wasn\'t available this time.'), plain);
     assert.ok(!plain.includes('*Web:*'));
@@ -710,7 +741,7 @@ module.exports = H => {
       web: { sources: [{ title: 'a', uri: 'https://news.testing.test/' + 'u'.repeat(350) }, { title: 'b', uri: 'https://docs.testing.test/' + 'u'.repeat(350) }] } };
     const big = B.edStoryCardText_(many, longD, NOW);
     assert.ok(big.length <= 3900, String(big.length));
-    assert.ok(big.startsWith('\ud83d\udea8 *Early Detection Alert: TTT') && big.includes('\n1. sss'), big.slice(0, 300));
+    assert.ok(big.startsWith('\ud83d\udea8 *Early Detection Alert* \ud83d\udea8\n*TTT') && big.includes('\n1. sss'), big.slice(0, 300));
   });
 
   // ===========================================================================================================
@@ -820,12 +851,14 @@ module.exports = H => {
     t.g.clock.now += 15 * MIN;
     t.poll();
     eq([edCards(t.chat, TEST_FEED).length, edReviewsOf(t)], [1, 2]);
-    const update = t.chat.botPosts(TEST_FEED).find(m => m.threadReply && /^📈 \*Early Detection Update: /.test(m.text));
+    const update = t.chat.botPosts(TEST_FEED).find(m => m.threadReply && /^\ud83d\udcc8 \*Early Detection Update\*\n/.test(m.text));
     assert.ok(update, t.chat.botPosts(TEST_FEED).map(m => m.text).join('\n---\n'));
     eq([update.thread.name, /^client-zeda-/.test(update.clientAssignedMessageId || '')], [first.thread.name, true]);
-    assert.ok(update.text.startsWith('📈 *Early Detection Update: Dialer freeze reports double and reach TikTok*\n' +
+    assert.ok(update.text.startsWith('\ud83d\udcc8 *Early Detection Update*\n*Dialer freeze reports double and reach TikTok*\n' +
       '*What\'s new:* 21 accounts now, up from 9; now also on TikTok (since the '), update.text);
-    assert.ok(/ \(since the \d{1,2}:\d\d [AP]M ET card\)\.\n\*👍 Monitor build-up\* · 21 accounts on X, Reddit, Owned Social, TikTok · /.test(update.text), update.text);
+    assert.ok(/ \(since the \d{1,2}:\d\d [AP]M ET card\)\.\n\*Product:\* /.test(update.text), update.text);
+    assert.ok(update.text.includes('\n\u2022 *Call:* \ud83d\udc4d Monitor build-up: Early reports worth watching\n' +
+      '\u2022 *Activity:* 21 small accounts on X, Reddit, Owned Social and TikTok posted about this 25 times'), update.text);
     eq(update.attachment || [], []);
     eq(B.outboxGuardHits_(update.text, { terms: ['SLRR Triaged Alerts', 'AAQAaLn375E'] }), []);
     assert.ok(update.text.length <= 3900);
@@ -833,8 +866,8 @@ module.exports = H => {
     eq([sent.previous_card.title, sent.previous_card.accounts, sent.previous_card.platforms, sent.previous_card.whats_new],
       ['Pixel 9 owners say the overnight update froze the emergency dialer', 9, 'X, Reddit, Owned Social', '21 accounts now, up from 9; now also on TikTok']);
     assert.ok(prompts[1].systemInstruction.parts[0].text.includes('`previous_card` (only on an update)'));
-    const firstCopy = t.chat.botPosts(TRIAGED).find(m => !m.threadReply && /Early Detection Alert:/.test(m.text));
-    const updCopy = t.chat.botPosts(TRIAGED).find(m => m.threadReply && /^📈 \*Early Detection Update:/.test(m.text));
+    const firstCopy = t.chat.botPosts(TRIAGED).find(m => !m.threadReply && /\*Early Detection Alert\*/.test(m.text));
+    const updCopy = t.chat.botPosts(TRIAGED).find(m => m.threadReply && /^\ud83d\udcc8 \*Early Detection Update\*/.test(m.text));
     assert.ok(firstCopy && updCopy, t.chat.botPosts(TRIAGED).map(m => m.text).join('\n---\n'));
     eq(updCopy.thread.name, firstCopy.thread.name);
     assert.ok(t.chat.botPosts(TRIAGED).some(m => m.threadReply && m.thread.name === firstCopy.thread.name && m.name !== updCopy.name &&
@@ -901,7 +934,7 @@ module.exports = H => {
     t.bot.edQueuePut_(props, clusterRow({ alert_id: 'ED-CLU-BIG', unique_low_tier_authors: 14, primary_url: REDDIT_URL }), t.g.clock.now + 1);
     t.poll();
     eq([edCards(t.chat, TEST_FEED).length, edReviewsOf(t), t.g.props.has('ED_ALERT_QUEUE')], [1, 1, false]);
-    assert.ok(edCards(t.chat, TEST_FEED)[0].text.includes('· 14 accounts on'), edCards(t.chat, TEST_FEED)[0].text);
+    assert.ok(edCards(t.chat, TEST_FEED)[0].text.includes('\u2022 *Activity:* 14 small accounts on'), edCards(t.chat, TEST_FEED)[0].text);
     assert.ok(t.g.logs.some(l => /early detection: held back a repeat \(ED-CLU-SMALL\): 9 accounts vs 14 on its card at \d{1,2}:\d\d [AP]M ET \(QA-\d+\), nothing new/.test(l)), t.g.logs.join('\n'));
     assert.match(note(t), / · 1 cluster, 0 velocity alert today · 1 repeat held back$/);
   });
@@ -995,7 +1028,7 @@ module.exports = H => {
     const acTop = t.chat.botPosts(AC).filter(m => !m.threadReply);
     assert.ok(acTop.some(m => m.text === H.F.MISTAKES_FIXED), 'rewritten auto-corrected Burson card in B10 (no raw Zapier card)');
     assert.ok(!acTop.some(m => m.text === H.F.MISTAKES), 'raw Zapier card is NEVER posted in B10');
-    assert.ok(acTop.some(m => /\*Early Detection Alert: Pixel 9 owners say the overnight update froze the emergency dialer\*/.test(m.text)),
+    assert.ok(acTop.some(m => /\*Early Detection Alert\* \ud83d\udea8\n\*Pixel 9 owners say the overnight update froze the emergency dialer\*/.test(m.text)),
       'Early Detection story card posted in B10 when B9 is blank');
     const edReplies = t.chat.botPosts(AC).filter(m => m.threadReply && /Early Detection Review:/.test(m.text));
     eq(edReplies.length, 1);

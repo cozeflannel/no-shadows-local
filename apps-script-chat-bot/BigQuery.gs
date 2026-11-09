@@ -856,6 +856,8 @@ function enrichFromBsip_(postUrl, postId) {
     '  ca.collection_tier AS bsip_collection_tier,',
     '  ca.is_kol AS bsip_is_kol,',
     '  ca.priority_flag AS bsip_priority_flag,',
+    '  ca.exposure_tag AS bsip_exposure_tag,',
+    '  ca.product AS bsip_product,',
     '  ca.ca_content AS bsip_post_text,',
     '  bsip_slrr.kof_vertical AS bsip_kof_vertical',
     'FROM (SELECT 1) d',

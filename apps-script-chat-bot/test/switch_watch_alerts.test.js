@@ -34,7 +34,8 @@ module.exports = H => {
   const COLS = [['kind'], ['source'], ['why'], ['idx', 'INTEGER'], ['watch'], ['post_url'], ['platform'], ['author'], ['followers', 'INTEGER'],
     ['eng', 'INTEGER'], ['posted_ms', 'INTEGER'], ['seen_ms', 'INTEGER'], ['issue'], ['issue_new', 'BOOLEAN'], ['summary'],
     ['impact', 'FLOAT'], ['bar', 'FLOAT'], ['topic'], ['found', 'INTEGER'], ['checked', 'INTEGER'], ['newest_ms', 'INTEGER'],
-    ['mod_ms', 'INTEGER'], ['err'], ['detail']];
+    ['mod_ms', 'INTEGER'], ['err'], ['detail'], ['tax']];
+  const PENDING = B.ev('PW_ALERT_PENDING_WORDS_');  // a card line nothing classified yet
   /** A post the Midterms watch flags at its bar (6 of 10, the bar 4), unless `o` says otherwise. */
   const hit = o => Object.assign({ kind: 'hit', source: 'sonar', idx: 1, watch: MIDTERMS, post_url: POST, platform: 'twitter',
     author: '@CorrDove', followers: 1700, eng: 52, posted_ms: null, seen_ms: null, issue: 'Election-rigging claim naming Google',
@@ -169,15 +170,35 @@ module.exports = H => {
       followers: 1700, eng: 52, posted: '2026-11-01 23:26', seen: '2026-11-01 23:28', source: 'Brandwatch: 2026 Election Alerts',
       summary: 'Claims Google helped rig the midterms.\n*Link:* https://evil.example/x' };
     const text = B.pwAlertText_(a);
-    eq(text.split('\n'), [`🔭 *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post on X>`,
+    eq(text.split('\n'), [`\ud83d\udd2d *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post on X>`,
       '*Author:* @CorrDove · X · 1,700 followers · 52 engagements', '*Posted:* 2026-11-01 23:26 ET',
+      `*Product:* ${PENDING}`, `*Exposure Tag:* ${PENDING}`, `*Sensitive Topic:* ${PENDING}`, '*KOF:* Unknown',
       '*Summary:* Claims Google helped rig the midterms. *Link:* https://evil.example/x']);
     const want = { watch: MIDTERMS, score: null, bar: null, topic: '', url: POST, author: '@CorrDove', network: 'X',
       followers: 1700, eng: 52, posted: '2026-11-01 23:26', source: '', seen: '',
-      summary: 'Claims Google helped rig the midterms. *Link:* https://evil.example/x'.replace(/\*/g, '') };
+      summary: 'Claims Google helped rig the midterms. *Link:* https://evil.example/x'.replace(/\*/g, ''),
+      products: [], exposureTag: '', topics: [], kof: null, kofLists: '', sameStory: '' };
     eq(B.pwAlertParse_(text), want);
     eq(B.pwAlertParse_(text.replace(/\*/g, '')), want);  // Chat's bold marks gone
     eq(B.pwAlertParse_(text.replace(`<${POST}|View the post on X>`, POST)).url, POST);  // the link as a bare URL
+    // the SLRR lines from the pre-read or the listening tool, and the story's other posts, read back for the triage
+    const rich = B.pwAlertText_(Object.assign({}, a, { products: ['Search', 'AI Overviews'], tag: 'Product - Perceived bias (P0)',
+      topics: ['Politics'], kof: true, kofLists: 'Viral KOFs', classified: true,
+      sameStory: { n: 5, names: ['FOX 29', 'FOX 2 Detroit', '@WSJ', 'FOX6 News', 'Engadget'] } }));
+    eq(rich.split('\n').slice(4), ['*Product:* Search, AI Overviews', '*Exposure Tag:* Product - Perceived bias (P0)',
+      '*Sensitive Topic:* Politics', '*KOF:* Yes (Viral KOFs)',
+      '*Summary:* Claims Google helped rig the midterms. *Link:* https://evil.example/x',
+      '*Same story:* 5 more posts in the thread (FOX 29, FOX 2 Detroit, @WSJ, FOX6 News and 1 more)']);
+    const back = B.pwAlertParse_(rich);
+    eq([back.products, back.exposureTag, back.topics, back.kof, back.kofLists, back.sameStory],
+      [['Search', 'AI Overviews'], 'Product - Perceived bias', ['Politics'], true, 'Viral KOFs',
+        '5 more posts in the thread (FOX 29, FOX 2 Detroit, @WSJ, FOX6 News and 1 more)']);
+    // classified with nothing that applies (Sonar: on no KOF list); a post that isn't about Google
+    eq(B.pwAlertTaxLines_({ classified: true, products: ['Waymo'], topics: [], kof: false }),
+      ['*Product:* Waymo', '*Exposure Tag:* None', '*Sensitive Topic:* None', '*KOF:* No']);
+    eq(B.pwAlertTaxLines_({ notGoogle: true }), ['*Product:* None (not about Google)', '*Exposure Tag:* None (not about Google)',
+      '*Sensitive Topic:* None', '*KOF:* Unknown']);
+    eq(B.pwAlertParse_(B.pwAlertText_({ watch: MIDTERMS, url: POST, notGoogle: true, kof: false })).products, []);
     // a video's: "Watch the video on <network>"; a network a label doesn't name (news, say): just "View the post"
     assert.match(B.pwAlertText_(Object.assign({}, a, { video: true })), new RegExp(`\\n\\*Link:\\* <${POST.replace(/[.]/g, '\\.')}\\|Watch the video on X>\\n`));
     assert.match(B.pwAlertText_(Object.assign({}, a, { network: 'news', url: 'https://example.com/a' })), /\n\*Link:\* <https:\/\/example\.com\/a\|View the post>\n/);
@@ -188,7 +209,8 @@ module.exports = H => {
       [6.5, 4, 'Elections and civics', 'Brandwatch: 2026 Election Alerts', '2026-11-01 23:28', POST]);
     // little known: no followers, engagements, posted time or summary
     const bare = B.pwAlertText_({ watch: MIDTERMS, score: 4, bar: 4, url: POST, source: 'Sonar' });
-    eq(bare.split('\n'), [`🔭 *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post>`, '*Author:* unknown author']);
+    eq(bare.split('\n'), [`\ud83d\udd2d *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post>`, '*Author:* unknown author',
+      `*Product:* ${PENDING}`, `*Exposure Tag:* ${PENDING}`, `*Sensitive Topic:* ${PENDING}`, '*KOF:* Unknown']);
     eq([B.pwAlertParse_(bare).author, B.pwAlertParse_(bare).followers, B.pwAlertParse_(bare).summary], ['', null, '']);
     // not one: a Zapier alert, the bot's own notes, a quote of one
     for (const other of ['🚨 *X Alert: 2026 Midterm Elections / Civics - Negative* 🚨\n*Author:* @CorrDove', '🤖 *Triage: ❌ No action*',
@@ -303,10 +325,11 @@ module.exports = H => {
     const out = posted(t, MID);
     eq(out.length, 1);
     const msg = out[0];
-    eq(msg.text.split('\n'), [`🔭 *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post on X>`,
+    eq(msg.text.split('\n'), [`\ud83d\udd2d *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post on X>`,
       '*Author:* @CorrDove · X · 1,700 followers · 52 engagements',
+      `*Product:* ${PENDING}`, `*Exposure Tag:* ${PENDING}`, `*Sensitive Topic:* ${PENDING}`, '*KOF:* Unknown',
       '*Summary:* An X reply (@CorrDove, 1.7K followers) claims Google helped rig the midterms.']);
-    assert.ok(!/Score|Found by|Topic/.test(msg.text), 'no score, topic or source on it');
+    assert.ok(!/Score:|Found by:|(?<!Sensitive )Topic:/.test(msg.text), 'no score, topic or source on it');
     eq(msg.attachment, undefined);  // X wouldn't show the post (no picture): a text alert
     chatShows(msg);  // read back as Chat gives it: "*Link:* View the post on X", the address only in formattedText
     // the Watch detections tab: the flag went out (a: 'p', the message, B33, when); the near miss never waited
@@ -639,5 +662,163 @@ module.exports = H => {
     t.control().getRange(34, 2).setValue('OFF');
     t.poll();
     eq(c35(t), '\u26a0\ufe0f Other alerts space (B33) chosen, but the Proactive watch (row 34) is OFF: nothing to post');
+  });
+
+  // ===========================================================================================================
+  // What a card says, and one alert a story
+  // ===========================================================================================================
+
+  /** The pre-read's JSON parts of a Gemini call: {posts (the <watch_posts>), recent (the <recent_alerts>, or [])}. */
+  const preReadOf = payload => {
+    const prompt = payload.contents[0].parts.map(p => p.text || '').join('');
+    const part = tag => (prompt.match(new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`)) || [])[1];
+    return { posts: JSON.parse(part('watch_posts') || '[]'), recent: JSON.parse(part('recent_alerts') || '[]'), prompt };
+  };
+
+  test('Watch alerts: every card says what the post is about before anyone opens it (the AI pre-read\'s summary and its Product / Exposure Tag / Sensitive Topic lines; KOF only from the listening data: Sonar\'s influencer lists), the triage starts from the card\'s values, and a flag with no summary, text or picture is never posted as a bare link (a: \'n\')', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    t.g.vertex.triage = triage();
+    const BLANK = 'https://www.instagram.com/p/DfgyBL1Bccm';
+    const TAX = JSON.stringify({ p: ['Search & Shopping', 'AIOverviews'], t: 'Product - Perceived bias', s: ['Politics'], k: ['Viral KOFs'] });
+    const asked = [];
+    t.g.vertex.watchPreRead = payload => {
+      asked.push(payload);
+      return { watch_posts: [
+        { ref: 'C1', summary: 'X user @CorrDove (1.7K followers) claims Google rigged search results for the midterms.',
+          about_google: true, product: 'Search', other_products: ['AI Overviews'], exposure_tag: 'Product - Perceived bias',
+          sensitive_topics: ['Politics'], story: 'Claim that Google rigged midterm search results', same_story_as: '' },
+        { ref: 'C2', summary: '', about_google: true, product: null, other_products: [], exposure_tag: '', sensitive_topics: [],
+          story: 'An Instagram post with no text', same_story_as: '' },
+      ] };
+    };
+    look(w, [hit({ tax: TAX }), hit({ post_url: BLANK, platform: 'instagram', author: 'mediaselangor_en', followers: 2009, eng: 5,
+      impact: 5, summary: '', issue: '', tax: JSON.stringify({ p: [], t: '', s: [], k: [] }) })]);
+    const out = posted(t, MID);
+    eq(out.length, 1);
+    const msg = out[0];
+    eq(msg.text.split('\n').slice(3), ['*Product:* Search, AI Overviews', '*Exposure Tag:* Product - Perceived bias (P0)',
+      '*Sensitive Topic:* Politics', '*KOF:* Yes (Viral KOFs)',
+      '*Summary:* X user @CorrDove (1.7K followers) claims Google rigged search results for the midterms.']);
+    // the keys: the alert's thread, space and story (for later flags on it), the listening tool's classification
+    // (Pendulum's names in SLRR's: "Search & Shopping" is two products, "AIOverviews" AI Overviews); the blank post: a: 'n'
+    const byKey = Object.fromEntries(keys(t).map(k => [k.k, k]));
+    const kp = byKey[B.recordKey_({ post_url: POST })];
+    eq([kp.a, kp.t, kp.sp, kp.st], ['p', msg.thread.name, MID, 'Claim that Google rigged midterm search results']);
+    eq(kp.x, { p: ['Search', 'Shopping', 'AI Overviews'], t: 'Product - Perceived bias', s: ['Politics'], k: true, l: 'Viral KOFs' });
+    eq(byKey[B.recordKey_({ post_url: BLANK })].a, 'n');
+    // BMIE's KOF column keeps which kind of KOF (its live values); "No" is not one; a DSD KOF alert names itself
+    eq(['{"kv":"Yes (Viral KOF)","p":null}', '{"kv":"Yes (but not Viral KOF)","p":null}', '{"kv":"No","p":null}', '{"kv":null}',
+      '{"kv":"Brandwatch KOF alert"}'].map(B.pwTaxOf_), [{ p: [], t: '', s: [], k: true, l: 'Viral KOF' },
+      { p: [], t: '', s: [], k: true, l: 'but not Viral KOF' }, { p: [], t: '', s: [], k: false, l: '' }, null,
+      { p: [], t: '', s: [], k: true, l: 'Brandwatch KOF alert' }]);
+    assert.match(c35(t), / \u00b7 today: 1 posted$/);
+    // ONE pre-read for the run, its posts as untrusted data, by ref; nothing posted lately to compare with
+    eq(asked.length, 1);
+    const sent = preReadOf(asked[0]);
+    eq([sent.posts.map(p => [p.ref, p.author]), sent.recent], [[['C1', '@CorrDove'], ['C2', 'mediaselangor_en']], []]);
+    assert.ok(/UNTRUSTED/.test(asked[0].systemInstruction.parts[0].text));
+    // the triage starts from the card's values: its product, exposure tag and Sensitive Topics, and the KOF the data gave
+    chatShows(msg);
+    t.poll();
+    const call = t.g.vertex.calls.find(c => ((c.payload.generationConfig.responseSchema || {}).properties || {}).stream_call);
+    const alert = JSON.parse(call.payload.contents[0].parts.map(p => p.text || '').join('').match(/<alert>\n([\s\S]*)\n<\/alert>/)[1]);
+    eq([alert.product, alert.card_products, alert.card_exposure_tag, alert.card_sensitive_topics, alert.kof, alert.kof_lists],
+      ['Search', 'Search, AI Overviews', 'Product - Perceived bias', 'Politics', true, 'Viral KOFs']);
+    assert.ok(call.payload.systemInstruction.parts.map(p => p.text || '').join('\n').includes('The alert card already shows a quick pre-read'));
+    eq([writes(t), outbox(t)], [[], []]);
+  });
+
+  test('Watch alerts: one story, one alert: of several flags on the same story (the AI pre-read says so), the most engaging is posted in the space and the others are listed in its thread (a: \'g\'), named on its Same story line; a later flag on that story joins the same thread, unless it raises the stakes (2,000+ engagements: an alert of its own); C35 counts them', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    t.g.vertex.triage = triage();
+    const WSJ = 'https://twitter.com/WSJ/status/2119866546579296548';
+    const FOX2 = 'https://twitter.com/FOX2News/status/2119863861842980913';
+    const FOX29 = 'https://www.facebook.com/fox29philadelphia/posts/pfbid0zK2F4Jenn8bC1n89sc9oYizbA4XxaRz5XxNNJC5T17THVuakHkhuqNqvnppxH9U5l';
+    const FOX13 = 'https://www.instagram.com/p/Dfhv4jzIOSD';
+    const ENGADGET = 'https://www.facebook.com/Engadget/posts/pfbid0QuXUA1YEQsyBghotVAbSE2pda8wkYg46r8cosvEYmBgm6J3vum2bh45hedehKGQjl';
+    const BIG = 'https://x.com/BigNews/status/2119900000000000001';
+    const STORY = 'NHTSA investigates Waymo robotaxis passing stopped school buses';
+    const waymo = (url, author, platform, followers, eng, impact, summary) => hit({ post_url: url, author, platform, followers, eng,
+      impact, summary, issue: 'Waymo school bus investigation' });
+    t.g.vertex.watchPreRead = payload => {
+      const { posts, recent } = preReadOf(payload);
+      const first = posts.find(p => /Waymo/.test(p.text || ''));
+      const prior = recent.find(r => /Waymo/.test(r.story || ''));
+      return { watch_posts: posts.map(p => {
+        const story = /Waymo/.test(p.text || '');
+        return { ref: p.ref, summary: p.text || '', about_google: true, product: story ? 'Waymo' : 'Search', other_products: [],
+          exposure_tag: story ? 'Product - Product failures - physical safety issues' : 'Brand - Conspiratorial theories about Google',
+          sensitive_topics: [], story: story ? STORY : 'Election-rigging claim naming Google',
+          same_story_as: !story ? '' : prior ? prior.ref : first.ref !== p.ref ? first.ref : '' };
+      }) };
+    };
+    look(w, [hit({ impact: 9 }),
+      waymo(WSJ, 'The Wall Street Journal', 'twitter', 22280000, 0, 8,
+        'X account WSJ (22.3M followers) said Waymo fixed its robotaxis passing school buses, yet regulators are investigating new complaints.'),
+      waymo(FOX29, 'FOX 29', 'facebook', 1900000, 5, 7,
+        'Facebook page FOX 29 (1.9M followers) reported a federal investigation into a recall of nearly 3,000 Waymo vehicles.'),
+      waymo(FOX2, 'FOX 2 Detroit', 'twitter', 414861, 0, 6,
+        'X account FOX2News (414.9K followers) reported a federal investigation into a recall of nearly 3,000 Waymo vehicles.'),
+      waymo(FOX13, 'fox13seattle', 'instagram', 175000, 20, 5,
+        'Instagram account fox13seattle (175,000 followers) posted a news graphic: feds investigate the Waymo recall.')]);
+    // two alerts in the space: the election claim, and ONE for the Waymo story: its most engaging post (20 engagements)
+    let out = posted(t, MID);
+    eq(out.length, 2);
+    const alertOf = url => out.find(m => m.text.includes(url));
+    const story = alertOf(FOX13);
+    assert.ok(story && alertOf(POST), out.map(m => m.text).join('\n---\n'));
+    eq([WSJ, FOX29, FOX2].map(u => !!alertOf(u)), [false, false, false]);
+    assert.ok(story.text.includes('\n*Product:* Waymo\n*Exposure Tag:* Product - Product failures - physical safety issues (P1)\n'), story.text);
+    assert.ok(story.text.endsWith('\n*Same story:* 3 more posts in the thread (FOX 29, The Wall Street Journal, FOX 2 Detroit)'), story.text);
+    // the others: one reply in its thread, the most engaging first, each linked and summed up
+    const storyReplies = () => inThread(t, MID, story).filter(m => /^\ud83d\udd17 /.test(m.text));
+    eq(storyReplies().length, 1);
+    const reply = storyReplies()[0].text.split('\n');
+    eq(reply[0], '\ud83d\udd17 *Same story: 3 more posts*');
+    assert.ok(reply[1].startsWith(`\u2022 <${FOX29}|FOX 29> \u00b7 Facebook \u00b7 1,900,000 followers \u00b7 5 engagements \u2014 Facebook page FOX 29`), reply[1]);
+    assert.ok(reply[2].startsWith(`\u2022 <${WSJ}|The Wall Street Journal> \u00b7 X \u00b7 22,280,000 followers \u2014 X account WSJ`), reply[2]);
+    assert.ok(reply[3].startsWith(`\u2022 <${FOX2}|FOX 2 Detroit> \u00b7 X \u00b7 414,861 followers \u2014 `), reply[3]);
+    const byKey = () => Object.fromEntries(keys(t).map(k => [k.k, k]));
+    const rk = u => B.recordKey_({ post_url: u });
+    let k = byKey();
+    eq([FOX13, WSJ, FOX29, FOX2, POST].map(u => k[rk(u)].a), ['p', 'g', 'g', 'g', 'p']);
+    eq([k[rk(WSJ)].pm, k[rk(WSJ)].t, k[rk(FOX13)].st], [story.name, story.thread.name, STORY]);
+    assert.match(c35(t), / \u00b7 today: 2 posted, \+3 in their story's thread$/);
+    // 5 minutes on: Engadget on the same story joins that thread (the pre-read matched it to the alert posted); a post
+    // with 2,500 engagements raises the stakes (the alert's had 20): an alert of its own
+    look(w, [waymo(ENGADGET, 'Engadget', 'facebook', 1600000, 4, 7,
+      'Facebook page Engadget (1.6M followers) reported NHTSA is investigating whether Waymo robotaxis fail to stop for school buses.'),
+    waymo(BIG, '@BigNews', 'twitter', 50000, 2500, 6, 'X account @BigNews (50K followers) says Waymo robotaxis keep passing school buses.')]);
+    out = posted(t, MID);
+    eq(out.length, 3);
+    assert.ok(alertOf(BIG) && !alertOf(ENGADGET));
+    eq(storyReplies().length, 2);
+    const later = storyReplies()[1].text.split('\n');
+    eq(later[0], '\ud83d\udd17 *Same story: 1 more post* (seen since this alert was posted)');
+    assert.ok(later[1].startsWith(`\u2022 <${ENGADGET}|Engadget> \u00b7 Facebook \u00b7 1,600,000 followers \u00b7 4 engagements \u2014 `), later[1]);
+    k = byKey();
+    eq([k[rk(ENGADGET)].a, k[rk(ENGADGET)].pm, k[rk(BIG)].a], ['g', story.name, 'p']);
+    assert.match(c35(t), / \u00b7 today: 3 posted, \+4 in their story's thread$/);
+    eq([writes(t), outbox(t)], [[], []]);
+  });
+
+  test('Watch alerts: with the AI pre-read failing, flags wait for a later run (C35 says why) until 30 minutes after they were seen, then go out with the listening tool\'s own classification (Sonar: on no KOF list, so KOF: No)', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    t.g.vertex.triage = triage();
+    t.g.vertex.fail = payload => (((payload.generationConfig.responseSchema || {}).properties || {}).watch_posts
+      ? { code: 503, body: { error: { code: 503, message: 'overloaded' } } } : null);
+    look(w, [hit({ tax: JSON.stringify({ p: ['Brand'], t: 'Brand - Conspiratorial theories about Google', s: [], k: [] }) })]);
+    eq([posted(t, MID).length, keys(t)[0].a], [0, 'q']);
+    assert.match(c35(t), /^\u26a0\ufe0f waiting: the AI read of the flagged posts failed this run \(tried again next run\)/);
+    t.g.clock.now += 15 * MIN;
+    t.poll();
+    const out = posted(t, MID);
+    eq(out.length, 1);
+    eq(out[0].text.split('\n').slice(3, 7), ['*Product:* Brand', '*Exposure Tag:* Brand - Conspiratorial theories about Google (P2)',
+      '*Sensitive Topic:* None', '*KOF:* No']);
+    eq(keys(t)[0].a, 'p');
   });
 };

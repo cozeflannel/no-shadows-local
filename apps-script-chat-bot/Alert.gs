@@ -449,8 +449,16 @@ function isBlank_(v) {
   return v === null || v === undefined || v === '' || (Array.isArray(v) && v.length === 0);
 }
 
+/** True when `text` opens with the bot's own Watch alert or Early Detection header (never a Zapier/Burson alert). Pure. */
+function isOwnAlertCardHeader_(text) {
+  const first = String(text || '').split(/\r?\n/).map(l => l.replace(/\*/g, '').trim()).find(Boolean) || '';
+  const clean = first.replace(/^[^\p{L}\p{N}]+/u, '').replace(/[^\p{L}\p{N})\]]+$/u, '').trim();
+  return /^(?:Watch alert\s*\u00b7|Early Detection (?:Alert|Update)\b)/i.test(clean);
+}
+
 /** Is this message a Zapier/Burson alert? (enough labels + a sender or text signal), like parser.detect. */
 function detectAlert_(text, parsed, senderDisplay) {
+  if (isOwnAlertCardHeader_(text)) return false;
   const det = GEN.detection;
   const matched = Object.keys(parsed.fields).length;
   if (matched < det.min_labels) return false;

@@ -51,20 +51,29 @@ const ED_REF_RX_ = /\[([^\[\]\n]{1,160})\]\(\s*P(\d{1,2})\s*\)/g;
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
- * Parses a formatted Early Detection Alert card (`edAlertCardText_` in BigQuery.gs) into structured fields.
- * Returns null if `text` is not an Early Detection Alert card. Pure.
+ * Parses a formatted Early Detection Alert card (`edAlertCardText_` in BigQuery.gs, or the story card edStoryCardText_)
+ * into structured fields: its first line `(siren) *Early Detection Alert: <headline>* (siren)`, or `(siren) *Early
+ * Detection Alert* (siren)` with the headline on the next line. Returns null if `text` is not an Early Detection Alert
+ * card. Pure.
  */
 function edParseCard_(text, links) {
   const raw = String(text || '');
   if (!raw.trim() || raw.length > 20000) return null;
   const lines = raw.split(/\r?\n/);
-  const first = String(lines[0] || '').replace(/\*/g, '').replace(/^[^\p{L}\p{N}]+/u, '').replace(/[^\p{L}\p{N})\]]+$/u, '').trim();
+  const strip = s => String(s || '').replace(/\*/g, '').replace(/^[^\p{L}\p{N}]+/u, '').replace(/[^\p{L}\p{N})\]]+$/u, '').trim();
+  const first = strip(lines[0]);
   const hm = first.match(/^Early Detection Alert\s*[:：–—-]\s*(.+)$/i);
-  if (!hm) return null;
-  const headline = hm[1].trim();
+  let headline = hm ? hm[1].trim() : '';
+  let from = 1;
+  if (!hm && /^Early Detection Alert$/i.test(first)) {
+    const at = lines.findIndex((l, i) => i > 0 && String(l || '').trim());
+    headline = at > 0 ? String(lines[at]).replace(/\*/g, '').trim() : '';
+    from = at + 1;
+  }
+  if (!headline) return null;
 
   const kv = {};
-  for (let i = 1; i < lines.length; i++) {
+  for (let i = from; i < lines.length; i++) {
     const clean = String(lines[i] || '').replace(/<(https?:\/\/[^|>\s]+)\|([^>]*)>/g, '$1')
       .replace(/^[•\-–]\s*/, '').replace(/\*/g, '').trim();
     if (!clean) continue;
@@ -492,7 +501,7 @@ function edDecide_(ctx, parsed, rev, llm, history, now) {
     });
   }
 
-  if (!rev) return fin({ why: 'AI review unavailable, so flagged for analyst review' });
+  if (!rev) return fin({ why: 'AI review unavailable, so a person makes the call' });
 
   // Suppress if BigQuery vector DB matched evergreen noise and Gemini did not find a high-confidence emergency
   if (parsed.bq && parsed.bq.is_evergreen_noise && !(rev.disposition === 'escalate' && rev.confidence >= 0.92)) {
@@ -528,7 +537,7 @@ function edDecide_(ctx, parsed, rev, llm, history, now) {
     return fin({
       disposition: 'monitor',
       basis: 'low_confidence',
-      why: `${rev.reason || 'emerging build-up may warrant escalation'} (${Math.round(rev.confidence * 100)}% sure, so an analyst decides)`,
+      why: `${rev.reason || 'emerging build-up may warrant escalation'} (${Math.round(rev.confidence * 100)}% sure, so a person decides)`,
     });
   }
 
@@ -536,7 +545,7 @@ function edDecide_(ctx, parsed, rev, llm, history, now) {
     return fin({
       disposition: 'monitor',
       basis: 'early_detection',
-      why: rev.reason || 'early build-up worth analyst monitoring',
+      why: rev.reason || 'early build-up worth monitoring',
     });
   }
 
@@ -1368,29 +1377,100 @@ function edCardSteps_(d, story) {
 }
 
 /**
- * The ONE card a queued signal gets in the space, after its review (edReviewAndPost_): Gemini's headline; the call,
- * the spread and when; its story with the posts linked inline; what the web says (its sources linked); suggested next
- * steps; every post as a link. A plain story, headline and steps from the signal itself when Gemini gave none. First
- * line `🚨 *Early Detection Alert: …* 🚨` (edParseCard_ still reads it); an update of an earlier card on the same story
- * (`ed.update`, same-story dedup) opens `📈 *Early Detection Update: …*` with a `*What's new:*` line. Chat markup
+ * The card's SLRR lines: Product, Exposure Tag (with its priority; an unconfirmed one says how sure the review was),
+ * Sensitive Topic and KOF (Early Detection only ever clusters small, non-KOF accounts: the KOF authors are left out
+ * upstream), from the review's SLRR view (`d.fields` / `d.rev.slrr`); "not assessed" without a review. Pure.
+ */
+function edTaxonomyLines_(ed, d) {
+  const x = ed || {};
+  const f = (d && d.fields) || {};
+  const rev = d && d.rev;
+  const s = rev && rev.slrr;
+  const clean = v => String(v === undefined || v === null ? '' : v).replace(/[<>|*\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const unread = 'not assessed (the AI review was unavailable)';
+  let product = unread;
+  let tag = unread;
+  let topics = unread;
+  if (rev) {
+    product = clean(allProductsText_(f)) || 'Brand';
+    if (f.exposure_tag) tag = `${f.exposure_tag}${f.priority ? ` (${f.priority})` : ''}`;
+    else if (s && s.is && s.tag) tag = `${s.tag} (${s.priority}, unconfirmed: ${Math.round((Number(s.confidence) || 0) * 100)}% sure)`;
+    else tag = s ? 'None (not a Google brand-safety issue)' : 'None identified';
+    const list = Array.isArray(f.risk_tags) && f.risk_tags.length ? f.risk_tags : ((s && s.topics) || []);
+    topics = list.length ? list.join(', ') : 'None';
+  } else if (x.product) {
+    product = clean(normalizeProposal_('product', x.product) || x.product);
+  }
+  const n = Number(x.distinctAuthors) || 0;
+  return [`*Product:* ${product}`, `*Exposure Tag:* ${clean(tag)}`, `*Sensitive Topic:* ${clean(topics)}`,
+    `*KOF:* No (${n ? `${fmtInt_(n)} ` : ''}small, non-KOF account${n === 1 ? '' : 's'})`];
+}
+
+/**
+ * The card's call, in words a reader needs no key for: the call (a dismissal says "no action needed") and why: the
+ * review's own reason, or the bot's rule when it changed the call (already alerted, evergreen noise, not sure enough).
+ * Pure.
+ */
+function edCallLine_(d) {
+  const x = d || {};
+  const rev = x.rev || null;
+  const why = x.basis === 'early_detection' && rev && rev.reason ? rev.reason
+    : x.basis === 'p0_tag' ? 'a P0 exposure tag is escalated at any size' : x.why;
+  const plain = x.disposition === 'dismiss' && x.basis !== 'repeat' && !x.tnsActive && !x.tnsPlanned ? ' (no action needed)' : '';
+  const words = truncate_(String(why || '').replace(/\s+/g, ' ').replace(/[.\s]+$/, '').trim(), 220);
+  return `\u2022 *Call:* ${edCallWords_(x)}${plain}${words ? `: ${words}` : ''}`;
+}
+
+/** When the posts happened, in words: "between 10:39 AM and 12:55 PM ET", "at 7:42 AM ET" (dates when not today), or ''. */
+function edWindowWords_(ed, posts, now) {
+  const label = edWindowLabel_(ed, posts, now);
+  if (!label) return '';
+  const m = label.match(/^(.+?)\u2013(.+) ET$/);
+  return m ? `between ${m[1]} and ${m[2]} ET` : `at ${label}`;
+}
+
+/**
+ * The card's activity, as a sentence: "8 small accounts on Instagram and X posted about this 11 times between 10:39 AM
+ * and 12:55 PM ET (3.2x the usual pace)". Pure.
+ */
+function edActivityLine_(ed, posts, now) {
+  const x = ed || {};
+  const n = Number(x.distinctAuthors) || 0;
+  const m = Number(x.mentionCount) || 0;
+  const plats = String(x.platformsCsv || x.platform || '').split(',').map(s => s.trim()).filter(Boolean);
+  const where = plats.length > 1 ? `${plats.slice(0, -1).join(', ')} and ${plats[plats.length - 1]}` : plats[0] || '';
+  const when = edWindowWords_(x, posts, now);
+  return `\u2022 *Activity:* ${n ? `${fmtInt_(n)} small account${n === 1 ? '' : 's'}` : 'Small accounts'}` +
+    `${where ? ` on ${where}` : ''} posted about this${m > n ? ` ${fmtInt_(m)} times` : ''}${when ? ` ${when}` : ''}` +
+    `${x.velocityRatio ? ` (${Number(x.velocityRatio).toFixed(1)}x the usual pace)` : ''}`;
+}
+
+/**
+ * The ONE card a queued signal gets in the space, after its review (edReviewAndPost_), laid out for a quick read:
+ *   (siren) *Early Detection Alert* (siren)
+ *   *<Gemini's headline>*
+ *   *Product:* … / *Exposure Tag:* … / *Sensitive Topic:* … / *KOF:* …   (edTaxonomyLines_)
+ *   (blank line)
+ *   its story with the posts linked inline; suggested next steps (numbered); what the web says (its sources linked)
+ *   • *Call:* the call and why (edCallLine_)   • *Activity:* how many small accounts, where, when (edActivityLine_)
+ *   • *Posts:* every post as a link
+ * A plain story, headline and steps from the signal itself when Gemini gave none. edParseCard_ reads the header (and
+ * the older one-line `*Early Detection Alert: …*`). An update of an earlier card on the same story (`ed.update`,
+ * same-story dedup) opens `(chart) *Early Detection Update*`, its headline, then a `*What's new:*` line. Chat markup
  * (<url|text>), under ED_CARD_MAX_CHARS_ (fewer post links, then no web sources, when it would be longer). Pure.
  */
 function edStoryCardText_(ed, d, now) {
   const x = ed || {};
   const posts = edPostsOf_(x);
   const story = d && d.rev && d.rev.story ? d.rev.story : null;
-  const title = (story && story.title) || edFallbackTitle_(x, posts);
+  const title = truncate_(ewText_((story && story.title) || edFallbackTitle_(x, posts)).replace(/\*/g, ''), 120);
   const upd = x.update && x.update.news ? x.update : null;
   const since = upd ? edCardTime_(upd.at, now) : '';
   const newsLine = upd ? `*What's new:* ${ewText_(upd.news)}${since ? ` (since the ${since} card)` : ''}.` : '';
-  const n = Number(x.distinctAuthors) || 0;
-  const plats = String(x.platformsCsv || x.platform || '').trim();
-  const facts = [
-    `*${edCallWords_(d || {})}*`,
-    n ? `${fmtInt_(n)} account${n === 1 ? '' : 's'}${plats ? ` on ${plats}` : ''}` : '',
-    x.velocityRatio ? `${Number(x.velocityRatio).toFixed(1)}x the usual pace` : '',
-    edWindowLabel_(x, posts, now),
-  ].filter(Boolean).join(' · ');
+  const head = (upd ? ['\ud83d\udcc8 *Early Detection Update*', `*${title}*`, newsLine]
+    : ['\ud83d\udea8 *Early Detection Alert* \ud83d\udea8', `*${title}*`]).concat(edTaxonomyLines_(x, d || {})).join('\n');
+  const call = edCallLine_(d || {});
+  const activity = edActivityLine_(x, posts, now);
   const sources = ((d && d.web && d.web.sources) || [])
     .filter(s => s && /^https:\/\/[^\s<>|]+$/i.test(String(s.uri || '')) && String(s.uri).length <= 400).slice(0, 2)
     .map((s, i) => edChatLink_(s.uri, truncate_(String(s.title || '').replace(/[*_~`]/g, ' ').replace(/\s+/g, ' ').trim() ||
@@ -1408,14 +1488,14 @@ function edStoryCardText_(ed, d, now) {
       `${o.sources && sources.length ? ` (${sources.join(', ')})` : ''}` : '';
     const stepLines = steps.slice(0, 3).map((s, i) => `${i + 1}. ${edLinkify_(s, posts, inline)}`);
     const links = postLinks.slice(0, o.links);
-    const head = upd ? [`\ud83d\udcc8 *Early Detection Update: ${truncate_(ewText_(title), 120)}*`, newsLine, facts]
-      : [`\ud83d\udea8 *Early Detection Alert: ${truncate_(ewText_(title), 120)}* \ud83d\udea8`, facts];
-    return head.concat([
+    return `${head}\n\n${[
       body,
       stepLines.length ? stepLines.join('\n') : '',
       web,
+      call,
+      activity,
       links.length ? `\u2022 *Posts:* ${links.join(' \u00b7 ')}` : '',
-    ].filter(Boolean)).join('\n');
+    ].filter(Boolean).join('\n')}`;
   };
   // Longest first; past ED_CARD_MAX_CHARS_: fewer post links, then no web sources, then the story and steps without
   // inline links (the posts line still links them), then a shorter story. The headline and the steps always stay.

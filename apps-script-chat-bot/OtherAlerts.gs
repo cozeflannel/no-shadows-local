@@ -91,6 +91,7 @@ function otherAlertOf_(text, sender, links) {
   try {
     const t = String(text || '');
     if (!t.trim() || t.length > OTHER_TEXT_MAX_CHARS_) return null;
+    if (typeof isOwnAlertCardHeader_ === 'function' && isOwnAlertCardHeader_(t)) return null;
     if (otherSlrrSign_(t, sender)) return null;
     const o = parseOtherAlert_(t, sender, links);
     const n = o.keys.length;
@@ -1054,7 +1055,12 @@ function otherTriagePrompts_(parsed, media) {
       'media, web search, knowledge base, guidance, or recent alerted issues. Do NOT rubber-stamp the watch\'s flag: ' +
       'verify whether the full post is a real Google brand-safety issue under SLRR\'s unified mission, whether it repeats an ' +
       'already-alerted known issue with nothing materially new (`no_action`), warrants analyst monitoring / T&S intake while ' +
-      'still below SLRR\'s formal email threshold (`flag`), or genuinely needs a Social Alert email now (`escalate`).\n'
+      'still below SLRR\'s formal email threshold (`flag`), or genuinely needs a Social Alert email now (`escalate`).\n' +
+      ((o.unknown || []).some(u => u && /^(?:card_|same_story_)/.test(String(u.label || '')))
+        ? 'The alert card already shows a quick pre-read (card_products, card_exposure_tag, card_sensitive_topics: a ' +
+          'lightweight AI pass or the listening tool\'s own tags): confirm or correct them in `slrr`. same_story_coverage ' +
+          'names other posts on the same story listed in this alert\'s thread: weigh their combined reach, never a second alert.\n'
+        : '')
     : '';
   const system =
     'You are an experienced Google SLRR brand-safety Incident Manager on shift. Early Catch (`Proactive watch` and stream ' +

@@ -219,8 +219,20 @@ def normalize_value(spec: FieldSpec, raw: Any, default_tz: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
+def _is_own_alert_card_header(text: str | None) -> bool:
+    for raw in (text or "").splitlines():
+        line = raw.replace("*", "").strip()
+        if not line:
+            continue
+        clean = re.sub(r"^[^\w]+|[^\w)\]]+$", "", line, flags=re.UNICODE).strip()
+        return bool(re.match(r"^(?:Watch alert\s*\u00b7|Early Detection (?:Alert|Update)\b)", clean, re.I))
+    return False
+
+
 def detect(config: AgentConfig, message: ChatMessage, parsed: ParsedAlert) -> tuple[bool, str]:
     """Is this message an alert? (labels matched + sender / text signals)."""
+    if _is_own_alert_card_header(message.text):
+        return False, "bot own card"
     det = config.alert_template.detection
     matched = len(parsed.fields)
     sender_name = (message.sender.name or "").lower()

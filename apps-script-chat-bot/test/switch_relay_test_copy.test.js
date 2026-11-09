@@ -1000,19 +1000,19 @@ module.exports = H => {
       chatbot_card_text: '',
     }];
     t.poll();
-    const edInMirror = tops(t, MIRROR).filter(m => /Early Detection Alert:/.test(m.text));
+    const edInMirror = tops(t, MIRROR).filter(m => /Early Detection Alert/.test(m.text));
     eq(edInMirror.length, 1, 'Early Detection Alert card is posted at the top of the Mirror space');
     assert.match(edInMirror[0].clientAssignedMessageId || '', /^client-zeda-/);
     // Never forwarded or relayed to COPY or REAL
-    eq(posts(t, COPY).filter(m => /Early Detection Alert:/.test(m.text)), []);
-    eq(posts(t, REAL).filter(m => /Early Detection Alert:/.test(m.text)), []);
+    eq(posts(t, COPY).filter(m => /Early Detection Alert/.test(m.text)), []);
+    eq(posts(t, REAL).filter(m => /Early Detection Alert/.test(m.text)), []);
 
     // Switch to LIVE (clear B26, Safety valve OFF): Mirror space Auto-send goes to real recipients, while Auto-correct (B10) stays in Testing (only to tester@testing.test)
     t.set('B26', '');
     t.poll();
     // Even after a second poll (which triages the Early Detection Alert in MIRROR and runs Relay), nothing from Early Detection ever leaks to COPY or REAL
-    eq(posts(t, COPY).filter(m => /Early Detection Alert:|Triage:/.test(m.text)), []);
-    eq(posts(t, REAL).filter(m => /Early Detection Alert:|Triage:/.test(m.text)), []);
+    eq(posts(t, COPY).filter(m => /Early Detection Alert|Triage:/.test(m.text)), []);
+    eq(posts(t, REAL).filter(m => /Early Detection Alert|Triage:/.test(m.text)), []);
     const beforeCount = t.g.gmail.sentMessages().length;
     t.chat.say(REAL, F.AIO, ZAP);
     t.poll();
