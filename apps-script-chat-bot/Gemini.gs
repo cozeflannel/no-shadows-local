@@ -47,8 +47,8 @@ const BQ_GEMINI_MODEL_ = 'brand-social-central-data.DSD.gemini_analyzer';
 const GROUNDING_TOOLS_ = { enterprise: { enterpriseWebSearch: {} }, google: { googleSearch: {} } };
 const GROUNDING_OFF_SEC_ = 6 * 3600;
 // generationConfig.maxOutputTokens (thinking included): without a cap a call can run to the model's 65,536-token default
-// (5-6 minutes, then UrlFetchApp's timeout). A review's JSON and its thinking fit well under 16k.
-const GEMINI_MAX_TOKENS_ = { review: 16384, answer: 8192, press: 8192, synopsis: 4096, other: 8192 };
+// (5-6 minutes, then UrlFetchApp's timeout). 24k gives multimodal reviews headroom above MEDIUM thinking; 8k covers synopsis thinking + text.
+const GEMINI_MAX_TOKENS_ = { review: 24576, answer: 8192, press: 8192, synopsis: 8192, other: 8192 };
 // generationConfig.thinkingConfig.thinkingLevel, Gemini 3 and later only (Gemini 2.5 refuses it). MEDIUM is the documented
 // default of gemini-3.8-flash (Vertex AI "Thinking" page): this changes nothing on today's model and keeps thinking from
 // going to HIGH if the model or its default changes.
@@ -61,6 +61,10 @@ const GEMINI_RETRY_MIN_LEFT_MS_ = 45 * 1000;
 const BQ_GEMINI_WAIT_MS_ = 75 * 1000;
 const BQ_GEMINI_POLL_MS_ = 10 * 1000;
 
+function isMaxTokensErr_(e) {
+  return /cut off \(MAX_TOKENS\)/.test(String((e && e.message) || e || ''));
+}
+
 function geminiClient_() {
   return {
     assess(parsed, opts) {
@@ -68,9 +72,9 @@ function geminiClient_() {
       const left = () => (deadline ? deadline - Date.now() : Infinity);
       const mediaTime = () => left() >= GEMINI_MEDIA_MIN_LEFT_MS_;
       const grounding = webGroundingMode_();
-      const review = m => {  // one Gemini call, with the post's media (m) or the alert text alone (null)
+      const review = (m, over) => {  // one Gemini call, with the post's media (m) or the alert text alone (null)
         const p = assessPrompts_(parsed, m);
-        const o = { grounding, deadline, maxOutputTokens: GEMINI_MAX_TOKENS_.review };
+        const o = Object.assign({ grounding, deadline, maxOutputTokens: GEMINI_MAX_TOKENS_.review }, over || {});
         const out = geminiGenerate_(p.system, p.prompt, p.schema || ASSESS_SCHEMA_, m
           ? Object.assign(o, { parts: m.parts, tries: 1, mediaResolution: m.kind === 'image' ? null : 'MEDIA_RESOLUTION_LOW' })
           : o);
@@ -130,6 +134,10 @@ function geminiClient_() {
         if (missed && out && typeof out === 'object' && !Array.isArray(out)) out._missed = missed;
         return out;
       };
+      const retryOver = () => ({
+        thinkingLevel: thinkingLevelFor_(GEN.models.triage) ? 'LOW' : '',
+        temperature: 0.3,
+      });
       let tried = false;  // a call with media was made: the text-only review is then another try
       try {
         // A clip whose lookup or Cloud Storage copy took the time it needed (as above)
@@ -157,6 +165,14 @@ function geminiClient_() {
           try {
             return withMissed(review(media));
           } catch (e) {
+            if (isMaxTokensErr_(e) && !isClip(media) && left() >= GEMINI_RETRY_MIN_LEFT_MS_) {
+              try {
+                console.warn(`Gemini hit MAX_TOKENS with ${media.label}; retrying concise review with ${media.label}`);
+                return withMissed(review(media, retryOver()));
+              } catch (e2) {
+                e = e2;
+              }
+            }
             console.warn(`Gemini couldn't review ${media.label} (${(e && e.message) || e})`);
           }
           if (!missed) missed = { label: media.label, why: 'failed' };
@@ -167,15 +183,32 @@ function geminiClient_() {
             try {
               return withMissed(review(still));
             } catch (e) {
+              if (isMaxTokensErr_(e) && left() >= GEMINI_RETRY_MIN_LEFT_MS_) {
+                try {
+                  return withMissed(review(still, retryOver()));
+                } catch (e2) {
+                  e = e2;
+                }
+              }
               console.warn(`Gemini couldn't review ${still.label} (${(e && e.message) || e})`);
             }
           }
           console.warn('reviewing the alert text only');
         }
         if (tried && left() < GEMINI_RETRY_MIN_LEFT_MS_) {
-          throw new Error(`no time left in this run for the text-only review (${secondsLeft_(left())} s left)`);
+          const err = new Error(`no time left in this run for the text-only review (${secondsLeft_(left())} s left)`);
+          if (opts && opts.hold) err.holdReview = true;
+          throw err;
         }
-        return withMissed(review(null));
+        try {
+          return withMissed(review(null));
+        } catch (e) {
+          if (isMaxTokensErr_(e) && left() >= GEMINI_RETRY_MIN_LEFT_MS_) {
+            console.warn('Gemini hit MAX_TOKENS on text-only review; retrying concise review');
+            return withMissed(review(null, retryOver()));
+          }
+          throw e;
+        }
       } finally {
         if (staged.length) unstageMedia_(staged);  // the Cloud Storage copy of a big video is only for this review
       }
@@ -272,7 +305,8 @@ function thinkingLevelFor_(model) {
  */
 function geminiPayload_(system, prompt, schema, opts) {
   const o = opts || {};
-  const generationConfig = { temperature: GEN.models.temperature, responseMimeType: 'application/json', responseSchema: schema };
+  const temp = o.temperature !== undefined && o.temperature !== null ? Number(o.temperature) : GEN.models.temperature;
+  const generationConfig = { temperature: temp, responseMimeType: 'application/json', responseSchema: schema };
   if (o.mediaResolution) generationConfig.mediaResolution = o.mediaResolution;
   if (Number(o.maxOutputTokens) > 0) generationConfig.maxOutputTokens = Math.round(Number(o.maxOutputTokens));
   if (o.thinkingLevel) generationConfig.thinkingConfig = { thinkingLevel: String(o.thinkingLevel) };

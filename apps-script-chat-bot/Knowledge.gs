@@ -43,7 +43,7 @@ const KNOWLEDGE_WEB_MS_ = 6 * 3600 * 1000;     // read a web page again
 const KNOWLEDGE_RETRY_MS_ = 30 * 60 * 1000;    // try a document the bot couldn't read again
 const KNOWLEDGE_RUN_MS_ = 25 * 1000;           // reading time in an every-minute run (the rest waits for the next run)
 const KNOWLEDGE_FULL_MS_ = 240 * 1000;         // reading time for refreshKnowledge() and setup()
-const KNOWLEDGE_REVIEW_CHARS_ = 100000;        // of the documents in each alert review
+const KNOWLEDGE_REVIEW_CHARS_ = 50000;         // of the documents in each alert review
 const KNOWLEDGE_ANSWER_CHARS_ = 40000;         // in each analyst answer
 const KNOWLEDGE_BURSON_CHARS_ = 25000;         // in each answer to Burson (the documents Burson can see only)
 const KNOWLEDGE_PASSAGE_CHARS_ = 1800;         // a long document is searched in passages about this long
@@ -735,19 +735,21 @@ function knowledgeFor_(kb, query, opts) {
       const len = s.d.text.length;
       if (len <= KNOWLEDGE_SHORT_CHARS_ && len <= shortRoom) { s.whole = true; shortRoom -= len; left -= len; }
     });
+    const longDocs = sel.filter(s => !s.whole);
+    const maxPerDoc = longDocs.length > 1 ? 12 : Infinity;
     const pool = [];
-    sel.filter(s => !s.whole).forEach(s => knowledgePassages_(s.d.text).forEach((p, k) => pool.push({ s, k, p })));
+    longDocs.forEach(s => knowledgePassages_(s.d.text).forEach((p, k) => pool.push({ s, k, p })));
     const scores = knowledgeScores_(pool.map(x => x.p.text), query);
     const take = x => {
       const cost = x.p.text.length + 60;
-      if (cost > left || x.s.passages.indexOf(x) >= 0) return false;
+      if (cost > left || x.s.passages.length >= maxPerDoc || x.s.passages.indexOf(x) >= 0) return false;
       x.s.passages.push(x);
       left -= cost;
       return true;
     };
     pool.map((x, j) => ({ x, j, score: scores[j] })).sort((a, b) => b.score - a.score || a.j - b.j)
       .forEach(r => { if (r.score > 0) take(r.x); });
-    for (let k = 0; left > 200; k++) {  // the room left: each long document's opening, in turn
+    for (let k = 0; k < 1 && left > 200; k++) {  // the room left: at most each long document's single opening passage
       const round = pool.filter(x => x.k === k);
       if (!round.length) break;
       round.forEach(take);

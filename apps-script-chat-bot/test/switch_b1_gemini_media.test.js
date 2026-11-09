@@ -209,20 +209,20 @@ module.exports = H => {
   // H5: output cap, thinking level, MAX_TOKENS
   // ===========================================================================================================
 
-  test('B1 H5: every call has an output cap (16,384 tokens for reviews, less for answers and the Results summary) and, on Gemini 3+, thinking level MEDIUM; the temperature is unchanged', () => {
+  test('B1 H5: every call has an output cap (24,576 tokens for reviews, 8,192 for answers and the Results summary) and, on Gemini 3+, thinking level MEDIUM; the temperature is unchanged', () => {
     const w = world();
     w.paste(F.P0_OK);
     w.run();
     const [rev] = reviews(w);
     eq([rev.generationConfig.maxOutputTokens, rev.generationConfig.thinkingConfig, rev.generationConfig.temperature],
-      [16384, { thinkingLevel: 'MEDIUM' }, B.ev('GEN').models.temperature]);
+      [24576, { thinkingLevel: 'MEDIUM' }, B.ev('GEN').models.temperature]);
     const client = w.bot.geminiClient_();
     client.answer('Is the product right?', null, [], null);
     client.answerAnalyst('Why was this escalated?', null, w.ctx(), null);
     client.synopsis({ alerts: 3 });
     const caps = w.vertex.calls.slice(1).map(c => [Object.keys(c.payload.generationConfig.responseSchema.properties)[0],
       c.payload.generationConfig.maxOutputTokens, c.payload.generationConfig.thinkingConfig.thinkingLevel]);
-    eq(caps, [['answer', 8192, 'MEDIUM'], ['answer', 8192, 'MEDIUM'], ['synopsis', 4096, 'MEDIUM']]);
+    eq(caps, [['answer', 8192, 'MEDIUM'], ['answer', 8192, 'MEDIUM'], ['synopsis', 8192, 'MEDIUM']]);
     w.vertex.grounding = () => null;
     client.pressCoverage({ url: X_URL });
     eq(w.vertex.calls.slice(-1)[0].payload.generationConfig.maxOutputTokens, 8192);
@@ -233,19 +233,32 @@ module.exports = H => {
     old.bot.ev('GEN').models.triage = 'gemini-2.5-flash';
     old.paste(F.P0_OK);
     old.run();
-    eq([reviews(old)[0].generationConfig.thinkingConfig, reviews(old)[0].generationConfig.maxOutputTokens], [undefined, 16384]);
+    eq([reviews(old)[0].generationConfig.thinkingConfig, reviews(old)[0].generationConfig.maxOutputTokens], [undefined, 24576]);
     eq(B.geminiPayload_('s', 'p', { type: 'OBJECT' }, {}).generationConfig.maxOutputTokens, undefined);  // the payload builder adds only what it's given
   });
 
-  test('B1 H5: an answer cut off at the cap (MAX_TOKENS) is a clear error, never read as JSON or retried; any finish reason but STOP is logged with the token counts', () => {
+  test('B1 H5: an answer cut off at the cap (MAX_TOKENS) is a clear error in geminiGenerate_; assess() retries once at LOW thinking + temperature 0.3 keeping any photo attached without falsely blaming the photo', () => {
     const cut = { code: 200, body: { candidates: [{ content: { parts: [{ text: '{"checks": [{"id": "product_fit", "fin' }] }, finishReason: 'MAX_TOKENS' }],
       usageMetadata: { promptTokenCount: 31204, thoughtsTokenCount: 2950, candidatesTokenCount: 13434, totalTokenCount: 47588 } } };
     const w = world();
     w.vertex.fail = () => cut;
     assert.throws(() => w.bot.geminiGenerate_('s', 'p', { type: 'OBJECT' }, {}), /^Error: Gemini's answer was cut off \(MAX_TOKENS\)$/);
     eq(w.vertex.calls.length, 1);
-    assert.ok(w.g.logs.includes('Gemini finish reason MAX_TOKENS · tokens: 31,204 in, 2,950 thinking, 13,434 out, 47,588 total'), w.g.logs.join('\n'));
-    // A review cut off: the bot says why and goes on with its rules (the alert is still handled)
+    assert.ok(w.g.logs.includes('Gemini finish reason MAX_TOKENS \u00b7 tokens: 31,204 in, 2,950 thinking, 13,434 out, 47,588 total'), w.g.logs.join('\n'));
+    // When the first review with a photo hits MAX_TOKENS and the LOW-thinking retry succeeds, the photo stays attached and no missed-photo note is posted
+    const p = world({ post: () => photoPost([PHOTO_A]) });
+    p.g.pages.set(PHOTO_A, image(JPG, 'image/jpeg'));
+    let photoCalls = 0;
+    p.vertex.fail = () => (++photoCalls === 1 ? cut : null);
+    p.paste(F.WAYMO_KOF);
+    p.run();
+    const pRevs = reviews(p);
+    eq(pRevs.length, 2);
+    eq([pRevs[0].generationConfig.thinkingConfig.thinkingLevel, pRevs[1].generationConfig.thinkingConfig.thinkingLevel,
+      pRevs[1].generationConfig.temperature], ['MEDIUM', 'LOW', 0.3]);
+    eq([mediaOf(pRevs[0]), mediaOf(pRevs[1])], [[`inline image/jpeg ${b64(JPG)}`], [`inline image/jpeg ${b64(JPG)}`]]);
+    assert.ok(!/Gemini couldn't review/.test(p.analystPosts()[0].text), p.analystPosts()[0].text);
+    // A review cut off on every try: the bot says why and goes on with its rules (the alert is still handled)
     const v = world();
     v.vertex.fail = () => cut;
     v.paste(F.P0_OK);
@@ -256,13 +269,31 @@ module.exports = H => {
     eq([B.geminiFinishNote_({ candidates: [{ finishReason: 'STOP' }] }), B.geminiFinishNote_({ candidates: [{ finishReason: 'FINISH_REASON_STOP' }] }),
       B.geminiFinishNote_({ candidates: [{ finishReason: 'SAFETY' }], usageMetadata: { promptTokenCount: 10, totalTokenCount: 10 } }),
       B.geminiFinishNote_({ candidates: [{}] }), B.geminiFinishNote_({ promptFeedback: { blockReason: 'OTHER' } })],
-    ['', '', 'finish reason SAFETY · tokens: 10 in, 10 total', 'finish reason none', 'finish reason none (no answer)']);
+    ['', '', 'finish reason SAFETY \u00b7 tokens: 10 in, 10 total', 'finish reason none', 'finish reason none (no answer)']);
     assert.throws(() => B.parseGeminiJson_({ candidates: [{ content: { parts: [{ text: '{}' }] }, finishReason: 'FINISH_REASON_MAX_TOKENS' }] }), /cut off \(MAX_TOKENS\)/);
     eq(B.parseGeminiJson_({ candidates: [{ content: { parts: [{ text: '{"a":1}' }] }, finishReason: 'STOP' }] }), { a: 1 });
     // A normal answer logs no finish reason
     const ok = world();
     ok.bot.geminiGenerate_('s', 'p', { type: 'OBJECT' }, {});
     assert.ok(!ok.g.logs.some(l => /finish reason/.test(l)), ok.g.logs.join('\n'));
+  });
+
+  test('English-only collection filter: excludes non-English posts by language tag or non-Latin script while keeping English posts', () => {
+    eq([
+      B.isNonEnglishLangTag_(''), B.isNonEnglishLangTag_('en'), B.isNonEnglishLangTag_('en-US'), B.isNonEnglishLangTag_('und'),
+      B.isNonEnglishLangTag_('ko'), B.isNonEnglishLangTag_('ja'), B.isNonEnglishLangTag_('id'), B.isNonEnglishLangTag_('es'),
+    ], [false, false, false, false, true, true, true, true]);
+    eq([
+      B.isNonEnglishPost_('Google Search AI Overviews returned wrong dates', 'en'),
+      B.isNonEnglishPost_('Google Tokyo office (\u6771\u4eac\u90fd) announced a Pixel fix today', ''),
+      B.isNonEnglishPost_('\uad6c\uae00 \uc81c\ubbf8\ub098\uc774 \ud504\ub85c \uacb0\uc81c \uc624\ub958 Google AI Pro', ''),
+      B.isNonEnglishPost_('\u65e5\u672c\u8a9e\u306e\u30dd\u30b9\u30c8 Google Pixel 9', ''),
+      B.isNonEnglishPost_('Post text in Bahasa Indonesia without non-Latin letters', 'id'),
+    ], [false, false, true, true, true]);
+    const parsedKo = B.parseAlert_(F.P0_OK);
+    parsedKo.post = { platform: 'X', id: '1', url: X_URL, author: 'u', text: '\uad6c\uae00 \uc81c\ubbf8\ub098\uc774 \uc624\ub958 \ubc1c\uc0dd', lang: 'ko', photos: [] };
+    const revKo = B.reviewAlert_(parsedKo, { llm: { checks: [], social_alert: { warranted: true, confidence: 0.95, reason: 'test' } } });
+    eq([revKo.socialAlert.warranted, revKo.socialAlert.source], [false, 'rule']);
   });
 
   // ===========================================================================================================

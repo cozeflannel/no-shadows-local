@@ -40,7 +40,7 @@ models:   # Gemini 2.5 retires 2026-10-20; Gemini 3.x is served from the global 
   drafting: gemini-3.8-flash
   converse: gemini-3.8-flash
   location: global
-  temperature_triage: 0.0
+  temperature_triage: 0.1
   temperature_drafting: 0.4
 
 thresholds:

@@ -1801,6 +1801,7 @@ function bqDirectUsSql_(sprinklr, bmie) {
       '    AND (UPPER(m.engagement) IN ("MODERATE", "HIGH") OR (m.KOF IS NOT NULL AND LOWER(m.KOF) != "no" AND m.KOF != ""))',
       `    AND NOT REGEXP_CONTAINS(LOWER(IFNULL(m.alert_source, "")), r"${BQ_NON_GOOGLE_SOURCES_RX_}")`,
       `    AND ${bqGoogleTextSql_('IFNULL(m.snippet, "")')}`,
+      `    AND NOT ${nonEnglishScriptSql_('IFNULL(m.snippet, "")')}`,
       '    AND NOT EXISTS (SELECT 1 FROM existing_slrr e WHERE e.url = m.url)',
       `  ORDER BY m.ingestionTimestamp DESC LIMIT ${BQ_POLL_CANDIDATES_}`,
       ')',
@@ -1831,11 +1832,12 @@ function bqBsipCandidates_(minutes) {
     '  TO_JSON_STRING(smart_alert_names) AS alert_names_json, ARRAY_TO_STRING(smart_tags, " | ") AS tags,',
     '  IFNULL(criticality, "") AS criticality, COALESCE(SAFE_CAST(followers AS INT64), 0) AS followers,',
     `  ${total} AS total, SUBSTR(IFNULL(summary, ""), 1, 600) AS summary, TRIM(IFNULL(issue_name, "")) AS issue_name,`,
-    '  CAST(post_timestamp AS STRING) AS post_time',
+    '  IFNULL(language, "") AS language, CAST(post_timestamp AS STRING) AS post_time',
     `FROM ${BQ_SONAR_TABLE_}`,
     'WHERE last_received_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE)',
     '  AND post_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @max_age_hours HOUR)',
     `  AND post_url IS NOT NULL AND ARRAY_LENGTH(smart_tags) > 0 AND ${bqBsipGoogleSql_()}`,
+    `  AND ${englishLangSql_('language')} AND NOT ${nonEnglishScriptSql_('IFNULL(summary, "")')}`,
     `  AND ${total} >= @min_total`,
     'QUALIFY ROW_NUMBER() OVER (PARTITION BY post_url ORDER BY last_received_at DESC) = 1',
     `ORDER BY total DESC, last_received_at DESC LIMIT ${BQ_POLL_CANDIDATES_}`,
@@ -2091,7 +2093,8 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
     const here = new Set();  // a post this source gives twice: once
     (rows || []).forEach(r => {
       const key = r && r.url ? recordKey_({ post_url: r.url }) : '';
-      if (key && !taken.has(key) && !here.has(key) && isGoogleRelevantBqRow_(r) && isNew(r.url)) {
+      const nonEn = r && isNonEnglishPost_(r.snippet || r.summary || r.post_caption || '', r.language || '');
+      if (key && !nonEn && !taken.has(key) && !here.has(key) && isGoogleRelevantBqRow_(r) && isNew(r.url)) {
         here.add(key);
         fresh.push(r);
       } else {
@@ -3252,6 +3255,15 @@ function earlyWaveCheck_(ctx) {
     if (!keys.length) continue;
     const idKey = keys.find(k => k.indexOf('id:') === 0) || '';
     if (idKey ? seen.has(idKey) : keys.some(k => seen.has(k))) continue;  // read again: already queued or held back
+    let samples = [];
+    try { samples = JSON.parse(String(r.representative_posts_json || '[]')) || []; } catch (e) { samples = []; }
+    const sampleNonEn = Array.isArray(samples) && samples.length > 0 &&
+      samples.filter(p => isNonEnglishPost_(p && (p.snippet || p.text || ''), '')).length * 2 >= samples.length;
+    if (sampleNonEn || isNonEnglishPost_(String(r.headline || ''), '')) {
+      if (idKey) seen.add(idKey, now);
+      marked++;
+      continue;
+    }
     readStore();
     const recKey = r.primary_url ? recordKey_({ post_url: String(r.primary_url).trim() }) : '';
     if (recKey && otherKeys.has(recKey)) continue;  // another alert on the same post in the last 24h

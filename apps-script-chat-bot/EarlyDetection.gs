@@ -459,6 +459,25 @@ function edDecide_(ctx, parsed, rev, llm, history, now) {
     ed: parsed.ed,
   };
 
+  const ed = (parsed && parsed.ed) || {};
+  const post = (parsed && parsed.post) || null;
+  const bq = (parsed && parsed.bq) || null;
+  const edPosts = edPostsOf_(ed);
+  const nonEnSamples = edPosts.length > 0 &&
+    edPosts.filter(p => isNonEnglishPost_(p && p.snippet, '')).length * 2 >= edPosts.length;
+  const nonEnLang = (rev && rev.translation && rev.translation.language) ||
+    (post && isNonEnglishLangTag_(post.lang) ? post.lang : '') ||
+    (bq && isNonEnglishLangTag_(bq.bsip_language) ? bq.bsip_language : '');
+  if ((rev && rev.translation) || nonEnLang || nonEnSamples ||
+      isNonEnglishPost_((post && post.text) || ed.text || ed.headline || '', '')) {
+    return Object.assign(d, {
+      disposition: 'dismiss',
+      basis: 'non_english',
+      why: `non-English signal${nonEnLang ? ` (${nonEnLang})` : ''} excluded under the English-language collection rule`,
+      tnsInput: null,
+    });
+  }
+
   if (!rev) {
     d.why = 'AI review unavailable, so flagged for analyst review';
     return d;
@@ -682,8 +701,8 @@ function edParseReview_(llm, parsed) {
     teamReasons,
     knowledgeUsed: knowledgeUsed_(llm, parsed && parsed.knowledge),
     story: edStoryOf_(llm),
-    translation: tr && tr.is_non_english === true && tr.english_text
-      ? { language: one(tr.language, 40), text: one(tr.english_text, 400) } : null,
+    translation: tr && tr.is_non_english === true
+      ? { language: one(tr.language, 40) || 'non-English', text: one(tr.english_text, 400) } : null,
   };
 }
 
@@ -713,9 +732,10 @@ function edReviewPrompts_(parsed, media) {
     'exposure, coordinated boycott/backlash, viral misinformation about Google, executive/employee flashpoint, or a ' +
     'pattern matching Knowledge Base / Guidance escalation criteria) that stakeholder teams need a Social Alert on NOW.\n' +
     '- `monitor`: Something real may be starting to coalesce (an unverified claim, early bug reports, or an unusual ' +
-    'multi-author spike whose root cause is still unclear), worth flagging with 👍 for an analyst and preparing a Temp ' +
+    'multi-author spike whose root cause is still unclear), worth flagging with \ud83d\udc4d for an analyst and preparing a Temp ' +
     'Check search query to size/track before sending a full Social Alert.\n' +
-    '- `dismiss`: Unrelated keyword/homonym collision (e.g. astrology, fashion), disconnected everyday gripes grouped ' +
+    '- `dismiss`: Non-English posts/clusters (this collection is English-language only), unrelated keyword/homonym ' +
+    'collision (e.g. astrology, fashion), disconnected everyday gripes grouped ' +
     'loosely by wording, routine one-off customer-support troubleshooting with no broader incident, evergreen memes, a ' +
     'copy-paste spam or bot ring (the same text from throwaway accounts) that makes no claim about Google (set `tns` only ' +
     'if it pushes scams, phishing or harassment), or an already-alerted known/ongoing issue with nothing materially new.\n\n' +
@@ -736,7 +756,7 @@ function edReviewPrompts_(parsed, media) {
     '- `story`: 2-4 sentences, at most 90 words: who is posting (what kind of accounts, how many, which platforms, over ' +
     'what time), exactly what they claim, ask or show (quote a few key words), what or whom it is about, and what (if ' +
     'anything) is driving it: news, an official statement, an outage, one viral post. Weave links to the posts into the ' +
-    'sentences by wrapping 2-5 short phrases as [phrase](P#), using ONLY the refs in `posts` (P1, P2, …), each ref at ' +
+    'sentences by wrapping 2-5 short phrases as [phrase](P#), using ONLY the refs in `posts` (P1, P2, \u2026), each ref at ' +
     'most once. Never write a URL.\n' +
     '- `web_context`: one sentence on what public sources say right now, from your web search (news coverage, an official ' +
     'Google statement or status page, a known incident or trend), or plainly that you found nothing relevant.\n' +
@@ -763,7 +783,10 @@ function edReviewPrompts_(parsed, media) {
     (typeof knownIssuesPrompt_ === 'function' ? knownIssuesPrompt_(parsed && parsed.knownIssues) : '') +
     transcriptPrompt_(parsed && parsed.transcript, media) +
     (media ? `\n\nMEDIA: attached above is ${media.label}. Review all of it against the emerging cluster.` : '') +
-    '\n\nTRANSLATION (`translation`): if non-English, set `is_non_english: true`, `language`, and `english_text`.';
+    '\n\nTRANSLATION (`translation`): if non-English, set `is_non_english: true`, `language`, a concise single-line ' +
+    '`english_text` (under 400 characters), and set `early_detection_call.disposition` to `"dismiss"`.\n\n' +
+    'JSON FORMATTING: Every JSON string value must be concise single-line plain text (use spaces instead of \\n line breaks; ' +
+    'never emit repeated newlines or padding whitespace).';
 
   const payload = {
     alert_id: ed.alertId || '',
@@ -1451,17 +1474,22 @@ function edReviewAndPost_(ctx, row, report) {
   const space = ctx.spaces.burson.id;
   edLogSignal_(ctx, ed);
   const prep = edPrepare_(ctx, ed, now);
+  const preCheck = edDecide_(ctx, prep.parsed, null, null, prep.history, now);
   let assessed;
-  try {
-    assessed = { llm: ctx.gemini.assess(prep.parsed, { deadline: ctx.deadline, media: 'still', hold: false }), llmError: null, held: null };
-  } catch (e) {
-    const llmError = String((e && e.message) || e);
-    ctx.log('Gemini review failed: ' + llmError);
-    assessed = { llm: null, llmError, held: null };
+  if (preCheck.basis === 'non_english') {
+    assessed = { llm: null, llmError: null, held: null };
+  } else {
+    try {
+      assessed = { llm: ctx.gemini.assess(prep.parsed, { deadline: ctx.deadline, media: 'still', hold: false }), llmError: null, held: null };
+    } catch (e) {
+      const llmError = String((e && e.message) || e);
+      ctx.log('Gemini review failed: ' + llmError);
+      assessed = { llm: null, llmError, held: null };
+    }
   }
   const d = edConclude_(ctx, prep, assessed, now);
-  // Same-story dedup, after the review: an issue already alerted with nothing materially new gets no card
-  if (d.basis === 'repeat') {
+  // Same-story dedup or non-English exclusion, after the review: posts no card
+  if (d.basis === 'repeat' || d.basis === 'non_english') {
     const named = (d.rev && d.rev.story && d.rev.story.title) || ed.headline;
     const why = d.why || 'already alerted';
     ctx.log(`early detection: held back "${truncate_(ewText_(named), 90)}" after its review: ${truncate_(why, 240)}`);

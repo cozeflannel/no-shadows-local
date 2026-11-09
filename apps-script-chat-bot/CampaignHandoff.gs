@@ -120,8 +120,9 @@ function classifyCampaignCandidate_(text) {
     },
     contents: [{ role: 'user', parts: [{ text: text }] }],
     generationConfig: {
-      temperature: 0,
-      maxOutputTokens: 256,
+      temperature: 0.1,
+      maxOutputTokens: 2048,
+      thinkingConfig: { thinkingLevel: 'LOW' },
       responseMimeType: 'application/json',
       responseSchema: CAMPAIGN_ROUTE_SCHEMA_,
     },
@@ -144,7 +145,7 @@ function classifyCampaignCandidate_(text) {
   }
   const parsed = JSON.parse(resp.getContentText() || '{}');
   const rawPart = (((parsed.candidates || [])[0] || {}).content || {}).parts || [];
-  const jsonText = rawPart.map(p => p.text || '').join('').trim();
+  const jsonText = rawPart.filter(p => !p.thought && typeof p.text === 'string').map(p => p.text).join('').trim();
   const obj = jsonText ? JSON.parse(jsonText) : {};
   return Boolean(obj.route_to_campaigns);
 }

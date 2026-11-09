@@ -501,6 +501,8 @@ const PW_SOURCE_SQL_ = {
       `    STRING_AGG(DISTINCT SUBSTR(${json('$.detail.post.snippet.text')}, 1, 500), ' | ' LIMIT 3) AS snippets`,
       `  FROM ${PW_SONAR_RAW_}`,
       `  WHERE received_at > ${since} AND received_at <= ${until} AND post_url IS NOT NULL`,
+      `    AND ${englishLangSql_(json('$.detail.post.language'))}`,
+      `    AND NOT ${nonEnglishScriptSql_(`IFNULL(${json('$.detail.post.snippet.text')}, '')`)}`,
       '  GROUP BY post_url',
       '),',
       'prior AS (',
@@ -614,6 +616,7 @@ const PW_SOURCE_SQL_ = {
       `      WHERE ingestionTimestamp > TIMESTAMP_SUB(${from}, INTERVAL ${PW_NEW_HOURS_} HOUR)`,
       '        AND ingestionTimestamp <= TIMESTAMP_MILLIS(@until_ms) AND url IS NOT NULL',
       "        AND NOT REGEXP_CONTAINS(LOWER(IFNULL(alert_source, '')), r'positive')",
+      `        AND NOT ${nonEnglishScriptSql_('IFNULL(snippet, \'\')')}`,
       '    )',
       '    GROUP BY url',
       '    HAVING LOGICAL_OR(cur) AND NOT checked_before',
@@ -657,8 +660,8 @@ const PW_SOURCE_SQL_ = {
     `INSERT INTO pw_new (${PW_NEW_COLS_})`,
     "SELECT 'story', ROW_NUMBER() OVER (ORDER BY IF(UPPER(IFNULL(alert_type, '')) = 'KOF', 0, 1), IFNULL(eng, 0) DESC, ingestion_time DESC),",
     `  url, ${pwNetSql_('platform')}, author, SAFE_CAST(follower_count AS INT64), eng, post_time, ingestion_time,`,
-    "  CONCAT('DSD story selection', IF(IFNULL(alert_type, '') = '', '', CONCAT(' · ', alert_type)),",
-    "    IF(IFNULL(query_name, '') = '', '', CONCAT(' · ', query_name))), CAST(NULL AS BOOL), SUBSTR(snippet, 1, 400),",
+    "  CONCAT('DSD story selection', IF(IFNULL(alert_type, '') = '', '', CONCAT(' \u00b7 ', alert_type)),",
+    "    IF(IFNULL(query_name, '') = '', '', CONCAT(' \u00b7 ', query_name))), CAST(NULL AS BOOL), SUBSTR(snippet, 1, 400),",
     "  SUBSTR(CONCAT('Post text: ', snippet, IF(IFNULL(alert_type, '') = '', '', CONCAT('\\nBrandwatch alert: ', alert_type,",
     `    IF(UPPER(alert_type) = 'KOF', ' (a key opinion former)', '')))), 1, ${PW_TEXT_CHARS_})`,
     'FROM (',
@@ -668,6 +671,7 @@ const PW_SOURCE_SQL_ = {
     '  WHERE ingestion_time > TIMESTAMP_MILLIS(@story_from) AND ingestion_time <= TIMESTAMP_MILLIS(@until_ms) AND url IS NOT NULL',
     ')',
     "WHERE TRIM(IFNULL(snippet, '')) != ''",
+    `  AND NOT ${nonEnglishScriptSql_('IFNULL(snippet, \'\')')}`,
     '  AND (post_time IS NULL OR post_time >= TIMESTAMP_SUB(TIMESTAMP_MILLIS(@until_ms), INTERVAL 72 HOUR));',
   ],
   // The Other alerts space's alerts (pwChatItems_), as the query parameter @chat
@@ -703,8 +707,8 @@ function pwModSql_(srcs) {
 }
 
 /**
- * Whether a post is Grok's (PW_GROK_URL_RX_): Sonar and BMIE link Grok's posts as twitter.com/grok/status(es)/…, the
- * Brandwatch query as x.com/grok/status/… (X's embed data gives a repost as the post it reposts), and the sources that
+ * Whether a post is Grok's (PW_GROK_URL_RX_): Sonar and BMIE link Grok's posts as twitter.com/grok/status(es)/\u2026, the
+ * Brandwatch query as x.com/grok/status/\u2026 (X's embed data gives a repost as the post it reposts), and the sources that
  * name the handle say @grok. Pure.
  */
 function pwByGrok_(url, author) {
@@ -743,7 +747,7 @@ function pwAiSql_(srcs, structs, topics) {
     '  SELECT c.*, w.idx, w.watch, w.rubric, w.bar',
     '  FROM cand c CROSS JOIN watches w',
     '  WHERE (w.nets = \'\' OR c.platform IN UNNEST(SPLIT(w.nets, \'|\')))',
-    '    AND AI.IF(CONCAT(w.cond, \'\\n\\n\', c.txt))',
+    '    AND AI.IF(CONCAT(w.cond, \'\\n\\nRule: Return TRUE only if the post text itself is in English (return FALSE for non-English posts).\\n\\n\', c.txt))',
     '),',
     'scored AS (',
     "  SELECT *, AI.SCORE(CONCAT(rubric, '\\n\\nAuthor reach: ', IFNULL(CAST(followers AS STRING), 'unknown'), ' followers. Engagements so far: ',",
@@ -1132,11 +1136,12 @@ function pwBwRow_(m, x) {
     : (pos(m.likes) + pos(m.comments) + pos(m.shares) || pos(m.engagementScore) || -1);
   const text = one((x && x.text) || m.snippet || m.fullText);
   const title = one(m.title);
+  const nonEn = isNonEnglishPost_(text || title, one((x && x.lang) || m.language));
   const site = PW_BW_SOCIAL_.includes(net) || net === 'reddit' ? '' : one(m.publicationName || m.domain);
   const signals = [one(m.sentiment) ? `${one(m.sentiment)} sentiment` : '',
     pos(m.potentialAudience) ? `potential audience ${fmtInt_(pos(m.potentialAudience))}` : '',
     Number(m.impact) > 0 ? `impact ${Math.round(Number(m.impact) * 10) / 10} of 100` : ''].filter(Boolean);
-  const lines = !text ? [] : [
+  const lines = !text || nonEn ? [] : [
     title && !text.toLowerCase().startsWith(title.toLowerCase()) ? `Title: ${title}` : '',
     `Post text: ${text}`,
     x && x.quoted && x.quoted.text ? `Quoting @${one(x.quoted.author)}: ${one(x.quoted.text)}` : '',
@@ -1147,7 +1152,7 @@ function pwBwRow_(m, x) {
   return {
     u: truncate_(url, 500), n: net, a: truncate_(author, 120), f: followers || -1, e: eng,
     p: isX ? pwBwTime_(x && x.created_at) : pwBwTime_(m.date), s: pwBwTime_(m.added),
-    i: truncate_(`Brandwatch · ${one(m.queryName) || PW_BW_QUERY_NAME_}`, 200), m: truncate_(text || title, 400),
+    i: truncate_(`Brandwatch \u00b7 ${one(m.queryName) || PW_BW_QUERY_NAME_}`, 200), m: truncate_(text || title, 400),
     t: truncate_(lines.join('\n'), PW_TEXT_CHARS_),
   };
 }
@@ -1212,6 +1217,7 @@ function pwDetections_(results, have, floor, queue) {
   (results || []).forEach(r => {
     if (!r || !r.post_url || !r.watch || r.impact === null || r.impact === undefined) return;
     if (pwByGrok_(r.post_url, r.author)) return;  // Grok's posts are never flagged (pwGrokSql_ leaves them out before Gemini)
+    if (isNonEnglishPost_(String(r.summary || ''), '')) return;
     const key = recordKey_({ post_url: String(r.post_url) }) || String(r.post_url);
     const watch = String(r.watch);
     if (have.has(`${watch}|${key}`)) return;

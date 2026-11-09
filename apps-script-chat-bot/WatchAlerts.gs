@@ -508,7 +508,9 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     const fresh = queued.filter(q => {
       const qUrl = String(q.v[PW_COL_.post - 1] || '').replace(/^'/, '').trim();
       const qPid = postIdOf_(qUrl);
-      if (done.has(q.k.k) || String(q.v[PW_COL_.bursonAt - 1] || '').trim() || (qPid && doneThreadIds.has(qPid))) {
+      const qSum = String(q.v[PW_COL_.summary - 1] || '').replace(/^'/, '').trim();
+      if (done.has(q.k.k) || String(q.v[PW_COL_.bursonAt - 1] || '').trim() || (qPid && doneThreadIds.has(qPid)) ||
+          isNonEnglishPost_(qSum, '')) {
         same(q);
         return false;
       }
@@ -517,7 +519,7 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       out.dropped++;
       return false;
     });
-    let dup = 0;  // fresh flags skipped because their post or conversation thread was already alerted
+    let dup = 0;  // fresh flags skipped because their post or conversation thread was already alerted (or non-English)
     let problem = !dest || !dest.choice ? 'Watch alerts (row 35) is OFF' : dest.problem || '';
     if (!problem && dest.choice === 'mirror' && pwMirrorBusy_()) {
       problem = 'the Mirror space\'s flow ran out of time on its last run (Burson\'s alerts come first)';
@@ -538,6 +540,7 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
           if (canFetch) {
             try { post = lookupPost_(a.url); } catch (e) { post = null; }
           }
+          if (post && isNonEnglishPost_(post.text || '', post.lang || '')) { same(q); dup++; continue; }
           const parentIds = Array.from(new Set(
             [post && post.parent && post.parent.id, post && post.reply_to && post.reply_to.id]
               .concat((post && post.thread_ids) || [])

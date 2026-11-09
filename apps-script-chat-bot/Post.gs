@@ -353,6 +353,7 @@ function xPostFromEmbed_(d) {
   // no photo or video file of its own: the picture it still shows, for the picture of the post only (screenshotFor_)
   const preview = photos.length || video ? null : xPreview_(d);
   if (preview) post.preview = preview;
+  if (d.lang) post.lang = String(d.lang).trim();
   return post;
 }
 

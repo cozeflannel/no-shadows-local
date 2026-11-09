@@ -497,6 +497,53 @@ function jaccard_(a, b) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// English-language collection filter (SLRR Collection Requirements: English-language only)
+// ---------------------------------------------------------------------------------------------------------------
+
+const NON_LATIN_CHAR_RX_ =
+  /\p{Script=Hangul}|\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Arabic}|\p{Script=Cyrillic}|\p{Script=Devanagari}|\p{Script=Thai}|\p{Script=Hebrew}|\p{Script=Bengali}|\p{Script=Tamil}|\p{Script=Telugu}|\p{Script=Malayalam}|\p{Script=Kannada}|\p{Script=Gujarati}|\p{Script=Gurmukhi}|\p{Script=Myanmar}|\p{Script=Khmer}|\p{Script=Sinhala}|\p{Script=Georgian}|\p{Script=Armenian}/gu;
+
+const NON_ENGLISH_SCRIPT_SQL_CLASS_ =
+  '[\\p{Hangul}\\p{Han}\\p{Hiragana}\\p{Katakana}\\p{Arabic}\\p{Cyrillic}\\p{Devanagari}\\p{Thai}\\p{Hebrew}\\p{Bengali}\\p{Tamil}\\p{Telugu}]';
+
+/** True when `lang` is an explicit non-English language code or name (empty, en/en-*, und/unknown -> false). Pure. */
+function isNonEnglishLangTag_(lang) {
+  const s = String(lang === undefined || lang === null ? '' : lang).trim().toLowerCase();
+  if (!s || /^(?:en|eng|english|und|zxx|unknown|n\/a|none|-)$/.test(s) || /^en[-_]/.test(s)) return false;
+  return true;
+}
+
+/**
+ * True when a social post is non-English: either `lang` explicitly names a non-English language, or non-Latin script
+ * characters in `text` (after stripping URLs, @handles and ASCII hashtags) number >= 3 and make up >= 20% of letters. Pure.
+ */
+function isNonEnglishPost_(text, lang) {
+  if (isNonEnglishLangTag_(lang)) return true;
+  const cleaned = String(text === undefined || text === null ? '' : text)
+    .replace(/<https?:\/\/[^>\s]+>/gi, ' ')
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/@[\w.]+/g, ' ')
+    .replace(/#[A-Za-z0-9_]+/g, ' ');
+  const nonLatin = (cleaned.match(NON_LATIN_CHAR_RX_) || []).length;
+  if (nonLatin < 3) return false;
+  const latin = (cleaned.match(/\p{Script=Latin}/gu) || []).length;
+  return nonLatin * 5 >= nonLatin + latin;
+}
+
+/** BigQuery RE2 SQL predicate matching text dominated by non-Latin scripts (>= 3 chars and >= 20% of letters). Pure. */
+function nonEnglishScriptSql_(expr) {
+  const cls = NON_ENGLISH_SCRIPT_SQL_CLASS_;
+  return `(REGEXP_CONTAINS(${expr}, r'${cls}{3,}') AND ARRAY_LENGTH(REGEXP_EXTRACT_ALL(${expr}, r'${cls}')) * 5 >= ` +
+    `ARRAY_LENGTH(REGEXP_EXTRACT_ALL(REGEXP_REPLACE(${expr}, r'https?://\\S+', ' '), r'\\p{L}')))`;
+}
+
+/** BigQuery SQL predicate matching English (or unset/undetermined) language tags on `expr`. Pure. */
+function englishLangSql_(expr) {
+  const v = `LOWER(TRIM(IFNULL(${expr}, '')))`;
+  return `(${v} IN ('', 'en', 'eng', 'english', 'und', 'zxx') OR STARTS_WITH(${v}, 'en-') OR STARTS_WITH(${v}, 'en_'))`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Rebuild: Burson's exact text with corrected values (the analyst-space copy)
 // ---------------------------------------------------------------------------------------------------------------
 

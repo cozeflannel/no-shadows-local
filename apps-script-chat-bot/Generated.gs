@@ -10,7 +10,7 @@ const GEN = {
  "models": {
   "triage": "gemini-3.8-flash",
   "location": "global",
-  "temperature": 0.0
+  "temperature": 0.1
  },
  "settings": {
   "react": true,

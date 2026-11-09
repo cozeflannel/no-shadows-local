@@ -402,6 +402,23 @@ function reviewAlert_(parsed, opts) {
     }
   }
 
+  // English-language collection rule (SLRR Collection Requirements: English-language only): non-English posts do not warrant a Social Alert
+  const nonEnLang = (tr && tr.language) ||
+    (parsed && parsed.post && isNonEnglishLangTag_(parsed.post.lang) ? parsed.post.lang : '') ||
+    (bq && isNonEnglishLangTag_(bq.bsip_language) ? bq.bsip_language : '');
+  if ((opts.llm && opts.llm.translation && opts.llm.translation.is_non_english === true) ||
+      nonEnLang ||
+      isNonEnglishPost_((parsed && parsed.post && parsed.post.text) || f.post_content || '', '')) {
+    socialAlert = {
+      warranted: false,
+      confidence: 0.99,
+      reason: `non-English post${nonEnLang ? ` (${nonEnLang})` : ''} excluded under the English-language collection rule`,
+      signal_class: (socialAlert && socialAlert.signal_class) || null,
+      outrage_half_life: (socialAlert && socialAlert.outrage_half_life) || null,
+      source: 'rule',
+    };
+  }
+
   // Check outage & comms docs (only while it's ON): Gemini's outage / status check and the holding statement it found,
   // checked against what it was given (an unchecked outage call or a statement that isn't word for word is left out)
   const cc = parsed.outageComms === true && opts.llm ? opts.llm.comms_context : null;
@@ -741,11 +758,13 @@ function assessPrompts_(parsed, media) {
       'check against what the post actually shows and says, not only the alert text. ' +
       'In `media_review`, return: `watched` (true if you could review it), `duration_seconds` (the full length of the video or audio), ' +
       '`google_timestamp` (MM:SS where Google or the Google product first comes up, if it does), `what_happens` (one or two neutral ' +
-      'sentences on the whole clip, start to finish), `transcript` (the key spoken words from the whole clip, or an audio summary), ' +
-      '`on_screen_text` (visible text/UI on screen), `tone` (e.g. frustrated, ' +
+      'sentences on the whole clip, start to finish), `transcript` (concise key spoken words under 500 characters; null for still images), ' +
+      '`on_screen_text` (concise visible text/UI under 500 characters), `tone` (e.g. frustrated, ' +
       'satirical, informative), `google_angle` (how Google or the product is involved), and `story_accuracy` ("accurate" if the ' +
       'alert summary matches the media, "needs_review" if the alert summary misstates or misses what the video/audio actually shows, ' +
-      'or "unverified"), plus `corrected_summary` and `accuracy_note` when `story_accuracy` is "needs_review".' : '');
+      'or "unverified"), plus `corrected_summary` and `accuracy_note` when `story_accuracy` is "needs_review".' : '') +
+    '\n\nJSON FORMATTING: Every JSON string value must be concise single-line plain text (use spaces instead of \\n line breaks; ' +
+    'never emit repeated newlines or padding whitespace).';
   const payload = {};
   Object.keys(parsed.fields).forEach(k => { if (!isBlank_(parsed.fields[k])) payload[k] = parsed.fields[k]; });
   return { system, prompt: '<alert>\n' + JSON.stringify(payload).slice(0, 12000) + '\n</alert>', schema: assessSchema_(parsed) };
