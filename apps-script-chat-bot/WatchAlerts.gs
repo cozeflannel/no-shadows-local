@@ -35,12 +35,13 @@ const PW_ALERTS_LABEL_ = 'Watch alerts';
 const PW_ALERTS_OFF_ = 'OFF';
 const PW_ALERTS_OTHER_ = 'Other alerts space (B33)';
 const PW_ALERTS_MIRROR_ = 'Mirror space (B9)';
-const PW_ALERTS_CHOICES_ = [PW_ALERTS_OFF_, PW_ALERTS_OTHER_, PW_ALERTS_MIRROR_];
+const PW_ALERTS_AUTOCORRECT_ = 'Auto-correct space (B10)';
+const PW_ALERTS_CHOICES_ = [PW_ALERTS_OFF_, PW_ALERTS_OTHER_, PW_ALERTS_MIRROR_, PW_ALERTS_AUTOCORRECT_];
 const PW_ALERT_ID_PREFIX_ = 'client-zwat-';       // the watch alerts' message ids (Relay.gs RELAY_ID_RX_: the bot's own)
 const PW_ALERT_INGESTED_ = 'Watch alert';         // the Alert log's `ingested` for them
 const PW_ALERT_SOURCE_ = 'Proactive watch';       // the "tool" they come from, for the triage (OtherAlerts.gs)
 const PW_ALERTS_MAX_OTHER_ = 5;                   // posted a run at most in the Other alerts space...
-const PW_ALERTS_MAX_MIRROR_ = 2;                  // ...and in the Mirror space, whose flow works Burson's alerts too
+const PW_ALERTS_MAX_MIRROR_ = 2;                  // ...and in the Mirror / Auto-correct space, whose flow works Burson's alerts too
 const PW_ALERT_MAX_AGE_MS_ = 3 * 60 * 60 * 1000;  // a flag not posted within 3 hours of being seen is dropped
 const PW_ALERT_POSTED_PROP_ = 'PW_ALERT_POSTED';  // the watch alerts posted lately: hashes of their message names
 const PW_ALERT_POSTED_MAX_ = 300;
@@ -53,13 +54,13 @@ const PW_ALERT_NETS_ = ['X', 'Instagram', 'TikTok', 'YouTube', 'Reddit', 'Bluesk
 const PW_ALERT_DAY_PROP_ = 'PW_ALERT_TODAY';      // {day, n}: today's watch alerts
 const PW_ALERT_PENDING_PROP_ = 'PW_ALERT_PENDING';  // set while flags may wait on the Watch detections tab (else it isn't read)
 const PW_ALERT_TEXT_CHARS_ = 600;                 // of the post's words in an alert
-const PW_ALERT_HEAD_ = '🔭';
+const PW_ALERT_HEAD_ = '\ud83d\udd2d';
 
 // --------------------------------------------------------------------------------------------------------------
 // Control tab row 35
 // --------------------------------------------------------------------------------------------------------------
 
-/** Strict dropdown for B35: OFF, Other alerts space (B33), Mirror space (B9). */
+/** Strict dropdown for B35: OFF, Other alerts space (B33), Mirror space (B9), Auto-correct space (B10). */
 function pwAlertsRule_() {
   return SpreadsheetApp.newDataValidation().requireValueInList(PW_ALERTS_CHOICES_, true).setAllowInvalid(false).build();
 }
@@ -71,23 +72,32 @@ function pwAlertsOffText_() {
 
 /**
  * Row 35 ("Watch alerts"), below the Proactive watch switch: a tab from before it gets it on its next run, without
- * setup(), OFF (only a person chooses where they go), with its dropdown; "How it works" moves down to row 38.
+ * setup(), OFF (only a person chooses where they go), with its dropdown; an existing tab gets any new dropdown choice.
  */
 function ensureWatchAlertsRow_(sh) {
   if (!sh) return;
-  if (String(sh.getRange(PW_ALERTS_ROW_, 1).getValue() || '').trim() === PW_ALERTS_LABEL_) return;
+  if (String(sh.getRange(PW_ALERTS_ROW_, 1).getValue() || '').trim() === PW_ALERTS_LABEL_) {
+    try {
+      const cell = sh.getRange(PW_ALERTS_ROW_, 2);
+      const dv = typeof cell.getDataValidation === 'function' ? cell.getDataValidation() : null;
+      const cur = dv && typeof dv.getCriteriaValues === 'function' ? (dv.getCriteriaValues() || [])[0] : null;
+      if (!Array.isArray(cur) || cur.length !== PW_ALERTS_CHOICES_.length) cell.setDataValidation(pwAlertsRule_());
+    } catch (e) {}
+    return;
+  }
   sh.getRange(PW_ALERTS_ROW_, 1, 1, 3).setValues([[PW_ALERTS_LABEL_, PW_ALERTS_OFF_, pwAlertsOffText_()]]);
   sh.getRange(PW_ALERTS_ROW_, 1).setFontWeight('bold');
   sh.getRange(PW_ALERTS_ROW_, 2).setBackground('#fff8e1').setDataValidation(pwAlertsRule_());
   writeControlHelp_(sh);
 }
 
-/** B35 as where the alerts go: 'other' (B33), 'mirror' (B9), or '' (OFF, blank or anything else). Pure. */
+/** B35 as where the alerts go: 'other' (B33), 'mirror' (B9), 'autocorrect' (B10), or '' (OFF/blank/other). Pure. */
 function pwAlertsChoice_(raw) {
   const v = String(raw === undefined || raw === null ? '' : raw).trim().toLowerCase();
   if (!v || v === 'off') return '';
   if (/\bb33\b|other alerts/.test(v)) return 'other';
   if (/\bb9\b|mirror/.test(v)) return 'mirror';
+  if (/\bb10\b|auto-?correct/.test(v)) return 'autocorrect';
   return '';
 }
 
@@ -101,8 +111,6 @@ function writeWatchAlertsNote_(sh, note) {
 /**
  * This run's Other alerts space for the watch's alerts: the one its run worked this minute (`os`: OtherSpace.gs
  * runOtherSpace_'s {report, ctx}), else B33 found and checked as its run checks it (otherSpaceProblem_), else null.
- * `cfg`: the main run's setup; `sfb`: this run's B25 (Main.gs sfBursonFor_; null when the run stopped before it). Never
- * throws.
  */
 function pwOtherSpaceFor_(os, wanted, cfg, sfb) {
   try {
@@ -117,12 +125,26 @@ function pwOtherSpaceFor_(os, wanted, cfg, sfb) {
 }
 
 /**
- * Where the watch's alerts go this run: {choice ('' | 'other' | 'mirror'), space ({id, name}, or null), problem ('' when
- * they can go)}. `otherSpace`: pwOtherSpaceFor_; `cfg`: the main run's setup, whose Mirror space counts only while
- * outbounds are blocked (never while the bot works directly in B25). Never S-F Burson, the Burson test copy or a space
- * people outside Google can join. Never throws (a failed check: they wait, and the problem says why).
+ * This run's Auto-correct space (B10) for the watch's alerts: `ac.ctx.spaces.analyst` when `runAutoCorrect_` ran this
+ * minute, else B10 resolved and verified via `autoCorrectProblem_`. Never throws.
  */
-function pwAlertsDest_(raw, otherSpace, cfg) {
+function pwAutoCorrectSpaceFor_(ac, wanted, cfg, sfb) {
+  try {
+    if (ac && ac.ctx && ac.ctx.spaces && ac.ctx.spaces.analyst && ac.ctx.spaces.analyst.id) return ac.ctx.spaces.analyst;
+    const ref = String((wanted && wanted.autocorrect) || '').trim();
+    if (!ref || !sfb || !sfb.space) return null;
+    const space = resolveAutoCorrectSpace_(ref);
+    return autoCorrectProblem_(space, wanted, cfg, sfb.space) ? null : space;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Where the watch's alerts go this run: {choice ('' | 'other' | 'mirror' | 'autocorrect'), space ({id, name}, or null),
+ * problem ('' when they can go)}. Never S-F Burson, the Burson test copy or a space people outside Google can join.
+ */
+function pwAlertsDest_(raw, otherSpace, cfg, acSpace) {
   const choice = pwAlertsChoice_(raw);
   const out = { choice, space: null, problem: '' };
   if (!choice) return out;
@@ -131,6 +153,9 @@ function pwAlertsDest_(raw, otherSpace, cfg) {
     if (choice === 'other') {
       space = otherSpace && otherSpace.id ? otherSpace : null;
       if (!space) out.problem = 'the Other alerts space (B33) is blank or can\'t be used this run (see C33)';
+    } else if (choice === 'autocorrect') {
+      space = acSpace && acSpace.id ? acSpace : null;
+      if (!space) out.problem = 'the Auto-correct space (B10) is blank or can\'t be used this run (see C10)';
     } else {
       space = cfg && cfg.outboundBlocked && !cfg.direct && cfg.mirror && cfg.mirror.id ? cfg.mirror : null;
       if (!space) out.problem = 'the Mirror space (B9) isn\'t working this run (see C9)';
@@ -148,8 +173,12 @@ function pwAlertsDest_(raw, otherSpace, cfg) {
   return out;
 }
 
-/** "Other alerts space (B33)" / "Mirror space (B9)" for `choice`. Pure. */
-function pwAlertsWhere_(choice) { return choice === 'mirror' ? 'Mirror space (B9)' : 'Other alerts space (B33)'; }
+/** "Other alerts space (B33)" / "Mirror space (B9)" / "Auto-correct space (B10)" for `choice`. Pure. */
+function pwAlertsWhere_(choice) {
+  if (choice === 'mirror') return 'Mirror space (B9)';
+  if (choice === 'autocorrect') return 'Auto-correct space (B10)';
+  return 'Other alerts space (B33)';
+}
 
 /**
  * C35 for this run: `dest` (pwAlertsDest_), `res` (pwPostAlerts_, or null when nothing was tried), `watchOn` (row 34),
@@ -159,13 +188,15 @@ function pwAlertsNoteText_(dest, res, watchOn, today) {
   const choice = dest && dest.choice;
   if (!choice) return pwAlertsOffText_();
   const where = pwAlertsWhere_(choice);
-  if (!watchOn) return `⚠️ ${where} chosen, but the Proactive watch (row 34) is OFF: nothing to post`;
-  const counts = ` · today: ${fmtInt_(today || 0)} posted${res && res.waiting ? `, ${fmtInt_(res.waiting)} waiting` : ''}`;
+  if (!watchOn) return `\u26a0\ufe0f ${where} chosen, but the Proactive watch (row 34) is OFF: nothing to post`;
+  const counts = ` \u00b7 today: ${fmtInt_(today || 0)} posted${res && res.waiting ? `, ${fmtInt_(res.waiting)} waiting` : ''}`;
   const problem = (dest && dest.problem) || (res && res.problem) || (!dest.space ? 'no space to post in this run' : '');
-  if (problem) return truncate_(`⚠️ waiting: ${problem} (a flag waits up to 3 hours)${counts}`, 250);
-  return truncate_(`✓ ${dest.space.name} (${choice === 'mirror' ? 'B9' : 'B33'}): each flag at a watch's bar is posted there as a ` +
-    `${PW_ALERT_HEAD_} Watch alert for full triage: ❌ if off-topic or already alerted, 👍, or a Social Alert` +
-    `${choice === 'other' ? ' (always Testing there)' : ' (only the testers while Testing)'}${counts}`, 250);
+  if (problem) return truncate_(`\u26a0\ufe0f waiting: ${problem} (a flag waits up to 3 hours)${counts}`, 250);
+  const cellTag = choice === 'mirror' ? 'B9' : choice === 'autocorrect' ? 'B10' : 'B33';
+  const modeNote = choice === 'mirror' ? ' (only the testers while Testing)' : ' (always Testing there)';
+  return truncate_(`\u2713 ${dest.space.name} (${cellTag}): each flag at a watch's bar is posted there as a ` +
+    `${PW_ALERT_HEAD_} Watch alert for full triage: \u274c if off-topic or already alerted, \ud83d\udc4d, or a Social Alert` +
+    `${modeNote}${counts}`, 250);
 }
 
 // --------------------------------------------------------------------------------------------------------------
@@ -470,7 +501,8 @@ function pwAlertedState_(ss, block, choice) {
       const alerts = sheetBackend_(ss).loadAlerts() || [];
       alerts.forEach(r => {
         const sp = String((r && r.space) || '');
-        if (!r || sp.endsWith(AC_PARTITION_SUFFIX_) || (choice !== 'other' && sp.endsWith(osSuffix))) return;
+        if (!r || (choice !== 'autocorrect' && sp.endsWith(AC_PARTITION_SUFFIX_)) ||
+            (choice !== 'other' && sp.endsWith(osSuffix))) return;
         if (earlierOutcome_(r) !== 'alerted') return;
         if (r.record_key) done.add(String(r.record_key));
         markUrl((r.forwarded_fields || {}).post_url);
@@ -489,7 +521,7 @@ function pwAlertedState_(ss, block, choice) {
  * was seen is dropped (a: 'x'), and one for a post or conversation thread already alerted (by another watch, Burson, or
  * any flow in the Alert log) isn't posted again (a: 'd'). Nothing goes out while B35 is OFF or the destination can't
  * take them (they wait), nor while the destination space's flow ran out of time. `left`: ms of the run left;
- * `opts`: {ss, otherBusy}. {posted, waiting, dropped, problem, error (it failed: whatever waits is kept)}. Never throws.
+ * `opts`: {ss, otherBusy, acBusy}. {posted, waiting, dropped, problem, error}. Never throws.
  */
 function pwPostAlerts_(sh, dest, now, left, opts) {
   const out = { posted: 0, waiting: 0, dropped: 0, problem: '', error: false };
@@ -525,9 +557,11 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       problem = 'the Mirror space\'s flow ran out of time on its last run (Burson\'s alerts come first)';
     } else if (!problem && dest.choice === 'other' && opts && opts.otherBusy) {
       problem = 'the Other alerts space\'s flow ran out of time on this run (its current alerts come first)';
+    } else if (!problem && dest.choice === 'autocorrect' && opts && opts.acBusy) {
+      problem = 'the Auto-correct space\'s flow ran out of time on this run (Burson\'s alerts come first)';
     }
     if (!problem) {
-      const max = dest.choice === 'mirror' ? PW_ALERTS_MAX_MIRROR_ : PW_ALERTS_MAX_OTHER_;
+      const max = (dest.choice === 'mirror' || dest.choice === 'autocorrect') ? PW_ALERTS_MAX_MIRROR_ : PW_ALERTS_MAX_OTHER_;
       fresh.sort((a, b) => (Number(b.k.sc) || 0) - (Number(a.k.sc) || 0) || (Number(a.k.s) || 0) - (Number(b.k.s) || 0));
       for (const q of fresh) {
         if (out.posted >= max || (typeof left === 'function' && left() < PW_MIN_LEFT_MS_)) break;

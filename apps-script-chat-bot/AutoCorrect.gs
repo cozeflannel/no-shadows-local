@@ -68,7 +68,7 @@ function stopAutoCorrect() {
  * problem go in C10, never in the main Status cell. `sfb`: this run's S-F Burson (Control tab B25, sfBursonFor_):
  * while none is known it doesn't run, and C10 says it needs B25. Returns {report, ctx} when it ran, else null.
  */
-function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb) {
+function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
   const props = PropertiesService.getScriptProperties();
   try {
     ensureAutoCorrectRow_(control);
@@ -91,27 +91,49 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb) {
     try {
       space = resolveAutoCorrectSpace_(ref);
     } catch (e) {
-      writeAutoCorrectNote_(control, `✗ ${truncate_(String((e && e.message) || e), 220)}`);
+      writeAutoCorrectNote_(control, `\u2717 ${truncate_(String((e && e.message) || e), 220)}`);
       return null;
     }
     const problem = autoCorrectProblem_(space, wanted, mainCfg, sfb.space);
     if (problem) {
-      writeAutoCorrectNote_(control, `✗ ${problem}`);
+      writeAutoCorrectNote_(control, `\u2717 ${problem}`);
       return null;
     }
     const cfg = autoCorrectCfg_(space, sfb.space);
     cfg.testers = mainCfg && Array.isArray(mainCfg.testers) ? mainCfg.testers : testersFor_(wanted ? wanted.testers : '').testers;
     const ctx = buildCtx_(cfg, ss, wanted && wanted.switches);
+    ctx.settings.bq_lookback_minutes = (opts && opts.lookbackMinutes) ||
+      bqLookbackFrom_(wanted && wanted.bqLookback).minutes;
+    ctx.allowEarlyWave = Boolean(opts && opts.allowEarlyWave);
     ctx.deadline = Math.min(Date.now() + AC_BUDGET_MS_, latest);
     startFromAutoCorrect_(props, cfg, ctx);
     const report = runOnce_(ctx);
+    const slaBusy = Boolean(report && (report.held > 0 || report.handled >= ctx.settings.max_messages_per_run ||
+      (report.errors || []).some(e => /^time budget/.test(String(e)))));
+    ctx.slaBusy = slaBusy;
+    if (ctx.allowEarlyWave && switchOn_(ctx, 'earlyWave') &&
+        (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', slaBusy))) {
+      try {
+        earlyWaveCheck_(ctx);
+      } catch (e) {
+        console.error('auto-correct early detection check: ' + ((e && e.message) || e));
+      }
+      try {
+        const drained = edDrainQueue_(ctx, report);
+        if (drained && (drained.posted || drained.dropped)) console.log(`auto-correct early detection review: ${JSON.stringify(drained)}`);
+      } catch (e) {
+        console.error('auto-correct early detection review: ' + ((e && e.message) || e));
+      }
+    }
     ctx.recent.save();
     const today = bumpAutoCorrectStats_(props, report, dayKey_());
     const issues = report.errors.filter(e => !/^time budget/.test(e));
-    if (report.handled || report.answers || report.drafts_sent || issues.length) console.log('auto-correct space: ' + JSON.stringify(report));
+    if (report.handled || report.answers || report.drafts_sent || report.early_detection_alerts || issues.length) {
+      console.log('auto-correct space: ' + JSON.stringify(report));
+    }
     writeAutoCorrectNote_(control, issues.length
-      ? `⚠️ ${truncate_(issues[0], 220)} The bot keeps retrying.`
-      : `✓ ${space.name} · ${autoCorrectTodayText_(today)}`);
+      ? `\u26a0\ufe0f ${truncate_(issues[0], 220)} The bot keeps retrying.`
+      : `\u2713 ${space.name} \u00b7 ${autoCorrectTodayText_(today)}`);
     return { report, ctx };
   } catch (e) {
     console.error('auto-correct space failed: ' + ((e && e.stack) || e));

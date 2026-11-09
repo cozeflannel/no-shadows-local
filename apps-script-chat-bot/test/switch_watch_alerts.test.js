@@ -26,7 +26,8 @@ module.exports = H => {
   const POST2 = 'https://x.com/someone/status/1980000000000000002';
   const OTHER = 'Other alerts space (B33)';
   const MIRRORED = 'Mirror space (B9)';
-  const CHOICES = ['OFF', OTHER, MIRRORED];
+  const AUTOCORRECT = 'Auto-correct space (B10)';
+  const CHOICES = ['OFF', OTHER, MIRRORED, AUTOCORRECT];
   const TEXT = '@ewarren How much did your donors pay to rig the midterms? You blame Google but you\'re being busted in it.';
 
   // A look's result columns (ProactiveWatch.gs pwSql_'s final SELECT)
@@ -605,6 +606,29 @@ module.exports = H => {
     eq([keys(t).map(k => k.a), posted(t, MID).length, posted(t, MID2).length, t.g.props.get('PW_ALERT_PENDING')], [['p', 'p', 'x'], 1, 1, undefined]);
   });
 
+  test('Watch alerts to the Auto-correct space (B10): posts Watch alerts into B10 when B35 = Auto-correct space (B10) (including standalone B10 with B9 and B4 blank), triages them in B10 on the next run, and keeps Mirror space (B9) unchanged', () => {
+    const w = world();
+    const { t } = w;
+    const AC = 'spaces/AAQAautocorrectW1';
+    t.chat.addSpace(AC, 'SLRR Auto-correct Unified');
+    t.control().getRange(4, 2).setValue('');   // B4 blank
+    t.control().getRange(9, 2).setValue('');   // B9 blank
+    t.control().getRange(10, 2).setValue('SLRR Auto-correct Unified');
+    t.control().getRange(35, 2).setValue(AUTOCORRECT);
+    t.g.vertex.triage = triage();
+    look(w, [hit()]);
+    const out = posted(t, AC);
+    eq(out.length, 1);
+    assert.match(c35(t), /^\u2713 SLRR Auto-correct Unified \(B10\): .* \u00b7 today: 1 posted$/);
+    chatShows(out[0]);
+    t.poll();
+    const notes = inThread(t, AC, out[0]);
+    eq(notes.length, 1);
+    assert.match(notes[0].text, /^\ud83e\udd16 \*Triage: \ud83d\udce6 Social Alert \(the watch\)\* \u00b7 low\n/);
+    eq([writes(t), outbox(t), posted(t, MIRROR)], [[], [], []]);
+    eq(t.get('B5'), '\u2705 Working');
+  });
+
   test('Watch alerts: a post two watches flag gets one alert (the other watch\'s flag says so: a: \'d\'); the Proactive watch OFF, nothing is posted and C35 says why', () => {
     const w = world(OTHER);
     const { t } = w;
@@ -614,6 +638,6 @@ module.exports = H => {
     eq(keys(t).map(k => [k.w, k.a]).sort(), [['Google brand safety (all)', 'p'], [MIDTERMS, 'd']].sort());
     t.control().getRange(34, 2).setValue('OFF');
     t.poll();
-    eq(c35(t), '⚠️ Other alerts space (B33) chosen, but the Proactive watch (row 34) is OFF: nothing to post');
+    eq(c35(t), '\u26a0\ufe0f Other alerts space (B33) chosen, but the Proactive watch (row 34) is OFF: nothing to post');
   });
 };

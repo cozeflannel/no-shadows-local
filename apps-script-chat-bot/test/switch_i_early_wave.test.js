@@ -972,4 +972,34 @@ module.exports = H => {
     eq(Object.keys(bot.pruneEarlyWaveSeen_({ a: NOW - 25 * HOUR, b: [NOW - 25 * HOUR, 3], c: [NOW, 3] }, NOW)), ['c']);
   });
 
+  test('standalone Auto-correct space (B10 with B9 and B4 blank): hosts rewritten auto-corrected Burson alerts AND Early Detection cards in B10 with zero writes to S-F Burson', () => {
+    const t = ready(e2e());
+    const AC = 'spaces/AAQAautocorrect1';
+    t.chat.addSpace(AC, 'SLRR Unified Auto-correct');
+    t.set('B25', REAL);
+    t.control().getRange(3, 2).setValue(`https://chat.google.com/app/chat/${AC.replace('spaces/', '')}`);
+    t.control().getRange(4, 2).setValue('');   // B4 blank (user's single-space B10 layout)
+    t.control().getRange(9, 2).setValue('');   // B9 blank -> Early Wave routes to B10
+    t.control().getRange(10, 2).setValue('SLRR Unified Auto-correct');
+    t.control().getRange(23, 2).setValue('ON');
+    switchOn(t);
+    fakeBq(t.g, routes([clusterRow()]));
+    t.g.vertex.earlyDetection = monitorReview();
+
+    t.poll();  // initializes AC cursor floor & posts first Early Detection story card into B10
+    t.g.clock.now += MIN;
+    t.chat.say(REAL, H.F.MISTAKES, { sender: 'users/zapier', type: 'BOT', displayName: 'Zapier' });
+    t.poll();
+
+    eq(t.get('B5'), '\u2705 Working');
+    const acTop = t.chat.botPosts(AC).filter(m => !m.threadReply);
+    assert.ok(acTop.some(m => m.text === H.F.MISTAKES_FIXED), 'rewritten auto-corrected Burson card in B10 (no raw Zapier card)');
+    assert.ok(!acTop.some(m => m.text === H.F.MISTAKES), 'raw Zapier card is NEVER posted in B10');
+    assert.ok(acTop.some(m => /\*Early Detection Alert: Pixel 9 owners say the overnight update froze the emergency dialer\*/.test(m.text)),
+      'Early Detection story card posted in B10 when B9 is blank');
+    const edReplies = t.chat.botPosts(AC).filter(m => m.threadReply && /Early Detection Review:/.test(m.text));
+    eq(edReplies.length, 1);
+    eq(t.chat.botPosts(REAL), []);
+  });
+
 };

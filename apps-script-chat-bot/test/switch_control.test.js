@@ -36,7 +36,8 @@ module.exports = H => {
     // B31 is no switch: 60 minutes, with its own 15 / 30 / 45 / 60 minutes dropdown
     eq([t.control().cell(31, 2), t.control().validations['31,2'].values], ['60 minutes', ['15 minutes', '30 minutes', '45 minutes', '60 minutes']]);
     // B35 is no switch either: OFF, with its own OFF / Other alerts space (B33) / Mirror space (B9) dropdown
-    eq([t.control().cell(35, 2), t.control().validations['35,2'].values], ['OFF', ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)']]);
+    eq([t.control().cell(35, 2), t.control().validations['35,2'].values],
+      ['OFF', ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)', 'Auto-correct space (B10)']]);
     const help = Array.from({ length: 39 }, (_, i) => t.control().cell(39 + i, 1)).join('\n');
     LABELS.forEach(l => assert.ok(help.includes(`• ${l}: `), l));
     eq(t.bot.readControl_(t.control()).switches, allOff());

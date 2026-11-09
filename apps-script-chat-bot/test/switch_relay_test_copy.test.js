@@ -247,7 +247,7 @@ module.exports = H => {
     for (let r = 39 + help.length; r <= Math.max(sh.rows.length, 76); r++) eq(cells(r), ['', '', ''], `${when}: row ${r}`);
     eq(lists(sh), Object.assign({}, variant.validations, { '27,2': ['ON', 'OFF'], '28,2': ['ON', 'OFF'], '29,2': ['ON', 'OFF'],
       '31,2': ['15 minutes', '30 minutes', '45 minutes', '60 minutes'], '32,2': ['ON', 'OFF'], '34,2': ['ON', 'OFF'],
-      '35,2': ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)'], '36,2': ['ON', 'OFF'] }), when);
+      '35,2': ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)', 'Auto-correct space (B10)'], '36,2': ['ON', 'OFF'] }), when);
     const read = t.bot.readControl_(sh);
     eq([read.switches, read.sfBurson, read.testCopy, read.testers, read.bqLookback],
       [keysOn(variant.on), variant.b25, b26 ? b26.value : '', '', '60 minutes'], when);

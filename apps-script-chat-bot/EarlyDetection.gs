@@ -260,8 +260,8 @@ function edConclude_(ctx, prep, assessed, now) {
  */
 function edAct_(ctx, m, d, report) {
   const alertId = ctx.store.nextAlertId();
-  const twoSpace = !!(ctx.spaces && ctx.spaces.analyst && ctx.spaces.burson && ctx.spaces.analyst.id &&
-    ctx.spaces.analyst.id !== ctx.spaces.burson.id);
+  const twoSpace = !ctx.sourceReadOnly && !!(ctx.spaces && ctx.spaces.analyst && ctx.spaces.burson &&
+    ctx.spaces.analyst.id && ctx.spaces.analyst.id !== ctx.spaces.burson.id);
   const upd = d.ed && d.ed.update ? d.ed.update : null;  // an update: its copy goes in its story's thread too
   const fwd = twoSpace ? postTo_(ctx, ctx.spaces.analyst.id, m.text, (upd && upd.fwd) || null, 'edfwd:' + m.name, null, true) : m;
 
@@ -1475,7 +1475,7 @@ function edThemePicture_(ctx, ed, d, parsed, space) {
 function edReviewAndPost_(ctx, row, report) {
   const now = ctx.now();
   const ed = edFromRow_(row);
-  const space = ctx.spaces.burson.id;
+  const space = ctx.sourceReadOnly ? ctx.spaces.analyst.id : ctx.spaces.burson.id;
   edLogSignal_(ctx, ed);
   const prep = edPrepare_(ctx, ed, now);
   const preCheck = edDecide_(ctx, prep.parsed, null, null, prep.history, now);

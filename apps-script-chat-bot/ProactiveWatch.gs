@@ -1749,7 +1749,9 @@ function runProactiveWatch_(ss, runStart, opts) {
     // 3. the flags waiting to go out as watch alerts (Control row 35, WatchAlerts.gs), a few a run, only while some wait
     // (PW_ALERT_PENDING: nothing is read otherwise); C35 says how it's going
     if (queue && left() >= PW_MIN_LEFT_MS_ && props.getProperty(PW_ALERT_PENDING_PROP_)) {
-      out.alerts = pwPostAlerts_(dt.sh, dest, Date.now(), left, { ss, otherBusy: !!(opts && opts.otherBusy) });
+      out.alerts = pwPostAlerts_(dt.sh, dest, Date.now(), left, {
+        ss, otherBusy: !!(opts && opts.otherBusy), acBusy: !!(opts && opts.acBusy),
+      });
       if (!out.alerts.error && !out.alerts.waiting) props.deleteProperty(PW_ALERT_PENDING_PROP_);
     }
     if (opts && opts.control) {

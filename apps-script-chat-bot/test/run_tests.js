@@ -1085,7 +1085,7 @@ test('setup(): one run creates the control sheet (ready for testing), starts the
   eq([t.control().cell(36, 2), t.control().validations['36,2'].values], ['OFF', ['ON', 'OFF']]);  // and row 36 (Temp checks)
   // Watch alerts (B35): OFF, with its strict dropdown; only a person chooses where the watch's alerts go
   eq([t.control().cell(35, 2), t.control().validations['35,2'].values, t.control().validations['35,2'].allowInvalid],
-    ['OFF', ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)'], false]);
+    ['OFF', ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)', 'Auto-correct space (B10)'], false]);
   // Other alerts space (B33): blank, with no dropdown (a space link, like B9 and B10); C33 says what it's for
   eq([t.control().cell(33, 2), t.control().cell(33, 3), t.control().validations['33,2']], ['', t.bot.ev('OS_HINT_'), undefined]);
   // BigQuery lookback (B31): starts at the longest, 60 minutes, with its strict 15 / 30 / 45 / 60 minutes dropdown; C31 what the bot uses

@@ -120,7 +120,9 @@ async function handleAuditSafetyInvariants() {
       b35Label === 'Watch alerts' &&
       b35Val === 'OFF' &&
       b35Strict &&
-      JSON.stringify(b35Choices) === JSON.stringify(['OFF', 'Other alerts space (B33)', 'Mirror space (B9)']),
+      JSON.stringify(b35Choices) === JSON.stringify([
+        'OFF', 'Other alerts space (B33)', 'Mirror space (B9)', 'Auto-correct space (B10)',
+      ]),
     detail: `A35="${b35Label}", B35 default="${b35Val}", strict=${b35Strict}, choices=${JSON.stringify(b35Choices)}`,
   });
 

@@ -1544,24 +1544,57 @@ function pollAnalystMessages_(ctx, report) {
   const since = new Date(Math.max(cursor - S.overlap_minutes * 60 * 1000, ctx.floor || 0)).toISOString();
   const msgs = ctx.chat.list(ctx.spaces.analyst.id, since, LIST_LIMIT_).sort((a, b) => a.createTime - b.createTime);
   let newCursor = cursor;
+  let blocked = false;
+  const advance = m => { if (!blocked) newCursor = Math.max(newCursor, m.createTime); };
   for (const m of msgs) {
     if (ctx.now() > ctx.deadline) break;
+    // Auto-correct space (B10): triage the bot's own Watch alerts (B35 = Auto-correct space (B10)) right in B10
+    if (ctx.sourceReadOnly && !m.threadReply && typeof pwAlertOf_ === 'function') {
+      const watched = pwAlertOf_(ctx, m);
+      if (watched) {
+        if (ctx.recent.has(m.name) || ctx.store.isDone(m.name)) {
+          ctx.recent.add(m.name, m.createTime);
+          advance(m);
+          continue;
+        }
+        if (report.handled >= S.max_messages_per_run) { blocked = true; break; }
+        report.handled++;
+        report.alerts++;
+        try {
+          handleOtherAlert_(ctx, m, watched, report);
+          ctx.recent.add(m.name, m.createTime);
+          advance(m);
+        } catch (e) {
+          if (e && e.holdReview) {
+            report.handled--;
+            report.alerts--;
+            report.held = (report.held || 0) + 1;
+            ctx.log(`held ${m.name} for the next run: ${e.message}`);
+            blocked = true;
+            break;
+          }
+          report.errors.push(`${m.name}: ${(e && e.message) || e}`);
+          blocked = true;
+        }
+        continue;
+      }
+    }
     if (ctx.recent.has(m.name) || isOwnMessage_(ctx, m) || COPIED_ROW_RX_.test(String(m.text || ''))) {  // incl. old test-feed reposts
       ctx.recent.add(m.name, m.createTime);
-      newCursor = Math.max(newCursor, m.createTime);
+      advance(m);
       continue;
     }
     if (m.threadReply && ctx.spaces.analyst.id === campaignAlertsSpace_(ctx)) {
       if (isCampaignOwnedThread_(ctx, ctx.spaces.analyst.id, m.thread)) {
         ctx.recent.add(m.name, m.createTime);
-        newCursor = Math.max(newCursor, m.createTime);
+        advance(m);
         continue;
       }
       if (isCampaignHandoffRequest_(ctx, ctx.spaces.analyst.id, m)) {
         handOffThreadToCampaigns_(ctx, ctx.spaces.analyst.id, m);
         ctx.store.markDone(m.name, 'campaign_handoff');
         ctx.recent.add(m.name, m.createTime);
-        newCursor = Math.max(newCursor, m.createTime);
+        advance(m);
         continue;
       }
     }
@@ -1572,7 +1605,7 @@ function pollAnalystMessages_(ctx, report) {
     const mentioned = !!ctx.botUser && mentions.indexOf(ctx.botUser) >= 0;
     if (m.senderType === 'BOT' || (mentions.length && !mentioned)) {
       ctx.recent.add(m.name, m.createTime);
-      newCursor = Math.max(newCursor, m.createTime);
+      advance(m);
       continue;
     }
     const ack = isShortAck_(m.text);
@@ -1580,18 +1613,18 @@ function pollAnalystMessages_(ctx, report) {
       (m.threadReply && !ack && (mentionsAnalystAction_(m.text) || mentionsAlertField_(m.text)));
     if (!wantsAnswer) {
       ctx.recent.add(m.name, m.createTime);
-      newCursor = Math.max(newCursor, m.createTime);
+      advance(m);
       continue;
     }
     if (ctx.store.isDone(m.name)) {
       ctx.recent.add(m.name, m.createTime);
-      newCursor = Math.max(newCursor, m.createTime);
+      advance(m);
       continue;
     }
     if (!selfAnswerOk_(ctx, m)) {  // the loop backstop: never the bot answering itself over and over
       ctx.store.markDone(m.name, 'ignored', '');
       ctx.recent.add(m.name, m.createTime);
-      newCursor = Math.max(newCursor, m.createTime);
+      advance(m);
       continue;
     }
     const rawAlert = m.threadReply ? ctx.store.alertByForwardThread(m.thread) : null;

@@ -29,7 +29,7 @@ module.exports = H => {
   const SW34 = () => [at(34).label, 'OFF', B.switchOffText_(at(34))];  // Proactive watch, as every tab gets it
   const WA35 = () => [B.ev('PW_ALERTS_LABEL_'), 'OFF', B.pwAlertsOffText_()];  // Watch alerts, OFF, as every tab gets it
   const TC36 = () => [at(36).label, 'OFF', B.switchOffText_(at(36))];  // Temp checks, as every tab gets it
-  const WA_CHOICES = ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)'];  // B35's dropdown
+  const WA_CHOICES = ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)', 'Auto-correct space (B10)'];  // B35's dropdown
 
   /** The bot's sheet and properties from setup(), then its Control tab replaced by one the LIVE code made. */
   const liveWorld = variant => {

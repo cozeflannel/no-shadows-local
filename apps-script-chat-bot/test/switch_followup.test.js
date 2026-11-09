@@ -422,7 +422,7 @@ module.exports = H => {
       eq([sh.validations['32,2'].values, sh.validations['33,2'], sh.validations['34,2'].values, sh.validations['36,2'].values],
         [['ON', 'OFF'], undefined, ['ON', 'OFF'], ['ON', 'OFF']]);  // rows 32, 34 and 36 are switches: OFF until a person turns them ON; B33 a space
       // B35 (Watch alerts): OFF, with its own dropdown; only a person chooses where the watch's alerts go
-      eq(sh.validations['35,2'].values, ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)']);
+      eq(sh.validations['35,2'].values, ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)', 'Auto-correct space (B10)']);
       // B31 (a help line's row on the deployed tab) gets its 15 / 30 / 45 / 60 minutes dropdown, and C31 says what the bot uses
       eq([sh.validations['31,2'].values, sh.cell(31, 3)], [['15 minutes', '30 minutes', '45 minutes', '60 minutes'], B.bqLookbackFrom_('60 minutes').note]);
       const help = B.ev('CONTROL_HELP_');

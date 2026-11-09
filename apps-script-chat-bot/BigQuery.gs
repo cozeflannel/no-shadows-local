@@ -2886,7 +2886,14 @@ function earlyWaveRefusal_(ctx) {
   const analyst = spaces.analyst || {};
   const burson = spaces.burson || {};
   const sfb = ctx && typeof ctx.sfBurson === 'string' && ctx.sfBurson ? { id: ctx.sfBurson } : (ctx && ctx.sfBurson);
-  if (ctx && ctx.sourceReadOnly) return 'the auto-correct space doesn\'t check';
+  if (ctx && ctx.sourceReadOnly) {
+    if (!ctx.allowEarlyWave) return 'the auto-correct space doesn\'t check';
+    if (!analyst.id) return 'there is no analyst space to triage in';
+    if (isSfBurson_(sfb, analyst.id)) return 'the Burson space is the live one (use Mirror space B9 or a test feed)';
+    if (analyst.externalUserAllowed) return 'the space allows people outside Google';
+    if (S.dry_run) return 'dry run (nothing is posted)';
+    return '';
+  }
   if (ctx && ctx.direct) return `${DIRECT_B25_MODE_WHY_}, so its own alerts aren't mixed with BigQuery's`;
   if (!burson.id) return 'there is no feed or Mirror space to post in';
   if (!analyst.id) return 'there is no analyst space to triage in';

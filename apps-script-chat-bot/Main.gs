@@ -142,11 +142,19 @@ function status() {
     // Work directly in B25 (Control row 32): ON with B25 Google-only, the bot works right in B25 (directCfg_)
     const direct = directB25For_(wanted.switches, sfb);
     info.work_directly_in_b25 = direct.state;
-    const cfg = direct.space ? directCfg_(direct.space) : resolveSetup_(wanted, true, sfb.space);
-    info.burson_space = `${cfg.burson.name} (${cfg.burson.id})`;
-    info.analyst_space = direct.space ? `${cfg.analyst.name} (the same space: row 32)` : `${cfg.analyst.name} (${cfg.analyst.id})`;
-    const cursor = Number(props.getProperty('CURSOR:' + cfg.burson.id)) || null;
-    info.read_up_to = cursor ? new Date(cursor).toISOString() : 'not started';
+    const acOnly = !direct.space && !String(wanted.mirror || '').trim() && !!String(wanted.autocorrect || '').trim() &&
+      (!String(wanted.burson || '').trim() || !String(wanted.analyst || '').trim());
+    if (acOnly) {
+      info.burson_space = 'not used (working in Auto-correct space, B10)';
+      info.analyst_space = 'not used (working in Auto-correct space, B10)';
+      info.read_up_to = 'via Auto-correct space (B10)';
+    } else {
+      const cfg = direct.space ? directCfg_(direct.space) : resolveSetup_(wanted, true, sfb.space);
+      info.burson_space = `${cfg.burson.name} (${cfg.burson.id})`;
+      info.analyst_space = direct.space ? `${cfg.analyst.name} (the same space: row 32)` : `${cfg.analyst.name} (${cfg.analyst.id})`;
+      const cursor = Number(props.getProperty('CURSOR:' + cfg.burson.id)) || null;
+      info.read_up_to = cursor ? new Date(cursor).toISOString() : 'not started';
+    }
     info.mirror_space = wanted.mirror || (typeof MIRROR_TARGET_SPACE !== 'undefined' ? MIRROR_TARGET_SPACE : '') || 'off';
     info.autocorrect_space = wanted.autocorrect || 'off';
     info.other_alerts_space = wanted.otherSpace || 'off';
@@ -376,6 +384,21 @@ function poll() {
     // directly in B25 (row 32): not used (C9 says so)
     const relayMayCopy = !!(wanted.switches.relay && sfbFlows.space && !(GEN.settings && GEN.settings.dry_run));
     let mirror = direct.space ? directB25MirrorOff_(control, wanted) : mirrorZapierPosts_(control, wanted, sfb, { defer: relayMayCopy });
+    const acStandalone = !direct.space && !mirror && !!String(wanted.autocorrect || '').trim() &&
+      (!String(wanted.burson || '').trim() || !String(wanted.analyst || '').trim());
+    if (acStandalone) {
+      mode = { live: false, why: 'working in the Auto-correct space (B10)' };
+      const needs = sfb.space ? [] : sfbNeeds_(wanted, null);
+      writeControlStatus_(control, {
+        bursonNote: '\u2014 not used (working in Auto-correct space, B10)',
+        analystNote: '',
+        status: needs.length ? `\u26a0\ufe0f ${sfbProblemText_(sfb, needs)}` : okStatusText_(),
+        lastCheck: nowLabel_(),
+        today: todayText_(readStats_(), dayKey_(), wanted.switches.noWait),
+      });
+      props.setProperty('FAIL_STREAK', '0');
+      return;
+    }
     if (direct.space) {
       cfg = directCfg_(direct.space);  // one space, as the Mirror's: the bot posts and reacts right in B25
     } else if (mirror && mirror.outboundBlocked) {
@@ -594,7 +617,12 @@ function poll() {
         // The auto-correct test space (Control tab B10): the live Burson space (S-F Burson, B25), read only, with each
         // alert corrected by the bot and posted there. Its own status (C10) and time budget; it never touches the run above.
         // Working directly in B25 (row 32): no S-F Burson this run (sfbFlows), so it doesn't run, and C10 says why
-        const ac = runAutoCorrect_(control, wanted, ss, cfg, runStart, sfbFlows || sfb);
+        const allowAcEarlyWave = !String(wanted.mirror || '').trim() &&
+          (!mainCtx || Boolean(earlyWaveRefusal_(mainCtx)));
+        const ac = runAutoCorrect_(control, wanted, ss, cfg, runStart, sfbFlows || sfb, {
+          allowEarlyWave: allowAcEarlyWave,
+          lookbackMinutes: lookback ? lookback.minutes : BQ_LOOKBACK_DEFAULT_MIN_,
+        });
         if (ac) activity += activityOf_(ac.report);
         if (ac) followActivity += followupActivityOf_(ac.report);
         // Temp checks (Control row 36, TempCheck.gs): what analysts asked for in a thread of the Mirror space or the Other
@@ -604,15 +632,22 @@ function poll() {
         runTempChecks_(runStart, wanted.switches, { testers: testers && testers.testers });
         // Proactive watch (Control row 34, ProactiveWatch.gs): a shadow test over Pendulum's posts in BigQuery; what it
         // would flag goes on its own tabs. Nothing is posted or emailed unless Watch alerts (row 35, WatchAlerts.gs) says
-        // where its flags go: the Other alerts space (B33) or the Mirror space (B9), where their flows work them next run
-        // like any alert. Its own time guard and failures; switched OFF, whatever a look left behind is forgotten, so
-        // turning it ON starts afresh
+        // where its flags go: B33, B9, or B10, where their flows work them next run like any alert.
         if (wanted.switches.proactiveWatch) {
-          const toOther = pwAlertsChoice_(wanted.watchAlerts) === 'other';
-          const alerts = pwAlertsDest_(wanted.watchAlerts, toOther ? pwOtherSpaceFor_(os, wanted, cfg, sfb) : null, cfg);
-          const otherBusy = !!(toOther && os && os.report &&
+          const waChoice = pwAlertsChoice_(wanted.watchAlerts);
+          const toOther = waChoice === 'other';
+          const toAc = waChoice === 'autocorrect';
+          const alerts = pwAlertsDest_(
+            wanted.watchAlerts,
+            toOther ? pwOtherSpaceFor_(os, wanted, cfg, sfb) : null,
+            cfg,
+            toAc ? pwAutoCorrectSpaceFor_(ac, wanted, cfg, sfbFlows || sfb) : null
+          );
+          const otherBusy = Boolean(toOther && os && os.report &&
             ((os.report.errors || []).some(e => /^time budget/.test(String(e))) || os.report.held > 0));
-          runProactiveWatch_(ss, runStart, { alerts, control, otherBusy, slaBusy: bgBusy });
+          const acBusy = Boolean(toAc && ac && ac.report &&
+            ((ac.report.errors || []).some(e => /^time budget/.test(String(e))) || ac.report.held > 0));
+          runProactiveWatch_(ss, runStart, { alerts, control, otherBusy, acBusy, slaBusy: bgBusy });
         } else {
           proactiveWatchOff_();
           pwAlertsIdle_(control, wanted.watchAlerts, false);
