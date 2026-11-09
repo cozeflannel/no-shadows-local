@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Bot Analysis</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #dadce0;
+      --text: #202124;
+      --muted: #5f6368;
+      --blue: #1a73e8;
+      --blue-hover: #1557b0;
+      --blue-soft: #e8f0fe;
+      --green: #137333;
+      --green-soft: #e6f4ea;
+      --amber: #b06000;
+      --amber-soft: #fef7e0;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: "Google Sans", Roboto, Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--text);
+      background: var(--bg);
+    }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 12px 0;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .brand-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .updated-pill {
+      font-size: 11px;
+      color: var(--muted);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 2px 8px;
+      white-space: nowrap;
+    }
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2px;
+    }
+    .tab-btn {
+      appearance: none;
+      background: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      padding: 8px 4px 9px;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+      text-align: center;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active {
+      color: var(--blue);
+      border-bottom-color: var(--blue);
+    }
+    .panel {
+      display: none;
+      padding: 14px 12px 20px;
+    }
+    .panel.active { display: block; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 11px 12px;
+      margin-bottom: 10px;
+    }
+    .card-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .card-big {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 3px;
+    }
+    .card-sub {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .stat-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 6px;
+      text-align: center;
+    }
+    .stat-num {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--blue);
+    }
+    .stat-cap {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .field { margin-bottom: 11px; }
+    .field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: var(--text);
+    }
+    .field select,
+    .field input[type="text"] {
+      width: 100%;
+      padding: 7px 9px;
+      font-family: inherit;
+      font-size: 13px;
+      color: var(--text);
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .field select:focus,
+    .field input[type="text"]:focus {
+      outline: none;
+      border-color: var(--blue);
+      box-shadow: 0 0 0 2px var(--blue-soft);
+    }
+    .field-hint {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 3px;
+    }
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .btn {
+      flex: 1;
+      appearance: none;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+    .btn-primary {
+      background: var(--blue);
+      color: #fff;
+    }
+    .btn-primary:hover { background: var(--blue-hover); }
+    .btn-secondary {
+      background: #fff;
+      color: var(--text);
+      border-color: var(--border);
+    }
+    .btn-secondary:hover { background: var(--surface); }
+    .btn:disabled { opacity: 0.6; cursor: default; }
+    .banner {
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 12px;
+      margin-bottom: 10px;
+      display: none;
+    }
+    .banner.show { display: block; }
+    .banner.pending {
+      background: var(--amber-soft);
+      color: var(--amber);
+      border: 1px solid #f6d992;
+    }
+    .banner.ok {
+      background: var(--green-soft);
+      color: var(--green);
+      border: 1px solid #b7e1cd;
+    }
+    .link-btn {
+      background: none;
+      border: none;
+      padding: 0;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--blue);
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .legend-list {
+      margin: 6px 0 0;
+      padding-left: 16px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .legend-list li { margin-bottom: 4px; }
+    .legend-list strong { color: var(--text); }
+    .pill-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+    .mini-pill {
+      font-size: 11px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: #fff;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <span class="brand-title">Bot vs. Analyst</span>
+      <span id="topUpdated" class="updated-pill">Loading…</span>
+    </div>
+    <div class="tabs" role="tablist">
+      <button class="tab-btn" data-tab="overview" onclick="switchTab('overview')">Overview</button>
+      <button class="tab-btn" data-tab="controls" onclick="switchTab('controls')">Controls</button>
+      <button class="tab-btn" data-tab="scorecard" onclick="switchTab('scorecard')">Scorecard</button>
+    </div>
+  </div>
+
+  <!-- SUBTAB 1: OVERVIEW (formerly Rows 1–3) -->
+  <div id="panel-overview" class="panel">
+    <div class="card">
+      <div class="card-label">What This Sheet Compares</div>
+      <div id="ovDesc" style="font-size:12.5px;color:var(--text);">
+        Side-by-side comparison of the chatbot's responses next to Google analysts' own responses, with triage logic and Knowledge Base snippets.
+      </div>
+      <div id="ovStale" class="field-hint" style="margin-top:6px;color:var(--amber);display:none;"></div>
+    </div>
+
+    <div class="card-label" style="margin: 12px 2px 6px;">Active Grounding Loaded</div>
+    <div class="stat-grid">
+      <div class="stat-box">
+        <div id="ovKb" class="stat-num">0</div>
+        <div class="stat-cap">Resources Docs</div>
+      </div>
+      <div class="stat-box">
+        <div id="ovGuidance" class="stat-num">0</div>
+        <div class="stat-cap">Guidance Rules</div>
+      </div>
+      <div class="stat-box">
+        <div id="ovLearned" class="stat-num">0</div>
+        <div class="stat-cap">Precedents</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">How to Read Columns E–K</div>
+      <ul class="legend-list">
+        <li><strong>Cols E &amp; F:</strong> Chatbot's response next to our team's Chat &amp; IM call.</li>
+        <li><strong>Col G:</strong> Instant alignment or disagreement badge.</li>
+        <li><strong>Cols H &amp; I:</strong> Bot's exact rule/AI logic and verbatim Resources snippet.</li>
+        <li><strong>Cols J &amp; K:</strong> Pick your <em>Analyst Verdict</em> &amp; leave short notes (saved across filter changes).</li>
+      </ul>
+    </div>
+
+    <button class="btn btn-secondary" style="width:100%;" onclick="focusAnalysisSheet()">
+      Jump to Analysis Table (Row 2)
+    </button>
+  </div>
+
+  <!-- SUBTAB 2: CONTROLS & FILTERS (formerly Rows 4–8) -->
+  <div id="panel-controls" class="panel">
+    <div id="syncBanner" class="banner"></div>
+
+    <div class="card" style="padding:9px 11px;">
+      <div class="card-label">Currently Shown on Sheet</div>
+      <div id="ctStatus" style="font-size:12.5px;font-weight:600;">Loading…</div>
+    </div>
+
+    <div class="field">
+      <label for="selWindow">Lookback window</label>
+      <select id="selWindow">
+        <option value="24 hours">24 hours</option>
+        <option value="3 days">3 days</option>
+        <option value="7 days" selected>7 days</option>
+        <option value="14 days">14 days</option>
+      </select>
+      <div class="field-hint">Time range of alerts and Chat Q&amp;A to include.</div>
+    </div>
+
+    <div class="field">
+      <label for="selFocus">Focus</label>
+      <select id="selFocus">
+        <option value="All items">All items</option>
+        <option value="Disagreements only">Disagreements only</option>
+        <option value="With Chat replies / Q&A">With Chat replies / Q&amp;A</option>
+        <option value="Social Alerts only">Social Alerts only</option>
+        <option value="QA mistakes caught">QA mistakes caught</option>
+        <option value="Thread Q&A only">Thread Q&amp;A only</option>
+      </select>
+      <div class="field-hint">Narrow to disagreements, Chat Q&amp;A, escalations, or QA catches.</div>
+    </div>
+
+    <div class="field">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;">
+        <label for="inpSearch">Search filter</label>
+        <button type="button" class="link-btn" onclick="clearSearchBox()">Clear</button>
+      </div>
+      <input id="inpSearch" type="text" placeholder="Product, tag, @handle, analyst, keyword…" onkeydown="if(event.key==='Enter') applyControls(false)" />
+    </div>
+
+    <div class="btn-row">
+      <button id="btnApply" class="btn btn-primary" onclick="applyControls(false)">Apply Filters</button>
+      <button id="btnRefresh" class="btn btn-secondary" onclick="applyControls(true)">Refresh Now</button>
+    </div>
+    <div class="field-hint" style="margin-top:8px;">
+      Applies on the bot's 1-minute cycle and updates this panel automatically once written.
+    </div>
+  </div>
+
+  <!-- SUBTAB 3: SCORECARD (formerly Rows 9–15) -->
+  <div id="panel-scorecard" class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <span id="scWindowTitle" class="card-label" style="margin:0;">7-Day Window Scorecard</span>
+      <button type="button" class="link-btn" onclick="reloadState()">↻ Recount</button>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Social Alert Call Alignment</div>
+      <div id="scParity" class="card-big">—</div>
+      <div id="scDisagreeText" class="card-sub">0 disagreements</div>
+      <div class="pill-row">
+        <span id="scImOnly" class="mini-pill">0 IM-only</span>
+        <span id="scBotOnly" class="mini-pill">0 Bot-only</span>
+        <button type="button" class="link-btn" style="margin-left:auto;" onclick="quickFilterDisagreements()">
+          Filter disagreements →
+        </button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Alerts Reviewed &amp; QA Mistakes Caught</div>
+      <div id="scAlerts" class="card-big">0</div>
+      <div id="scMistakes" class="card-sub">0 alerts had Burson field mistakes caught/fixed</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Live Chat Activity &amp; Q&amp;A</div>
+      <div id="scChatTotal" class="card-big">0</div>
+      <div id="scChatSub" class="card-sub">0 threads with analyst replies/emojis · 0 Chat Q&amp;A</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Analyst Review Verdicts Recorded</div>
+      <div id="scGraded" class="card-big">0</div>
+      <div id="scGradedSub" class="card-sub">Pick a verdict in Column J while reviewing</div>
+    </div>
+  </div>
+
+  <script>
+    const INITIAL_TAB = <?= JSON.stringify(initialTab || 'overview') ?>;
+    let pollTimer = null;
+    let waitingSinceUpdatedAt = 0;
+
+    function switchTab(tab) {
+      ['overview', 'controls', 'scorecard'].forEach(function(id) {
+        const btn = document.querySelector('.tab-btn[data-tab="' + id + '"]');
+        const panel = document.getElementById('panel-' + id);
+        if (btn) btn.classList.toggle('active', id === tab);
+        if (panel) panel.classList.toggle('active', id === tab);
+      });
+      if (tab === 'scorecard') reloadState(true);
+    }
+
+    function setBanner(kind, msg) {
+      const el = document.getElementById('syncBanner');
+      if (!msg) {
+        el.className = 'banner';
+        el.textContent = '';
+        return;
+      }
+      el.className = 'banner show ' + kind;
+      el.textContent = msg;
+    }
+
+    function renderState(s, preserveInputs) {
+      if (!s) return;
+      const ov = s.overview || {};
+      const ct = s.controls || {};
+      const sc = s.scorecard || {};
+
+      document.getElementById('topUpdated').textContent = ov.updatedEt || 'Ready';
+      document.getElementById('ovDesc').textContent = ov.description || '';
+      const staleEl = document.getElementById('ovStale');
+      if (ov.staleEt) {
+        staleEl.style.display = 'block';
+        staleEl.textContent = 'IM BigQuery comparison cached from ' + ov.staleEt + '.';
+      } else {
+        staleEl.style.display = 'none';
+      }
+      document.getElementById('ovKb').textContent = String(ov.kbDocs || 0);
+      document.getElementById('ovGuidance').textContent = String(ov.guidanceCount || 0);
+      document.getElementById('ovLearned').textContent = String(ov.learnedCount || 0);
+
+      document.getElementById('ctStatus').textContent = ct.statusText || 'Ready';
+      if (!preserveInputs) {
+        document.getElementById('selWindow').value = ct.windowLabel || '7 days';
+        document.getElementById('selFocus').value = ct.focus || 'All items';
+        document.getElementById('inpSearch').value = ct.search || '';
+      }
+
+      document.getElementById('scWindowTitle').textContent = 'Scorecard (' + (sc.windowLabel || ct.windowLabel || '7 days') + ')';
+      document.getElementById('scParity').textContent = sc.decided
+        ? (sc.aligned + ' of ' + sc.decided + ' (' + sc.parityPct + ')')
+        : '—';
+      document.getElementById('scDisagreeText').textContent = 'Disagreements: ' + (sc.disagreements || 0);
+      document.getElementById('scImOnly').textContent = (sc.imOnly || 0) + ' IM-only';
+      document.getElementById('scBotOnly').textContent = (sc.botOnly || 0) + ' Bot-only';
+      document.getElementById('scAlerts').textContent = String(sc.alerts || 0);
+      document.getElementById('scMistakes').textContent =
+        (sc.mistakes || 0) + ' alert' + (sc.mistakes === 1 ? '' : 's') + ' had Burson mistakes caught/fixed';
+      document.getElementById('scChatTotal').textContent = String(sc.chatAndQa || 0);
+      document.getElementById('scChatSub').textContent =
+        (sc.withChat || 0) + ' analyst Chat thread' + (sc.withChat === 1 ? '' : 's') +
+        ' · ' + (sc.qaCount || 0) + ' Chat Q&A';
+      document.getElementById('scGraded').textContent = String(sc.graded || 0);
+      document.getElementById('scGradedSub').textContent = sc.graded
+        ? ((sc.botRight || 0) + ' Bot/Both acceptable · ' + (sc.analystRight || 0) + ' Analyst right')
+        : 'Pick a verdict in Column J while reviewing';
+    }
+
+    function reloadState(preserveInputs) {
+      google.script.run
+        .withSuccessHandler(function(s) { renderState(s, !!preserveInputs); })
+        .getAnalysisSidepanelState();
+    }
+
+    function clearSearchBox() {
+      document.getElementById('inpSearch').value = '';
+    }
+
+    function applyControls(forceRefresh) {
+      const payload = {
+        windowLabel: document.getElementById('selWindow').value,
+        focus: document.getElementById('selFocus').value,
+        search: document.getElementById('inpSearch').value.trim(),
+        runNow: true,
+      };
+      document.getElementById('btnApply').disabled = true;
+      document.getElementById('btnRefresh').disabled = true;
+      setBanner('pending', forceRefresh
+        ? '⏳ Requested full refresh — updating sheet on the next 1-minute cycle…'
+        : '⏳ Applying filters — updating sheet on the next 1-minute cycle…');
+
+      google.script.run
+        .withSuccessHandler(function(res) {
+          document.getElementById('btnApply').disabled = false;
+          document.getElementById('btnRefresh').disabled = false;
+          waitingSinceUpdatedAt = Number(res && res.previousUpdatedAt) || 0;
+          if (res && res.state) renderState(res.state, true);
+          startPollingForRebuild();
+        })
+        .withFailureHandler(function(err) {
+          document.getElementById('btnApply').disabled = false;
+          document.getElementById('btnRefresh').disabled = false;
+          setBanner('pending', 'Could not save filter: ' + ((err && err.message) || err));
+        })
+        .saveAnalysisControls(payload);
+    }
+
+    function startPollingForRebuild() {
+      if (pollTimer) clearInterval(pollTimer);
+      let ticks = 0;
+      pollTimer = setInterval(function() {
+        ticks++;
+        if (ticks > 22) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+          return;
+        }
+        google.script.run
+          .withSuccessHandler(function(s) {
+            if (!s) return;
+            const latest = Number((s.overview && s.overview.updatedAt) || 0);
+            if (latest > waitingSinceUpdatedAt && (!s.controls || !s.controls.runNow)) {
+              clearInterval(pollTimer);
+              pollTimer = null;
+              renderState(s, false);
+              setBanner('ok', '✓ Sheet updated (' + (s.controls ? s.controls.statusText : 'ready') + ')');
+              setTimeout(function() { setBanner('', ''); }, 6000);
+            }
+          })
+          .getAnalysisSidepanelState();
+      }, 4000);
+    }
+
+    function quickFilterDisagreements() {
+      document.getElementById('selFocus').value = 'Disagreements only';
+      switchTab('controls');
+      applyControls(false);
+    }
+
+    function focusAnalysisSheet() {
+      google.script.run.jumpToAnalysisTab();
+    }
+
+    switchTab(INITIAL_TAB || 'overview');
+    reloadState(false);
+  </script>
+</body>
+</html>

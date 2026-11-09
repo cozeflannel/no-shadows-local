@@ -1,0 +1,22 @@
+# Cloud Run jobs image:  python -m jobs.run_job followups|inhouse|handover|digest
+# Built by infra/06_jobs.sh through infra/cloudbuild.yaml.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+COPY requirements-runtime.txt .
+RUN pip install -r requirements-runtime.txt
+
+COPY triage_agent/ triage_agent/
+COPY config/ config/
+COPY jobs/ jobs/
+
+RUN useradd --uid 10001 --no-create-home app
+USER app
+
+ENTRYPOINT ["python", "-m", "jobs.run_job"]
+CMD ["followups"]

@@ -1,0 +1,4 @@
+# clasp push sends only the bot's .gs files and the manifest (tests, README and node files stay local).
+**/**
+!*.gs
+!appsscript.json

@@ -1,0 +1,416 @@
+Guide to Starters & Steps in Workspace Studio - Workspace Studio Help Skip to main content 
+Workspace Studio Help 
+Workspace Studio 
+Privacy Policy 
+Terms of Service 
+Submit feedback
+Send feedback on...
+This help content & information 
+General Help Center experience 
+Workspace Studio 
+Guide to Starters & Steps in Workspace Studio
+Work or school accounts: Some starters and steps are only available for these account types.
+Personal accounts: Currently available for users with Google Workspace Experiments. Learn more .
+Age limits: If you are under 18 on a school account, you can’t use AI features. AI steps will be removed from flows shared with you.
+Approvals: Some flow steps may require user approval before running, depending on security policies set by your Google Workspace administrator. Learn how to manage approval requests. 
+Third-party apps: Integration steps can share your Google Account data (like Gmail or Calendar contents). Make sure you trust the service.
+Learn about Starters and Steps
+Every flow has 2 main parts:
+Starter: To choose the trigger that launches your flow, click Choose a Starter .
+You can choose an event, schedule, or create a trigger manually.
+Step: This is a task your flow performs after it starts. A step can be an action, like “draft a reply,” or a notification, like “notify me in Chat". You can add multiple steps to a flow.
+Narrow by ... Starters Only Steps: Gemini Steps: Logic & Tools Steps: Calendar Steps: Chat Steps: Docs Steps: Drive Steps: Gmail Steps: Gemini Notebook Steps: Sheets Steps: Tasks (Beta) Steps: Other App Integration Custom Starters & Steps Starter or Step 
+Start manually 
+Important: This starter is only available to users in the Gemini Beta program .
+The flow starts when you or skills trigger it manually. To set it up, you choose what data to input with your start request. That data turns into variables that can be used for later steps in your flow.
+Configuration: 
+Set up to 10 input fields.
+Enter a data name to each field as a label.
+You can optionally set a default value which the flow will use unless you change it in the run.
+If you build the pitch deck flow in the example mentioned above, you can set up your inputs like this:
+Data name: Target Customer, Default value: (leave empty) 
+Data name: Product to Pitch, Default value: Premium Cloud Subscription 
+To run the example flow above once it’s turned on, you can trigger it in:
+Workspace Studio 
+Open the manual flow.
+From the bottom, click Run .
+Enter the default values.
+Click Start .
+Other Workspace apps 
+Open the Ask Gemini side panel in apps like Gmail, Docs, Slides, Drive, or Docs.
+Enter “ @ " followed by the flow name.
+Add data values directly in your prompt.
+Press Enter .
+On a schedule 
+The flow starts at a specific date and time.
+Configuration: 
+Set a start date and time.
+Choose a repeat frequency, such as "Daily" or "Weekly."
+Optional: Set your time zone.
+When someone joins a space 
+This starter is only available for work or school accounts. 
+The flow starts when a new user joins a Google Chat space you're in.
+Configuration: 
+Enter one or more specific space names. To monitor all spaces leave the "Spaces" field blank.
+When I get an email 
+The flow starts when a new email arrives in Gmail. You can start it for all emails or for specific ones.
+Important: By default, this starter ignores events other flows create. This prevents a situation where a flow is in a loop after it sends an email. If you need a flow to start through an email sent by another flow, check the box next to "Include messages sent by flows."
+Configuration: 
+To start for specific emails, you can set conditions for:
+From/To: To limit which emails start the flow, use the "To" field.
+Has the words/Doesn't have: You can refine your starter with standard words or phrases. You can't filter based on labels, like label:finance, or dates.
+Has attachment 
+Filter by email size 
+When I get a chat message 
+The flow starts when a message is posted in a Google Chat space from specific people or by conversation type.
+Configuration: 
+Specify which spaces and/or senders to monitor.
+Use specific words to filter messages. You can choose to filter for messages that "Match text exactly" or "Match text with regular expression."
+Examples of regex: 
+To match messages that start with "Urgent": ^Urgent
+To match messages that end with "Approved": Approved$
+To match messages that contain the word "Error": Error
+Exact match (the message is only "Yes"): ^Yes$
+When I'm mentioned 
+The flow starts when you're @mentioned in Google Chat.
+Configuration: 
+Specify which spaces to monitor for mentions: To monitor all spaces where you're a member, leave this section blank.
+People who mention me: To have the flow run only when a specific person mentions you, add their name or email address here.
+When an emoji reaction is added 
+The flow starts when someone reacts to a message with a specific emoji in Google Chat.
+Configuration: 
+Select one or more reaction emojis to monitor.
+Optional: Limit the starter to specific spaces or users.
+When a sheet changes 
+The flow starts when a value in a specific column or row in a Google Sheet is updated. Tip: This is a powerful starter to track specific data. For complex setups, you can define which columns and rows to monitor for changes.
+Configuration: 
+Select the spreadsheet and tab to watch.
+Optional: Set conditions to monitor changes in specific columns or rows.
+When an item is added to a folder 
+The flow starts when a new file or subfolder is added to a specific folder in Google Drive.
+Configuration: 
+Select the folder you want to monitor.
+When a file is edited 
+The flow starts when the content of a specific file is modified. It doesn't start when a file is renamed, moved, or receives a new comment.
+Configuration: 
+Select the file you want to monitor.
+When an item in a folder is edited 
+The flow starts when a file within a selected folder is modified. This doesn't include files located in sub-folders.
+Configuration: 
+Select the folder that contains the files you want to monitor.
+Based on a meeting 
+Start the flow at a set time before or after a Google Calendar event.
+Configuration: 
+Choose a specific meeting from the drop down or Every meeting.
+Set a time offset in minutes or hours.
+Select if the flow should run Before meeting or After meeting.
+When a form response comes in 
+The flow starts when a new response is submitted to a Google Form.
+Configuration: 
+Anonymous and non-anonymous forms are supported.
+Select the form you want to monitor.
+Optional: Select the box to run the flow when a response is edited.
+When meeting outputs are ready 
+This starter is only available for work or school accounts. 
+Start the flow when a meeting transcript or notes by Gemini are ready. This flow only runs if you attend the meeting during its scheduled time. If you reuse a past calendar event, update its time to match when you join so the flow triggers.
+Configuration: 
+Select an option to start the flow: 
+Notes by Gemini
+Under "Meetings," select one: 
+Meetings that you organized
+Specific meetings: Begin typing the name of a meeting from your calendar and select it once it populates. You can add multiple meetings. For repeating meetings, the flow runs for each one.
+Use a custom prompt to have Gemini generate text, get answers, or transform information from earlier steps in your flow.
+Configuration: 
+Enter a prompt: Write the instructions for Gemini. To include information from a previous step, like the subject or sender of an email, click + Variables.
+Skills: In the "skills" box, enter your skill's name to select one or more skills to give Gemini customized expertise.
+Sources Gemini can use: Select where Gemini should access information. You can choose from All sources (Web search or Workspace) or Specific sources.
+Response format: Choose either Text or List to select how Gemini's response appears. If you select "List," you can use each item one by one with a "Repeat for each" step.
+Use a specialized AI agent for a specific task, like brainstorm ideas or draft a copy. Watch this video to learn how to use Gems in Google Workspace Studio 
+Configuration: 
+Select a Gem: Choose from a list of pre-made Gems, such as "Brainstormer" or "Copy creator." To build your own gem, you can also click Create or edit Gems.
+Enter a prompt: Provide the specific instructions for your selected Gem. To add context from earlier steps, click + Variables.
+Sources Gemini can use: Select where Gemini should access information (All sources or Specific sources).
+Use Gemini to analyze content and make a simple true or false decision. You can use this decision to control the flow with a "Check if" step.
+Configuration: 
+Enter a prompt: Write the question you want Gemini to answer with a true or false decision. You can use predefined decisions like "is urgent" or "requires response."
+Have Gemini find and pull out specific pieces of information from a piece of content, like an email or a document.
+Configuration: 
+Content to analyze: To select the content from a previous step that you want Gemini to analyze, use + Variables.
+What to extract: Select from predefined items or add your own custom content names and descriptions for Gemini to find.
+Recap unread emails 
+Get an AI-generated summary of your important unread emails. You can share this summary with yourself or others in a later step.
+Configuration: 
+Time range for summary: Select the time period you want to recap, like "Today (12 AM)," "Yesterday," "Last 7 days," or "Last 30 days."
+Use Gemini to generate a summary of content from a document, meeting, email, or other sources. You can then share this summary in a later step.
+Important: This step summarizes content you provide to it, like the body of an email or text from a document. It can't independently summarize all unread messages in a Google Chat space.
+Configuration: 
+What to summarize: Choose the source of the content you want Gemini to summarize. You have 2 main options:
+Use data from your flow: To select content that came from your starter or a previous step, click + Variables.
+Select a specific file: Choose an item, like a Google Doc, directly from the dropdown menu.
+Create with Gemini 
+Have Gemini create a document in Google Docs or a presentation in Google Slides based on your instructions.
+Configuration: 
+Click Create with Gemini .
+Under content type, choose Document or Presentation .
+Enter a prompt: Use natural language to ask what type of document or presentation you would like the flow to create. For example, “Create a presentation summarizing the meeting decisions.” Optional: Link a doc or presentation in your prompt to use as a template so the output matches your company's colors and fonts.
+Sources Gemini can use: Select where Gemini should access information. You can choose from:
+All sources and check either or both of these options:
+Web search to allow Gemini to search the web
+Workspace content you can access
+Specific sources and select specific Drive files from your Drive folder.
+Output destination: The result will automatically generate as a new document or slide deck in Drive and can be found under “My Drive.”
+Add a subsequent Notify me in Chat step .
+Click + Variables .
+Select Create with Gemini .
+Click Link to content by Gemini .
+Deep Research 
+Have Gemini perform comprehensive, multi-source analysis, and report generation directly within a flow execution.
+Deep Research follows an agentic workflow. While you focus on other tasks, it builds a research plan, fetches current data, and delivers a production-ready Google Doc in the background.
+Configuration: 
+Add a Deep Research step .
+Enter a prompt: To define the research topic, use variables or text. For example, “Research the company mentioned in this incoming email.”
+Select Sources Gemini can use: Both options are on by default:
+Web search to allow Gemini to search the web
+Workspace content you can access
+Output destination: The result will automatically generate as a new Google Doc in Drive and can be found under “My Drive.” You will also receive an email notification when the doc is ready.
+Add a subsequent Notify me in Chat step .
+Click + Variables .
+Select Deep Research .
+Click Link to Deep Research report .
+Continue the flow only if specific conditions are met. This allows you to build conditional logic into your flow.
+Configuration: 
+Set the condition: Create a rule: 
+Choose a variable from a previous step.
+Select an operator, like "contains" or "starts with."
+Enter the text or value to check against. You can add multiple conditions with "AND" or "OR."
+Filter a list 
+Process only certain items from a list of items generated in a previous step.
+Configuration: 
+Apply filter to: To select the list from a previous step that you want to filter, use + Variables.
+Repeat for each 
+Allows a flow to handle lists of items individually.
+Configuration: 
+Add a "Repeat for each" step.
+Identify a list of items. Select a list variable from the starter or previous step.
+Add sub-steps inside the loop block. Choose a variable from the "Repeat for each" menu to choose which list items to apply your action to.
+Create a meeting on your Google Calendar.
+Configuration: 
+Title: Enter a name for the event.
+Start date: Select a date when the event begins.
+Start time: Select a time when the event begins.
+Duration: Select how long the event lasts. Options are in 15 minute increments from 15 minutes-4 hours.
+Repeat: Select the event frequency (Does not repeat, Daily, Weekly, Monthly, Yearly).
+Event description: Enter event details.
+Time zone: Select the time zone for the event.
+Set up a meeting 
+Create a new event on your Google Calendar.
+Configuration: 
+Title, Date, Time: Set the event details.
+Guests: Add the email addresses of the meeting attendees.
+Description: Add any relevant information, such as a meeting agenda or video conference link. To insert personalized information, such as the form submitter’s name, use + Variables .
+Add guests to a meeting 
+Add one or more attendees to a Google Calendar event.
+Configuration: 
+Meeting: Select the meeting you want to add guests to or use + Variables to use one from another step.
+Guests to add: Enter the email addresses of the new attendees or use + Variables to use email addresses from another step.
+Notify me in Chat 
+Send a direct notification message only to yourself in Google Chat. Messages are sent through a Chat app that's named after the flow.
+Configuration: 
+Message: Write the notification message you want to receive.
+Send a message 
+Send a direct message to one or more people in Google Chat.
+Configuration: 
+To: Enter the recipients’ names or email addresses.
+Message: Write your message. To insert personalized information, such as the meeting name, use + Variables .
+The “To” field controls who gets notified. Emails you add in the “Message” field won’t get a notification.
+To enhance text style, lists, and code blocks, use “Markdown.”
+Post in a space 
+Automatically post a message to a specific Google Chat space.
+Configuration: 
+Space: Select the Google Chat space where you want to post the message.
+Message: Write the content of the message you want to post. To insert personalized information, such as the new file name, use + Variables .
+Notify space members: If you want to convert email addresses in your message into clickable @mentions that notify users, check this box.
+Important: A user is only notified if they’re already a member of the selected space. If a person isn’t a member of the space, their email still becomes a chip, but they won’t be notified or added to the space.
+Reply to a message 
+Send an automated reply to a message or thread in Google Chat.
+Important: For security, this step requires your approval if the run includes people outside your organization.
+Configuration: 
+Message to reply to: Select the specific message you want to reply to. To select a message variable from your starter or a previous step, click + Variables .
+Message: Write the content of your reply. To insert dynamic content from previous steps, like AI-generated text or sender details, click + Variables .
+Reply in a thread: Post the reply directly in the existing thread.
+Quote in reply: Quote the original message as a part of your reply.
+Optional: Notify space members whose email addresses are in the message: Check this box if applicable.
+Create a doc 
+Automatically create a new doc.
+Configuration: 
+New doc name: Specify the name of the new document or use + Variables to use a name based on another step.
+Content to add (Optional): Add initial text or content to the document.
+Location for new doc: Choose the folder in Google Drive to save the doc.
+Add to a doc 
+Add new text or content to the start or end of a Google Doc.
+Configuration: 
+Doc to update: Click + Document to select a file from Drive, or select a document ID or a link to a doc from a previous step.
+Where to add new content: Select whether to add "Before all existing content" or "After existing content."
+Content to add: Enter your text. To insert dynamic information from your starter, use + Variables .
+Add email attachments to Drive 
+Important: Drive links, such as Gemini Notes for example, aren't considered attachments and won't be moved to Drive.
+Automatically save attachments from an email to a specific folder in Google Drive.
+Configuration: 
+Location for email attachments: Select a location from Drive, or select an ID or a link variable from a previous step.
+Gmail attachments: Click + Variables . Then, select Full list - Email attachments .
+Create a folder 
+Automatically create a new folder in Google Drive.
+Configuration: 
+Folder name: Specify the name for the new folder or click + Variables to name it using information from a previous step. If a folder with the same name exists in the selected location, the existing folder is used.
+Location for new folder: Choose the location for the new folder in your Drive.
+Copy a file or folder 
+Automatically make a copy of a file or folder in Google Drive. You can rename it and save it to a new destination.
+For security, this step requires your approval if the run includes people outside your organization.
+Folders to be copied can contain up to 50 items and 3 levels of folder nesting.
+Configuration: 
+What to copy: Select whether you want to copy a File or a Folder .
+Select file to copy or Select folder to copy: To select the specific file or folder you want to copy, click Drive .
+Destination folder: To select the Google Drive folder where to save the copy, click Drive .
+Optional: Rename Drive file or folder: Enter a custom name for the copy. To insert dynamic text, type @ or click + Variables . If left blank, "Copy of " is automatically added before the original name.
+Move files or folders 
+Automatically move a file or folder to a new destination in Google Drive.
+Important: For security, this step requires your approval if the run includes people outside your organization.
+Configuration: 
+What to move: Specify the file or folder to move. To select an ID or link variable from a previous starter or step, click + Variables .
+Location to move to: Select the destination folder in Google Drive:
+To browse and select a folder, click Drive .
+To select an ID or link variable from a previous step, click + Variables .
+Draft an email 
+Automatically draft an email reply so you can review and send it later.
+Configuration: 
+Message: Write the reply draft. To include content from the original email, use + Variables.
+Add or remove labels 
+To keep your inbox organized, automatically add or remove labels from emails in Gmail.
+Configuration: 
+Label(s): Select one or more labels to add or remove from the email.
+AI-powered labels (Optional): To have Gemini apply your selected labels only if the content of the message matches the label's description, turn on this toggle.
+Mark as read or unread 
+Change the read status of an email.
+Configuration: 
+This step automatically applies to the email from your starter.
+Star an email or remove star from an email 
+Add or remove a star from an email.
+Configuration: 
+This step automatically applies to the email from your starter.
+Archive an email 
+Move an email out of your inbox and into your archive.
+Configuration: 
+Email to archive: This tells the flow which email to archive. It should already contain the Email ID variable from your starter. If the field is empty, use + Variables and select the email you want to archive.
+Notify me by email 
+Send a direct email to yourself in Gmail.
+Configuration: 
+Subject: Set the subject line for the email.
+Message: Write the body of the email. Use + Variables to insert dynamic content from previous steps, such as the sender's name or the message text.
+Send an email 
+Automatically compose and send a new email from your Gmail account.
+Configuration: 
+To/Cc/Bcc: Specify the email recipients.
+Subject: Set the subject line for the email.
+Message: Write the email. To insert personalized information, such as the form submitter’s name, use + Variables .
+Send a reply 
+Automatically send a reply to an existing email thread in Gmail.
+Important: For security, this step requires your approval if the run includes people outside your organization.
+Configuration: 
+Email to reply to: Select the email you want to reply to. To select the email variable from your starter or a previous step, click + Variables .
+Message: Write the body of your reply. To insert dynamic details, like the sender's name or content generated in previous steps, type @ or click + Variables .
+Reply options: 
+Reply to the sender: Sends the reply only to the original sender.
+Reply to all: Sends the reply to all participants in the email thread.
+Optional: To add dynamic email addresses, click + Variables .
+Cc: Add additional recipients to copy on the reply.
+Bcc: Add blind copy recipients to the reply.
+Ask Gemini Notebook 
+Send a prompt to a specific notebook to generate summaries, answer questions, or get insights based on the sources in that notebook.
+Configuration: 
+Notebook: Select the specific notebook you want to query.
+Enter a prompt: Write the instructions or question you want Gemini Notebook to answer. To include content to analyze, click + Variables.
+Add a source to Gemini Notebook 
+Automatically add content as a new source to a specific notebook. This updates your notebook with new information that you can ask questions about later.
+Configuration: 
+Notebook: Select the specific notebook you want to update from the dropdown list.
+Input type: Select the format of the information you add. Options include:
+Copied content
+Copied content or Source URL: You can add the text you want based on the input you want to select. To insert dynamic content, click + Variables. This includes text extracted from a .pdf or the body of an email.
+Add a row of data to a specific Google Sheet.
+Configuration: 
+Select a Spreadsheet: Choose the specific Google Sheet and tab you want to add a row to.
+Add a row: Select whether to add "Before all existing content" or "After existing content."
+Find and update one or more rows in a Google Sheet that match certain criteria.
+Configuration: 
+Select a Spreadsheet: Choose the Google Sheet and tab where you want to update rows. For best results, make sure your sheet has a header row with unique names for each column.
+Conditions: Set one or more conditions to identify which rows to update.
+Update values: Specify the new values for the columns you want to change.
+Delete the content of all rows that match a specific condition.
+Configuration: 
+Select a Spreadsheet: Choose the specific Google Sheet and tab you want to clear rows from.
+Conditions: Set the criteria to identify which rows to clear.
+Get sheet contents 
+Retrieve data from a Google Sheet to use in a later step of your flow.
+Configuration: 
+Select a sheet: Choose the specific Google Sheet and tab from which you want to get data.
+Rows and Columns: Specify the range of data you want to retrieve.
+Create a task 
+Create a new task in Google Tasks. New tasks are automatically added to your primary task list in Google Tasks.
+Configuration: 
+Task title: Set the name of the task.
+Task details: Add any relevant notes or information about the task.
+Date: Optionally set a deadline for the task.
+Asana integration (Beta) 
+This step is only available for work or school accounts. 
+Create projects, sections, tasks, and subtasks in Asana.
+Configuration: 
+Select the specific step, like "Create task" or "Create project."
+Configure the required fields, such as the Asana project, task name, and description.
+Confluence integration (Beta) 
+This step is only available for work or school accounts. 
+Create pages in Confluence.
+Configuration: 
+Space: Select the Confluence space.
+Title: Enter the title for the new page.
+Content: Add the page content with variables from previous steps.
+Jira integration (Beta) 
+This step is only available for work or school accounts. 
+Create issues and issue comments in Jira.
+Configuration: 
+Jira project: Select the project where the issue will be created.
+Issue type: Choose the type of issue, such as "Bug" or "Task."
+Summary and description: Provide the details for the Jira issue.
+Mailchimp integration (Beta) 
+This step is only available for work or school accounts. 
+Manage subscribers and campaigns in Mailchimp.
+Configuration: 
+Audience: Select your Mailchimp audience list.
+Subscriber details: Provide the required information, like the email address.
+Slack integration (Beta) 
+This step is only available for work or school accounts. 
+Perform steps in your Slack workspace.
+Configuration: 
+Channel/User: Select the specific channel or user to message.
+Message: Write the content of the message you want to send.
+Custom starters & custom steps 
+Learn how to create and use custom starters & steps in flows .
+No matching Starters or Steps found. | 
+Related resources
+Create a flow from scratch 
+Create a flow with Gemini AI 
+Tips to use AI steps in flows 
+Use variables to pass data in your flow 
+Guide to Starters & Steps in Workspace Studio 
+Tips to create flows with conditional steps 
+Create and use custom starters & steps in flows 
+Take actions in third-party services with flows (Beta) 
+Watch and manage sheets with flows 
+Connect flows to other services with webhooks 
+Learn how skills work in Google Workspace & Google Workspace Studio 
+©2026 Google Privacy Policy 
+Terms of Service 
+Language Deutsch&lrm; español (Latinoamérica)&lrm; français&lrm; italiano&lrm; português (Brasil)&lrm; 日本語&lrm; 한국어&lrm; English&lrm; Enable Dark Mode
+Send feedback about our Help Center Send feedback on...
+This help content & information General Help Center experience 
+1370919264550641536
+Search Help Center

@@ -1,0 +1,374 @@
+# =============================================================================
+# SLRR alert distribution taxonomy & routing triggers (zero hardcoded emails).
+#
+# Live Google Group addresses are loaded at runtime from the `Brand safety groups`
+# worksheet of the `slrr-agentic-assistant` workbook (`1dVGeQjLOfEYoCm_iIOmXd5hLM3rOTY_71IF-J8Hl2AI`).
+# =============================================================================
+version: "2026-11"
+fallback_product: Brand
+
+products:
+  - name: Ads/Merchant Center
+    group_name: "Ads / Merchant Center"
+    aliases: [Ads, Google Ads, Merchant Center, Google Merchant Center]
+    pa: []
+  - name: AI Mode
+    group_name: AI Mode
+    aliases: [Search AI Mode]
+    pa: []
+  - name: AI Overviews
+    group_name: AI Overviews
+    aliases: [AI Overview, AIO, AI Overviews (Search), "AI Overviews (AIM, Web Guide)"]
+    pa: []
+  - name: Android (Android OS & Google TV)
+    group_name: Android
+    aliases: [Android, Android OS, Google TV, Android Auto, Wear OS]
+    pa: []
+  - name: Antigravity
+    group_name: Antigravity
+    aliases: [Google Antigravity]
+    pa: []
+  - name: Assistant/Home
+    group_name: "Assistant / Home"
+    aliases: [Google Assistant, Assistant, Google Home, Nest, Gemini for Home, Home/Assistant]
+    pa: []
+  - name: Brand
+    aliases: [Google, Alphabet, Google (Brand)]
+    pa: []
+    notes: "Brand-level alerts route to a Brand row on Brand safety groups when configured."
+  - name: Employees
+    deprecated: true
+    redirect_to: [Brand]
+    aliases: [Sundar]
+    pa: []
+    notes: "Legacy product name in Sonar/Burson; employee/executive alerts use Product: Brand with an Employees - exposure tag."
+  - name: Executives
+    group_name: Executives
+    aliases: [Executive]
+    pa: []
+  - name: Calendar
+    group_name: Calendar
+    aliases: [Google Calendar]
+    pa: []
+  - name: Central AI
+    deprecated: true
+    redirect_to: [Gemini Model, Gemini App, DeepMind, Devs Products, Brand]
+    pa: []
+    notes: Distro removed; reclassify alerts to Gemini Model, Gemini App, DeepMind, Devs Products or Brand.
+  - name: Chrome
+    group_name: Chrome
+    aliases: [Google Chrome, Chrome browser]
+    pa: []
+  - name: Chromebook
+    group_name: Chromebook
+    aliases: [ChromeOS, Chrome OS]
+    pa: []
+  - name: Googlebook
+    group_name: Googlebook
+    aliases: []
+    pa: []
+  - name: Chromecast
+    group_name: Chromecast
+    aliases: [Google Chromecast]
+    pa: []
+  - name: Cloud
+    group_name: Cloud
+    aliases: [Google Cloud, GCP, Google Cloud Next]
+    pa: []
+  - name: Cloud x Gemini (incl. Android Studio)
+    group_name: Cloud x Gemini
+    aliases: [Cloud x Gemini, Gemini for Google Cloud, Gemini Code Assist, Android Studio, Vertex AI, Gemini Enterprise]
+    pa: []
+  - name: Data Centers
+    group_name: Data Centers
+    aliases: [Google Data Centers, Data Center]
+    pa: []
+  - name: DeepMind
+    group_name: DeepMind
+    aliases: [Google DeepMind]
+    pa: []
+  - name: Devs Products
+    group_name: Devs Products
+    aliases: [Dev Products, Devs Products (include AI Studio & Antigravity), AI Studio, Google AI Studio, Gemini API, Firebase]
+    pa: []
+  - name: Doodles
+    group_name: Doodles
+    aliases: [Doodle, Google Doodle]
+    pa: []
+  - name: Easter Eggs and Delight Features
+    group_name: "Easter Eggs & Delights"
+    aliases: [Easter Egg, Easter Eggs, Delight, Delight Features, "Easter Eggs & Delights"]
+    pa: []
+  - name: Google for Education
+    group_name: Google for Education
+    aliases: [Education, Google Education, Google Classroom, Classroom]
+    pa: []
+  - name: Fitbit
+    group_name: Fitbit
+    aliases: [Google Fitbit]
+    pa: []
+  - name: Google One (G1)
+    group_name: "Google One (G1)"
+    aliases: [Google One, G1]
+    pa: []
+  - name: Gemini App
+    group_name: Gemini App
+    aliases: [Gemini, Gemini Live, Bard]
+    pa: []
+  - name: Gemini Model
+    group_name: Gemini Model
+    aliases: [Gemini model, Gemini 3, Gemini 4, Gemini Pro, Gemini Flash]
+    pa: []
+  - name: Gems
+    deprecated: true
+    redirect_to: [Gemini App]
+    pa: []
+    notes: Distro removed; Gems alerts go to Gemini App.
+  - name: Nano Banana
+    group_name: Nano Banana
+    aliases: [Nano Banana Pro, Gemini Image, GemPix/Nano Banana, GemPix/NanoBanana, GemPix, "Gemini 2.5 Flash Image (GemPix)"]
+    pa: []
+  - name: GFiber
+    group_name: GFiber
+    aliases: [Google Fiber]
+    pa: []
+  - name: Glass
+    group_name: Glass
+    aliases: [Google Glass]
+    pa: []
+  - name: Google Health
+    group_name: Google Health
+    aliases: [Health]
+    pa: []
+  - name: Google News
+    group_name: Google News
+    aliases: [News]
+    pa: []
+  - name: Google Research
+    group_name: Google Research
+    aliases: [Research]
+    pa: []
+  - name: Grow with Google
+    group_name: Grow with Google
+    aliases: [Grow w/ Google]
+    pa: []
+  - name: Intrinsic.ai
+    group_name: Intrinsic.ai
+    aliases: [Intrinsic]
+    pa: []
+  - name: Isomorphic Labs
+    group_name: Isomorphic Labs
+    aliases: [Isomorphic]
+    pa: []
+  - name: Jigsaw
+    group_name: Jigsaw
+    pa: []
+  - name: Kaggle
+    group_name: Kaggle
+    pa: []
+  - name: Labs (e.g. ImageFX)
+    group_name: Labs
+    aliases: [Labs, Google Labs, ImageFX, Whisk, Flow, MusicFX, VideoFX]
+    pa: []
+  - name: Lyria
+    group_name: Lyria
+    aliases: [Google Lyria]
+    pa: []
+  - name: Lens
+    group_name: Lens
+    aliases: [Google Lens, Circle to Search]
+    pa: []
+  - name: Maps/Geo
+    group_name: "Maps / Geo"
+    aliases: [Google Maps, Maps, Google Earth, Geo, "Maps / Geo"]
+    pa: []
+  - name: NotebookLM
+    group_name: Gemini Notebook
+    aliases: [Gemini Notebook]
+    pa: []
+  - name: Pay
+    group_name: Google Pay
+    aliases: [Google Pay, Google Wallet, Wallet, Pay/Wallet]
+    pa: []
+  - name: Photos
+    group_name: Photos
+    aliases: [Google Photos]
+    pa: []
+  - name: Pixel
+    group_name: Pixel
+    aliases: [Google Pixel, Pixel Watch, Pixel Buds]
+    pa: []
+  - name: Play Store
+    group_name: Play Store
+    aliases: [Google Play, Play]
+    pa: []
+  - name: Reviews
+    group_name: Reviews
+    aliases: [Google Reviews, Maps Reviews]
+    pa: []
+  - name: Search
+    group_name: Search
+    aliases: [Google Search, Search II]
+    pa: []
+  - name: Search Images
+    group_name: Search Images
+    aliases: [Google Images, Image Search]
+    pa: []
+  - name: Search Knowledge Panel
+    group_name: Search Knowledge Panel
+    aliases: [Knowledge Panel]
+    pa: []
+  - name: Shopping
+    group_name: Shopping
+    aliases: [Google Shopping]
+    pa: []
+  - name: Translate
+    group_name: Translate
+    aliases: [Google Translate]
+    pa: []
+  - name: Trends
+    group_name: Trends
+    aliases: [Google Trends, Year In Search]
+    pa: []
+  - name: Veo
+    group_name: Veo
+    aliases: [Veo 3, Flow (Veo)]
+    pa: []
+  - name: Waymo
+    group_name: Waymo
+    pa: []
+  - name: Waze
+    group_name: Waze
+    pa: []
+  - name: Wing
+    group_name: Wing
+    pa: []
+  - name: Workspace
+    group_name: Workspace
+    aliases: [Google Workspace, Gmail, Google Docs, Google Drive, Google Meet, Google Sheets, Google Chat]
+    pa: []
+  - name: Willow
+    group_name: Willow
+    aliases: [Google Quantum AI, Quantum AI]
+    pa: []
+  - name: YouTube
+    group_name: YouTube
+    aliases: [YT]
+    pa: []
+    notes: Follow the YouTube protocol (chat ping vs. email) before emailing.
+
+# Non-product-specific alert groups + emoji-legend groups.
+# Recipients are resolved dynamically at runtime from matching rows on `Brand safety groups`.
+groups:
+  - name: Civics
+    action_code: civics
+    auto_include: true
+    recipients: []
+    triggers:
+      sensitive_topics: [Politics, Child Safety, Hate Speech, Violence / Weapons, Criminal/Dangerous Activity, "Sexual Content & Gender",
+                         "Malicious & Unwanted Software", AI Personification, Medical Content / Medical Misinformation, Privacy,
+                         Circumvention / Prohibited Use]
+      sensitive_topics_urgent_only: true
+      sensitive_topics_any_engagement: [Medical Content / Medical Misinformation, Violence / Weapons]
+      exposure_tags: ["Brand - Litigation", "Product - Litigation"]
+  - name: gUP (social customer support)
+    action_code: gup
+    auto_include: true
+    recipients: []
+    triggers:
+      exposure_tags: ["Product - Product failures - general software/service issues", "Product - Product failures - general hardware issues", "Product - Account deletion/suspension", "Product - Privacy & security concerns"]
+    notes: Resolved from product gUP group when configured on Brand safety groups.
+  - name: LSS / Exec Security
+    action_code: lss
+    auto_include: true
+    recipients: []
+    triggers:
+      match: all
+      exposure_tags: ["Employees - Physical safety of Googlers or campuses"]
+      keywords: ["\\b(ceo|cfo|executives?|execs?|sundar|pichai|leadership)\\b"]
+  - name: People Comms
+    action_code: people_comms
+    auto_include: true
+    recipients: []
+    triggers:
+      exposure_tag_prefixes: ["Employees - "]
+  - name: Executive Comms
+    action_code: exec_comms
+    auto_include: true
+    recipients: []
+    triggers: {exposure_tags: ["Employees - Executive criticism"], sundar_mention: true}
+    notes: Resolved from the Executives row on Brand safety groups.
+  - name: Stop Leaks
+    action_code: stop_leaks
+    auto_include: true
+    recipients: []
+    triggers:
+      exposure_tags: ["Product - Public leak (e.g. features/models)", "Employees - Self-proclaimed whistleblowers"]
+      keywords: ["\\bleak(s|ed|ing)?\\b|whistle-?blow"]
+  - name: Influencer Team
+    action_code: influencer_team
+    auto_include: true
+    recipients: []
+    triggers: {exposure_tags: ["Content - Negative reaction to Google influencer post/activity"]}
+  - name: GCPA
+    action_code: gcpa
+    auto_include: true
+    is_placeholder: true
+    recipients: []
+    triggers:
+      exposure_tag_prefixes: ["Brand - ", "Product - ", "Employees - ", "Content - "]
+      exclude_products: [YouTube, YT]
+    notes: "Global Communications & Public Affairs distro (📰); resolved from Brand safety groups when present."
+  - name: GSOC
+    action_code: gsoc
+    auto_include: true
+    is_placeholder: true
+    recipients: []
+    triggers: {exposure_tag_prefixes: ["Employees - "]}
+    notes: "Google Security Operations (🦺); resolved from Brand safety groups when present."
+  - name: Regional Leads
+    action_code: regional_leads
+    auto_include: true
+    is_placeholder: false
+    recipients: []
+    triggers: {non_us_market: true}
+    notes: "Regional teams are alerted when their markets are mentioned (🌎); resolved from Brand safety groups when present."
+  - name: Channel Owner
+    action_code: channel_owner
+    auto_include: true
+    is_placeholder: false
+    recipients: []
+    triggers: {exposure_tags: ["Content - Negative reaction to owned social post", "Content - Negative reaction to paid Google ad"], owned_post: true}
+    notes: "Owners of Google-owned social channels (🌱); resolved dynamically when configured."
+
+regional_leads:
+  - {region: Latin America, aliases: [LATAM, Brazil, Mexico, Argentina, Colombia, Chile, Peru], recipients: []}
+  - {region: Asia Pacific, aliases: [APAC, Asia], recipients: []}
+  - {region: Japan, aliases: [JP, Tokyo], recipients: []}
+  - {region: Indonesia, aliases: [ID, Jakarta], recipients: []}
+  - {region: India, aliases: [IN, Mumbai, Delhi, Bengaluru], recipients: []}
+  - {region: Australia, aliases: [AU, ANZ, Sydney, Melbourne], recipients: []}
+  - {region: New Zealand, aliases: [NZ, Auckland, Wellington], recipients: []}
+  - {region: Canada, aliases: [CA, Toronto, Montreal, Vancouver], recipients: []}
+  - {region: EMEA, aliases: ["Europe, Middle East, and Africa", Europe], recipients: []}
+  - {region: Austria, aliases: [AT, Vienna], parent_region: EMEA, recipients: []}
+  - {region: Belgium, aliases: [BE, Brussels], parent_region: EMEA, recipients: []}
+  - {region: Czech Republic, aliases: [Czechia, CZ, Prague], parent_region: EMEA, recipients: []}
+  - {region: Denmark, aliases: [DK, Copenhagen], parent_region: EMEA, recipients: []}
+  - {region: France, aliases: [FR, Paris], parent_region: EMEA, recipients: []}
+  - {region: Germany, aliases: [DE, DACH, Berlin, Munich], parent_region: EMEA, recipients: []}
+  - {region: Hungary, aliases: [HU, Budapest], parent_region: EMEA, recipients: []}
+  - {region: Ireland, aliases: [IE, Dublin], parent_region: EMEA, recipients: []}
+  - {region: Israel, aliases: [IL, Tel Aviv], parent_region: EMEA, recipients: []}
+  - {region: Italy, aliases: [IT, Rome, Milan], parent_region: EMEA, recipients: []}
+  - {region: MENA, aliases: ["MENA (Egypt, Saudi, UAE)", Middle East, North Africa, Egypt, Saudi Arabia, Saudi, UAE, United Arab Emirates, Dubai, Abu Dhabi], parent_region: EMEA, recipients: []}
+  - {region: Netherlands, aliases: [NL, Amsterdam, Holland], parent_region: EMEA, recipients: []}
+  - {region: Poland, aliases: [PL, Warsaw], parent_region: EMEA, recipients: []}
+  - {region: Portugal, aliases: [PT, Lisbon], parent_region: EMEA, recipients: []}
+  - {region: Romania, aliases: [RO, Bucharest], parent_region: EMEA, recipients: []}
+  - {region: Spain, aliases: [ES, Madrid, Barcelona], parent_region: EMEA, recipients: []}
+  - {region: Sub-Saharan Africa, aliases: [SSA, "SSA (Ghana, Kenya, Nigeria, South Africa)", Africa, Ghana, Kenya, Nigeria, South Africa], parent_region: EMEA, recipients: []}
+  - {region: Sweden, aliases: [SE, Stockholm, Nordics, Norway, Finland], parent_region: EMEA, recipients: []}
+  - {region: Switzerland, aliases: [CH, Zurich, Geneva], parent_region: EMEA, recipients: []}
+  - {region: Turkey, aliases: [TR, Istanbul, Turkiye], parent_region: EMEA, recipients: []}
+  - {region: United Kingdom, aliases: [UK, Britain, England, London, GB], parent_region: EMEA, recipients: []}

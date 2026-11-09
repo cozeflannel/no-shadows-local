@@ -1,0 +1,4 @@
+# Agent Console (FastAPI + built React app) on Cloud Run.
+-r requirements-runtime.txt
+fastapi==0.142.2
+uvicorn==0.54.0

@@ -1,0 +1,566 @@
+# =============================================================================
+# SLRR Alert Automation Agent: production configuration
+# -----------------------------------------------------------------------------
+# Effective config = this file + config/distribution.yaml (+ config/channel_owners.json),
+# deep-merged with overrides saved in the Agent Console.
+# Source docs: SLRR Updated Collection Requirements (Mar 5 2026), Incident
+# Manager guide, T&S Intake Form guide, Sonar overview, SLRR Alert Assistant v3.3.0.
+# =============================================================================
+
+version: "2026-10-13.2"
+env: dev
+timezone: America/New_York
+case_id_prefix: TRG
+escalation_id_prefix: ESC
+
+agent:
+  display_name: Triage Agent
+  email: ""
+  message_prefix: "🤖"
+
+spaces:
+  - {key: burson, display_name: "[S-F] Burson Automated Alerts V3", space_id: spaces/AAQAaa_0I9g, url: "https://chat.google.com/room/AAQAaa_0I9g"}
+  - {key: clean, display_name: "SLRR Triaged Alerts", space_id: spaces/AAQAaLn375E, url: "https://chat.google.com/room/AAQAaLn375E"}
+  - {key: shadow, display_name: "SLRR Triage Agent (shadow)", space_id: spaces/AAQAhVQ3mLo, url: "https://chat.google.com/room/AAQAhVQ3mLo"}
+  - {key: youtube, display_name: "[S-F] YouTube Social", space_id: spaces/AAAAmUvgYGU, url: "https://chat.google.com/room/AAAAmUvgYGU"}
+  - {key: doodle, display_name: "Doodle Team"}
+  - {key: team, display_name: "24/7 SL (SLPO/SLRR) Team", space_id: spaces/AAAAEoKjb2g, url: "https://chat.google.com/app/chat/AAAAEoKjb2g"}
+  - {key: crisis, display_name: "\"this is fine\" crisis chat"}
+
+analysts: []
+
+shifts:   # 4-shift follow-the-sun coverage
+  - {name: APAC, start: "18:00", end: "00:00", tz: America/New_York}
+  - {name: EMEA, start: "00:00", end: "06:00", tz: America/New_York}
+  - {name: AMER early, start: "06:00", end: "12:00", tz: America/New_York}
+  - {name: AMER late, start: "12:00", end: "18:00", tz: America/New_York}
+
+models:   # Gemini 2.5 retires 2026-10-20; Gemini 3.x is served from the global endpoint only (404 in us-central1)
+  triage: gemini-3.8-flash
+  drafting: gemini-3.8-flash
+  converse: gemini-3.8-flash
+  location: global
+  temperature_triage: 0.0
+  temperature_drafting: 0.4
+
+thresholds:
+  needs_review_below: 0.70
+  llm_block_min_confidence: 0.80
+  llm_checks_enabled: true
+  url_check_enabled: false
+  url_check_timeout_s: 4.0
+  max_correction_wait_min: 240
+  sla_warn_fraction: 0.6
+  review_reminder_min: 10
+
+corrections:
+  mode: auto                     # auto-apply high-confidence corrections; IM can revert (👎)
+  auto_apply_min_confidence: 0.85
+  never_auto_correct: [post_url]
+
+burson_feedback:                 # legacy Studio path only (V1 uses burson_qa below)
+  mode: digest                   # corrections go to Burson as a daily digest, not real-time requests
+  digest_hour_local: 9
+  recipients: []
+  post_digest_to_burson_space: false
+  silent_in_burson_space: true   # Stealth mode: Burson receives zero messages in [S-F] Burson Automated Alerts V3
+
+# V1 Burson QA bot (Apps Script poller in apps-script-chat-bot/). After editing, regenerate its data file:
+#   .venv/bin/python -m scripts.build_apps_script
+# Bot ON/OFF and the Burson + analyst spaces are set on the Control tab of the bot's Google Sheet, not here.
+burson_qa:
+  react: true                    # legend emojis on Burson's posts: 👍 once reviewed · ⬇️ "addressed on updated post below"
+  mirror_analyst_reactions: true # legend emojis analysts add on the forwarded copy are added to Burson's post too
+  never_mirror: [agent_wrong]    # legend codes Burson never sees
+  corrections_footer: true       # analysts see one line listing what the bot corrected
+  dry_run: false                 # true = post nothing in the Burson space ("would reply" notes go under the forward)
+  llm_min_confidence: 0.9        # Gemini suggestions below this are "double-check" notes for analysts, not fix requests
+  llm_fix_severities: [blocking, warning]  # Gemini checks that can become fix requests: tag, product, topics + KOF, issue name, summary
+  check_issue_status: true       # Burson's "New" -> "Ongoing Issue" when the same issue was alerted in the last 14 days
+  pending_fix_hours: 48          # an alert for the same post within 48 h of a fix request is Burson's fix
+  start_lookback_minutes: 15
+  overlap_minutes: 5
+  max_messages_per_run: 100
+  max_attempts: 3
+  silent_fields: [alert_name, ts, code]   # corrected for analysts, never requested from Burson
+  web_grounding: enterprise      # Gemini searches the web when reviewing alerts / answering analysts: enterprise (Vertex AI Web Grounding for Enterprise) | google | off
+  follow_ups: true               # same post alerted again, or the author following up on an alert that went out: ❌ unless it adds something (then an update on that thread)
+  follow_up_min_confidence: 0.8  # Gemini's "adds nothing new" must be at least this sure
+  post_lookup: true              # look up the post itself (X, Bluesky, TikTok, Instagram, YouTube): its words, thread, quote, video and photos for Gemini
+  media_bucket: brand-social-central-data-slrr-automations  # videos over 15 MB (up to 50 MB) are copied here for Gemini, then deleted; "" = never
+  kof_no_alert: true             # Gemini may ❌ a KOF-only alert when it's 90%+ sure and a no-alert check holds and is backed up (an earlier alert that went out, or the leads' guidance)
+  kof_no_alert_judgment: false   # true = Gemini's own "mistake" / "not actionable" reading alone may ❌ a KOF alert too (off: it disagreed with the IMs on 8 of 15 in May-June)
+  guidance_from_email: true      # Gemini also reads the SLRR leads' recent emails about alerts (plus the sheet's Guidance tab)
+  guidance_email_days: 7
+  speed_tab: true                # the Speed tab: how fast the bot sent each Social Alert vs the IMs, matched on the post's link (every 15 min)
+  speed_days: 7                  # the summary covers the alerts of the last N days
+  speed_im_table: brand-social-central-data.slrr_feedback.alert_sends   # the IMs' Social Alert drafts (SLRR Assistant)
+  speed_log_table: brand-social-central-data.slrr_alerts.slrr_alerts    # the IMs' actioned alerts (backs up their call)
+  speed_im_sender: ""                                                   # resolved dynamically from Brand safety groups when configured
+  speed_gmail: true              # look up when the IMs' emails went out (in the mailbox the bot runs as)
+  # What the Resources tab of the bot's sheet starts with. After that the tab is what the bot uses: edit it there.
+  # The bot links these when Burson asks about the alert requirements, so only list documents Burson can open.
+  resources:
+    - name: SLRR Collection Requirements
+      url: "https://docs.google.com/document/d/1jHM7bVBNPw0hMN7bxVd4IivBjhVfTmNF33U4WknZN5s/edit"
+      covers: "The alert requirements: every alert field and its format, exposure tags and their priority (P0/P1/P2), Sensitive Topics, product names, engagement levels, KOF, issue status, social network"
+    - name: KOF lists
+      url: "https://docs.google.com/spreadsheets/d/1b54g1c6R8Y2j1xnVQavmLJQZn04qgPfgyeTzBdFt_1k/edit"
+      covers: "Who counts as a KOF (Key Opinion Former) and which KOF list they're on"
+
+sonar_lookup:   # ground truth from Sonar data in bsip-s-bsip-gg-26-2cf3.google_bg (us-central1) + brand-social-central-data (US)
+  enabled: true
+  project: brand-social-central-data
+  table: bsip-s-bsip-gg-26-2cf3.google_bg.sonar_post_aggregates_7d_materialized
+  alert_log_table: bsip-s-bsip-gg-26-2cf3.google_bg.collection_alerts
+  slrr_table: brand-social-central-data.slrr_alerts.slrr_alerts
+  location: us-central1
+  lookback_days: 7
+
+inhouse:        # Path B: in-house alerts from brand-social-central-data.slrr_alerts / bsip-s-bsip-gg-26-2cf3.google_bg
+  enabled: true
+  project: brand-social-central-data
+  outbox_view: brand-social-central-data.slrr_alerts.slrr_source_mirror
+  alert_log_table: brand-social-central-data.slrr_alerts.slrr_alerts
+  sonar_table: bsip-s-bsip-gg-26-2cf3.google_bg.sonar_post_aggregates_7d_materialized
+  location: US
+  sonar_location: us-central1
+  mark_delivered: false
+  parity_mode: true
+  max_rows_per_run: 200
+
+# Posts that don't come from a Studio run (jobs, Console, email follow-ups) are queued and
+# delivered by the Studio "Outbox" flow. Studio's schedule starter only repeats daily/weekly,
+# so the agent rings a doorbell to start that flow in real time.
+outbox:
+  doorbell: none
+  sheet_id: null
+  sheet_tab: outbox
+  email_subject: "[triage-agent outbox]"
+  clean_items_per_drain: 1
+  max_items_per_target: 10
+
+handover:
+  enabled: true
+  post_to_team: true
+  append_to_doc: true
+  minutes_after_shift_end: 5
+
+metrics:
+  burson_retrigger_minutes: 30   # "it takes our agency partner 30 minutes to alert viral KOFs (median)"
+  im_minutes_per_alert: 10
+
+# -----------------------------------------------------------------------------
+# Incoming alert template: [S-F] Burson Automated Alerts V3 (Confirmed from
+# production Burson Zapier messages + SLRR Alert Assistant v3.3.0)
+# -----------------------------------------------------------------------------
+alert_template:
+  id: burson_sonar_alert_v3
+  name: Burson Automated Alerts V3
+  is_placeholder: false
+  separator: ":"
+  detection:
+    sender_names: [Zapier, Burson, Sonar]
+    sender_emails: []
+    text_regex: "(?im)^\\s*(?:[\\*\\[]*(?:alert name|name|exposure tag)[\\*\\]]*\\s*:|(?:[⬛🟨🟧🟥⭐]\\s*)?SOCIAL ALERT)"
+    min_labels_matched: 4
+  flag_patterns:
+    meets_p0: "(?i)this alert meets p0 criteria"
+  record_key_fields: [post_url]
+  clean_post_fields:
+    [alert_name, engagement_level, total_engagement, product, other_products, social_network,
+     exposure_tag, risk_tags, kof, ts, author, post_date, location, video_timestamp, post_url, code]
+  fields:
+    - {name: alert_name, labels: [Alert Name, Name, Alert, Title], type: string, required: true, min_length: 5, correctable: true,
+       description: "Name of alert including product and whether it's a new or known issue, e.g. [Name]: <Issue> / Ongoing Issue"}
+    - {name: issue_name, labels: [Issue Name, Issue], type: string, correctable: true,
+       description: "Descriptive, neutral issue name."}
+    - {name: issue_status, labels: [Issue Status, Status, Novelty], type: enum,
+       allowed: [NEW, Ongoing Issue, Recently Reported, "New / not previously reported over the past 14 days"], correctable: true,
+       description: "Alerted within 14 days = Ongoing Issue; otherwise NEW / New / not previously reported over the past 14 days."}
+    - {name: engagement_level, labels: [Engagement Level, Engagement], type: enum, allowed: [VERY LOW, LOW, MODERATE, HIGH, VIRAL KOF], correctable: true, numeric_fallback: total_engagement}
+    - {name: total_engagement, labels: [Total Engagement, Engagements, Engagement Count], type: integer, min: 0, correctable: true,
+       description: likes + comments + shares}
+    - {name: likes, labels: [Likes], type: integer, min: 0}
+    - {name: comments, labels: [Comments, Replies], type: integer, min: 0}
+    - {name: shares, labels: [Shares, Reposts, Retweets], type: integer, min: 0}
+    - {name: views, labels: [Views], type: integer, min: 0}
+    - {name: product, labels: [Product, Google Product], type: string, required: true, reference_list: products, correctable: true,
+       description: "Google product (distro name), e.g. Gemini App, AI Overviews, Pixel.",
+       fix_hint: Use the product names from the distribution list (Gems -> Gemini App; AI Studio/Antigravity -> Devs Products).}
+    - {name: other_products, labels: [Other Products, Other Google Products, "Product #2", "Product #3", Product 2, Additional Products], type: list, correctable: true}
+    - {name: social_network, labels: [Social Network, Platform, Network], type: enum, required: true, correctable: true,
+       allowed: [X, Reddit, Bluesky, Threads, TikTok, Instagram, Facebook, YouTube, LinkedIn, Truth Social, Gab, Rumble, Podcast, News, Other]}
+    - {name: exposure_tag, labels: [Exposure Tag, Tag], type: string, required: true, reference_list: exposure_tags, correctable: true,
+       description: One P0/P1/P2 brand-safety exposure tag (single tag per alert).}
+    - {name: priority, labels: [Priority], type: enum, allowed: [P0, P1, P2], correctable: true}
+    - {name: risk_tags, labels: [Risk Tag, Risk Tags, Sensitive Topic, Sensitive Topics, Sensitivity Topics], type: list, reference_list: sensitive_topics, correctable: true}
+    - {name: kof, labels: [KOF, Key Opinion Former, P0 KOF], type: boolean, correctable: true}
+    - {name: kof_lists, labels: [KOF Lists, KOF List, Influencer Lists], type: list}
+    - {name: ts, labels: ["T&S", Trust & Safety, "T&S Recommended", "T&S Submitted"], type: boolean, correctable: true}
+    - {name: author, labels: [Author, Handle, Account, Posted By], type: string, required: true}
+    - {name: followers, labels: [Followers, Follower Count], type: integer, min: 0}
+    - {name: post_date, labels: [Post Date, Published, Post Time, Posted, "Time/Date Post Went Live", "Time/Date Post Went Live (EST)", "Time/Date Post Went Live (EDT)"], type: datetime, not_in_future: true, max_age_days: 30}
+    - {name: post_url, labels: [View Post, Post URL, URL, Link, Post Link], type: url, required: true,
+       fix_hint: Paste the direct post permalink.}
+    - {name: post_content, labels: [Post Content, Post, Content, Post Text, Text], type: text}
+    - {name: summary, labels: [Summary, Sonar Summary, AI Summary], type: text, correctable: true}
+    - {name: location, labels: [Location, Market, Country, Region], type: string}
+    - {name: video_timestamp, labels: [Timestamp, Video Timestamp], type: string, correctable: true}
+    - {name: code, labels: [Code], type: string}
+  cross_field_rules:
+    - {id: engagement_sum, kind: sum_equals, target: total_engagement, fields: [likes, comments, shares], tolerance: 0, severity: blocking,
+       description: Total engagement must equal likes + comments + shares., fix: Recalculate Total Engagement.}
+    - {id: url_matches_network, kind: url_domain_matches, url_field: post_url, key_field: social_network, domain_map: platform_domains, severity: blocking,
+       description: The post URL must be on the stated network's domain., fix: Correct the Social Network (or the link).}
+    - {id: video_needs_timestamp, kind: require_if, when: {social_network: YouTube}, require: [video_timestamp], severity: warning,
+       description: Long videos need a timestamp for the Google mention., fix: Add the timestamp of the Google mention.}
+  llm_checks:
+    - {id: exposure_tag_fit, correctable_field: exposure_tag, severity: blocking, fields: [exposure_tag, post_content, summary, alert_name],
+       instruction: "The Exposure Tag must be the single best tag from the taxonomy (P0 > P1 > P2 when several apply; use context clues for product failures / Google mistakes). Propose the correct tag if not."}
+    - {id: product_fit, correctable_field: product, severity: blocking, fields: [product, post_content, summary, alert_name],
+       instruction: "The Product must be the Google product the post is about, using distribution names (Gems -> Gemini App; AI Studio / Antigravity -> Devs Products; Central AI -> Gemini Model, Gemini App, DeepMind, Devs Products or Brand)."}
+    - {id: sensitive_topics_fit, correctable_field: risk_tags, severity: blocking, fields: [risk_tags, post_content, summary, location],
+       instruction: "Risk Tags must list the Sensitive Topics that apply (Politics only for US/unknown location or English election content)."}
+    - {id: kof_fit, correctable_field: kof, severity: warning, fields: [kof, author, followers, kof_lists],
+       instruction: "KOF comes from Burson's KOF and influencer lists (the alert names them, e.g. 'Viral KOFs (KOFs)' or 'CAM Tech/AI (INFs)'); a listed author is a KOF whatever the engagement or follower count. Mark it wrong only when the alert says No for an author you know is on a P0 KOF list."}
+    - {id: issue_name_neutral, correctable_field: issue_name, severity: warning, fields: [issue_name, alert_name, summary],
+       instruction: "The issue name must describe the issue accurately, descriptively and neutrally."}
+    - {id: summary_grammar, correctable_field: summary, severity: warning, fields: [summary, post_content],
+       instruction: "The summary must be accurate to the post and free of major grammatical errors."}
+
+reference_lists:
+  platform_domains:
+    X: [x.com, twitter.com]
+    Reddit: [reddit.com, redd.it]
+    Bluesky: [bsky.app]
+    Threads: [threads.net, threads.com]
+    TikTok: [tiktok.com]
+    Instagram: [instagram.com]
+    Facebook: [facebook.com, fb.com, fb.watch]
+    YouTube: [youtube.com, youtu.be]
+    LinkedIn: [linkedin.com]
+    Truth Social: [truthsocial.com]
+    Gab: [gab.com]
+    Rumble: [rumble.com]
+  kof_lists:
+    p0_kof_sheet: "https://docs.google.com/spreadsheets/d/1b54g1c6R8Y2j1xnVQavmLJQZn04qgPfgyeTzBdFt_1k/edit#gid=169673661"
+  markets_us: [US, USA, United States]
+
+# -----------------------------------------------------------------------------
+# SLRR Collection Requirements (March 5, 2026)
+# -----------------------------------------------------------------------------
+collection:
+  version: "2026-03-05"
+  language: en
+  high_engagement_threshold: 2000
+  novelty_days: 14
+  novelty_min_jaccard: 0.6
+  urgent_max_detect_age_hours: 24
+  ongoing_urgent_requires_kof: true      # Ongoing URGENT alerts are suppressed unless the author is a KOF
+  remap_suspension_bias: true            # Account deletion/suspension + censorship claim -> Product - Perceived bias (P0)
+  politics_us_locations: [US, USA, United States]
+  engagement_levels:
+    - {name: VERY LOW, emoji: "⬛", min: 0}
+    - {name: LOW, emoji: "🟨", min: 200}
+    - {name: MODERATE, emoji: "🟧", min: 500}
+    - {name: HIGH, emoji: "🟥", min: 2000}
+  platform_tiers:
+    - {name: strong, platforms: [X, Reddit, Bluesky, Threads], sla_minutes: 15}
+    - {name: partial, platforms: [TikTok, Instagram, Facebook, YouTube], sla_minutes: 1440}
+    - {name: limited, platforms: [LinkedIn, Truth Social], sla_minutes: null}
+  # Exclusions apply unless a risk signal is present (a Sensitive Topic, or Sonar VERY_HIGH relevance).
+  # Logic per id mirrors brand_safety_alerting/sql/02 (step 4); regexes live in `patterns`.
+  exclusions:
+    - {id: google_as_verb, description: "Irrelevant Google conversation (Google as a verb: \"go Google him\"); not P0; only Brand/Search products"}
+    - {id: drive_link, description: Links to Google Drive documents unless keywords relevant to exposure/risk tags}
+    - {id: spam, description: "Spam content (giveaways, promo codes, 4+ links, 12+ hashtags) unless keywords relevant to exposure/risk tags"}
+    - {id: ai_comparison, description: "Comparisons to other AI products (even from a KOF) unless they raise a specific issue with a Google product", unless_risk_keywords: false}
+    - {id: benchmark, description: "Another product/model doing better at a benchmark or leaderboard is not a specific issue", unless_risk_keywords: false}
+  redundant_pairs:   # risk tags that restate the exposure tag do NOT make a post Sensitive
+    - {exposure_tag: "Brand - Privacy & security concerns", risk_tag: Privacy}
+    - {exposure_tag: "Brand - Privacy & security concerns", risk_tag: "Malicious & Unwanted Software"}
+    - {exposure_tag: "Product - Privacy & security concerns", risk_tag: Privacy}
+    - {exposure_tag: "Product - Privacy & security concerns", risk_tag: "Malicious & Unwanted Software"}
+    - {exposure_tag: "Product - Scams involving Google products", risk_tag: Criminal/Dangerous Activity}
+    - {exposure_tag: "Product - Scams involving Google products", risk_tag: "Malicious & Unwanted Software"}
+    - {exposure_tag: "Product - Scams involving Google products", risk_tag: Privacy}
+    - {exposure_tag: "Product - TOS Violation", risk_tag: Circumvention / Prohibited Use}
+    - {exposure_tag: "Product - Policy Update", risk_tag: Circumvention / Prohibited Use}
+    - {exposure_tag: "Product - SEO/Publisher Concerns", risk_tag: Circumvention / Prohibited Use}
+  briefed_topics: []   # e.g. {label: Pixel 11 launch, product_regex: pixel, text_regex: "pixel 11", ends_at: "2026-11-15"}
+  hallucination_tags:      # Gemini + these => T&S recommended
+    ["Product - Dangerous results (e.g. medical/legal)", "Product - Offensive or explicit results",
+     "Product - Factual inaccuracies (not dangerous/offensive)", "Product - Unexpected Responses"]
+  # Other AI / Search products where IMs file T&S for those tags (SLRR log: 50-76% of factual-inaccuracy and
+  # offensive-result alerts on these products got ✍️) => "AI hallucination" T&S recommendation.
+  hallucination_products: [AI Overviews, AI Mode, Search, Search Images, Search Knowledge Panel, Gemini Model, Nano Banana,
+                           Veo, Translate, "Labs (e.g. ImageFX)", NotebookLM, Lens]
+  product_mistake_tags:    # leadership escalation protocol context (plus all "Content - " tags)
+    ["Product - Dangerous results (e.g. medical/legal)", "Product - Offensive or explicit results",
+     "Product - Factual inaccuracies (not dangerous/offensive)", "Product - Unexpected Responses",
+     "Product - Product failures - general software/service issues", "Product - Product failures - physical safety issues",
+     "Product - Product failures - general hardware issues"]
+  bias_tags: ["Brand - Perceived bias - brand", "Product - Perceived bias"]
+  generic_criticism_tags: ["Brand - Other/general criticism", "Product - Other/general criticism"]
+  long_video_platforms: [YouTube, Podcast, Rumble, BitChute, Twitch]
+  issue_stopwords:
+    [google, alleged, allegation, claim, claimed, perception, perceived, narrative, accusation, accused, discussion,
+     example, general, criticism, critique, criticized, criticised, concern, issue, report, complaint, debate,
+     controversy, backlash, reaction, query, response, post, sentiment, mention, commentary, theory, rumor,
+     frustration, confusion, outrage, negative, experience, question, speculation, warning, user, new, ongoing,
+     vs, a, an, the, of, in, "on", for, to, with, and, or, at, by, from, about, over, into, as, is, it, its, after,
+     amid, against, via]
+  patterns:   # Python regexes, matched case-insensitively against lower-cased text
+    google_verb: "\\bgoogle (it|him|her|them|that|this|me|yourself)\\b|\\b(just|go|pls|please|let me|you can|try) google\\b|\\bgoogle is (free|your friend)\\b"
+    drive_link: "\\b(drive|docs)\\.google\\.com/"
+    spam: "\\b(giveaways?|airdrops?|promo codes?|use (my )?code|coupons?|link in (my )?bio|dm me|follow back|sub4sub|onlyfans|casino|betting tips|forex|crypto signals|free (robux|v-?bucks|gift ?cards?)|make money online)\\b|whatsapp\\s*(me|\\+?\\d)"
+    comparison: "\\b(vs|versus|compared (to|with)|comparison|better than|worse than|beats?|outperform(s|ed|ing)?|switch(ed|ing)? (to|from)|rivals?)\\b"
+    ai_context: "\\b(ai|gemini|chatgpt|openai|gpt|claude|anthropic|grok|llama|copilot|perplexity|deepseek|mistral|llms?|chatbots?|models?)\\b"
+    benchmark: "\\b(benchmarks?|leaderboards?|lmarena|lmsys|mmlu|gpqa|swe-?bench|humaneval|arc-agi|aime)\\b"
+    censorship: "censor|shadow ?-?ban|silenc|deplatform|\\bbias|politically|viewpoint"
+    election: "\\b(elections?|electoral|ballots?|midterms?|voters?|voting|polling (station|place)s?)\\b"
+    youtube: "you ?tube"
+    google_products: "\\b(gemini|android|pixel|chrome|search|maps|gmail|workspace|play store|waymo|deepmind|fitbit|nest|ai overviews?|ai mode|sundar|pichai)\\b"
+    doodle: "\\bdoodles?\\b"
+    sundar: "\\bsundar\\b|\\bpichai\\b"
+    exec: "\\b(ceo|cfo|executives?|execs?|sundar|pichai|leadership)\\b"
+    leak: "\\bleak(s|ed|ing)?\\b|whistle-?blow"
+  do_not_escalate:
+    - "Employees - Executive criticism: do not escalate general criticism unless high-engaging or shared by a KOF."
+    - "Brand - Other/general criticism: comparisons to other AI products or another model doing better on a benchmark are not a specific Google product issue."
+    - "Product - Account deletion/suspension is a gUP issue unless it claims censorship/bias (then use Product - Perceived bias)."
+    - "Product failures (general software/service, general hardware) are gUP customer-support issues; still alert AI models becoming 'personified'."
+    - "Because one alert carries one exposure tag, use context clues to decide whether an alert is a product failure / Google mistake."
+    - "Content - Negative reaction to owned social post: only escalate when the Google-owned social post has reached the threshold of 30+ comments with >=30% negativity (and include the comment count and negativity percentage in the summary)."
+    - "Brand vs. Product exposure tags: when the Product is a specific Google product (not Brand), use the Product - exposure tag equivalent (e.g. Product - Perceived bias, Product - Privacy & security concerns, Product - Conspiratorial theories about Google products, Product - Other/general criticism) rather than a Brand - tag, except for Brand - Litigation."
+    - "Do not escalate (warranted=false): posts that are positive, neutral headlines, sarcasm/jokes with no real issue, unverifiable claims with no proof below HIGH engagement, retweets/reposts without new context when the original was already alerted, or AI Overviews/Search posts where the screenshot does not show an AI Overview or cannot be replicated and is not viral."
+    - "Issue names must be specific to the post's actual negative claim and avoid redundantly including 'Google' when the product is already specified."
+  sensitive_topics:
+    - {name: AI Personification, description: "AI exhibiting unexpected 'sentient-like' behavior: emotions, manipulative statements, conversations users find unsettling or creepy."}
+    - {name: Child Safety, description: "Content that sexualizes, endangers or exploits children; GenAI producing harmful content for a suspected minor."}
+    - {name: Circumvention / Prohibited Use, description: "Bypassing Google policies or account restrictions: jailbreaking, obfuscated wording, evasion of enforcement."}
+    - {name: Criminal/Dangerous Activity, description: "Illegal goods/drugs/weapons accessories, instructions for cyber or physical crimes, protected-animal trade."}
+    - {name: Hate Speech, aliases: [Race/Ethnicity, Religion, LGBTQ+ Inclusion, Women empowerment], description: "Content promoting violence or hatred based on protected characteristics; slurs, hate symbols, negative generalizations."}
+    - {name: Malicious & Unwanted Software, description: "Malware, viruses, phishing for sensitive data, unwanted installs."}
+    - {name: Medical Content / Medical Misinformation, aliases: [Misinformation], description: "False or misleading health, medication, mental-health or public-health information."}
+    - {name: Launches, aliases: [Launch, I/O, I/O 2026], description: "Briefed launches / initiatives (I/O, litigation…) treated as Sensitive so non-P0 issues escalate as Urgent."}
+    - {name: Politics, aliases: [World Politics], description: "Suggestions of political bias; any English mention of elections; US political parties or elected representatives."}
+    - {name: Privacy, aliases: [Public leak of internal documents], description: "Improper exposure of, or access to, private information of individuals or organizations."}
+    - {name: Sexual Content & Gender, description: "Sexual content shared with or without consent; gender norms or misgendering."}
+    - {name: Violence / Weapons, aliases: [Violence & Gore, Violence and Gore, Physical Safety of Employees], description: "Terrorist/violent-group content, graphic violence, firearms/explosives and other dangerous goods."}
+  exposure_tags:
+    # ---- P0: no threshold for recently reported issues / sensitive topics; 2K+/KOF for ongoing; all Content issues regardless of novelty
+    - {name: "Brand - Perceived bias - brand", priority: P0, category: Brand, description: "Claims Google shows systemic bias towards/against ideologies or politics, users, corporate partnerships, political donations, or overall mission."}
+    - {name: "Content - Negative reaction to Google influencer post/activity", priority: P0, category: Content, always_alert: true, description: "Criticism of content created by an influencer/creator in a paid partnership or sponsorship with Google."}
+    - {name: "Content - Negative reaction to Google site content", priority: P0, category: Content, always_alert: true, description: "Criticism of content on Google's official websites (blogs, marketing pages, help centers…), incl. Doodles/Delights."}
+    - {name: "Content - Negative reaction to owned social post", priority: P0, category: Content, always_alert: true, aliases: ["Content - Negative discussion of owned content", "Content - Threshold met for negativity on owned post"], description: "Criticism or backlash directed at a specific post by an official Google social account."}
+    - {name: "Content - Negative reaction to paid Google ad", priority: P0, category: Content, always_alert: true, description: "Criticism of Google advertisements/sponsorships."}
+    - {name: "Employees - Physical safety of Googlers or campuses", priority: P0, category: Employees, description: "Direct threats of physical harm to Google employees or campuses, incl. allegations of harassment/abuse towards employees."}
+    - {name: "Employees - Self-proclaimed whistleblowers", priority: P0, category: Employees, description: "Current/former employees leaking internal information or exposing alleged wrongdoing."}
+    - {name: "Employees - Misconduct allegations", priority: P0, category: Employees, description: "Allegations that a Google employee committed misconduct (sexual misconduct, harassment, negatively impacting users)."}
+    - {name: "Product - Public leak (e.g. features/models)", priority: P0, category: Product, description: "Posts alleging a public leak of a new Google product or product update."}
+    - {name: "Product - Dangerous results (e.g. medical/legal)", priority: P0, category: Product, aliases: ["Product - Dangerous/offensive results"], description: "Potentially harmful product output: child abuse, circumvention, criminal activities, dangerous goods/use, harmful content, regulated or illegal, medical misinformation, malicious software, prohibited use, personal information, privacy, security, self harm, violence and gore."}
+    - {name: "Product - Offensive or explicit results", priority: P0, category: Product, description: "Product output involving harassment, hate, minors (not child abuse), misinformation (not medical), sexually explicit content, sexual & romantic goods/services."}
+    - {name: "Product - Perceived bias", priority: P0, category: Product, description: "Claims a product's results/behavior show political, racial, gender or other bias (neutrality, fairness, persuasion)."}
+    # ---- P1: no threshold for sensitive topics when recently reported; 2K+/KOF otherwise
+    - {name: "Brand - Consumer boycotts & protests", priority: P1, category: Brand, description: "Organized consumer action (boycotts, protests) against Google as a company."}
+    - {name: "Brand - Litigation", priority: P1, category: Brand, aliases: ["Product - Litigation", "[ARCH] Product - Litigation"], description: "Lawsuits or regulatory investigations against Google."}
+    - {name: "Brand - Privacy & security concerns", priority: P1, category: Brand, description: "Concerns about Google's overall data collection or corporate security practices (not product-specific)."}
+    - {name: "Employees - Employee boycotts & protests", priority: P1, category: Employees, description: "Protests, walkouts or collective action by current Google employees."}
+    - {name: "Employees - Executive criticism", priority: P1, category: Employees, aliases: ["Employees - Criticism of Exec Statements"], description: "Criticism or allegations directed at a named Google executive.", notes: "Escalate general criticism only if high-engaging or from a KOF."}
+    - {name: "Employees - Google culture concerns", priority: P1, category: Employees, description: "Criticism of Google's work environment, culture, diversity or employee treatment."}
+    - {name: "Employees - Hate speech toward or criticism of Googlers", priority: P1, category: Employees, description: "Threats, harassment or severe criticism targeting individual non-executive Googlers."}
+    - {name: "Product - Accessibility", priority: P1, category: Product, description: "Criticism of a product's usability for people with disabilities."}
+    - {name: "Product - Factual inaccuracies (not dangerous/offensive)", priority: P1, category: Product, aliases: ["Product - Factual inaccuracies (not dangerous/offensive) 2"], description: "Factually incorrect but not harmful output (wrong date, spelling, math, facts about a known person or plot)."}
+    - {name: "Product - Policy Update", priority: P1, category: Product, description: "Criticism of a change to a product's terms of service or community guidelines."}
+    - {name: "Product - Privacy & security concerns", priority: P1, category: Product, description: "A specific product vulnerability, data leak, 'listening' concerns, or a feature that compromises security."}
+    - {name: "Product - Product failures - general software/service issues", priority: P1, category: Product, customer_support: true, description: "Malfunctions that are customer-support issues affecting individuals (handled by gUP).", notes: "Continue to alert AI models becoming personified."}
+    - {name: "Product - Product failures - physical safety issues", priority: P1, category: Product, description: "Hardware overheating, smoking, or otherwise physically dangerous."}
+    - {name: "Product - Review Abuse", priority: P1, category: Product, description: "Fake reviews, review bombing or rating manipulation (Maps, Play)."}
+    - {name: "Product - Scams involving Google products", priority: P1, category: Product, description: "Scams that use a Google product to work (fraudulent Maps listings, Gmail phishing)."}
+    - {name: "Product - TOS Violation", priority: P1, category: Product, description: "Users reporting content or users for violating a product's Terms of Service."}
+    - {name: "Product - Unexpected Responses", priority: P1, category: Product, description: "Bizarre, nonsensical or strange output that isn't inaccurate or offensive."}
+    # ---- P2: no threshold for sensitive topics when recently reported; otherwise only 2K+ or KOF
+    - {name: "Brand - Conspiratorial theories about Google", priority: P2, category: Brand, description: "Unfounded theories about Google's corporate motives or secret plans."}
+    - {name: "Brand - Other/general criticism", priority: P2, category: Brand, aliases: ["Brand - Other brand issues", "Brand - General criticism of Google brand", "Brand – General criticism of Google brand"], description: "General criticism of Google's corporate practices not covered elsewhere.", notes: "Do not escalate comparisons to other AI products unless a specific Google product issue."}
+    - {name: "Brand - Social & Economic Impact", priority: P2, category: Brand, aliases: ["Brand - Community Investment"], description: "Google's broad influence on society, the economy or communities (not sustainability)."}
+    - {name: "Brand - Sustainability concerns", priority: P2, category: Brand, description: "Criticism of Google's environmental impact."}
+    - {name: "Brand - Value & Earnings", priority: P2, category: Brand, aliases: ["Brand - Value Earnings & Finance"], description: "Concerns about stock performance, valuation, revenue or financial metrics."}
+    - {name: "Employees - Other employee issues", priority: P2, category: Employees, description: "Negative discussion of a former employee's actions/statements related to their time at Google."}
+    - {name: "Employees - Workforce reductions", priority: P2, category: Employees, description: "Other employee issues such as compensation disputes or individual grievances."}
+    - {name: "Employees - General criticism of former Google employee", priority: P2, category: Employees, description: "Criticism of a former Googler/exec noting their previous Google association."}
+    - {name: "Product - Account deletion/suspension", priority: P2, category: Product, customer_support: true, description: "User reports a Google account being suspended, banned or deleted.", notes: "Claims of censorship/bias -> Product - Perceived bias."}
+    - {name: "Product - Alleged anticompetitive behavior", priority: P2, category: Product, description: "Claims a product is designed to stifle competition or create a monopoly."}
+    - {name: "Product - Connection to Sensitive Trending Events", priority: P2, category: Product, description: "Google products mentioned in relation to a sensitive event not covered by other tags."}
+    - {name: "Product - Conspiratorial theories about Google products", priority: P2, category: Product, description: "Unfounded theories about how a product or feature works."}
+    - {name: "Product - Fake news/screenshots about products", priority: P2, category: Product, description: "Manipulated screenshots or fabricated information about a product's results."}
+    - {name: "Product - Feature request", priority: P2, category: Product, description: "Users suggesting new features or improvements."}
+    - {name: "Product - Meme about Google products", priority: P2, category: Product, aliases: ["Product - Memes & humorous content"], description: "Jokes, memes or humorous viral content about a product."}
+    - {name: "Product - Other/general criticism", priority: P2, category: Product, aliases: ["Product - Other product issues", "Product - General criticism"], description: "General complaints not covered elsewhere (e.g. anti-AI conversations)."}
+    - {name: "Product - Product failures - general hardware issues", priority: P2, category: Product, customer_support: true, aliases: ["Product - Product failures - general hardware issues/product damage"], description: "Hardware malfunctions without physical safety risk (largely gUP)."}
+    - {name: "Product - SEO/Publisher Concerns", priority: P2, category: Product, description: "Website owners/publishers complaining about ranking or visibility."}
+
+# -----------------------------------------------------------------------------
+# Protocols
+# -----------------------------------------------------------------------------
+protocols:
+  youtube:
+    enabled: true
+    space_target: youtube
+    high_engagement_threshold: 2000
+    sensitive_topics_for_low_engagement: [Child Safety, Violence / Weapons, Hate Speech]
+    notes: >-
+      Google is the subject (even if YouTube is mentioned) and it meets criteria: email as normal AND
+      ping [S-F] YouTube Social. YouTube is the subject: 2K+ -> ping the chat, put 📦 on the alert, email
+      only if a bias allegation is captured (skip if TeamYouTube already replied); below 2K -> no action
+      unless sensitive (child safety, threats to employees) -> ping saying it's not escalated on Google's end.
+  doodle:
+    enabled: true
+    space_target: doodle
+    products: [Doodles, Easter Eggs and Delight Features]
+    message: "Hey Doodle team, sharing the below alert for visibility."
+  leadership:
+    enabled: true
+    recipients: []
+    require_new_issue: true
+    priorities: [P0]
+    include_sensitive_topics: true
+    product_failure_tags:
+      ["Product - Product failures - general software/service issues", "Product - Product failures - physical safety issues",
+       "Product - Dangerous results (e.g. medical/legal)", "Product - Offensive or explicit results", "Product - Factual inaccuracies (not dangerous/offensive)"]
+    dedupe_days: 14
+    doc_url: "https://docs.google.com/document/d/17Q1fgBAR-4VbNkbAToUkXksTDLCbDTH7YwpuaPZi8jo/edit"
+
+# -----------------------------------------------------------------------------
+# IM emoji legend -> agent actions (react on the clean-space alert)
+# -----------------------------------------------------------------------------
+actions:
+  - {emoji: "👍", code: ack, label: "Confirming receipt, no action yet taken", kind: ack}
+  - {emoji: "⬇️", code: superseded, label: "Addressed on updated post below", kind: superseded}
+  - {emoji: "✍️", code: tns, label: "Reported to Trust & Safety (T&S)", kind: tns}
+  - {emoji: "📰", code: gcpa, label: "Reported to GCPA", kind: add_group, group: gcpa}
+  - {emoji: "📦", code: pa, label: "Reported to Product Areas (PAs)", kind: email_pa}
+  - {emoji: "💬", code: gup, label: "Reported to gUP (social customer support)", kind: add_group, group: gup}
+  - {emoji: "🔥", code: crisis, label: "Reported to \"this is fine\" // crisis chat", kind: post_space, target: crisis}
+  - {emoji: "💼", code: people_comms, label: People Comms, kind: add_group, group: people_comms}
+  - {emoji: "💧", code: stop_leaks, label: Stop Leaks, kind: add_group, group: stop_leaks}
+  - {emoji: "1️⃣", code: exec_comms, label: Executive Comms, kind: add_group, group: exec_comms}
+  - {emoji: "🦺", code: gsoc, label: GSOC (Google Security team), kind: add_group, group: gsoc}
+  - {emoji: "⛑️", code: lss, label: LSS (Executive security team), kind: add_group, group: lss}
+  - {emoji: "➕", code: other_team, label: Reported to team not listed above, kind: none}
+  - {emoji: "🌎", code: regional_leads, label: Regional Leads, kind: add_group, group: regional_leads}
+  - {emoji: "⚖️", code: civics, label: Civics, kind: add_group, group: civics}
+  - {emoji: "🌱", code: channel_owner, label: Channel Owner, kind: add_group, group: channel_owner}
+  - {emoji: "📸", code: influencer_team, label: Influencer Team, kind: add_group, group: influencer_team}
+  - {emoji: "❌", code: no_action, label: No action taken, kind: close}
+  - {emoji: "🧑‍💻", code: escalated_jon, label: Escalated to leadership, kind: dm, recipients: []}
+  - {emoji: "👎", code: agent_wrong, label: "Agent verdict/classification was wrong (feedback)", kind: feedback}
+
+# -----------------------------------------------------------------------------
+# Social Alert email + T&S (recipients & test addresses come from Google Sheets)
+# -----------------------------------------------------------------------------
+escalation:
+  from_name: Brand Social
+  from_email: ""
+  auto_draft_tracks: [URGENT]
+  subject_format: "{alert_name}"
+  reply_subject_prefix: "Re: "
+  signature: Brand Social
+  default_to: []
+  default_cc: []
+  brand_social_updates_cc: []
+  recipients_in: to
+  # Testing recipients are configured directly in Control!B30 ("Testing: send to") on the slrr-agentic-assistant sheet.
+  stand_in: ""
+  max_body_chars: 12000
+  email_templates:
+    - id: social_alert
+      name: Social Alert (SLRR Alert Assistant format)
+      when: Default for every alert.
+      subject: "{alert_name}"
+      body_guidance: >-
+        Mirror the SLRR Alert Assistant email: a one-line bottom line, then the fields Name, Engagement
+        (level + total), Product, Social Network, Exposure Tag, Risk Tag, KOF, T&S; then the post text and a
+        "View Post" link. Neutral and factual; no speculation. Add the video timestamp when present.
+    - id: ongoing_update
+      name: Ongoing issue update (reply on the existing thread)
+      when: Issue status is Ongoing (alerted within 14 days).
+      subject: "{alert_name}"
+      body_guidance: Short update to the existing thread, with what's new (engagement change, new KOF, new platform) and the View Post link.
+
+tns:
+  form_url: "https://docs.google.com/forms/d/e/1FAIpQLScd0beRIurDyc5beuY9_tYDEvp-UFAIKY2FWTdLvsUV4whSkw/viewform"   # go/WD-Triage
+  is_placeholder: true            # only the Team entry id (entry.290320498) is real; discover the rest in Phase 0 #9
+  urgent_alias: ""
+  urgent_when: [viral_kof, high_engagement, child_safety]
+  submitter_team_option: Marketing
+  criteria_doc_url: "https://docs.google.com/document/d/1T6ulU_6L6NiD8VTOuGYYxRTFneKfNI3ZaSU4z-dCHY8/edit"
+  evidence_required: true
+  max_url_length: 7000
+  reference_format: "[SLRR {escalation_id} / {case_id}]"   # stamped into the description to match WD intake emails
+  criteria:
+    - {id: product_abuse, description: "Potential product abuse: a product not working as intended and/or being manipulated in a nefarious way (see Anti-Abuse Alerts collection requirement)."}
+    - {id: viral_kof, description: "Viral KOF post showing a product issue."}
+    - {id: child_safety, description: "Child safety issue.", category: Child safety}
+    - {id: gemini_hallucination, description: "Technical Gemini hallucination."}
+  categories: [Dangerous content, Harmful hallucination, Child safety, Hate / harassment, Sexually explicit, Circumvention / jailbreak, Privacy, Scams / fraud, Misinformation, Other]
+  fields:
+    - {entry_id: entry.1000000001, label: Link to the post, type: short_text, source: "field:post_url", required: true}
+    - {entry_id: entry.1000000002, label: Product, type: short_text, source: "field:product", required: true}
+    - {entry_id: entry.1000000003, label: Issue Category, type: dropdown, source: llm, required: true}
+    - {entry_id: entry.290320498, label: Team, type: multiple_choice, source: "const:Marketing", options: [Marketing], required: true}
+    - {entry_id: entry.1000000005, label: Description, type: paragraph, source: llm, max_len: 1500}
+    - {entry_id: entry.1000000006, label: Evidence (input shown / replicable), type: short_text, source: llm}
+
+watchdog:
+  enabled: true
+  subject_regex: "Watchdog Anti-Abuse Alert"
+  skip_subject_regexes: ["Early Warning"]
+  skip_content: [jailbreak, NSFW generated image]
+
+stakeholders:   # Q&A routing (alert emails use Brand safety groups)
+  - {id: slrr_leads, team: SLRR leads, topics: [time off, coverage, process, escalation protocol], contacts: [], autonomy: answer_only}
+  - {id: tns_watchdog, team: "T&S Intel Watchdog", topics: ["T&S", watchdog, go/bad, bug id], contacts: [], autonomy: answer_only}
+  - {id: youtube_social, team: "[S-F] YouTube Social", topics: [YouTube], chat_space: "[S-F] YouTube Social", autonomy: answer_only}
+
+knowledge:
+  docs:
+    collection_requirements: "https://docs.google.com/document/d/1jHM7bVBNPw0hMN7bxVd4IivBjhVfTmNF33U4WknZN5s/edit"
+    escalation_protocol: "https://docs.google.com/document/d/17Q1fgBAR-4VbNkbAToUkXksTDLCbDTH7YwpuaPZi8jo/edit"
+    slrr_alert_assistant: "https://docs.google.com/spreadsheets/d/1lazaVFbDDjUdQQABeuq2zMHtfgz1tCBHXfHk71mGUKA/edit"
+    handover_doc: "https://docs.google.com/document/d/1c-zFrAwBEOVcbCpjkYd2y8qxEkiyz7NfRsG3hp84nzY/edit"
+    wd_triage_form: "https://docs.google.com/forms/d/e/1FAIpQLScd0beRIurDyc5beuY9_tYDEvp-UFAIKY2FWTdLvsUV4whSkw/viewform"
+    anti_abuse_criteria: "https://docs.google.com/document/d/1T6ulU_6L6NiD8VTOuGYYxRTFneKfNI3ZaSU4z-dCHY8/edit"
+    abuse_training: "https://docs.google.com/presentation/d/1kMeCx0WdRCBCVVOYp9OwvZz8urGd0It4S2sEiC99DZo/edit"
+    alert_next_steps_deck: "https://docs.google.com/presentation/d/1h6M5A_BkdL8zBUnVJ7WgEA2zWBV5yM1HdJpYQk-ZtG0/edit"
+    p0_kofs: "https://docs.google.com/spreadsheets/d/1b54g1c6R8Y2j1xnVQavmLJQZn04qgPfgyeTzBdFt_1k/edit"
+    slrr_about: "http://go/slrr-about"
+  faq:
+    - question: What happens when an alert comes in?
+      answer: >-
+        The agent checks it against the Collection Requirements within seconds, fixes what it can (old → new shown on the post),
+        and posts it to the clean space with suggested actions. URGENT alerts also get a Social Alert draft (Brand Social) in the
+        on-shift IM's Gmail. Alerts that don't meet the requirements are suppressed and listed in the Console with the reason.
+    - question: How do I action an alert?
+      answer: >-
+        React on the clean-space alert with the usual legend: 📦 PA email draft, ✍️ T&S form + urgent email if viral, 💬 gUP,
+        📰 GCPA, 💼 People Comms, 💧 Stop Leaks, 1️⃣ Exec Comms, ⛑️ LSS, 🦺 GSOC, ⚖️ Civics, 📸 Influencer Team, 🌎 Regional,
+        🔥 crisis chat, 🧑‍💻 leadership, ⬇️ superseded, ❌ no action, 👍 receipt. You still send emails and submit forms yourself.
+    - question: How do I request changes to a draft?
+      answer: Reply in the alert's thread with "@Triage Agent revise:" followed by the change.
+    - question: When does something go to Trust & Safety?
+      answer: >-
+        Potential product abuse (not working as intended or manipulated nefariously) with evidence of input (a screenshot showing
+        the query) or replicability; viral KOFs, child safety and technical Gemini hallucinations are typical. Select "Marketing".
+        Viral/urgent issues also go to the T&S urgent alias. The agent follows up with the go/Bad bug id when T&S marks it Fixed.
+    - question: The agent got the classification wrong. What do I do?
+      answer: React 👎 on its post (and reply with the right value if you like). It's logged for rule tuning and the eval set.
+    - question: Who is on call / on shift?
+      answer: Ask "@Triage Agent who's on shift?" for the IM, or "who's the Burson on-call?". Admins edit rosters in the Agent Console.
+
+# -----------------------------------------------------------------------------
+# Rosters (maintained live in the Console / via chat; no hardcoded emails here)
+# -----------------------------------------------------------------------------
+seed_rosters: {}
+

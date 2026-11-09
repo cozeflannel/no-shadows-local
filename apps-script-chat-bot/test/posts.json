@@ -1,0 +1,537 @@
+{
+ "x_followup": {
+  "__typename": "Tweet",
+  "favorite_count": 0,
+  "in_reply_to_screen_name": "Ground_Signal",
+  "in_reply_to_status_id_str": "2111839363516756085",
+  "in_reply_to_user_id_str": "2036138363544305664",
+  "lang": "en",
+  "created_at": "2026-10-18T15:23:36.000Z",
+  "display_text_range": [
+   15,
+   247
+  ],
+  "id_str": "2111840627885252950",
+  "text": "@Ground_Signal Hey @grok : in the video being discussed, in the dark of night, would the Waymo assistance call likelier have been handled by a rep in the mainland U.S. or in The Philippines? Also please address any inaccurate claims you see above.",
+  "user": {
+   "id_str": "367237480",
+   "name": "James Stephenson",
+   "screen_name": "ICannot_Enough",
+   "is_blue_verified": true,
+   "profile_image_shape": "Circle",
+   "verified": false,
+   "profile_image_url_https": "https://pbs.twimg.com/profile_images/1334264832397291522/AR2jbpaD_normal.jpg",
+   "highlighted_label": {
+    "badge": {
+     "url": "https://pbs.twimg.com/profile_images/2091490555528085504/sOxpcvJR_bigger.jpg"
+    },
+    "description": "Rebellionaire",
+    "url": {
+     "url": "https://twitter.com/Rebellionaire",
+     "url_type": "DeepLink"
+    },
+    "user_label_display_type": "Badge",
+    "user_label_type": "BusinessLabel"
+   }
+  },
+  "conversation_count": 1,
+  "news_action_type": "conversation",
+  "parent": {
+   "favorite_count": 0,
+   "in_reply_to_screen_name": "ICannot_Enough",
+   "in_reply_to_status_id_str": "2111814207448514693",
+   "in_reply_to_user_id_str": "367237480",
+   "lang": "en",
+   "reply_count": 1,
+   "retweet_count": 0,
+   "created_at": "2026-10-18T15:18:34.000Z",
+   "display_text_range": [
+    16,
+    275
+   ],
+   "entities": {
+    "user_mentions": [
+     {
+      "id_str": "367237480",
+      "indices": [
+       0,
+       15
+      ],
+      "name": "James Stephenson",
+      "screen_name": "ICannot_Enough"
+     }
+    ]
+   },
+   "id_str": "2111839363516756085",
+   "text": "@ICannot_Enough Waymo told Sen. Markey in February it had about 70 remote assistance agents on duty at a time for 3,000 cars. For a car stuck in a highway lane, only a US-based team can prompt it onto the shoulder, at 2 mph. Waymo says that's never happened outside training.",
+   "user": {
+    "id_str": "2036138363544305664",
+    "name": "Ground Signal",
+    "screen_name": "Ground_Signal",
+    "is_blue_verified": true,
+    "profile_image_shape": "Circle",
+    "verified": false,
+    "profile_image_url_https": "https://pbs.twimg.com/profile_images/2097761394301259776/CI949ylw_normal.png"
+   },
+   "edit_control": {
+    "edit_tweet_ids": [
+     "2111839363516756085"
+    ],
+    "editable_until_msecs": "1792340314000",
+    "edits_remaining": "5",
+    "is_edit_eligible": false
+   },
+   "isEdited": false,
+   "isStaleEdit": false
+  },
+  "isEdited": false,
+  "isStaleEdit": false
+ },
+ "x_original": {
+  "__typename": "Tweet",
+  "favorite_count": 46,
+  "lang": "en",
+  "possibly_sensitive": false,
+  "created_at": "2026-10-18T13:38:37.000Z",
+  "display_text_range": [
+   0,
+   184
+  ],
+  "id_str": "2111814207448514693",
+  "text": "If only a Waymo had been there, it could have &lt;checks notes&gt; … stopped in the middle of the interstate waiting for a support rep in The Philippines to figure out what to do next. https://t.co/w5FEfjNk5k",
+  "user": {
+   "id_str": "367237480",
+   "name": "James Stephenson",
+   "screen_name": "ICannot_Enough",
+   "is_blue_verified": true,
+   "profile_image_shape": "Circle",
+   "verified": false,
+   "profile_image_url_https": "https://pbs.twimg.com/profile_images/1334264832397291522/AR2jbpaD_normal.jpg",
+   "highlighted_label": {
+    "badge": {
+     "url": "https://pbs.twimg.com/profile_images/2091490555528085504/sOxpcvJR_bigger.jpg"
+    },
+    "description": "Rebellionaire",
+    "url": {
+     "url": "https://twitter.com/Rebellionaire",
+     "url_type": "DeepLink"
+    },
+    "user_label_display_type": "Badge",
+    "user_label_type": "BusinessLabel"
+   }
+  },
+  "mediaDetails": [
+   {
+    "additional_media_info": {},
+    "display_url": "pic.x.com/w5FEfjNk5k",
+    "expanded_url": "https://x.com/ICannot_Enough/status/2111814207448514693/video/1",
+    "ext_media_availability": {
+     "status": "Available"
+    },
+    "indices": [
+     185,
+     208
+    ],
+    "media_url_https": "https://pbs.twimg.com/amplify_video_thumb/2111813973750210560/img/zNcPCcIhg_Dmv0Ls.jpg",
+    "original_info": {
+     "focus_rects": [],
+     "height": 1080,
+     "width": 1920
+    },
+    "sizes": {
+     "large": {
+      "h": 1080,
+      "resize": "fit",
+      "w": 1920
+     },
+     "medium": {
+      "h": 675,
+      "resize": "fit",
+      "w": 1200
+     },
+     "small": {
+      "h": 383,
+      "resize": "fit",
+      "w": 680
+     },
+     "thumb": {
+      "h": 150,
+      "resize": "crop",
+      "w": 150
+     }
+    },
+    "type": "video",
+    "url": "https://t.co/w5FEfjNk5k",
+    "video_info": {
+     "aspect_ratio": [
+      16,
+      9
+     ],
+     "duration_millis": 193120,
+     "variants": [
+      {
+       "content_type": "application/x-mpegURL",
+       "url": "https://video.twimg.com/amplify_video/2111813973750210560/pl/e6U_6qWLhmhvFA8Y.m3u8?v=268"
+      },
+      {
+       "bitrate": 256000,
+       "content_type": "video/mp4",
+       "url": "https://video.twimg.com/amplify_video/2111813973750210560/vid/avc1/480x270/3_fJD9Rc98bdrwJd.mp4"
+      },
+      {
+       "bitrate": 832000,
+       "content_type": "video/mp4",
+       "url": "https://video.twimg.com/amplify_video/2111813973750210560/vid/avc1/640x360/5XOvmcAw5kZ3XDjV.mp4"
+      },
+      {
+       "bitrate": 2176000,
+       "content_type": "video/mp4",
+       "url": "https://video.twimg.com/amplify_video/2111813973750210560/vid/avc1/1280x720/4V7JB9QoZBCz0ZQ8.mp4"
+      },
+      {
+       "bitrate": 10368000,
+       "content_type": "video/mp4",
+       "url": "https://video.twimg.com/amplify_video/2111813973750210560/vid/avc1/1920x1080/-t3kpx2meG6RCuc0.mp4"
+      }
+     ]
+    }
+   }
+  ],
+  "photos": [],
+  "video": {
+   "aspectRatio": [
+    16,
+    9
+   ],
+   "contentType": "media_entity",
+   "durationMs": 193120,
+   "mediaAvailability": {
+    "status": "available"
+   },
+   "poster": "https://pbs.twimg.com/amplify_video_thumb/2111813973750210560/img/zNcPCcIhg_Dmv0Ls.jpg",
+   "variants": [
+    {
+     "type": "application/x-mpegURL",
+     "src": "https://video.twimg.com/amplify_video/2111813973750210560/pl/e6U_6qWLhmhvFA8Y.m3u8?v=268"
+    },
+    {
+     "type": "video/mp4",
+     "src": "https://video.twimg.com/amplify_video/2111813973750210560/vid/avc1/480x270/3_fJD9Rc98bdrwJd.mp4"
+    },
+    {
+     "type": "video/mp4",
+     "src": "https://video.twimg.com/amplify_video/2111813973750210560/vid/avc1/640x360/5XOvmcAw5kZ3XDjV.mp4"
+    },
+    {
+     "type": "video/mp4",
+     "src": "https://video.twimg.com/amplify_video/2111813973750210560/vid/avc1/1280x720/4V7JB9QoZBCz0ZQ8.mp4"
+    },
+    {
+     "type": "video/mp4",
+     "src": "https://video.twimg.com/amplify_video/2111813973750210560/vid/avc1/1920x1080/-t3kpx2meG6RCuc0.mp4"
+    }
+   ],
+   "videoId": {
+    "type": "tweet",
+    "id": "2111814207448514693"
+   },
+   "viewCount": 0
+  },
+  "conversation_count": 8,
+  "news_action_type": "conversation",
+  "quoted_tweet": {
+   "favorite_count": 235,
+   "lang": "en",
+   "possibly_sensitive": false,
+   "reply_count": 72,
+   "retweet_count": 23,
+   "created_at": "2026-10-17T19:18:36.000Z",
+   "display_text_range": [
+    0,
+    131
+   ],
+   "entities": {
+    "urls": [
+     {
+      "display_url": "cnbc.com/amp/2021/05/25…",
+      "expanded_url": "https://www.cnbc.com/amp/2021/05/25/op-ed-waymo-warns-misusing-term-self-driving-can-be-unsafe.html",
+      "indices": [
+       108,
+       131
+      ],
+      "url": "https://t.co/9oaNumhVuJ"
+     }
+    ]
+   },
+   "id_str": "2111537381941604800",
+   "text": "This is why we have argued for years that calling any diver assistance system “self-driving” is problematic https://t.co/9oaNumhVuJ",
+   "user": {
+    "id_str": "746053227360227329",
+    "name": "Ethan Teicher",
+    "screen_name": "ethanteicher",
+    "is_blue_verified": true,
+    "profile_image_shape": "Circle",
+    "verified": false,
+    "profile_image_url_https": "https://pbs.twimg.com/profile_images/2086831413865660416/7eXagCSQ_normal.jpg",
+    "highlighted_label": {
+     "badge": {
+      "url": "https://pbs.twimg.com/profile_images/1958686951692984320/93TDUCiO_bigger.jpg"
+     },
+     "description": "Waymo",
+     "url": {
+      "url": "https://twitter.com/Waymo",
+      "url_type": "DeepLink"
+     },
+     "user_label_display_type": "Badge",
+     "user_label_type": "BusinessLabel"
+    }
+   },
+   "edit_control": {
+    "edit_tweet_ids": [
+     "2111537381941604800"
+    ],
+    "editable_until_msecs": "1792268316000",
+    "edits_remaining": "5",
+    "is_edit_eligible": true
+   },
+   "isEdited": false,
+   "isStaleEdit": false
+  },
+  "isEdited": false,
+  "isStaleEdit": false
+ },
+ "bsky_video": {
+  "thread": {
+   "post": {
+    "uri": "at://did:plc:udnac33pmf2iwcblpeai5a5p/app.bsky.feed.post/3mobtlvo7ec25",
+    "cid": "bafyreide6rh4itjyhryjdye3a7lnvwu3w2nr3qbbzfavdvgbh7cg3lihdq",
+    "author": {
+     "did": "did:plc:udnac33pmf2iwcblpeai5a5p",
+     "handle": "iwillnotbesilenced.bsky.social",
+     "displayName": "Raider",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:udnac33pmf2iwcblpeai5a5p/bafkreibo44jy3wcnq3tpzkfaaerqyyc3raw42i2kloersuxza4zurxsble",
+     "associated": {
+      "chat": {
+       "allowIncoming": "none",
+       "allowGroupInvites": "none"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2024-11-11T13:47:49.382Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-06-14T22:39:58.110Z",
+     "embed": {
+      "$type": "app.bsky.embed.video",
+      "aspectRatio": {
+       "height": 720,
+       "width": 1280
+      },
+      "presentation": "default",
+      "video": {
+       "$type": "blob",
+       "ref": {
+        "$link": "bafkreidkz2k2mptj5iedf3fttftopr6z2mrsrichorjdzfeoiyubdjb2ii"
+       },
+       "mimeType": "video/mp4",
+       "size": 6665627
+      }
+     },
+     "langs": [
+      "en"
+     ],
+     "text": "Stanford grads walk out of their commencement when Google CEO\nSundar Pichai takes the stage"
+    },
+    "embed": {
+     "cid": "bafkreidkz2k2mptj5iedf3fttftopr6z2mrsrichorjdzfeoiyubdjb2ii",
+     "playlist": "https://video.bsky.app/watch/did%3Aplc%3Audnac33pmf2iwcblpeai5a5p/bafkreidkz2k2mptj5iedf3fttftopr6z2mrsrichorjdzfeoiyubdjb2ii/playlist.m3u8",
+     "thumbnail": "https://video.bsky.app/watch/did%3Aplc%3Audnac33pmf2iwcblpeai5a5p/bafkreidkz2k2mptj5iedf3fttftopr6z2mrsrichorjdzfeoiyubdjb2ii/thumbnail.jpg",
+     "aspectRatio": {
+      "height": 720,
+      "width": 1280
+     },
+     "presentation": "default",
+     "$type": "app.bsky.embed.video#view"
+    },
+    "bookmarkCount": 57,
+    "replyCount": 145,
+    "repostCount": 953,
+    "likeCount": 3014,
+    "quoteCount": 115,
+    "indexedAt": "2026-06-14T22:39:59.163Z",
+    "labels": []
+   },
+   "threadContext": {},
+   "$type": "app.bsky.feed.defs#threadViewPost"
+  }
+ },
+ "bsky_quote": {
+  "thread": {
+   "post": {
+    "uri": "at://did:plc:fod53mv7ibmkrlzglm7w5zie/app.bsky.feed.post/3mpvtjpiqqc2i",
+    "cid": "bafyreiaisgmfu3twsojhj3a6cffhphyjuzs2ehi3nadbib3fblyrwcjja4",
+    "author": {
+     "did": "did:plc:fod53mv7ibmkrlzglm7w5zie",
+     "handle": "terrenceobrien.bsky.social",
+     "displayName": "Terrence O'Brien",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:fod53mv7ibmkrlzglm7w5zie/bafkreiey72u7cdgeigxerrresugg7lhbamgw2ktsffujyrphvwygoeknoi",
+     "associated": {
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2023-07-06T17:16:08.068Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-07-05T14:57:10.925Z",
+     "embed": {
+      "$type": "app.bsky.embed.record",
+      "record": {
+       "cid": "bafyreien4bng3rukfrty4se6ucdyfb4tae6lidkkrmoj5shjztjl3qcnti",
+       "uri": "at://did:plc:7exlcsle4mjfhu3wnhcgizz6/app.bsky.feed.post/3mpvrzaqy422r"
+      }
+     },
+     "langs": [
+      "en"
+     ],
+     "text": "I do wonder what kind of sycophantic reply Gemini would have given the founding fathers if they asked about women's right to vote, slavery, and Manifest Destiny."
+    },
+    "embed": {
+     "record": {
+      "uri": "at://did:plc:7exlcsle4mjfhu3wnhcgizz6/app.bsky.feed.post/3mpvrzaqy422r",
+      "cid": "bafyreien4bng3rukfrty4se6ucdyfb4tae6lidkkrmoj5shjztjl3qcnti",
+      "author": {
+       "did": "did:plc:7exlcsle4mjfhu3wnhcgizz6",
+       "handle": "theverge.com",
+       "displayName": "The Verge",
+       "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:7exlcsle4mjfhu3wnhcgizz6/bafkreiavnay6zpox43vgy6i2wbdwvrg2ydwp4haexq5k63ayuh5pzvg74i",
+       "associated": {
+        "chat": {
+         "allowIncoming": "none",
+         "allowGroupInvites": "none"
+        },
+        "activitySubscription": {
+         "allowSubscriptions": "followers"
+        }
+       },
+       "labels": [],
+       "createdAt": "2023-05-23T19:11:25.009Z",
+       "verification": {
+        "verifications": [
+         {
+          "issuer": "did:plc:z72i7hdynmk6r22z27h6tvur",
+          "issuerDisplayName": "Bluesky",
+          "issuerHandle": "bsky.app",
+          "uri": "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.graph.verification/3lndpvilhl62l",
+          "isValid": true,
+          "createdAt": "2025-04-21T10:47:40.526Z"
+         }
+        ],
+        "verifiedStatus": "valid",
+        "trustedVerifierStatus": "none"
+       }
+      },
+      "value": {
+       "$type": "app.bsky.feed.post",
+       "createdAt": "2026-07-05T14:30:04.299Z",
+       "embed": {
+        "$type": "app.bsky.embed.external",
+        "external": {
+         "description": "It should make Americans of every political stripe want to hurl their devices against a wall.",
+         "thumb": {
+          "$type": "blob",
+          "ref": {
+           "$link": "bafkreib5egbonizop3zvaxuekem4q4wc4oatnplxqr23h5ruooaxszvawq"
+          },
+          "mimeType": "image/jpeg",
+          "size": 93756
+         },
+         "title": "Infuriating Google commercial imagines the founding fathers embracing AI",
+         "uri": "https://buff.ly/SbziPLO"
+        }
+       },
+       "text": "Infuriating Google commercial imagines the founding fathers embracing AI"
+      },
+      "labels": [],
+      "likeCount": 64,
+      "replyCount": 2,
+      "repostCount": 17,
+      "quoteCount": 4,
+      "indexedAt": "2026-07-05T14:30:06.120Z",
+      "embeds": [
+       {
+        "external": {
+         "uri": "https://buff.ly/SbziPLO",
+         "title": "Infuriating Google commercial imagines the founding fathers embracing AI",
+         "description": "It should make Americans of every political stripe want to hurl their devices against a wall.",
+         "thumb": "https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:7exlcsle4mjfhu3wnhcgizz6/bafkreib5egbonizop3zvaxuekem4q4wc4oatnplxqr23h5ruooaxszvawq"
+        },
+        "$type": "app.bsky.embed.external#view"
+       }
+      ],
+      "$type": "app.bsky.embed.record#viewRecord"
+     },
+     "$type": "app.bsky.embed.record#view"
+    },
+    "bookmarkCount": 1,
+    "replyCount": 1,
+    "repostCount": 2,
+    "likeCount": 9,
+    "quoteCount": 0,
+    "indexedAt": "2026-07-05T14:57:11.320Z",
+    "labels": []
+   },
+   "threadContext": {},
+   "$type": "app.bsky.feed.defs#threadViewPost"
+  }
+ },
+ "bsky_plc": {
+  "@context": [
+   "https://www.w3.org/ns/did/v1",
+   "https://w3id.org/security/multikey/v1",
+   "https://w3id.org/security/suites/secp256k1-2019/v1"
+  ],
+  "id": "did:plc:udnac33pmf2iwcblpeai5a5p",
+  "alsoKnownAs": [
+   "at://iwillnotbesilenced.bsky.social"
+  ],
+  "verificationMethod": [
+   {
+    "id": "did:plc:udnac33pmf2iwcblpeai5a5p#atproto",
+    "type": "Multikey",
+    "controller": "did:plc:udnac33pmf2iwcblpeai5a5p",
+    "publicKeyMultibase": "zQ3sheGDGfqw9Ey55NSFYdXyAqWFFqyqBm459szVVJdRDBxzw"
+   }
+  ],
+  "service": [
+   {
+    "id": "#atproto_pds",
+    "type": "AtprotoPersonalDataServer",
+    "serviceEndpoint": "https://scarletina.us-east.host.bsky.network"
+   }
+  ]
+ },
+ "tiktok_oembed": {
+  "version": "1.0",
+  "type": "video",
+  "title": "In the next fifteen years, data centers are expected to add an additional $160 billion to electric grid costs in the U.S. By one estimate, electricity rates for average households cold spike as much as seventy percent. While companies like Amazon, Meta and Google are making record profits, the rest of us are forced to foot the bill. #corporategreed #workersrights ",
+  "author_url": "https://www.tiktok.com/@moreperfectunion",
+  "author_name": "More Perfect Union",
+  "width": "100%",
+  "height": "100%",
+  "thumbnail_width": 576,
+  "thumbnail_height": 1024,
+  "thumbnail_url": "https://p16-common-sign.tiktokcdn-us.com/tos-useast8-p-0068-tx2/o8AALD6ARiIzDbZKNaBrAlvr4EzMArsVBijEt~tplv-tiktokx-origin.image?dr=9636&x-expires=1792519200&x-signature=mgRh%2FzyhU5Lrsn8JfuLMaqLkdj0%3D&t=4d5b0474&ps=13740610&shp=81f88b70&shcp=43f4a2f9&idc=useast8",
+  "provider_url": "https://www.tiktok.com",
+  "provider_name": "TikTok",
+  "author_unique_id": "moreperfectunion",
+  "embed_product_id": "7551106238768090399",
+  "embed_type": "video"
+ }
+}

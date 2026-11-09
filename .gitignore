@@ -1,0 +1,47 @@
+.venv/
+__pycache__/
+*.pyc
+.local/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+dist/
+.env
+*.db
+.clasp.json
+secrets/
+burson_live_history.csv
+data/
+archive/
+knowledge_docs/
+
+# Extra secret & credential protections
+.env.*
+*.pem
+*.key
+.clasprc.json
+*client_secret*.json
+*credentials*.json
+*service-account*.json
+*service_account*.json
+
+# Secrets
+.env
+.env.*
+*.env
+credentials.json
+*-credentials.json
+service-account*.json
+*.pem
+*.key
+secrets/
+
+# Apps Script
+.clasp.json
+.claspignore
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/

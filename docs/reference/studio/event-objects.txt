@@ -1,0 +1,419 @@
+      Workspace Studio event objects  |  Google Workspace add-ons  |  Google for Developers
+      Skip to main content
+    Google
+  Workspace
+    Home
+    Add-ons
+    All products
+                Google Workspace apps
+                      Admin console
+                      Cloud Search
+                      Gmail
+                      Google Calendar
+                      Google Chat
+                      Google Classroom
+                      Google Docs
+                      Google Drive
+                 
+                      Google Forms
+                      Google Keep
+                      Google Meet
+                      Google Sheets
+                      Google Sites
+                      Google Slides
+                      Google Tasks
+                      Google Vault
+                Extend, automate & share
+                      Add-ons
+                      Apps Script
+                      Chat apps
+                      Drive apps
+                      Marketplace
+    Resources
+                Tools
+                      Admin console
+                      Apps Script dashboard
+                      Google Cloud console
+                      APIs Explorer
+                      Card Builder
+                Training & support
+                      How to get started
+                      Codelabs
+                      Developer support
+                Updates
+                      Release notes
+                      Developer Previews
+                      YouTube
+                      Newsletter
+                      X (Twitter)
+                      Blog
+            /
+      English
+      Deutsch
+      Español
+      Español – América Latina
+      Français
+      Indonesia
+      Italiano
+      Polski
+      Português – Brasil
+      Tiếng Việt
+      Türkçe
+      Русский
+      עברית
+      العربيّة
+      فارسی
+      हिंदी
+      বাংলা
+      ภาษาไทย
+      中文 – 简体
+      中文 – 繁體
+      日本語
+      한국어
+              Sign in
+          Add-ons
+    Overview
+    Guides
+    Reference
+    Samples
+    Support
+    Google
+  Workspace
+      Home
+      Add-ons
+      Overview
+      Guides
+      Reference
+      Samples
+      Support
+      All products
+      More
+      Resources
+      More
+            Add-ons overview
+  Add-on types
+  Install and authorize add-ons
+  Open and use add-ons
+        Get started
+  Develop on Google Workspace
+  Configure OAuth consent
+        Develop Google Workspace add-ons
+  Overview
+        Quickstarts
+Apps Script
+Node.js
+  Manifests
+  Scopes
+  Build using HTTP endpoints
+        Build cards
+Overview
+Cards
+Homepages
+Widgets
+Actions
+Event objects
+Triggers
+Style guide
+Build interactive cards
+Navigate between cards
+Use universal actions
+Add autocomplete to text inputs
+Read user locale and timezone
+        Extend Gmail
+Overview
+Build contextual message interfaces
+Build contextual compose interfaces
+Compose draft messages
+Gmail actions
+        Extend Google Calendar
+Overview
+Build Calendar interfaces
+Calendar actions
+Third-party conferencing overview
+Calendar conferencing quickstart
+Build conferencing add-ons
+Create third-party conferences
+Sync calendar conference changes
+Add conferencing add-on settings
+Provide conference solution logos
+Provide attachment icons
+        Extend Google Drive
+Overview
+Build Drive interfaces
+Drive actions
+        Extend Google Editors
+Overview
+Build Editor interfaces
+Editor actions
+        Create smart chips
+Preview links
+Create third-party resources
+  Extend Google Chat
+  Extend Google Meet
+        Extend Google Workspace Studio
+Overview
+        Quickstarts
+Calculator
+Build a step
+Build a starter
+Update and manage steps with versions
+        Pass data between steps with variables
+Input variables
+Validate an input variable
+Output variables
+Define a custom resource
+Dynamic variables
+        Build step interfaces
+Build configuration cards
+Update configuration cards
+Select Google Drive files and folders
+Log activity and errors
+Handle errors
+Studio event objects
+  Connect your add-on to third-party services
+        Test and debug
+Apps Script
+HTTP
+  Query error logs
+  Best practices
+  Restrictions
+  Glossary
+  Upgrade legacy add-ons
+        Develop Editor add-ons
+  Overview
+        Quickstarts
+Docs
+Slides
+Forms
+  Authorization lifecycle
+  Manifest
+  Scopes
+        Build HTML interfaces
+Overview
+Triggers
+Add-on menus
+Add-on dialogs and sidebars
+Style guide
+CSS package
+  Extend Google Sheets
+  Extend Google Docs
+  Extend Google Slides
+  Extend Google Forms
+  Test your add-on
+  Best Practices
+  Restrictions
+        Publish an add-on
+  Overview
+  Update a published add-on
+      Google Workspace apps
+      Admin console
+      Cloud Search
+      Gmail
+      Google Calendar
+      Google Chat
+      Google Classroom
+      Google Docs
+      Google Drive
+       
+      Google Forms
+      Google Keep
+      Google Meet
+      Google Sheets
+      Google Sites
+      Google Slides
+      Google Tasks
+      Google Vault
+      Extend, automate & share
+      Add-ons
+      Apps Script
+      Chat apps
+      Drive apps
+      Marketplace
+      Tools
+      Admin console
+      Apps Script dashboard
+      Google Cloud console
+      APIs Explorer
+      Card Builder
+      Training & support
+      How to get started
+      Codelabs
+      Developer support
+      Updates
+      Release notes
+      Developer Previews
+      YouTube
+      Newsletter
+      X (Twitter)
+      Blog
+          Home
+          Google Workspace
+          Add-ons
+      Workspace Studio event objects
+      Stay organized with collections
+      Save and categorize content based on your preferences.
+This guide provides examples of the Workspace Studio event objects.
+Flows sends event parameters in the
+common Google Workspace add-ons event object used throughout Google Workspace add-ons.
+To learn more about the common event object, see
+Google Workspace add-ons event objects.
+The flow event object includes the following objects:
+workflow: An event detailing what happens when a flow runs, is
+created, updated, deleted, or a custom resource is requested. Depending on what
+happens, it has the following objects:
+actionInvocation: A step runs.
+resourceRetrieval: A custom resource gets requested from a flow.
+The following table outlines which event object is populated based on what
+a flow does:
+Event object
+Workflow action
+Workflow resource
+actionInvocation
+onExecuteFunction 
+ Called when onExecuteFunction is invoked on an action.
+Not applicable
+resourceRetrieval
+Not applicable
+providerFunction 
+ Called when the resource is requested from the workflow.
+actionInvocation
+The following example shows an actionInvocation event:
+JSON
+```
+{
+    "workflow": {
+        "triggerEventSource": "TRIGGER_EVENT_SOURCE_AUTOMATED",
+        "actionInvocation": {
+            "inputs": {
+                "operation": {
+                    "stringValues": [
+                        "+"
+                    ]
+                },
+                "value2": {
+                    "integerValues": [
+                        2
+                    ]
+                },
+                "value1": {
+                    "integerValues": [
+                        2
+                    ]
+                }
+            }
+        }
+    },
+    "userLocale": "en",
+    "hostApp": "flows",
+    "clientPlatform": "web",
+    "commonEventObject": {
+        "timeZone": {
+            "offset": -14400000,
+            "id": "America/New_York"
+        },
+        "userLocale": "en-US",
+        "hostApp": "WORKFLOW",
+        "platform": "WEB"
+    },
+    "userCountry": "US",
+    "userTimezone": {
+        "id": "America/New_York",
+        "offSet": "-14400000"
+    }
+}
+```
+resourceRetrieval
+The following example shows a resourceRetrieval event:
+JSON
+```
+{
+    "workflow": {
+        "resourceRetrieval": {
+            "resourceReference": {
+                "resourceType": {
+                    "workflowBundleId": "workflow_bundle_id",
+                    "workflowResourceDefinitionId": "workflow_resource_definition_id"
+                },
+                "resourceId": "resource_id"
+            }
+        }
+    },
+    "userLocale": "en",
+    "hostApp": "flows",
+    "clientPlatform": "web",
+    "commonEventObject": {
+        "timeZone": {
+            "offset": -14400000,
+            "id": "America/New_York"
+        },
+        "userLocale": "en-US",
+        "hostApp": "WORKFLOW",
+        "platform": "WEB"
+    },
+    "userCountry": "US",
+    "userTimezone": {
+        "id": "America/New_York",
+        "offSet": "-14400000"
+    }
+}
+```
+  Except as otherwise noted, the content of this page is licensed under the Creative Commons Attribution 4.0 License, and code samples are licensed under the Apache 2.0 License. For details, see the Google Developers Site Policies. Java is a registered trademark of Oracle and/or its affiliates.
+  Last updated 2026-10-09 UTC.
+    Need to tell us more?
+          Blog
+      Read the Google Workspace Developers blog
+          X (Twitter)
+      Follow @workspacedevs on X (Twitter)
+          Code Samples
+      Explore our sample apps or copy them to build your own
+          Codelabs
+      Try a guided, hands-on coding experience
+          Videos
+      Subscribe to our YouTube channel
+    Google Workspace for Developers
+            Platform overview
+            Developer products
+            Release notes
+            Developer support
+            Terms of Service
+    Tools
+            Admin console
+            Apps Script Dashboard
+            Google Cloud console
+            APIs Explorer
+    Connect
+            Blog
+            Newsletter
+            X (Twitter)
+            YouTube
+          Android
+          Chrome
+          Firebase
+          Google Cloud Platform
+          Google AI
+          All products
+          Terms
+          Privacy
+          Manage cookies
+      English
+      Deutsch
+      Español
+      Español – América Latina
+      Français
+      Indonesia
+      Italiano
+      Polski
+      Português – Brasil
+      Tiếng Việt
+      Türkçe
+      Русский
+      עברית
+      العربيّة
+      فارسی
+      हिंदी
+      বাংলা
+      ภาษาไทย
+      中文 – 简体
+      中文 – 繁體
+      日本語
+      한국어

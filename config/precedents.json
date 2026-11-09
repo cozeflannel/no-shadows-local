@@ -1,0 +1,1482 @@
+[
+  {
+    "kind": "fix",
+    "product": "Gemini App",
+    "tag": "Product - Other/general criticism",
+    "name": "Gemini Vs Grok",
+    "summary": "X user cb_doge (1.8M followers) reports that Grok 4 ranked first on the RalliesAI simulated trading leaderboard, posting an 8.9% portfolio gain and outperforming competing models, ",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Other/general criticism'); product='Gemini App' (was 'Brand'); issue_name='Gemini Vs Grok' (was 'Google Vs Grok')): this is again Gemini vs grok, please retrigger. Correct the description accordingly too [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Gemini App",
+    "tag": "Product - Alleged anticompetitive behavior",
+    "name": "Gemini - Siri integration",
+    "summary": "X user robbystarbuck (862.9K followers) posted a message stating, \"I have no idea, but I’m suing to make sure real safeguards exist,\" regarding potential legal action involving App",
+    "lesson": "Analyst correction (exposure_tag='Product - Alleged anticompetitive behavior' (was 'Brand - Litigation'); product='Gemini App' (was 'Brand'); issue_name='Gemini - Siri integration' (was 'Legal Actions Against Google')): Looks like the KOF tag is missing here. Can we please update and retrigger? [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Brand",
+    "tag": "Brand - Conspiratorial theories about Google",
+    "name": "Hidden Conspiracy Theories About Google",
+    "summary": "X user natejhake (3,780 followers) posted that Google officially launched \"surveillance-pricing-as-a-service\" in AI Mode, alleging conspiratorial theories regarding the company's p",
+    "lesson": "Analyst correction (exposure_tag='Brand - Conspiratorial theories about Google' (was 'Employees - Executive criticism'); product='Brand' (was 'AI Mode'); issue_name='Hidden Conspiracy Theories About Google' (was 'Criticism of AI Mode')): Note that I've retriggered this as a new issue, as it's a unique new product [Final emojis: ❌ No action taken]"
+  },
+  {
+    "kind": "fix",
+    "product": "Gemini App",
+    "tag": "Product - Other/general criticism",
+    "name": "Criticism against Gemini Personal Context launch",
+    "summary": "X user VassB (9.8K followers) shared an article titled \"Will Google Become Our AI-Powered Central Planner?\" which alleged that Google’s recent moves signal a bid to centralize enor",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Product - Privacy & security concerns'); product='Gemini App' (was 'Gemini Model'); issue_name='Criticism against Gemini Personal Context launch' (was 'Gemini AI training data risk')): This is a criticism of the Personal Context Launch. Please edit and retrigger [Final emojis: ❌ No action taken]"
+  },
+  {
+    "kind": "fix",
+    "product": "Gemini App",
+    "tag": "Content - Negative reaction to paid Google ad",
+    "name": "Criticism of Gemini and The Princeton Review partnership",
+    "summary": "X user natejhake (3,797 followers) commented on a post that described Google DeepMind as “democratizing learning” in relation to Gemini’s new SAT practice features. Hake criticized",
+    "lesson": "Analyst correction (exposure_tag='Content - Negative reaction to paid Google ad' (was 'Brand - Perceived bias - brand'); product='Gemini App' (was 'Brand'); issue_name='Criticism of Gemini and The Princeton Review partnership' (was 'Claims of Google's Political Bias')): Adjusting this one to the previously alerted Issue Name [Final emojis: 📰 GCPA, 📦 Product, 🌱 Channel Owner]"
+  },
+  {
+    "kind": "fix",
+    "product": "Brand",
+    "tag": "Brand - Litigation",
+    "name": "Antitrust case against Google",
+    "summary": "X user rustybrick (244.7K followers) shared that Google is appealing the DOJ Search monopoly ruling, stating that users choose Google \"because they want to, not because they're for",
+    "lesson": "Analyst correction (exposure_tag='Brand - Litigation' (was 'Product - Other/general criticism'); product='Brand' (was 'Search'); issue_name='Antitrust case against Google' (was 'Monopoly on Search')): this is not the correct issue name for this. Please retrigger under: Antitrust case against Google / Previously Reported Issue Exposure tag: Brand - Litigation [Final emojis: 📰 GCPA, ⚖️ Civics]"
+  },
+  {
+    "kind": "fix",
+    "product": "Search",
+    "tag": "Product - Meme about Google products",
+    "name": "Search \"1986 world series champ\"",
+    "summary": "X user Krukisking (5 followers) shared a screenshot of AI Overviews for the query \"1986 world series champ,\" to which AIO responded, \"cocaine.\" The user captioned, \"Google knows wh",
+    "lesson": "Analyst correction (exposure_tag='Product - Meme about Google products' (was 'Product - Unexpected Responses'); product='Search' (was 'AI Overviews'); issue_name='Search \"1986 world series champ\"' (was 'AIO \"1986 world series champ\"')): Please update the product to search and please update the exposure tag to Product - Meme about Google products then retrigger. Thank you! [Final emojis: 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Brand",
+    "tag": "Employees - Executive criticism",
+    "name": "Alleged Google AI Undermining User Trust",
+    "summary": "X user WR4NYGov (103.5k followers) shared a post highlighting growing tension between major AI labs such as Google DeepMind, OpenAI, and xAI and the U.S. government regarding wheth",
+    "lesson": "Analyst correction (exposure_tag='Employees - Executive criticism' (was 'Product - Other/general criticism'); product='Brand' (was 'Gemini App'); issue_name='Alleged Google AI Undermining User Trust' (was 'Gemini Vs Grok')): Issue name should also be updated to reflect the core issue here. It should be a new issue [Final emojis: 📰 GCPA, 🦺 GSOC - Global Security Operations Center, 💼 = People Comms]"
+  },
+  {
+    "kind": "fix",
+    "product": "Gemini Model",
+    "tag": "Product - Privacy & security concerns",
+    "name": "Criticism of Gemini integration in Workspace",
+    "summary": "X user AndroidAuth (1.1M followers) shared a post titled, “Google Drive’s AI nonsense finally pushed me to self-host my documents.” The post discusses frustration with Google Drive",
+    "lesson": "Analyst correction (exposure_tag='Product - Privacy & security concerns' (was 'Product - Other/general criticism'); product='Gemini Model' (was 'Workspace'); issue_name='Criticism of Gemini integration in Workspace' (was 'Alleged criticism against Google drive storage')): this should be Criticism of Gemini integration in Workspace / Previously Reported Issue [Final emojis: 📦 Product, 💬 gUP, 📰 GCPA]"
+  },
+  {
+    "kind": "fix",
+    "product": "Android (Android OS & Google TV)",
+    "tag": "Product - Alleged anticompetitive behavior",
+    "name": "Concerns over duopoly of Google and Apple mobile apps",
+    "summary": "X user TheEconomist (25.8M followers) states that Apple and Google have created a highly lucrative duopoly in the smartphone industry over the past two decades, but new challengers",
+    "lesson": "Analyst correction (exposure_tag='Product - Alleged anticompetitive behavior' (was 'Product - Other/general criticism'); product='Android (Android OS & Google TV)' (was 'Gemini App'); issue_name='Concerns over duopoly of Google and Apple mobile apps' (was 'Gemini content restriction criticism')): Hi sorry this doesn't reference Gemini at all. Please edit and retrigger [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Search",
+    "tag": "Product - Perceived bias",
+    "name": "Alleged Wikipedia editorial influence on Search",
+    "summary": "X user OpIndia_com (735.2K followers) shared a video alleging that, \"Google has been funding many left-leaning NGOs. To create a smokescreen, Google dissolved its foundation in 201",
+    "lesson": "Analyst correction (exposure_tag='Product - Perceived bias' (was 'Brand - Perceived bias - brand'); product='Search' (was 'Brand'); issue_name='Alleged Wikipedia editorial influence on Search' (was 'Google Bias and Censorship Claims')): Hi team, this descriptive text doesn't make any sense. Please rewrite it to describe the post and retrigger. Thanks! [Final emojis: 📰 GCPA, 📦 Product, 💬 gUP, ⚖️ Civics]"
+  },
+  {
+    "kind": "fix",
+    "product": "Search",
+    "tag": "Product - Other/general criticism",
+    "name": "Debate Over Googlebot Blocking Search Vs AI",
+    "summary": "X user natejhake (3.7K followers) reports that Google’s testimony to UK Members of Parliament states that the company does not require licensing to train AI models on publicly avai",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Product - SEO/Publisher Concerns'); product='Search' (was 'AI Mode'); issue_name='Debate Over Googlebot Blocking Search Vs AI' (was 'Search Ranking Manipulation Claims')): hi team! this is a previously reported issue under: Google AI Stealing Publishers Work & product is: AI Overviews (just an FYI!) [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Play Store",
+    "tag": "Product - Privacy & security concerns",
+    "name": "Play Store CSAM Policy Enforcement",
+    "summary": "X user Viral KOF DogeDesigner (1.8M followers) shared three screenshots of a query to Gemini, ChatGPT, and Grok to create an image of a woman in a bikini, and the results are nearl",
+    "lesson": "Analyst correction (exposure_tag='Product - Privacy & security concerns' (was 'Product - Offensive or explicit results'); product='Play Store' (was 'Gemini App'); issue_name='Play Store CSAM Policy Enforcement' (was 'Criticism against Gemini image generation')): This is related to the ongoing CSAM complaints and Play Store. Please edit and Retrigger with the correct issue name [Final emojis: 📰 GCPA, 📦 Product, ⚖️ Civics]"
+  },
+  {
+    "kind": "fix",
+    "product": "Gemini App",
+    "tag": "Content - Negative reaction to owned social post",
+    "name": "Criticism against Google AI Pro annual plan post",
+    "summary": "X user GeminiApp (363.9K followers) shared a post urging new AI and Google One members to claim a limited-time Google AI Pro annual offer. Offer ends today, Jan 15, 2026, at 11:59 ",
+    "lesson": "Analyst correction (exposure_tag='Content - Negative reaction to owned social post' (was 'Product - Other/general criticism'); product='Gemini App' (was 'Workspace'); issue_name='Criticism against Google AI Pro annual plan post' (was 'Criticism against Google One AI Pro annual plan')): hi team! product is G1 & exp tag is Content - Threshold met for negativity on owned post (just an FYI!) [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "AI Overviews",
+    "tag": "Product - Other/general criticism",
+    "name": "Criticism against AI Overviews",
+    "summary": "On X, natejhake (3.8K followers) shared a post that examined a study of over 50,000 health searches. AI Overviews cite YouTube more than any medical authority, with YouTube making ",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Other/general criticism'); product='AI Overviews' (was 'Brand'); issue_name='Criticism against AI Overviews' (was 'Criticism of Search quality')): Please update the product to AI overview. Update the issue name to be Criticism against AI Overviews (can leave as a previously reported issue), also please upd [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Brand",
+    "tag": "Brand - Other/general criticism",
+    "name": "60 UK Lawmakers Accuse Google of Breaking AI Safety Pledge",
+    "summary": "X user PauseAI (5.2K followers) shared a post acknowledging Google DeepMind CEO Demis Hassabis's conditional support for an AI development pause, which mirrors their core demands. ",
+    "lesson": "Analyst correction (exposure_tag='Brand - Other/general criticism' (was 'Employees - Executive criticism'); product='Brand' (was 'Gemini App'); issue_name='60 UK Lawmakers Accuse Google of Breaking AI Safety Pledge' (was 'Demis Hassabis on OpenAI's ads')): hi team! there is no mention of OpenAI in the post.. can you please re-trigger under: 60 UK Lawmakers Accuse Google of Breaking AI Safety Pledge [Final emojis: ❌ No action taken]"
+  },
+  {
+    "kind": "fix",
+    "product": "Search",
+    "tag": "Product - Meme about Google products",
+    "name": "\"Pychosis\" Search Result",
+    "summary": "X user iluminatibot (2.4M followers) posted an alleged screenshot for a Search for \"psychosis\" where the results link it to \"unfounded beliefs\" about government harm. [Link]: https",
+    "lesson": "Analyst correction (exposure_tag='Product - Meme about Google products' (was 'Brand - Conspiratorial theories about Google'); product='Search' (was 'Brand'); issue_name='\"Pychosis\" Search Result' (was 'Conspiratorial theories about Google')): This is more of a meme using Google Search. Please change this issue name to \"Pychosis\" Search Result and the Exposure to \"Meme involving Google products.\" The  [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Search Images",
+    "tag": "Product - Perceived bias",
+    "name": "Search Images \"anthony davis\"",
+    "summary": "X user NBAMemes (681.7K followers) drew attention to a perceived bias in Image Search results for \"Anthony Davis.\" The user shared a screenshot showing numerous images of Davis aft",
+    "lesson": "Analyst correction (exposure_tag='Product - Perceived bias' (was 'Product - Factual inaccuracies (not dangerous/offensive)'); product='Search Images' (was 'AI Overviews'); issue_name='Search Images \"anthony davis\"' (was 'AIO \"anthony davis\"')): This is not AIO, the product should be Search Images. This is also not a factual inaccuracy. The images are depicting the player after they had fallen where the [Final emojis: ❌ No action taken]"
+  },
+  {
+    "kind": "fix",
+    "product": "Chromebook",
+    "tag": "Product - Other/general criticism",
+    "name": "Chromebook School Training Concerns",
+    "summary": "X user natejhake (3806 followers) reposted a post by @Pirat_Nation claiming that internal Google documents from a 2020 presentation, uncovered in a New Mexico AG lawsuit alleging C",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Other/general criticism'); product='Chromebook' (was 'Brand'); issue_name='Chromebook School Training Concerns' (was 'Google Chromebook School Training Concerns')): please make corrections to this automated alert. Product: Chromebook Exposure tag: Product - Other/general criticism Issue name: Chromebook School Training Conc [Final emojis: 📦 Product, 📰 GCPA]"
+  },
+  {
+    "kind": "fix",
+    "product": "Brand",
+    "tag": "Brand - Privacy & security concerns",
+    "name": "Apple Warns iPhone Users About Alleged Google Tracking",
+    "summary": "X user jornadatop (8.9M followers) posted that Chrome is being criticized by Microsoft and Apple for security and privacy concerns. Both companies argue that Chrome’s architecture ",
+    "lesson": "Analyst correction (exposure_tag='Brand - Privacy & security concerns' (was 'Product - Other/general criticism'); product='Brand' (was 'Chrome'); issue_name='Apple Warns iPhone Users About Alleged Google Tracking' (was 'Microsoft Accused of Discouraging Chrome')): Hi we've reported on these warnings before. Please use the existing issue name (Apple Warns iPhone Users About Alleged Google Tracking) and retrigger [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Search",
+    "tag": "Product - Meme about Google products",
+    "name": "Search \"why potion make ass fat?\"",
+    "summary": "On Bluesky, covertcanine.bsky.social (5.3K followers) shared a screenshot humorously criticizing Search relevance. The user's query, \"why potion make ass fat?\" reportedly prompted ",
+    "lesson": "Analyst correction (exposure_tag='Product - Meme about Google products' (was 'Product - Factual inaccuracies (not dangerous/offensive)'); product='Search' (was 'AI Overviews'); issue_name='Search \"why potion make ass fat?\"' (was 'AIO \"why potion make ass fat?\"')): Team, this is not an AIO response (AI overview is not in the screenshot). Please update the product to Search, update the title and description to reflect the p [Final emojis: ❌ No action taken]"
+  },
+  {
+    "kind": "fix",
+    "product": "DeepMind",
+    "tag": "Product - Product failures - general software/service issues",
+    "name": "DeepMind Project Genie Knockoffs",
+    "summary": "BlueSky user jamellebouie (720.9K followers) shared a post by jaypeters (19.6K followers) alleging that they tested Genie and generated \"a bunch of Nintendo-inspired games.\" jamell",
+    "lesson": "Analyst correction (exposure_tag='Product - Product failures - general software/service issues' (was 'Product - Other/general criticism'); product='DeepMind' (was 'Gemini App'); issue_name='DeepMind Project Genie Knockoffs' (was 'Genie 3 Intellectual Property Concerns')): Please alert the original post here. Note the article calls these \"Bad Nintendo knockoffs.\" This is not General Criticism either. This post from Bouie should be [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Nano Banana",
+    "tag": "Product - Offensive or explicit results",
+    "name": "Nano Banana generates controversial content",
+    "summary": "X user alpaysh (7.3K followers) posted a generated image by Nano Banana (confirmed by synthID) of Sundar Pichai with Elon Musk and Jeff Bezos shaking hands. In the image, Sundar ap",
+    "lesson": "Analyst correction (exposure_tag='Product - Offensive or explicit results' (was 'Employees - Other employee issues'); product='Nano Banana' (was 'Brand'); issue_name='Nano Banana generates controversial content' (was 'AI generated image of Sundar Pichai smoking')): Please update to previously reported issue. Update the issue name to Nano Banana generates controversial content, update the exposure tag to Product - Offensive [Final emojis: ✍️ T&S, 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "AI Overviews",
+    "tag": "Product - Product failures - general software/service issues",
+    "name": "AIO allegedly replacing local packs in Search results",
+    "summary": "X user rustybrick (244.7K followers) shared a post alleging that AI Overviews are replacing traditional local packs in search results. The user shared a video demonstrating side-by",
+    "lesson": "Analyst correction (exposure_tag='Product - Product failures - general software/service issues' (was 'Product - SEO/Publisher Concerns'); product='AI Overviews' (was 'Search'); issue_name='AIO allegedly replacing local packs in Search results' (was 'Search \"Clearwater Florida personal injury lawyer\"')): please describe the problem here in the issue name. E.g. change to: AI Overviews allegedly replacing local packs in search results [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Gemini Model",
+    "tag": "Product - Other/general criticism",
+    "name": "Alleged reverse-engineering of Gemini system prompts on GitHub",
+    "summary": "X user midudev (312.9K followers) published a video in Spanish claiming that \"system prompts from ChatGPT, Gemini, Claude, and Grok have been leaked. The GitHub repository 'System ",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Product - Public leak (e.g. features/models)'); product='Gemini Model' (was 'Gemini App'); issue_name='Alleged reverse-engineering of Gemini system prompts on GitHub' (was 'Gemini System Prompt Leaks')): Hi team, can you retag this under the previously reported issue Alleged reverse-engineering of Gemini system prompts on GitHub. and update the fields to match b [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Search",
+    "tag": "Product - Conspiratorial theories about Google products",
+    "name": "Search Indian Fraud Pipleline Manipulation",
+    "summary": "X user NeonWhiteCat (14.2K followers) accused tech companies, particularly Google, of manipulating information to hide \"THE TRUTH about the INDIAN FRAUD PIPELINE.\" The user attache",
+    "lesson": "Analyst correction (exposure_tag='Product - Conspiratorial theories about Google products' (was 'Product - Perceived bias'); product='Search' (was 'AI Mode'); issue_name='Search Indian Fraud Pipleline Manipulation' (was 'AI Mode \"indian fraud pipeline neon white rabbit\"')): Hi Team, this title doesn't make sense (and there seems to be come confusion about the username). it looks like this alert was auto-generated and is registering [Final emojis: 📰 GCPA, 📦 Product, ⚖️ Civics]"
+  },
+  {
+    "kind": "fix",
+    "product": "Photos",
+    "tag": "Product - Privacy & security concerns",
+    "name": "Photos Privacy Issue",
+    "summary": "X user dflieb (36.3K followers) shared a post about Photos, citing a specific feature they believe indicates a shift toward a 'wartime mode' for the company, capable of overcoming ",
+    "lesson": "Analyst correction (exposure_tag='Product - Privacy & security concerns' (was 'Brand - Other/general criticism'); product='Photos' (was 'Brand'); issue_name='Photos Privacy Issue' (was 'Google Wartime Mode Sentiment')): Taborda please retrigger"
+  },
+  {
+    "kind": "fix",
+    "product": "Search",
+    "tag": "Product - Privacy & security concerns",
+    "name": "Criticism against Google's Privacy",
+    "summary": "X user RealAlexJones (4.5M followers) posted, \"If you target Jewish students, your actions will not disappear into the darkness... thanks to Google and SEO,\" alleging that Google i",
+    "lesson": "Analyst correction (exposure_tag='Product - Privacy & security concerns' (was 'Brand - Other/general criticism'); product='Search' (was 'Brand'); issue_name='Criticism against Google's Privacy' (was 'Google SEO and Targeted Harassment')): Got it, will re-trigger"
+  },
+  {
+    "kind": "fix",
+    "product": "Cloud",
+    "tag": "Product - Account deletion/suspension",
+    "name": "Google Cloud blocking Railway services",
+    "summary": "X user Grummz (299.5K followers) reacted to reports that Google Cloud allegedly blocked Railway’s account, questioning how Google could block \"a huge customer like Railway without ",
+    "lesson": "Analyst correction (exposure_tag='Product - Account deletion/suspension' (was 'Brand - Other/general criticism'); product='Cloud' (was 'Brand'); issue_name='Google Cloud blocking Railway services' (was '/ Recently Reported')): Please check and retrigger this alert"
+  },
+  {
+    "kind": "fix",
+    "product": "Veo",
+    "tag": "Product - Other/general criticism",
+    "name": "Veo 3 vs Grok Imagine API",
+    "summary": "X user cb_doge (1.8M followers) shared a post titled, \"Grok Imagine API just launched video and audio AI tools for developers.\" The user alleges, \"It just beat Google Veo 3.1\" alon",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Value & Earnings'); product='Veo' (was 'Brand'); issue_name='Veo 3 vs Grok Imagine API' (was 'Launch of New AI Video Tools')): This is a Sonar automated alert [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Calendar",
+    "tag": "Product - Perceived bias",
+    "name": "Google Removes Women's Day from Calendar",
+    "summary": "Instagram user seedingsovereignty (415K followers) posted a carousel for International Women’s Day, honoring women in various countries who are revolutionaries, stating that corpor",
+    "lesson": "Analyst correction (exposure_tag='Product - Perceived bias' (was 'Brand - Perceived bias - brand'); product='Calendar' (was 'Brand'); issue_name='Google Removes Women's Day from Calendar' (was 'Claim of Google Erasing International Women's Day')): Got it! Retrigger coming soon"
+  },
+  {
+    "kind": "fix",
+    "product": "Brand",
+    "tag": "Brand - Litigation",
+    "name": "Alleged Google SB 175 Lobbying",
+    "summary": "X user and viral KOF WallStreetMav (1.7M followers) alleged that Google is trying to push the Ohio legislature to pass SB 175, in an effort to \"defeat a Big Tech law with actual te",
+    "lesson": "Analyst correction (exposure_tag='Brand - Litigation' (was 'Brand - Other/general criticism'); product='Brand' (was 'Play Store'); issue_name='Alleged Google SB 175 Lobbying' (was 'Google's alleged push for SB 175 in Ohio')): ongoing issue - Alleged Google SB 175 Lobbying please retrigger"
+  },
+  {
+    "kind": "fix",
+    "product": "YouTube",
+    "tag": "Product - Other/general criticism",
+    "name": "Criticism against YouTube's AI",
+    "summary": "Instagram user saycheesetv (2.7M followers) shared a post pointing out the inconsistency in Google's messaging about AI: YouTube’s Head of Music is saying AI needs rules and artist",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Other/general criticism'); product='YouTube' (was 'Brand'); issue_name='Criticism against YouTube's AI' (was 'Criticism against Google AI')): Okay I am not getting the alert title, of the ongoing issue as well"
+  },
+  {
+    "kind": "fix",
+    "product": "Workspace",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "Alleged Jeffrey Epstein Gmail Account",
+    "summary": "X user AutismCapital (1M followers) shared a post alleging that newly surfaced Epstein-related records show Jeffrey Epstein used multiple Gmail and Yahoo email accounts, contradict",
+    "lesson": "Analyst correction (exposure_tag='Product - Connection to Sensitive Trending Events' (was 'Product - Privacy & security concerns'); product='Workspace' (was 'Maps/Geo'); issue_name='Alleged Jeffrey Epstein Gmail Account' (was 'Google Data Privacy Concerns')): Sonar alert pls fix and retrigger"
+  },
+  {
+    "kind": "fix",
+    "product": "YouTube",
+    "tag": "Product - Privacy & security concerns",
+    "name": "Search age verification in Australia",
+    "summary": "X user MarioNawfal (2.7M followers) shared a post on Australia’s social media ban for under-16s. Prime Minister Anthony Albanese stated the rollout would be bumpy but insisted it w",
+    "lesson": "Analyst correction (exposure_tag='Product - Privacy & security concerns' (was 'Brand - Litigation'); product='YouTube' (was 'Brand'); issue_name='Search age verification in Australia' (was 'YouTube \"U-16 social media ban issue - Australia\"')): LMK if I need to retrigger this with another issue name"
+  },
+  {
+    "kind": "fix",
+    "product": "Brand",
+    "tag": "Content - Negative reaction to owned social post",
+    "name": "Google Employee Allegedly Profits from Insider Info",
+    "summary": "X user spacexbt (9.3K followers) criticized Google's annual \"Year in Search\" feature, calling it \"garbage\" and alleging it was \"abused\" by a Google employee. [Link]: https://x.com/",
+    "lesson": "Analyst correction (exposure_tag='Content - Negative reaction to owned social post' (was 'Product - Other/general criticism'); product='Brand' (was 'Search'); issue_name='Google Employee Allegedly Profits from Insider Info' (was 'Year In Search general criticism')): Wrong exposure tag - please update"
+  },
+  {
+    "kind": "fix",
+    "product": "AI Overviews",
+    "tag": "Product - SEO/Publisher Concerns",
+    "name": "Google AI Stealing Publishers Work",
+    "summary": "X user and viral KOF natejhake (3K followers) replied to his thread on Google's Q4/FY25 earnings, affirming his stance that Google \"steals\" from publishers. He alleged that Google ",
+    "lesson": "Analyst correction (exposure_tag='Product - SEO/Publisher Concerns' (was 'Product - Alleged anticompetitive behavior'); product='AI Overviews' (was 'Search'); issue_name='Google AI Stealing Publishers Work' (was 'Unfair Publisher Scraping Practices')): Hi ! We will update this and alert manually, thanks!"
+  },
+  {
+    "kind": "fix",
+    "product": "AI Overviews",
+    "tag": "Product - Policy Update",
+    "name": "Search Generative AI Opt-Out Under Consideration",
+    "summary": "X user natejhake (3,823 followers) claimed that Google has previously failed to follow through on promises for public discussions with publishers about AI controls, referencing a s",
+    "lesson": "Analyst correction (exposure_tag='Product - Policy Update' (was 'Brand - Other/general criticism'); product='AI Overviews' (was 'Brand'); issue_name='Search Generative AI Opt-Out Under Consideration' (was 'Repeated Promises by Google on AI')): Reviewing this automated alert [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "AI Mode",
+    "tag": "Product - SEO/Publisher Concerns",
+    "name": "Alleged Monopsonist Selective AI Licensing Deals",
+    "summary": "X user natejhake (3,532 followers) reposted a tweet about Alphabet's stock surging over 7% while questioning, 'Why can't Google pay AI licensing fees?' [Link]: https://x.com/natejh",
+    "lesson": "Analyst correction (exposure_tag='Product - SEO/Publisher Concerns' (was 'Employees - Workforce reductions'); product='AI Mode' (was 'Brand'); issue_name='Alleged Monopsonist Selective AI Licensing Deals' (was 'YouTube opt-in layoffs')): please retrigger with the correct link and description as per the title"
+  },
+  {
+    "kind": "fix",
+    "product": "AI Overviews",
+    "tag": "Product - Other/general criticism",
+    "name": "Alleged removal of sources from AIO results",
+    "summary": "X user natejhake (3808K followers) reposted a post that criticizes a Google AI Overview generated for the query 'best travel destinations for 2026,' alleging that Google aggregated",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Other/general criticism'); product='AI Overviews' (was 'Brand'); issue_name='Alleged removal of sources from AIO results' (was 'Criticism of Google's Reputation')): This is an automated trigger [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Doodles",
+    "tag": "Product - Perceived bias",
+    "name": "Google Doodle Omits International Men’s Day",
+    "summary": "X user Psk7167 (5.2k followers) shared a post criticizing Google's disparity in celebrating International Men's Day compared to International Women's Day. The author claimed to hav",
+    "lesson": "Analyst correction (exposure_tag='Product - Perceived bias' (was 'Brand - Perceived bias - brand'); product='Doodles' (was 'Brand'); issue_name='Google Doodle Omits International Men’s Day' (was 'Google’s Alleged Gender Bias')): we already have a issue name for this: Google Doodle Omits International Men’s Day"
+  },
+  {
+    "kind": "fix",
+    "product": "Workspace",
+    "tag": "Brand - Litigation",
+    "name": "Alleged Phone Tracking Scandal",
+    "summary": "TikTok user cee.cee4991 (4.7K followers) posted a video alleging that, \"Even if you selected no, they continued to track you.\" The user stated, \"They denied it. People fought. The ",
+    "lesson": "Analyst correction (exposure_tag='Brand - Litigation' (was 'Brand - Privacy & security concerns'); product='Workspace' (was 'Brand'); issue_name='Alleged Phone Tracking Scandal' (was 'Gmail Lawsuit Claim')): Hi team we've reported on this class action lawsuit extensively. Please edit the issue name and retrigger"
+  },
+  {
+    "kind": "fix",
+    "product": "Search Images",
+    "tag": "Product - Perceived bias",
+    "name": "Search \"white mother\"",
+    "summary": "X user elonmusk (240.1M followers) reshared a post by KatieMiller (231.9K followers) alleging that image searches of \"white mother\" return images of white women with only black chi",
+    "lesson": "Analyst correction (exposure_tag='Product - Perceived bias' (was 'Brand - Perceived bias - brand'); product='Search Images' (was 'Brand'); issue_name='Search \"white mother\"' (was 'Perceived Bias in Google Search Results')): Hi team, will be re-triggering this automated alert with the proper issue name and tags 🙏"
+  },
+  {
+    "kind": "fix",
+    "product": "Cloud",
+    "tag": "Product - Other/general criticism",
+    "name": "Alleged Increase in AI-Generated New Code",
+    "summary": "X user Viral KOF unusual_whales (3.6M followers) shared a post citing Bloomberg as a source alleging, \"75% of all new code at Google is now AI-generated and approved by engineers,\"",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Other/general criticism'); product='Cloud' (was 'Brand'); issue_name='Alleged Increase in AI-Generated New Code' (was 'Code generated by AI')): i'm not seeing a previous escalation using this issue name - when had it last been used?"
+  },
+  {
+    "kind": "fix",
+    "product": "Ads/Merchant Center",
+    "tag": "Product - Perceived bias",
+    "name": "Sadhguru Misinformation on Google Ads",
+    "summary": "X user techsivam (570 Followers) replied to @YouTubeIndia sharing that a YouTube ad titled \"The whole of India is in mourning & This morning's headlines shocked nation\" featured an",
+    "lesson": "Analyst correction (exposure_tag='Product - Perceived bias' (was 'Product - Fake news/screenshots about products'); product='Ads/Merchant Center' (was 'Gemini App'); issue_name='Sadhguru Misinformation on Google Ads' (was 'Gemini deepfake images')): there is an existing exposure: Sadhguru Misinformation on Google Ads"
+  },
+  {
+    "kind": "fix",
+    "product": "AI Mode",
+    "tag": "Product - Unexpected Responses",
+    "name": "AI Mode: \"Is 1.2 GPA good?\"",
+    "summary": "Redditors on subreddit r/DumbAI (3,500 members) shared a screenshot showing AI Mode responding to the query \"Is 1.2 GPA good?\" with \"A 1.2 GPA is an outstanding and exceptional aca",
+    "lesson": "Analyst correction (exposure_tag='Product - Unexpected Responses' (was 'Product - Other/general criticism'); product='AI Mode' (was 'AI Overviews'); issue_name='AI Mode: \"Is 1.2 GPA good?\"' (was 'AI Overviews criticism')): Note, this is an AI Mode issue, and needs a unique issue name assigned. I've edited and retriggered"
+  },
+  {
+    "kind": "fix",
+    "product": "AI Overviews",
+    "tag": "Product - SEO/Publisher Concerns",
+    "name": "AIO Allegedly Causes Website Traffic Decline",
+    "summary": "X user natejhake (135K followers) shared a post by @eastdakota, Cloudflare CEO attributing an article titled, \"Global publisher Google traffic dropped by a third in 2025.\" The arti",
+    "lesson": "Analyst correction (exposure_tag='Product - SEO/Publisher Concerns' (was 'Brand - Other/general criticism'); product='AI Overviews' (was 'Brand'); issue_name='AIO Allegedly Causes Website Traffic Decline' (was 'Google Traffic Decline Due to AI Overviews')): This is a Sonar automated alert [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Gemini App",
+    "tag": "Product - Other/general criticism",
+    "name": "Discussion regarding AI hallucinations",
+    "summary": "X user BenBurgis (51.9K followers) posted a screenshot of a post by Robert Anderson announcing a fake article titled, \"Hallucinated cases are good law\" in Princeton Law Review (whi",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Product - Factual inaccuracies (not dangerous/offensive)'); product='Gemini App' (was 'AI Overviews'); issue_name='Discussion regarding AI hallucinations' (was 'AIO alleged misinformation on mandated laws')): let me review and we'll update + retrigger!"
+  },
+  {
+    "kind": "fix",
+    "product": "Pixel",
+    "tag": "Brand - Privacy & security concerns",
+    "name": "China Plans to Ban Pixel Over Security Concerns",
+    "summary": "TikTok user realgodivagoddess (no follower count available) posted a video alleging that brands like Google, Apple, and Samsung are using Virtual Private Network (VPN) spyware or b",
+    "lesson": "Analyst correction (exposure_tag='Brand - Privacy & security concerns' (was 'Brand - Conspiratorial theories about Google'); product='Pixel' (was 'Brand'); issue_name='China Plans to Ban Pixel Over Security Concerns' (was 'VPN on Play Store allegedly Chinese Spyware')): This is the wrong issue name. I'll correct in the tracker"
+  },
+  {
+    "kind": "fix",
+    "product": "AI Overviews",
+    "tag": "Product - Factual inaccuracies (not dangerous/offensive)",
+    "name": "Alleged AI Overviews Xbox Live Misinformation",
+    "summary": "Bluesky user crohnic.bsky.social (28 followers) shared a post alleging Google Search is \"misleading everyone\" by surfacing false claims like \"Xbox Live’s online multiplayer is now ",
+    "lesson": "Analyst correction (exposure_tag='Product - Factual inaccuracies (not dangerous/offensive)' (was 'Product - Other/general criticism'); product='AI Overviews' (was 'Search'); issue_name='Alleged AI Overviews Xbox Live Misinformation' (was 'Alleged search \"Xbox Live's online multiplayer is now free\"')): this is product: AI Overviews"
+  },
+  {
+    "kind": "fix",
+    "product": "Google News",
+    "tag": "Product - Perceived bias",
+    "name": "Google’s alleged censorship of conservative media",
+    "summary": "X account FreeSpeechAmer (124.8K followers) alleges censorship, claiming, \"Google News has gone a full week without publishing a single right-leaning outlet in its morning Top Stor",
+    "lesson": "Analyst correction (exposure_tag='Product - Perceived bias' (was 'Product - Factual inaccuracies (not dangerous/offensive)'); product='Google News' (was 'AI Overviews'); issue_name='Google’s alleged censorship of conservative media' (was 'AIO \"gold price in Bhutan, 1 tola\"')): please retrigger - no link here, and hyperlink doesnt work"
+  },
+  {
+    "kind": "fix",
+    "product": "Gemini App",
+    "tag": "Product - Privacy & security concerns",
+    "name": "AI Studio Voice Cloning",
+    "summary": "X user glenngabe (80.9K followers) shared a post stating that Google is making voice cloning accessible to developers via Gemini Flash. This development poses risks such as fraud, ",
+    "lesson": "Analyst correction (exposure_tag='Product - Privacy & security concerns' (was 'Product - Public leak (e.g. features/models)'); product='Gemini App' (was 'Gemini Model')): Hi team, this one isn't a leak. Please change product to Gemini App and the exposure tag to Product - Privacy & security concerns [Final emojis: 📰 GCPA, 📦 Product, 💬 gUP]"
+  },
+  {
+    "kind": "fix",
+    "product": "DeepMind",
+    "tag": "Product - Other/general criticism",
+    "name": "Criticism of Antigravity",
+    "summary": "X user GergelyOrosz (317K followers) posted that at Google, engineers are allegedly prioritized over paying customers. The user alleges, \"This means Google is amazing to work at as",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Other/general criticism'); product='DeepMind' (was 'Brand'); issue_name='Criticism of Antigravity' (was 'Google Engineers Prioritized Over Customers')): the user is talking about antigravity with this criticism. We should take it with the correct product 'DeepMind' please"
+  },
+  {
+    "kind": "fix",
+    "product": "YouTube",
+    "tag": "Product - Other/general criticism",
+    "name": "Alleged YouTube TV dispute over ABC channel removal",
+    "summary": "X user pablofindsout (73,239 followers) posted about the competitive dynamics between Google and Disney, stating, \"If you're Google and you're YouTube TV, you want to make Disney a",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Value & Earnings'); product='YouTube' (was 'Brand'); issue_name='Alleged YouTube TV dispute over ABC channel removal' (was 'YouTubeTV vs. Disney')): Hi team this is related to the ongoing YouTubeTV/ESPN contract dispute. Please edit and retrigger with the existing issue name"
+  },
+  {
+    "kind": "fix",
+    "product": "Gemini Model",
+    "tag": "Product - Conspiratorial theories about Google products",
+    "name": "Alleged AI censorship",
+    "summary": "X user julykittenBS (1,673 followers) posted, \"Google & Meta have both shown they can't be trusted for the truth or facts... they will censor you,\" alleging that these companies ex",
+    "lesson": "Analyst correction (exposure_tag='Product - Conspiratorial theories about Google products' (was 'Brand - Perceived bias - brand'); product='Gemini Model' (was 'Brand'); issue_name='Alleged AI censorship' (was 'Concerns Over Google Censorship and Bias')): Please retrigger with the title ⬛SOCIAL ALERT⬛: Gemini Model | Alleged AI censorship | X | 0 Engagements"
+  },
+  {
+    "kind": "fix",
+    "product": "Doodles",
+    "tag": "Content - Negative reaction to Google site content",
+    "name": "Omission of Easter Doodle",
+    "summary": "X user AutismCapital (1.1M followers) replies to his own post about the official Easter Doodle in 2026, sharing a screenshot detailing Google's historical approach to Easter recogn",
+    "lesson": "Analyst correction (exposure_tag='Content - Negative reaction to Google site content' (was 'Brand - Perceived bias - brand'); product='Doodles' (was 'Brand'); issue_name='Omission of Easter Doodle' (was 'Perceived political bias in Google')): I thought AutismCapital is a KOF? And isn't this about the Easter Doodle? Please reevaluate this alert and retrigger"
+  },
+  {
+    "kind": "fix",
+    "product": "Reviews",
+    "tag": "Product - Perceived bias",
+    "name": "Church reviews",
+    "summary": "X user abierkhatib (328,704 followers) posted a video claiming that reviews are being censored at the Islamic Center of Charlotte. The user stated, \"Google is censoring reviews.\" [",
+    "lesson": "Analyst correction (exposure_tag='Product - Perceived bias' (was 'Product - Review Abuse'); product='Reviews' (was 'Brand'); issue_name='Church reviews' (was 'Google censors reviews about the Islamic Center of Charlotte')): hi team! this is a previously reported issue under \"Church Reviews\", product: Reviews tag: [Product] Perceived bias - new product/feature issue"
+  },
+  {
+    "kind": "fix",
+    "product": "Nano Banana",
+    "tag": "Product - Factual inaccuracies (not dangerous/offensive)",
+    "name": "Nano Banana 2 generates controversial content",
+    "summary": "On Bluesky, heathercampbell.bsky.social (13.9K followers) posted an AI-generated image of \"Trump on the set of Doomsday\" to underscore the alarming realism of Google's new image ge",
+    "lesson": "Analyst correction (exposure_tag='Product - Factual inaccuracies (not dangerous/offensive)' (was 'Product - Perceived bias'); product='Nano Banana' (was 'Gemini App'); issue_name='Nano Banana 2 generates controversial content' (was 'Gemini Creates Trump Deepfake/Fake Set Leak Photos')): this should be on Nano Banana 2 generates controversial content / prev reported"
+  },
+  {
+    "kind": "fix",
+    "product": "Workspace",
+    "tag": "Product - Policy Update",
+    "name": "Criticism of new AI features on Gmail",
+    "summary": "X user Grady_Booch (168K followers) posted a verse expressing a strong and repeated dislike for \"genAI slop,\" explicitly asking Google to stop it, stating a general aversion to it:",
+    "lesson": "Analyst correction (exposure_tag='Product - Policy Update' (was 'Product - Other/general criticism'); product='Workspace' (was 'AI Mode'); issue_name='Criticism of new AI features on Gmail' (was 'AI: \"genAI slop\" criticism')): This is related to the new Gmail update, as you can see from the screenshot attached. This is not an AI Mode issue. Please edit and retrigger"
+  },
+  {
+    "kind": "fix",
+    "product": "Nano Banana",
+    "tag": "Product - Unexpected Responses",
+    "name": "Nano Banana \"change jacket color\" request",
+    "summary": "Redditors on subreddit r/GeminiAI (145K members) shared a screenshot of a conversation with Gemini, where an image was sent without instructions. Gemini responded, \"Can you make th",
+    "lesson": "Analyst correction (exposure_tag='Product - Unexpected Responses' (was 'Product - Product failures - general software/service issues'); product='Nano Banana' (was 'Gemini App'); issue_name='Nano Banana \"change jacket color\" request' (was 'Gemini \"change jacket color\" request')): Exposure tag should be: Product - Unexpected response Product: Gemini 2.5 Flash Image (GemPix)"
+  },
+  {
+    "kind": "fix",
+    "product": "Pixel",
+    "tag": "Product - Product failures - general software/service issues",
+    "name": "AIO burying food blogger recipe",
+    "summary": "X user natejhake (3,777 followers) claimed that \"Google is censoring indie websites\" and suggested that its AI is programmed not to link to these brands. [Link]: https://x.com/nate",
+    "lesson": "Analyst correction (exposure_tag='Product - Product failures - general software/service issues' (was 'Brand - Other/general criticism'); product='Pixel' (was 'Brand'); issue_name='AIO burying food blogger recipe' (was 'Google Censorship of Indie Sites')): hi team! this is a previously reported AIO issue under: AIO burying food blogger recipe [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "YouTube",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "Naomi Seibt Alleged Free Speech Asylum Case",
+    "summary": "X user MarioNawfal (2.6M followers) posted \"German Firebrand Journalist Finds an Ally - And a New Home,\" detailing Naomi Seibt's asylum quest in the U.S. She claims support from El",
+    "lesson": "Analyst correction (exposure_tag='Product - Connection to Sensitive Trending Events' (was 'Brand - Litigation'); product='YouTube' (was 'Brand'); issue_name='Naomi Seibt Alleged Free Speech Asylum Case' (was 'Anabela Natário defamation case against Google')): please read the post/copy again, seems to be very different from the issue name and not sure on the Google link either"
+  },
+  {
+    "kind": "fix",
+    "product": "Workspace",
+    "tag": "Product - Other/general criticism",
+    "name": "Workspace icons criticism",
+    "summary": "X user nucknyan (1.2K followers) reposted a post by advaithj1 (15.5K followers) that praises Google products' new icon design. The user criticized that Google is \"unbelievably bad ",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Other/general criticism'); product='Workspace' (was 'Brand'); issue_name='Workspace icons criticism' (was 'Criticism of Google products' new icons')): Please change the title on the tracker: Workspace | Workspace icons criticism Product: Workspace Exposure tag: Product - Other/general criticism"
+  },
+  {
+    "kind": "fix",
+    "product": "Google Research",
+    "tag": "Product - Other/general criticism",
+    "name": "Google Research Sparks Bitcoin Security Debate",
+    "summary": "X user EvanKirstel (376.7K followers) shared a post claiming that recent developments in quantum computing involving Google could accelerate the ability to break encryption, mentio",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Privacy & security concerns'); product='Google Research' (was 'Brand'); issue_name='Google Research Sparks Bitcoin Security Debate' (was 'Alleged quantum computing advancements increasing risk to encryption security')): Please retrigger Google Research | Google Research Sparks Bitcoin Security Debate"
+  },
+  {
+    "kind": "fix",
+    "product": "YouTube",
+    "tag": "Product - Perceived bias",
+    "name": "Censorship of Palestine-related Content",
+    "summary": "TikTok user @ajplus (1.1M followers) reported that YouTube has deleted over 700 videos from three Palestinian rights organizations' accounts that documented Israeli violence agains",
+    "lesson": "Analyst correction (exposure_tag='Product - Perceived bias' (was 'Brand - Litigation'); product='YouTube' (was 'Brand'); issue_name='Censorship of Palestine-related Content' (was 'Project Nimbus And Human Rights Concerns')): hi team! can you please re-name & re-trigger under issue: YouTube | Censorship of Palestine-related Content (I know this post mentions Project Nimbus but the pu"
+  },
+  {
+    "kind": "fix",
+    "product": "Nano Banana",
+    "tag": "Product - Offensive or explicit results",
+    "name": "Nano Banana generates controversial conten",
+    "summary": "X user @AutismCapital (900.3K followers) shared an image (reportedly generated with Gemini AI) depicting a fabricated Macy’s Parade scene featuring an ICE officer balloon alongside",
+    "lesson": "Analyst correction (exposure_tag='Product - Offensive or explicit results' (was 'Product - Other/general criticism'); product='Nano Banana' (was 'Gemini App'); issue_name='Nano Banana generates controversial conten' (was 'Alleged Misleading Gemini Image Content')): this is product: GemPix/Nano Banana Issue name: Nano Banana generates controversial content / Previously Reported Issue"
+  },
+  {
+    "kind": "fix",
+    "product": "Nano Banana",
+    "tag": "Product - Other/general criticism",
+    "name": "Nano Banana Pro undetectable images concern",
+    "summary": "Instagram user marcinteodoru (10k followers) shared a post reacting to the increasingly realistic outputs from the Nano Banana Pro model. They expressed surprise at how advanced th",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Product - Privacy & security concerns'); product='Nano Banana' (was 'Gemini App'); issue_name='Nano Banana Pro undetectable images concern' (was 'Gemini deepfake images')): Nano Banana Pro undetectable images concern / Previously Reported Issue Product: GemPix/Nano Banana Exposure: Product - Other/general criticism"
+  },
+  {
+    "kind": "fix",
+    "product": "Maps/Geo",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "White House renamed Epstein Island on Google Maps",
+    "summary": "X user @kylegriffin1 (1.2M followers) reported that White House contact listings appeared as “Epstein Island” on callers’ phones, indicating that Google’s widely used business list",
+    "lesson": "Analyst correction (exposure_tag='Product - Connection to Sensitive Trending Events' (was 'Brand - Litigation'); product='Maps/Geo' (was 'Brand'); issue_name='White House renamed Epstein Island on Google Maps' (was 'Alleged Google role in Epstein data leak')): Saenz Taborda This is the wrong issue name. Please use: White House renamed Epstein Island on Google Maps / Previously Reported Issue"
+  },
+  {
+    "kind": "fix",
+    "product": "Gemini Model",
+    "tag": "Product - Perceived bias",
+    "name": "Alleged political bias in Gemini results",
+    "summary": "X user Vivek4real_ (265.1K followers) shared a video claiming that companies like Google, Gemini, OpenAI, and Meta are allegedly not maximally truth-seeking. The user's video featu",
+    "lesson": "Analyst correction (exposure_tag='Product - Perceived bias' (was 'Brand - Perceived bias - brand'); product='Gemini Model' (was 'Brand'); issue_name='Alleged political bias in Gemini results' (was 'Alleged political bias in Google')): Hi - can you please re-trigger, and include this post in the ongoing issue \"Alleged political bias in Gemini results\" and put Gemini as Product (tags will then "
+  },
+  {
+    "kind": "fix",
+    "product": "Gemini Model",
+    "tag": "Product - Privacy & security concerns",
+    "name": "Google training AI tools using YouTube videos",
+    "summary": "X user LinusEkenstam (221K followers) stated that creators on YouTube, by default, grant Google permission to use their uploaded content for AI training unless they specifically op",
+    "lesson": "Analyst correction (exposure_tag='Product - Privacy & security concerns' (was 'Brand - Litigation'); product='Gemini Model' (was 'Brand'); issue_name='Google training AI tools using YouTube videos' (was 'Antitrust case against Google')): Please update the issue name to Google training AI tools using YouTube videos. Note the antitrust case is not mentioned here. Please update the exposure tag to "
+  },
+  {
+    "kind": "fix",
+    "product": "Veo",
+    "tag": "Product - Other/general criticism",
+    "name": "Google Releases First AI-Generated Ad Without Disclosure Label",
+    "summary": "X user rustybrick (243.5K followers) commented on Google's release of an AI-generated ad promoting Search's AI mode. The user noted the ad lacks a disclosure label that indicates i",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Other/general criticism'); product='Veo' (was 'Brand'); issue_name='Google Releases First AI-Generated Ad Without Disclosure Label' (was 'Alleged Google of incapability')): we've just covered this exact issue. Please correct and use the proper issue name. Google Releases First AI-Generated Ad Without Disclosure Label"
+  },
+  {
+    "kind": "fix",
+    "product": "Gemini Model",
+    "tag": "Product - Other/general criticism",
+    "name": "Alleged Criticism of Google AI",
+    "summary": "X user RealAlexJones (4.4M followers) posted a video about artificial intelligence and its development by Google and other tech companies, mentioning the design of systems called n",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Social & Economic Impact'); product='Gemini Model' (was 'Brand'); issue_name='Alleged Criticism of Google AI' (was 'Google's influence on societal change')): Please see my feedback for another post on this issue: [S-F] Burson Automated Alerts V3 Please retrigger the linked alert and please also retrigger this one und"
+  },
+  {
+    "kind": "fix",
+    "product": "Chromebook",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "Chromebook Ibrahim Arief Trial",
+    "summary": "On Instagram, vereditum (285,971 followers) posted a video from Tom Lembong alleging that the case against Nadiem Makarim will decrease foreign investor interest in Indonesia and s",
+    "lesson": "Analyst correction (exposure_tag='Product - Connection to Sensitive Trending Events' (was 'Brand - Conspiratorial theories about Google'); product='Chromebook' (was 'Brand'); issue_name='Chromebook Ibrahim Arief Trial' (was 'Alleged Conspiracy Against Google in Nadiem Makarim Case')): hi team! can we please re-trigger this as an ongoing Chromebook issue under: Chromebook Ibrahim Arief Trial? thank you!"
+  },
+  {
+    "kind": "fix",
+    "product": "Data Centers",
+    "tag": "Brand - Social & Economic Impact",
+    "name": "Environmental impacts of Google Data Centers",
+    "summary": "X user RealAlexJones (4.5M followers) claimed that the head of Alphabet stated data centers will require 100 times more power than currently used by humans. The user criticized res",
+    "lesson": "Analyst correction (exposure_tag='Brand - Social & Economic Impact' (was 'Brand - Other/general criticism'); product='Data Centers' (was 'Brand'); issue_name='Environmental impacts of Google Data Centers' (was 'Broad Criticism of Google Brand')): Can we please mark this as a previously reported issue under the issue name Environmental impacts of Google Data Centers, update the product to Data Centers and"
+  },
+  {
+    "kind": "fix",
+    "product": "Gemini Model",
+    "tag": "Product - Other/general criticism",
+    "name": "Criticism against Big Tech AI safety concerns",
+    "summary": "X user Miles_Brundage (69.6k followers) posted an overview mentioning alleged issues regarding Google’s safety talent bench being reflected in its models' behavior, OpenAI’s focus ",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Other/general criticism'); product='Gemini Model' (was 'Brand'); issue_name='Criticism against Big Tech AI safety concerns' (was 'Google vs Anthropic vs OpenAI')): this issue name does not reflect what is being mentioned in the post. The product should be: Gemini Model This is general criticism relating to AI safety concer"
+  },
+  {
+    "kind": "fix",
+    "product": "Android (Android OS & Google TV)",
+    "tag": "Product - Policy Update",
+    "name": "Criticism against reCAPTCHA system being linked to Play Services.",
+    "summary": "X user Pirat_Nation (321.4K followers) claimed that Google has begun replacing traditional reCAPTCHA image tests with a QR code verification system tied to Android devices running ",
+    "lesson": "Analyst correction (exposure_tag='Product - Policy Update' (was 'Product - Privacy & security concerns'); product='Android (Android OS & Google TV)' (was 'Play Store'); issue_name='Criticism against reCAPTCHA system being linked to Play Services.' (was 'reCAPTCHA Custom OS Exclusion')): Hi team, could you switch the issue name for this alert to Criticism against reCAPTCHA system being linked to Play Services"
+  },
+  {
+    "kind": "fix",
+    "product": "YouTube",
+    "tag": "Product - Other/general criticism",
+    "name": "Israel’s $6M AI Campaign to Influence Google Products",
+    "summary": "X user DropSiteNews (197.2K followers) shared a post alleging Israel has allocated over $145 million for 'Project 545,' which targets social media narratives through AI models like",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Product - Perceived bias'); product='YouTube' (was 'Gemini App'); issue_name='Israel’s $6M AI Campaign to Influence Google Products' (was 'Google's alleged support of Israel')): Please update the alert title to Israel’s $6M AI Campaign to Influence Google Products and update the description to \"X user DropSiteNews (196.9K followers) sha"
+  },
+  {
+    "kind": "fix",
+    "product": "Maps/Geo",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "Nick Shirley, YouTuber, exposes childcare fraud",
+    "summary": "X user KOF libsoftiktok (4.5M followers) posted a video alleging that a Minneapolis childcare business listed on Maps has a phone number that connects to the office of Minnesota Go",
+    "lesson": "Analyst correction (exposure_tag='Product - Connection to Sensitive Trending Events' (was 'Product - Review Abuse'); product='Maps/Geo' (was 'Search'); issue_name='Nick Shirley, YouTuber, exposes childcare fraud' (was 'Manipulation of Google Review System')): Hi team this is related to this issue, correct? Nick Shirley, YouTuber, exposes childcare fraud. Also, the Minnesota governor is Tim Walz, and this this is not "
+  },
+  {
+    "kind": "fix",
+    "product": "Labs (e.g. ImageFX)",
+    "tag": "Content - Negative reaction to owned social post",
+    "name": "Criticism against Lyria",
+    "summary": "X user GoogleDeepMind (1.3M followers) posted a video showing how @Wyclef used Lyria to help develop his latest track, “Back From Abu Dhabi.” Comments are expressing how AI will re",
+    "lesson": "Analyst correction (exposure_tag='Content - Negative reaction to owned social post' (was 'Product - Other/general criticism'); product='Labs (e.g. ImageFX)' (was 'AI Mode'); issue_name='Criticism against Lyria' (was 'The impact of AI on music and replacing artists')): hi team! can we change issue name to: Criticism against Lyria, product: Lyria, & exp tag: Content - Threshold met for negativity on owned post. thank you!"
+  },
+  {
+    "kind": "fix",
+    "product": "DeepMind",
+    "tag": "Product - Privacy & security concerns",
+    "name": "Elon Musk criticizes Google for neglecting AI safety",
+    "summary": "X user MarioNawfal (3M followers) posted a clip of Elon Musk’s commentary on Fox News, in which he criticizes that though Google has \"close to monopoly\" on AI talent and scaled com",
+    "lesson": "Analyst correction (exposure_tag='Product - Privacy & security concerns' (was 'Brand - Other/general criticism'); product='DeepMind' (was 'Brand'); issue_name='Elon Musk criticizes Google for neglecting AI safety' (was 'Broad Negative Sentiment Towards Google')): please investigate this Sonar issue and retrigger with right description title, engagement etc. And also report the original post in case not reported previousl"
+  },
+  {
+    "kind": "fix",
+    "product": "Play Store",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "ICE-spotting apps removed from Play Store",
+    "summary": "Bluesky user adamkinzinger.substack.com (712.7K followers) shared a post questioning the response of critics who previously expressed concern over President Biden asking Google to ",
+    "lesson": "Analyst correction (exposure_tag='Product - Connection to Sensitive Trending Events' (was 'Product - Perceived bias'); product='Play Store' (was 'Search'); issue_name='ICE-spotting apps removed from Play Store' (was 'Google’s alleged censorship of conservative media')): Please update the alert title to ICE-spotting apps removed from Play Store, update the code to product- connection to sensitive events and update the product to"
+  },
+  {
+    "kind": "fix",
+    "product": "DeepMind",
+    "tag": "Product - TOS Violation",
+    "name": "Alleged SynthID watermark bypass via Github project",
+    "summary": "X user AlphaSignalAI (13K followers) claimed that Google’s SynthID watermarking for Gemini-generated images can be reverse-engineered using relatively simple techniques, such as av",
+    "lesson": "Analyst correction (exposure_tag='Product - TOS Violation' (was 'Product - Privacy & security concerns'); product='DeepMind' (was 'Gemini App'); issue_name='Alleged SynthID watermark bypass via Github project' (was 'Alleged vulnerability in Gemini SynthID watermarking')): Hi team, this is part of the previously reported Alleged SynthID watermark bypass via Github project. Please update the name in the tracker and maker sure the o"
+  },
+  {
+    "kind": "fix",
+    "product": "Maps/Geo",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "Maps showing Iranian ballistic missile alerts trigger",
+    "summary": "X user mosha3324 (287,735 followers) posted a list of locations in Israel, mentioning Google in relation to the social and economic impact. [Link]: https://twitter.com/mosha3324/st",
+    "lesson": "Analyst correction (exposure_tag='Product - Connection to Sensitive Trending Events' (was 'Brand - Social & Economic Impact'); product='Maps/Geo' (was 'Brand'); issue_name='Maps showing Iranian ballistic missile alerts trigger' (was 'Google's Role in Society and Economy')): Please update this to a previously reported issue under the issue name Maps showing Iranian ballistic missile alerts trigger, update the exposure tag to Product"
+  },
+  {
+    "kind": "fix",
+    "product": "Play Store",
+    "tag": "Product - Dangerous results (e.g. medical/legal)",
+    "name": "Sanctioned company apps on app stores",
+    "summary": "On X, TTP_updates (6,548 followers) claimed that Apple and Google may be violating Treasury sanctions by allowing apps from Russian banks and Chinese paramilitary groups to be avai",
+    "lesson": "Analyst correction (exposure_tag='Product - Dangerous results (e.g. medical/legal)' (was 'Brand - Other/general criticism'); product='Play Store' (was 'Brand'); issue_name='Sanctioned company apps on app stores' (was 'Potential of Google allegedly violating Treasury sanctions')): This issue name misunderstands the issue at hand. Russian companies are skirting regulations on the App Stores. Please change the issue name to Sanctioned compa"
+  },
+  {
+    "kind": "fix",
+    "product": "Devs Products",
+    "tag": "Product - Other/general criticism",
+    "name": "Alleged Google's AI agents building a full OS with one prompt",
+    "summary": "X user random_walker (126.8K followers) shared an article allegedly fact-checking Google's recent claim that Antigravity 2.0 agents using Gemini 3.5 Flash built a functional OS run",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Other/general criticism'); product='Devs Products' (was 'Brand'); issue_name='Alleged Google's AI agents building a full OS with one prompt' (was 'Alleged Google Single Prompt Transparency Issue')): please alert the original post, not the comment: The product here should be Antigravity, not brand. The issue name is not descriptive enough of the issue - it n"
+  },
+  {
+    "kind": "fix",
+    "product": "Nano Banana",
+    "tag": "Product - Offensive or explicit results",
+    "name": "Nano Banana allegedly generated image related to 9/11",
+    "summary": "Threads user sambhav.ai (6,328 followers) posted an image showing Gemini successfully generating a realistic street-level photograph of crowds and smoke potentially around the Worl",
+    "lesson": "Analyst correction (exposure_tag='Product - Offensive or explicit results' (was 'Product - Fake news/screenshots about products'); product='Nano Banana' (was 'Gemini App'); issue_name='Nano Banana allegedly generated image related to 9/11' (was 'Gemini generated deepfake image of real-world voilent tragedy')): 1. Product should be Nano Banana 2. The post does not show Gemini giving this response, only the output image and a comparison to ChatGPT which refused this req"
+  },
+  {
+    "kind": "fix",
+    "product": "Search Knowledge Panel",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "Search Knowledge Panel allegedly mislabeling Rafah city status",
+    "summary": "X user trumptardz (25 followers) posted a screenshot showing a Search Knowledge Panel description referring to Rafah in the Gaza Strip in the past tense (“Rafah was a city”), criti",
+    "lesson": "Analyst correction (exposure_tag='Product - Connection to Sensitive Trending Events' (was 'Product - Factual inaccuracies (not dangerous/offensive)'); product='Search Knowledge Panel' (was 'Maps/Geo'); issue_name='Search Knowledge Panel allegedly mislabeling Rafah city status' (was 'Claim of Google mislabeling Rafah status')): many issues with this alert. Please update accordingly: 1. Issue name: Search Knowledge Panel allegedly mislabeling Rafah city status 2. Change product to Searc"
+  },
+  {
+    "kind": "fix",
+    "product": "Data Centers",
+    "tag": "Product - Perceived bias",
+    "name": "Alleged Oklahoma Google Data Centre Corruption",
+    "summary": "X user WallStreetApes (1.3M followers) posted a video of a person accusing Sand Springs, Oklahoma City Manager Mike Carter of supporting a new Google data center while allegedly ha",
+    "lesson": "Analyst correction (exposure_tag='Product - Perceived bias' (was 'Brand - Perceived bias - brand'); product='Data Centers' (was 'Brand')): hi team! product should be Data Centers 🙂"
+  },
+  {
+    "kind": "fix",
+    "product": "Central AI",
+    "tag": "Product - Other/general criticism",
+    "name": "Criticism against Google AI Pro",
+    "summary": "X user AndroidPolice (701.3K followers) shared an article alleging that Google AI Pro lacks clear value and mainstream appeal. The article states that upgraded Gemini models and ne",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Other/general criticism'); product='Central AI' (was 'Brand')): please change the product to: Central AI"
+  },
+  {
+    "kind": "fix",
+    "product": "Chrome",
+    "tag": "Product - Other/general criticism",
+    "name": "Arattai Web displaying ‘Personal Computer – Google Chrome’",
+    "summary": "X user rakeshkumar_rky (2 followers) posted a query regarding the Arattai app displaying ‘Personal Computer – Google Chrome’ as a linked device after using Arattai Web in the Ulaa ",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Product - Privacy & security concerns'); product='Chrome' (was 'Search')): can we change product to Chrome please"
+  },
+  {
+    "kind": "fix",
+    "product": "YouTube",
+    "tag": "Product - Account deletion/suspension",
+    "name": "Hacked YouTube Account Recovery",
+    "summary": "X user TheInFoqus (581 followers) user reports their YouTube channel (@TheInFoqus) has been seriously compromised. A hacker gained control, deleted the channel, and locked the user",
+    "lesson": "Analyst correction (exposure_tag='Product - Account deletion/suspension' (was 'Brand - Privacy & security concerns'); product='YouTube' (was 'Brand')): Product should be YouTube instead of Brand"
+  },
+  {
+    "kind": "fix",
+    "product": "Central AI",
+    "tag": "Product - Feature request",
+    "name": "Alleged Google not offering Dubbing AI",
+    "summary": "X user JonhernandezIA (13.7K followers) shared a post questioning why Google is not offering the DUBBING AI used in YouTube as a tool, stating it would be useful. [Link]: https://x",
+    "lesson": "Analyst correction (exposure_tag='Product - Feature request' (was 'Brand - Other/general criticism'); product='Central AI' (was 'Brand')): Please change product to: Central AI Exposure tag: Feature request"
+  },
+  {
+    "kind": "fix",
+    "product": "Reviews",
+    "tag": "Product - Other/general criticism",
+    "name": "Message from Google saying it should be deleted due to defamation",
+    "summary": "Redditors on subreddit r/berlin (586K members) posted about receiving a message from Google stating that a two-star review for a breakfast cafe in Prenzlauer Berg was removed due t",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Conspiratorial theories about Google'); product='Reviews' (was 'Brand')): Product: Reviews Exposure tag: General criticism"
+  },
+  {
+    "kind": "fix",
+    "product": "Reviews",
+    "tag": "Product - Other/general criticism",
+    "name": "Alleging local reviews disappearing",
+    "summary": "X user glenngabe (79.7K followers) shared that local reviews are disappearing from Maps and Search profiles. Businesses have allegedly lost between 10 and 70 legitimate reviews ove",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Other/general criticism'); product='Reviews' (was 'Brand')): please be consistent. The previous alert used Product: Reviews"
+  },
+  {
+    "kind": "fix",
+    "product": "Android (Android OS & Google TV)",
+    "tag": "Product - Privacy & security concerns",
+    "name": "Alleged North Korean hack compromising Google accounts",
+    "summary": "Bluesky user metacurity.com (5.4K followers) posted a report detailing a cyberattack by North Korean hackers. The report confirms the hackers compromised Google accounts to hijack ",
+    "lesson": "Analyst correction (exposure_tag='Product - Privacy & security concerns' (was 'Brand - Privacy & security concerns'); product='Android (Android OS & Google TV)' (was 'Brand')): please update the product to Android"
+  },
+  {
+    "kind": "fix",
+    "product": "Android (Android OS & Google TV)",
+    "tag": "Product - Other/general criticism",
+    "name": "Alleged Backlash Over Samsung Dropping Messages for Google",
+    "summary": "X user Wvisioncreation (5890 followers) posted that Samsung’s decision to phase out Samsung Messages in favor of deeper integration with Google has drawn criticism, describing it a",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Other/general criticism'); product='Android (Android OS & Google TV)' (was 'Brand')): Please change the product from Brand to android"
+  },
+  {
+    "kind": "fix",
+    "product": "Ads/Merchant Center",
+    "tag": "Product - Scams involving Google products",
+    "name": "Alleged phishing “Kinetiq” ads on Search",
+    "summary": "X user @defidragonreal (8 followers) warned that fake \"Kinetiq\" ads are allegedly appearing at the top of Google Search results. The post claims these Google Ads are phishing attem",
+    "lesson": "Analyst correction (exposure_tag='Product - Scams involving Google products' (was 'Product - Privacy & security concerns'); product='Ads/Merchant Center' (was 'Search')): please use Product - Scams involving Google products"
+  },
+  {
+    "kind": "fix",
+    "product": "Assistant/Home",
+    "tag": "Product - Other/general criticism",
+    "name": "Alleged Gemini triggering Search instead of smart-home actions",
+    "summary": "Redditors on subreddit r/googlehome (874K members) commented that when saying 'Hey Google' on their phones, Gemini performs search or conversation responses instead of just executi",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Product - Product failures - general software/service issues'); product='Assistant/Home' (was 'Gemini App')): please change this to Product: Assistant/Home"
+  },
+  {
+    "kind": "fix",
+    "product": "Veo",
+    "tag": "Brand - Other/general criticism",
+    "name": "Google vs Grok",
+    "summary": "X user viral KOF cb_doge (1.8M followers) shared a post alleging that Grok Imagine ranks first in multiple rankings by Design Arena, Artificial Analysis, and LMArena. The accompany",
+    "lesson": "Analyst correction (exposure_tag='Brand - Other/general criticism' (was 'Brand - Value & Earnings'); product='Veo' (was 'Brand'); issue_name='Google vs Grok' (was 'Market valuation concerns')): please fix this and alert this manually"
+  },
+  {
+    "kind": "fix",
+    "product": "Google News",
+    "tag": "Product - Perceived bias",
+    "name": "Alleged Political Bias in News",
+    "summary": "X user Mario Nawfal (3.3M followers) criticized Google News, claiming that 73% of its non-personalized homepage articles come from left-leaning outlets. He contrasted this with X, ",
+    "lesson": "Analyst correction (exposure_tag='Product - Perceived bias' (was 'Brand - Perceived bias - brand'); product='Google News' (was 'Brand'); issue_name='Alleged Political Bias in News' (was '/ New Issue')): sonar automated alert; sharing manually"
+  },
+  {
+    "kind": "fix",
+    "product": "Waymo",
+    "tag": "Product - Other/general criticism",
+    "name": "Waymo vs Tesla",
+    "summary": "X user MarioNawfal (2.8M followers) reports that Tesla's robotaxi advantage lies in vertical integration and scale. Citing ARK Invest analyst Tasha Keeney, the post explains that c",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Product - Alleged anticompetitive behavior'); issue_name='Waymo vs Tesla' (was '/ New Issue')): Title is missing Please retrigger this alert [Final emojis: 📦 Product, 📰 GCPA]"
+  },
+  {
+    "kind": "fix",
+    "product": "Trends",
+    "tag": "Product - Other/general criticism",
+    "name": "Trends \"Grokipedia\"",
+    "summary": "X user MarioNawfal (2.9M followers) shared a post highlighting SimilarWeb data showing Grokipedia's organic Google traffic surging from 20K to 60K daily visits in January 2026, dep",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Other/general criticism'); product='Trends' (was 'Brand'); issue_name='Trends \"Grokipedia\"' (was '/ New Issue')): This is a Sonar automated alert. We are sending one manually"
+  },
+  {
+    "kind": "fix",
+    "product": "Workspace",
+    "tag": "Product - Privacy & security concerns",
+    "name": "Alleged Google emails to minors regarding parental control changes",
+    "summary": "X user SafetyNetofPA (431 followers) shared an article titled \"Yes, Google Emails 13-Year-Olds About Disabling Parental Controls.\" The article summarizes: Google is facing backlash",
+    "lesson": "Analyst correction (product='Workspace' (was 'Android (Android OS & Google TV)'); issue_name='Alleged Google emails to minors regarding parental control changes' (was 'Android parental control bypass')): please edit and retrigger [Final emojis: ❌ No action taken]"
+  },
+  {
+    "kind": "fix",
+    "product": "Google News",
+    "tag": "Product - Perceived bias",
+    "name": "Alleged bias in Google News",
+    "summary": "X user kylenabecker (682.6K followers) reposted a post of FreeSpeechAmer (125.3K followers) claiming that Apple News received its lowest left-wing bias rating in 47 days, with a sc",
+    "lesson": "Analyst correction (exposure_tag='Product - Perceived bias' (was 'Brand - Perceived bias - brand'); product='Google News' (was 'Brand'); issue_name='Alleged bias in Google News' (was 'Alleged bias in Google search results')): Sonar automated alert; sharing this manually"
+  },
+  {
+    "kind": "fix",
+    "product": "Search Knowledge Panel",
+    "tag": "Product - Product failures - general software/service issues",
+    "name": "BTC charts allegedly removed from Google UK Search results",
+    "summary": "Redditors on subreddit r/BitcoinUK (35k members) shared that Google in the UK no longer displays BTC price charts by default. They provided two screenshots for the queries \"btc\" an",
+    "lesson": "Analyst correction (exposure_tag='Product - Product failures - general software/service issues' (was 'Product - Unexpected Responses'); product='Search Knowledge Panel' (was 'Search')): Search Knowledge Panel please Exposure tag: Product - Product failures - general software/service issues"
+  },
+  {
+    "kind": "fix",
+    "product": "Workspace",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "Alleged relationship between Google and Epstein",
+    "summary": "X user Viral KOF MarioNawfal (2.9M followers) shared a post including emails from the 'Epstein files' allegedly showing Jeffrey Epstein wrote to author Michael Wolff and claimed th",
+    "lesson": "Analyst correction (exposure_tag='Product - Connection to Sensitive Trending Events' (was 'Product - Privacy & security concerns'); issue_name='Alleged relationship between Google and Epstein' (was '/ New Issue')): Hi Ivy, please manually retrigger with correct details [Final emojis: ❌ No action taken]"
+  },
+  {
+    "kind": "fix",
+    "product": "Waze",
+    "tag": "Product - Other/general criticism",
+    "name": "Criticism against Waze",
+    "summary": "X user Harrris0n (938 followers) shared a post stating that Waze’s crowdsourced reports not only assist drivers but also expose users' exact locations, timestamps, and usernames. T",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Product - Conspiratorial theories about Google products'); issue_name='Criticism against Waze' (was 'Waze is Israeli allegation')): hi team! can you please provide context for issue name? [Final emojis: 📰 GCPA, 📦 Product, ⚖️ Civics]"
+  },
+  {
+    "kind": "fix",
+    "product": "Central AI",
+    "tag": "Product - Other/general criticism",
+    "name": "Perplexity Finance vs Google Finance",
+    "summary": "X user AravSrinivas (372,483 followers) retweeted a post claiming \"Perplexity Finance > Google Finance,\" alleging it's better than the Google product. [Link]: https://x.com/AravSri",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Value & Earnings'); product='Central AI' (was 'Brand'); issue_name='Perplexity Finance vs Google Finance' (was 'Google Earnings and Valuation Issues')): Please edit this to be a new issue: Perplexity Finance vs Google Finance"
+  },
+  {
+    "kind": "fix",
+    "product": "Ads/Merchant Center",
+    "tag": "Product - Product failures - general software/service issues",
+    "name": "Alleged Gambling Ads shown to minors",
+    "summary": "X user rebecca_delacy (1,791 followers) posted, \"Apparently they bombard children just the same... the Law should fix this constant brainwashing of our young,\" alleging concerns ab",
+    "lesson": "Analyst correction (exposure_tag='Product - Product failures - general software/service issues' (was 'Brand - Privacy & security concerns'); product='Ads/Merchant Center' (was 'Brand'); issue_name='Alleged Gambling Ads shown to minors' (was '/ New Issue')): Sonar issue. We are retriggering the alert manually"
+  },
+  {
+    "kind": "fix",
+    "product": "AI Mode",
+    "tag": "Product - SEO/Publisher Concerns",
+    "name": "AI Mode Publisher Standard License Deal Criticism",
+    "summary": "X user @natejhake (3.7K followers) quoted a post by @theinformation criticizing Google for allegedly scraping web content without permission to train its AI models. The post contra",
+    "lesson": "Analyst correction (exposure_tag='Product - SEO/Publisher Concerns' (was 'Brand - Value & Earnings'); product='AI Mode' (was 'Brand'); issue_name='AI Mode Publisher Standard License Deal Criticism' (was 'Google Earnings and Stock Issues')): Hi , this is an automated trigger. Looking into this for corrections"
+  },
+  {
+    "kind": "fix",
+    "product": "Google News",
+    "tag": "Product - Perceived bias",
+    "name": "Search: Alex Jones and Sandy Hook",
+    "summary": "X user Viral KOF Alex Jones (4.5M followers) shared a video alleging that Google manipulated Search results related to Sandy Hook, claiming that international media and Hillary Cli",
+    "lesson": "Analyst correction (exposure_tag='Product - Perceived bias' (was 'Brand - Conspiratorial theories about Google'); product='Google News' (was 'Brand'); issue_name='Search: Alex Jones and Sandy Hook' (was 'Conspiracy Theories about Google Coverups')): hi team! do we have timestamp for issue mention? thank you!"
+  },
+  {
+    "kind": "fix",
+    "product": "Android (Android OS & Google TV)",
+    "tag": "Product - Other/general criticism",
+    "name": "UK Government proposal to block explicit content at OS Level",
+    "summary": "X user @LordBlizzard (150 followers) posted that the UK plans to \"encourage\" Apple and Google to put nudity-blocking systems on phones, citing government interest in \"nudity-detect",
+    "lesson": "Analyst correction (exposure_tag='Product - Other/general criticism' (was 'Brand - Litigation'); product='Android (Android OS & Google TV)' (was 'Brand')): this is not litigation. It also mentions Android directly, so should be tagged as such. Product: Android (Android OS & Google TV) Exposure tag: Other/general cr"
+  },
+  {
+    "kind": "fix",
+    "product": "Nano Banana",
+    "tag": "Product - Offensive or explicit results",
+    "name": "Nano Banana \"A man bathing in cow dung\"",
+    "summary": "Redditors on subreddit r/GeminiAI (178k members) shared a post showing Nano Banana displaying inconsistent behavior with the prompt, \"A man bathing in cow dung.\" The first image (g",
+    "lesson": "Analyst correction (exposure_tag='Product - Offensive or explicit results' (was 'Product - Unexpected Responses'); product='Nano Banana' (was 'Gemini App')): this should be explicit/offensive result. The user directly accuses Nano banana of racism. Product should be: GemPix/Nano Banana Sensitive topic: Race/Ethnicity"
+  },
+  {
+    "kind": "fix",
+    "product": "Doodles",
+    "tag": "Product - Other/general criticism",
+    "name": "Omission of Caesar crossing the rubicon Doodle",
+    "summary": "X user typesfast (468.1k followers) shared a post alleging, \"Pretty lame of Google to honor all these woke causes on their homepage and then totally leave off the day Caesar crosse",
+    "lesson": "Analyst correction (product='Doodles' (was 'Search'); issue_name='Omission of Caesar crossing the rubicon Doodle' (was 'Google´s alleged wokeness')): this is about Product: Doodles and should be marked as a new issue. The issue name should be: Omission of Caesar crossing the rubicon Doodle [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Ads/Merchant Center",
+    "tag": "Content - Negative reaction to paid Google ad",
+    "name": "\"Stranger Things\" ad criticism",
+    "summary": "X user mom_upstate (1.4K followers) posted that they \"went to see Zootopia 2 and they had a scary ass Google commercial for Stranger Things spoilers.\" The user added that \"not only",
+    "lesson": "Analyst correction (exposure_tag='Content - Negative reaction to paid Google ad' (was 'Product - Other/general criticism'); product='Ads/Merchant Center' (was 'Search')): Hi, can we change the exposure tag on this to Content - Negative reaction to paid Google ad as it explicitly mentions a \"Google commercial\" and retrigger?"
+  },
+  {
+    "kind": "fix",
+    "product": "Maps/Geo",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "Maps: Iran's alleged rocket strike",
+    "summary": "X user mosha3324 (288.8k followers) shared a post titled “Iranian Rocket Strike” that allegedly included Maps imagery of central Israel shaded in red to indicate the impacted area.",
+    "lesson": "Analyst correction (exposure_tag='Product - Connection to Sensitive Trending Events' (was 'Brand - Perceived bias - brand'); product='Maps/Geo' (was 'Brand'); issue_name='Maps: Iran's alleged rocket strike' (was 'Alleged Google Censorship in Europe')): We have deleted the duplicate Sonar alerts. We are sending an alert manually"
+  },
+  {
+    "kind": "fix",
+    "product": "Play Store",
+    "tag": "Product - Feature request",
+    "name": "Play Store feature request",
+    "summary": "X user AndroidAuth (1.1M followers) shared a post criticizing Google Play Store search as \"bad\" and \"sub-par,\" arguing it prioritizes ads and Google's suggestions over accurate dis",
+    "lesson": "Analyst correction (exposure_tag='Product - Feature request' (was 'Product - Other/general criticism'); issue_name='Play Store feature request' (was 'Alleged Criticism against Play Store')): this user has previously tweeted about the exact same thing under this issue name: Play Store feature request [Final emojis: 📰 GCPA, 📦 Product]"
+  },
+  {
+    "kind": "fix",
+    "product": "Ads/Merchant Center",
+    "tag": "Product - Conspiratorial theories about Google products",
+    "name": "Suspicious Funding of Nonprofit Ads",
+    "summary": "X user seanmdav (631K followers) retweeted a post alleging that \"Google runs a program that gives 'nonprofits' $120,000 a year in free advertising to boost their search results.\" [",
+    "lesson": "Analyst correction (exposure_tag='Product - Conspiratorial theories about Google products' (was 'Brand - Conspiratorial theories about Google'); product='Ads/Merchant Center' (was 'Brand')): hi team! can we please re-trigger this under: Ads/Merchant Center with exp tag: Product - Conspiratorial theories about Google products. thank you!!"
+  },
+  {
+    "kind": "fix",
+    "product": "Labs (e.g. ImageFX)",
+    "tag": "Product - Product failures - general software/service issues",
+    "name": "Alleged 404 error on Google Labs for Project Genie",
+    "summary": "Redditors on subreddit r/Bard (329K followers) shared a post with a screenshot of Google Labs allegedly showing Error 404, captioned, \"It says this EVERY TIME.\" [Link]: https://www",
+    "lesson": "Analyst correction (exposure_tag='Product - Product failures - general software/service issues' (was 'Product - Other/general criticism'); issue_name='Alleged 404 error on Google Labs for Project Genie' (was 'Alleged error on Google Labs')): Please retrigger under product failures exposure tag [Final emojis: ✍️ T&S, 📰 GCPA, 📦 Product, 💬 gUP]"
+  },
+  {
+    "kind": "fix",
+    "product": "Google News",
+    "tag": "Product - Product failures - general software/service issues",
+    "name": "News: \"marriage equality japan\"",
+    "summary": "X user writerofscratch (12.4K followers) posted a screenshot of a Search result for News regarding \"marriage equality japan.\" The Search didn't show any results, prompting the user",
+    "lesson": "Analyst correction (exposure_tag='Product - Product failures - general software/service issues' (was 'Product - Other/general criticism'); product='Google News' (was 'Search'); issue_name='News: \"marriage equality japan\"' (was 'Criticism of Search Quality')): this seems like a novel issue. It also looks like a News issue, rather than Search?"
+  },
+  {
+    "kind": "no_action",
+    "product": "Search",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "Manipulated Search Results",
+    "summary": "YouTube user HasanAbi (1.75M followers) posted a video discussing perceived bias in Google's algorithms, alleging that many Jewish New Yorkers oppose certain political figures and ",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing as this is not critical of Google"
+  },
+  {
+    "kind": "no_action",
+    "product": "Gemini App",
+    "tag": "Product - Policy Update",
+    "name": "Alleged Gemini 3 Pro Change in policy",
+    "summary": "Redditors on subreddit r/SillyTavernAI (80K members) shared a post stating that they usually used Gemini 3 Pro for NSFW content and claiming that it allegedly stopped generating an",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing this as it is working as intended"
+  },
+  {
+    "kind": "no_action",
+    "product": "Gemini App",
+    "tag": "Product - Other/general criticism",
+    "name": "Gemini vs Grok",
+    "summary": "X user WR4NYGov (103.2K Followers) states that Gemini Fast is significantly faster than Grok Fast, calling the performance difference \"not even close.\" The user clarifies that Grok",
+    "lesson": "No Social Alert (warranted=false / ❌): x-ing as this is positive towards Gemini"
+  },
+  {
+    "kind": "no_action",
+    "product": "Brand",
+    "tag": "Brand - Other/general criticism",
+    "name": "Piastri Marketing Perfomance",
+    "summary": "X user pinkolive81 (1.435 k followers) posted a review comparing several major brands, including Google, noting that they have successfully used the humor of a public figure in the",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing as this is not critical of Google 🙂"
+  },
+  {
+    "kind": "no_action",
+    "product": "Brand",
+    "tag": "Employees - Executive criticism",
+    "name": "Demis Hassabis on OpenAI's ads",
+    "summary": "X user alexeheath (59.8K followers) shared an interview with Demis Hassabis regarding the implementation of ads into Gemini, which he claims they have no plans to do. When question",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing as this is not critical or negative!"
+  },
+  {
+    "kind": "no_action",
+    "product": "Search",
+    "tag": "Product - Perceived bias",
+    "name": "Hermès Client Vetting via Search",
+    "summary": "X user LouisPisano (53K followers) posted that Hermès employees are allegedly using Google to look up clients’ home addresses to judge whether those addresses are prestigious enoug",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing as this is not negative towards Google!"
+  },
+  {
+    "kind": "no_action",
+    "product": "YouTube",
+    "tag": "Product - Other/general criticism",
+    "name": "Criticism YouTube Ads Investment Scam",
+    "summary": "X user GergelyOrosz highlights that YouTube distributes 55% of its advertising revenue ($21 billion TTM) to creators, surpassing the $18 billion that Netflix spends on original con",
+    "lesson": "No Social Alert (warranted=false / ❌): Not negative towards YouTube so X'ing this one 🙂"
+  },
+  {
+    "kind": "no_action",
+    "product": "Waymo",
+    "tag": "Product - Product failures - physical safety issues",
+    "name": "Waymo Crashes Into Parked Cars",
+    "summary": "X user Jason (1.1M followers) shared a video from KTLA showing a Waymo vehicle allegedly crashing into multiple parked cars in Echo Park. [Link]: https://x.com/Jason/status/2016335",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing this because the user has deleted the post"
+  },
+  {
+    "kind": "no_action",
+    "product": "Brand",
+    "tag": "Brand - Other/general criticism",
+    "name": "Alleged Iran Internet Shutdown",
+    "summary": "X user Osint613 (886.2K followers) posted that Iranian media reports public access to Google has just been restored. [Link]: https://x.com/Osint613/status/2012884712725918023 As a ",
+    "lesson": "No Social Alert (warranted=false / ❌): This is not negative towards Google, so X'ing this one"
+  },
+  {
+    "kind": "no_action",
+    "product": "Brand",
+    "tag": "Product - Privacy & security concerns",
+    "name": "Brand Cyber Weapon Action",
+    "summary": "On X, WSJ (20.6M followers) posted that, in an “Exclusive,” Google delivered what it called a “knockout blow” against a major cyber weapon that researchers reportedly say is runnin",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing as this is not negative, thank you for flagging!"
+  },
+  {
+    "kind": "no_action",
+    "product": "Gemini App",
+    "tag": "Content - Negative reaction to owned social post",
+    "name": "Negative comments on Gemini supporting in new langauages owned post",
+    "summary": "On X, GeminiApp (368.3K followers) shared a post about Gemini \"expanded to 23 new languages, now supporting 70+ languages across all surfaces.\" The negative comments criticize Gemi",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing as post has not reached threshold of 30% negativity 🙂"
+  },
+  {
+    "kind": "no_action",
+    "product": "Veo",
+    "tag": "Product - Other/general criticism",
+    "name": "Veo 3 vs Grok Imagine API",
+    "summary": "X user teslaownersSV (1.3M followers) reports that xAI has launched the Grok Imagine API, a new text-to-video and image-to-video model. According to Artificial Analysis benchmarks,",
+    "lesson": "No Social Alert (warranted=false / ❌): x-ing this because same content was posted by Cb_doge handle"
+  },
+  {
+    "kind": "no_action",
+    "product": "Android (Android OS & Google TV)",
+    "tag": "Product - Other/general criticism",
+    "name": "Grok Imagine Android Download Delay",
+    "summary": "X user AdamLowisz (41.8k followers) shared a post asking whether the Grok app on Android can be fixed, claiming that when they generate images using Grok Imagine and try to downloa",
+    "lesson": "No Social Alert (warranted=false / ❌): same issue reported twice as a repost hence, X-ing the repost"
+  },
+  {
+    "kind": "no_action",
+    "product": "AI Mode",
+    "tag": "Product - Unexpected Responses",
+    "name": "AI Mode response glitch",
+    "summary": "Redditors on subreddit r/conspiracy (729K members) shared screenshots showing AI Mode generating a detailed summary of conspiracy theories related to the disappearance of Gabriela ",
+    "lesson": "No Social Alert (warranted=false / ❌): Ok noted. X-ing for now as it is always on and low engagement"
+  },
+  {
+    "kind": "no_action",
+    "product": "Search Knowledge Panel",
+    "tag": "Product - Factual inaccuracies (not dangerous/offensive)",
+    "name": "Search Knowledge Panel \"Jalen suggs\"",
+    "summary": "Redditors on subreddit r/OrlandoMagic (29K members) shared a post noting that when searching for NBA player Jalen Suggs on Search, the first image shown appears to be of another pl",
+    "lesson": "No Social Alert (warranted=false / ❌): This is WAI since its pulling from the latest article hence X-ing"
+  },
+  {
+    "kind": "no_action",
+    "product": "Search",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "Search \"where is Trump's help?\"",
+    "summary": "X user aymots (794 followers) shared a post that satirizes Iran's recent Google restoration after a 12-day internet blackout during anti-regime protests, displaying the top search ",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing this as it seems like a typed message rather than the top search"
+  },
+  {
+    "kind": "no_action",
+    "product": "AI Overviews",
+    "tag": "Product - Factual inaccuracies (not dangerous/offensive)",
+    "name": "AIO \"guy on CNN who yells about polls\"",
+    "summary": "On Blueksy, mims.bsky.social (35.1K followers) shared a screenshot of AI Overviews for the query \"guy on CNN who yells about polls\" to which AIO has responded, \"Harry Enten, CNN's ",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing as this is not negative & provided user with the correct answer 🙂"
+  },
+  {
+    "kind": "no_action",
+    "product": "Pixel",
+    "tag": "Product - Other/general criticism",
+    "name": "Leaks on the Pixel 10a",
+    "summary": "X user geekdegafas (43.5K followers) posted an allegedly leaked photo of the new Pixel 10a. The user alleged, \"Google, you make it so difficult: this is what the Google Pixel 10a a",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing as I don't believe this is negative, though the post is in Spanish"
+  },
+  {
+    "kind": "no_action",
+    "product": "Search",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "Greenland Dispute on Search",
+    "summary": "X user aravosis (93K followers) posted alleging that, \"Donald Trump said today that he’s going to declare war on Denmark because Norway didn’t give him the Nobel prize. I wish I we",
+    "lesson": "No Social Alert (warranted=false / ❌): Google being used as a verb here. Not negative towards Google, so X'ing this one"
+  },
+  {
+    "kind": "no_action",
+    "product": "Devs Products",
+    "tag": "Content - Negative reaction to owned social post",
+    "name": "Criticism against 'USB' owned post",
+    "summary": "LinkedIn user Google for Developers (3.5M followers) posted a playful “wrong guess” game, humorously reinterpreting the acronym “USB” (Universal Serial Bus) as “Unlimited Salad Bow",
+    "lesson": "No Social Alert (warranted=false / ❌): 9 out of 88 comments is only 10% negative - post hasn't met the threshold so X-ing"
+  },
+  {
+    "kind": "no_action",
+    "product": "Workspace",
+    "tag": "Product - Other/general criticism",
+    "name": "Criticism of new AI features on Gmail",
+    "summary": "X account gmail (6.3M followers) shared a video announcing the Gemini era in Gmail. This post received negative comments that include brand criticism and privacy concerns like, \"st",
+    "lesson": "No Social Alert (warranted=false / ❌): hi team! X'ing as post has not received the negativity threshold yet (30 comments)!"
+  },
+  {
+    "kind": "no_action",
+    "product": "Maps/Geo",
+    "tag": "Product - Factual inaccuracies (not dangerous/offensive)",
+    "name": "Maps: alleged giant insect in Antarctica",
+    "summary": "X user maniaUFO (172.2K followers) shared a video zooming into Maps, alleging that a giant insect-like creature can be found in Antarctica. Note: results do not seem to be replicab",
+    "lesson": "No Social Alert (warranted=false / ❌): This is not negative towards Google and is not a factual inaccuracy. X'ing this one for now"
+  },
+  {
+    "kind": "no_action",
+    "product": "Search",
+    "tag": "Product - Privacy & security concerns",
+    "name": "Alleged Google data collection",
+    "summary": "TikTok user antiplasticlady (155.2K followers) shared commentary alleging that Google search results can reveal personal information, such as phone numbers and addresses, which are",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing as this is not critical of Google, rather just using Search to find \"data broker\" info!"
+  },
+  {
+    "kind": "no_action",
+    "product": "Waymo",
+    "tag": "Product - Product failures - physical safety issues",
+    "name": "Waymo malfunctioning closing doors",
+    "summary": "X user @Sadie_NC (294.8K followers) reposted a scenario describing a Waymo driverless taxi ride gone wrong, where a passenger heading to the airport claims the vehicle became confu",
+    "lesson": "No Social Alert (warranted=false / ❌): Original post was already alerted hence not sharing this repost as there's nothing new in the post"
+  },
+  {
+    "kind": "no_action",
+    "product": "Gemini App",
+    "tag": "Brand - Litigation",
+    "name": "EU DMA on Gemini’s Deep Android Integration",
+    "summary": "X user and KOF natejhake (3.8K followers) retweeted a previously reported post by AndroidAuth (1.1M followers) with no caption, which claims the EU warns Google that Gemini cannot ",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing this KOF post since it's a RT and the original post was already alerted [S-F] Burson Automated Alerts V3"
+  },
+  {
+    "kind": "no_action",
+    "product": "Play Store",
+    "tag": "Product - TOS Violation",
+    "name": "Play Store CSAM Policy Enforcement",
+    "summary": "Redditors on subreddit r/technology (20M members) posted an article about Democratic senators urging Apple and Google to remove X's Grok app from their stores, arguing that its non",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing for now, can we please re-trigger if/when post reaches high engagement? (currently right at the threshold)"
+  },
+  {
+    "kind": "no_action",
+    "product": "Search",
+    "tag": "Product - Other/general criticism",
+    "name": "Criticism of Search quality",
+    "summary": "X user natejhake (3.8K followers) retweeted a previously alerted post by henri_fjord (71.2K followers) with no caption. The post alleged Google deliberately made its Search engine ",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing this since the original post was alerted, hence, X-ing this repost, as there's no new information to share"
+  },
+  {
+    "kind": "no_action",
+    "product": "Maps/Geo",
+    "tag": "Product - Other/general criticism",
+    "name": "Is Street View art?",
+    "summary": "Instagram user art (2.2M followers) shared a post in which artist Jon Rafman has collated a series of images captured by Street View, questioning whether these count as art due to ",
+    "lesson": "No Social Alert (warranted=false / ❌): This is not negative towards google and doesn't show anything particularly related to brand safety, so X'ing this one"
+  },
+  {
+    "kind": "no_action",
+    "product": "Nano Banana",
+    "tag": "Product - Offensive or explicit results",
+    "name": "Explicit images generated by Nano Banana",
+    "summary": "X user lilzula_009_me (6.3K followers) shared an explicit image allegedly generated by Nano Banana. The user also shared the prompt describing how the image was created. [Link]: ht",
+    "lesson": "No Social Alert (warranted=false / ❌): Hi team I'm X'ing out since we're not sharing these unless HIGH engagement. Please retrigger if it reaches HIGH engagement"
+  },
+  {
+    "kind": "no_action",
+    "product": "AI Overviews",
+    "tag": "Product - Perceived bias",
+    "name": "Alleged AIO guidance on avoiding ICE enforcement",
+    "summary": "X user MikeJon17963947 (106 followers) shared a post claiming that Google is helping individuals run from Immigration and Customs Enforcement (ICE). The user cited an AIO that prov",
+    "lesson": "No Social Alert (warranted=false / ❌): x-ing as this is more of a user bias. please mark this as other/generalcriticism and update in tracker. No need to retrigger"
+  },
+  {
+    "kind": "no_action",
+    "product": "Brand",
+    "tag": "Brand - Privacy & security concerns",
+    "name": "Alleged google third-party data sharing",
+    "summary": "On YouTube, TheOfficerTatum (3.7M followers) posted a comment alleging server´s data haversting and complained about companies such as Google and Meta. [Link]: https://www.youtube.",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing out due to LOW engagement and previously reported, but there are significant typos and syntax issues here. Please remember to check these before submitting"
+  },
+  {
+    "kind": "no_action",
+    "product": "Brand",
+    "tag": "Content - Negative reaction to owned social post",
+    "name": "Negative Reaction to YouTube Owned Post",
+    "summary": "YouTube user Google (14.2M subscribers) shared a video promoting the Google I/O event, scheduled for May 19, 2026, at 10 AM. The post received negative feedback, with comments such",
+    "lesson": "No Social Alert (warranted=false / ❌): I dont think this has hit the threshold yet- there are less than 14 neg comments. So x-ing this for now but pls keep out in case negativity increases and retriggger"
+  },
+  {
+    "kind": "no_action",
+    "product": "Play Store",
+    "tag": "Content - Negative reaction to owned social post",
+    "name": "Negative Comments on Google Owned Post",
+    "summary": "X user @DareAde6 (6.6M followers) commented about difficulties linking a debit card to the Play Store, stating, \"I was trying to link my debit card Play Store; my money was debited",
+    "lesson": "No Social Alert (warranted=false / ❌): Looks like Google Play is activity responding, so X'ing this one. A couple notes on this alert though. The link is for our owned channel, but the description only discusses one com"
+  },
+  {
+    "kind": "no_action",
+    "product": "Doodles",
+    "tag": "Content - Negative reaction to Google site content",
+    "name": "Criticism of MLK Day Doodle",
+    "summary": "X user timjacobwise (145.9K followers) posted a critique of Google’s MLK Day Doodle, stating that it avoids referencing Martin Luther King Jr.’s life or work and instead focuses on",
+    "lesson": "No Social Alert (warranted=false / ❌): Hi team this post is from yesterday morning, when the alert first went live. I'm X'ing out since it's a duplicate of Wise's BlueSky post, but we can't have delays like this on cont"
+  },
+  {
+    "kind": "no_action",
+    "product": "Workspace",
+    "tag": "Content - Negative reaction to owned social post",
+    "name": "Alleged email misclassification and false spam warnings",
+    "summary": "X user gmail (6.3M followers) shared an update that the spam filters issue is now fully resolved for all users—thank you for your patience. The negative comments on the post focuse",
+    "lesson": "No Social Alert (warranted=false / ❌): This looks like it only has 6 negative comments at this time, making the percentage 19%, so X'ing this one Also, note this was marked under a previously reported issue, but in the "
+  },
+  {
+    "kind": "no_action",
+    "product": "Search Knowledge Panel",
+    "tag": "Product - Offensive or explicit results",
+    "name": "Search Knowledge Panel \"John MacArthur\"",
+    "summary": "X user megbasham (198.1K followers) shared a screenshot of the Search Knowledge Panel for “John MacArthur,” showing a preview of a Medium article titled “The worst pastor in the wo",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing since not replicable"
+  },
+  {
+    "kind": "no_action",
+    "product": "AI Overviews",
+    "tag": "Product - Offensive or explicit results",
+    "name": "AIO \"who is osamason?\"",
+    "summary": "Redditors on subreddit r/osamason (31K members) reported an AI Overviews response on the query, \"who is osamason?\" where it allegedly states that underground rapper Osamason (Osama",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing since not replicable"
+  },
+  {
+    "kind": "no_action",
+    "product": "AI Mode",
+    "tag": "Product - Factual inaccuracies (not dangerous/offensive)",
+    "name": "AI Mode \"who is Marc Davenant?\"",
+    "summary": "Bluesky user marcdavenant.bsky.social (6200 followers) shared an AI Mode response about photographer Marc Davenant, allegedly linking his work to the 1984/85 Miners’ Strike instead",
+    "lesson": "No Social Alert (warranted=false / ❌): x-ing as it is not replicable"
+  },
+  {
+    "kind": "no_action",
+    "product": "AI Overviews",
+    "tag": "Product - Other/general criticism",
+    "name": "AIO “guy raising glass”",
+    "summary": "X user user823493247 (175.5K followers) posted that when searching for a drawing reference such as “guy raising glass,” AIO provided a definition-style response interpreting it as ",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing as it is not replicable"
+  },
+  {
+    "kind": "no_action",
+    "product": "AI Overviews",
+    "tag": "Product - Factual inaccuracies (not dangerous/offensive)",
+    "name": "AIO \"is iran bigger than germany, UK, france combined\"",
+    "summary": "X user PatrickMcSwain (3.8K followers) pointed out an error in an AI Overview that claimed Iran (~1.65 million km²) is roughly equivalent in size to Germany, the UK, and France com",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing as it is not replicable"
+  },
+  {
+    "kind": "no_action",
+    "product": "DeepMind",
+    "tag": "Product - Other/general criticism",
+    "name": "Alleged AlphaFold Scaling Hype",
+    "summary": "X user MarioNawfal (3.4M followers) shared a post highlighting Google DeepMind CEO Demis Hassabis approving AlphaFold to predict \"1–2 billion known proteins in just a month,\" frami",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing as this is not negative"
+  },
+  {
+    "kind": "no_action",
+    "product": "Doodles",
+    "tag": "Product - Other/general criticism",
+    "name": "Criticism of Google's 27th Birthday Doodle",
+    "summary": "X user sixwordletter (12.5K followers) shared a screenshot of Google's 27th Birthday Doodle. The user asked, \"why is google so retro?\" [Link]: https://x.com/sixwordletter/status/19",
+    "lesson": "No Social Alert (warranted=false / ❌): this is not negative, so X'ing"
+  },
+  {
+    "kind": "no_action",
+    "product": "Gemini Model",
+    "tag": "Product - Alleged anticompetitive behavior",
+    "name": "Alleged Cannibalization of AI with Gemini",
+    "summary": "X user chrmanning (155.4K followers) posted that Google's strategy of \"cannibalizing\" its own offerings with Gemini 3 Pro is crucial for avoiding the Innovator's Dilemma. This is f",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing as this is not negative!"
+  },
+  {
+    "kind": "no_action",
+    "product": "Gemini,Gemini App",
+    "tag": "Product - Perceived bias",
+    "name": "Military AI Platform Bias Concerns",
+    "summary": "X user MarioNawfal (2.7M followers) posted about the Pentagon's launch of GenAImil, a military-focused AI platform powered by Gemini, describing it as a \"critical first step\" in th",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing as this is not negative!"
+  },
+  {
+    "kind": "no_action",
+    "product": "Gemini App",
+    "tag": "Product - Privacy & security concerns",
+    "name": "Alleged malware obfuscation via Gemini",
+    "summary": "X user KOF kimmonismus (90K followers) posted about Google’s Threat Intelligence Group reporting that malware is now using large language models during execution to dynamically alt",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing bc not critical of Google"
+  },
+  {
+    "kind": "no_action",
+    "product": "AI Overviews",
+    "tag": "Product - Unexpected Responses",
+    "name": "AIO \"is it a TOS violation to try to open a Waymo trunk?\"",
+    "summary": "Redditors on subreddit r/aibeingstupid (5.9k members) shared a screenshot of an AIO response to \"Is it a TOS violation to try to open a Waymo trunk?\" Upon approval of the statement",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing as this is not replicable"
+  },
+  {
+    "kind": "no_action",
+    "product": "Workspace",
+    "tag": "Product - Privacy & security concerns",
+    "name": "The Indicator's guide to uncover publicly available Docs",
+    "summary": "X user @CraigSilverman (47.9K followers) shared a link to his article in The Indicator, which discusses tools and techniques for locating publicly available documents on websites a",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing this bc doesnt seem negative"
+  },
+  {
+    "kind": "no_action",
+    "product": "Gemini App",
+    "tag": "Product - Perceived bias",
+    "name": "Alleged anti-White bias in Gemini image generation",
+    "summary": "X user robertsepehr (141.8K followers) reposted a screenshot of a 2024 Fox Business article discussing Gemini image generation controversies, including examples of allegedly histor",
+    "lesson": "No Social Alert (warranted=false / ❌): Yes I am x-ing it since its deleted"
+  },
+  {
+    "kind": "no_action",
+    "product": "Workspace",
+    "tag": "Product - Dangerous results (e.g. medical/legal)",
+    "name": "Misleading Medical Advice on Search",
+    "summary": "X user MarioNawfal (2.9M followers) posted content discussing HPV vaccines and their protective benefits against cervical cancer, while referencing a WebMD article and including a ",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing this as it is unrelated to Google"
+  },
+  {
+    "kind": "no_action",
+    "product": "Data Centers",
+    "tag": "Brand - Other/general criticism",
+    "name": "Bharat alleged tax haven for cloud companies",
+    "summary": "X user MumbaichaDon (224.3K followers) shared a post alleging that foreign firms, including Google, setting up data centres in Bharat will be exempt from tax by the Indian Governme",
+    "lesson": "No Social Alert (warranted=false / ❌): This post seems positive, so X'ing this"
+  },
+  {
+    "kind": "no_action",
+    "product": "Trends",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "Trends “America First”",
+    "summary": "X user CryptoChris7391 (1.3K followers) urges followers to \"check out $AF,\" calling it an obvious \"layup\" trade due to many \"official government accounts\" using the \"America First\"",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing as not directly negative to trends"
+  },
+  {
+    "kind": "no_action",
+    "product": "Pixel",
+    "tag": "Product - Product failures - physical safety issues",
+    "name": "Allegedly Pixel 10 Fold explosion",
+    "summary": "X user RjeyTech (33K followers) shared a video about the Pixel 10 Pro Fold, referencing a durability test by JerryRigEverything where the device reportedly exploded. The user noted",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing this since it's not negative content"
+  },
+  {
+    "kind": "no_action",
+    "product": "Android (Android OS & Google TV)",
+    "tag": "Product - Other/general criticism",
+    "name": "Android Airdrop update raises new blue bubble debate",
+    "summary": "TikTok user carterpcs (5.9M followers) discussed the new Android update that allows users to airdrop to Apple devices. The user stated that everyone should be able to airdrop to an",
+    "lesson": "No Social Alert (warranted=false / ❌): Not negative towards Google, X'ing this one"
+  },
+  {
+    "kind": "no_action",
+    "product": "Workspace",
+    "tag": "Product - Other/general criticism",
+    "name": "General criticism of Gmail",
+    "summary": "X user IndianTechGuide (923K followers) posted that Google is introducing a feature allowing users to change the part of their Gmail address before “@gmail.com” without losing data",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing this because the post is not negative"
+  },
+  {
+    "kind": "no_action",
+    "product": "Maps/Geo",
+    "tag": "Product - Other/general criticism",
+    "name": "Map Data Accuracy Concerns",
+    "summary": "X user mosha3324 (285,354 followers) posted a message referencing Google Maps data, which may imply criticism of the product's performance or usability. [Link]: https://twitter.com",
+    "lesson": "No Social Alert (warranted=false / ❌): This is not negative toward Google, 'Xing out"
+  },
+  {
+    "kind": "no_action",
+    "product": "Maps/Geo",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "Sensitive Event Map Content",
+    "summary": "X user MarioNawfal (3.1M followers) shared a detailed description of various cityscapes and landscapes in the Middle East, including Tehran, Haifa, Doha, and Lebanon, mentioning a ",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing this since there is no google relevance"
+  },
+  {
+    "kind": "no_action",
+    "product": "Maps/Geo",
+    "tag": "Product - Connection to Sensitive Trending Events",
+    "name": "Maps: Iran \"Aim Here\"",
+    "summary": "X user V222LoL (797 followers) shared a Maps screenshot showing the location of Riot Games Inc in the U.S. with the caption, \"aim here @iran.\" [Link]: https://x.com/V222LoL/status/",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing as not directly negative to google maps"
+  },
+  {
+    "kind": "no_action",
+    "product": "Waymo",
+    "tag": "Product - Other/general criticism",
+    "name": "Criticism against Waymo",
+    "summary": "X user PirateWires (291K Followers) reported that San Francisco Supervisor Jackie Fielder checked herself into a mental health facility last week, linking the incident to a possibl",
+    "lesson": "No Social Alert (warranted=false / ❌): X'ing as this is not criticism against Waymo!"
+  },
+  {
+    "kind": "no_action",
+    "product": "Chrome",
+    "tag": "Product - Privacy & security concerns",
+    "name": "Criticism of Chrome",
+    "summary": "Redditors on subreddit r/technology (follower count not specified) claim that Gemini in Chrome can now see exactly what you are looking at on screen, with members commenting about ",
+    "lesson": "No Social Alert (warranted=false / ❌): Post and article are neutral, X'ing this one 🙂"
+  },
+  {
+    "kind": "no_action",
+    "product": "Translate",
+    "tag": "Product - Factual inaccuracies (not dangerous/offensive)",
+    "name": "Translate Misinterprets Japanese Conditional Sentence",
+    "summary": "Bluesky user 76tg67g67g.bsky.social (89 Followers) shared a post titled \"translated wrong by Google,\" featuring a screenshot of a conversation with ChatGPT. The conversation highli",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing this as the results are on ChatGPT window"
+  },
+  {
+    "kind": "no_action",
+    "product": "Chrome",
+    "tag": "Product - Perceived bias",
+    "name": "Chrome Historical Competitive Advantage",
+    "summary": "X user elonmusk (227.1M followers) replied \"Exactly\" to a post discussing factors that led users to switch to Chrome from Internet Explorer and Netscape. The post highlighted Chrom",
+    "lesson": "No Social Alert (warranted=false / ❌): This is not negative towards Chrome, so X'ing this"
+  },
+  {
+    "kind": "no_action",
+    "product": "Android (Android OS & Google TV)",
+    "tag": "Product - Other/general criticism",
+    "name": "Android removing ability to sideload APK apps",
+    "summary": "X user Pirat_Nation (293.3K followers) shared a post stating that Google is set to restrict sideloading unverified apps on certified Android devices starting in September 2026 in s",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing this because same post was escalated 9hr ago"
+  },
+  {
+    "kind": "no_action",
+    "product": "Waymo",
+    "tag": "Content - Negative reaction to owned social post",
+    "name": "Negative comments on Waymo owned post",
+    "summary": "Instagram user waymo (247K followers) posted a video with the caption “Protect your peace, queen.” The post received several negative comments including, \"Waymo in Austin is terrib",
+    "lesson": "No Social Alert (warranted=false / ❌): X-ing this since it's a very old post (13th April)"
+  },
+  {
+    "kind": "no_action",
+    "product": "Waymo",
+    "tag": "Product - Other/general criticism",
+    "name": "50 Waymo cars ordered concurrently",
+    "summary": "X user rtwlz (37.8K followers) posted two images showing an event where 50 people simultaneously ordered Waymo cars in San Francisco. The user stated, \"The plan? At dusk, 50 people",
+    "lesson": "No Social Alert (warranted=false / ❌): This is not negative towards Waymo or Google, X'ing"
+  },
+  {
+    "kind": "no_action",
+    "product": "Nano Banana",
+    "tag": "Product - Unexpected Responses",
+    "name": "Nano Banana Pro Response Errors",
+    "summary": "On X, legit_api (12,116 followers) posted, \"Nano Banana Pro has suddenly become really dumb overnight... it is making silly Flash level mistakes on the same prompts... did Google c",
+    "lesson": "No Social Alert (warranted=false / ❌): This is the same post as above and duplicate. X'ing"
+  }
+]

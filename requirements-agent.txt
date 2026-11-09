@@ -1,0 +1,4 @@
+# Agent Runtime (Gemini Enterprise Agent Platform) build: shared runtime deps + the platform SDK.
+# infra/05_deploy_agent_engine.py copies this file into the source package as requirements.txt.
+-r requirements-runtime.txt
+google-cloud-aiplatform[agent_engines]==2.4.0

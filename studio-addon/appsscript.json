@@ -1,0 +1,1674 @@
+{
+  "timeZone": "America/New_York",
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "urlFetchWhitelist": [
+    "https://*.googleapis.com/"
+  ],
+  "addOns": {
+    "common": {
+      "name": "SLRR Triage Agent",
+      "logoUrl": "https://www.gstatic.com/images/icons/material/system/1x/fact_check_black_48dp.png",
+      "useLocaleFromApp": true
+    },
+    "flows": {
+      "workflowElements": [
+        {
+          "id": "triage_alert",
+          "state": "ACTIVE",
+          "name": "Triage Agent: Triage alert",
+          "description": "QA a Burson alert against the SLRR Collection Requirements and return what to post.",
+          "workflowAction": {
+            "inputs": [
+              {
+                "id": "message_text",
+                "description": "Message text",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "sender_name",
+                "description": "Sender name",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "sender_email",
+                "description": "Sender email",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "space",
+                "description": "Space (id or name)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "message_id",
+                "description": "Message id",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "message_link",
+                "description": "Message link",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "thread_id",
+                "description": "Thread id",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "sent_at",
+                "description": "Sent at",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "targets",
+                "description": "Targets this flow can post to (constant)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "flow",
+                "description": "Flow name (constant, for logs)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "id": "has_reply",
+                "description": "yes/no: run 'Reply to a message' (clean space / DM only)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "reply_text",
+                "description": "Thread reply text",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_burson",
+                "description": "yes/no: post in the Burson space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "burson_text",
+                "description": "Text for the Burson space (Notify space members ON)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_clean",
+                "description": "yes/no: post in the clean triage space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "clean_text",
+                "description": "Text for the clean triage space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_dm",
+                "description": "yes/no: send a direct message",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "dm_text",
+                "description": "Direct message text",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "dm_recipients",
+                "description": "Comma-separated DM recipients",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_youtube",
+                "description": "yes/no: post in [S-F] YouTube Social",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "youtube_text",
+                "description": "Text for [S-F] YouTube Social",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_doodle",
+                "description": "yes/no: post in the Doodle Team space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "doodle_text",
+                "description": "Text for the Doodle Team space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_team",
+                "description": "yes/no: post in the 24/7 SL team chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "team_text",
+                "description": "Text for the 24/7 SL team chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_crisis",
+                "description": "yes/no: post in the crisis chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "crisis_text",
+                "description": "Text for the crisis chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_handover",
+                "description": "yes/no: append to the Handover doc",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "handover_text",
+                "description": "Text to append to the Handover doc",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "case_id",
+                "description": "Alert case id (TRG-…)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "escalation_id",
+                "description": "Escalation id (ESC-…)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "verdict",
+                "description": "Triage verdict / case status",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "summary",
+                "description": "What the agent did (one line)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              }
+            ],
+            "onConfigFunction": "onConfigTriageAlert",
+            "onExecuteFunction": "onExecuteTriageAlert"
+          }
+        },
+        {
+          "id": "record_reaction",
+          "state": "ACTIVE",
+          "name": "Triage Agent: Record reaction",
+          "description": "Carry out the IM emoji-legend action (📦 draft, ✍️ T&S, 📰 💬 … teams, 🔥, ❌, 👍, 👎).",
+          "workflowAction": {
+            "inputs": [
+              {
+                "id": "emoji",
+                "description": "Emoji",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "reactor_email",
+                "description": "Reactor email",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "reactor_name",
+                "description": "Reactor name",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "message_text",
+                "description": "Reacted message text",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "message_id",
+                "description": "Reacted message id",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "message_link",
+                "description": "Reacted message link",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "space",
+                "description": "Space (id or name)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "targets",
+                "description": "Targets this flow can post to (constant)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "flow",
+                "description": "Flow name (constant, for logs)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "id": "has_reply",
+                "description": "yes/no: run 'Reply to a message' (clean space / DM only)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "reply_text",
+                "description": "Thread reply text",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_burson",
+                "description": "yes/no: post in the Burson space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "burson_text",
+                "description": "Text for the Burson space (Notify space members ON)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_clean",
+                "description": "yes/no: post in the clean triage space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "clean_text",
+                "description": "Text for the clean triage space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_dm",
+                "description": "yes/no: send a direct message",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "dm_text",
+                "description": "Direct message text",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "dm_recipients",
+                "description": "Comma-separated DM recipients",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_youtube",
+                "description": "yes/no: post in [S-F] YouTube Social",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "youtube_text",
+                "description": "Text for [S-F] YouTube Social",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_doodle",
+                "description": "yes/no: post in the Doodle Team space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "doodle_text",
+                "description": "Text for the Doodle Team space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_team",
+                "description": "yes/no: post in the 24/7 SL team chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "team_text",
+                "description": "Text for the 24/7 SL team chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_crisis",
+                "description": "yes/no: post in the crisis chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "crisis_text",
+                "description": "Text for the crisis chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_handover",
+                "description": "yes/no: append to the Handover doc",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "handover_text",
+                "description": "Text to append to the Handover doc",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "case_id",
+                "description": "Alert case id (TRG-…)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "escalation_id",
+                "description": "Escalation id (ESC-…)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "verdict",
+                "description": "Triage verdict / case status",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "summary",
+                "description": "What the agent did (one line)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              }
+            ],
+            "onConfigFunction": "onConfigRecordReaction",
+            "onExecuteFunction": "onExecuteRecordReaction"
+          }
+        },
+        {
+          "id": "converse",
+          "state": "ACTIVE",
+          "name": "Triage Agent: Converse",
+          "description": "Answer a question or act on a command sent to the Triage Agent (mention or DM).",
+          "workflowAction": {
+            "inputs": [
+              {
+                "id": "message_text",
+                "description": "Message text",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "sender_name",
+                "description": "Sender name",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "sender_email",
+                "description": "Sender email",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "space",
+                "description": "Space (id or name; empty for DMs)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "conversation_type",
+                "description": "SPACE or DM",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "message_id",
+                "description": "Message id",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "message_link",
+                "description": "Message link",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "thread_id",
+                "description": "Thread id",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "targets",
+                "description": "Targets this flow can post to (constant)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "flow",
+                "description": "Flow name (constant, for logs)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "id": "has_reply",
+                "description": "yes/no: run 'Reply to a message' (clean space / DM only)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "reply_text",
+                "description": "Thread reply text",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_burson",
+                "description": "yes/no: post in the Burson space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "burson_text",
+                "description": "Text for the Burson space (Notify space members ON)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_clean",
+                "description": "yes/no: post in the clean triage space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "clean_text",
+                "description": "Text for the clean triage space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_dm",
+                "description": "yes/no: send a direct message",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "dm_text",
+                "description": "Direct message text",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "dm_recipients",
+                "description": "Comma-separated DM recipients",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_youtube",
+                "description": "yes/no: post in [S-F] YouTube Social",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "youtube_text",
+                "description": "Text for [S-F] YouTube Social",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_doodle",
+                "description": "yes/no: post in the Doodle Team space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "doodle_text",
+                "description": "Text for the Doodle Team space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_team",
+                "description": "yes/no: post in the 24/7 SL team chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "team_text",
+                "description": "Text for the 24/7 SL team chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_crisis",
+                "description": "yes/no: post in the crisis chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "crisis_text",
+                "description": "Text for the crisis chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_handover",
+                "description": "yes/no: append to the Handover doc",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "handover_text",
+                "description": "Text to append to the Handover doc",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "case_id",
+                "description": "Alert case id (TRG-…)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "escalation_id",
+                "description": "Escalation id (ESC-…)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "verdict",
+                "description": "Triage verdict / case status",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "summary",
+                "description": "What the agent did (one line)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              }
+            ],
+            "onConfigFunction": "onConfigConverse",
+            "onExecuteFunction": "onExecuteConverse"
+          }
+        },
+        {
+          "id": "ingest_email",
+          "state": "ACTIVE",
+          "name": "Triage Agent: Ingest email",
+          "description": "Process WD intake / outcome emails and Watchdog Anti-Abuse Alerts.",
+          "workflowAction": {
+            "inputs": [
+              {
+                "id": "subject",
+                "description": "Subject",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "from",
+                "description": "From",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "to",
+                "description": "To",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "cc",
+                "description": "Cc",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "body",
+                "description": "Body",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "message_id",
+                "description": "Message id",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "thread_id",
+                "description": "Thread id",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "received_at",
+                "description": "Received at",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "link",
+                "description": "Email link",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "targets",
+                "description": "Targets this flow can post to (constant)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "flow",
+                "description": "Flow name (constant, for logs)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "id": "has_reply",
+                "description": "yes/no: run 'Reply to a message' (clean space / DM only)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "reply_text",
+                "description": "Thread reply text",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_burson",
+                "description": "yes/no: post in the Burson space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "burson_text",
+                "description": "Text for the Burson space (Notify space members ON)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_clean",
+                "description": "yes/no: post in the clean triage space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "clean_text",
+                "description": "Text for the clean triage space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_dm",
+                "description": "yes/no: send a direct message",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "dm_text",
+                "description": "Direct message text",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "dm_recipients",
+                "description": "Comma-separated DM recipients",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_youtube",
+                "description": "yes/no: post in [S-F] YouTube Social",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "youtube_text",
+                "description": "Text for [S-F] YouTube Social",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_doodle",
+                "description": "yes/no: post in the Doodle Team space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "doodle_text",
+                "description": "Text for the Doodle Team space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_team",
+                "description": "yes/no: post in the 24/7 SL team chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "team_text",
+                "description": "Text for the 24/7 SL team chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_crisis",
+                "description": "yes/no: post in the crisis chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "crisis_text",
+                "description": "Text for the crisis chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_handover",
+                "description": "yes/no: append to the Handover doc",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "handover_text",
+                "description": "Text to append to the Handover doc",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "case_id",
+                "description": "Alert case id (TRG-…)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "escalation_id",
+                "description": "Escalation id (ESC-…)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "verdict",
+                "description": "Triage verdict / case status",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "summary",
+                "description": "What the agent did (one line)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              }
+            ],
+            "onConfigFunction": "onConfigIngestEmail",
+            "onExecuteFunction": "onExecuteIngestEmail"
+          }
+        },
+        {
+          "id": "deliver_outbox",
+          "state": "ACTIVE",
+          "name": "Triage Agent: Deliver outbox",
+          "description": "Deliver queued posts (SLA nudges, reminders, handovers, digests, Console decisions).",
+          "workflowAction": {
+            "inputs": [
+              {
+                "id": "targets",
+                "description": "Targets this flow can post to (constant)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "flow",
+                "description": "Flow name (constant, for logs)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "id": "has_reply",
+                "description": "yes/no: run 'Reply to a message' (clean space / DM only)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "reply_text",
+                "description": "Thread reply text",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_burson",
+                "description": "yes/no: post in the Burson space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "burson_text",
+                "description": "Text for the Burson space (Notify space members ON)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_clean",
+                "description": "yes/no: post in the clean triage space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "clean_text",
+                "description": "Text for the clean triage space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_dm",
+                "description": "yes/no: send a direct message",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "dm_text",
+                "description": "Direct message text",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "dm_recipients",
+                "description": "Comma-separated DM recipients",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_youtube",
+                "description": "yes/no: post in [S-F] YouTube Social",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "youtube_text",
+                "description": "Text for [S-F] YouTube Social",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_doodle",
+                "description": "yes/no: post in the Doodle Team space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "doodle_text",
+                "description": "Text for the Doodle Team space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_team",
+                "description": "yes/no: post in the 24/7 SL team chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "team_text",
+                "description": "Text for the 24/7 SL team chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_crisis",
+                "description": "yes/no: post in the crisis chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "crisis_text",
+                "description": "Text for the crisis chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_handover",
+                "description": "yes/no: append to the Handover doc",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "handover_text",
+                "description": "Text to append to the Handover doc",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "case_id",
+                "description": "Alert case id (TRG-…)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "escalation_id",
+                "description": "Escalation id (ESC-…)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "verdict",
+                "description": "Triage verdict / case status",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "summary",
+                "description": "What the agent did (one line)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              }
+            ],
+            "onConfigFunction": "onConfigDeliverOutbox",
+            "onExecuteFunction": "onExecuteDeliverOutbox"
+          }
+        },
+        {
+          "id": "record_post",
+          "state": "ACTIVE",
+          "name": "Triage Agent: Record post",
+          "description": "Optional: remember the message id/link of a clean-space post for reaction lookups.",
+          "workflowAction": {
+            "inputs": [
+              {
+                "id": "case_id",
+                "description": "Case id (TRG-…)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "message_id",
+                "description": "Posted message id",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "message_link",
+                "description": "Posted message link",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "targets",
+                "description": "Targets this flow can post to (constant)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "flow",
+                "description": "Flow name (constant, for logs)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "id": "has_reply",
+                "description": "yes/no: run 'Reply to a message' (clean space / DM only)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "reply_text",
+                "description": "Thread reply text",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_burson",
+                "description": "yes/no: post in the Burson space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "burson_text",
+                "description": "Text for the Burson space (Notify space members ON)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_clean",
+                "description": "yes/no: post in the clean triage space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "clean_text",
+                "description": "Text for the clean triage space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_dm",
+                "description": "yes/no: send a direct message",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "dm_text",
+                "description": "Direct message text",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "dm_recipients",
+                "description": "Comma-separated DM recipients",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_youtube",
+                "description": "yes/no: post in [S-F] YouTube Social",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "youtube_text",
+                "description": "Text for [S-F] YouTube Social",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_doodle",
+                "description": "yes/no: post in the Doodle Team space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "doodle_text",
+                "description": "Text for the Doodle Team space",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_team",
+                "description": "yes/no: post in the 24/7 SL team chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "team_text",
+                "description": "Text for the 24/7 SL team chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_crisis",
+                "description": "yes/no: post in the crisis chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "crisis_text",
+                "description": "Text for the crisis chat",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "has_handover",
+                "description": "yes/no: append to the Handover doc",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "handover_text",
+                "description": "Text to append to the Handover doc",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "case_id",
+                "description": "Alert case id (TRG-…)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "escalation_id",
+                "description": "Escalation id (ESC-…)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "verdict",
+                "description": "Triage verdict / case status",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "summary",
+                "description": "What the agent did (one line)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              }
+            ],
+            "onConfigFunction": "onConfigRecordPost",
+            "onExecuteFunction": "onExecuteRecordPost"
+          }
+        },
+        {
+          "id": "inspect_variables",
+          "state": "ACTIVE",
+          "name": "Triage Agent: Inspect variables (Phase 0)",
+          "description": "Phase 0 spike: log up to 8 starter variables to the Activity log to learn their exact names and formats.",
+          "workflowAction": {
+            "inputs": [
+              {
+                "id": "var1",
+                "description": "Variable 1",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "var2",
+                "description": "Variable 2",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "var3",
+                "description": "Variable 3",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "var4",
+                "description": "Variable 4",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "var5",
+                "description": "Variable 5",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "var6",
+                "description": "Variable 6",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "var7",
+                "description": "Variable 7",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              },
+              {
+                "id": "var8",
+                "description": "Variable 8",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "id": "summary",
+                "description": "Logged variables (JSON)",
+                "cardinality": "SINGLE",
+                "dataType": {
+                  "basicType": "STRING"
+                }
+              }
+            ],
+            "onConfigFunction": "onConfigInspectVariables",
+            "onExecuteFunction": "onExecuteInspectVariables"
+          }
+        }
+      ]
+    }
+  }
+}

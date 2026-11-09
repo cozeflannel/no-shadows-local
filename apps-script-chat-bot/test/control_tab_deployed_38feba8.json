@@ -1,0 +1,583 @@
+{
+ "made_by": "today's deployed code (git 38feba8, tag deployed-2026-10-22), with test/fakes.js: setup(), then the switches in \"on\" set ON and B25 set to \"b25\" (when given), then one poll()",
+ "all_off": {
+  "on": [],
+  "b25": "",
+  "rows": [
+   [
+    "Burson QA bot",
+    "",
+    ""
+   ],
+   [
+    "Bot",
+    "ON",
+    "OFF pauses the bot."
+   ],
+   [
+    "Burson space",
+    "SLRR Test Feed (Burson Sim)",
+    "✓ SLRR Test Feed (Burson Sim)"
+   ],
+   [
+    "Analyst space",
+    "spaces/AAQAaLn375E",
+    "✓ SLRR Triaged Alerts"
+   ],
+   [
+    "Status",
+    "✅ Working",
+    ""
+   ],
+   [
+    "Last check",
+    "Oct 14, 8:01 AM EDT",
+    ""
+   ],
+   [
+    "Today",
+    "No alerts yet today",
+    ""
+   ],
+   [
+    "Runs as",
+    "bot@runner.test",
+    "The bot posts as this account. It must be a member of both spaces."
+   ],
+   [
+    "Mirror space",
+    "",
+    "Leave blank, or paste a training space link to mirror live Zapier posts there (outbounds blocked)."
+   ],
+   [
+    "Auto-correct space",
+    "",
+    "Leave blank, or paste a Google-only test space link: live Burson alerts are posted there, corrected by the bot."
+   ],
+   [
+    "Auto-send Social Alerts",
+    "OFF",
+    "OFF (the Social Alert is a Gmail draft for a person to send; while testing it goes only to the stand-in)"
+   ],
+   [
+    "Auto-submit T&S form",
+    "OFF",
+    "OFF (posts the pre-filled T&S form link in Chat for a person to submit)"
+   ],
+   [
+    "KB & Guidance can start alerts",
+    "OFF",
+    "OFF (the Resources documents and the Guidance tab can only stop an alert or correct its fields)"
+   ],
+   [
+    "Auto-find missing links",
+    "OFF",
+    "OFF (asks Burson when the link or the author is missing)"
+   ],
+   [
+    "Direct BigQuery alerts",
+    "OFF",
+    "OFF (reviews the alerts posted in Chat only)"
+   ],
+   [
+    "Write back to SLRR BigQuery",
+    "OFF",
+    "OFF (writes only to this sheet: nothing goes to the shared SLRR BigQuery tables)"
+   ],
+   [
+    "Learn from IM calls",
+    "OFF",
+    "OFF (no learning from the IMs' past calls)"
+   ],
+   [
+    "Watch sent alerts (24h)",
+    "OFF",
+    "OFF (stops once the Social Alert is sent)"
+   ],
+   [
+    "Early wave & velocity check",
+    "OFF",
+    "OFF (one post at a time)"
+   ],
+   [
+    "Check outage & comms docs",
+    "OFF",
+    "OFF (standard review)"
+   ],
+   [
+    "Track post-alert outcomes",
+    "OFF",
+    "OFF (doesn't read replies after the Social Alert is sent)"
+   ],
+   [
+    "Relay with S-F Burson",
+    "OFF",
+    "OFF (the Mirror space gets Zapier's alerts only; nothing is posted in S-F Burson)"
+   ],
+   [
+    "Never wait on Burson",
+    "OFF",
+    "OFF (asks Burson to fix and resend, and waits for the resend)"
+   ],
+   [
+    "Post in S-F Burson",
+    "OFF",
+    "OFF (nothing is posted or reacted in S-F Burson)"
+   ],
+   [
+    "S-F Burson space",
+    "",
+    "⚠️ Not set: paste S-F Burson's link (the real Burson space). Until then the Mirror, Auto-correct and Relay are paused, and the bot posts nothing in any space people outside Google can join."
+   ],
+   [
+    ""
+   ],
+   [
+    "How it works"
+   ],
+   [
+    "• Every minute the bot reads the Burson space. It reviews each Zapier alert, asks Burson in the alert's thread to fix mistakes, answers their questions, sends every alert, corrected, to the analyst space, and makes the Social Alert email when an alert needs escalation: while testing it sends it only to the tester, otherwise it's a Gmail draft for a person to send. In the real Burson space (S-F Burson, the space in B25) it posts and reacts only through the Burson outbox tab, with Post in S-F Burson ON."
+   ],
+   [
+    "• To pause, set Bot to OFF. Set it back to ON to restart. It skips anything posted while it was off."
+   ],
+   [
+    "• To change a space (for example from the test space to the real Burson space), paste the space's link in column B. To get the link, open the space in Google Chat and copy the address bar. Column C shows the space the bot found."
+   ],
+   [
+    "• S-F Burson space (B25): which space is the real Burson space, S-F Burson. Only this cell decides it, never the code: paste its link (or its exact name) there, and C25 shows the space the bot found. The Mirror, Auto-correct and Relay read it, the Burson outbox posts only there, and the bot is live only when the Burson space (B3) is this space. While it's blank or can't be found, they're paused and the bot is never live. Whatever it says, the bot never posts or reacts itself in a space people outside Google can join. A change takes effect on the next run: the Mirror and Auto-correct start from the new space's last 15 minutes, and outbox rows queued for the old space are never sent."
+   ],
+   [
+    "• If Status shows ⚠️, it says what to fix. If Last check is more than 10 minutes old, the bot has stopped: ask the person in \"Runs as\" to open the bot's Apps Script project and run setup."
+   ],
+   [
+    "• The Resources tab is the bot's knowledge base. Gemini reads every document listed there (Google Docs, Sheets and Slides, text files and public web pages) and uses it to triage and action each alert and to answer questions. Bot status shows whether it could read each one. Only rows marked Yes in \"Burson can see it?\" are used in answers to Burson or linked for them. The bot keeps its copy of the documents' text in a hidden tab of its own, \"Knowledge cache (bot)\"; no tab needs renaming."
+   ],
+   [
+    "• The Guidance tab holds the leads' current instructions on what to escalate or skip (one per row; \"Until\" is optional). The bot follows them, and the leads' recent emails about alerts, when it decides on a Social Alert."
+   ],
+   [
+    "• The Results tab shows what the bot is doing, in plain numbers: how many of Burson's alerts had mistakes and what it fixed, how often it made the same Social Alert call as the IMs, and how much sooner it sent it (matched on the post's link, not the subject line). Gemini writes the summary at the top from those numbers only. It updates right after the bot handles an alert, and every 10 minutes."
+   ],
+   [
+    "• Don't share this sheet with Burson."
+   ],
+   [
+    "• To train the bot on live Zapier messages in a separate space (one-sided, with outbounds blocked), paste that Google-only training space's link in Mirror space (B9); it copies them from S-F Burson (B25). Clear B9 to stop mirroring."
+   ],
+   [
+    "• To test the bot fixing alerts itself, paste a Google-only test space's link in Auto-correct space (B10). Each live Burson alert (from S-F Burson, B25) is posted there already corrected, with what changed in its thread, and the bot works it there like an IM (emojis, the Social Alert email to the tester, the T&S test-form link, answers). It never posts or reacts in the Burson space. C10 shows how it is doing. Clear B10 to stop."
+   ],
+   [
+    "• Rows 11-24 are switches for what the bot may do on its own. Each starts OFF, and OFF keeps the bot working as described above. Set one to ON to turn it on; column C says what it does when OFF, and what it is doing when ON. While testing, every email still goes only to the tester and no live form is ever submitted."
+   ],
+   [
+    "• Auto-send Social Alerts: the bot sends the Social Alert email itself, instead of leaving a Gmail draft for a person."
+   ],
+   [
+    "• Auto-submit T&S form: the bot submits the T&S form itself (the test copy while testing), never twice for the same post, and sends the urgent email when the alert is urgent."
+   ],
+   [
+    "• KB & Guidance can start alerts: a Social Alert can start when Gemini is very confident and cites a Guidance row or a Resources document, even when the rules alone wouldn't escalate."
+   ],
+   [
+    "• Auto-find missing links: when an alert has no link or author, the bot looks for the post in BigQuery (SLRR and Sonar, the last 48 hours) before asking Burson (with Never wait on Burson ON: found or not, the alert is processed right away, and Burson is told when it isn't found)."
+   ],
+   [
+    "• Direct BigQuery alerts: the bot also reviews qualifying Sprinklr, BMIE and BSIP posts straight from BigQuery, never one it has already seen (in a test feed or the Mirror space only, never the live Burson space)."
+   ],
+   [
+    "• Write back to SLRR BigQuery: finalized alerts and sends are written to the shared SLRR BigQuery tables, where other teams and dashboards see them. Keep it OFF while testing."
+   ],
+   [
+    "• Learn from IM calls: alerts where the IMs and the bot made different calls are kept on the Learned precedents tab (set Active to No to ignore one), and Gemini sees the similar ones when it reviews an alert."
+   ],
+   [
+    "• Watch sent alerts (24h): for a day after a Social Alert is sent, the bot re-checks the post every 30 minutes and replies on the email thread once if its engagement surges past 50K, it is deleted, or the press picks it up."
+   ],
+   [
+    "• Early wave & velocity check: every 15 minutes the bot looks in BigQuery for many people posting about the same issue, or a post rising fast, and warns the analyst space."
+   ],
+   [
+    "• Check outage & comms docs: for an outage or a widespread bug, Gemini checks whether it is confirmed and adds any approved holding statement from the Resources documents to the analyst note and the Social Alert email."
+   ],
+   [
+    "• Track post-alert outcomes: the bot reads replies to sent Social Alerts and T&S confirmations for a week, and logs the outcome on the Alert log and the Results tab."
+   ],
+   [
+    "• Relay with S-F Burson: analysts work in the Mirror space (B9) only. Burson's replies, messages and emojis in S-F Burson (B25) come over to it. With Post in S-F Burson ON too, the analysts' replies, messages (except ones starting with \"internal:\") and emojis wait on the Burson outbox tab, with the analyst's name, and go to S-F Burson from the bot's account only once someone sets them to Send there. The bot's own work is never queued, and nothing written while either switch was OFF. Emojis go on messages posted since it's been on. The Relay tab logs each one; type people's names once on the Relay names tab (Chat doesn't give them). Run the bot from an account of its own, not an analyst's."
+   ],
+   [
+    "• Never wait on Burson: OFF, the bot asks Burson in the alert's thread to fix a wrong alert and resend it, and waits for the resend before deciding it. ON, it decides a corrected alert right away (the Social Alert, ❌ or the T&S form) and tells Burson what it changed."
+   ],
+   [
+    "• Post in S-F Burson: OFF, the bot never posts or reacts in S-F Burson (the real Burson space, B25), and nothing is queued. ON, everything the bot or the relay would post or react there waits on the Burson outbox tab, one row each: set its Status to Send to post it (you can edit its text first) or Skip. Each row goes once, from the bot's account; one that mentions anything internal is Blocked, not sent. Turning it ON never sends a row by itself; turning it OFF stops sending at once. Nothing is sent while B25 is blank or can't be found."
+   ],
+   [
+    ""
+   ],
+   [
+    ""
+   ],
+   [
+    ""
+   ]
+  ],
+  "validations": {
+   "11,2": [
+    "ON",
+    "OFF"
+   ],
+   "12,2": [
+    "ON",
+    "OFF"
+   ],
+   "13,2": [
+    "ON",
+    "OFF"
+   ],
+   "14,2": [
+    "ON",
+    "OFF"
+   ],
+   "15,2": [
+    "ON",
+    "OFF"
+   ],
+   "16,2": [
+    "ON",
+    "OFF"
+   ],
+   "17,2": [
+    "ON",
+    "OFF"
+   ],
+   "18,2": [
+    "ON",
+    "OFF"
+   ],
+   "19,2": [
+    "ON",
+    "OFF"
+   ],
+   "20,2": [
+    "ON",
+    "OFF"
+   ],
+   "21,2": [
+    "ON",
+    "OFF"
+   ],
+   "22,2": [
+    "ON",
+    "OFF"
+   ],
+   "23,2": [
+    "ON",
+    "OFF"
+   ],
+   "24,2": [
+    "ON",
+    "OFF"
+   ],
+   "2,2": [
+    "ON",
+    "OFF"
+   ]
+  },
+  "props": []
+ },
+ "on_14_15_17_b25": {
+  "on": [
+   14,
+   15,
+   17
+  ],
+  "b25": "https://chat.google.com/room/AAQAaa_0I9g",
+  "rows": [
+   [
+    "Burson QA bot",
+    "",
+    ""
+   ],
+   [
+    "Bot",
+    "ON",
+    "OFF pauses the bot."
+   ],
+   [
+    "Burson space",
+    "SLRR Test Feed (Burson Sim)",
+    "✓ SLRR Test Feed (Burson Sim)"
+   ],
+   [
+    "Analyst space",
+    "spaces/AAQAaLn375E",
+    "✓ SLRR Triaged Alerts"
+   ],
+   [
+    "Status",
+    "✅ Working",
+    ""
+   ],
+   [
+    "Last check",
+    "Oct 14, 8:01 AM EDT",
+    ""
+   ],
+   [
+    "Today",
+    "No alerts yet today",
+    ""
+   ],
+   [
+    "Runs as",
+    "bot@runner.test",
+    "The bot posts as this account. It must be a member of both spaces."
+   ],
+   [
+    "Mirror space",
+    "",
+    "Leave blank, or paste a training space link to mirror live Zapier posts there (outbounds blocked)."
+   ],
+   [
+    "Auto-correct space",
+    "",
+    "Leave blank, or paste a Google-only test space link: live Burson alerts are posted there, corrected by the bot."
+   ],
+   [
+    "Auto-send Social Alerts",
+    "OFF",
+    "OFF (the Social Alert is a Gmail draft for a person to send; while testing it goes only to the stand-in)"
+   ],
+   [
+    "Auto-submit T&S form",
+    "OFF",
+    "OFF (posts the pre-filled T&S form link in Chat for a person to submit)"
+   ],
+   [
+    "KB & Guidance can start alerts",
+    "OFF",
+    "OFF (the Resources documents and the Guidance tab can only stop an alert or correct its fields)"
+   ],
+   [
+    "Auto-find missing links",
+    "ON",
+    "✓ ON: looks in BigQuery (SLRR, Sonar) for a missing link or author before asking Burson"
+   ],
+   [
+    "Direct BigQuery alerts",
+    "ON",
+    "✓ ON: also reviews Sprinklr, BMIE and BSIP posts straight from BigQuery (each post once) · last check Oct 14, 8:01 AM EDT (BigQuery refused the query for Sprinklr, BMIE and BSIP; it tries again at the next check) · 0 posts today"
+   ],
+   [
+    "Write back to SLRR BigQuery",
+    "OFF",
+    "OFF (writes only to this sheet: nothing goes to the shared SLRR BigQuery tables)"
+   ],
+   [
+    "Learn from IM calls",
+    "ON",
+    "✓ ON: keeps the IMs' different calls on the Learned precedents tab and shows Gemini the similar ones"
+   ],
+   [
+    "Watch sent alerts (24h)",
+    "OFF",
+    "OFF (stops once the Social Alert is sent)"
+   ],
+   [
+    "Early wave & velocity check",
+    "OFF",
+    "OFF (one post at a time)"
+   ],
+   [
+    "Check outage & comms docs",
+    "OFF",
+    "OFF (standard review)"
+   ],
+   [
+    "Track post-alert outcomes",
+    "OFF",
+    "OFF (doesn't read replies after the Social Alert is sent)"
+   ],
+   [
+    "Relay with S-F Burson",
+    "OFF",
+    "OFF (the Mirror space gets Zapier's alerts only; nothing is posted in S-F Burson)"
+   ],
+   [
+    "Never wait on Burson",
+    "OFF",
+    "OFF (asks Burson to fix and resend, and waits for the resend)"
+   ],
+   [
+    "Post in S-F Burson",
+    "OFF",
+    "OFF (nothing is posted or reacted in S-F Burson)"
+   ],
+   [
+    "S-F Burson space",
+    "https://chat.google.com/room/AAQAaa_0I9g",
+    "✓ [S-F] Burson Automated Alerts V3"
+   ],
+   [
+    ""
+   ],
+   [
+    "How it works"
+   ],
+   [
+    "• Every minute the bot reads the Burson space. It reviews each Zapier alert, asks Burson in the alert's thread to fix mistakes, answers their questions, sends every alert, corrected, to the analyst space, and makes the Social Alert email when an alert needs escalation: while testing it sends it only to the tester, otherwise it's a Gmail draft for a person to send. In the real Burson space (S-F Burson, the space in B25) it posts and reacts only through the Burson outbox tab, with Post in S-F Burson ON."
+   ],
+   [
+    "• To pause, set Bot to OFF. Set it back to ON to restart. It skips anything posted while it was off."
+   ],
+   [
+    "• To change a space (for example from the test space to the real Burson space), paste the space's link in column B. To get the link, open the space in Google Chat and copy the address bar. Column C shows the space the bot found."
+   ],
+   [
+    "• S-F Burson space (B25): which space is the real Burson space, S-F Burson. Only this cell decides it, never the code: paste its link (or its exact name) there, and C25 shows the space the bot found. The Mirror, Auto-correct and Relay read it, the Burson outbox posts only there, and the bot is live only when the Burson space (B3) is this space. While it's blank or can't be found, they're paused and the bot is never live. Whatever it says, the bot never posts or reacts itself in a space people outside Google can join. A change takes effect on the next run: the Mirror and Auto-correct start from the new space's last 15 minutes, and outbox rows queued for the old space are never sent."
+   ],
+   [
+    "• If Status shows ⚠️, it says what to fix. If Last check is more than 10 minutes old, the bot has stopped: ask the person in \"Runs as\" to open the bot's Apps Script project and run setup."
+   ],
+   [
+    "• The Resources tab is the bot's knowledge base. Gemini reads every document listed there (Google Docs, Sheets and Slides, text files and public web pages) and uses it to triage and action each alert and to answer questions. Bot status shows whether it could read each one. Only rows marked Yes in \"Burson can see it?\" are used in answers to Burson or linked for them. The bot keeps its copy of the documents' text in a hidden tab of its own, \"Knowledge cache (bot)\"; no tab needs renaming."
+   ],
+   [
+    "• The Guidance tab holds the leads' current instructions on what to escalate or skip (one per row; \"Until\" is optional). The bot follows them, and the leads' recent emails about alerts, when it decides on a Social Alert."
+   ],
+   [
+    "• The Results tab shows what the bot is doing, in plain numbers: how many of Burson's alerts had mistakes and what it fixed, how often it made the same Social Alert call as the IMs, and how much sooner it sent it (matched on the post's link, not the subject line). Gemini writes the summary at the top from those numbers only. It updates right after the bot handles an alert, and every 10 minutes."
+   ],
+   [
+    "• Don't share this sheet with Burson."
+   ],
+   [
+    "• To train the bot on live Zapier messages in a separate space (one-sided, with outbounds blocked), paste that Google-only training space's link in Mirror space (B9); it copies them from S-F Burson (B25). Clear B9 to stop mirroring."
+   ],
+   [
+    "• To test the bot fixing alerts itself, paste a Google-only test space's link in Auto-correct space (B10). Each live Burson alert (from S-F Burson, B25) is posted there already corrected, with what changed in its thread, and the bot works it there like an IM (emojis, the Social Alert email to the tester, the T&S test-form link, answers). It never posts or reacts in the Burson space. C10 shows how it is doing. Clear B10 to stop."
+   ],
+   [
+    "• Rows 11-24 are switches for what the bot may do on its own. Each starts OFF, and OFF keeps the bot working as described above. Set one to ON to turn it on; column C says what it does when OFF, and what it is doing when ON. While testing, every email still goes only to the tester and no live form is ever submitted."
+   ],
+   [
+    "• Auto-send Social Alerts: the bot sends the Social Alert email itself, instead of leaving a Gmail draft for a person."
+   ],
+   [
+    "• Auto-submit T&S form: the bot submits the T&S form itself (the test copy while testing), never twice for the same post, and sends the urgent email when the alert is urgent."
+   ],
+   [
+    "• KB & Guidance can start alerts: a Social Alert can start when Gemini is very confident and cites a Guidance row or a Resources document, even when the rules alone wouldn't escalate."
+   ],
+   [
+    "• Auto-find missing links: when an alert has no link or author, the bot looks for the post in BigQuery (SLRR and Sonar, the last 48 hours) before asking Burson (with Never wait on Burson ON: found or not, the alert is processed right away, and Burson is told when it isn't found)."
+   ],
+   [
+    "• Direct BigQuery alerts: the bot also reviews qualifying Sprinklr, BMIE and BSIP posts straight from BigQuery, never one it has already seen (in a test feed or the Mirror space only, never the live Burson space)."
+   ],
+   [
+    "• Write back to SLRR BigQuery: finalized alerts and sends are written to the shared SLRR BigQuery tables, where other teams and dashboards see them. Keep it OFF while testing."
+   ],
+   [
+    "• Learn from IM calls: alerts where the IMs and the bot made different calls are kept on the Learned precedents tab (set Active to No to ignore one), and Gemini sees the similar ones when it reviews an alert."
+   ],
+   [
+    "• Watch sent alerts (24h): for a day after a Social Alert is sent, the bot re-checks the post every 30 minutes and replies on the email thread once if its engagement surges past 50K, it is deleted, or the press picks it up."
+   ],
+   [
+    "• Early wave & velocity check: every 15 minutes the bot looks in BigQuery for many people posting about the same issue, or a post rising fast, and warns the analyst space."
+   ],
+   [
+    "• Check outage & comms docs: for an outage or a widespread bug, Gemini checks whether it is confirmed and adds any approved holding statement from the Resources documents to the analyst note and the Social Alert email."
+   ],
+   [
+    "• Track post-alert outcomes: the bot reads replies to sent Social Alerts and T&S confirmations for a week, and logs the outcome on the Alert log and the Results tab."
+   ],
+   [
+    "• Relay with S-F Burson: analysts work in the Mirror space (B9) only. Burson's replies, messages and emojis in S-F Burson (B25) come over to it. With Post in S-F Burson ON too, the analysts' replies, messages (except ones starting with \"internal:\") and emojis wait on the Burson outbox tab, with the analyst's name, and go to S-F Burson from the bot's account only once someone sets them to Send there. The bot's own work is never queued, and nothing written while either switch was OFF. Emojis go on messages posted since it's been on. The Relay tab logs each one; type people's names once on the Relay names tab (Chat doesn't give them). Run the bot from an account of its own, not an analyst's."
+   ],
+   [
+    "• Never wait on Burson: OFF, the bot asks Burson in the alert's thread to fix a wrong alert and resend it, and waits for the resend before deciding it. ON, it decides a corrected alert right away (the Social Alert, ❌ or the T&S form) and tells Burson what it changed."
+   ],
+   [
+    "• Post in S-F Burson: OFF, the bot never posts or reacts in S-F Burson (the real Burson space, B25), and nothing is queued. ON, everything the bot or the relay would post or react there waits on the Burson outbox tab, one row each: set its Status to Send to post it (you can edit its text first) or Skip. Each row goes once, from the bot's account; one that mentions anything internal is Blocked, not sent. Turning it ON never sends a row by itself; turning it OFF stops sending at once. Nothing is sent while B25 is blank or can't be found."
+   ],
+   [
+    ""
+   ],
+   [
+    ""
+   ],
+   [
+    ""
+   ]
+  ],
+  "validations": {
+   "11,2": [
+    "ON",
+    "OFF"
+   ],
+   "12,2": [
+    "ON",
+    "OFF"
+   ],
+   "13,2": [
+    "ON",
+    "OFF"
+   ],
+   "14,2": [
+    "ON",
+    "OFF"
+   ],
+   "15,2": [
+    "ON",
+    "OFF"
+   ],
+   "16,2": [
+    "ON",
+    "OFF"
+   ],
+   "17,2": [
+    "ON",
+    "OFF"
+   ],
+   "18,2": [
+    "ON",
+    "OFF"
+   ],
+   "19,2": [
+    "ON",
+    "OFF"
+   ],
+   "20,2": [
+    "ON",
+    "OFF"
+   ],
+   "21,2": [
+    "ON",
+    "OFF"
+   ],
+   "22,2": [
+    "ON",
+    "OFF"
+   ],
+   "23,2": [
+    "ON",
+    "OFF"
+   ],
+   "24,2": [
+    "ON",
+    "OFF"
+   ],
+   "2,2": [
+    "ON",
+    "OFF"
+   ]
+  },
+  "props": [
+   "SWITCH_NOTES"
+  ]
+ }
+}

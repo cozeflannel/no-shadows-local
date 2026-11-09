@@ -1,0 +1,261 @@
+# Golden set: SLRR Collection Requirements (March 5, 2026).
+# Each case is one alert as the Burson chat would show it, plus the decision an
+# Incident Manager would make. Add real samples under evals/golden/real/*.yaml
+# using the same shape (fields use the canonical template field names).
+#
+#   history: prior alerts already posted to the clean space (for the 14-day rule)
+#   llm:     the Gemini response to simulate in offline mode (live mode ignores it)
+#   expect:  verdict | track | issue_status | suppression_reason | protocols | corrections | ts_recommended | actions
+
+defaults:
+  alert_name: "[HIGH ENGAGEMENT] [NEW] Gemini App – Users report fabricated citations"
+  issue_name: Gemini fabricates academic citations
+  issue_status: NEW
+  total_engagement: 2450
+  likes: 2000
+  comments: 300
+  shares: 150
+  product: Gemini App
+  social_network: X
+  exposure_tag: Product - Factual inaccuracies (not dangerous/offensive)
+  kof: "No"
+  author: "@techwatcher"
+  post_date: "2026-10-12T13:05:00Z"
+  location: US
+  summary: User claims Gemini fabricated three academic sources in a research answer.
+  post_content: Asked Gemini for sources on microplastics and it invented three papers.
+
+cases:
+  - id: he_new_pass
+    description: 2K+ non-sensitive P1 on X, new issue -> HIGH ENGAGEMENT alert as received
+    alert: {}
+    expect: {verdict: PASS, track: HIGH_ENGAGEMENT, issue_status: NEW, ts_recommended: true, actions: [tns, pa]}
+
+  - id: p0_urgent_zero_engagement
+    description: P0 tag at 0 engagement on a new issue -> URGENT, leadership protocol
+    alert:
+      exposure_tag: Product - Dangerous results (e.g. medical/legal)
+      alert_name: "[URGENT] [NEW] Gemini App – Gemini gives unsafe dosage advice"
+      issue_name: Gemini gives unsafe medication dosage advice
+      total_engagement: 0
+      likes: 0
+      comments: 0
+      shares: 0
+    expect: {verdict: PASS, track: URGENT, protocols: [leadership]}
+
+  - id: sensitive_child_safety
+    description: Sensitive topic at low engagement -> URGENT and T&S recommended
+    alert:
+      exposure_tag: Product - Offensive or explicit results
+      risk_tags: Child Safety
+      issue_name: Image tool produces inappropriate content for a minor
+      total_engagement: 12
+      likes: 10
+      comments: 2
+      shares: 0
+    expect: {verdict: CORRECTED, track: URGENT, ts_recommended: true, corrections: {alert_name: "[URGENT] [NEW] Gemini App – Users report fabricated citations"}}
+
+  - id: p2_below_threshold
+    description: Non-sensitive P2 below 2K -> suppressed
+    alert:
+      exposure_tag: Product - Meme about Google products
+      total_engagement: 300
+      likes: 250
+      comments: 30
+      shares: 20
+    expect: {verdict: SUPPRESSED, suppression_reason: below_threshold}
+
+  - id: ongoing_urgent_without_kof
+    description: P0 issue already alerted this week, new post below 2K, author not a KOF -> suppressed
+    history:
+      - {exposure_tag: Product - Offensive or explicit results, issue_name: Gemini image tool generates offensive caricatures, posted_minutes_ago: 600}
+    alert:
+      exposure_tag: Product - Offensive or explicit results
+      issue_name: Gemini image tool generating offensive caricatures
+      total_engagement: 40
+      likes: 40
+      comments: 0
+      shares: 0
+    expect: {verdict: SUPPRESSED, suppression_reason: ongoing_no_kof}
+
+  - id: ongoing_with_kof
+    description: Same ongoing issue but from a P0 KOF -> URGENT update; Burson's [NEW] corrected to [ONGOING]
+    history:
+      - {exposure_tag: Product - Offensive or explicit results, issue_name: Gemini image tool generates offensive caricatures, posted_minutes_ago: 600}
+    alert:
+      exposure_tag: Product - Offensive or explicit results
+      issue_name: Gemini image tool generating offensive caricatures
+      alert_name: "[URGENT] [NEW] Gemini App – offensive caricatures"
+      kof: "Yes"
+      kof_lists: P0 KOFs
+      total_engagement: 40
+      likes: 40
+      comments: 0
+      shares: 0
+    expect: {verdict: CORRECTED, track: URGENT, issue_status: ONGOING, corrections: {issue_status: Ongoing Issue}}
+
+  - id: ongoing_2k_update
+    description: Ongoing issue crossing 2K -> HIGH ENGAGEMENT update on the existing thread
+    history:
+      - {exposure_tag: Product - Factual inaccuracies (not dangerous/offensive), issue_name: Gemini fabricates academic citations, posted_minutes_ago: 1440}
+    alert:
+      issue_status: Ongoing Issue
+      alert_name: "[HIGH ENGAGEMENT] [ONGOING] Gemini App – fabricated citations"
+    expect: {verdict: PASS, track: HIGH_ENGAGEMENT, issue_status: ONGOING}
+
+  - id: gems_distro_removed
+    description: Gems distro removed -> product corrected to Gemini App
+    alert: {product: Gems}
+    expect: {verdict: CORRECTED, corrections: {product: Gemini App}}
+
+  - id: network_from_link
+    description: Network says Reddit but the link is x.com -> corrected to X
+    alert: {social_network: Reddit}
+    expect: {verdict: CORRECTED, corrections: {social_network: X}}
+
+  - id: engagement_math
+    description: Total engagement doesn't match likes + comments + shares -> corrected
+    alert: {total_engagement: 2100}
+    expect: {verdict: CORRECTED, corrections: {total_engagement: 2450}}
+
+  - id: merged_tag_alias
+    description: Old tag name "Product - Litigation" -> merged into "Brand - Litigation"
+    alert:
+      exposure_tag: Product - Litigation
+    expect: {corrections: {exposure_tag: Brand - Litigation}}
+
+  - id: missing_link
+    description: No post link -> the only remaining bounce to Burson
+    alert: {post_url: null}
+    expect: {verdict: FAIL}
+
+  - id: drive_link_excluded
+    description: Google Drive link without risk keywords -> excluded
+    alert:
+      exposure_tag: Product - Other/general criticism
+      post_content: "my notes https://docs.google.com/document/d/abc"
+    expect: {verdict: SUPPRESSED, suppression_reason: EXCLUDED_DRIVE_LINK}
+
+  - id: ai_comparison_excluded
+    description: Generic AI comparison, even at 5K -> excluded
+    alert:
+      exposure_tag: Brand - Other/general criticism
+      post_content: ChatGPT is better than Gemini, switched to Claude
+      total_engagement: 5000
+      likes: 5000
+      comments: 0
+      shares: 0
+    expect: {verdict: SUPPRESSED, suppression_reason: EXCLUDED_AI_COMPARISON}
+
+  - id: redundant_privacy_risk
+    description: Privacy risk tag restating a privacy exposure tag isn't Sensitive -> P1 below 2K suppressed
+    alert:
+      exposure_tag: Product - Privacy & security concerns
+      risk_tags: Privacy
+      total_engagement: 100
+      likes: 100
+      comments: 0
+      shares: 0
+    expect: {verdict: SUPPRESSED, suppression_reason: below_threshold}
+
+  - id: politics_non_us
+    description: Politics risk tag on a non-US post without election language -> not Sensitive
+    alert:
+      exposure_tag: Product - Meme about Google products
+      risk_tags: World Politics
+      location: India
+      total_engagement: 100
+      likes: 100
+      comments: 0
+      shares: 0
+    expect: {verdict: SUPPRESSED, suppression_reason: below_threshold}
+
+  - id: politics_election_english
+    description: English election mention makes Politics Sensitive anywhere -> URGENT
+    alert:
+      exposure_tag: Product - Meme about Google products
+      risk_tags: World Politics
+      location: India
+      post_content: Gemini refuses to talk about the election
+      total_engagement: 100
+      likes: 100
+      comments: 0
+      shares: 0
+    expect: {track: URGENT}
+
+  - id: youtube_subject_chat_only
+    description: YouTube itself is the subject at 2K+ without a bias claim -> YouTube chat ping, no email
+    alert:
+      product: YouTube
+      exposure_tag: Product - Other/general criticism
+      issue_name: YouTube ads are too long
+      alert_name: "[HIGH ENGAGEMENT] [NEW] YouTube – ads too long"
+      summary: Users complain about long YouTube ads
+      post_content: youtube ads are unbearable
+    expect: {protocols: [youtube], alert_action: YOUTUBE_CHAT_ONLY}
+
+  - id: youtube_subject_low_engagement
+    description: URGENT-eligible post where YouTube is the subject, below 2K and not sensitive -> no action (sql/02 YouTube rule)
+    alert:
+      product: YouTube
+      exposure_tag: Product - Public leak (e.g. features/models)
+      issue_name: YouTube redesign leaked
+      alert_name: "[URGENT] [NEW] YouTube – redesign leaked"
+      summary: Screenshots of an unreleased YouTube redesign
+      post_content: leaked youtube redesign screenshots
+      total_engagement: 100
+      likes: 100
+      comments: 0
+      shares: 0
+    expect: {verdict: SUPPRESSED, suppression_reason: youtube_no_action}
+
+  - id: youtube_subject_below_threshold
+    description: Non-urgent YouTube-subject post below 2K is simply below threshold
+    alert:
+      product: YouTube
+      exposure_tag: Product - Other/general criticism
+      issue_name: YouTube premium price
+      post_content: youtube premium costs too much
+      total_engagement: 100
+      likes: 100
+      comments: 0
+      shares: 0
+    expect: {verdict: SUPPRESSED, suppression_reason: below_threshold}
+
+  - id: doodle_protocol
+    description: Backlash to a Doodle (Content tag, always alert) -> Doodle Team ping
+    alert:
+      product: Doodles
+      exposure_tag: Content - Negative reaction to Google site content
+      issue_name: Backlash over today's Doodle
+      total_engagement: 10
+      likes: 10
+      comments: 0
+      shares: 0
+    expect: {track: URGENT, protocols: [doodle]}
+
+  - id: suspension_censorship_remap
+    description: Account suspension claiming censorship -> Product - Perceived bias (P0)
+    alert:
+      exposure_tag: Product - Account deletion/suspension
+      post_content: Google suspended my account to censor my political views
+      issue_name: User claims Google censored them by suspending account
+      total_engagement: 50
+      likes: 50
+      comments: 0
+      shares: 0
+    expect: {track: URGENT, corrections: {exposure_tag: Product - Perceived bias}}
+
+  - id: llm_tag_fix_high_confidence
+    description: Gemini is confident the tag should be Dangerous results -> auto-corrected
+    llm:
+      exposure_tag_fit: {ok: false, confidence: 0.92, finding: medical claim, proposed_value: Product - Dangerous results (e.g. medical/legal)}
+    alert: {}
+    expect: {verdict: CORRECTED, corrections: {exposure_tag: Product - Dangerous results (e.g. medical/legal)}}
+
+  - id: llm_tag_fix_low_confidence
+    description: Gemini unsure -> IM decides
+    llm:
+      exposure_tag_fit: {ok: false, confidence: 0.6, finding: maybe offensive, proposed_value: Product - Offensive or explicit results}
+    alert: {}
+    expect: {verdict: NEEDS_REVIEW}

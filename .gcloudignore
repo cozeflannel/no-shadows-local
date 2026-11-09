@@ -1,0 +1,19 @@
+# Files Cloud Build does not need (keeps uploads small; secrets and local data never leave the laptop).
+.git
+.gitignore
+.venv/
+.local/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.db
+infra/.env
+secrets/
+console/frontend/node_modules/
+console/frontend/dist/
+studio-addon/node_modules/
+evals/results/
+burson_live_history.csv
+data/
+.mypy_cache/
+.ruff_cache/

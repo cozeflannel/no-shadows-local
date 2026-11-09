@@ -1,0 +1,39 @@
+# Copy to infra/.env and edit; every script sources it. infra/.env is git-ignored (.gitignore: .env).
+# Values marked PLACEHOLDER must be confirmed before deploying.
+
+export PROJECT_ID="brand-social-central-data"        # Brand Social Central Data GCP project
+export PROJECT_NUMBER="1028310913761"                # Brand Social Central Data GCP project number
+export REGION="us-central1"                          # Agent Engine, Cloud Run, Firestore
+export BQ_LOCATION="US"                              # brand-social-central-data BigQuery is in US multi-region
+export DATASET="slrr_triage_agent"                   # agent_events + KPI views
+export FIRESTORE_DB="(default)"
+export STAGING_BUCKET="gs://${PROJECT_ID}-slrr-triage-agent"   # Agent Engine staging
+export AR_REPO="slrr-triage-agent"                   # Artifact Registry repo for job/console images
+
+export RUNTIME_SA_NAME="slrr-triage-agent"           # runs Agent Engine calls, jobs and the Console
+export SCHEDULER_SA_NAME="slrr-triage-scheduler"     # Cloud Scheduler -> Cloud Run jobs
+export TRIAGE_AGENT_ACCOUNT="triage-agent@domain.invalid"   # Set in infra/.env: Workspace account that owns the Studio flows
+export IAP_MEMBERS="user:admin@domain.invalid"              # Set in infra/.env: comma-separated IAP principals for the Console
+
+export SONAR_PROJECT="bsip-s-bsip-gg-26-2cf3"        # Path B / Sonar lookups (us-central1)
+export SONAR_DATASET="google_bg"
+export SONAR_LOCATION="us-central1"                  # bsip-s-bsip-gg-26-2cf3.google_bg is in us-central1
+
+export TRIAGE_ENV="shadow"                           # dev | shadow | prod
+export CONSOLE_SERVICE="slrr-triage-console"
+export OAUTH_CLIENT_SECRET="slrr-triage-oauth-client"     # Secret Manager secret holding the OAuth web client JSON (Gmail connect)
+
+# Attribution (enforcing-resource-attribution): tag gcloud metrics and bq jobs/resources.
+export CLOUDSDK_METRICS_ENVIRONMENT="${CLOUDSDK_METRICS_ENVIRONMENT:+$CLOUDSDK_METRICS_ENVIRONMENT }datacloud.antigravity"
+export BQ_LABELS="--label=app:slrr-triage-agent --label=datacloud:antigravity"
+
+export RUNTIME_SA="${RUNTIME_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+export SCHEDULER_SA="${SCHEDULER_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+export IMAGE_BASE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}"
+
+# Set after the first deploy (infra/05_deploy_agent_engine.py prints it; later runs update in place).
+export AGENT_RESOURCE=""                             # projects/<number>/locations/<region>/reasoningEngines/<id>
+export TRIAGE_LLM_LOCATION="global"                  # Gemini endpoint location
+export FOLLOWUPS_SCHEDULE="* * * * *"                # Cloud Scheduler (UTC) -> slrr-followups
+export INHOUSE_SCHEDULE="*/2 * * * *"                # Cloud Scheduler (UTC) -> slrr-inhouse (Path B)
+export TRIAGE_GMAIL_READ_SCOPE="metadata"           # metadata | readonly (Phase 0 check 10b decides)

@@ -1,0 +1,264 @@
+/**
+ * BrandSafetyGroups.gs - Read-only Google Sheets connector for the `Brand safety groups` worksheet.
+ *
+ * Loads Social Alert Google Group addresses at runtime from the `Brand safety groups` tab of the
+ * `slrr-agentic-assistant` workbook (`STORE_SHEET_ID`), caching parsed rows in `CacheService` for 10 minutes
+ * so zero recipient addresses ever need to be hardcoded in repository files or `Generated.gs`.
+ *
+ * Tab ownership invariant: strictly read-only. Never creates, clears, formats, or writes to `Brand safety groups`.
+ */
+
+const BRAND_SAFETY_GROUPS_TAB_ = 'Brand safety groups';
+const BSG_CACHE_PREFIX_ = 'bsg_rows_v1:';
+const BSG_CACHE_SEC_ = 600;
+
+const BSG_SYSTEM_SLOTS_ = {
+  defaultcc: 'default_cc',
+  defaultto: 'default_to',
+  fromemail: 'from_email',
+  brandsocialsender: 'from_email',
+  brandsocialsends: 'from_email',
+  tnsurgent: 'tns_urgent',
+  tsurgent: 'tns_urgent',
+  trustsafetyurgent: 'tns_urgent',
+  leadership: 'leadership',
+  slrrleads: 'leadership',
+};
+
+const BSG_GROUP_ALIASES_ = {
+  executives: 'exec_comms',
+  executivecomms: 'exec_comms',
+  execcomms: 'exec_comms',
+  civics: 'civics',
+  peoplecomms: 'people_comms',
+  stopleaks: 'stop_leaks',
+  lss: 'lss',
+  lssexecsecurity: 'lss',
+  execsecurity: 'lss',
+  influencerteam: 'influencer_team',
+  gcpa: 'gcpa',
+  gsoc: 'gsoc',
+  channelowner: 'channel_owner',
+  channelowners: 'channel_owner',
+};
+
+let BSG_BASE_ = null;
+
+/** Normalized alphanumeric lookup key ("Ads / Merchant Center" -> "adsmerchantcenter"). Pure. */
+function bsgNormKey_(name) {
+  return String(name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+/** Deduplicated valid email addresses from a cell or list, lowercased. Pure. */
+function bsgParseEmails_(raw) {
+  const out = [];
+  const seen = new Set();
+  const list = Array.isArray(raw) ? raw : [raw];
+  list.forEach(item => {
+    (String(item || '').match(/[^\s<>",;:()]+@[^\s<>",;:()]+/g) || []).forEach(tok => {
+      const cleaned = tok.replace(/^[.'"]+|[.'"]+$/g, '').toLowerCase();
+      if (/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(cleaned) && !seen.has(cleaned)) {
+        seen.add(cleaned);
+        out.push(cleaned);
+      }
+    });
+  });
+  return out;
+}
+
+/** Parses 2D sheet values (`Google Group Name`, `Google Group Email`) into `[[name, [emails]], ...]`. Pure. */
+function bsgParseRows_(values) {
+  if (!Array.isArray(values) || !values.length) return [];
+  const out = [];
+  for (let i = 0; i < values.length; i++) {
+    const r = values[i] || [];
+    const name = String(r[0] === undefined || r[0] === null ? '' : r[0]).trim();
+    const rawEmails = String(r[1] === undefined || r[1] === null ? '' : r[1]).trim();
+    if (!name || !rawEmails) continue;
+    const key = bsgNormKey_(name);
+    if (i === 0 && (key === 'googlegroupname' || key === 'groupname' || key === 'group' || key === 'product')) {
+      continue;
+    }
+    const emails = bsgParseEmails_(rawEmails);
+    if (emails.length) out.push([name, emails]);
+  }
+  return out;
+}
+
+function bsgSnapshotBase_() {
+  if (BSG_BASE_ || typeof GEN === 'undefined' || !GEN) return;
+  BSG_BASE_ = {
+    distribution: JSON.parse(JSON.stringify(GEN.distribution || {})),
+    products: JSON.parse(JSON.stringify(GEN.products || [])),
+    email: JSON.parse(JSON.stringify(GEN.email || {})),
+    leadership: JSON.parse(JSON.stringify(GEN.leadership || {})),
+    speedImSender: String((GEN.settings && GEN.settings.speed_im_sender) || ''),
+  };
+}
+
+function bsgMergeUnique_(a, b) {
+  const out = [];
+  const seen = new Set();
+  [].concat(a || [], b || []).forEach(e => {
+    const lc = String(e || '').trim().toLowerCase();
+    if (lc && !seen.has(lc)) {
+      seen.add(lc);
+      out.push(String(e).trim());
+    }
+  });
+  return out;
+}
+
+/**
+ * Applies `[[groupName, [emails]], ...]` rows onto `GEN.distribution` (and optional operational slots) from a clean
+ * snapshot of `GEN`, preserving any runtime test overrides on `GEN.email.stand_in` / `GEN.email.recipients_in`.
+ */
+function applyBrandSafetyGroups_(rows) {
+  if (typeof GEN === 'undefined' || !GEN) return 0;
+  bsgSnapshotBase_();
+  const keepStandIn = GEN.email ? GEN.email.stand_in : '';
+  const keepRecipientsIn = GEN.email ? GEN.email.recipients_in : 'to';
+
+  GEN.distribution = JSON.parse(JSON.stringify(BSG_BASE_.distribution));
+  GEN.products = JSON.parse(JSON.stringify(BSG_BASE_.products));
+  GEN.email = Object.assign(JSON.parse(JSON.stringify(BSG_BASE_.email)), {
+    stand_in: keepStandIn,
+    recipients_in: keepRecipientsIn,
+  });
+  GEN.leadership = JSON.parse(JSON.stringify(BSG_BASE_.leadership));
+  if (GEN.settings) GEN.settings.speed_im_sender = BSG_BASE_.speedImSender;
+
+  const parsed = [];
+  const byNorm = {};
+  (rows || []).forEach(entry => {
+    if (!entry) return;
+    const name = String(Array.isArray(entry) ? entry[0] : entry.name || '').trim();
+    const emails = bsgParseEmails_(Array.isArray(entry) ? entry[1] : entry.emails);
+    if (!name || !emails.length) return;
+    parsed.push([name, emails]);
+    const k = bsgNormKey_(name);
+    if (k) byNorm[k] = bsgMergeUnique_(byNorm[k], emails);
+  });
+
+  const matched = new Set();
+
+  // 1. Optional operational rows (Default CC, Default To, From Email / Brand Social Sender, T&S Urgent, Leadership)
+  Object.keys(BSG_SYSTEM_SLOTS_).forEach(k => {
+    if (!byNorm[k]) return;
+    matched.add(k);
+    const slot = BSG_SYSTEM_SLOTS_[k];
+    const emails = byNorm[k];
+    if (slot === 'default_cc') GEN.email.default_cc = emails.slice();
+    else if (slot === 'default_to') GEN.email.default_to = emails.slice();
+    else if (slot === 'from_email' && emails[0]) {
+      GEN.email.from_email = emails[0];
+      if (GEN.settings) GEN.settings.speed_im_sender = emails[0];
+    } else if (slot === 'tns_urgent' && emails[0]) GEN.email.tns_urgent = emails[0];
+    else if (slot === 'leadership') GEN.leadership.recipients = emails.slice();
+  });
+
+  // 2. Product Area distros (match explicit group_name, then name, then aliases)
+  (GEN.distribution.products || []).forEach(p => {
+    if (p.deprecated) return;
+    const cands = [p.group_name, p.name].concat(p.aliases || []).filter(Boolean);
+    for (let i = 0; i < cands.length; i++) {
+      const ck = bsgNormKey_(cands[i]);
+      if (ck && byNorm[ck]) {
+        matched.add(ck);
+        p.pa = byNorm[ck].slice();
+        break;
+      }
+    }
+  });
+
+  // 3. Non-product specialty groups (Executive Comms <- Executives, Civics, Stop Leaks, People Comms, etc.)
+  (GEN.distribution.groups || []).forEach(g => {
+    const aliasKeys = Object.keys(BSG_GROUP_ALIASES_).filter(ak => BSG_GROUP_ALIASES_[ak] === g.action_code);
+    const cands = [bsgNormKey_(g.name), bsgNormKey_(g.action_code)].concat(aliasKeys).filter(Boolean);
+    for (let i = 0; i < cands.length; i++) {
+      const ck = cands[i];
+      if (byNorm[ck]) {
+        matched.add(ck);
+        g.recipients = byNorm[ck].slice();
+        break;
+      }
+    }
+  });
+
+  // 4. Regional leads when regional Google Groups exist on the sheet
+  (GEN.distribution.regional_leads || []).forEach(rl => {
+    const cands = [rl.region].concat(rl.aliases || []).filter(Boolean);
+    for (let i = 0; i < cands.length; i++) {
+      const ck = bsgNormKey_(cands[i]);
+      if (ck && byNorm[ck]) {
+        matched.add(ck);
+        rl.recipients = byNorm[ck].slice();
+        break;
+      }
+    }
+  });
+
+  // 5. Register any newly added product group row not yet in distribution.yaml
+  parsed.forEach(([name, emails]) => {
+    const ck = bsgNormKey_(name);
+    if (!ck || matched.has(ck)) return;
+    matched.add(ck);
+    GEN.distribution.products.push({ name: name, group_name: name, pa: emails.slice() });
+    if (!(GEN.products || []).some(p => bsgNormKey_(p.name) === ck)) {
+      GEN.products.push({ name: name });
+    }
+  });
+
+  return parsed.length;
+}
+
+/**
+ * Reads `Brand safety groups` from `ss` (cached 10 minutes per spreadsheet ID unless `opts.force` is true).
+ * Returns `{present: boolean, rows: [[name, [emails]], ...]}`. Never throws and never writes to the sheet.
+ */
+function readBrandSafetyGroupsTab_(ss, opts) {
+  if (!ss || typeof ss.getSheetByName !== 'function') return { present: false, rows: [] };
+  let sh = null;
+  try {
+    sh = ss.getSheetByName(BRAND_SAFETY_GROUPS_TAB_);
+  } catch (e) {
+    return { present: false, rows: [] };
+  }
+  if (!sh) return { present: false, rows: [] };
+
+  const force = !!(opts && opts.force);
+  const sid = typeof ss.getId === 'function' ? String(ss.getId() || 'sheet') : 'sheet';
+  const cacheKey = BSG_CACHE_PREFIX_ + sid;
+  const cache = typeof CacheService !== 'undefined' && CacheService.getScriptCache
+    ? CacheService.getScriptCache()
+    : null;
+  if (cache && !force) {
+    try {
+      const raw = cache.get(cacheKey);
+      if (raw) {
+        const cachedRows = JSON.parse(raw);
+        if (Array.isArray(cachedRows)) return { present: true, rows: cachedRows };
+      }
+    } catch (e) {}
+  }
+
+  try {
+    const lastRow = typeof sh.getLastRow === 'function' ? sh.getLastRow() : 0;
+    const values = lastRow > 0 ? sh.getRange(1, 1, Math.min(lastRow, 500), 2).getValues() : [];
+    const rows = bsgParseRows_(values);
+    if (cache) {
+      try { cache.put(cacheKey, JSON.stringify(rows), BSG_CACHE_SEC_); } catch (e) {}
+    }
+    return { present: true, rows };
+  } catch (e) {
+    console.error('could not read Brand safety groups tab: ' + ((e && e.message) || e));
+    return { present: false, rows: [] };
+  }
+}
+
+/** Loads `Brand safety groups` from `ss` (when the tab exists on `ss`) and applies it to `GEN`. Never throws. */
+function syncBrandSafetyGroups_(ss, opts) {
+  const res = readBrandSafetyGroupsTab_(ss, opts);
+  if (!res.present) return 0;
+  return applyBrandSafetyGroups_(res.rows);
+}

@@ -1,0 +1,619 @@
+// Watch alerts (Control tab row 35, WatchAlerts.gs): the Proactive watch's flags (a watch's yes and a score at its bar)
+// posted as the bot's own alerts where B35 says: OFF (as it starts: the watch only lists them on the Watch detections
+// tab), "Other alerts space (B33)" or "Mirror space (B9)". Each is a "🔭 Watch alert · <watch>" text message with its own
+// id (client-zwat-), never in Zapier's format, and the space's flow works it like an alert in another format with the
+// watch's call: ❌ when it repeats an alert already sent (no second email), else its Social Alert (only the testers while
+// Testing). Nothing of it ever reaches S-F Burson (B25), the Burson outbox or the Relay.
+'use strict';
+
+module.exports = H => {
+  const { test, eq, assert, B, e2e, REAL } = H;
+  const MIN = 60 * 1000;
+  const HOUR = 60 * MIN;
+  const C1 = 'us-central1';
+  const US = 'US';
+  const MID = 'spaces/AAQAmidterm1';
+  const MID_NAME = 'Midterms 2026';
+  const MID_LINK = 'https://chat.google.com/app/chat/AAQAmidterm1';
+  const MID2 = 'spaces/AAQAmidterm2';
+  const MID2_NAME = 'Midterms 2026 alerts';
+  const MIRROR = 'spaces/AAQAmirror1';
+  const MIRROR_NAME = 'SLRR Zapier Training Mirror';
+  const ROOM = 'https://chat.google.com/room/AAQAaa_0I9g';  // S-F Burson: people outside Google can join it
+  const BOTACCT = { sender: 'users/bot', displayName: 'Lucas Hammonds' };  // the Midterms stream's tool posts as the bot's account
+  const MIDTERMS = 'Midterms 2026 × Google';
+  const POST = 'https://x.com/CorrDove/status/1980000000000000001';
+  const POST2 = 'https://x.com/someone/status/1980000000000000002';
+  const OTHER = 'Other alerts space (B33)';
+  const MIRRORED = 'Mirror space (B9)';
+  const CHOICES = ['OFF', OTHER, MIRRORED];
+  const TEXT = '@ewarren How much did your donors pay to rig the midterms? You blame Google but you\'re being busted in it.';
+
+  // A look's result columns (ProactiveWatch.gs pwSql_'s final SELECT)
+  const COLS = [['kind'], ['source'], ['why'], ['idx', 'INTEGER'], ['watch'], ['post_url'], ['platform'], ['author'], ['followers', 'INTEGER'],
+    ['eng', 'INTEGER'], ['posted_ms', 'INTEGER'], ['seen_ms', 'INTEGER'], ['issue'], ['issue_new', 'BOOLEAN'], ['summary'],
+    ['impact', 'FLOAT'], ['bar', 'FLOAT'], ['topic'], ['found', 'INTEGER'], ['checked', 'INTEGER'], ['newest_ms', 'INTEGER'],
+    ['mod_ms', 'INTEGER'], ['err'], ['detail']];
+  /** A post the Midterms watch flags at its bar (6 of 10, the bar 4), unless `o` says otherwise. */
+  const hit = o => Object.assign({ kind: 'hit', source: 'sonar', idx: 1, watch: MIDTERMS, post_url: POST, platform: 'twitter',
+    author: '@CorrDove', followers: 1700, eng: 52, posted_ms: null, seen_ms: null, issue: 'Election-rigging claim naming Google',
+    issue_new: true, summary: 'An X reply (@CorrDove, 1.7K followers) claims Google helped rig the midterms.', impact: 6, bar: 4,
+    topic: 'Elections and civics' }, o || {});
+  const src = source => ({ kind: 'src', source, found: 0, checked: 0, newest_ms: null, mod_ms: null, err: null });
+  const C1_ROWS = ['sonar', 'tubular', 'outbound'].map(src);
+  const US_ROWS = ['bmie', 'comments', 'story', 'chat', 'bwq'].map(src);
+
+  /** A fake BigQuery for the watch's looks (as in switch_proactive_watch.test.js): sent pending, collected from bq.answers. */
+  function fakeBq(g) {
+    const bq = { looks: [], answers: {}, seq: 0, where: {} };
+    const orig = g.services.UrlFetchApp.fetch;
+    const resp = (code, body) => ({ getResponseCode: () => code, getHeaders: () => ({}),
+      getContentText: () => (typeof body === 'string' ? body : JSON.stringify(body)) });
+    const answer = (a, jobId) => {
+      const location = bq.where[jobId] || C1;
+      if (!a) return resp(200, { jobComplete: false, jobReference: { projectId: 'brand-social-central-data', jobId, location } });
+      return resp(200, { jobComplete: true, jobReference: { projectId: 'brand-social-central-data', jobId, location },
+        schema: { fields: COLS.map(c => ({ name: c[0], type: c[1] || 'STRING' })) },
+        rows: (a.rows || []).map(r => ({ f: COLS.map(c => ({ v: r[c[0]] === undefined || r[c[0]] === null ? null : String(r[c[0]]) })) })) });
+    };
+    g.services.UrlFetchApp.fetch = (link, params) => {
+      const url = String(link);
+      if (!url.startsWith('https://bigquery.googleapis.com/')) return orig(link, params);
+      const method = String((params && params.method) || 'get').toLowerCase();
+      if (method === 'post' && /\/jobs\/[^/]+\/cancel/.test(url)) return resp(200, {});
+      if (method === 'post' && /\/queries$/.test(url)) {
+        const body = JSON.parse(params.payload);
+        if (!/CREATE TEMP TABLE pw_new/.test(body.query || '')) return resp(200, { jobComplete: true, schema: { fields: [] }, rows: [] });
+        const jobId = `pwjob_${++bq.seq}`;
+        bq.where[jobId] = body.location;
+        bq.looks.push({ jobId, location: body.location });
+        return answer(null, jobId);
+      }
+      if (method === 'get' && /\/queries\/pwjob_\d+\?/.test(url)) {
+        const jobId = url.match(/pwjob_\d+/)[0];
+        return answer(bq.answers[bq.where[jobId]] || null, jobId);
+      }
+      return orig(link, params);
+    };
+    return bq;
+  }
+
+  /** Gemini's triage of a watch alert (FakeVertex.triage): confirms the watch's civics call unless `o` says otherwise. */
+  const triage = o => () => Object.assign({
+    summary: 'An X reply (@CorrDove, 1.7K followers) accusing donors of rigging the midterms and claiming Google is "being busted in it."',
+    issue_name: 'Election-rigging claim naming Google',
+    stream_fit: 'An election-rigging conspiracy claim that names Google, relevant to the Midterms civics watch.',
+    risks: ['misinformation', 'election_integrity'],
+    stream_call: { action: 'escalate', severity: 'low', confidence: 0.9, reason: 'Election-rigging claim naming Google',
+      watch_for: 'A KOF or 2,000+ engagements amplifying it, or press pickup' },
+    slrr: { is_slrr: true, confidence: 0.9, exposure_tag: 'Brand - Conspiratorial theories about Google', product: 'Brand',
+      sensitive_topics: [], warranted: false, warranted_confidence: 0.9, why: 'Routine fringe grumbling' },
+    tns: { needed: false },
+  }, o || {});
+  // Gemini sure it's a P0 exposure tag: the SLRR rules escalate it at any engagement
+  const P0 = {
+    stream_call: { action: 'flag', severity: 'medium', confidence: 0.7, reason: 'Claims Google rigs results for one party' },
+    slrr: { is_slrr: true, confidence: 0.9, exposure_tag: 'Brand - Perceived bias - brand', product: 'Brand', sensitive_topics: [],
+      warranted: true, warranted_confidence: 0.8, why: 'A political-bias claim about Google' },
+    recommended_groups: [{ code: 'gcpa', reason: 'A reputational claim about Google' }],
+  };
+  /** The Midterms stream's own alert of `url` (default POST), as its tool posts it in B33 (the link only in formattedText). */
+  const sayMidterms = (t, url) => {
+    const u = url || POST;
+    const body = link => ['🚨 *X Alert: 2026 Midterm Elections / Civics - Negative* 🚨', '', '*Author:* @CorrDove', '*Followers:* 1.7K',
+      '*Engagement:* Very Low (0-199)', '*Sentiment:* Negative', `*Text:* _"${TEXT}"_`, '', link, '',
+      '_⚠️ *Disclaimer:* These alerts are fully automated._'].join('\n');
+    return t.chat.say(MID, body('Click to view post'), Object.assign({ formattedText: body(`<${u}|Click to view post>`) }, BOTACCT));
+  };
+
+  /**
+   * setup(); S-F Burson in B25; the Mirror space (B9) copying its Zapier alerts; Midterms 2026 in B33; Testing (the
+   * Safety valve ON); the Proactive watch ON (its tabs made) with its Midterms watch ON; B35 set to `dest` (none: as it
+   * starts, OFF).
+   */
+  const world = dest => {
+    const t = e2e();
+    t.chat.addSpace(MID, MID_NAME);
+    t.chat.addSpace(MID2, MID2_NAME);
+    t.chat.addSpace(MIRROR, MIRROR_NAME);
+    t.bot.setup();
+    t.set('B30', 'tester@testing.test');
+    const bq = fakeBq(t.g);
+    t.set('B25', ROOM);
+    t.bot.startMirror(MIRROR_NAME);
+    t.control().getRange(29, 2).setValue('ON');  // the Safety valve: Testing
+    t.control().getRange(33, 2).setValue(MID_LINK);
+    t.control().getRange(34, 2).setValue('ON');  // the Proactive watch
+    t.poll();  // its tabs
+    t.sheet().getSheetByName('Watches').getRange(2, 2).setValue('ON');  // the Midterms watch
+    if (dest) t.control().getRange(35, 2).setValue(dest);
+    return { t, bq };
+  };
+  /** The watch's next look (5 minutes on): sent, then collected a minute later with `hits` (us-central1). */
+  const look = (w, hits) => {
+    w.t.g.clock.now += 5 * MIN;
+    w.bq.answers = {};
+    w.t.poll();
+    w.bq.answers = { [C1]: { rows: (hits || []).concat(C1_ROWS) }, [US]: { rows: US_ROWS } };
+    w.t.poll();
+    w.bq.answers = {};
+  };
+  /** The bot's watch alerts in `space` (top-level, with their own id). */
+  const posted = (t, space) => t.chat.botPosts(space).filter(m => !m.threadReply && /^client-zwat-/.test(m.clientAssignedMessageId || ''));
+  const inThread = (t, space, msg) => t.chat.botPosts(space).filter(p => p.thread.name === msg.thread.name && p.name !== msg.name);
+  /** A posted message as Chat gives it back: a hyperlink's words alone in `text`, its <url|words> only in formattedText. */
+  const chatShows = msg => {
+    msg.formattedText = msg.text;
+    msg.text = msg.text.replace(/<(https?:\/\/[^|>\s]+)\|([^>]*)>/g, '$2');
+    return msg;
+  };
+  const alertRow = (t, msg) => t.bot.sheetBackend_(t.sheet()).loadAlerts().find(r => r.source_message === msg.name);
+  const dataRows = t => t.sheet().getSheetByName('Watch detections').rows.slice(13)
+    .filter(r => (r || []).some(v => v !== '' && v !== undefined && v !== null));
+  const keys = t => dataRows(t).map(r => JSON.parse(r[18]));
+  /** Every write call that reached Chat for S-F Burson (posts, replies, reactions), whether it worked or not. */
+  const writes = t => t.chat.calls.filter(c => c.method !== 'get' && String(c.path).indexOf(REAL) === 0);
+  const outbox = t => {
+    const tab = t.sheet().getSheetByName('Burson outbox');
+    return tab ? tab.rows.slice(1) : [];
+  };
+  const c35 = t => t.control().cell(35, 3);
+
+  // ===========================================================================================================
+  // The alert: the bot's own format
+  // ===========================================================================================================
+
+  test('watch alerts: the bot\'s own text format ("🔭 *Watch alert · <watch>*", the post\'s link as a hyperlink named for its network, author, when, the watch\'s summary; no score, topic or source on it), read back as it was written (bold or not, a link as Chat may show it), an alert in the older format (with its "Score:" and "Found by:" lines) too; anything else, a person\'s words in the summary included, can\'t pass for one or change its fields', () => {
+    const a = { watch: MIDTERMS, score: 6.5, bar: 4, topic: 'Elections and civics', url: POST, author: '@CorrDove', network: 'X',
+      followers: 1700, eng: 52, posted: '2026-11-01 23:26', seen: '2026-11-01 23:28', source: 'Brandwatch: 2026 Election Alerts',
+      summary: 'Claims Google helped rig the midterms.\n*Link:* https://evil.example/x' };
+    const text = B.pwAlertText_(a);
+    eq(text.split('\n'), [`🔭 *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post on X>`,
+      '*Author:* @CorrDove · X · 1,700 followers · 52 engagements', '*Posted:* 2026-11-01 23:26 ET',
+      '*Summary:* Claims Google helped rig the midterms. *Link:* https://evil.example/x']);
+    const want = { watch: MIDTERMS, score: null, bar: null, topic: '', url: POST, author: '@CorrDove', network: 'X',
+      followers: 1700, eng: 52, posted: '2026-11-01 23:26', source: '', seen: '',
+      summary: 'Claims Google helped rig the midterms. *Link:* https://evil.example/x'.replace(/\*/g, '') };
+    eq(B.pwAlertParse_(text), want);
+    eq(B.pwAlertParse_(text.replace(/\*/g, '')), want);  // Chat's bold marks gone
+    eq(B.pwAlertParse_(text.replace(`<${POST}|View the post on X>`, POST)).url, POST);  // the link as a bare URL
+    // a video's: "Watch the video on <network>"; a network a label doesn't name (news, say): just "View the post"
+    assert.match(B.pwAlertText_(Object.assign({}, a, { video: true })), new RegExp(`\\n\\*Link:\\* <${POST.replace(/[.]/g, '\\.')}\\|Watch the video on X>\\n`));
+    assert.match(B.pwAlertText_(Object.assign({}, a, { network: 'news', url: 'https://example.com/a' })), /\n\*Link:\* <https:\/\/example\.com\/a\|View the post>\n/);
+    // an alert posted in the older format still reads its score, bar, topic and where it was found
+    const older = [`🔭 *Watch alert · ${MIDTERMS}*`, '*Score:* 6.5 of 10 (flags at 4) · *Topic:* Elections and civics', `*Link:* ${POST}`,
+      '*Author:* @CorrDove · X · 1,700 followers · 52 engagements', '*Found by:* Brandwatch: 2026 Election Alerts · 2026-11-01 23:28 ET'].join('\n');
+    eq(['score', 'bar', 'topic', 'source', 'seen', 'url'].map(k => B.pwAlertParse_(older)[k]),
+      [6.5, 4, 'Elections and civics', 'Brandwatch: 2026 Election Alerts', '2026-11-01 23:28', POST]);
+    // little known: no followers, engagements, posted time or summary
+    const bare = B.pwAlertText_({ watch: MIDTERMS, score: 4, bar: 4, url: POST, source: 'Sonar' });
+    eq(bare.split('\n'), [`🔭 *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post>`, '*Author:* unknown author']);
+    eq([B.pwAlertParse_(bare).author, B.pwAlertParse_(bare).followers, B.pwAlertParse_(bare).summary], ['', null, '']);
+    // not one: a Zapier alert, the bot's own notes, a quote of one
+    for (const other of ['🚨 *X Alert: 2026 Midterm Elections / Civics - Negative* 🚨\n*Author:* @CorrDove', '🤖 *Triage: ❌ No action*',
+      `FYI\n${text}`, '']) {
+      eq(B.pwAlertParse_(other), null, other);
+    }
+    // never a Burson alert or an alert in another format (it's the bot's own, worked only through its id)
+    eq([B.detectAlert_(text, B.parseAlert_(text), 'Lucas Hammonds')], [false]);
+    eq(B.pwAlertWhy_({ name: MIDTERMS, score: 6.5, bar: 4, topic: 'Elections and civics' }),
+      `the ${MIDTERMS} watch scored it 6.5 of 10 (it flags at 4): Elections and civics`);
+    eq(B.pwAlertWhy_({ name: MIDTERMS, score: null, bar: null, topic: '' }), `the ${MIDTERMS} watch flagged it`);
+  });
+
+  test('watch alerts: only the bot\'s own post counts (its client-zwat- id, or, with no id, its record of the watch alerts it posted), at the top level; anyone else\'s copy, a thread reply or another id is not one; its alert carries the watch\'s call for the triage (the score, bar, topic and source from the bot\'s record of what it posted, as the message doesn\'t show them)', () => {
+    const t = e2e();
+    t.bot.setup();
+    t.set('B30', 'tester@testing.test');
+    const text = B.pwAlertText_({ watch: MIDTERMS, score: 6, bar: 4, topic: 'Elections and civics', url: POST, author: '@CorrDove',
+      network: 'X', followers: 1700, eng: 52, source: 'Sonar', summary: 'Claims Google helped rig the midterms.' });
+    const ctx = { botUser: 'users/bot' };
+    const m = o => Object.assign({ name: 'spaces/AAQAmidterm1/messages/m1', text, senderName: 'users/bot', clientId: 'client-zwat-abc' }, o);
+    // no record of it (posted before the bot kept one): the watch's call without a score
+    eq(t.bot.pwAlertOf_(ctx, m()).watch, { name: MIDTERMS, score: null, bar: null, topic: '', source: '' });
+    t.bot.pwRememberPosted_('spaces/AAQAmidterm1/messages/m1', { sc: 6, br: 4, tp: 'Elections and civics', src: 'Sonar' });
+    const a = t.bot.pwAlertOf_(ctx, m());
+    eq([a.source, a.topic, a.url, a.author, a.followers, a.network, a.summary, a.text, a.watch],
+      ['Proactive watch', MIDTERMS, POST, '@CorrDove', 1700, 'X', 'Claims Google helped rig the midterms.', '',
+        { name: MIDTERMS, score: 6, bar: 4, topic: 'Elections and civics', source: 'Sonar' }]);
+    eq(a.unknown, [{ label: 'watch_score', value: '6 of 10 (the watch flags at 4)' }, { label: 'watch_topic', value: 'Elections and civics' },
+      { label: 'found_by', value: 'Sonar' }]);
+    eq(t.bot.pwAlertOf_(ctx, m({ threadReply: true })), null);
+    eq(t.bot.pwAlertOf_(ctx, m({ clientId: 'client-zmir-abc' })), null);  // a Mirror copy
+    eq(t.bot.pwAlertOf_(ctx, m({ clientId: '', name: 'spaces/AAQAmidterm1/messages/m2' })), null);  // no id, and not in the bot's record
+    eq(t.bot.pwAlertOf_(ctx, m({ clientId: '', senderName: 'users/analyst7' })), null);  // a person's copy
+    eq(t.bot.pwAlertOf_(ctx, m({ clientId: '' })).url, POST);  // Chat kept no id: the bot's record says it's its own
+    eq(t.bot.pwAlertOf_(ctx, m({ clientId: '', senderName: 'users/analyst7' })), null);
+    // the record keeps the newest 40, each once
+    for (let i = 0; i < 45; i++) t.bot.pwRememberPosted_(`spaces/AAQAmidterm1/messages/n${i}`, { sc: 5, br: 4, tp: 'x', src: 'Sonar' });
+    t.bot.pwRememberPosted_('spaces/AAQAmidterm1/messages/n44', { sc: 9, br: 4, tp: 'y', src: 'Sonar' });
+    const kept = JSON.parse(t.g.props.get('PW_ALERT_INFO'));
+    eq([kept.length, t.bot.pwAlertInfo_('spaces/AAQAmidterm1/messages/m1'), t.bot.pwAlertInfo_('spaces/AAQAmidterm1/messages/n44').sc],
+      [40, null, 9]);
+    assert.ok(t.g.props.get('PW_ALERT_INFO').length < 9000, 'fits in one Script Property');
+    // the Relay never takes it for an analyst's message, with or without its id
+    const relayCtx = { botUser: 'users/bot' };
+    for (const msg of [m({ senderType: 'HUMAN' }), m({ senderType: 'HUMAN', clientId: '', name: 'spaces/AAQAmirror1/messages/zz' })]) {
+      eq([t.bot.relayAnalyst_(relayCtx, msg), t.bot.relayBotsOwn_(relayCtx, msg)], [false, true], msg.clientId || 'no id');
+    }
+  });
+
+  test('watch alerts: where they go (B35): OFF, blank or anything else is OFF; B33 only while the Other alerts space can be used this run; the Mirror space only while the bot works through it (never working directly in B25); never S-F Burson, the Burson test copy or a space people outside Google can join; C35 says which, and why they wait', () => {
+    const t = e2e();
+    t.bot.setup();
+    t.set('B30', 'tester@testing.test');
+    eq(['', 'OFF', ' off ', OTHER, 'other alerts', MIRRORED, 'mirror', 'B9', 'ON', 'yes'].map(v => t.bot.pwAlertsChoice_(v)),
+      ['', '', '', 'other', 'other', 'mirror', 'mirror', 'mirror', '', '']);
+    const mid = { id: MID, name: MID_NAME };
+    const mirror = { id: MIRROR, name: MIRROR_NAME };
+    const viaMirror = { outboundBlocked: true, mirror };
+    eq(t.bot.pwAlertsDest_(OTHER, mid, viaMirror), { choice: 'other', space: mid, problem: '' });
+    eq(t.bot.pwAlertsDest_(OTHER, null, viaMirror).problem, 'the Other alerts space (B33) is blank or can\'t be used this run (see C33)');
+    eq(t.bot.pwAlertsDest_(MIRRORED, mid, viaMirror), { choice: 'mirror', space: mirror, problem: '' });
+    eq(t.bot.pwAlertsDest_(MIRRORED, mid, { outboundBlocked: true, direct: true, mirror }).problem, 'the Mirror space (B9) isn\'t working this run (see C9)');
+    eq(t.bot.pwAlertsDest_(MIRRORED, mid, { outboundBlocked: false, mirror }).space, null);
+    eq(t.bot.pwAlertsDest_(MIRRORED, mid, null).space, null);
+    eq(t.bot.pwAlertsDest_('OFF', mid, viaMirror), { choice: '', space: null, problem: '' });
+    const vendor = { id: 'spaces/AAQAvendor1', name: 'Shared With Vendors', externalUserAllowed: true };
+    eq(t.bot.pwAlertsDest_(OTHER, vendor, viaMirror).space, null);
+    // C35
+    const ok = t.bot.pwAlertsDest_(OTHER, mid, viaMirror);
+    eq(t.bot.pwAlertsNoteText_({ choice: '' }, null, true, 0), B.pwAlertsOffText_());
+    eq(t.bot.pwAlertsNoteText_(ok, null, false, 0), '⚠️ Other alerts space (B33) chosen, but the Proactive watch (row 34) is OFF: nothing to post');
+    assert.match(t.bot.pwAlertsNoteText_(ok, { posted: 1, waiting: 2, problem: '' }, true, 3),
+      /^✓ Midterms 2026 \(B33\): each flag at a watch's bar is posted there as a 🔭 Watch alert for full triage: ❌ if off-topic or already alerted, 👍, or a Social Alert \(always Testing there\) · today: 3 posted, 2 waiting$/);
+    eq(t.bot.pwAlertsNoteText_(t.bot.pwAlertsDest_(OTHER, null, viaMirror), null, true, 0),
+      '⚠️ waiting: the Other alerts space (B33) is blank or can\'t be used this run (see C33) (a flag waits up to 3 hours) · today: 0 posted');
+    [OTHER, MIRRORED].forEach(v => assert.ok(t.bot.pwAlertsNoteText_(t.bot.pwAlertsDest_(v, mid, viaMirror), null, true, 0).length <= 250));
+    // the switch texts: C34 keeps its words while B35 is OFF
+    const sw = B.ev('CONTROL_SWITCHES_').find(s => s.row === 34);
+    assert.match(sw.on('', false, {}, {}), /^✓ ON \(shadow test: nothing is posted or emailed\)/);
+    assert.match(sw.on('', false, {}, { watchAlerts: 'mirror' }), /^✓ ON \(its flags go out as watch alerts: row 35, Mirror space \(B9\)\)/);
+  });
+
+  // ===========================================================================================================
+  // In a run
+  // ===========================================================================================================
+
+  test('Watch alerts OFF (B35, as it starts: OFF with its dropdown): the watch only lists its flags on the Watch detections tab (none waits to go out), nothing is posted anywhere and C35 says what OFF means; choosing a space later never posts the flags from before', () => {
+    const w = world();
+    const { t } = w;
+    eq([t.control().cell(35, 1), t.control().cell(35, 2), c35(t), t.control().validations['35,2'].values, t.bot.readControl_(t.control()).watchAlerts],
+      ['Watch alerts', 'OFF', B.pwAlertsOffText_(), CHOICES, 'OFF']);
+    look(w, [hit()]);
+    eq(keys(t).map(k => [k.w, k.b, k.a]), [[MIDTERMS, 1, undefined]]);
+    eq([posted(t, MID), posted(t, MIRROR), t.g.props.get('PW_ALERT_PENDING'), c35(t)], [[], [], undefined, B.pwAlertsOffText_()]);
+    assert.match(t.control().cell(34, 3), /^✓ ON \(shadow test: nothing is posted or emailed\)/);
+    eq([t.bot.status().watch_alerts, t.bot.status().proactive_watch], ['OFF', 'ON (shadow test: nothing is posted)']);
+    t.control().getRange(35, 2).setValue(OTHER);
+    t.poll();
+    t.poll();
+    eq(posted(t, MID), []);  // the flag from before B35 was set never goes out
+    assert.match(c35(t), /^✓ Midterms 2026 \(B33\): each flag at a watch's bar is posted there/);
+    assert.match(t.control().cell(34, 3), /^✓ ON \(its flags go out as watch alerts: row 35, Other alerts space \(B33\)\)/);
+    eq(t.bot.status().watch_alerts, OTHER);
+  });
+
+  test('Watch alerts to the Other alerts space (B33): a flag at the watch\'s bar is posted there once, as the bot\'s own 🔭 Watch alert (its own id; never in Zapier\'s format), and the next run works it there like any alert: its triage note in its thread, its Social Alert to the testers only (always Testing there), its Alert-log row a "Watch alert" (never Burson\'s); a near miss is never posted; nothing reaches S-F Burson, the Mirror space or the Burson outbox', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    t.g.vertex.triage = triage();
+    look(w, [hit(), hit({ post_url: POST2, author: '@someone', impact: 3, summary: 'A near miss.' })]);
+    const out = posted(t, MID);
+    eq(out.length, 1);
+    const msg = out[0];
+    eq(msg.text.split('\n'), [`🔭 *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post on X>`,
+      '*Author:* @CorrDove · X · 1,700 followers · 52 engagements',
+      '*Summary:* An X reply (@CorrDove, 1.7K followers) claims Google helped rig the midterms.']);
+    assert.ok(!/Score|Found by|Topic/.test(msg.text), 'no score, topic or source on it');
+    eq(msg.attachment, undefined);  // X wouldn't show the post (no picture): a text alert
+    chatShows(msg);  // read back as Chat gives it: "*Link:* View the post on X", the address only in formattedText
+    // the Watch detections tab: the flag went out (a: 'p', the message, B33, when); the near miss never waited
+    const k = keys(t);
+    eq(k.map(x => [x.b, x.a]), [[1, 'p'], [0, undefined]]);
+    eq([k[0].m, k[0].d, k[0].br, k[0].sc], [msg.name, 'other', 4, 6]);
+    assert.match(c35(t), /^✓ Midterms 2026 \(B33\): .* · today: 1 posted$/);
+    eq(t.g.props.get('PW_ALERT_PENDING'), undefined);  // nothing waits: the tab isn't read for it again
+    // the next run works it, right there
+    t.poll();
+    const notes = inThread(t, MID, msg);
+    eq(notes.length, 1);
+    assert.match(notes[0].text, /^🤖 \*Triage: 📦 Social Alert \(the watch\)\* · low\n/);
+    assert.match(notes[0].text, new RegExp(`\\n\\*Why:\\* the ${MIDTERMS} watch scored it 6 of 10 \\(it flags at 4\\): Elections and civics\\n`));
+    assert.match(notes[0].text, new RegExp(`\\n\\*For ${MIDTERMS}:\\* An election-rigging conspiracy claim`));
+    const row = alertRow(t, msg);
+    eq([row.ingested, row.forwarded_fields.triage.call, row.forwarded_fields.triage.basis, row.forwarded_fields.triage.from],
+      ['Watch alert', 'escalate', 'watch', 'watch']);
+    assert.ok(['sent', 'drafted', 'pending'].includes(row.email_status), row.email_status);
+    assert.ok(row.email_input.escalation.reasons.includes('PROACTIVE_WATCH'));
+    const sent = t.g.gmail.sentMessages();
+    sent.forEach(m => eq(m.to, ['tester@testing.test'], m.subject));
+    const social = sent.filter(m => /SOCIAL ALERT/.test(m.subject));
+    eq(social.map(m => [m.to, m.cc, m.subject]), [[['tester@testing.test'], [],
+      '[Other alerts space] ⬛SOCIAL ALERT⬛: Brand | Election-rigging claim naming Google | X | 52 Engagements']]);
+    // the standard Social Alert, as any alert's: the post's summary, its link, the details, who it would have gone to
+    assert.match(social[0].text, new RegExp(`^SOCIAL ALERT\\r?\\n\\r?\\nAn X reply \\(@CorrDove, 1\\.7K followers\\)[^\\n]*\\r?\\n\\r?\\nLink: ${POST.replace(/[.?]/g, '\\$&')}\\r?\\n`));
+    assert.match(social[0].text, /\nWould have gone to: To: Brand alert POCs; Cc: GCPA, standard CC list/);
+    // nothing anywhere else: no write in S-F Burson, nothing on the outbox, nothing of it in the Mirror space
+    eq([writes(t), outbox(t), t.chat.botPosts(MIRROR).filter(p => /Watch alert|CorrDove/.test(p.text))], [[], [], []]);
+    eq(t.get('B5'), '✅ Working');
+    t.poll();  // worked once, posted once
+    eq([inThread(t, MID, msg).length, posted(t, MID).length], [1, 1]);
+  });
+
+  test('Watch alerts: the post\'s picture goes under its alert (its photo; a video\'s frame, its link then "Watch the video on X"), uploaded to that space only; Chat refusing the upload leaves a text alert, never a missed one; the flow still works it with the watch\'s score', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    t.g.vertex.triage = triage();
+    const embed = id => `https://cdn.syndication.twimg.com/tweet-result?id=${id}&lang=en&token=${B.xEmbedToken_(id)}`;
+    const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70, 0, 1, 0xff, 0xd9]);
+    const PHOTO = 'https://pbs.twimg.com/media/GxPhoto1.jpg';
+    const FRAME = 'https://pbs.twimg.com/ext_tw_video_thumb/1/pu/img/frame1.jpg';
+    const [id1, id2, id3] = ['1980000000000000001', '1980000000000000002', '1980000000000000003'];
+    const POST3 = `https://x.com/CorrDove/status/${id3}`;
+    t.g.pages.set(embed(id1), JSON.stringify({ id_str: id1, text: TEXT, user: { screen_name: 'CorrDove' }, favorite_count: 40,
+      conversation_count: 12, mediaDetails: [{ type: 'photo', media_url_https: PHOTO }] }));
+    t.g.pages.set(embed(id2), JSON.stringify({ id_str: id2, text: 'Watch this', user: { screen_name: 'someone' }, mediaDetails: [{
+      type: 'video', media_url_https: FRAME, video_info: { duration_millis: 42000, variants: [
+        { content_type: 'video/mp4', url: 'https://video.twimg.com/ext_tw_video/1/pu/vid/v1.mp4', bitrate: 832000 }] } }] }));
+    t.g.pages.set(embed(id3), JSON.stringify({ id_str: id3, text: TEXT, user: { screen_name: 'CorrDove' },
+      mediaDetails: [{ type: 'photo', media_url_https: PHOTO }] }));
+    [PHOTO, FRAME].forEach(u => t.g.pages.set(u, { code: 200, bytes: JPEG, headers: { 'Content-Type': 'image/jpeg' } }));
+    look(w, [hit(), hit({ post_url: POST2, author: '@someone', impact: 5 })]);
+    const out = posted(t, MID);
+    eq(out.length, 2);
+    // each picture uploaded to B33 (multipart: its file name, then its bytes) and attached under its alert
+    eq(t.chat.uploads.map(u => [u.space, u.filename, u.contentType, u.bytes.equals(JPEG)]),
+      [[MID, 'post.jpg', 'image/jpeg', true], [MID, 'post.jpg', 'image/jpeg', true]]);
+    eq(out.map(m => (m.attachment || []).map(a => [a.contentName, a.contentType])), [[['post.jpg', 'image/jpeg']], [['post.jpg', 'image/jpeg']]]);
+    assert.match(out[0].text, new RegExp(`\\n\\*Link:\\* <${POST.replace(/[.]/g, '\\.')}\\|View the post on X>\\n`));
+    assert.match(out[1].text, new RegExp(`\\n\\*Link:\\* <${POST2.replace(/[.]/g, '\\.')}\\|Watch the video on X>\\n`));
+    // the flow works it with the watch's score (the bot's record of it), as before, read back as Chat gives it
+    out.forEach(chatShows);
+    t.poll();
+    assert.match(inThread(t, MID, out[0])[0].text,
+      new RegExp(`\\n\\*Why:\\* the ${MIDTERMS} watch scored it 6 of 10 \\(it flags at 4\\): Elections and civics\\n`));
+    // Chat refusing the upload: the alert still goes out, as text
+    t.chat.fail = (method, path) => (/^upload\//.test(path) ? { code: 500, body: { error: { code: 500, message: 'backend error' } } } : null);
+    look(w, [hit({ post_url: POST3 })]);
+    const third = posted(t, MID).find(m => m.text.includes(id3));
+    eq([!!third, third && third.attachment], [true, undefined]);
+    assert.ok(t.g.logs.some(l => /Watch alerts: posted without the post's picture: Chat API 500 on uploading/.test(l)), 'logged');
+    // nothing of it anywhere else
+    eq([writes(t), outbox(t)], [[], []]);
+  });
+
+  test('Watch alerts: a post with no picture of its own still gets one: an X post\'s link card (its preview), a Facebook video\'s page picture (read as a link preview reads it: "Watch the video on Facebook"); a Reddit text post\'s banner never (a text alert); Chat refusing the alert with its picture posts it as text, once', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    t.g.vertex.triage = triage();
+    const embed = id => `https://cdn.syndication.twimg.com/tweet-result?id=${id}&lang=en&token=${B.xEmbedToken_(id)}`;
+    const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70, 0, 1, 0xff, 0xd9]);
+    const CARD = 'https://pbs.twimg.com/card_img/1980/large.jpg';
+    const FB_THUMB = 'https://scontent-iad3-1.xx.fbcdn.net/v/t15.5256-10/123_n.jpg?stp=dst-jpg&_nc_cat=1';
+    const BANNER = 'https://share.redd.it/preview/post/1oabc12';
+    const [id1, id2] = ['1980000000000000011', '1980000000000000012'];
+    const X_CARD = `https://x.com/CorrDove/status/${id1}`;
+    const FB = 'https://www.facebook.com/meidastouch/videos/2107937259924586';
+    const REDDIT = 'https://www.reddit.com/r/California/comments/1oabc12/the_midterms/';
+    const withCard = (id, text) => JSON.stringify({ id_str: id, text, user: { screen_name: 'CorrDove' },
+      card: { name: 'summary_large_image', binding_values: { photo_image_full_size_large: { type: 'IMAGE', image_value: { url: CARD } } } } });
+    t.g.pages.set(embed(id1), withCard(id1, TEXT));
+    t.g.pages.set(FB, `<html><head><meta property="og:type" content="video.other"><meta property="og:image" content="${FB_THUMB.replace(/&/g, '&amp;')}"></head></html>`);
+    t.g.pages.set(REDDIT, `<html><head><meta property="og:image" content="${BANNER}"></head></html>`);
+    [CARD, FB_THUMB, BANNER].forEach(u => t.g.pages.set(u, { code: 200, bytes: JPEG, headers: { 'Content-Type': 'image/jpeg' } }));
+    look(w, [hit({ post_url: X_CARD, impact: 7 }), hit({ post_url: FB, platform: 'facebook', author: 'MeidasTouch', impact: 6 }),
+      hit({ post_url: REDDIT, platform: 'reddit', author: 'u/someone', impact: 5 })]);
+    const out = posted(t, MID);
+    eq(out.length, 3);
+    const of = u => out.find(m => m.text.includes(u));
+    eq([X_CARD, FB, REDDIT].map(u => (of(u).attachment || []).map(a => a.contentType)), [['image/jpeg'], ['image/jpeg'], []]);
+    assert.match(of(X_CARD).text, /\|View the post on X>/);
+    assert.match(of(FB).text, /\|Watch the video on Facebook>/);
+    assert.match(of(REDDIT).text, /\|View the post on Reddit>/);
+    // the Facebook and Reddit pages were read as a link preview reads them; the banner was never downloaded
+    const pageReads = t.g.fetches.filter(f => f.url === FB || f.url === REDDIT);
+    assert.ok(pageReads.length >= 2 && pageReads.every(f => /^facebookexternalhit\//.test(f.headers['User-Agent'])), JSON.stringify(pageReads));
+    assert.ok(!t.g.fetches.some(f => f.url === BANNER), 'the banner is never downloaded');
+    eq((t.chat.uploads || []).map(u => u.space), [MID, MID]);
+    // Chat refusing the alert with its picture: the alert goes as text, once
+    t.g.pages.set(embed(id2), withCard(id2, 'Another one'));
+    t.chat.fail = (method, path, query, body) => (body && body.attachment ? { code: 400, body: { error: { code: 400, message: 'Invalid attachment' } } } : null);
+    look(w, [hit({ post_url: `https://x.com/CorrDove/status/${id2}`, impact: 8, summary: 'Another claim.' })]);
+    t.chat.fail = null;
+    const refused = posted(t, MID).filter(m => m.text.includes(id2));
+    eq([refused.length, refused[0] && refused[0].attachment], [1, undefined]);
+    assert.ok(t.g.logs.some(l => /Watch alerts: Chat refused the alert with the post's picture, so it goes as text/.test(l)), 'logged');
+    // nothing of it anywhere else
+    eq([writes(t), outbox(t)], [[], []]);
+  });
+
+  test('Watch alerts: a post whose alert already went out is skipped pre-post (a: \'d\', never cluttering B33); and if a Watch alert and stream alert arrive in the same run, the second gets ❌ Already escalated and no second email', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    t.g.vertex.triage = triage(P0);  // the stream's alert of POST: the SLRR rules escalate it
+    sayMidterms(t, POST);
+    t.poll();
+    const sent0 = t.g.gmail.sentMessages().length;
+    assert.ok(sent0 >= 1, 'the first alert\'s Social Alert went out');
+    // Pre-post dedup: POST is already alerted in Alert log, so pwPostAlerts_ marks it a: 'd' and never posts into MID
+    look(w, [hit()]);
+    eq([posted(t, MID).length, keys(t)[0].a, t.g.gmail.sentMessages().length], [0, 'd', sent0]);
+    // In-space dedup: POST2 (a new issue) is posted by the watch, then the stream also posts POST2 before the next run works them
+    t.g.vertex.triage = triage({
+      summary: 'An X post (@VoterOrg, 12K followers) reporting broken voter-registration links in Search.',
+      issue_name: 'Broken voter-registration link in Search',
+    });
+    look(w, [hit({ post_url: POST2, author: '@VoterOrg', summary: 'Broken voter-registration link in Search.' })]);
+    const msg = posted(t, MID)[0];
+    assert.ok(msg, 'watch alert for POST2 posted');
+    const streamMsg = sayMidterms(t, POST2);
+    t.poll();
+    const socialAfter = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
+    eq(socialAfter.length, 2, 'only one new Social Alert for POST2 across both alerts');
+    // the Watch alert ran first (escalated) and the stream's duplicate got ❌ Already escalated (or vice versa in order)
+    const reactions = [msg, streamMsg].map(m => t.chat.botReactions(m.name));
+    assert.ok(reactions.some(r => r.includes('❌')), 'the duplicate alert in B33 got ❌');
+  });
+
+  test('Watch alerts: LLM-driven full triage (never a blind rubber-stamp) — Gemini sees PROACTIVE WATCH CONTEXT and can reject off-topic watch hits with ❌ No action or mark borderline hits 👍 Worth a look with zero emails', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    const OFF_URL = 'https://www.tiktok.com/@24ghanta_nepal/photo/7703496719899659538';
+    const FLAG_URL = 'https://x.com/voterwatch/status/1980000000000000088';
+    look(w, [
+      hit({ post_url: OFF_URL, network: 'TikTok', author: '24ghanta_nepal', impact: 7,
+        summary: 'TikTok post about Nepal government free online AI training portal outage, unrelated to US midterms or Google.' }),
+      hit({ post_url: FLAG_URL, network: 'X', author: '@voterwatch', impact: 5,
+        summary: 'Small account complaining that YouTube search results favored an opponent.' }),
+    ]);
+    const out = posted(t, MID);
+    eq(out.length, 2);
+    let callIdx = 0;
+    t.g.vertex.triage = () => {
+      callIdx++;
+      if (callIdx === 1) {
+        return {
+          summary: 'TikTok post about Nepal government AI training portal disruption, unrelated to Google or US elections.',
+          issue_name: 'Nepal government AI portal disruption',
+          stream_fit: 'Off-topic for Midterms 2026 × Google: neither US civics nor a Google product issue.',
+          risks: ['none'],
+          stream_call: { action: 'no_action', severity: 'low', confidence: 0.94,
+            reason: 'Off-topic Nepal government portal story with no Google or US election tie', watch_for: '' },
+          slrr: { is_slrr: false, confidence: 0.95, exposure_tag: 'None', product: 'Other', sensitive_topics: [],
+            warranted: false, warranted_confidence: 0.95, why: 'Not about Google' },
+          tns: { needed: false },
+        };
+      }
+      return {
+        summary: 'Low-reach X complaint (@voterwatch) about YouTube search ordering for a local race.',
+        issue_name: 'YouTube candidate search ordering complaint',
+        stream_fit: 'Touches midterms search ordering, worth keeping an eye on if amplified.',
+        risks: ['election_integrity'],
+        stream_call: { action: 'flag', severity: 'low', confidence: 0.85,
+          reason: 'Worth analyst awareness in the space, below email escalation bar', watch_for: 'KOF amplification' },
+        slrr: { is_slrr: false, confidence: 0.85, exposure_tag: 'None', product: 'YouTube', sensitive_topics: [],
+          warranted: false, warranted_confidence: 0.85, why: 'Single low-reach complaint' },
+        tns: { needed: false },
+      };
+    };
+    const sentBefore = t.g.gmail.sentMessages().length;
+    t.poll();
+    // System instruction passed PROACTIVE WATCH CONTEXT so Gemini knew the watch's name, score, bar, and topic
+    const triageSystems = t.g.vertex.calls
+      .filter(c => ((c.payload.generationConfig.responseSchema || {}).properties || {}).stream_call)
+      .map(c => c.payload.systemInstruction.parts.map(p => p.text || '').join('\n'));
+    assert.ok(triageSystems.some(p => /PROACTIVE WATCH CONTEXT:/.test(p) && /7\/10/.test(p)), 'watch context passed to Gemini');
+    // Off-topic hit -> ❌ No action; borderline hit -> 👍 Worth a look; zero emails sent
+    assert.match(inThread(t, MID, out[0])[0].text, /^🤖 \*Triage: ❌ No action\* · low\n/);
+    eq(t.chat.botReactions(out[0].name), ['❌']);
+    assert.match(inThread(t, MID, out[1])[0].text, /^🤖 \*Triage: 👍 Worth a look\* · low/);
+    eq(t.chat.botReactions(out[1].name), ['👍']);
+    eq(t.g.gmail.sentMessages().length, sentBefore);
+  });
+
+  test('Watch alerts: pre-post thread deduplication (multiple replies in the same X thread post only the highest-scored tweet; siblings become a: \'d\'), Burson-alerted rows are skipped, and otherBusy holds Watch alerts until the next run', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    const embed = id => `https://cdn.syndication.twimg.com/tweet-result?id=${id}&lang=en&token=${B.xEmbedToken_(id)}`;
+    const ROOT_ID = '1980000000000000500';
+    const REPLY1_ID = '1980000000000000501';
+    const REPLY2_ID = '1980000000000000502';
+    const BURSON_ID = '1980000000000000503';
+    const U1 = `https://x.com/ally1/status/${REPLY1_ID}`;
+    const U2 = `https://x.com/ally2/status/${REPLY2_ID}`;
+    const UB = `https://x.com/ally3/status/${BURSON_ID}`;
+    t.g.pages.set(embed(ROOT_ID), JSON.stringify({ id_str: ROOT_ID, text: 'Root thread', user: { screen_name: 'root' } }));
+    t.g.pages.set(embed(REPLY1_ID), JSON.stringify({ id_str: REPLY1_ID, text: 'Reply 1', user: { screen_name: 'ally1' },
+      in_reply_to_status_id_str: ROOT_ID, parent: { id_str: ROOT_ID, text: 'Root thread', user: { screen_name: 'root' } } }));
+    t.g.pages.set(embed(REPLY2_ID), JSON.stringify({ id_str: REPLY2_ID, text: 'Reply 2', user: { screen_name: 'ally2' },
+      in_reply_to_status_id_str: ROOT_ID, parent: { id_str: ROOT_ID, text: 'Root thread', user: { screen_name: 'root' } } }));
+    // Pre-seed a Mirror-space alerted row for UB in Alert log -> pre-post cross-space dedup skips UB too
+    t.bot.sheetBackend_(t.sheet()).appendAlert({
+      alert_id: 'QA-77', space: `${MIRROR} > (isolated)`, record_key: B.recordKey_({ post_url: UB }),
+      forwarded_at: new Date(t.g.clock.now).toISOString(), email_status: 'sent',
+      forwarded_fields: { post_url: UB, issue_title: 'Already alerted in Mirror' },
+    });
+    look(w, [
+      hit({ post_url: U1, author: '@ally1', impact: 8, summary: 'Higher-scored reply in same thread.' }),
+      hit({ post_url: U2, author: '@ally2', impact: 6, summary: 'Sibling reply in same thread.' }),
+      hit({ post_url: UB, author: '@ally3', impact: 9, summary: 'Already alerted in Mirror space.' }),
+    ]);
+    const out = posted(t, MID);
+    eq(out.length, 1, 'only the single highest-scored non-duplicate thread tweet is posted');
+    assert.ok(out[0].text.includes(REPLY1_ID), 'highest-scored tweet U1 was posted');
+    const byKey = Object.fromEntries(keys(t).map(k => [k.k, k]));
+    eq([byKey[B.recordKey_({ post_url: U1 })].a, byKey[B.recordKey_({ post_url: U2 })].a, byKey[B.recordKey_({ post_url: UB })].a],
+      ['p', 'd', 'd']);
+    assert.ok((byKey[B.recordKey_({ post_url: U1 })].th || []).includes(ROOT_ID), 'root thread ID persisted on posted key');
+    // Direct check of otherBusy backpressure on pwPostAlerts_: queued flag waits when OtherSpace ran out of time
+    const sh = t.sheet().getSheetByName('Watch detections');
+    const WAIT_URL = 'https://x.com/later/status/1980000000000000599';
+    const nextRow = sh.getLastRow() + 1;
+    const rowVals = new Array(19).fill('');
+    rowVals[1] = MIDTERMS; rowVals[2] = 7; rowVals[3] = 'Yes'; rowVals[5] = WAIT_URL; rowVals[7] = 'X'; rowVals[8] = '@later';
+    rowVals[18] = JSON.stringify({ k: B.recordKey_({ post_url: WAIT_URL }), w: MIDTERMS, s: t.g.clock.now, b: 1, a: 'q', sc: 7, br: 4 });
+    sh.getRange(nextRow, 1, 1, 19).setValues([rowVals]);
+    const heldRes = t.bot.pwPostAlerts_(sh, { choice: 'other', space: { id: MID, name: MID_NAME }, problem: '' },
+      t.g.clock.now, () => 120000, { ss: t.sheet(), otherBusy: true });
+    eq([heldRes.posted, heldRes.waiting], [0, 1]);
+    assert.match(heldRes.problem, /Other alerts space's flow ran out of time on this run/);
+  });
+
+  test('Watch alerts to the Mirror space (B9): posted there beside Burson\'s alerts, at most 2 a run (the highest scores first, the rest the next run), and worked by the Mirror\'s flow; with the Relay ON nothing of it goes to S-F Burson or the Burson outbox; the Mirror and its Zapier copies carry on as before', () => {
+    const w = world(MIRRORED);
+    const { t } = w;
+    t.control().getRange(22, 2).setValue('ON');  // Relay with S-F Burson
+    t.g.vertex.triage = triage();
+    const url = n => `https://x.com/CorrDove/status/19800000000000001${n}`;
+    look(w, [hit({ post_url: url(1), impact: 5 }), hit({ post_url: url(2), impact: 7 }), hit({ post_url: url(3), impact: 6 })]);
+    let out = posted(t, MIRROR);
+    eq(out.map(m => (m.text.match(/status\/(\d+)\|/) || [])[1]), ['198000000000000012', '198000000000000013']);  // 7, then 6
+    eq(posted(t, MID), []);
+    assert.match(c35(t), /^✓ SLRR Zapier Training Mirror \(B9\): .*\(only the testers while Testing\) · today: 2 posted, 1 waiting$/);
+    t.poll();  // the third goes out; the first two are worked by the Mirror's flow
+    out = posted(t, MIRROR);
+    eq(out.length, 3);
+    out.slice(0, 2).forEach(msg => assert.match(inThread(t, MIRROR, msg)[0].text, /^🤖 \*Triage: 📦 Social Alert \(the watch\)\*/));
+    eq(alertRow(t, out[0]).ingested, 'Watch alert');
+    t.poll();
+    assert.match(inThread(t, MIRROR, out[2])[0].text, /^🤖 \*Triage: 📦 Social Alert \(the watch\)\*/);
+    eq([writes(t), outbox(t)], [[], []]);
+    assert.match(t.get('C9'), /^✓ SLRR Zapier Training Mirror/);
+  });
+
+  test('Watch alerts: pasting another space in B33 moves them (the next ones go there, the ones posted stay); B33 blank, they wait and C35 says why; a flag that waited 3 hours is dropped, never posted late', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    t.g.vertex.triage = triage();
+    look(w, [hit()]);
+    eq(posted(t, MID).length, 1);
+    t.control().getRange(33, 2).setValue(`https://chat.google.com/app/chat/${MID2.replace('spaces/', '')}`);
+    look(w, [hit({ post_url: POST2, author: '@someone' })]);
+    eq([posted(t, MID).length, posted(t, MID2).length], [1, 1]);
+    assert.match(c35(t), /^✓ Midterms 2026 alerts \(B33\): /);
+    // B33 blank: the next flag waits
+    t.control().getRange(33, 2).setValue('');
+    look(w, [hit({ post_url: 'https://x.com/later/status/1980000000000000003', author: '@later' })]);
+    eq(keys(t).map(k => k.a), ['p', 'p', 'q']);
+    assert.match(c35(t), /^⚠️ waiting: the Other alerts space \(B33\) is blank or can't be used this run \(see C33\) \(a flag waits up to 3 hours\) · today: 2 posted, 1 waiting$/);
+    eq(t.g.props.get('PW_ALERT_PENDING') !== undefined, true);
+    // 3 hours on, B33 back: the flag is dropped, not posted
+    t.g.clock.now += 3 * HOUR;
+    t.control().getRange(33, 2).setValue(MID_LINK);
+    t.poll();
+    eq([keys(t).map(k => k.a), posted(t, MID).length, posted(t, MID2).length, t.g.props.get('PW_ALERT_PENDING')], [['p', 'p', 'x'], 1, 1, undefined]);
+  });
+
+  test('Watch alerts: a post two watches flag gets one alert (the other watch\'s flag says so: a: \'d\'); the Proactive watch OFF, nothing is posted and C35 says why', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    t.sheet().getSheetByName('Watches').getRange(3, 2).setValue('ON');  // the brand-safety watch too
+    look(w, [hit(), hit({ watch: 'Google brand safety (all)', idx: 2, impact: 8, bar: 7 })]);
+    eq(posted(t, MID).length, 1);
+    eq(keys(t).map(k => [k.w, k.a]).sort(), [['Google brand safety (all)', 'p'], [MIDTERMS, 'd']].sort());
+    t.control().getRange(34, 2).setValue('OFF');
+    t.poll();
+    eq(c35(t), '⚠️ Other alerts space (B33) chosen, but the Proactive watch (row 34) is OFF: nothing to post');
+  });
+};

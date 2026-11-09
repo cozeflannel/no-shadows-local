@@ -1,0 +1,13 @@
+# Generic image build used by infra/06_jobs.sh and infra/07_console.sh:
+#   gcloud builds submit --config infra/cloudbuild.yaml \
+#     --substitutions=_IMAGE=<region>-docker.pkg.dev/<project>/<repo>/<name>:<tag>,_DOCKERFILE=Dockerfile.jobs .
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "${_DOCKERFILE}", "-t", "${_IMAGE}", "."]
+images:
+  - "${_IMAGE}"
+substitutions:
+  _IMAGE: ""
+  _DOCKERFILE: Dockerfile.jobs
+options:
+  logging: CLOUD_LOGGING_ONLY

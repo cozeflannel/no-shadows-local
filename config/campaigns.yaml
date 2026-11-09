@@ -1,0 +1,34 @@
+gcp_project_id: brand-social-central-data
+chat_project_id: brand-social-central-data
+cloud_run_region: us-central1
+cloud_run_service: slrr-campaigns
+firestore_database: slrr-social-alerts
+alerts_space: spaces/AAQAnWE2vpo
+forbidden_burson_space: spaces/AAQAaa_0I9g
+drive_folder_id: 1D1TPdVmD1fFTDQQAWSkz6jI3eO3DZVXt
+registry_spreadsheet_id: 1dp5te1avPOkw34x8P0TPmM456u9UJLoJVWtl9myt2ng
+kof_spreadsheet_id: 17HIdayu6q9NDFRR-BC0VZWiAXfGHX1rjO5IKC0YreEQ
+bigquery_sundar_table: brand-social-central-data.social_alerts_dataset.all_sundar_mentions
+bigquery_brandwatch_table: brand-social-central-data.social_alerts_dataset.brandwatch_mentions
+brandwatch_project_ids:
+- 1998344909
+- 1998368542
+- 1998376270
+- 1998378240
+- 1998377738
+- 1998308694
+- 1998384263
+- 1998370446
+- 1998377559
+- 1998377368
+- 1998376534
+- 1998378129
+- 1998394594
+- 1998396152
+- 1998364588
+secrets:
+  oauth_client_json: slrr-campaigns-oauth-client
+  oauth_refresh_token: slrr-campaigns-oauth-refresh-token
+  brandwatch_username: slrr-campaigns-bw-username
+  brandwatch_password: slrr-campaigns-bw-password
+  brandwatch_token: slrr-campaigns-bw-token

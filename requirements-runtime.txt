@@ -1,0 +1,15 @@
+# Runtime dependencies shared by the deployed agent (Agent Runtime), the Cloud Run jobs and the Console.
+# Pinned to the versions the test suite runs with (requirements.txt is the full local dev freeze).
+# Code targets Python 3.12 (the deployed runtime); local dev also runs on 3.14.
+google-genai==2.29.0
+google-cloud-firestore==2.34.1
+google-cloud-bigquery==3.46.1
+google-cloud-secret-manager==2.31.0
+google-api-python-client==2.201.0
+google-auth==2.62.0
+google-auth-httplib2==0.4.4
+google-auth-oauthlib==1.5.0
+requests==2.34.2
+pydantic==2.13.5
+PyYAML==6.0.3
+tzdata==2026.5
