@@ -212,23 +212,45 @@ def plan_recipients(
             if e and e.lower() not in (x.lower() for x in plan.to + plan.cc):
                 target.append(e)
 
-    if product:
-        add(plan.to, product.pa)
-        plan.groups.append(product.name)
-        plan.reasons[product.name] = "product alert POCs"
-        for cond in product.conditional:
+    def add_product_distro(prod: ProductDistro) -> None:
+        add(plan.to, prod.pa)
+        if prod.name not in plan.groups:
+            plan.groups.append(prod.name)
+            plan.reasons[prod.name] = "product alert POCs"
+        for cond in prod.conditional:
             if (a.engagement_total or 0) >= cond.min_engagement:
                 add(plan.to, cond.recipients)
-                label = f"{product.name} – {cond.label}"
-                plan.groups.append(label)
-                plan.reasons[label] = f"{a.engagement_total:,} engagements ≥ {cond.min_engagement:,}"
-        if product.execs:
-            if _execs_apply(product, a, config.collection.high_engagement_threshold):
-                add(plan.to, product.execs)
-                plan.groups.append(f"{product.name} Execs")
-                plan.reasons[f"{product.name} Execs"] = f"execs rule: {product.execs_rule}"
+                label = f"{prod.name} – {cond.label}"
+                if label not in plan.groups:
+                    plan.groups.append(label)
+                    plan.reasons[label] = f"{a.engagement_total:,} engagements ≥ {cond.min_engagement:,}"
+        if prod.execs:
+            if _execs_apply(prod, a, config.collection.high_engagement_threshold):
+                add(plan.to, prod.execs)
+                exec_label = f"{prod.name} Execs"
+                if exec_label not in plan.groups:
+                    plan.groups.append(exec_label)
+                    plan.reasons[exec_label] = f"execs rule: {prod.execs_rule}"
             else:
-                plan.notes.append(f"{product.name} Execs list not added (rule: {product.execs_rule})")
+                plan.notes.append(f"{prod.name} Execs list not added (rule: {prod.execs_rule})")
+
+    secondary_distros: list[ProductDistro] = []
+    if not product_name and a.secondary_products:
+        for sec_name in a.secondary_products:
+            sec_prod, sec_note = resolve_product(dist, sec_name)
+            if sec_note:
+                plan.notes.append(sec_note)
+            if sec_prod and (not product or sec_prod.name.lower() != product.name.lower()):
+                if all(s.name.lower() != sec_prod.name.lower() for s in secondary_distros):
+                    secondary_distros.append(sec_prod)
+
+    if product:
+        add_product_distro(product)
+        for sec_prod in secondary_distros:
+            add_product_distro(sec_prod)
+    elif secondary_distros:
+        for sec_prod in secondary_distros:
+            add_product_distro(sec_prod)
     else:
         add(plan.to, config.escalation.default_to)
 
@@ -240,6 +262,11 @@ def plan_recipients(
         if not reason:
             continue
         emails = group_recipients(group, product, dist=dist, a=a, text=text)
+        if group.action_code == GUP_CODE and secondary_distros:
+            for sec_prod in secondary_distros:
+                for gup_email in group_recipients(group, sec_prod, dist=dist, a=a, text=text):
+                    if gup_email and gup_email.lower() not in (x.lower() for x in emails):
+                        emails.append(gup_email)
         if not emails:
             plan.missing.append(group.name)
             continue

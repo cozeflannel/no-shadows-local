@@ -1587,19 +1587,31 @@ function bsipAlertNames_(json) {
   return (Array.isArray(v) ? v : [v]).map(nameOf).map(x => String(x === null || x === undefined ? '' : x).trim()).filter(Boolean);
 }
 
-/** The product a BSIP post is about, from Pendulum's alert names ("Gemini App - Accuracy" -> Gemini App); else Brand. Pure. */
-function bsipProduct_(names) {
+/** All distinct Google products a BSIP post is about from Pendulum's alert names ({product, otherProducts}). Pure. */
+function bsipProducts_(names) {
   const tries = [];
   (names || []).forEach(n => {
     tries.push(n);
-    const head = String(n).split(/\s+[-–|:]\s+/)[0].trim();
+    const head = String(n).split(/\s+[-\u2013|:]\s+/)[0].trim();
     if (head && head !== n) tries.push(head);
   });
-  for (const t of tries) {
+  const found = [];
+  let sawExplicitBrand = false;
+  tries.forEach(t => {
     const p = mapBqProduct_(t, '', '');
-    if (p !== 'Brand' || BQ_PRODUCT_MAP_[String(t).trim().toLowerCase()] === 'Brand') return p;
-  }
-  return 'Brand';
+    if (p === 'Brand') {
+      if (BQ_PRODUCT_MAP_[String(t).trim().toLowerCase()] === 'Brand') sawExplicitBrand = true;
+      return;
+    }
+    if (p && !found.some(x => x.toLowerCase() === p.toLowerCase())) found.push(p);
+  });
+  if (!found.length) return { product: sawExplicitBrand ? 'Brand' : 'Brand', otherProducts: [] };
+  return { product: found[0], otherProducts: found.slice(1, 4) };
+}
+
+/** The product a BSIP post is about, from Pendulum's alert names ("Gemini App - Accuracy" -> Gemini App); else Brand. Pure. */
+function bsipProduct_(names) {
+  return bsipProducts_(names).product;
 }
 
 /**
@@ -1610,7 +1622,9 @@ function bsipProduct_(names) {
  */
 function formatBsipSonarAlertText_(row) {
   const one = s => String(s === null || s === undefined ? '' : s).replace(/[|\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const product = bsipProduct_(bsipAlertNames_(row.alert_names_json));
+  const bp = bsipProducts_(bsipAlertNames_(row.alert_names_json));
+  const product = bp.product;
+  const prodDisplay = [product].concat(bp.otherProducts).join(', ');
   const network = linkNetwork_({ url: row.url, network: row.network }) || one(row.network) || 'X';
   const handle = feedHandle_(one(row.handle), network);
   const bare = handle.replace(/^(?:@+|u\/)/i, '');
@@ -1621,22 +1635,22 @@ function formatBsipSonarAlertText_(row) {
   const tag = tagObj ? tagObj.name
     : (product === 'Brand' ? 'Brand - Other/general criticism' : 'Product - Other/general criticism');
   const priority = ((tagObj || (typeof lookupTag_ === 'function' ? lookupTag_(tag) : null)) || {}).priority || 'P2';
-  const banner = priority === 'P0' ? '🟥SOCIAL ALERT🟥' : priority === 'P1' ? '🟧SOCIAL ALERT🟧' : '🟨SOCIAL ALERT🟨';
+  const banner = priority === 'P0' ? '\ud83d\udfe5SOCIAL ALERT\ud83d\udfe5' : priority === 'P1' ? '\ud83d\udfe7SOCIAL ALERT\ud83d\udfe7' : '\ud83d\udfe8SOCIAL ALERT\ud83d\udfe8';
   const followers = Math.max(0, Math.round(Number(row.followers) || 0));
   const issueName = one(row.issue_name) || `Criticism regarding ${product} from ${handle || 'a user'}`;
   const followerText = followers > 0 ? ` (${followers.toLocaleString('en-US')} followers)` : '';
   const summary = String(row.summary || '').replace(/\s+/g, ' ').trim().slice(0, 600) ||
-    `${network} user ${handle || '(unknown)'}${followerText} posted criticism of ${product === 'Brand' ? 'Google' : product} ` +
+    `${network} user ${handle || '(unknown)'}${followerText} posted criticism of ${product === 'Brand' ? 'Google' : prodDisplay} ` +
     `(${total} engagements).`;
   const pubDate = bqPostTimeText_(row.post_time);
 
   return [
-    `THIS ALERT MEETS ${priority} CRITERIA · ${bqSourceBadge_('BSIP')}`,
+    `THIS ALERT MEETS ${priority} CRITERIA \u00b7 ${bqSourceBadge_('BSIP')}`,
     '',
-    `${banner}: ${product} | ${issueName} | ${network} | ${total} Engagements`,
+    `${banner}: ${prodDisplay} | ${issueName} | ${network} | ${total} Engagements`,
     `[Name]: ${issueName} / NEW`,
     `[Engagement]: ${level} (${total} engagements)`,
-    `[Product]: ${product}`,
+    `[Product]: ${prodDisplay}`,
     `[Social Network]: ${network}`,
     `[Exposure Tag]: ${tag}`,
     `[Sensitive Topic]: -`,

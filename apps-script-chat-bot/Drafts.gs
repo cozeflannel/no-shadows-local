@@ -393,10 +393,14 @@ function draftRowFor_(ctx, review, esc, related) {
 /** The AI's team calls that can go on the draft: recipient teams (T&S is a form, not a team) with addresses on file. */
 function aiTeamsWithAddresses_(input) {
   const esc = (input && input.escalation) || {};
-  const product = resolveDistro_(esc.product).distro;
+  const prodNames = allProductsList_(input && input.fields, esc);
+  const distros = (prodNames.length ? prodNames : [esc.product]).map(n => resolveDistro_(n).distro).filter(Boolean);
+  const product = distros[0] || null;
   return ((input && input.recommended_groups) || []).filter(code => {
     const g = GEN.distribution.groups.find(x => x.action_code === code);
-    return !!g && groupRecipients_(g, product, esc, esc.text).length > 0;
+    if (!g) return false;
+    if (groupRecipients_(g, product, esc, esc.text).length > 0) return true;
+    return g.action_code === 'gup' && distros.slice(1).some(d => groupRecipients_(g, d, esc, esc.text).length > 0);
   });
 }
 
@@ -1542,9 +1546,9 @@ function missingTeams_(plan, input) {
  */
 function draftNoteText_(D, email, plan, reply, input, wsNote, ctx, o) {
   const esc = (input && input.escalation) || {};
-  const hasProduct = plan.groups.length && plan.reasons[plan.groups[0]] === 'product alert POCs';
-  const productName = hasProduct ? plan.groups[0] : (esc.product || 'this product');
-  const ccGroups = plan.groups.filter(g => g !== plan.groups[0] || plan.reasons[g] !== 'product alert POCs');
+  const productGroups = plan.groups.filter(g => plan.reasons[g] === 'product alert POCs');
+  const productName = productGroups.length ? productGroups.join(', ') : allProductsText_(input && input.fields, esc, 'this product');
+  const ccGroups = plan.groups.filter(g => plan.reasons[g] !== 'product alert POCs');
   const toCount = D.live ? email.to.length : plan.to.length;
   const ccCount = D.live ? email.cc.length : plan.cc.length;
   const kind = reply ? 'Social Alert update draft (replying to the earlier email)' : 'Social Alert draft';
@@ -1557,7 +1561,7 @@ function draftNoteText_(D, email, plan, reply, input, wsNote, ctx, o) {
     `- To: ${toCount ? `${productName} alert POCs (${toCount})` : `empty (${productName} has no alert contacts on file)`}`,
     `- Cc: ${ccGroups.length ? ccGroups.join(', ') + ' + ' : ''}standard CC (${ccCount})` + (D.live ? '' : ' (test draft, only to you)'),
   ];
-  if (o && o.warn) lines.splice(1, 0, `- ${String(o.warn).replace(/^⚠️\s*/, '')}`);
+  if (o && o.warn) lines.splice(1, 0, `- ${String(o.warn).replace(/^\u26a0\ufe0f\s*/, '')}`);
   if (plan.notes.length) lines.push(`- Note: ${plan.notes.join('; ')}`);
   if (tnsWhy_(input)) lines.push((o && o.tnsNote) || tnsFormText_(input));
   if (wsNote) lines.push(`- ${wsNote}`);
@@ -1582,11 +1586,20 @@ function escalationEmojisForRow_(row, sent, live) {
   const teams = [];
   let paOn = false;
   if (esc) {
-    const product = resolveDistro_(esc.product).distro;
-    const emailsOf = g => groupRecipients_(g, product, esc, esc.text).map(e => String(e).toLowerCase());
+    const prodNames = allProductsList_(input.fields, esc);
+    const distros = (prodNames.length ? prodNames : [esc.product]).map(n => resolveDistro_(n).distro).filter(Boolean);
+    const product = distros[0] || null;
+    const emailsOf = g => {
+      const list = groupRecipients_(g, product, esc, esc.text);
+      if (g.action_code === 'gup' && distros.length > 1) {
+        distros.slice(1).forEach(d => addUnique_(list, groupRecipients_(g, d, esc, esc.text)));
+      }
+      return list.map(e => String(e).toLowerCase());
+    };
     const groupOf = name => GEN.distribution.groups.find(x => x.name === name || x.action_code === name);
     const plan = planRecipients_(esc, esc.text, extraGroups.filter(g => g !== 'tns'));
-    const pa = product ? (product.pa || []).map(e => String(e).toLowerCase()) : [];
+    const pa = [];
+    distros.forEach(d => (d.pa || []).forEach(e => { if (e) pa.push(String(e).toLowerCase()); }));
     paOn = pa.length > 0 && (!got || pa.some(e => got.has(e)));
     (plan.groups || []).forEach(gName => {
       const g = groupOf(gName);
@@ -1600,9 +1613,10 @@ function escalationEmojisForRow_(row, sent, live) {
       });
     }
     if (got) {  // teams someone added by hand in Gmail (addresses that aren't the product's or the standard CC)
-      const base = new Set([].concat(product ? (product.pa || []) : [], product ? (product.execs || []) : [],
-        ...((product && product.conditional) || []).map(c => c.recipients || []), GEN.email.default_cc || [],
-        GEN.email.default_to || []).map(e => String(e).toLowerCase()));
+      const baseList = [].concat(GEN.email.default_cc || [], GEN.email.default_to || []);
+      distros.forEach(d => baseList.push.apply(baseList, [].concat(d.pa || [], d.execs || [],
+        ...(d.conditional || []).map(c => c.recipients || []))));
+      const base = new Set(baseList.map(e => String(e).toLowerCase()));
       GEN.distribution.groups.forEach(g => {
         if (g.action_code && emailsOf(g).some(e => !base.has(e) && got.has(e))) teams.push(g.action_code);
       });
@@ -1924,7 +1938,7 @@ function leadershipText_(f, esc) {
     : '';
   return [
     '*Escalation protocol* (P0 + Sensitive Topics + Product Failure)',
-    `- Product: ${f.product || esc.product || '-'}`,
+    `- Product: ${allProductsText_(f, esc, '-')}`,
     `- Issue: ${f.issue_name || esc.issue_name || '-'}`,
     `- Platform & Engagement: ${f.social_network || esc.platform || '-'} (${fmtInt_(esc.engagement_total || 0)} engagements)`,
     `- Exposure Tag: ${esc.exposure_tag || '-'}`,

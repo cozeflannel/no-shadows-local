@@ -1700,7 +1700,7 @@ test('human Q&A in both spaces: answers "Should i escalate this or is it handled
   assert.strictEqual(replies.length, 1);
   assert.match(replies[0].text, /^<users\/im_lead> Social Alert draft is in Gmail Drafts: review and send it, or delete it to skip\./);
   assert.match(replies[0].text, /- Why: High engagement \(29,425 on X\)/);
-  assert.match(replies[0].text, /- To: AI Overviews alert POCs/);
+  assert.match(replies[0].text, /- To: AI Overviews, Search alert POCs/);
 
   // 1. In the Burson space: user asks "Should i escalate this or is it handled/"
   w.vertex.answer = () => 'We already have the escalation email in review for this one since it hit 29,425 engagements on X, so you\'re all set!';
@@ -4409,6 +4409,129 @@ test('knowledge base: the live mix-up and its fix: the earlier build wrote its t
   eq(ss.sheets.map(sh => sh.name), ['Control', 'Resources', 'Knowledge', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)']);
   eq(t.bot.loadKnowledge_(ss).docs.map(d => d.name), ['Escalation playbook']);
   assert.strictEqual(JSON.stringify(old.rows), oldRows);
+});
+
+test('chatMarkupText_ & Q&A replies: converts CommonMark **bold**, __bold__, # headings, and * bullets to Google Chat markup without touching code spans or URLs', () => {
+  const md = [
+    '### Action Checklist',
+    '**1. Review and send the email draft:** Go to Gmail Drafts in tester@testing.test. Check the drafted Social Alert to confirm all details look accurate, ensure the **From** field is set to **Brand Social**, and hit **Send**.',
+    '**2. Submit the Trust & Safety form:** Because the author is on the **Viral KOFs** list, the bot will post a pre-filled [T&S Intake Form](https://docs.testing.test/forms/1) link in the chat space. Review the fields and click **Submit**.',
+    '**3. (Optional) To skip:** If you determine no action is needed, simply delete the draft in Gmail.',
+    '* Keep inline `**literal**` and https://docs.testing.test/path/*star*/view and FOO__BAR untouched, while __double_under__ becomes bold.',
+  ].join('\n');
+  const out = B.chatMarkupText_(md);
+  assert.ok(!out.includes('**1.'), out);
+  assert.ok(!out.includes('**From**'), out);
+  assert.ok(!out.includes('**Brand Social**'), out);
+  assert.ok(!out.includes('**Send**'), out);
+  assert.ok(!out.includes('**Submit**'), out);
+  assert.ok(!out.includes('###'), out);
+  assert.ok(out.includes('*Action Checklist*'), out);
+  assert.ok(out.includes('*1. Review and send the email draft:*'), out);
+  assert.ok(out.includes('ensure the *From* field is set to *Brand Social*, and hit *Send*.'), out);
+  assert.ok(out.includes('*Viral KOFs*'), out);
+  assert.ok(out.includes('<https://docs.testing.test/forms/1|T&S Intake Form>'), out);
+  assert.ok(out.includes('*3. (Optional) To skip:*'), out);
+  assert.ok(out.includes('- Keep inline `**literal**` and https://docs.testing.test/path/*star*/view and FOO__BAR untouched, while *double_under* becomes bold.'), out);
+
+  // End-to-end analyst Q&A in B4/B10 and Burson Q&A strip Markdown ** before posting to Chat
+  const w = world({ drafts: { live: false, mailbox: 'tester@testing.test', from: 'Brand Social <tester@testing.test>' } });
+  const src = w.paste(F.AIO);
+  w.run();
+  const [fwd] = w.analystPosts().filter(m => !m.threadReply);
+  w.vertex.answer = () => '**1. Review and send the email draft:** Ensure **From** is **Brand Social** and hit **Send**.';
+  w.chat.say(w.ANA, 'what do I need to do?', { thread: fwd.thread.name, sender: 'users/im_lead' });
+  w.run();
+  const anaMsg = w.analystPosts().filter(m => m.threadReply && m.thread.name === fwd.thread.name).pop();
+  eq(anaMsg.text, '*1. Review and send the email draft:* Ensure *From* is *Brand Social* and hit *Send*.');
+  assert.ok(!anaMsg.text.includes('**'));
+
+  w.vertex.answer = () => '**All set:** this alert is already **handled** and needs no changes.';
+  w.reply(src, 'Is anything else needed on this alert?');
+  w.run();
+  const burMsg = w.bursonPosts().pop();
+  eq(burMsg.text, '*All set:* this alert is already *handled* and needs no changes.');
+  assert.ok(!burMsg.text.includes('**'));
+});
+
+test('multi-product alerts: parses compound [Product] lines, enriches via Gemini other_products without nagging Burson, rebuilds cards, routes all product POCs, and shows all products in emails and Early Catch notes', () => {
+  // 1. Compound [Product] line splits outside parentheses while keeping single comma-containing product names intact
+  const multiAlert = F.P0_OK.replace('[Product]: Search', '[Product]: Gemini App, AI Overviews (AIM, Web Guide)');
+  const pMulti = parse(multiAlert);
+  eq(pMulti.fields.product, 'Gemini App');
+  eq(plain(pMulti.fields.other_products), ['AI Overviews (AIM, Web Guide)']);
+
+  const slashSingleAlert = F.P0_OK.replace('[Product]: Search', '[Product]: Ads/Merchant Center');
+  const pSlashSingle = parse(slashSingleAlert);
+  eq(pSlashSingle.fields.product, 'Ads/Merchant Center');
+  eq(pSlashSingle.fields.other_products, undefined);
+
+  const parenSingleAlert = F.P0_OK.replace('[Product]: Search', '[Product]: AI Overviews (AIM, Web Guide)');
+  const pParenSingle = parse(parenSingleAlert);
+  eq(pParenSingle.fields.product, 'AI Overviews (AIM, Web Guide)');
+  eq(pParenSingle.fields.other_products, undefined);
+
+  // 2. Gemini proposes other_products on a single-product Zapier card -> silentFix (never asks Burson to resend),
+  //    rebuilds card header + [Product] line with both products, and round-trips cleanly
+  const pixelAlert = F.P0_OK
+    .replace('Search | Alleged Bias in Search Reporting for Paris Riots 2026 | X | 1 Engagements',
+      'Pixel | Pixel 9 Emergency Dialer Freeze After Android Update | X | 1 Engagements')
+    .replace('[Product]: Search', '[Product]: Pixel')
+    .replace('[Name]: Alleged Bias in Search Reporting for Paris Riots 2026 / New / not previously reported over the past 14 days',
+      '[Name]: Pixel 9 Emergency Dialer Freeze After Android Update / New / not previously reported over the past 14 days');
+  const parsedPx = parse(pixelAlert);
+  const androidCanon = 'Android (Android OS & Google TV)';
+  const revPx = review(pixelAlert, {
+    llm: {
+      checks: B.ev('GEN').llm_checks.map(c => ({ id: c.id, ok: true, confidence: 0.98, finding: '' })),
+      other_products: ['Android', 'Pixel', 'Brand'],
+      social_alert: { warranted: true, confidence: 0.96, reason: 'Safety-critical emergency dialer freeze', signal_class: 'structural_threat' },
+    },
+  });
+  eq(revPx.fixes, []);
+  eq(revPx.silentFixes.map(x => x.field), ['other_products']);
+  eq(plain(revPx.fields.other_products), [androidCanon]);
+  const rebuiltPx = B.rebuildAlert_(pixelAlert, parsedPx, revPx.fields, revPx.changed);
+  assert.ok(rebuiltPx.includes(`SOCIAL ALERT\u2b1b: Pixel, ${androidCanon} | Pixel 9 Emergency Dialer Freeze After Android Update`), rebuiltPx);
+  assert.ok(rebuiltPx.includes(`[Product]: Pixel, ${androidCanon}`), rebuiltPx);
+  const reparsedPx = parse(rebuiltPx);
+  eq(reparsedPx.fields.product, 'Pixel');
+  eq(plain(reparsedPx.fields.other_products), [androidCanon]);
+  assert.match(B.changeNoteText_(revPx, true), /- Other Google Products added: Android \(Android OS & Google TV\)/);
+
+  // 3. Escalation, recipient routing, Social Alert email, and T&S single-select dropdown compatibility
+  const escPx = B.escalation_(revPx.fields, { now: NOW });
+  eq(plain(escPx.other_products), [androidCanon]);
+  const planPx = B.planRecipients_(escPx, escPx.text, []);
+  assert.ok(planPx.groups.includes('Pixel') && planPx.groups.includes(androidCanon), JSON.stringify(planPx.groups));
+  const inputPx = B.emailInput_(revPx.fields, escPx, false);
+  const mailPx = B.socialAlertEmail_(inputPx, planPx, { standIn: 'reviewer@testing.test' });
+  assert.ok(mailPx.subject.includes(`Pixel, ${androidCanon} | Pixel 9 Emergency Dialer Freeze After Android Update`), mailPx.subject);
+  assert.ok(mailPx.html.includes(`>Product</td><td style="padding: 8px; border: 1px solid #ddd; font-size: 14px;">Pixel, Android (Android OS &amp; Google TV)</td>`), mailPx.html);
+  assert.ok(mailPx.text.includes(`\nProduct: Pixel, ${androidCanon}\n`), mailPx.text);
+  // T&S form dropdown stays a single valid choice, falling back to secondary product when primary maps to Other
+  const tnsFallback = B.tnsFormValues_(B.emailInput_(
+    { product: 'Brand', other_products: ['Gemini App'], issue_name: 'Hallucination screenshot', post_url: 'https://x.com/u/status/99' },
+    { product: 'Brand', other_products: ['Gemini App'], exposure_tag: 'Product - Dangerous results (e.g. medical/legal)' }, false));
+  eq(tnsFallback.product, 'Gemini');
+
+  // 4. Watch / Other alerts & BSIP Direct BigQuery cards show all applicable products
+  const slrrLine = B.otherSlrrLine_({
+    tri: { slrr: { is: true, tag: 'Product - Dangerous results (e.g. medical/legal)', priority: 'P0', product: 'Gemini App', others: ['AI Overviews'], topics: [], confidence: 0.95 } },
+    slrr: null,
+  });
+  assert.ok(slrrLine.includes('Gemini App, AI Overviews'), slrrLine);
+  const bsipCard = B.formatBsipSonarAlertText_({
+    url: 'https://x.com/user1/status/777',
+    handle: '@user1',
+    network: 'X',
+    alert_names_json: JSON.stringify(['Gemini App - Accuracy', 'AI Overviews - Quality']),
+    tags: 'Product - Factual inaccuracies (not dangerous/offensive)',
+    total: 850,
+    issue_name: 'Cross-product AI answer mismatch',
+    post_time: '2026-10-14T12:00:00Z',
+  });
+  assert.ok(bsipCard.includes('[Product]: Gemini App, AI Overviews'), bsipCard);
 });
 
 // =============================================================================================================

@@ -1516,7 +1516,7 @@ function directAnswer_(ctx, m, rawAlert, report) {
   } catch (e) {
     ctx.log('Gemini analyst answer failed: ' + ((e && e.message) || e));
   }
-  const clean = String(raw || '').trim().replace(new RegExp('^' + GEN.prefix + '\\s*'), '');
+  const clean = chatMarkupText_(String(raw || '')).trim().replace(new RegExp('^' + GEN.prefix + '\\s*'), '');
   const text = clean ? truncate_(clean, 1500) : fallbackAnalystAnswer_(alert, ctx);
   postTo_(ctx, ctx.spaces.burson.id, text, m.thread || null, 'anaans:' + m.name, null, true);
   report.answers++;
@@ -1641,7 +1641,7 @@ function pollAnalystMessages_(ctx, report) {
     } catch (e) {
       ctx.log('Gemini analyst answer failed: ' + ((e && e.message) || e));
     }
-    const clean = String(raw || '').trim().replace(new RegExp('^' + GEN.prefix + '\\s*'), '');
+    const clean = chatMarkupText_(String(raw || '')).trim().replace(new RegExp('^' + GEN.prefix + '\\s*'), '');
     const text = clean
       ? truncate_(clean, 1500)
       : fallbackAnalystAnswer_(alert, ctx);

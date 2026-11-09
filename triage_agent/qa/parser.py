@@ -379,6 +379,28 @@ def parse(config: AgentConfig, text: str) -> ParsedAlert:
     if fields.get("issue_status") == "New / not previously reported over the past 14 days":
         fields["issue_status"] = "NEW"
 
+    # Split multi-product [Product] lines (e.g. "Gemini App, AI Overviews (AIM, Web Guide)" or "Pixel / Android")
+    # when the whole value is not already a single known product/alias (such as "Doodles, Easter Eggs and Delight Features").
+    raw_prod = fields.get("product")
+    if isinstance(raw_prod, str) and raw_prod and config.distribution.product(raw_prod) is None:
+        parts = parse_list(raw_prod)
+        if len(parts) < 2 and re.search(r"\s*(?:/|\+)\s*", raw_prod):
+            cand = [p.strip() for p in re.split(r"\s*(?:/|\+)\s*", raw_prod) if p.strip()]
+            if sum(1 for p in cand if config.distribution.product(p) is not None) >= 2:
+                parts = cand
+        if len(parts) >= 2 and sum(1 for p in parts if config.distribution.product(p) is not None) >= 2:
+            fields["product"] = parts[0]
+            existing = list(fields.get("other_products") or [])
+            seen = {parts[0].strip().lower()}
+            merged = []
+            for p in [*parts[1:], *existing]:
+                key = str(p).strip().lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    merged.append(str(p).strip())
+            if merged:
+                fields["other_products"] = merged
+
     # Extract author and followers from summary/post_content/[Code]/post_url if not explicitly labeled
     narrative = f"{fields.get('summary') or ''}\n{fields.get('post_content') or ''}".strip()
     if narrative and (not fields.get("author") or fields.get("followers") is None):

@@ -233,7 +233,8 @@ function escalation_(fields, opts) {
   const severe = (L.priorities || ['P0']).includes(priority) || (L.include_sensitive_topics !== false && (sensitive.length + briefed.length) > 0);
   const leadership = !!L.enabled && alertable && action === 'EMAIL_ALERT' && (status === 'NEW' || L.require_new_issue === false) &&
     severe && mistake;
-  return {
+  const otherProducts = dedupeProducts_(product, asList_(fields.other_products), true);
+  const escOut = {
     escalated: alertable && action === 'EMAIL_ALERT',
     track: alertable ? track : null, action, status, reasons, suppression, youtube,
     priority, exposure_tag: tagName, product, issue_name: issueName, sensitive_topics: sensitive.concat(briefed.map(b => `Launches: ${b}`)),
@@ -243,6 +244,8 @@ function escalation_(fields, opts) {
     owned_post: tagName === 'Content - Negative reaction to owned social post', ts_reasons: ts,
     text: `${textAll}\n${issueText}`,  // what the routing keyword triggers look at
   };
+  if (otherProducts.length) escOut.other_products = otherProducts;
+  return escOut;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -257,7 +260,7 @@ function resolveDistro_(name) {
   if (distro.deprecated) {
     const to = distro.redirect_to || [];
     const target = to.length === 1 ? lookupByName_(products, to[0]) : null;
-    if (target) return { distro: target, note: `${distro.name} distro removed → ${target.name}` };
+    if (target) return { distro: target, note: `${distro.name} distro removed \u2192 ${target.name}` };
     return { distro: null, note: `${distro.name} distro removed; reclassify to one of: ${to.join(', ')}` };
   }
   return { distro, note: null };
@@ -289,7 +292,7 @@ function groupMatchReason_(group, a, text) {
   if (t.owned_post) conds.push([!!a.owned_post, 'owned social post']);
   if (!conds.length) return null;
   if (t.match === 'all') return conds.every(c => c[0]) ? conds.map(c => c[1]).join('; ') : null;
-  const hit = conds.find(c => c[0]);
+  const hit = conds.find(c => [0] && c[0]);
   return hit ? hit[1] : null;
 }
 
@@ -365,7 +368,7 @@ function execsApply_(product, a) {
 
 /**
  * Recipients for the Social Alert draft: {to, cc, groups, reasons, members, missing, notes}.
- *   to: the product's alert POCs (+ engagement add-ons, execs per rule, gUP when triggered)
+ *   to: the product's alert POCs (+ secondary products' PA POCs, engagement add-ons, execs per rule, gUP when triggered)
  *   cc: groups whose triggers match (auto-included) or that an analyst added (extraGroups: legend codes), + default CC
  *   members: each group's own addresses ({group name: [emails]}, before to / cc drop the ones already on), so a reply
  *            can be credited to the team whose address sent it (FollowUp.gs)
@@ -374,32 +377,57 @@ function planRecipients_(a, text, extraGroups, productName) {
   const plan = { to: [], cc: [], groups: [], reasons: {}, members: {}, missing: [], notes: [] };
   const all = () => plan.to.concat(plan.cc).map(e => e.toLowerCase());
   const add = (target, emails) => (emails || []).forEach(e => { if (e && !all().includes(e.toLowerCase())) target.push(e); });
+  const addProductDistro = prod => {
+    add(plan.to, prod.pa);
+    if (!plan.groups.includes(prod.name)) {
+      plan.groups.push(prod.name);
+      plan.reasons[prod.name] = 'product alert POCs';
+      plan.members[prod.name] = (prod.pa || []).slice();
+    }
+    (prod.conditional || []).forEach(c => {
+      if ((a.engagement_total || 0) < c.min_engagement) return;
+      add(plan.to, c.recipients);
+      const label = `${prod.name} \u2013 ${c.label}`;
+      if (!plan.groups.includes(label)) {
+        plan.groups.push(label);
+        plan.reasons[label] = `${fmtInt_(a.engagement_total)} engagements \u2265 ${fmtInt_(c.min_engagement)}`;
+        plan.members[label] = (c.recipients || []).slice();
+      }
+    });
+    if ((prod.execs || []).length) {
+      if (execsApply_(prod, a)) {
+        add(plan.to, prod.execs);
+        const execLabel = `${prod.name} Execs`;
+        if (!plan.groups.includes(execLabel)) {
+          plan.groups.push(execLabel);
+          plan.reasons[execLabel] = `execs rule: ${prod.execs_rule}`;
+          plan.members[execLabel] = prod.execs.slice();
+        }
+      } else {
+        plan.notes.push(`${prod.name} Execs list not added (rule: ${prod.execs_rule})`);
+      }
+    }
+  };
   const res = resolveDistro_(productName || a.product);
   if (res.note) plan.notes.push(res.note);
   const product = res.distro;
-  if (product) {
-    add(plan.to, product.pa);
-    plan.groups.push(product.name);
-    plan.reasons[product.name] = 'product alert POCs';
-    plan.members[product.name] = (product.pa || []).slice();
-    (product.conditional || []).forEach(c => {
-      if ((a.engagement_total || 0) < c.min_engagement) return;
-      add(plan.to, c.recipients);
-      const label = `${product.name} – ${c.label}`;
-      plan.groups.push(label);
-      plan.reasons[label] = `${fmtInt_(a.engagement_total)} engagements ≥ ${fmtInt_(c.min_engagement)}`;
-      plan.members[label] = (c.recipients || []).slice();
-    });
-    if ((product.execs || []).length) {
-      if (execsApply_(product, a)) {
-        add(plan.to, product.execs);
-        plan.groups.push(`${product.name} Execs`);
-        plan.reasons[`${product.name} Execs`] = `execs rule: ${product.execs_rule}`;
-        plan.members[`${product.name} Execs`] = product.execs.slice();
-      } else {
-        plan.notes.push(`${product.name} Execs list not added (rule: ${product.execs_rule})`);
+  const secondaryDistros = [];
+  if (!productName && Array.isArray(a.other_products) && a.other_products.length) {
+    a.other_products.forEach(opName => {
+      const secRes = resolveDistro_(opName);
+      if (secRes.note) plan.notes.push(secRes.note);
+      const secProd = secRes.distro;
+      if (secProd && (!product || secProd.name.toLowerCase() !== product.name.toLowerCase()) &&
+          !secondaryDistros.some(s => s.name.toLowerCase() === secProd.name.toLowerCase())) {
+        secondaryDistros.push(secProd);
       }
-    }
+    });
+  }
+  if (product) {
+    addProductDistro(product);
+    secondaryDistros.forEach(addProductDistro);
+  } else if (secondaryDistros.length) {
+    secondaryDistros.forEach(addProductDistro);
   } else {
     add(plan.to, GEN.email.default_to);
   }
@@ -409,6 +437,9 @@ function planRecipients_(a, text, extraGroups, productName) {
     const reason = keyMatch ? 'added by IM' : (group.auto_include ? groupMatchReason_(group, a, text) : null);
     if (!reason) return;
     const emails = groupRecipients_(group, product, a, text);
+    if (group.action_code === 'gup' && secondaryDistros.length) {
+      secondaryDistros.forEach(secProd => addUnique_(emails, groupRecipients_(group, secProd, a, text)));
+    }
     if (!emails.length) { plan.missing.push(group.name); return; }
     add(group.action_code === 'gup' ? plan.to : plan.cc, emails);
     plan.groups.push(group.name);

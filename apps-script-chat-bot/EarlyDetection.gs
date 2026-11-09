@@ -864,7 +864,8 @@ function edNoteText_(d) {
   const whyText = truncate_(String(d.why || rev.narrative || rev.summary || 'reviewed').replace(/\.$/, '').trim(), 220);
   const bullets = [];
   if (rev.slrr && rev.slrr.is) {
-    const tax = [`${rev.slrr.tag} (${rev.slrr.priority})`, rev.slrr.product,
+    const edProds = allProductsList_({ product: rev.slrr.product, other_products: rev.slrr.others || [] });
+    const tax = [`${rev.slrr.tag} (${rev.slrr.priority})`, edProds.join(', '),
       rev.slrr.topics.length ? `Sensitive: ${rev.slrr.topics.join(', ')}` : ''].filter(Boolean).join(' \u00b7 ');
     bullets.push(`\u2022 *SLRR:* ${tax}.`);
   }
@@ -1286,7 +1287,8 @@ function edLinkify_(text, posts, maxLinks) {
     .replace(/<[^>\s]*\|([^>]*)>/g, '$1')                // Chat links Gemini wrote itself: their words only
     .replace(/\(\s*P\d{1,2}\s*\)/g, '')                  // bare (P3) refs
     .replace(/https?:\/\/[^\s)\]]+/g, '')                // raw URLs
-    .replace(/[<>|]/g, ' ');
+    .replace(/[<>|]/g, ' ')
+    .replace(/\*\*([^\r\n*]+?)\*\*/g, '*$1*');
   s = s.replace(/\u0000(\d+)\u0000/g, (all, i) => links[Number(i)] || '');
   return s.replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').replace(/\s+([.,;:!?])/g, '$1').trim();
 }

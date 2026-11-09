@@ -63,6 +63,19 @@ function normalizeProposal_(field, value) {
   switch (field) {
     case 'exposure_tag': { const t = lookupTag_(value); return t ? t.name : null; }
     case 'product': { const p = lookupProduct_(value); return p && !p.deprecated ? p.name : null; }
+    case 'other_products': {
+      const names = [];
+      parseListValue_(value).forEach(v => {
+        const p = lookupProduct_(v);
+        if (!p) return;
+        if (p.deprecated) {
+          if ((p.redirect_to || []).length === 1) names.push(p.redirect_to[0]);
+          return;
+        }
+        names.push(p.name);
+      });
+      return Array.from(new Set(names));
+    }
     case 'risk_tags': {
       const names = parseListValue_(value).map(v => lookupTopic_(v)).filter(Boolean).map(t => t.name);
       return Array.from(new Set(names));
@@ -142,6 +155,17 @@ function reviewAlert_(parsed, opts) {
   } else if (f.product && !product) {
     unsure.push({ field: 'product', proposed: null, confidence: null, finding: `"${f.product}" isn't a known product name` });
   }
+  if (Array.isArray(f.other_products) && f.other_products.length) {
+    const mappedOthers = f.other_products.map(op => {
+      const pOp = lookupProduct_(op);
+      if (pOp && pOp.deprecated && (pOp.redirect_to || []).length === 1) return pOp.redirect_to[0];
+      return op;
+    });
+    const cleanedOthers = dedupeProducts_(f.product, mappedOthers, true);
+    if (!sameValue_(cleanedOthers, f.other_products)) {
+      fix('other_products', cleanedOthers, 'Other Google Products updated to current product names');
+    }
+  }
 
   // 4. Social network: standard name, and it must match the link's domain
   if (typeof f.social_network === 'string' && f.social_network) {
@@ -164,7 +188,7 @@ function reviewAlert_(parsed, opts) {
     fix('kof', true, `the author is on the ${bsipKof} KOF list`);
   }
 
-  // 6. Gemini judgment (exposure tag, product, Sensitive Topics, KOF, issue name, summary)
+  // 6. Gemini judgment (exposure tag, product, other_products, Sensitive Topics, KOF, issue name, summary)
   if (opts.llm) {
     const fixSeverities = S.llm_fix_severities || ['blocking'];
     (opts.llm.checks || []).forEach(c => {
@@ -188,6 +212,18 @@ function reviewAlert_(parsed, opts) {
     const p = lookupProduct_(f.product);
     if (p && p.deprecated && (p.redirect_to || []).length > 1 && recl && p.redirect_to.includes(recl)) {
       fix('product', recl, `${p.name} is no longer used; this post is about ${recl}`, 'llm', 0.9);
+    }
+    const rawLlmOthers = normalizeProposal_('other_products', opts.llm.other_products);
+    const llmOthers = Array.isArray(rawLlmOthers) ? rawLlmOthers.filter(x => productCanonKey_(x) !== 'brand') : null;
+    if (Array.isArray(f.other_products) || (Array.isArray(llmOthers) && llmOthers.length)) {
+      const mergedOthers = dedupeProducts_(f.product, [].concat(f.other_products || [], llmOthers || []), true).slice(0, 3);
+      if (!sameValue_(mergedOthers, f.other_products || [])) {
+        if (mergedOthers.length) {
+          fix('other_products', mergedOthers, `the post also involves ${mergedOthers.join(', ')}`, 'llm', 0.92);
+        } else if (Array.isArray(f.other_products) && f.other_products.length) {
+          fix('other_products', [], 'already covered by the primary product');
+        }
+      }
     }
   } else if (opts.llmError) {
     notes.push('AI checks were unavailable, so this alert was reviewed with the rules only');
@@ -577,8 +613,10 @@ function relevantPrecedents_(parsed, maxCount) {
   if (!pool.length) return [];
   const limit = maxCount || 6;
   const f = (parsed && parsed.fields) || {};
-  const prodObj = lookupProduct_(f.product);
-  const prod = String((prodObj && prodObj.name) || f.product || '').toLowerCase();
+  const prodSet = new Set(allProductsList_(f).map(n => {
+    const p = lookupProduct_(n);
+    return String((p && p.name) || n || '').toLowerCase();
+  }).filter(Boolean));
   const tagObj = lookupTag_(f.exposure_tag);
   const tag = String((tagObj && tagObj.name) || f.exposure_tag || '').toLowerCase();
   const tokens = issueTokens_(`${f.issue_name || ''} ${f.alert_name || ''} ${f.summary || ''} ${f.post_content || ''}`);
@@ -588,7 +626,7 @@ function relevantPrecedents_(parsed, maxCount) {
     let score = 0;
     const pProd = String(p.product || '').toLowerCase();
     const pTag = String(p.tag || '').toLowerCase();
-    if (prod && pProd === prod) score += 6;
+    if (pProd && prodSet.has(pProd)) score += 6;
     if (tag && pTag === tag) score += 5;
     else if (tag && pTag && tag.split(' - ')[0] === pTag.split(' - ')[0]) score += 1;
     const pTokens = issueTokens_(`${p.name || ''} ${p.summary || ''}`);
@@ -610,7 +648,7 @@ function relevantPrecedents_(parsed, maxCount) {
 function precedentsText_(parsed, maxCount) {
   const list = relevantPrecedents_(parsed, maxCount);
   if (!list.length) return '';
-  return list.map(p => `- [${p.product} | ${p.tag}] "${p.name}" — ${p.summary}\n  -> ${p.lesson}`).join('\n');
+  return list.map(p => `- [${p.product} | ${p.tag}] "${p.name}" \u2014 ${p.summary}\n  -> ${p.lesson}`).join('\n');
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -641,7 +679,8 @@ function learnedNames_(value, look) {
  */
 function learnedPrecedentsFor_(rows, fields, max) {
   const f = fields || {};
-  const products = learnedNames_(f.product, lookupProduct_);
+  const products = new Set();
+  allProductsList_(f).forEach(p => learnedNames_(p, lookupProduct_).forEach(n => products.add(n)));
   const tags = learnedNames_(f.exposure_tag, lookupTag_);
   const meets = (mine, value, look) => Array.from(learnedNames_(value, look)).some(n => mine.has(n));
   const key = postKey_(f.post_url);
@@ -669,7 +708,7 @@ function imPrecedentsPrompt_(list) {
     const facts = [day || 'date unknown', one(r.product, 80) || 'product unknown',
       one(r.exposure_tag, 100) || 'exposure tag unknown', eng, `KOF: ${one(r.kof, 10) || 'unknown'}`,
       `the bot: ${one(r.bot_call, 40) || 'unknown'}`, `the IMs: ${one(r.im_call, 40) || 'unknown'}`];
-    return `- ${facts.join(' · ')}${String(r.lesson || '').trim() ? `\n  -> ${one(r.lesson, 300)}` : ''}`;
+    return `- ${facts.join(' \u00b7 ')}${String(r.lesson || '').trim() ? `\n  -> ${one(r.lesson, 300)}` : ''}`;
   });
   return 'PAST IM DECISIONS ON SIMILAR ALERTS (recent alerts about the same product or exposure tag where the on-shift ' +
     'Incident Managers, the IMs, made a different Social Alert call than the bot\'s review did; the IMs\' call is the one ' +
@@ -723,7 +762,10 @@ function assessPrompts_(parsed, media) {
     'names (lists comma-separated, booleans Yes/No). finding: one short, neutral sentence for the person who wrote ' +
     'the alert, about the alert only (never mention teams, people, escalation or what happens to the alert). ' +
     'product_reclassification: only when the product is a removed product with several replacements, the ' +
-    'replacement this post is about.\n\n' +
+    'replacement this post is about. other_products: when the post substantively involves more than one Google ' +
+    'product from PRODUCTS (e.g., Gemini App and AI Overviews, or Pixel and Android), list the additional Google ' +
+    'product distribution names here (excluding the primary product and Brand); leave empty [] when the post is ' +
+    'about a single product.\n\n' +
     'TEAMS (recommended_groups): decide which teams get this alert, as the on-shift Incident Manager would. The ' +
     'product\'s own contacts are always included. List every other team below whose area the post clearly falls in, ' +
     'each with a one-sentence reason (read by Google analysts only, never by the alert\'s author). The bot adds these ' +
@@ -1195,6 +1237,7 @@ const ASSESS_SCHEMA_ = {
       },
     },
     product_reclassification: { type: 'STRING', nullable: true },
+    other_products: { type: 'ARRAY', nullable: true, items: { type: 'STRING' } },
     recommended_groups: {
       type: 'ARRAY', nullable: true,
       items: { type: 'OBJECT', properties: { code: { type: 'STRING' }, reason: { type: 'STRING' } }, required: ['code'] },

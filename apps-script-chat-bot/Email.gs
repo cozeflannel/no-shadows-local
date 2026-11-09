@@ -56,6 +56,7 @@ function emailInput_(fields, esc, noWait) {
       text: truncate_(esc.text, 4000),
     },
   };
+  if (Array.isArray(esc.other_products) && esc.other_products.length) input.escalation.other_products = esc.other_products.slice();
   if (esc.kb_basis) input.escalation.kb_basis = truncate_(String(esc.kb_basis), 200);
   // the stream triage's reason (OtherAlerts.gs: an alert in another format it escalated), for analysts' "Why" only
   if (esc.triage_basis) input.escalation.triage_basis = truncate_(String(esc.triage_basis), 200);
@@ -109,9 +110,9 @@ function htmlEsc_(s) {
 }
 
 function levelSquare_(level, isKof) {
-  if (isKof || String(level || '').toUpperCase() === String(GEN.viral_kof_label).toUpperCase()) return '⭐';
+  if (isKof || String(level || '').toUpperCase() === String(GEN.viral_kof_label).toUpperCase()) return '\u2b50';
   const lv = GEN.engagement_levels.find(l => l.name === String(level || '').toUpperCase());
-  return lv ? lv.emoji : '🟧';
+  return lv ? lv.emoji : '\ud83d\udfe7';
 }
 
 function emailValues_(input) {
@@ -120,8 +121,10 @@ function emailValues_(input) {
   const status = esc.status === 'ONGOING' ? ONGOING_STATUS_SUFFIX_ : 'New';
   const count = Number.isInteger(f.total_engagement) ? f.total_engagement : (esc.engagement_total || 0);
   const kofLists = asList_(f.kof_lists);
+  const primaryProduct = f.product || esc.product || 'Google';
   return {
-    product: f.product || 'Google', issue: f.issue_name || esc.issue_name || 'Alert', network: f.social_network || '-',
+    product: allProductsText_(f, esc, 'Google'), primaryProduct,
+    issue: f.issue_name || esc.issue_name || 'Alert', network: f.social_network || '-',
     count, level: f.engagement_level || 'N/A', square: levelSquare_(f.engagement_level, esc.is_kof),
     name: `${f.issue_name || esc.issue_name || '-'} / ${status}`,
     tag: f.exposure_tag || '-', risk: asList_(f.risk_tags).join(', ') || '-',
@@ -164,8 +167,9 @@ function taggedSubject_(subject, tag, reply) {
 function socialAlertHtml_(v, opts) {
   const color = HEADER_COLORS_[String(v.level).toUpperCase()] || '#FFA500';
   const L = SOCIAL_ALERT_LINKS_;
+  const campaignProd = String(v.primaryProduct || v.product || '').trim();
   const learnMore = `${L.learnMore}?utm_source=social_alert&utm_medium=email&utm_campaign=` +
-    `${encodeURIComponent(v.product.trim().replace(/\s+/g, '_').toLowerCase()) || 'social_alert'}` +
+    `${encodeURIComponent(campaignProd.replace(/\s+/g, '_').toLowerCase()) || 'social_alert'}` +
     `&utm_content=header_learn_more&utm_term=${encodeURIComponent(String(v.code).trim()) || 'none'}`;
   const sendId = encodeURIComponent(opts.sendId || '');
   const sq = c => `<span style="display: inline-block; width: 12px; height: 12px; vertical-align: middle; border: 1px solid #ccc; background-color: ${c};"></span>`;

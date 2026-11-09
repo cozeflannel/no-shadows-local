@@ -34,7 +34,8 @@ const GEN = {
   "silent_fields": [
    "alert_name",
    "ts",
-   "code"
+   "code",
+   "other_products"
   ],
   "web_grounding": "enterprise",
   "follow_ups": true,

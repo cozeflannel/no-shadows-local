@@ -82,7 +82,7 @@ burson_qa:
   overlap_minutes: 5
   max_messages_per_run: 100
   max_attempts: 3
-  silent_fields: [alert_name, ts, code]   # corrected for analysts, never requested from Burson
+  silent_fields: [alert_name, ts, code, other_products]   # corrected for analysts, never requested from Burson
   web_grounding: enterprise      # Gemini searches the web when reviewing alerts / answering analysts: enterprise (Vertex AI Web Grounding for Enterprise) | google | off
   follow_ups: true               # same post alerted again, or the author following up on an alert that went out: ❌ unless it adds something (then an update on that thread)
   follow_up_min_confidence: 0.8  # Gemini's "adds nothing new" must be at least this sure

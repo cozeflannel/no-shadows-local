@@ -52,6 +52,50 @@ function lookupTag_(name) { return lookupByName_(GEN.exposure_tags, name); }
 function lookupTopic_(name) { return lookupByName_(GEN.sensitive_topics, name); }
 function lookupProduct_(name) { return lookupByName_(GEN.products, name); }
 
+/** Canonical lowercase key for deduplicating product names and aliases ("AI Overviews (AIM, Web Guide)" -> "ai overviews"). Pure. */
+function productCanonKey_(name) {
+  const s = String(name === undefined || name === null ? '' : name).trim();
+  if (!s) return '';
+  const p = lookupProduct_(s);
+  return String((p && p.name) || s).trim().toLowerCase();
+}
+
+/** Deduplicated secondary products excluding `primary` (and `'Brand'` when `dropBrand` is true and `primary` is specific). Pure. */
+function dedupeProducts_(primary, others, dropBrand) {
+  const list = Array.isArray(others) ? others : (others ? parseListValue_(others) : []);
+  const seen = new Set();
+  const pKey = productCanonKey_(primary);
+  if (pKey) seen.add(pKey);
+  const out = [];
+  list.forEach(item => {
+    const s = String(item === undefined || item === null ? '' : item).trim();
+    const k = productCanonKey_(s);
+    if (!k || seen.has(k)) return;
+    if (dropBrand && k === 'brand' && pKey && pKey !== 'brand') return;
+    seen.add(k);
+    out.push(s);
+  });
+  return out;
+}
+
+/** Ordered deduplicated list of all products on an alert (`[product, ...other_products]`). Pure. */
+function allProductsList_(fields, esc) {
+  const f = fields || {};
+  const e = esc || {};
+  const primary = String(f.product || e.product || '').trim();
+  const rawOthers = []
+    .concat(Array.isArray(f.other_products) ? f.other_products : (f.other_products ? parseListValue_(f.other_products) : []))
+    .concat(Array.isArray(e.other_products) ? e.other_products : (e.other_products ? parseListValue_(e.other_products) : []));
+  const others = dedupeProducts_(primary, rawOthers, true);
+  return (primary ? [primary] : []).concat(others);
+}
+
+/** Comma-separated display text for all products on an alert (single-product alerts return `product` unchanged). Pure. */
+function allProductsText_(fields, esc, fallback) {
+  const all = allProductsList_(fields, esc);
+  return all.length ? all.join(', ') : (fallback === undefined ? '' : fallback);
+}
+
 function legendByCode_(code) { return GEN.legend.find(a => a.code === code) || null; }
 
 function legendByEmoji_(emoji) {
@@ -344,6 +388,20 @@ function parseAlert_(text) {
     fields[name] = normalizeValue_(spec, raw[name]);
   });
   if (fields.issue_status === NEW_STATUS_SUFFIX_) fields.issue_status = 'NEW';
+  // Split multi-product [Product] lines (e.g. "Gemini App, AI Overviews (AIM, Web Guide)" or "Pixel / Android")
+  // when the whole string isn't already a single known product or alias (such as "Doodles, Easter Eggs and Delight Features").
+  if (typeof fields.product === 'string' && fields.product && !lookupProduct_(fields.product)) {
+    let parts = parseListValue_(fields.product);
+    if (parts.length < 2 && /\s*(?:\/|\+)\s*/.test(fields.product)) {
+      const cand = fields.product.split(/\s*(?:\/|\+)\s*/).map(p => p.trim()).filter(Boolean);
+      if (cand.filter(p => lookupProduct_(p)).length >= 2) parts = cand;
+    }
+    if (parts.length >= 2 && parts.filter(p => lookupProduct_(p)).length >= 2) {
+      fields.product = parts[0];
+      const merged = dedupeProducts_(parts[0], parts.slice(1).concat(fields.other_products || []), false);
+      if (merged.length) fields.other_products = merged;
+    }
+  }
   extra.raw = raw;
 
   const narrative = ((fields.summary || '') + '\n' + (fields.post_content || '')).trim();
@@ -565,15 +623,15 @@ function statusSuffix_(status, originalSuffix) {
 }
 
 function bannerLine_(priority, original) {
-  const plain = String(original).replace(/🚨/g, '').trim();
+  const plain = String(original).replace(/\ud83d\udea8/g, '').trim();
   const m = plain.match(/^(.*?THIS ALERT MEETS\s+)P[012](\s+CRITERIA)(.*)$/i);
   if (!m) {
     const replaced = plain.replace(/(THIS ALERT MEETS\s+)P[012](\s+CRITERIA)/i, '$1' + priority + '$2');
-    return priority === 'P0' ? '🚨' + replaced.trim() + '🚨' : replaced.trim();
+    return priority === 'P0' ? '\ud83d\udea8' + replaced.trim() + '\ud83d\udea8' : replaced.trim();
   }
   const core = (m[1] + priority + m[2]).trim();
   const tail = m[3] || '';
-  return (priority === 'P0' ? '🚨' + core + '🚨' : core) + tail;
+  return (priority === 'P0' ? '\ud83d\udea8' + core + '\ud83d\udea8' : core) + tail;
 }
 
 /**
@@ -587,19 +645,23 @@ function rebuildAlert_(text, parsed, fin, changed) {
   const index = labelIndex_();
   const lines = String(text).split(/\r?\n/);
   const codeFields = ['exposure_tag', 'total_engagement', 'risk_tags', 'product', 'issue_status'];
+  const hasOtherLine = lines.some((ln, idx) => idx !== ex.banner_line && idx !== ex.header_line &&
+    ((splitLabel_(ln, index) || {}).spec || {}).name === 'other_products');
+  const productChanged = ch.has('product') || ch.has('other_products');
 
   if (ch.has('priority') && ex.banner_line !== undefined) lines[ex.banner_line] = bannerLine_(fin.priority, lines[ex.banner_line]);
 
   if (ex.header_line !== undefined) {
     const line = lines[ex.header_line];
     const levelChanged = ch.has('engagement_level');
-    const partsChanged = ['product', 'issue_name', 'social_network', 'total_engagement'].some(f => ch.has(f));
+    const partsChanged = ['product', 'other_products', 'issue_name', 'social_network', 'total_engagement'].some(f => ch.has(f));
     if (ex.header_parts && (partsChanged || levelChanged)) {
       const lead = (line.match(/^([^A-Za-z]*)SOCIAL ALERT/i) || [])[1] || '';
       const sq = lead.trim() ? levelEmoji_(fin.engagement_level) || lead.trim() : '';
       const hp = ex.header_parts;
       const count = ch.has('total_engagement') ? fin.total_engagement + ' Engagements' : hp.engagements;
-      lines[ex.header_line] = `${sq}SOCIAL ALERT${sq}: ${ch.has('product') ? fin.product : hp.product} | ` +
+      const hdrProduct = productChanged ? allProductsText_(fin, null, fin.product) : hp.product;
+      lines[ex.header_line] = `${sq}SOCIAL ALERT${sq}: ${hdrProduct} | ` +
         `${ch.has('issue_name') ? fin.issue_name : hp.issue_name} | ${ch.has('social_network') ? fin.social_network : hp.social_network} | ${count}`;
     } else if (levelChanged) {
       const lead = (line.match(/^([^A-Za-z]*)SOCIAL ALERT/i) || [])[1] || '';
@@ -632,6 +694,10 @@ function rebuildAlert_(text, parsed, fin, changed) {
         value = [ch.has('exposure_tag') ? fin.exposure_tag : parts[0], ch.has('total_engagement') ? fin.total_engagement : parts[1],
           parts[2], ch.has('risk_tags') ? risk : parts[3], ch.has('product') ? fin.product : parts[4], status].join(',');
       }
+    } else if (f === 'product' && (ch.has('product') || (ch.has('other_products') && !hasOtherLine))) {
+      value = !hasOtherLine && Array.isArray(fin.other_products) && fin.other_products.length
+        ? allProductsText_(fin, null, fin.product)
+        : displayValue_(f, fin[f], hit.value);
     } else if (ch.has(f) && !['alert_name', 'engagement_level', 'code', 'kof'].includes(f)) {
       value = displayValue_(f, fin[f], hit.value);
     }

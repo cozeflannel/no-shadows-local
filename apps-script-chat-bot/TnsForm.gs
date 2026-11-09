@@ -68,18 +68,29 @@ function tnsEncode_(s) {
 
 /** "Google Product:" for an alert: the product's form choice, a Pixel feature named in the alert, else Other. Pure. */
 function tnsProduct_(f, esc) {
-  const raw = String(f.product || esc.product || '').trim();
-  const known = typeof lookupProduct_ === 'function' ? lookupProduct_(raw) : null;
-  const name = (known && known.name) || raw;
-  const text = [f.summary, f.issue_name, f.post_content].filter(Boolean).join(' ');
-  if (/\bAI Studio\b/i.test(text) && /^(Gemini Model|Devs Products|Central AI)$/.test(name)) return 'AI Studio';
-  if (name === 'Pixel') {
-    if (/\bPixel Studio\b/i.test(text)) return 'Pixel (Studio Image)';
-    if (/\bSmart Notes\b/i.test(text)) return 'Pixel (Smart notes)';
-    if (/\bPixel Screenshots\b|\bScreenshots app\b/i.test(text)) return 'Pixel (Screenshots)';
+  const mapOne = rawVal => {
+    const raw = String(rawVal || '').trim();
+    if (!raw) return 'Other';
+    const known = typeof lookupProduct_ === 'function' ? lookupProduct_(raw) : null;
+    const name = (known && known.name) || raw;
+    const text = [f.summary, f.issue_name, f.post_content].filter(Boolean).join(' ');
+    if (/\bAI Studio\b/i.test(text) && /^(Gemini Model|Devs Products|Central AI)$/.test(name)) return 'AI Studio';
+    if (name === 'Pixel') {
+      if (/\bPixel Studio\b/i.test(text)) return 'Pixel (Studio Image)';
+      if (/\bSmart Notes\b/i.test(text)) return 'Pixel (Smart notes)';
+      if (/\bPixel Screenshots\b|\bScreenshots app\b/i.test(text)) return 'Pixel (Screenshots)';
+    }
+    if (TNS_PRODUCTS_[name]) return TNS_PRODUCTS_[name];
+    if (!known && /\b(gemini|nano banana|veo|imagen|lyria)\b/i.test(raw)) return 'Gemini';  // "Gemini (Imagen, Nano Banana, …)"
+    return 'Other';
+  };
+  const primary = mapOne(f.product || esc.product || '');
+  if (primary !== 'Other') return primary;
+  const others = typeof allProductsList_ === 'function' ? allProductsList_(f, esc).slice(1) : [];
+  for (const op of others) {
+    const mapped = mapOne(op);
+    if (mapped !== 'Other') return mapped;
   }
-  if (TNS_PRODUCTS_[name]) return TNS_PRODUCTS_[name];
-  if (!known && /\b(gemini|nano banana|veo|imagen|lyria)\b/i.test(raw)) return 'Gemini';  // "Gemini (Imagen, Nano Banana, …)"
   return 'Other';
 }
 

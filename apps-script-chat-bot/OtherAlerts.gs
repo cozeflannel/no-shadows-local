@@ -662,6 +662,7 @@ function otherFields_(parsed, tri, eng, withView) {
     if (!f.location && v.location) f.location = v.location;
   } else if (v && v.product && !f.product) {
     f.product = v.product;  // for the routing of the stream's own Social Alert
+    if (v.others && v.others.length && !f.other_products) f.other_products = v.others;
   }
   const n = eng.n !== null ? eng.n : eng.min;
   if (Number.isFinite(n)) f.total_engagement = Math.round(n);
@@ -1088,9 +1089,10 @@ function otherTriagePrompts_(parsed, media) {
     'SLRR VIEW (slrr): classify how formal SLRR taxonomy sees this post using the exact names below:\n' +
     '- is_slrr: true only when the post is substantively about Google (its brands, products, executives, employees, business, ' +
     'policies or regulation), not "google" used as a verb, a passing mention, or an unrelated edited meme.\n' +
-    '- exposure_tag: the single best tag from EXPOSURE TAGS (P0 > P1 > P2 when several apply). product: from PRODUCTS (Brand ' +
-    'when it is about Google as a company). other_products. sensitive_topics: the SENSITIVE TOPICS that apply (Politics only ' +
-    'for a US or unknown location, or English election content). location: where the post is from, when it says.\n' +
+    '- exposure_tag: the single best tag from EXPOSURE TAGS (P0 > P1 > P2 when several apply). product: primary product from ' +
+    'PRODUCTS (Brand when it is about Google as a company). other_products: any additional Google products from PRODUCTS when ' +
+    'the post substantively involves more than one product (empty [] when single-product). sensitive_topics: the SENSITIVE ' +
+    'TOPICS that apply (Politics only for a US or unknown location, or English election content). location: where the post is from, when it says.\n' +
     '- confidence: your probability that is_slrr and the exposure tag are right.\n' +
     '- warranted / warranted_confidence: would an SLRR Incident Manager send a Social Alert email for it under the playbook ' +
     'below (thick-skinned: everyday snark and fringe grumbling never warrant one)? why: one short clause.\n' +
@@ -1176,7 +1178,8 @@ function otherSlrrLine_(d) {
   if (!v) return '';
   if (!v.is) return `*SLRR:* Not an SLRR alert${v.why ? ` (${v.why})` : ''}.`;
   const s = d.slrr;
-  const what = [`${v.tag} (${v.priority})`, v.product && v.product !== 'Brand' ? v.product : '',
+  const prods = allProductsList_({ product: v.product && v.product !== 'Brand' ? v.product : '', other_products: v.others || [] });
+  const what = [`${v.tag} (${v.priority})`, prods.join(', '),
     v.topics.length ? `Sensitive: ${v.topics.join(', ')}` : ''].filter(Boolean).join(', ');
   const head = s && s.sure ? '*SLRR:*' : `*SLRR (unsure, ${otherPct_(v.confidence)}):*`;
   if (!s) return `${head} ${what}.`;
