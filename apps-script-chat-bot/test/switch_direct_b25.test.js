@@ -87,18 +87,15 @@ module.exports = H => {
     const notes = inThread(t, alert);
     eq(notes.length, 1);
     const note = notes[0].text;
-    assert.match(note, /^🤖 \*Triage: ❌ No action\* · low\n/);
-    assert.match(note, /\n\*What it is:\* An X reply \(@CorrDove, 1\.7K followers\) accusing donors/);
-    assert.match(note, /\n\*For 2026 Midterm Elections \/ Civics:\* An election-rigging conspiracy claim that names Google/);
-    assert.match(note, /\n\*Risks:\* misinformation, election integrity\n/);
-    assert.match(note, /\n\*Why:\* A low-reach conspiracy claim nobody is picking up\n/);
-    assert.match(note, /\n\*SLRR view:\* Brand - Conspiratorial theories about Google \(P2\)\. Below the SLRR escalation bar: P2 needs 2,000\+ engagements, a KOF author or a Sensitive Topic; this one: engagement Very Low \(0-199\), not a KOF\./);
-    assert.match(note, /\n\*Watch for:\* A KOF or 2,000\+ engagements amplifying it, or press pickup/);
-    eq(t.chat.botReactions(alert.name), ['❌']);
+    assert.match(note, /^\ud83e\udd16 \*Triage: \u274c No action\* \u00b7 low\n/);
+    assert.match(note, /\nAn X reply \(@CorrDove, 1\.7K followers\) accusing donors .* \u2014 A low-reach conspiracy claim nobody is picking up\. \(<https:\/\/x\.com\/CorrDove\/status\/1980000000000000001\|@CorrDove on X>\)/);
+    assert.match(note, /\n\u2022 \*SLRR:\* Brand - Conspiratorial theories about Google \(P2\) \u2014 Below SLRR email bar \(P2 needs 2,000\+ engagements, a KOF author or a Sensitive Topic; this one: engagement Very Low \(0-199\), not a KOF\)\./);
+    assert.ok(note.split('\n').length <= 5, note);
+    eq(t.chat.botReactions(alert.name), ['\u274c']);
     const row = alertRow(t, alert);
-    eq([row.ingested, row.forward_message, row.email_status || '', String(row.decision).charAt(0)], ['Other alert', alert.name, '', '❌']);
+    eq([row.ingested, row.forward_message, row.email_status || '', String(row.decision).charAt(0)], ['Other alert', alert.name, '', '\u274c']);
     eq([row.forwarded_fields.triage.call, row.forwarded_fields.triage.stream], ['no_action', '2026 Midterm Elections / Civics']);
-    assert.ok(t.g.logs.some(l => l === 'other alert: X · @CorrDove · 1,700 followers · Very Low (0-199) · 2026 Midterm Elections / Civics'));
+    assert.ok(t.g.logs.some(l => l === 'other alert: X \u00b7 @CorrDove \u00b7 1,700 followers \u00b7 Very Low (0-199) \u00b7 2026 Midterm Elections / Civics'));
     // the triage: never the Burson-facing answer, nor Burson's review
     eq([callsWith(t, 'stream_call').length, callsWith(t, 'answer').length, callsWith(t, 'checks').length], [1, 0, 0]);
     eq(t.g.gmail.sentMessages(), []);
@@ -122,7 +119,7 @@ module.exports = H => {
     assert.match(sys, /helping the Google SLRR Incident Manager \/ analyst/);
     assert.match(sys, /This alert came from another monitoring stream, not Burson/);
     assert.ok(!/You help the Burson team/.test(sys));
-    assert.match(prompt, /\[Triage of this alert\]\nThis alert came from another monitoring stream \("2026 Midterm Elections \/ Civics"\), not Burson: the bot triaged it\.\nTriage call: no action \(❌\) \(basis: stream\), severity low: A low-reach conspiracy claim nobody is picking up/);
+    assert.match(prompt, /\[Triage of this alert\]\nThis alert came from another monitoring stream \("2026 Midterm Elections \/ Civics"\), not Burson: the bot triaged it\.\nTriage call: no action \(\u274c\) \(basis: stream\), severity low: A low-reach conspiracy claim nobody is picking up/);
     eq(inThread(t, alert).map(p => p.text).slice(1), ['Happy to help with that.']);
   });
 
@@ -144,14 +141,14 @@ module.exports = H => {
     eq([row.ingested, row.email_status, row.email_input.escalation.reasons.includes('P0_TOPIC'),
       row.email_input.escalation.triage_basis], ['Other alert', 'sent', true, undefined]);  // the SLRR rules' own Social Alert
     const note = inThread(t, alert)[0].text;
-    assert.match(note, /^🤖 \*Triage: 📦 Social Alert \(the SLRR rules\)\* · medium\n/);
-    assert.match(note, /\n\*Why:\* the SLRR rules: P0 criteria \(Brand - Perceived bias - brand\)\n/);
-    assert.match(note, /\n\*SLRR view:\* Brand - Perceived bias - brand \(P0\)\. Meets the SLRR escalation rules: P0 criteria/);
+    assert.match(note, /^\ud83e\udd16 \*Triage: \ud83d\udce6 Social Alert \(the SLRR rules\)\* \u00b7 medium\n/);
+    assert.match(note, /\u2014 the SLRR rules: P0 criteria \(Brand - Perceived bias - brand\)\. \(<https:\/\/x\.com\/CorrDove\/status\/1980000000000000001\|@CorrDove on X>\)/);
+    assert.match(note, /\n\u2022 \*SLRR:\* Brand - Perceived bias - brand \(P0\) \u2014 Meets SLRR escalation rules: P0 criteria/);
     const marks = t.chat.botReactions(alert.name);
-    assert.ok(marks.length > 0 && !marks.includes('❌') && !marks.includes('👍'), marks.join(' '));  // the distros' emojis
+    assert.ok(marks.length > 0 && !marks.includes('\u274c') && !marks.includes('\ud83d\udc4d'), marks.join(' '));  // the distros' emojis
   });
 
-  test('Work directly in B25: the stream\'s own call sends a Social Alert for an alert that isn\'t SLRR-type only when Gemini is 90%+ sure (to the testers; its "Why" names the stream triage); the same post again gets no second email (❌ already escalated); a less sure escalate is a 👍 for a person', () => {
+  test('Work directly in B25: the stream\'s own call sends a Social Alert for an alert that isn\'t SLRR-type only when Gemini is 90%+ sure (to the testers; its "Why" names the stream triage); the same post again gets no second email (\u274c already escalated); a less sure escalate is a \ud83d\udc4d for a person', () => {
     const t = directWorld();
     const notSlrr = { is_slrr: false, confidence: 0.85, why: 'About election officials: Google is only a passing mention' };
     t.g.vertex.triage = triage({
@@ -165,52 +162,52 @@ module.exports = H => {
     eq([row.email_status, row.email_input.escalation.reasons.includes('STREAM_TRIAGE'), row.email_input.escalation.triage_basis],
       ['sent', true, '2026 Midterm Elections / Civics: A false polling-place claim spreading fast']);
     eq(B.escalationWhyText_(row.email_input.escalation),
-      'Stream triage: 2026 Midterm Elections / Civics: A false polling-place claim spreading fast · High engagement (2,000 on X)');
+      'Stream triage: 2026 Midterm Elections / Civics: A false polling-place claim spreading fast \u00b7 High engagement (2,000 on X)');
     const note = inThread(t, first)[0].text;
-    assert.match(note, /^🤖 \*Triage: 📦 Social Alert \(the stream triage\)\* · high \(95% sure\)\n/);
-    assert.match(note, /\n\*SLRR view:\* not an SLRR alert \(About election officials: Google is only a passing mention\)\./);
-    assert.match(note, /\n\*Teams:\* Civics/);
+    assert.match(note, /^\ud83e\udd16 \*Triage: \ud83d\udce6 Social Alert \(the stream triage\)\* \u00b7 high \(95% sure\)\n/);
+    assert.match(note, /\n\u2022 \*SLRR:\* Not an SLRR alert \(About election officials: Google is only a passing mention\)\./);
+    assert.match(note, /\n\u2022 \*Teams:\* Civics\./);
     // the same post again: no second Social Alert
     const again = say(t, midterms({ engagement: 'High (2000+)' }));
     t.poll();
     eq(t.g.gmail.sentMessages().length, 1);
-    assert.match(inThread(t, again)[0].text, /^🤖 \*Triage: ❌ Already escalated\*/);
-    assert.match(inThread(t, again)[0].text, /\n\*Why:\* the same post was already alerted \(/);
-    eq(t.chat.botReactions(again.name), ['❌']);
+    assert.match(inThread(t, again)[0].text, /^\ud83e\udd16 \*Triage: \u274c Already escalated\*/);
+    assert.match(inThread(t, again)[0].text, /\u2014 the same post was already alerted \(/);
+    eq(t.chat.botReactions(again.name), ['\u274c']);
     // a less sure escalate: 👍, a person decides
     t.g.vertex.triage = triage({ stream_call: { action: 'escalate', severity: 'medium', confidence: 0.7, reason: 'Might be spreading' },
       slrr: notSlrr });
     const unsure = say(t, midterms({ url: 'https://x.com/CorrDove/status/1980000000000000002' }));
     t.poll();
-    eq([t.g.gmail.sentMessages().length, t.chat.botReactions(unsure.name)], [1, ['👍']]);
-    assert.match(inThread(t, unsure)[0].text, /^🤖 \*Triage: 👍 Worth a look\* · medium \(70% sure\)\n/);
-    assert.match(inThread(t, unsure)[0].text, /\n\*Why:\* Might be spreading \(70% sure, so a person decides\)/);
+    eq([t.g.gmail.sentMessages().length, t.chat.botReactions(unsure.name)], [1, ['\ud83d\udc4d']]);
+    assert.match(inThread(t, unsure)[0].text, /^\ud83e\udd16 \*Triage: \ud83d\udc4d Worth a look\* \u00b7 medium \(70% sure\)\n/);
+    assert.match(inThread(t, unsure)[0].text, /\u2014 Might be spreading \(70% sure, so a person decides\)\./);
   });
 
-  test('Work directly in B25: rules that would escalate it on a count the bot can\'t tell (a Sensitive Topic, engagement 0-199, no count) or on an SLRR view Gemini isn\'t sure of get 👍 for a person, never ❌ or an email; Gemini without its call: 👍, "Needs a person"', () => {
+  test('Work directly in B25: rules that would escalate it on a count the bot can\'t tell (a Sensitive Topic, engagement 0-199, no count) or on an SLRR view Gemini isn\'t sure of get \ud83d\udc4d for a person, never \u274c or an email; Gemini without its call: \ud83d\udc4d, "Needs a person"', () => {
     const t = directWorld();
     t.g.vertex.triage = triage({ slrr: { is_slrr: true, confidence: 0.9, exposure_tag: 'Brand - Conspiratorial theories about Google',
       product: 'Brand', sensitive_topics: ['Politics'], warranted: false, warranted_confidence: 0.6 } });
     const one = say(t, midterms());
     t.poll();
-    eq([t.chat.botReactions(one.name), t.g.gmail.sentMessages().length], [['👍'], 0]);
+    eq([t.chat.botReactions(one.name), t.g.gmail.sentMessages().length], [['\ud83d\udc4d'], 0]);
     const note = inThread(t, one)[0].text;
-    assert.match(note, /^🤖 \*Triage: 👍 Worth a look\* · low\n/);
-    assert.match(note, /\n\*Why:\* the SLRR rules would escalate it \(Sensitive topic \(Politics\)\) if it has 100\+ engagements: check its count\n/);
-    assert.match(note, /\n\*SLRR view:\* Brand - Conspiratorial theories about Google \(P2\), Sensitive: Politics\. The SLRR rules escalate it with 100\+ engagements \(Sensitive topic \(Politics\)\); this one: engagement Very Low \(0-199\)\./);
+    assert.match(note, /^\ud83e\udd16 \*Triage: \ud83d\udc4d Worth a look\* \u00b7 low\n/);
+    assert.match(note, /\u2014 the SLRR rules would escalate it \(Sensitive topic \(Politics\)\) if it has 100\+ engagements: check its count\./);
+    assert.match(note, /\n\u2022 \*SLRR:\* Brand - Conspiratorial theories about Google \(P2\), Sensitive: Politics \u2014 SLRR escalates at 100\+ engagements \(Sensitive topic \(Politics\)\); now engagement Very Low \(0-199\)\./);
     // an SLRR view Gemini is only 60% sure of: what the rules would do with it is for a person to check
     t.g.vertex.triage = triage({ slrr: { is_slrr: true, confidence: 0.6, exposure_tag: 'Brand - Perceived bias - brand', product: 'Brand' } });
     const two = say(t, midterms({ url: 'https://x.com/CorrDove/status/1980000000000000003' }));
     t.poll();
-    eq([t.chat.botReactions(two.name), t.g.gmail.sentMessages().length], [['👍'], 0]);
-    assert.match(inThread(t, two)[0].text, /\n\*Why:\* it may be an SLRR alert \(Brand - Perceived bias - brand, 60% sure\) that the SLRR rules would escalate \(P0 criteria \(Brand - Perceived bias - brand\)\)/);
-    assert.match(inThread(t, two)[0].text, /\n\*SLRR view \(unsure, 60%\):\* Brand - Perceived bias - brand \(P0\)\. Meets the SLRR escalation rules: P0 criteria/);
+    eq([t.chat.botReactions(two.name), t.g.gmail.sentMessages().length], [['\ud83d\udc4d'], 0]);
+    assert.match(inThread(t, two)[0].text, /\u2014 it may be an SLRR alert \(Brand - Perceived bias - brand, 60% sure\) that the SLRR rules would escalate \(P0 criteria \(Brand - Perceived bias - brand\)\)\./);
+    assert.match(inThread(t, two)[0].text, /\n\u2022 \*SLRR \(unsure, 60%\):\* Brand - Perceived bias - brand \(P0\) \u2014 Meets SLRR escalation rules: P0 criteria/);
     // Gemini's answer without its call: a person decides, with what the alert says
     t.g.vertex.triage = null;
     const three = say(t, midterms({ url: 'https://x.com/CorrDove/status/1980000000000000004' }));
     t.poll();
-    eq([t.chat.botReactions(three.name), t.g.gmail.sentMessages().length], [['👍'], 0]);
-    assert.match(inThread(t, three)[0].text, /^🤖 \*Triage: 👍 Needs a person\*\n\*What it is:\* X · @CorrDove · 1,700 followers · engagement Very Low \(0-199\)\n\*Why:\* the AI triage failed, so a person decides \(no call in its answer\)/);
+    eq([t.chat.botReactions(three.name), t.g.gmail.sentMessages().length], [['\ud83d\udc4d'], 0]);
+    assert.match(inThread(t, three)[0].text, /^\ud83e\udd16 \*Triage: \ud83d\udc4d Needs a person\*\nthe AI triage failed, so a person decides \(no call in its answer\)\.\n\u2022 \*Post:\* <https:\/\/x\.com\/CorrDove\/status\/1980000000000000004\|@CorrDove on X> \u00b7 1,700 followers \u00b7 engagement Very Low \(0-199\)\./);
   });
 
   test('Work directly in B25: an alert in Burson\'s format, whoever pastes it there, gets Burson\'s own review (never the triage); a person\'s chatter is neither an alert nor a question', () => {
@@ -256,16 +253,66 @@ module.exports = H => {
       { live: false, why: 'S-F Burson, B25, is a Google-only space: the real S-F Burson lets people outside Google join' });
   });
 
+  test('other alerts: unified single-reply T&S (no contradictory second message), off-brand meme T&S suppression, and Early Catch <-> Burson stage awareness', () => {
+    const t = directWorld();
+    t.control().getRange(12, 2).setValue('ON');
+    // 1. Off-brand edited meme (no_action + is_slrr: false + spurious AI tns): suppresses T&S and posts ONE No action reply
+    t.g.vertex.triage = triage({
+      summary: 'An X user (@rottenristic) shared an edited dark-humor meme using classic Search results.',
+      stream_call: { action: 'no_action', severity: 'low', confidence: 0.94, reason: 'Edited meme unrelated to actual Search output' },
+      slrr: { is_slrr: false, confidence: 0.92, why: 'Edited third-party meme' },
+      risks: ['other'],
+      tns: { needed: true, reason: 'The meme shows dark-humor imagery alongside Search branding.' },
+    });
+    const meme = say(t, midterms({ url: 'https://x.com/rottenristic/status/2042240000000000001' }));
+    t.poll();
+    const memeReplies = inThread(t, meme);
+    eq(memeReplies.length, 1);
+    assert.match(memeReplies[0].text, /^\ud83e\udd16 \*Triage: \u274c No action\* \u00b7 low\n/);
+    assert.ok(!/T&S/.test(memeReplies[0].text), memeReplies[0].text);
+    eq(t.chat.botReactions(meme.name), ['\u274c']);
+
+    // 2. Real pre-threshold Gemini hallucination (flag + tns): ONE unified concise reply with T&S folded in, <= 5 lines
+    t.g.vertex.triage = triage({
+      summary: 'An X user (@oscarwriter1959) shared screenshots claiming Gemini confused basic chronological facts.',
+      stream_call: { action: 'flag', severity: 'low', confidence: 0.85, reason: 'Real Gemini factual error at 0 engagements',
+        watch_for: 'Broader viral pickup past 100+ engagements' },
+      slrr: { is_slrr: true, confidence: 0.9, exposure_tag: 'Product - Hallucination/inaccurate', product: 'Gemini App',
+        sensitive_topics: [], warranted: false, warranted_confidence: 0.8, why: 'Below formal engagement threshold' },
+      tns: { needed: true, reason: 'Gemini factual hallucination on basic historical dates.' },
+    });
+    const hall = say(t, midterms({ url: 'https://x.com/oscarwriter1959/status/2042240000000000002' }));
+    t.poll();
+    const hallReplies = inThread(t, hall);
+    eq(hallReplies.length, 1);
+    assert.match(hallReplies[0].text, /^\ud83e\udd16 \*Triage: \ud83d\udc4d Worth a look \u00b7 \u270d\ufe0f T&S intake\* \u00b7 low \(85% sure\)\n/);
+    assert.match(hallReplies[0].text, /\n\u2022 \*T&S:\* /);
+    assert.ok(hallReplies[0].text.split('\n').length <= 5, hallReplies[0].text);
+
+    // 3. Stage handoff prompt: Watch alert row shows up in earlierAlertsPrompt_ with stage & T&S status for formal Burson review
+    const earlier = B.earlierAlerts_(
+      { post_url: 'https://x.com/oscarwriter1959/status/2042240000000000002', author: 'oscarwriter1959' },
+      [{ alert_id: 'QA-901', created_at: Date.now() - 600000, record_key: 'x.com/status/2042240000000000002',
+        author: 'oscarwriter1959', email_status: '', ingested: 'Watch alert', decision: '\ud83d\udc4d Worth a look + T&S',
+        tns_submitted: Date.now() - 590000, fields: { post_url: 'https://x.com/oscarwriter1959/status/2042240000000000002',
+          issue_name: 'Gemini historical date hallucination', total_engagement: 0 } }],
+      null, Date.now(), null);
+    const stagePrompt = B.earlierAlertsPrompt_(earlier);
+    assert.match(stagePrompt, /Early Catch \(Watch\)/);
+    assert.match(stagePrompt, /T&S already submitted/);
+  });
+
   test('other alerts: never in the SLRR tables (Write back to SLRR BigQuery leaves them out, even ON) nor on the Results tab; Burson\'s alerts keep their review prompt, other alerts get the triage prompt; the triage\'s reason goes only on its own Social Alerts', () => {
     const ctx = { switches: { writeBackBq: true }, log() {}, now: () => 0, memo: { get: () => null, set() {} } };
     eq(B.bqWriteBack_(ctx, { alert_id: 'QA-9', ingested: 'Other alert' }, 'decided', {}), false);
     eq(B.resultsBursonRows_([{ alert_id: 'a', ingested: 'Other alert' }, { alert_id: 'b', ingested: '' }]).map(r => r.alert_id), ['b']);
     const slrr = B.assessPrompts_(B.parseAlert_(F.P0_OK), null);
     assert.ok(slrr.schema.properties.checks && !slrr.schema.properties.stream_call);
+    assert.match(slrr.system, /SLRR operates as ONE unified system/);
     const other = B.otherAlertOf_(midterms().text, 'Lucas Hammonds', [POST]);
     const p = B.assessPrompts_({ kind: 'other', other, fields: B.otherBaseFields_(other) }, null);
     assert.ok(p.schema.properties.stream_call && !p.schema.properties.checks);
-    assert.match(p.system, /THE STREAM: "2026 Midterm Elections \/ Civics" \(X alerts\), labelled Negative by the tool\./);
+    assert.match(p.system, /THE STREAM \/ WATCH: "2026 Midterm Elections \/ Civics" \(X alerts\), labelled Negative by the tool\./);
     assert.match(p.system, /\nSLRR VIEW \(slrr\): /);
     assert.match(p.prompt, /"author":"@CorrDove"/);
     eq(B.emailInput_({ issue_name: 'x' }, { reasons: ['P0_TOPIC'] }).escalation.triage_basis, undefined);

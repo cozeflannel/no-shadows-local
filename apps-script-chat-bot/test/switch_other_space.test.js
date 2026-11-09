@@ -96,8 +96,8 @@ module.exports = H => {
     // the Other alerts space: the triage, in the alert's thread, and ❌; its row in its own partition
     const notes = inThread(t, alert);
     eq(notes.length, 1);
-    assert.match(notes[0].text, /^🤖 \*Triage: ❌ No action\* · low\n/);
-    assert.match(notes[0].text, /\n\*For 2026 Midterm Elections \/ Civics:\* An election-rigging conspiracy claim that names Google/);
+    assert.match(notes[0].text, /^\ud83e\udd16 \*Triage: \u274c No action\* \u00b7 low\n/);
+    assert.match(notes[0].text, /\u2014 A low-reach conspiracy claim nobody is picking up\. \(<https:\/\/x\.com\/CorrDove\/status\/1980000000000000001\|@CorrDove on X>\)/);
     eq(t.chat.botReactions(alert.name), ['❌']);
     const row = alertRow(t, alert);
     eq([row.ingested, row.space, row.forwarded_fields.triage.call], ['Other alert', PART, 'no_action']);

@@ -524,7 +524,9 @@ function earlierAlerts_(fields, history, bq, now, post, opts) {
       product: v.product || '', exposure_tag: h.exposure_tag || v.exposure_tag || '', risk_tags: asList_(v.risk_tags),
       priority: v.priority || '', issue_name: v.issue_name || '', summary: v.summary || '',
       engagement: Number.isInteger(v.total_engagement) ? v.total_engagement : null, engagement_level: v.engagement_level || '',
-      outcome: earlierOutcome_(h), emojis: String(h.mirrored || '').trim(), row: h,
+      outcome: earlierOutcome_(h), emojis: String(h.mirrored || '').trim(),
+      ingested: String(h.ingested || ''), decision: String(h.decision || ''), tns_submitted: Number(h.tns_submitted) > 0,
+      row: h,
     }, link));
   });
   const seen = new Set(out.map(e => recordKey_({ post_url: e.url })).filter(Boolean));

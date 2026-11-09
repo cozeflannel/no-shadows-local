@@ -318,9 +318,9 @@ module.exports = H => {
     t.poll();
     const notes = inThread(t, MID, msg);
     eq(notes.length, 1);
-    assert.match(notes[0].text, /^🤖 \*Triage: 📦 Social Alert \(the watch\)\* · low\n/);
-    assert.match(notes[0].text, new RegExp(`\\n\\*Why:\\* the ${MIDTERMS} watch scored it 6 of 10 \\(it flags at 4\\): Elections and civics\\n`));
-    assert.match(notes[0].text, new RegExp(`\\n\\*For ${MIDTERMS}:\\* An election-rigging conspiracy claim`));
+    assert.match(notes[0].text, /^\ud83e\udd16 \*Triage: \ud83d\udce6 Social Alert \(the watch\)\* \u00b7 low\n/);
+    assert.match(notes[0].text, new RegExp(`\\u2014 the ${MIDTERMS} watch scored it 6 of 10 \\(it flags at 4\\): Elections and civics\\. \\(<https:\\/\\/x\\.com\\/CorrDove\\/status\\/1980000000000000001\\|@CorrDove on X>\\)`));
+    assert.match(notes[0].text, /\n\u2022 \*SLRR:\* Brand - Conspiratorial theories about Google \(P2\)/);
     const row = alertRow(t, msg);
     eq([row.ingested, row.forwarded_fields.triage.call, row.forwarded_fields.triage.basis, row.forwarded_fields.triage.from],
       ['Watch alert', 'escalate', 'watch', 'watch']);
@@ -330,13 +330,13 @@ module.exports = H => {
     sent.forEach(m => eq(m.to, ['tester@testing.test'], m.subject));
     const social = sent.filter(m => /SOCIAL ALERT/.test(m.subject));
     eq(social.map(m => [m.to, m.cc, m.subject]), [[['tester@testing.test'], [],
-      '[Other alerts space] ⬛SOCIAL ALERT⬛: Brand | Election-rigging claim naming Google | X | 52 Engagements']]);
+      '[Other alerts space] \u2b1bSOCIAL ALERT\u2b1b: Brand | Election-rigging claim naming Google | X | 52 Engagements']]);
     // the standard Social Alert, as any alert's: the post's summary, its link, the details, who it would have gone to
     assert.match(social[0].text, new RegExp(`^SOCIAL ALERT\\r?\\n\\r?\\nAn X reply \\(@CorrDove, 1\\.7K followers\\)[^\\n]*\\r?\\n\\r?\\nLink: ${POST.replace(/[.?]/g, '\\$&')}\\r?\\n`));
     assert.match(social[0].text, /\nWould have gone to: To: Brand alert POCs; Cc: GCPA, standard CC list/);
     // nothing anywhere else: no write in S-F Burson, nothing on the outbox, nothing of it in the Mirror space
     eq([writes(t), outbox(t), t.chat.botPosts(MIRROR).filter(p => /Watch alert|CorrDove/.test(p.text))], [[], [], []]);
-    eq(t.get('B5'), '✅ Working');
+    eq(t.get('B5'), '\u2705 Working');
     t.poll();  // worked once, posted once
     eq([inThread(t, MID, msg).length, posted(t, MID).length], [1, 1]);
   });
@@ -372,7 +372,7 @@ module.exports = H => {
     out.forEach(chatShows);
     t.poll();
     assert.match(inThread(t, MID, out[0])[0].text,
-      new RegExp(`\\n\\*Why:\\* the ${MIDTERMS} watch scored it 6 of 10 \\(it flags at 4\\): Elections and civics\\n`));
+      new RegExp(`\\u2014 the ${MIDTERMS} watch scored it 6 of 10 \\(it flags at 4\\): Elections and civics\\.`));
     // Chat refusing the upload: the alert still goes out, as text
     t.chat.fail = (method, path) => (/^upload\//.test(path) ? { code: 500, body: { error: { code: 500, message: 'backend error' } } } : null);
     look(w, [hit({ post_url: POST3 })]);

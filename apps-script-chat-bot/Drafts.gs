@@ -136,8 +136,29 @@ function tnsFormText_(input) {
       ? `- Urgent: live, also email ${tnsUrgentLabel_()} with the link (not while testing).`
       : `- Urgent: after submitting, also email ${tnsUrgentLabel_()} with the link.`);
   }
-  lines.push('Check the pre-filled details, then Submit. The bot will mark ✍️ when the WD Intake Request confirmation email comes in.');
+  lines.push('Check the pre-filled details, then Submit. The bot will mark \u270d\ufe0f when the WD Intake Request confirmation email comes in.');
   return lines.join('\n');
+}
+
+/**
+ * Concise single-sentence T&S summary with `<url|text>` hyperlinks for fast-moving Early Catch thread replies (so T&S is
+ * folded into the single triage message instead of posting a second multi-line block). Pure-safe.
+ */
+function tnsCompactLine_(input, tnsNote, submitted) {
+  const v = tnsFormValues_(input);
+  const why = truncate_(String(tnsWhy_(input) || 'flagged').replace(/\.$/, ''), 140);
+  const note = String(tnsNote || '');
+  if (/^The alert was already submitted to T&S/i.test(note)) {
+    return truncate_(note.replace(/\s+/g, ' ').trim(), 200);
+  }
+  if (submitted) {
+    const subLink = (note.match(/<(https?:\/\/[^|>\s]+\|[^>]+)>/) || [])[0] || '';
+    return `Submitted Marketing intake (${v.product} / ${v.topic})${subLink ? ` \u00b7 ${subLink}` : ''}.`;
+  }
+  const testing = tnsTesting_();
+  const url = tnsPrefillUrl_(input);
+  const formLink = url ? `<${url}|Open the ${testing ? 'test copy of the ' : ''}T&S Intake Form, pre-filled>` : 'T&S Intake Form needed';
+  return `${why} \u2014 ${formLink} (${v.product} / ${v.topic}).`;
 }
 
 /** The Workspace form's values for a Workspace alert (not Threads), as slrr-assistant_app_script fills it, or null. */
@@ -1232,8 +1253,13 @@ function tnsAutoText_(ctx, input, entry, own, form) {
     const v = tnsFormValues_(input);
     const urgent = tnsUrgent_(input);
     const why = tnsWhy_(input) || 'flagged';
+    const fullSentence = why.length > 50 ||
+      /\s(?:is|are|was|were|has|have|shows?|provides?|incorporates?|alleges?|contains?|features?|depicts?|displays?)\b/i.test(why);
+    const headLine = fullSentence
+      ? `The alert has been submitted to T&S for review (${why.charAt(0).toLowerCase() + why.slice(1).replace(/\.$/, '')}).`
+      : `The alert regarding ${why} has been submitted to T&S for review.`;
     const lines = [
-      `The alert regarding ${why} has been submitted to T&S for review.`,
+      headLine,
       '- Intake Request: Marketing',
       `- Google Product: ${v.product}`,
       `- Topic Impacted: ${v.topic}`,
