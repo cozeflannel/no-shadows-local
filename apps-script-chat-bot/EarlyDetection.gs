@@ -21,9 +21,9 @@
  *          testers while Testing), priority/group marks, T&S intake when needed, plus Temp Check query brief.
  *        • `monitor` (early build-up worth analyst eyes / Temp Check sizing before a full Social Alert): 👍 reaction,
  *          structured build-up brief with ready-to-run Temp Check query, plus T&S intake when needed.
- *        • `dismiss` (benign coincidence, evergreen noise, routine support chatter): no card at all (edQuietDismissal_:
- *          neither a Social Alert nor a build-up to watch, so nothing in the space to act on; logged, and counted on
- *          Control C19), unless a T&S intake goes with it (then its card and the cross mark).
+ *        • `dismiss` (benign coincidence, evergreen noise, routine support chatter): filtered out (edDismissed_): it
+ *          gets through on no level, so no card, review note, mark, Social Alert or T&S intake (those only ever follow
+ *          a card in the space and its review); its reason is logged and Control C19 counts it.
  *   3. A raw `🚨 *Early Detection Alert: …* 🚨` card posted before the queue existed is still reviewed when Bot.gs meets
  *      it (`edAlertOf_` -> `handleEarlyDetection_`: the same prepare / review / act steps, the note in its thread).
  *   Same-story dedup (one story, one card, unless it materially grew): BigQuery holds back a cluster within
@@ -31,8 +31,8 @@
  *   (edDrainQueue_) hold back a signal whose story already has a card from the last 24h (`edStoryVerdict_`: same cluster,
  *   the alert BigQuery says it updates, or 2+ of the same posts) unless it reached 2x the accounts and 3 more, or a new
  *   platform: then its card goes in the earlier card's thread as `📈 *Early Detection Update: …*` with what's new. A
- *   review that finds an issue already alerted with nothing new posts no card, nor does a plain dismissal: Control C19
- *   counts the repeats held back and the dismissals.
+ *   review that finds an issue already alerted with nothing new posts no card, nor does any other dismissal (filtered
+ *   out): Control C19 counts the repeats held back and the dismissals filtered out.
  *   Relay.gs (`RELAY_ID_RX_`) treats `client-zeda-` as the bot's own work, so nothing ever relays to S-F Burson (B25) or
  *   the Burson test copy (B26). Records `ingested: ED_ALERT_INGESTED_` ('Early detection') so Burson parity KPIs
  *   (`Results` tab) and shared SLRR BigQuery write-backs (`bqWriteBack_`) remain isolated.
@@ -1549,13 +1549,13 @@ function edThemePicture_(ctx, ed, d, parsed, space) {
 }
 
 /**
- * True when a reviewed signal's call (`d`: edDecide_) is a plain dismissal: neither a Social Alert nor an early build-up
- * to monitor, and no T&S intake with it (a repeat or a non-English signal is held back on its own). It meets neither the
- * alert process's bar nor Early Detection's, so it posts no card: the space only gets what someone may act on. Pure.
+ * True when a reviewed signal's call (`d`: edDecide_) is a dismissal: neither a Social Alert nor an early build-up to
+ * monitor. A dismissed signal is filtered out: it gets through on no level (no card, so no review note, mark, Social
+ * Alert or T&S intake either: those only ever follow a card in the space and its review), whatever the review saw. Only a
+ * later signal on its story that grew (something new came to light) is reviewed afresh. Pure.
  */
-function edQuietDismissal_(d) {
-  const x = d || {};
-  return x.disposition === 'dismiss' && x.basis !== 'repeat' && x.basis !== 'non_english' && !x.tnsPlanned && !x.tnsActive;
+function edDismissed_(d) {
+  return !!d && d.disposition === 'dismiss';
 }
 
 /**
@@ -1565,8 +1565,8 @@ function edQuietDismissal_(d) {
  * text) -> edAct_ (the review note in its thread, the marks, the drafts). The card's key makes a retried post return the
  * same message. An update of an earlier card on the same story (`row.update_of`) goes in that card's thread, without a
  * picture. A review that finds an issue already alerted with nothing materially new (basis 'repeat') posts no card, nor
- * does a plain dismissal (edQuietDismissal_: logged with its reason, never in the space). {card (null when Chat held it
- * back), held (why no card was posted after the review, or ''), dismissed (the dismissal's reason, or '')}.
+ * does any other dismissal (edDismissed_: filtered out, its reason logged). {card (null when Chat held it back), held
+ * (why no card was posted after the review, or ''), dismissed (why it was filtered out as a dismissal, or '')}.
  */
 function edReviewAndPost_(ctx, row, report) {
   const now = ctx.now();
@@ -1596,10 +1596,11 @@ function edReviewAndPost_(ctx, row, report) {
     if (report) report.early_detection_held = (report.early_detection_held || 0) + 1;
     return { card: null, held: why, dismissed: '' };
   }
-  // A plain dismissal: nothing for anyone to act on, so nothing in the space (the reason is logged, C19 counts it)
-  if (edQuietDismissal_(d)) {
+  // A dismissal is filtered out: nothing of it gets through (no card, note, mark, Social Alert or T&S intake); its
+  // reason is logged and C19 counts it
+  if (edDismissed_(d)) {
     const why = d.why || 'benign or unrelated low-tier chatter';
-    ctx.log(`early detection: dismissed "${truncate_(ewText_(named), 90)}" after its review, so no card: ${truncate_(why, 240)}`);
+    ctx.log(`early detection: dismissed "${truncate_(ewText_(named), 90)}" after its review, so it was filtered out: ${truncate_(why, 240)}`);
     if (report) report.early_detection_dismissed = (report.early_detection_dismissed || 0) + 1;
     return { card: null, held: '', dismissed: why };
   }
@@ -1646,7 +1647,7 @@ function edReviewAndPost_(ctx, row, report) {
  * mid-review never loops), and a signal queued more than ED_QUEUE_MAX_AGE_MS_ ago is dropped. Right before its review,
  * the same-story dedup looks again at the cards posted since it was queued (edStoryVerdict_, the authoritative check):
  * a repeat with nothing new is dropped without a review; one that grew goes in its story's latest card's thread. A
- * review that posts no card (an issue already alerted, nothing new; or a plain dismissal: edQuietDismissal_) counts
+ * review that posts no card (an issue already alerted, nothing new; or a dismissal, filtered out: edDismissed_) counts
  * toward the run's reviews. {posted, dropped, held, dismissed, waiting}, or null when it didn't run.
  */
 function edDrainQueue_(ctx, report) {

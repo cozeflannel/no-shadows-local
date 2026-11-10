@@ -3010,8 +3010,8 @@ function pruneEarlyWaveSeen_(map, now) {
 /**
  * Today's early-detection counts (`EARLY_DETECTION_TODAY`): {day, clusters, velocity (story cards posted), queued
  * (signals queued for review today: EW_MAX_PER_DAY_ caps it), repeats (signals held back as a repeat of a story already
- * posted, with nothing new), dismissed (signals the review dismissed: no card), at (last check's time), problem}. Never
- * throws.
+ * posted, with nothing new), dismissed (signals the review dismissed, so filtered out), at (last check's time),
+ * problem}. Never throws.
  */
 function edDayState_(props) {
   const day = dayKey_();
@@ -3023,10 +3023,10 @@ function edDayState_(props) {
 /**
  * Updates today's counts in `EARLY_DETECTION_TODAY` and writes the Control C19 status note
  * (`"last check 10:15 AM · 2 waiting for review · N cluster, M velocity alert(s) today · K repeats held back · D
- * dismissed, not posted"`). `clusters` / `velocity`: story cards just posted; o.queued: signals just queued; o.repeats:
- * signals just held back as repeats; o.dismissed: signals the review just dismissed (no card); o.checked === false: a
- * review's count, which keeps the last check's time and problem; o.waiting: how many signals wait for review (read from
- * the queue when not given). Never throws.
+ * dismissals filtered out"`). `clusters` / `velocity`: story cards just posted; o.queued: signals just queued;
+ * o.repeats: signals just held back as repeats; o.dismissed: signals the review just dismissed (filtered out);
+ * o.checked === false: a review's count, which keeps the last check's time and problem; o.waiting: how many signals wait
+ * for review (read from the queue when not given). Never throws.
  */
 function noteEarlyWave_(props, clusters, velocity, problem, o) {
   const opt = o || {};
@@ -3051,7 +3051,7 @@ function noteEarlyWave_(props, clusters, velocity, problem, o) {
       `${s.queued >= EW_MAX_PER_DAY_ ? ` · daily cap of ${EW_MAX_PER_DAY_} reached, more tomorrow` : ''}` +
       ` · ${s.clusters} cluster, ${s.velocity} velocity alert${total === 1 ? '' : 's'} today` +
       `${s.repeats ? ` · ${s.repeats} repeat${s.repeats === 1 ? '' : 's'} held back` : ''}` +
-      `${s.dismissed ? ` · ${s.dismissed} dismissed, not posted` : ''}`);
+      `${s.dismissed ? ` · ${s.dismissed} dismissal${s.dismissed === 1 ? '' : 's'} filtered out` : ''}`);
   } catch (e) {
     console.error('could not count early detection alerts: ' + ((e && e.message) || e));
   }

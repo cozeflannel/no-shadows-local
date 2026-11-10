@@ -365,7 +365,7 @@ module.exports = H => {
   // 4. End-to-End Open-World Build-Up Review in Mirror Space (B9) with Relay & Outbox Active
   // ===========================================================================================================
 
-  test('early detection E2E in Mirror space (B9): discovers unknown build-up, drafts Social Alert + Temp Check + T&S behind human gate, marks \ud83d\udc4d on monitor, posts nothing for benign noise (a plain dismissal: its reason logged, C19 counts it), and NEVER leaks or relays to S-F Burson (B25) or test copy (B26)', () => {
+  test('early detection E2E in Mirror space (B9): discovers unknown build-up, drafts Social Alert + Temp Check + T&S behind human gate, marks \ud83d\udc4d on monitor, filters out benign noise (a dismissal gets through on no level: its reason logged, C19 counts it), and NEVER leaks or relays to S-F Burson (B25) or test copy (B26)', () => {
     const t = e2e();
     t.chat.addSpace(MIRROR, MIRROR_NAME);
     t.chat.addSpace(COPY, COPY_NAME);
@@ -492,8 +492,8 @@ module.exports = H => {
 
     // Pass 1: earlyWaveCheck_ reads US BigQuery and queues the 3 signals (nothing posted yet); the queue reviews 2 and
     // posts each as one story card, its review note in the thread. Pass 2 (1 minute later): the third, which the review
-    // dismisses: a plain dismissal posts nothing at all (no card, note, mark or Alert-log row), its reason is logged and
-    // Control C19 counts it
+    // dismisses, so it's filtered out: nothing of it gets through (no card, note, mark, Alert-log row, Social Alert or
+    // T&S intake); its reason is logged and Control C19 counts it
     t.poll();
     eq(edCards(t.chat, MIRROR).length, 2);
     t.g.clock.now += MIN;
@@ -506,9 +506,9 @@ module.exports = H => {
     assert.ok(t.g.vertex.calls.some(c => c.payload.contents[0].parts.map(p => p.text || '').join('').includes('ED-CLU-NOISE-1')),
       'the benign signal was reviewed');
     eq(t.chat.botPosts(MIRROR).filter(m => /pixel art|astrofan9/i.test(m.text)), []);
-    assert.ok(t.g.logs.some(l => /early detection: dismissed "Casual mentions of pixel art wallpaper packs" after its review, so no card: Off-brand pixel-art homonym unrelated to Google Pixel devices/.test(l)),
+    assert.ok(t.g.logs.some(l => /early detection: dismissed "Casual mentions of pixel art wallpaper packs" after its review, so it was filtered out: Off-brand pixel-art homonym unrelated to Google Pixel devices/.test(l)),
       t.g.logs.join('\n'));
-    assert.match(note(t), / · 1 cluster, 1 velocity alerts today · 1 dismissed, not posted$/);
+    assert.match(note(t), / · 1 cluster, 1 velocity alerts today · 1 dismissal filtered out$/);
 
     const rows = t.bot.sheetBackend_(t.sheet()).loadAlerts().filter(r => r.ingested === 'Early detection');
     eq(rows.length, 2);
@@ -576,6 +576,43 @@ module.exports = H => {
     eq(t.chat.botPosts(COPY).filter(m => /Early Detection|dialer|Locked Folder|pixel art/i.test(m.text)), []);
     const outboxTab = t.sheet().getSheetByName('Burson outbox');
     eq(outboxTab ? outboxTab.rows.slice(1) : [], []);
+    eq(lastRun(t).errors, []);
+  });
+
+  test('early detection: a dismissed signal is filtered out on every level, even when its review saw a T&S angle (a T&S form or Social Alert only ever follows a card in the space and its review): no card, review note, mark, Alert-log row, email or T&S intake; its reason is logged and C19 counts it', () => {
+    const t = e2e();
+    t.chat.addSpace(MIRROR, MIRROR_NAME);
+    t.chat.addSpace(COPY, COPY_NAME);
+    ready(t);
+    t.set('B25', ROOM);
+    t.set('B26', `https://chat.google.com/app/chat/${COPY.split('/')[1]}`);
+    t.bot.startMirror(MIRROR_NAME);
+    t.control().getRange(22, 2).setValue('ON'); // Relay ON
+    t.control().getRange(29, 2).setValue('ON'); // Safety valve: Testing
+    switchOn(t);
+    fakeBq(t.g, routes([clusterRow()]));
+    t.g.vertex.earlyDetection = () => ({
+      summary: 'A few Pixel owners say the dialer froze once after the update and works after a restart.',
+      issue_name: 'One-off Pixel dialer freeze',
+      emerging_narrative: 'Scattered one-off reports that clear after a restart.',
+      early_detection_call: { disposition: 'dismiss', severity: 'low', confidence: 0.9,
+        reason: 'One-off glitch that clears after a restart, nothing to escalate' },
+      slrr: { is_slrr: true, confidence: 0.9, exposure_tag: 'Product - Unexpected Responses', product: 'Pixel', other_products: [],
+        sensitive_topics: [] },
+      known_issue: { matches: false, confidence: 0.9 },
+      tns: { needed: true, reason: 'Emergency calling glitch' },
+      recommended_groups: [],
+    });
+    t.poll();
+    assert.ok(t.g.vertex.calls.some(c => c.payload.contents[0].parts.map(p => p.text || '').join('').includes('ED-CLU-20261014-001')),
+      'the signal was reviewed');
+    eq(edCards(t.chat, MIRROR), []);
+    eq(t.chat.botPosts(MIRROR).filter(m => /dialer|T&S (?:Intake|form)|Early Detection/i.test(m.text)), []);
+    eq([t.g.gmail.sentMessages().length, t.g.gmail.allDrafts().length], [0, 0]);
+    eq(t.bot.sheetBackend_(t.sheet()).loadAlerts().filter(r => r.ingested === 'Early detection'), []);
+    assert.ok(t.g.logs.some(l => /early detection: dismissed "Multiple users report Pixel 9 emergency dialer freezing after overnight update" after its review, so it was filtered out: One-off glitch that clears after a restart, nothing to escalate/.test(l)),
+      t.g.logs.join('\n'));
+    assert.match(note(t), / · 0 cluster, 0 velocity alerts today · 1 dismissal filtered out$/);
     eq(lastRun(t).errors, []);
   });
 
@@ -720,13 +757,13 @@ module.exports = H => {
     const unsure = B.edCardSteps_({ disposition: 'monitor', basis: 'low_confidence', why: 'May be a regression (70% sure, so a person decides)',
       rev: { disposition: 'escalate' } }, { steps: ['Send the Social Alert to Comms'] });
     eq(unsure, ['You decide on the Social Alert: May be a regression (70% sure, so a person decides).', 'Send the Social Alert to Comms']);
-    // Which reviewed calls post no card: a plain dismissal only (one with a T&S intake keeps its card; a repeat or a
-    // non-English signal is held back on its own; a monitor, an unsure or failed review, or a Social Alert always posts)
+    // Which reviewed calls are filtered out: every dismissal, whatever the review saw (even a T&S angle: a T&S form only
+    // ever follows a card in the space and its review); a monitor, an unsure or failed review, or a Social Alert posts
     eq([{ disposition: 'dismiss', basis: 'early_detection' }, { disposition: 'dismiss', basis: 'evergreen' },
       { disposition: 'dismiss', basis: 'early_detection', tnsPlanned: true }, { disposition: 'dismiss', basis: 'repeat' },
       { disposition: 'dismiss', basis: 'non_english' }, { disposition: 'monitor', basis: 'failed' },
-      { disposition: 'monitor', basis: 'low_confidence' }, { disposition: 'escalate', basis: 'p0_tag' }].map(x => B.edQuietDismissal_(x)),
-    [true, true, false, false, false, false, false, false]);
+      { disposition: 'monitor', basis: 'low_confidence' }, { disposition: 'escalate', basis: 'p0_tag' }].map(x => B.edDismissed_(x)),
+    [true, true, true, true, true, false, false, false]);
 
     // No AI review: a plain headline, story and next step from the posts themselves
     const plain = B.edStoryCardText_(ed, { disposition: 'monitor', basis: 'failed', why: 'AI review unavailable, so a person makes the call' }, NOW);
