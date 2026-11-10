@@ -1072,8 +1072,8 @@ function autoSubmitTns_(ctx, row, input, report) {
     // only sends it with its own submit, so a person is asked to
     const urgent = tnsUrgent_(input);
     const urgentLine = !urgent ? '' : `\n- Urgent (${urgent}): the bot didn't send the urgent email for this post. ` +
-      (form === 'test' ? `Live, a person would email ${TNS_URGENT_EMAIL_} with the link (not while testing).`
-        : `If nobody has, please email ${TNS_URGENT_EMAIL_} with the link: ${tnsLinkFor_(input, v.url)}`);
+      (form === 'test' ? `Live, a person would email ${tnsUrgentLabel_()} with the link (not while testing).`
+        : `If nobody has, please email ${tnsUrgentLabel_()} with the link: ${tnsLinkFor_(input, v.url)}`);
     const done = tnsAutoDecided_(ctx, row, post, key, form);
     if (done) {
       const sentBefore = !done.own && done.entry.s === 'sent';
@@ -1283,8 +1283,8 @@ function tnsAutoText_(ctx, input, entry, own, form) {
     if (entry.r) lines.push(`- Submission: ${chatLink_(entry.r, `View the submission${testing ? ' (test copy)' : ''}`)}`);
     if (urgent && entry.u === 'failed') {
       lines.push(`- Urgent (${urgent}): the bot couldn't send the urgent email${entry.ue ? ` (${entry.ue})` : ''}: ` +
-        (testing ? `live, a person would email ${TNS_URGENT_EMAIL_} with the link (not while testing).`
-          : `please email ${TNS_URGENT_EMAIL_} with the link.`));
+        (testing ? `live, a person would email ${tnsUrgentLabel_()} with the link (not while testing).`
+          : `please email ${tnsUrgentLabel_()} with the link.`));
     }
     return lines.join('\n');
   }

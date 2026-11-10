@@ -1066,9 +1066,6 @@ function seedSyntheticDistribution(sandbox) {
     syntheticRows.push([p.group_name, emails]);
   });
   sandbox.applyBrandSafetyGroups_(syntheticRows);
-  if (vm.runInContext('typeof TNS_URGENT_EMAIL_', sandbox) === 'undefined') {
-    Object.defineProperty(sandbox, 'TNS_URGENT_EMAIL_', { configurable: true, get: () => sandbox.tnsUrgentLabel_() });
-  }
 }
 
 /** Runs every .gs file in one vm context (Apps Script's shared global scope). Date.now() follows `clock` when given. */
