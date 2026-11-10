@@ -372,8 +372,18 @@ function draftPlan_(ctx, review, history) {
 /**
  * The row fields for a pending Social Alert for `review` with escalation `esc` (threaded on `related`'s email when that
  * one was sent): draftPlan_'s, and the stream triage's own Social Alert for an alert in another format (OtherAlerts.gs).
+ * One name per issue (IssueNames.gs), checked once more right before the draft: an alert whose email replies on an
+ * earlier alert's thread, or that its review tied to an existing issue, goes out under that issue's exact name, never
+ * a second name in the same thread (review.fields take it too, so the alert's row carries it).
  */
 function draftRowFor_(ctx, review, esc, related) {
+  const existing = existingIssueOf_(review, related, null);
+  if (existing && issueRenamed_(review.fields, existing)) {
+    ctx.log(`Social Alert issue name: "${existing.name}", the existing issue's (${existing.why}${existing.ref ? `, ${existing.ref}` : ''}), ` +
+      `not "${issueNameText_(review.fields.issue_name)}"`);
+    Object.assign(review.fields, withExistingIssue_(review.fields, existing));
+    esc = Object.assign({}, esc, { issue_name: existing.name });
+  }
   const input = emailInput_(review.fields, esc, switchOn_(ctx, 'noWait'));  // no_wait: Never wait on Burson (Email.gs)
   input.recommended_groups = review.recommendedGroups || [];
   input.ai_reasons = review.groupReasons || {};

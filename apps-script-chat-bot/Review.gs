@@ -94,6 +94,9 @@ function normalizeProposal_(field, value) {
  *   opts.now      epoch ms
  *   parsed.earlier  earlier alerts from the same author / for the same post / for a post this one replies under or quotes
  *                   (Escalate.gs earlierAlerts_), if any
+ *   parsed.knownIssues  the issues already alerted in the last 14 days most like this one (Bot.gs, OtherAlerts.gs
+ *                   recentKnownIssues_): Gemini says whether the alert is one of them, so it keeps that issue's name
+ *                   (rule 14b, IssueNames.gs)
  *   parsed.post     the post itself (Post.gs lookupPost_) and parsed.guidance the leads' current guidance (Control.gs
  *                   readGuidance_): both go to Gemini (Review.gs assessPrompts_)
  *   parsed.knowledge  the knowledge base's documents for this alert (Knowledge.gs knowledgeFor_): Gemini works the alert
@@ -112,8 +115,9 @@ function normalizeProposal_(field, value) {
  *   opts.llm._missed  {label, why: 'time' | 'failed'} when the review went without the post's own media (Gemini.gs
  *                   assess): a note tells analysts (mediaMissedNote_)
  * Returns {fields, fixes, silentFixes, missing, unsure, notes, changed, recordKey, issueTokens, recommendedGroups,
- *          groupReasons, socialAlert, media, translation, followUp, noAlertChecks, guidanceCount, knowledgeDocs,
- *          knowledgeUsed, earlierAlerted}, plus commsContext, mediaHeld and mediaMissed (those notes) only when there is one.
+ *          groupReasons, socialAlert, media, translation, followUp, knownIssue, knownIssueRow, existingIssue,
+ *          noAlertChecks, guidanceCount, knowledgeDocs, knowledgeUsed, earlierAlerted}, plus commsContext, mediaHeld and
+ *          mediaMissed (those notes) only when there is one.
  */
 function reviewAlert_(parsed, opts) {
   opts = opts || {};
@@ -255,13 +259,14 @@ function reviewAlert_(parsed, opts) {
   // 10. Issue status: "New" but the same issue was already reported in the last 14 days (token Jaccard OR Vector DB semantic match)
   const recordKey = recordKey_(f);
   const tokens = issueTokens_(f.issue_name || f.alert_name);
+  const novelSince = now - GEN.novelty_days * DAY_MS_;
+  // an earlier alert on this sheet with the same exposure tag and a near-identical name (rule 14b uses its name too)
+  const sameIssueRow = S.check_issue_status && finalTag && tokens.length ? (opts.history || []).find(h =>
+    h.created_at >= novelSince && h.created_at <= now && String(h.exposure_tag || '').toLowerCase() === finalTag.name.toLowerCase() &&
+    (!recordKey || h.record_key !== recordKey) && jaccard_(tokens, h.issue_tokens || []) >= GEN.novelty_min_jaccard) || null : null;
   if (S.check_issue_status && isNewStatus_(f.issue_status) && finalTag) {
-    const since = now - GEN.novelty_days * DAY_MS_;
-    const related = tokens.length ? (opts.history || []).find(h => h.created_at >= since && h.created_at <= now &&
-      String(h.exposure_tag || '').toLowerCase() === finalTag.name.toLowerCase() &&
-      (!recordKey || h.record_key !== recordKey) && jaccard_(tokens, h.issue_tokens || []) >= GEN.novelty_min_jaccard) : null;
     const vecOngoing = Boolean(bq && bq.semantic_ongoing_match);
-    if (related || vecOngoing) {
+    if (sameIssueRow || vecOngoing) {
       fix('issue_status', ONGOING_STATUS_SUFFIX_, `this issue was already reported in the last ${GEN.novelty_days} days`, 'rule', 0.95);
       if (parsed.extra && parsed.extra.burson_name_format) fix('alert_name', `${f.issue_name} / ${ONGOING_STATUS_SUFFIX_}`, 'issue status');
     }
@@ -318,6 +323,37 @@ function reviewAlert_(parsed, opts) {
   //     up on their own earlier alert. Drafts.gs decides what that means for the Social Alert (followUpSkip_).
   const followUp = S.follow_ups === false ? null
     : followUpOf_(parsed.earlier || [], opts.llm ? opts.llm.follow_up : undefined, f, now);
+
+  // 14b. One name per issue (IssueNames.gs): an alert on an issue already alerted in the last 14 days takes that issue's
+  //      exact name and the Ongoing Issue status, as SLRR's tools count and group alerts by name. What ties it: the
+  //      earlier alert it repeats or follows up on, an earlier alert with the same tag and a near-identical name (rule
+  //      10), Gemini's call that it's one of the EXISTING ISSUES it was shown (at ISSUE_MATCH_MIN_CONFIDENCE_; a less sure
+  //      call is a question for analysts), or its own name written differently. Gemini's wording suggestions for an
+  //      existing issue's name are dropped: one name for the issue beats a better one. A repeat of the same post is left
+  //      as it is: nothing to ask of Burson for it (it's marked no action, or its update email replies on the earlier one
+  //      and takes that issue's name right before it's drafted: Drafts.gs draftRowFor_)
+  const repeatOfPost = !!(followUp && followUp.by === 'same_post');
+  const kiSeen = S.check_issue_status && !repeatOfPost ? knownIssueCall_(opts.llm, parsed.knownIssues, ISSUE_MATCH_UNSURE_MIN_) : null;
+  const knownIssue = kiSeen && kiSeen.confidence >= ISSUE_MATCH_MIN_CONFIDENCE_ ? kiSeen : null;
+  const existingIssue = S.check_issue_status && !repeatOfPost
+    ? existingIssueOf_({ fields: f, followUp, knownIssue }, null, parsed.knownIssues, sameIssueRow) : null;
+  if (existingIssue) {
+    const byGemini = existingIssue.by === 'gemini';
+    if (issueRenamed_(f, existingIssue)) {
+      fix('issue_name', existingIssue.name, `use the existing issue's name: ${existingIssue.why}`, byGemini ? 'llm' : 'rule',
+        byGemini ? knownIssue.confidence : 0.95);
+    }
+    if (isNewStatus_(f.issue_status)) {
+      fix('issue_status', ONGOING_STATUS_SUFFIX_, `this issue was already reported in the last ${GEN.novelty_days} days`, 'rule', 0.95);
+    }
+    if (parsed.extra && parsed.extra.burson_name_format) fix('alert_name', `${existingIssue.name} / ${ONGOING_STATUS_SUFFIX_}`, 'issue name');
+    for (let i = unsure.length - 1; i >= 0; i--) {
+      if (unsure[i].field === 'issue_name') unsure.splice(i, 1);
+    }
+  } else if (kiSeen && issueNameKey_(kiSeen.issue_name) !== issueNameKey_(f.issue_name)) {
+    unsure.push({ field: 'issue_name', proposed: kiSeen.issue_name, confidence: kiSeen.confidence,
+      finding: `may be the existing issue "${kiSeen.issue_name}" (the same story as an issue already alerted)` });
+  }
 
   // 15. Gemini's no-alert checks (the reasons an IM marks even a KOF author's alert ❌). Drafts.gs aiVeto_ acts on them only
   //     when the bot can back them up: an earlier alerted post, the leads' guidance, the knowledge base, or the post itself.
@@ -493,6 +529,11 @@ function reviewAlert_(parsed, opts) {
     } : null,
     translation: tr,
     followUp,
+    // one name per issue (rule 14b): Gemini's call that it's an existing issue (its row: the email to reply on), and why
+    // the alert carries that issue's name
+    knownIssue,
+    knownIssueRow: knownIssue && knownIssue.entry && knownIssue.entry.row ? knownIssue.entry.row : null,
+    existingIssue,
     noAlertChecks,
     guidanceCount: (parsed.guidance || []).length,  // current lead guidance Gemini saw (Control.gs readGuidance_)
     // the knowledge base (Knowledge.gs): how many documents Gemini was given, and the ones it said it relied on
@@ -797,6 +838,7 @@ function assessPrompts_(parsed, media) {
     postPrompt_(parsed && parsed.post) +
     (typeof feedTextPrompt_ === 'function' ? feedTextPrompt_(parsed && parsed.bq) : '') +
     earlierAlertsPrompt_(parsed && parsed.earlier) +
+    existingIssuesPrompt_(parsed && parsed.knownIssues) +
     guidancePrompt_(parsed && parsed.guidance, !!(parsed && parsed.kbStartAlerts)) +
     NO_ALERT_PROMPT_ +
     kbStartPrompt_(parsed) +
@@ -1339,14 +1381,17 @@ const COMMS_CONTEXT_SCHEMA_ = {
 
 /**
  * The response schema for one review (Gemini.gs assess): ASSESS_SCHEMA_ itself, or a copy with what the switches that
- * are ON ask Gemini for (KB & Guidance can start alerts: social_alert.per; Check outage & comms docs: comms_context).
+ * are ON ask Gemini for (KB & Guidance can start alerts: social_alert.per; Check outage & comms docs: comms_context),
+ * and known_issue when the alert was shown the existing issues most like it (IssueNames.gs existingIssuesPrompt_).
  * ASSESS_SCHEMA_ itself never changes. Pure.
  */
 function assessSchema_(parsed) {
   const p = parsed || {};
-  if (!p.kbStartAlerts && !p.outageComms) return ASSESS_SCHEMA_;
+  const known = Array.isArray(p.knownIssues) && p.knownIssues.length > 0;
+  if (!p.kbStartAlerts && !p.outageComms && !known) return ASSESS_SCHEMA_;
   const schema = JSON.parse(JSON.stringify(ASSESS_SCHEMA_));
   if (p.kbStartAlerts) schema.properties.social_alert.properties.per = JSON.parse(JSON.stringify(KB_PER_SCHEMA_));
   if (p.outageComms) schema.properties.comms_context = JSON.parse(JSON.stringify(COMMS_CONTEXT_SCHEMA_));
+  if (known) schema.properties.known_issue = JSON.parse(JSON.stringify(KNOWN_ISSUE_SCHEMA_));
   return schema;
 }

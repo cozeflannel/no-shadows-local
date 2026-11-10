@@ -1268,12 +1268,16 @@ function parseAuthorAlerts_(json) {
   }
 }
 
-const BQ_RECENT_ISSUES_CACHE_KEY_ = 'bq_recent_slrr_issues_v1';
+const BQ_RECENT_ISSUES_CACHE_KEY_ = 'bq_recent_slrr_issues_v2';
 const BQ_RECENT_ISSUES_TTL_SEC_ = 900;  // 15 minutes
+const BQ_RECENT_ISSUES_MAX_ = 300;      // distinct issues alerted in 14 days (~330 in Oct-Nov 2026): the whole window
+const BQ_RECENT_ISSUES_CACHE_CHARS_ = 95000;  // CacheService takes 100 KB a value
 
 /**
  * Distinct issues alerted in the SLRR master log over the last 14 days (cached 15 minutes), so non-Burson / Watch flows
- * know what stories have already been alerted across SLRR even when posted by a new author. Never throws.
+ * know what stories have already been alerted across SLRR even when posted by a new author, and every flow can keep an
+ * issue's one name (IssueNames.gs). The whole window, BQ_RECENT_ISSUES_MAX_ at most, the most recent first; a list too
+ * long for the cache goes in it with shorter summaries. Never throws.
  */
 function recentSlrrIssues_(settings) {
   const S = settings || GEN.settings || {};
@@ -1294,7 +1298,7 @@ function recentSlrrIssues_(settings) {
     '  COUNT(DISTINCT url) AS alert_count,',
     '  MAX(engagements_actual) AS max_engagements,',
     '  MAX(date_added) AS latest_date,',
-    '  ARRAY_AGG(SUBSTR(REPLACE(overview, "\\n", " "), 1, 220) ORDER BY d DESC LIMIT 1)[OFFSET(0)] AS overview',
+    '  ARRAY_AGG(SUBSTR(REPLACE(overview, "\\n", " "), 1, 160) ORDER BY d DESC LIMIT 1)[OFFSET(0)] AS overview',
     'FROM (',
     '  SELECT SAFE.PARSE_TIMESTAMP("%Y-%m-%dT%H:%M:%E*SZ", date_added) AS d, date_added, url,',
     '    issue_name, product, exposure_tag, engagements_actual, overview',
@@ -1307,10 +1311,10 @@ function recentSlrrIssues_(settings) {
     'WHERE d >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)',
     'GROUP BY LOWER(TRIM(issue_name))',
     'ORDER BY MAX(d) DESC',
-    'LIMIT 20',
+    `LIMIT ${BQ_RECENT_ISSUES_MAX_}`,
   ].join('\n');
   try {
-    const rows = bqQuery_(sql, {}, 7000) || [];
+    const rows = bqQuery_(sql, {}, 9000) || [];
     const out = rows.filter(r => r && r.issue_name).map(r => {
       const eng = Number(r.max_engagements);
       return {
@@ -1324,7 +1328,14 @@ function recentSlrrIssues_(settings) {
       };
     });
     if (cache) {
-      try { cache.put(BQ_RECENT_ISSUES_CACHE_KEY_, JSON.stringify(out), BQ_RECENT_ISSUES_TTL_SEC_); } catch (e) {}
+      try {
+        let json = JSON.stringify(out);
+        if (json.length > BQ_RECENT_ISSUES_CACHE_CHARS_) {
+          json = JSON.stringify(out.map(x => Object.assign({}, x, { summary: truncate_(x.summary, 60) })));
+        }
+        if (json.length > BQ_RECENT_ISSUES_CACHE_CHARS_) json = JSON.stringify(out.map(x => Object.assign({}, x, { summary: '' })));
+        if (json.length <= BQ_RECENT_ISSUES_CACHE_CHARS_) cache.put(BQ_RECENT_ISSUES_CACHE_KEY_, json, BQ_RECENT_ISSUES_TTL_SEC_);
+      } catch (e) {}
     }
     return out;
   } catch (e) {

@@ -102,7 +102,8 @@ module.exports = H => {
     const t = e2e(null, { noWait: true });
     t.bot.setup();
     t.set('B30', 'tester@testing.test');
-    const calls = fakeBq(t.g, () => ({ rows: [feedRow()] }));
+    // every query gets the feed row, but the list of issues alerted lately (IssueNames.gs): none
+    const calls = fakeBq(t.g, c => (/ AS alert_count/.test(c.sql) ? { rows: [] } : { rows: [feedRow()] }));
     t.chat.say(TEST_FEED, F.NO_LINK, { sender: 'users/bot' });
     t.poll();
     eq(calls.filter(c => isLinkQuery(c) || isAuthorQuery(c)), []);

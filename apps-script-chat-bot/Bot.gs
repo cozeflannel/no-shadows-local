@@ -668,6 +668,9 @@ function handleAlert_(ctx, m, parsed, report) {
   // Earlier alerts this one may repeat or follow up on (same post, same author, or a post it replies under or quotes):
   // Gemini sees them too
   if (S.follow_ups !== false) parsed.earlier = earlierAlerts_(parsed.fields, history, parsed.bq, now, parsed.post);
+  // The issues already alerted in the last 14 days most like this one (IssueNames.gs): Gemini says whether the alert is
+  // one of them, so it keeps that issue's name instead of starting a second name for it
+  if (S.follow_ups !== false) parsed.knownIssues = knownIssuesFor_(ctx, parsed, history, now);
   // The SLRR leads' current guidance on what to escalate (the Guidance tab and their recent emails)
   try { parsed.guidance = ctx.guidance || []; } catch (e) { parsed.guidance = []; }
   // KB & Guidance can start alerts (Control tab row 13): Gemini cites the row or document that says to alert, if any

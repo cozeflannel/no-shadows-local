@@ -727,7 +727,9 @@ function otherCollected_(fields, eng) {
  * What Drafts.gs and Escalate.gs read of a review (Review.gs reviewAlert_), for an alert in another format: its fields,
  * record key and issue tokens, the follow-up check (Escalate.gs followUpOf_, with Gemini's call), Gemini's SLRR "is a
  * Social Alert warranted" (aiVeto_ reads it as for Burson's alerts; the evergreen-noise gate as there), the teams and T&S
- * call, the knowledge it used and the picture of the post for the email. Pure.
+ * call, the knowledge it used and the picture of the post for the email. A post on an issue already alerted takes that
+ * issue's exact name and the Ongoing Issue status (IssueNames.gs: `fields` is updated in place, so the alert, its
+ * Social Alert and its Alert-log row all carry it; existingIssue says why). Pure but for `fields`.
  */
 function otherReview_(parsed, tri, fields, llm, now) {
   const S = GEN.settings || {};
@@ -743,10 +745,12 @@ function otherReview_(parsed, tri, fields, llm, now) {
   }
   const knownIssue = tri && tri.knownIssue ? tri.knownIssue : null;
   const knownIssueRow = knownIssue && knownIssue.entry && knownIssue.entry.row ? knownIssue.entry.row : null;
+  const followUp = S.follow_ups === false ? null : followUpOf_(parsed.earlier || [], llm ? llm.follow_up : undefined, fields, now);
+  const existingIssue = existingIssueOf_({ fields, followUp, knownIssue }, null, parsed.knownIssues);
+  if (existingIssue) Object.assign(fields, withExistingIssue_(fields, existingIssue));
   return {
     fields, recordKey: recordKey_(fields), issueTokens: issueTokens_(fields.issue_name || ''),
-    followUp: S.follow_ups === false ? null : followUpOf_(parsed.earlier || [], llm ? llm.follow_up : undefined, fields, now),
-    knownIssue, knownIssueRow,
+    followUp, knownIssue, knownIssueRow, existingIssue,
     socialAlert, noAlertChecks: null,
     recommendedGroups: Object.keys(groupReasons), groupReasons,
     guidanceCount: (parsed.guidance || []).length,
@@ -757,21 +761,24 @@ function otherReview_(parsed, tri, fields, llm, now) {
 
 /**
  * Recent alerted issues across SLRR spaces (`history`) and the 14-day SLRR master log (`slrrIssues`), deduplicated by
- * issue name and leaving out the post itself and posts already listed in `earlier`. Gemini uses this list to judge
- * semantically whether a post from a new author repeats a known/ongoing issue. Pure.
+ * issue name (IssueNames.gs issueNameKey_: the master log's spelling of a name wins) and leaving out the post itself and
+ * posts already listed in `earlier`; the issues most like this alert first (its name, summary and post against each
+ * issue's name and summary), then the most recent, OTHER_KNOWN_ISSUES_MAX_ at most. Gemini uses this list to judge
+ * semantically whether a post from a new author repeats a known/ongoing issue, and the alert then keeps that issue's
+ * name. Pure.
  */
 function recentKnownIssues_(fields, history, slrrIssues, earlier, now) {
   const f = fields || {};
   const selfKey = recordKey_(f);
   const earlierKeys = new Set((earlier || []).map(e => recordKey_({ post_url: e.url })).filter(Boolean));
-  const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const norm = s => issueNameKey_(s);
   const byIssue = new Map();
   (history || []).forEach(h => {
     const at = Number(h.created_at) || 0;
     if (!at || at > now || earlierOutcome_(h) !== 'alerted') return;
     if ((selfKey && h.record_key === selfKey) || (h.record_key && earlierKeys.has(h.record_key))) return;
     const v = h.fields || {};
-    const name = String(v.issue_name || v.issue_title || '').trim();
+    const name = issueNameText_(v.issue_name || v.issue_title || '');
     const k = norm(name);
     if (!k) return;
     const eng = Number.isInteger(v.total_engagement) ? v.total_engagement : null;
@@ -802,7 +809,7 @@ function recentKnownIssues_(fields, history, slrrIssues, earlier, now) {
     }
   });
   (slrrIssues || []).forEach(r => {
-    const name = String((r && r.issue_name) || '').trim();
+    const name = issueNameText_((r && r.issue_name) || '');
     const k = norm(name);
     if (!k) return;
     const at = Number(r.latest_at) || 0;
@@ -817,6 +824,7 @@ function recentKnownIssues_(fields, history, slrrIssues, earlier, now) {
         alert_id: '', source: 'SLRR master log', row: null,
       });
     } else {
+      cur.issue_name = name;  // the name as the master log writes it: SLRR's tools go by that one
       cur.count = Math.max(cur.count, count);
       if (eng !== null && (cur.max_engagement === null || eng > cur.max_engagement)) cur.max_engagement = eng;
       if (at > cur.latest_at) cur.latest_at = at;
@@ -825,12 +833,23 @@ function recentKnownIssues_(fields, history, slrrIssues, earlier, now) {
       if (!cur.summary && r.summary) cur.summary = truncate_(String(r.summary).replace(/\s+/g, ' ').trim(), 220);
     }
   });
+  // How much an issue is like this alert: its name's words count double, its summary's once (stopwords aside)
+  const want = new Set(issueTokens_([f.issue_name, f.alert_name, f.summary, truncate_(String(f.post_content || ''), 600)]
+    .filter(Boolean).join(' ')));
+  const likeness = x => {
+    if (!want.size) return 0;
+    let s = 0;
+    issueTokens_(x.issue_name).forEach(t => { if (want.has(t)) s += 2; });
+    issueTokens_(x.summary).forEach(t => { if (want.has(t)) s += 1; });
+    return s;
+  };
   return Array.from(byIssue.values())
-    .sort((a, b) => (b.latest_at - a.latest_at) || (b.count - a.count))
+    .map(x => ({ x, s: likeness(x) }))
+    .sort((a, b) => (b.s - a.s) || (b.x.latest_at - a.x.latest_at) || (b.x.count - a.x.count))
     .slice(0, OTHER_KNOWN_ISSUES_MAX_)
-    .map((x, i) => Object.assign(x, {
+    .map((y, i) => Object.assign(y.x, {
       n: i + 1,
-      days_ago: x.latest_at ? Math.max(0, Math.floor((now - x.latest_at) / DAY_MS_)) : null,
+      days_ago: y.x.latest_at ? Math.max(0, Math.floor((now - y.x.latest_at) / DAY_MS_)) : null,
     }));
 }
 

@@ -410,20 +410,28 @@ function edMergedFields_(parsed, rev) {
   return f;
 }
 
-/** Builds the `review` object expected by `Drafts.gs` / `Escalate.gs` for an Early Detection signal. Pure. */
+/**
+ * Builds the `review` object expected by `Drafts.gs` / `Escalate.gs` for an Early Detection signal. A signal on an issue
+ * already alerted takes that issue's exact name and the Ongoing Issue status (IssueNames.gs: `fields` is updated in
+ * place; existingIssue says why). Pure but for `fields`.
+ */
 function edBuildReview_(parsed, rev, fields, llm, now) {
   const S = GEN.settings || {};
   const groupReasons = Object.assign({}, (rev && rev.teamReasons) || {});
   if (rev && rev.tns && !Object.prototype.hasOwnProperty.call(groupReasons, 'tns')) groupReasons.tns = rev.tns;
   const knownIssue = rev && rev.knownIssue ? rev.knownIssue : null;
   const knownIssueRow = knownIssue && knownIssue.entry && knownIssue.entry.row ? knownIssue.entry.row : null;
+  const followUp = S.follow_ups === false ? null : followUpOf_(parsed.earlier || [], llm ? llm.follow_up : undefined, fields, now);
+  const existingIssue = existingIssueOf_({ fields, followUp, knownIssue }, null, parsed.knownIssues);
+  if (existingIssue) Object.assign(fields, withExistingIssue_(fields, existingIssue));
   return {
     fields,
     recordKey: recordKey_(fields),
     issueTokens: issueTokens_(fields.issue_name || ''),
-    followUp: S.follow_ups === false ? null : followUpOf_(parsed.earlier || [], llm ? llm.follow_up : undefined, fields, now),
+    followUp,
     knownIssue,
     knownIssueRow,
+    existingIssue,
     socialAlert: rev ? { warranted: rev.disposition === 'escalate', confidence: rev.confidence, reason: rev.reason } : null,
     noAlertChecks: null,
     recommendedGroups: Object.keys(groupReasons),
