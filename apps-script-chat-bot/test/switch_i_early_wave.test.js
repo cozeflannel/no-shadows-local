@@ -365,7 +365,7 @@ module.exports = H => {
   // 4. End-to-End Open-World Build-Up Review in Mirror Space (B9) with Relay & Outbox Active
   // ===========================================================================================================
 
-  test('early detection E2E in Mirror space (B9): discovers unknown build-up, drafts Social Alert + Temp Check + T&S behind human gate, marks 👍 on monitor and ❌ on benign noise, and NEVER leaks or relays to S-F Burson (B25) or test copy (B26)', () => {
+  test('early detection E2E in Mirror space (B9): discovers unknown build-up, drafts Social Alert + Temp Check + T&S behind human gate, marks \ud83d\udc4d on monitor, posts nothing for benign noise (a plain dismissal: its reason logged, C19 counts it), and NEVER leaks or relays to S-F Burson (B25) or test copy (B26)', () => {
     const t = e2e();
     t.chat.addSpace(MIRROR, MIRROR_NAME);
     t.chat.addSpace(COPY, COPY_NAME);
@@ -491,19 +491,27 @@ module.exports = H => {
     };
 
     // Pass 1: earlyWaveCheck_ reads US BigQuery and queues the 3 signals (nothing posted yet); the queue reviews 2 and
-    // posts each as one story card, its review note in the thread. Pass 2 (1 minute later): the third.
+    // posts each as one story card, its review note in the thread. Pass 2 (1 minute later): the third, which the review
+    // dismisses: a plain dismissal posts nothing at all (no card, note, mark or Alert-log row), its reason is logged and
+    // Control C19 counts it
     t.poll();
     eq(edCards(t.chat, MIRROR).length, 2);
     t.g.clock.now += MIN;
     t.poll();
     const cards = edCards(t.chat, MIRROR);
-    eq(cards.length, 3);
+    eq(cards.length, 2);
     const cardFor = rx => cards.find(c => rx.test(c.text));
-    const ordered = [cardFor(/Pixel 9 owners say/), cardFor(/Locked Folder/), cardFor(/pixel art/i)];
+    const ordered = [cardFor(/Pixel 9 owners say/), cardFor(/Locked Folder/)];
     assert.ok(ordered.every(Boolean), cards.map(c => c.text).join('\n----\n'));
+    assert.ok(t.g.vertex.calls.some(c => c.payload.contents[0].parts.map(p => p.text || '').join('').includes('ED-CLU-NOISE-1')),
+      'the benign signal was reviewed');
+    eq(t.chat.botPosts(MIRROR).filter(m => /pixel art|astrofan9/i.test(m.text)), []);
+    assert.ok(t.g.logs.some(l => /early detection: dismissed "Casual mentions of pixel art wallpaper packs" after its review, so no card: Off-brand pixel-art homonym unrelated to Google Pixel devices/.test(l)),
+      t.g.logs.join('\n'));
+    assert.match(note(t), / · 1 cluster, 1 velocity alerts today · 1 dismissed, not posted$/);
 
     const rows = t.bot.sheetBackend_(t.sheet()).loadAlerts().filter(r => r.ingested === 'Early detection');
-    eq(rows.length, 3);
+    eq(rows.length, 2);
 
     // The escalated cluster's card: the siren header, Gemini's headline on its own line, the SLRR lines, its story with
     // ONLY the signal's posts linked inline (a made-up link and a post it never had stay plain words), next steps, what
@@ -528,13 +536,9 @@ module.exports = H => {
     assert.ok(!/\(P\d\)/.test(story.replace(/^\*Exposure Tag:\*.*$/m, '')), story);  // no leftover post refs
     assert.ok(!/https?:\/\//.test(story.replace(/<https?:\/\/[^|>\s]+\|[^>]*>/g, '')), 'every link is a <url|text> link');
     eq((ordered[0].attachment || []).map(a => a.contentType), ['image/jpeg']);
-    // No AI story (the other two reviews gave none): a plain one from the posts, still every post linked
-    assert.ok(ordered[2].text.startsWith('\ud83d\udea8 *Early Detection Alert* \ud83d\udea8\n*9 accounts posting \u201cCasual mentions of pixel art wallpaper packs\u201d*\n*Product:* '), ordered[2].text);
-    assert.ok(ordered[2].text.includes('\n*Exposure Tag:* None (not a Google brand-safety issue)\n*Sensitive Topic:* None\n*KOF:* No (9 small, non-KOF accounts)\n\n'), ordered[2].text);
-    // a dismissal says what it means (no action needed) and why, apart from how far the chatter spread
-    assert.ok(ordered[2].text.includes('\n\u2022 *Call:* \u274c Dismissed (no action needed): Off-brand pixel-art homonym unrelated to Google Pixel devices\n\u2022 *Activity:* 9 small accounts on '), ordered[2].text);
-    assert.ok(ordered[2].text.includes(`A typical post: \u201cCheck out my retro pixel art wallpaper pack for desktop setups!\u201d (<${NOISE_URL}|@astrofan9>).`), ordered[2].text);
-    assert.ok(ordered[2].text.includes('1. No action: Off-brand pixel-art homonym unrelated to Google Pixel devices.'), ordered[2].text);
+    // No AI story (the monitor review gave none): a plain headline from the posts; the call and why in words
+    assert.ok(ordered[1].text.startsWith('\ud83d\udea8 *Early Detection Alert* \ud83d\udea8\n*12 accounts posting \u201cMy Locked Folder in Photos'), ordered[1].text);
+    assert.ok(ordered[1].text.includes('\n\u2022 *Call:* \ud83d\udc4d Monitor build-up: 5.4x velocity spike across Reddit and X could be a transient sync delay or a broader data-visibility bug\n'), ordered[1].text);
     for (const c of ordered) {
       eq(B.outboxGuardHits_(c.text, { terms: ['SLRR Triaged Alerts', 'AAQAaLn375E'] }), []);
       assert.ok(!B.detectAlert_(c.text, B.parseAlert_(c.text), 'Lucas Hammonds'), 'never mistaken for a Zapier/Burson alert');
@@ -566,11 +570,6 @@ module.exports = H => {
     assert.ok(c2Replies.some(p => p.text.includes('*Early Detection Review: \ud83d\udc4d Monitor build-up*') &&
       p.text.includes('*Draft Temp Check query:* `"Google Photos" AND "Locked Folder"')));
     assert.ok(t.chat.botReactions(ordered[1].name).includes('\ud83d\udc4d'));
-
-    // Card 3 (dismiss): ❌ reaction, no email
-    const c3Replies = t.chat.botPosts(MIRROR).filter(p => p.thread.name === ordered[2].thread.name && p.name !== ordered[2].name);
-    assert.ok(c3Replies.some(p => p.text.includes('*Early Detection Review: \u274c Dismissed*')));
-    eq(t.chat.botReactions(ordered[2].name), ['\u274c']);
 
     // Zero leaks or relays to live S-F Burson (REAL), Burson test copy (COPY), or Burson outbox
     eq(t.chat.botPosts(REAL), []);
@@ -721,6 +720,13 @@ module.exports = H => {
     const unsure = B.edCardSteps_({ disposition: 'monitor', basis: 'low_confidence', why: 'May be a regression (70% sure, so a person decides)',
       rev: { disposition: 'escalate' } }, { steps: ['Send the Social Alert to Comms'] });
     eq(unsure, ['You decide on the Social Alert: May be a regression (70% sure, so a person decides).', 'Send the Social Alert to Comms']);
+    // Which reviewed calls post no card: a plain dismissal only (one with a T&S intake keeps its card; a repeat or a
+    // non-English signal is held back on its own; a monitor, an unsure or failed review, or a Social Alert always posts)
+    eq([{ disposition: 'dismiss', basis: 'early_detection' }, { disposition: 'dismiss', basis: 'evergreen' },
+      { disposition: 'dismiss', basis: 'early_detection', tnsPlanned: true }, { disposition: 'dismiss', basis: 'repeat' },
+      { disposition: 'dismiss', basis: 'non_english' }, { disposition: 'monitor', basis: 'failed' },
+      { disposition: 'monitor', basis: 'low_confidence' }, { disposition: 'escalate', basis: 'p0_tag' }].map(x => B.edQuietDismissal_(x)),
+    [true, true, false, false, false, false, false, false]);
 
     // No AI review: a plain headline, story and next step from the posts themselves
     const plain = B.edStoryCardText_(ed, { disposition: 'monitor', basis: 'failed', why: 'AI review unavailable, so a person makes the call' }, NOW);

@@ -729,7 +729,7 @@ module.exports = H => {
     eq([writes(t), outbox(t)], [[], []]);
   });
 
-  test('Watch alerts: one story, one alert: of several flags on the same story (the AI pre-read says so), the most engaging is posted in the space and the others are listed in its thread (a: \'g\'), named on its Same story line; a later flag on that story joins the same thread, unless it raises the stakes (2,000+ engagements: an alert of its own); C35 counts them', () => {
+  test('Watch alerts: one story, one alert: of several flags on the same story (the AI pre-read says so), the lead post goes in the space (one the pre-read judged meaningful enough to post about; the most followers when a post has no engagement count, as for the X posts here) and the others are listed in its thread (a: \'g\'), named on its Same story line; a later flag on that story joins the same thread, unless it raises the stakes (2,000+ engagements: an alert of its own); C35 counts them', () => {
     const w = world(OTHER);
     const { t } = w;
     t.g.vertex.triage = triage();
@@ -742,7 +742,9 @@ module.exports = H => {
     const STORY = 'NHTSA investigates Waymo robotaxis passing stopped school buses';
     const waymo = (url, author, platform, followers, eng, impact, summary) => hit({ post_url: url, author, platform, followers, eng,
       impact, summary, issue: 'Waymo school bus investigation' });
+    const asked = [];
     t.g.vertex.watchPreRead = payload => {
+      asked.push(payload);
       const { posts, recent } = preReadOf(payload);
       const first = posts.find(p => /Waymo/.test(p.text || ''));
       const prior = recent.find(r => /Waymo/.test(r.story || ''));
@@ -751,7 +753,7 @@ module.exports = H => {
         return { ref: p.ref, summary: p.text || '', about_google: true, product: story ? 'Waymo' : 'Search', other_products: [],
           exposure_tag: story ? 'Product - Product failures - physical safety issues' : 'Brand - Conspiratorial theories about Google',
           sensitive_topics: [], story: story ? STORY : 'Election-rigging claim naming Google',
-          same_story_as: !story ? '' : prior ? prior.ref : first.ref !== p.ref ? first.ref : '' };
+          same_story_as: !story ? '' : prior ? prior.ref : first.ref !== p.ref ? first.ref : '', meaningful: true };
       }) };
     };
     look(w, [hit({ impact: 9 }),
@@ -763,31 +765,50 @@ module.exports = H => {
         'X account FOX2News (414.9K followers) reported a federal investigation into a recall of nearly 3,000 Waymo vehicles.'),
       waymo(FOX13, 'fox13seattle', 'instagram', 175000, 20, 5,
         'Instagram account fox13seattle (175,000 followers) posted a news graphic: feds investigate the Waymo recall.')]);
-    // two alerts in the space: the election claim, and ONE for the Waymo story: its most engaging post (20 engagements)
+    // two alerts in the space: the election claim, and ONE for the Waymo story: WSJ's (X gives no engagement count, so
+    // the story goes by followers: 22.3M, over fox13seattle's 20 engagements and 175,000 followers)
     let out = posted(t, MID);
     eq(out.length, 2);
     const alertOf = url => out.find(m => m.text.includes(url));
-    const story = alertOf(FOX13);
+    const story = alertOf(WSJ);
     assert.ok(story && alertOf(POST), out.map(m => m.text).join('\n---\n'));
-    eq([WSJ, FOX29, FOX2].map(u => !!alertOf(u)), [false, false, false]);
+    eq([FOX13, FOX29, FOX2].map(u => !!alertOf(u)), [false, false, false]);
     assert.ok(story.text.includes('\n*Product:* Waymo\n*Exposure Tag:* Product - Product failures - physical safety issues (P1)\n'), story.text);
-    assert.ok(story.text.endsWith('\n*Same story:* 3 more posts in the thread (FOX 29, The Wall Street Journal, FOX 2 Detroit)'), story.text);
-    // the others: one reply in its thread, the most engaging first, each linked and summed up
+    assert.ok(story.text.endsWith('\n*Same story:* 3 more posts in the thread (FOX 29, FOX 2 Detroit, fox13seattle)'), story.text);
+    // the others: one reply in its thread, in the same order (the most followers first), each linked and summed up
     const storyReplies = () => inThread(t, MID, story).filter(m => /^\ud83d\udd17 /.test(m.text));
     eq(storyReplies().length, 1);
     const reply = storyReplies()[0].text.split('\n');
     eq(reply[0], '\ud83d\udd17 *Same story: 3 more posts*');
     assert.ok(reply[1].startsWith(`\u2022 <${FOX29}|FOX 29> \u00b7 Facebook \u00b7 1,900,000 followers \u00b7 5 engagements \u2014 Facebook page FOX 29`), reply[1]);
-    assert.ok(reply[2].startsWith(`\u2022 <${WSJ}|The Wall Street Journal> \u00b7 X \u00b7 22,280,000 followers \u2014 X account WSJ`), reply[2]);
-    assert.ok(reply[3].startsWith(`\u2022 <${FOX2}|FOX 2 Detroit> \u00b7 X \u00b7 414,861 followers \u2014 `), reply[3]);
+    assert.ok(reply[2].startsWith(`\u2022 <${FOX2}|FOX 2 Detroit> \u00b7 X \u00b7 414,861 followers \u2014 X account FOX2News`), reply[2]);
+    assert.ok(reply[3].startsWith(`\u2022 <${FOX13}|fox13seattle> \u00b7 Instagram \u00b7 175,000 followers \u00b7 20 engagements \u2014 `), reply[3]);
     const byKey = () => Object.fromEntries(keys(t).map(k => [k.k, k]));
     const rk = u => B.recordKey_({ post_url: u });
     let k = byKey();
-    eq([FOX13, WSJ, FOX29, FOX2, POST].map(u => k[rk(u)].a), ['p', 'g', 'g', 'g', 'p']);
-    eq([k[rk(WSJ)].pm, k[rk(WSJ)].t, k[rk(FOX13)].st], [story.name, story.thread.name, STORY]);
+    eq([WSJ, FOX13, FOX29, FOX2, POST].map(u => k[rk(u)].a), ['p', 'g', 'g', 'g', 'p']);
+    eq([k[rk(FOX13)].pm, k[rk(FOX13)].t, k[rk(WSJ)].st], [story.name, story.thread.name, STORY]);
     assert.match(c35(t), / \u00b7 today: 2 posted, \+3 in their story's thread$/);
+    // Gemini weighs each post as a whole: whether it's meaningful enough to post about (a missing engagement count is
+    // unknown, never held against it); its answer is kept per flag (null when it didn't say)
+    assert.ok(asked[0].systemInstruction.parts[0].text.includes('A post without `engagements` has no count from its source (unknown, not zero)'));
+    assert.ok(B.pwPreReadSchema_().properties.watch_posts.items.required.includes('meaningful'));
+    eq(B.pwPreReadOf_({ watch_posts: [{ ref: 'C1', summary: 's', about_google: true, story: 'a', meaningful: false },
+      { ref: 'C2', summary: 's', about_google: true, story: 'b' }] }, 2, 0).map(p => p.meaningful), [false, null]);
+    // the lead, in every case: a post judged meaningful first (one judged not never leads, whatever its reach; one it said
+    // nothing on comes between), then a KOF author, then a post past 2,000 engagements, then the most engagements when
+    // every post in the story has a count, else the most followers
+    const flag = (eng, followers, o) => ({ q: {}, a: Object.assign({ eng, followers, score: 7 }, o || {}) });
+    const order = (list, pre) => B.pwStoryOrder_(list.map((x, i) => i), list, pre || null);
+    const said = v => ({ meaningful: v });
+    eq(order([flag(20, 175000), flag(0, 22280000), flag(5, 1900000)]), [1, 2, 0]);
+    eq(order([flag(20, 175000), flag(4, 22280000), flag(5, 1900000)]), [0, 2, 1]);
+    eq(order([flag(20, 175000), flag(0, 22280000)], [said(true), said(false)]), [0, 1]);
+    eq(order([flag(0, 22280000), flag(20, 175000), flag(5, 1900000)], [null, said(true), said(false)]), [1, 0, 2]);
+    eq(order([flag(0, 22280000), flag(3, 9000, { tax: { k: true } })]), [1, 0]);
+    eq(order([flag(0, 60000), flag(2500, 50000)]), [1, 0]);
     // 5 minutes on: Engadget on the same story joins that thread (the pre-read matched it to the alert posted); a post
-    // with 2,500 engagements raises the stakes (the alert's had 20): an alert of its own
+    // with 2,500 engagements raises the stakes (the alert's post had no count): an alert of its own
     look(w, [waymo(ENGADGET, 'Engadget', 'facebook', 1600000, 4, 7,
       'Facebook page Engadget (1.6M followers) reported NHTSA is investigating whether Waymo robotaxis fail to stop for school buses.'),
     waymo(BIG, '@BigNews', 'twitter', 50000, 2500, 6, 'X account @BigNews (50K followers) says Waymo robotaxis keep passing school buses.')]);

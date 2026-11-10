@@ -120,7 +120,7 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
       }
       try {
         const drained = edDrainQueue_(ctx, report);
-        if (drained && (drained.posted || drained.dropped)) console.log(`auto-correct early detection review: ${JSON.stringify(drained)}`);
+        if (drained && (drained.posted || drained.dropped || drained.dismissed)) console.log(`auto-correct early detection review: ${JSON.stringify(drained)}`);
       } catch (e) {
         console.error('auto-correct early detection review: ' + ((e && e.message) || e));
       }

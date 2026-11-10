@@ -21,7 +21,9 @@
  *          testers while Testing), priority/group marks, T&S intake when needed, plus Temp Check query brief.
  *        • `monitor` (early build-up worth analyst eyes / Temp Check sizing before a full Social Alert): 👍 reaction,
  *          structured build-up brief with ready-to-run Temp Check query, plus T&S intake when needed.
- *        • `dismiss` (benign coincidence, evergreen noise, routine support chatter, or already-alerted issue): ❌ mark.
+ *        • `dismiss` (benign coincidence, evergreen noise, routine support chatter): no card at all (edQuietDismissal_:
+ *          neither a Social Alert nor a build-up to watch, so nothing in the space to act on; logged, and counted on
+ *          Control C19), unless a T&S intake goes with it (then its card and the cross mark).
  *   3. A raw `🚨 *Early Detection Alert: …* 🚨` card posted before the queue existed is still reviewed when Bot.gs meets
  *      it (`edAlertOf_` -> `handleEarlyDetection_`: the same prepare / review / act steps, the note in its thread).
  *   Same-story dedup (one story, one card, unless it materially grew): BigQuery holds back a cluster within
@@ -29,7 +31,8 @@
  *   (edDrainQueue_) hold back a signal whose story already has a card from the last 24h (`edStoryVerdict_`: same cluster,
  *   the alert BigQuery says it updates, or 2+ of the same posts) unless it reached 2x the accounts and 3 more, or a new
  *   platform: then its card goes in the earlier card's thread as `📈 *Early Detection Update: …*` with what's new. A
- *   review that finds an issue already alerted with nothing new posts no card. Control C19 counts the repeats held back.
+ *   review that finds an issue already alerted with nothing new posts no card, nor does a plain dismissal: Control C19
+ *   counts the repeats held back and the dismissals.
  *   Relay.gs (`RELAY_ID_RX_`) treats `client-zeda-` as the bot's own work, so nothing ever relays to S-F Burson (B25) or
  *   the Burson test copy (B26). Records `ingested: ED_ALERT_INGESTED_` ('Early detection') so Burson parity KPIs
  *   (`Results` tab) and shared SLRR BigQuery write-backs (`bqWriteBack_`) remain isolated.
@@ -1546,13 +1549,24 @@ function edThemePicture_(ctx, ed, d, parsed, space) {
 }
 
 /**
+ * True when a reviewed signal's call (`d`: edDecide_) is a plain dismissal: neither a Social Alert nor an early build-up
+ * to monitor, and no T&S intake with it (a repeat or a non-English signal is held back on its own). It meets neither the
+ * alert process's bar nor Early Detection's, so it posts no card: the space only gets what someone may act on. Pure.
+ */
+function edQuietDismissal_(d) {
+  const x = d || {};
+  return x.disposition === 'dismiss' && x.basis !== 'repeat' && x.basis !== 'non_english' && !x.tnsPlanned && !x.tnsActive;
+}
+
+/**
  * Reviews one queued signal (`row`) and posts its story card: edPrepare_ -> ONE Gemini review (web search as set, a
  * still of the primary post at most: never its video) -> edConclude_ -> the card in the Mirror space / test feed (with
  * the driver post's picture when the run has ED_PICTURE_MIN_LEFT_MS_ for it; Chat refusing the picture posts the card as
  * text) -> edAct_ (the review note in its thread, the marks, the drafts). The card's key makes a retried post return the
  * same message. An update of an earlier card on the same story (`row.update_of`) goes in that card's thread, without a
- * picture. A review that finds an issue already alerted with nothing materially new (basis 'repeat') posts no card.
- * {card (null when Chat held it back), held (why no card was posted after the review, or '')}.
+ * picture. A review that finds an issue already alerted with nothing materially new (basis 'repeat') posts no card, nor
+ * does a plain dismissal (edQuietDismissal_: logged with its reason, never in the space). {card (null when Chat held it
+ * back), held (why no card was posted after the review, or ''), dismissed (the dismissal's reason, or '')}.
  */
 function edReviewAndPost_(ctx, row, report) {
   const now = ctx.now();
@@ -1574,13 +1588,20 @@ function edReviewAndPost_(ctx, row, report) {
     }
   }
   const d = edConclude_(ctx, prep, assessed, now);
+  const named = (d.rev && d.rev.story && d.rev.story.title) || ed.headline;
   // Same-story dedup or non-English exclusion, after the review: posts no card
   if (d.basis === 'repeat' || d.basis === 'non_english') {
-    const named = (d.rev && d.rev.story && d.rev.story.title) || ed.headline;
     const why = d.why || 'already alerted';
     ctx.log(`early detection: held back "${truncate_(ewText_(named), 90)}" after its review: ${truncate_(why, 240)}`);
     if (report) report.early_detection_held = (report.early_detection_held || 0) + 1;
-    return { card: null, held: why };
+    return { card: null, held: why, dismissed: '' };
+  }
+  // A plain dismissal: nothing for anyone to act on, so nothing in the space (the reason is logged, C19 counts it)
+  if (edQuietDismissal_(d)) {
+    const why = d.why || 'benign or unrelated low-tier chatter';
+    ctx.log(`early detection: dismissed "${truncate_(ewText_(named), 90)}" after its review, so no card: ${truncate_(why, 240)}`);
+    if (report) report.early_detection_dismissed = (report.early_detection_dismissed || 0) + 1;
+    return { card: null, held: '', dismissed: why };
   }
   const text = edStoryCardText_(ed, d, now);
   const upd = ed.update && ed.update.thread ? ed.update : null;
@@ -1625,13 +1646,13 @@ function edReviewAndPost_(ctx, row, report) {
  * mid-review never loops), and a signal queued more than ED_QUEUE_MAX_AGE_MS_ ago is dropped. Right before its review,
  * the same-story dedup looks again at the cards posted since it was queued (edStoryVerdict_, the authoritative check):
  * a repeat with nothing new is dropped without a review; one that grew goes in its story's latest card's thread. A
- * review that posts no card (an issue already alerted, nothing new) counts toward the run's reviews. {posted, dropped,
- * held, waiting}, or null when it didn't run.
+ * review that posts no card (an issue already alerted, nothing new; or a plain dismissal: edQuietDismissal_) counts
+ * toward the run's reviews. {posted, dropped, held, dismissed, waiting}, or null when it didn't run.
  */
 function edDrainQueue_(ctx, report) {
   if (!switchOn_(ctx, 'earlyWave') || earlyWaveRefusal_(ctx)) return null;
   const props = PropertiesService.getScriptProperties();
-  const out = { posted: 0, dropped: 0, held: 0, waiting: 0 };
+  const out = { posted: 0, dropped: 0, held: 0, dismissed: 0, waiting: 0 };
   if (!props.getProperty(ED_QUEUE_PROP_)) return out;
   const left = () => (ctx.deadline ? ctx.deadline - ctx.now() : Infinity);
   const prune = () => {
@@ -1676,11 +1697,16 @@ function edDrainQueue_(ctx, report) {
       noteEarlyWave_(props, entry.sig === 'v' ? 0 : 1, entry.sig === 'v' ? 1 : 0, '', { checked: false });
     } else if (res && res.held) {
       out.held++;
+    } else if (res && res.dismissed) {
+      out.dismissed++;
     }
     list = prune();
   }
   out.waiting = list.length;
-  if (out.held) noteEarlyWave_(props, 0, 0, '', { checked: false, repeats: out.held, waiting: out.waiting });
-  else if (out.dropped && !out.posted) noteEarlyWave_(props, 0, 0, '', { checked: false, waiting: out.waiting });
+  if (out.held || out.dismissed) {
+    noteEarlyWave_(props, 0, 0, '', { checked: false, repeats: out.held, dismissed: out.dismissed, waiting: out.waiting });
+  } else if (out.dropped && !out.posted) {
+    noteEarlyWave_(props, 0, 0, '', { checked: false, waiting: out.waiting });
+  }
   return out;
 }

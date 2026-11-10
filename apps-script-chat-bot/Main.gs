@@ -554,7 +554,7 @@ function poll() {
       }
       try {
         const drained = edDrainQueue_(ctx, report);
-        if (drained && (drained.posted || drained.dropped)) console.log(`early detection review: ${JSON.stringify(drained)}`);
+        if (drained && (drained.posted || drained.dropped || drained.dismissed)) console.log(`early detection review: ${JSON.stringify(drained)}`);
       } catch (e) {
         console.error('early detection review: ' + ((e && e.message) || e));
       }

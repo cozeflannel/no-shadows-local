@@ -20,9 +20,11 @@
  * its link card; else the picture its page shows link previews: Facebook, Reddit, news sites…). Before posting, ONE AI
  * pre-read of the waiting flags (pwPreRead_) writes each card's summary and SLRR lines (else the listening tool's own
  * classification: pwTaxOf_; KOF only ever from the listening data) and says which flags tell the same story: each story
- * gets ONE alert in the space, its most engaging post (a KOF author first), with the story's other posts listed in that
- * alert's thread, and a later flag on a story posted in the last 24 hours joins that alert's thread unless the stakes
- * rose (pwStakesRose_). A flag with nothing to show (no summary, text or picture) is never posted as a bare link.
+ * gets ONE alert in the space, its lead post (pwStoryOrder_: one the pre-read judged meaningful enough to post about, a
+ * KOF author first, then the most reach: engagements when every post has a count, else followers), with the story's
+ * other posts listed in that alert's thread, and a later flag on a story posted in the last 24 hours joins that alert's
+ * thread unless the stakes rose (pwStakesRose_). A flag with nothing to show (no summary, text or picture) is never
+ * posted as a bare link.
  * The score, the watch's bar and topic, and
  * the source that found it stay off the message: the bot keeps them for the flow (pwRememberPosted_). The
  * space's flow knows it for the bot's (pwAlertOf_) and works it with the watch's call (Bot.gs handleMessage_ ->
@@ -686,9 +688,9 @@ function pwPreReadSchema_() {
           type: 'OBJECT',
           properties: {
             ref: text, summary: text, about_google: { type: 'BOOLEAN' }, product: maybe, other_products: list,
-            exposure_tag: maybe, sensitive_topics: list, story: text, same_story_as: maybe,
+            exposure_tag: maybe, sensitive_topics: list, story: text, same_story_as: maybe, meaningful: { type: 'BOOLEAN' },
           },
-          required: ['ref', 'summary', 'about_google', 'story'],
+          required: ['ref', 'summary', 'about_google', 'story', 'meaningful'],
         },
       },
     },
@@ -727,7 +729,12 @@ function pwPreReadPrompts_(posts, recent) {
     '- same_story_as: the ref of an EARLIER post in <watch_posts> (a smaller C number) or of an alert in <recent_alerts> ' +
     '(an R ref) covering the SAME specific story: the same event, report, announcement, lawsuit, outage or viral claim ' +
     '(e.g. several outlets reporting the same federal investigation). Never merely the same product, company or topic. ' +
-    '"" when there is none.\n\n' +
+    '"" when there is none.\n' +
+    '- meaningful: weigh the post as a whole (what it says or shows, who posted it and their reach): true when its content ' +
+    'or message is meaningful enough to post about for Google brand safety, even if something is missing (no engagement ' +
+    'count, no summary, a short caption); false for a bare link with no claim, a passing mention, a reshare that adds ' +
+    'nothing, or content too vague to act on. A post without `engagements` has no count from its source (unknown, not ' +
+    'zero): never judge it less meaningful for that.\n\n' +
     `EXPOSURE TAGS:\n${tags}\n\nSENSITIVE TOPICS:\n${topics}\n\nPRODUCTS (distribution names): ${products}\n\n` +
     'JSON FORMATTING: every string value is concise single-line plain text.';
   const prompt = `<watch_posts>\n${JSON.stringify(posts).slice(0, 24000)}\n</watch_posts>` +
@@ -737,8 +744,8 @@ function pwPreReadPrompts_(posts, recent) {
 
 /**
  * The pre-read's answer, checked, by flag (`n` flags, `m` recent alerts): [{summary, about, products, tag ("Name (P1)"),
- * topics, story, same: {c: flag index} | {r: recent index} | null} | null]; null without a usable answer. Names only
- * from the taxonomy. Pure.
+ * topics, story, same: {c: flag index} | {r: recent index} | null, meaningful: true | false | null (not said)} | null];
+ * null without a usable answer. Names only from the taxonomy. Pure.
  */
 function pwPreReadOf_(llm, n, m) {
   const rows = llm && typeof llm === 'object' && Array.isArray(llm.watch_posts) ? llm.watch_posts : null;
@@ -765,6 +772,7 @@ function pwPreReadOf_(llm, n, m) {
       topics: normalizeProposal_('risk_tags', Array.isArray(r.sensitive_topics) ? r.sensitive_topics : []) || [],
       story: one(r.story, 120).replace(/[*_~`<>|]/g, ''),
       same,
+      meaningful: r.meaningful === true ? true : r.meaningful === false ? false : null,
     };
   });
   return out.some(Boolean) ? out : null;
@@ -869,11 +877,37 @@ function pwStoryGroups_(items, pre, recent) {
   });
 }
 
-/** The order a story's posts are weighed in: a KOF author first, then the most engagements, followers, the score. Pure. */
-function pwStoryRank_(x, y) {
-  const kof = it => (it.a && it.a.tax && it.a.tax.k === true ? 1 : 0);
-  const n = (it, k) => Number(it.a && it.a[k]) || 0;
-  return kof(y) - kof(x) || n(y, 'eng') - n(x, 'eng') || n(y, 'followers') - n(x, 'followers') || n(y, 'score') - n(x, 'score');
+/**
+ * A story's posts (`members`: indexes into `items`) in the order its alert is chosen from (the first that's new, in
+ * English and has something to show leads): first the posts the AI pre-read (`pre`) judged meaningful enough to post
+ * about, read as a whole (a missing detail, such as an engagement count, never counts against one), then those it said
+ * nothing on, then those it judged not; within each, a KOF author first, then a post past SLRR's high-engagement bar
+ * (2,000+, the most first), then the most reach: engagements when every post in the story has a count, else followers
+ * (a source that gives no count, as Sonar often doesn't for X, never loses for it); then the watch's score. Every post's
+ * place comes from its own values (the story decides once whether counts or followers), so the order is consistent. A
+ * new array. Pure.
+ */
+function pwStoryOrder_(members, items, pre) {
+  const list = (members || []).slice();
+  const hi = Number(GEN.escalation_rules && GEN.escalation_rules.high_engagement_threshold) || 2000;
+  const num = (i, k) => Number(items[i] && items[i].a && items[i].a[k]) || 0;
+  const byEng = list.every(i => num(i, 'eng') > 0);
+  const keys = new Map(list.map(i => {
+    const p = (pre && pre[i]) || null;
+    const a = (items[i] && items[i].a) || {};
+    const eng = num(i, 'eng');
+    const followers = num(i, 'followers');
+    return [i, [p && p.meaningful === true ? 2 : p && p.meaningful === false ? 0 : 1, a.tax && a.tax.k === true ? 1 : 0,
+      eng >= hi ? eng : 0, byEng ? eng : followers, byEng ? followers : eng, num(i, 'score')]];
+  }));
+  return list.sort((x, y) => {
+    const a = keys.get(x);
+    const b = keys.get(y);
+    for (let k = 0; k < a.length; k++) {
+      if (a[k] !== b[k]) return b[k] - a[k];
+    }
+    return x - y;
+  });
 }
 
 /**
@@ -971,8 +1005,8 @@ function pwPostStoryReply_(space, thread, text, key) {
 /**
  * One alert a story (pwPostAlerts_). `items` ([{q, a}]: the flags, the highest scores first), `pre` (pwPreRead_, or
  * null), `recent` (pwRecentStories_), `c` {dest, now, max, timeLeft, done, doneThreadIds, mark, same}. A story joining
- * an alert posted lately goes in that alert's thread (but a flag that raises the stakes: pwStakesRose_); else its best
- * post (pwStoryRank_) that's new, in English and has something to show is posted as the alert (at most `max` a run),
+ * an alert posted lately goes in that alert's thread (but a flag that raises the stakes: pwStakesRose_); else its lead
+ * post (pwStoryOrder_) that's new, in English and has something to show is posted as the alert (at most `max` a run),
  * and the story's other posts go in its thread as one reply. {posted, grouped, dup, empty, problem}. Throws only what
  * the caller catches.
  */
@@ -982,7 +1016,7 @@ function pwPostStories_(items, pre, recent, c) {
   const at = { at: c.now, d: c.dest.choice, sp: space.id };
   const pr = i => (pre && pre[i]) || null;
   const groups = pwStoryGroups_(items, pre, recent);
-  groups.forEach(g => g.members.sort((i, j) => pwStoryRank_(items[i], items[j])));
+  groups.forEach(g => { g.members = pwStoryOrder_(g.members, items, pre); });
   let replies = 0;
   const join = (list, thread, alertName, later) => {
     const reply = pwPostStoryReply_(space, thread, pwStoryReplyText_(list.map(i => pwStoryView_(items[i], pr(i))), later),
@@ -1088,9 +1122,11 @@ function pwPostStories_(items, pre, recent, c) {
  * destination (`dest`: pwAlertsDest_), the highest scores first, PW_ALERTS_MAX_OTHER_ / PW_ALERTS_MAX_MIRROR_ a run.
  * First ONE AI pre-read of the waiting flags (pwPreReadFor_): each card's summary and its Product / Exposure Tag /
  * Sensitive Topic lines (else the listening tool's own: pwTaxOf_; KOF from the listening data only), and which flags,
- * and which alerts posted in this space in the last 24 hours, tell the same story. Then one story, one alert
- * (pwPostStories_): the story's most engaging post (a KOF author first) is the alert (its key then says a: 'p', the
- * message, its thread, the space, when and its story), the others go in its thread as one reply (a: 'g'), and a later
+ * and which alerts posted in this space in the last 24 hours, tell the same story, and whether each post is meaningful
+ * enough to post about. Then one story, one alert (pwPostStories_): the story's lead post (pwStoryOrder_: one judged
+ * meaningful, a KOF author first, then the most reach: engagements when every post has a count, else followers) is the
+ * alert (its key then says a: 'p', the message, its thread, the space, when and its story), the others go in its
+ * thread as one reply (a: 'g'), and a later
  * flag on a posted story joins that alert's thread. A flag waiting longer than PW_ALERT_MAX_AGE_MS_ since it was seen
  * is dropped (a: 'x'); one for a post or conversation thread already alerted (by another watch, Burson, or any flow in
  * the Alert log) isn't posted again (a: 'd'); one with nothing to show (no summary, text or picture) is never posted as

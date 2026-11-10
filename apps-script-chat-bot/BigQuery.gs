@@ -2622,7 +2622,7 @@ const EW_SEEN_MAX_ = 200;                     // cap stored hashes well under Sc
 const EW_SEEN_MAX_CHARS_ = 8800;              // the seen map's JSON (ScriptProperties: 9 KB a value)
 const ED_AT_PROP_ = 'EARLY_DETECTION_AT';     // timestamp (ms) when last poll started
 const ED_SEEN_PROP_ = 'EARLY_DETECTION_SEEN'; // {hash: ms | [ms, authors]} of recently queued early-detection signals
-const ED_DAY_PROP_ = 'EARLY_DETECTION_TODAY'; // {day, clusters, velocity, queued, repeats, at, problem} for Control C19 status note
+const ED_DAY_PROP_ = 'EARLY_DETECTION_TODAY'; // {day, clusters, velocity, queued, repeats, dismissed, at, problem} for Control C19
 const ED_POSTED_PROP_ = 'ED_ALERT_POSTED';    // recent message name hashes of the bot's early-detection cards
 const ED_POSTED_MAX_ = 300;
 const ED_INFO_PROP_ = 'ED_ALERT_INFO';        // structured BigQuery metadata keyed by message name hash
@@ -3010,7 +3010,8 @@ function pruneEarlyWaveSeen_(map, now) {
 /**
  * Today's early-detection counts (`EARLY_DETECTION_TODAY`): {day, clusters, velocity (story cards posted), queued
  * (signals queued for review today: EW_MAX_PER_DAY_ caps it), repeats (signals held back as a repeat of a story already
- * posted, with nothing new), at (last check's time), problem}. Never throws.
+ * posted, with nothing new), dismissed (signals the review dismissed: no card), at (last check's time), problem}. Never
+ * throws.
  */
 function edDayState_(props) {
   const day = dayKey_();
@@ -3021,10 +3022,11 @@ function edDayState_(props) {
 
 /**
  * Updates today's counts in `EARLY_DETECTION_TODAY` and writes the Control C19 status note
- * (`"last check 10:15 AM · 2 waiting for review · N cluster, M velocity alert(s) today · K repeats held back"`).
- * `clusters` / `velocity`: story cards just posted; o.queued: signals just queued; o.repeats: signals just held back as
- * repeats; o.checked === false: a review's count, which keeps the last check's time and problem; o.waiting: how many
- * signals wait for review (read from the queue when not given). Never throws.
+ * (`"last check 10:15 AM · 2 waiting for review · N cluster, M velocity alert(s) today · K repeats held back · D
+ * dismissed, not posted"`). `clusters` / `velocity`: story cards just posted; o.queued: signals just queued; o.repeats:
+ * signals just held back as repeats; o.dismissed: signals the review just dismissed (no card); o.checked === false: a
+ * review's count, which keeps the last check's time and problem; o.waiting: how many signals wait for review (read from
+ * the queue when not given). Never throws.
  */
 function noteEarlyWave_(props, clusters, velocity, problem, o) {
   const opt = o || {};
@@ -3035,6 +3037,7 @@ function noteEarlyWave_(props, clusters, velocity, problem, o) {
     s.velocity = (Number(s.velocity) || 0) + (velocity || 0);
     s.queued = (Number(s.queued) || 0) + (opt.queued || 0);
     if (opt.repeats || s.repeats) s.repeats = (Number(s.repeats) || 0) + (opt.repeats || 0);
+    if (opt.dismissed || s.dismissed) s.dismissed = (Number(s.dismissed) || 0) + (opt.dismissed || 0);
     if (opt.checked !== false) {
       s.at = nowLabel_();
       s.problem = problem || '';
@@ -3047,7 +3050,8 @@ function noteEarlyWave_(props, clusters, velocity, problem, o) {
       `${waiting ? ` · ${waiting} waiting for review` : ''}` +
       `${s.queued >= EW_MAX_PER_DAY_ ? ` · daily cap of ${EW_MAX_PER_DAY_} reached, more tomorrow` : ''}` +
       ` · ${s.clusters} cluster, ${s.velocity} velocity alert${total === 1 ? '' : 's'} today` +
-      `${s.repeats ? ` · ${s.repeats} repeat${s.repeats === 1 ? '' : 's'} held back` : ''}`);
+      `${s.repeats ? ` · ${s.repeats} repeat${s.repeats === 1 ? '' : 's'} held back` : ''}` +
+      `${s.dismissed ? ` · ${s.dismissed} dismissed, not posted` : ''}`);
   } catch (e) {
     console.error('could not count early detection alerts: ' + ((e && e.message) || e));
   }
