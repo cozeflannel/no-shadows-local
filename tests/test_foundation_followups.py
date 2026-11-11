@@ -62,14 +62,15 @@ def temp_op():
 
 
 def test_dispatch_returns_raw_outputs_and_handle_finalizes_once(ctx, temp_op):
-    temp_op("_t_raw", lambda c, p, rc: (ChatOutputs(clean_text="hello", dm_text="psst", dm_recipients=["a@ops.test"]),
-                                        {"k": 1}))
-    ctx.config.env = "shadow"
+    temp_op("_t_raw", lambda c, p, rc: (ChatOutputs(burson_text="fix it", clean_text="hello", dm_text="psst",
+                                                    dm_recipients=["a@ops.test"]), {"k": 1}))
+    ctx.config.burson_feedback.silent_in_burson_space = True  # stealth: a rule only handle() applies
     out, data = operations.dispatch("_t_raw", {}, ctx)
-    assert (out.clean_text, out.dm_recipients, data) == ("hello", ["a@ops.test"], {"k": 1})
+    assert (out.burson_text, out.clean_text, out.dm_recipients, data) == ("fix it", "hello", ["a@ops.test"], {"k": 1})
     resp = handle({"op": "_t_raw", "payload": {}}, ctx)
-    assert resp.outputs["clean_text"] == "[SHADOW → clean] hello"
-    assert resp.outputs["dm_text"].startswith("[SHADOW → would DM a@ops.test] psst")
+    assert resp.outputs["burson_text"] == ""
+    assert resp.outputs["clean_text"] == "hello\n\n[STEALTH — would post to Burson] fix it"
+    assert (resp.outputs["dm_text"], resp.outputs["dm_recipients"]) == ("psst", "a@ops.test")
     with pytest.raises(UserFacingError):
         operations.dispatch("_t_missing", {}, ctx)
 
@@ -78,7 +79,7 @@ def test_converse_nested_op_errors_answer_in_chat(ctx, temp_op):
     def boom(c, p, rc):
         raise RuntimeError("kaboom")
 
-    temp_op("generate_handover", boom)  # shadows the real op for this test only
+    temp_op("generate_handover", boom)  # replaces the real op for this test only
     resp = handle({"op": "converse", "payload": {"message": {
         "text": "@Triage Agent handover", "message_id": "spaces/CLEAN/messages/h1",
         "sender": {"email": IM, "name": "IM", "type": "HUMAN"}, "space_name": "SLRR Triaged Alerts"}}}, ctx)

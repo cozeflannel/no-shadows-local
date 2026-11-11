@@ -110,11 +110,6 @@ def test_review_revert_and_handover_dispatch_through_handle(ctx, stub_ops):
     hand = say(ctx, "handover")
     assert stub_ops[4][0] == "generate_handover" and hand.outputs["team_text"] == "🤖 *Shift handover*"
 
-    ctx.config.env = "shadow"  # nested shadow labels are undone, then applied once
-    shadow = say(ctx, "forward TRG-1050")
-    assert shadow.outputs["clean_text"] == "[SHADOW → clean] 🤖 *Alert* · TRG-1050"
-    assert shadow.outputs["reply_text"] == "[SHADOW → reply] 🤖 Forwarded TRG-1050."
-
 
 def test_revise_by_id_and_by_latest_open_escalation(ctx, clock, fake_llm):
     gmail = connect(ctx, clock, IM)

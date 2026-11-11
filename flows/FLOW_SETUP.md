@@ -25,11 +25,11 @@ Do the [Phase 0 spike](PHASE0_SPIKE.md) first. It confirms the exact starter var
 | DM | "Send a message" to `dm_recipients` | `dm` |
 | Reply | "Reply to a message" (clean space / DMs only) | `reply` |
 
-**Shadow mode:**
-- Set `TRIAGE_ENV=shadow` (Script Property and agent config).
-- Point every **Post in a space** step at a private *SLRR Triage Agent (shadow)* space.
+**Before the cutover:**
+- Keep `TRIAGE_ENV=dev` (Script Property and agent config).
+- Point every **Post in a space** step at a Google-only test space (never the Burson space).
 - Point every **Send a message** step at yourself.
-- The agent labels each text `[SHADOW → <target>]` so you can see where it would have gone.
+- At the cutover, point the steps at the real spaces ([`../infra/README.md`](../infra/README.md#cutover-to-production)).
 
 ## Check-if block recipe
 

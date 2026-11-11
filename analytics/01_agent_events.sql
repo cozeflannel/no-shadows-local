@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS `${PROJECT}.${DATASET}.agent_events` (
   event_id        STRING    NOT NULL OPTIONS (description = 'UUID; insert id for de-duplication'),
   event_ts        TIMESTAMP NOT NULL,
   event_type      STRING    NOT NULL OPTIONS (description = 'triage_agent.events.EventType, e.g. triage.corrected'),
-  env             STRING    OPTIONS (description = 'dev | shadow | prod'),
+  env             STRING    OPTIONS (description = 'dev | prod'),
   case_id         STRING    OPTIONS (description = 'TRG-…'),
   escalation_id   STRING    OPTIONS (description = 'ESC-…'),
   actor           STRING    OPTIONS (description = '"agent" or a user email'),

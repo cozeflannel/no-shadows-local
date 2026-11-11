@@ -623,7 +623,7 @@ class InhouseSource(ConfigModel):
     location: str = "US"
     sonar_location: str = "us-central1"
     mark_delivered: bool = False  # True only after cutover (parity mode leaves the log untouched)
-    parity_mode: bool = True  # in-house alerts post to the shadow space and are reconciled against Burson
+    parity_mode: bool = True  # in-house alerts are recorded (nothing posted to chat) and reconciled against Burson's
     max_rows_per_run: int = 200
 
 
@@ -687,7 +687,7 @@ class ModelConfig(ConfigModel):
 
 
 class SpaceRef(ConfigModel):
-    key: str  # burson | clean | shadow | youtube | doodle | team | crisis
+    key: str  # burson | clean | youtube | doodle | team | crisis
     display_name: str
     space_id: str | None = None  # filled in after the Phase 0 spike
     url: str | None = None
@@ -752,7 +752,7 @@ def space_id_of(value: str | None) -> str | None:
 
 class AgentConfig(ConfigModel):
     version: str = "dev"
-    env: Literal["dev", "shadow", "prod"] = "dev"
+    env: Literal["dev", "prod"] = "dev"
     timezone: str = "America/New_York"  # display timezone for chat messages
     case_id_prefix: str = "TRG"
     escalation_id_prefix: str = "ESC"

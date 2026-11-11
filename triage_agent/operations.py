@@ -16,7 +16,6 @@ Delivery rules applied here (handlers never need to care):
     `outputs` only carries ids/verdict/summary.
   * deliver="return" with context.targets set: outputs for targets the calling
     flow has no post step for are queued instead of being dropped.
-  * env "shadow": texts are prefixed "[SHADOW → <target>]" and DMs go to admins.
   * stealth (config burson_feedback.silent_in_burson_space, or the
     TRIAGE_STEALTH_BURSON env override set by the deploy scripts): burson_text is
     never emitted; it is appended to clean_text with a "[STEALTH …]" label.
@@ -134,22 +133,6 @@ def _stealth_burson(ctx: AgentContext, outputs: ChatOutputs) -> ChatOutputs:
     return out
 
 
-def _shadow(ctx: AgentContext, outputs: ChatOutputs) -> ChatOutputs:
-    """Shadow mode: the flows point at the shadow space; label every text with its real target."""
-    if ctx.config.env != "shadow":
-        return outputs
-    out = outputs.model_copy(deep=True)
-    for target, text in outputs.target_texts().items():
-        if target != "handover":
-            out.set_target(target, f"[SHADOW → {target}] {text}")
-    if out.reply_text.strip():
-        out.reply_text = f"[SHADOW → reply] {out.reply_text}"
-    if out.dm_text.strip() and out.dm_recipients:
-        out.dm_text = f"[SHADOW → would DM {', '.join(out.dm_recipients)}] {out.dm_text}"
-        out.dm_recipients = ctx.config.admin_emails() or out.dm_recipients
-    return out
-
-
 def _finalize(ctx: AgentContext, req: OperationRequest, outputs: ChatOutputs, data: dict) -> tuple[ChatOutputs, dict]:
     rc = req.context
     outputs = _stealth_burson(ctx, outputs)
@@ -171,7 +154,7 @@ def _finalize(ctx: AgentContext, req: OperationRequest, outputs: ChatOutputs, da
         if outputs.reply_text.strip() and "reply" not in allowed:
             data = {**data, "dropped_reply_text": outputs.reply_text}
             outputs = _strip_targets(outputs, {"reply"})
-    return _shadow(ctx, outputs), data
+    return outputs, data
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +163,7 @@ def _finalize(ctx: AgentContext, req: OperationRequest, outputs: ChatOutputs, da
 
 
 def dispatch(op: str, payload: dict[str, Any], ctx: AgentContext, rc: RequestContext | None = None) -> tuple[ChatOutputs, dict]:
-    """Run one handler and return its raw (ChatOutputs, data): no outbox, rerouting or shadow labels.
+    """Run one handler and return its raw (ChatOutputs, data): no outbox, rerouting or stealth.
 
     For nested calls (e.g. converse running review_decision); the outer handle() finalizes delivery
     once. Exceptions (UserFacingError included) propagate to the caller.

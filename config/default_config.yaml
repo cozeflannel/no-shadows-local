@@ -21,7 +21,6 @@ agent:
 spaces:
   - {key: burson, display_name: "[S-F] Burson Automated Alerts V3", space_id: spaces/AAQAaa_0I9g, url: "https://chat.google.com/room/AAQAaa_0I9g"}
   - {key: clean, display_name: "SLRR Triaged Alerts", space_id: spaces/AAQAaLn375E, url: "https://chat.google.com/room/AAQAaLn375E"}
-  - {key: shadow, display_name: "SLRR Triage Agent (shadow)", space_id: spaces/AAQAhVQ3mLo, url: "https://chat.google.com/room/AAQAhVQ3mLo"}
   - {key: youtube, display_name: "[S-F] YouTube Social", space_id: spaces/AAAAmUvgYGU, url: "https://chat.google.com/room/AAAAmUvgYGU"}
   - {key: doodle, display_name: "Doodle Team"}
   - {key: team, display_name: "24/7 SL (SLPO/SLRR) Team", space_id: spaces/AAAAEoKjb2g, url: "https://chat.google.com/app/chat/AAAAEoKjb2g"}

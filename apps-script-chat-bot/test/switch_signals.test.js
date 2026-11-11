@@ -27,6 +27,8 @@ module.exports = H => {
     ['Radar alerts (Track 2): reviewed as Early detection', 'Control row 19']];
   const T1_OFF = 'waiting: Watch alerts (Control row 35) is OFF, so classified alerts stay in BigQuery';
   const T2_OFF = 'waiting: Early wave & velocity check (Control row 19) is OFF, so radar alerts stay in BigQuery';
+  // The retired dry-run mode's name, spelled with [h] so that a search of the repo for the word doesn't find this file.
+  const RETIRED_RX = /s[h]adow/i;
 
   /**
    * A fake BigQuery for Signals: queries answer `bq.answer(sql, params)` (rows), inserts (tabledata.insertAll) are kept
@@ -73,7 +75,7 @@ module.exports = H => {
   // The tab: made by the bot, every switch OFF; with Control rows 35 and 19 OFF nothing is handed over
   // ===========================================================================================================
 
-  test('signals: the first run makes the Signals tab (each switch OFF with its ON/OFF dropdown, the days kept, the two tracks\' rows saying where the Control tab routes them); with everything OFF nothing is sent to or read from BigQuery, nothing is handed over and nothing is trimmed; no other tab is made, no word of a shadow anywhere; a "Signals" tab people made is never touched', () => {
+  test('signals: the first run makes the Signals tab (each switch OFF with its ON/OFF dropdown, the days kept, the two tracks\' rows saying where the Control tab routes them); with everything OFF nothing is sent to or read from BigQuery, nothing is handed over and nothing is trimmed; no other tab is made, no word of the retired dry-run mode anywhere; a "Signals" tab people made is never touched', () => {
     const { t, bq } = world();
     for (let i = 0; i < 3; i++) t.poll();
     const sh = tab(t, TAB);
@@ -85,8 +87,8 @@ module.exports = H => {
     eq([status(t, 'sync'), status(t, 'archive'), status(t, 'track1'), status(t, 'track2')],
       ['OFF: nothing is sent to BigQuery', 'OFF: every row stays on the sheet', T1_OFF, T2_OFF]);
     assert.match(status(t, 'watchdog'), /^OFF: a step that keeps stopping runs is only reported here/);
-    eq(t.sheet().getSheets().map(s => s.getName()).filter(n => /track|radar|shadow/i.test(n)), []);
-    assert.ok(!/shadow/i.test(JSON.stringify(sh.rows)), 'no shadow on the tab');
+    eq(t.sheet().getSheets().map(s => s.getName()).filter(n => /track|radar/i.test(n) || RETIRED_RX.test(n)), []);
+    assert.ok(!RETIRED_RX.test(JSON.stringify(sh.rows)), 'nothing of the retired dry-run mode on the tab');
     // once its statuses are there, an all-OFF tab costs no writes a run
     let writes = 0;
     const getRange = sh.getRange.bind(sh);
@@ -361,7 +363,7 @@ module.exports = H => {
     eq(t.bot.isPwDetectionsTab_(made), true);
     eq(t.bot.pwDetectionsTab_(ss, false).foreign, false);
     eq(made.cell(1, 1), B.ev('PW_DET_TITLE_'));
-    assert.ok(!/shadow/i.test(made.cell(1, 1)));
+    assert.ok(!RETIRED_RX.test(made.cell(1, 1)));
     made.getRange(1, 1).setValue('Our own detections');
     eq(t.bot.pwDetectionsTab_(ss, false).foreign, true);
     // with the bot paused (B2 OFF), its next run brings the title up to date too
@@ -372,25 +374,29 @@ module.exports = H => {
   });
 
   // ===========================================================================================================
-  // No shadow mode, ever again
+  // The retired dry-run mode never comes back
   // ===========================================================================================================
 
-  test('no shadow mode comes back: the word is nowhere in what the bot deploys (both Apps Script projects), the two-track service and its config, or their docs; the only uses left are the "shadowban" keyword the topic rules look for and the clean-up that deletes the old shadow mode\'s leftover trigger (shadowMatcherPoll)', () => {
+  test('the retired dry-run mode never comes back: its name is in no file git tracks (both Apps Script projects, the two-track service, the Python agent, the Console, the add-on, config, docs, SQL, infra and these tests); the word is left only in the topic keyword for posts about being "...banned" and in the CSS styling of buttons and cards', () => {
     const fs = require('fs');
     const path = require('path');
+    const { execFileSync } = require('child_process');
     const root = path.join(__dirname, '..', '..');
-    const files = [];
-    ['apps-script-chat-bot', 'apps-script-sheet-sidepanel'].forEach(d => fs.readdirSync(path.join(root, d))
-      .filter(f => /\.(gs|html|json)$/.test(f)).forEach(f => files.push(`${d}/${f}`)));
-    fs.readdirSync(path.join(root, 'slrr_signals')).filter(f => /\.py$/.test(f)).forEach(f => files.push(`slrr_signals/${f}`));
-    files.push('apps-script-chat-bot/README.md', 'docs/TWO_TRACK_SIGNALS.md', 'config/signals.yaml',
-      'analytics/slrr_signals/01_dataset_and_tables.sql', 'analytics/slrr_signals/02_views.sql', 'infra/09_slrr_signals.sh');
-    const allowed = /shadow \?-\?ban|shadow[ -]?ban\w*|shadowMatcherPoll|box-shadow/gi;
+    const files = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0')
+      .filter(f => f && !/\.(png|jpe?g|gif|ico|svg|webp|pdf|woff2?|ttf|eot|zip|gz|sqlite|db|pyc)$/i.test(f));
+    const allowed = new RegExp([
+      String.raw`s[h]adow \?-\?ban`, String.raw`s[h]adow[ -]?ban\w*`,  // the topic keyword (posts about being "...banned")
+      String.raw`box-?s[h]adow`, String.raw`transition-s[h]adow`, String.raw`\bs[h]adow-(?:sm|md|lg|xl|2xl|inner|none)\b`,  // CSS
+    ].join('|'), 'gi');
     const hits = [];
-    files.forEach(f => fs.readFileSync(path.join(root, f), 'utf8').split('\n').forEach((line, i) => {
-      if (/shadow/i.test(line.replace(allowed, ''))) hits.push(`${f}:${i + 1}: ${line.trim().slice(0, 140)}`);
-    }));
-    assert.ok(files.length > 50, `${files.length} files read`);
+    files.forEach(f => {
+      const full = path.join(root, f);
+      if (!fs.existsSync(full)) return;  // deleted in the working tree, not committed yet
+      fs.readFileSync(full, 'utf8').split('\n').forEach((line, i) => {
+        if (RETIRED_RX.test(line.replace(allowed, ''))) hits.push(`${f}:${i + 1}: ${line.trim().slice(0, 140)}`);
+      });
+    });
+    assert.ok(files.length > 300, `${files.length} files read`);
     eq(hits, []);
   });
 

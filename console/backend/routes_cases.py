@@ -506,7 +506,7 @@ def get_outbox(
 # Live Test Channel (push a message / react without touching Google Chat)
 #
 # These endpoints run the real operations against the real store, so they are
-# gated: analysts in dev/shadow, admins only in prod. They never post to Chat:
+# gated: analysts in dev, admins only in prod. They never post to Chat:
 # the agent's I/O stays with the Studio flows (docs/CONTRACTS.md §1).
 # ---------------------------------------------------------------------------
 

@@ -42,8 +42,9 @@ const TRIGGER_HANDLER_ = 'poll';
 // the archived prototype's triggers (checkSourceSpaceForNewMessages: an orphan that fails every minute)
 const LEGACY_HANDLERS_ = ['pollAlerts', 'sweepReactions', 'checkSourceSpaceForNewMessages'];
 // Triggers left behind by code that is no longer in this project: their function is gone, so each run of them only
-// fails ("Script function not found"). poll() deletes them (sweepOrphanTriggers_), and so does setup().
-const ORPHAN_HANDLERS_ = ['shadowMatcherPoll'];
+// fails ("Script function not found"). poll() deletes them (sweepOrphanTriggers_), and so does setup(). List a handler
+// here when its code is removed; none is listed now (the last one was deleted from the live project on Nov 6, 2026).
+const ORPHAN_HANDLERS_ = [];
 const ORPHAN_SWEEP_SEC_ = 6 * 3600;                         // poll() looks for them at most this often
 const RUN_BUDGET_MS_ = 180 * 1000;                          // Apps Script stops a run at 6 minutes
 const SETUP_LOCK_WAIT_MS_ = 5 * 60 * 1000;                  // setup() waits this long for a run in progress (3-7 min)
@@ -1244,9 +1245,11 @@ function removeTriggers_(handlers) {
 /**
  * Deletes the project's triggers for a handler in ORPHAN_HANDLERS_ whose function isn't in this project (never one whose
  * function exists), at most every ORPHAN_SWEEP_SEC_. Only the bot's own account's triggers can be seen and deleted
- * (another account's: that account, on the editor's Triggers page). How many it deleted. Never throws.
+ * (another account's: that account, on the editor's Triggers page). How many it deleted. Never throws. Nothing to do,
+ * and nothing read, while ORPHAN_HANDLERS_ is empty.
  */
 function sweepOrphanTriggers_() {
+  if (!ORPHAN_HANDLERS_.length) return 0;
   try {
     const cache = CacheService.getScriptCache();
     if (cache.get('ORPHAN_TRIGGER_SWEEP')) return 0;
