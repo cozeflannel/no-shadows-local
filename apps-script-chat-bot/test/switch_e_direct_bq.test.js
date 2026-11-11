@@ -189,14 +189,14 @@ module.exports = H => {
     assert.ok(/bmie_candidates AS/.test(bmie.sql) && !/sprinklr/.test(bmie.sql), bmie.sql);
     // Sprinklr's top comments come from a CTE joined on the posts: no subquery per post, which BigQuery refuses
     assert.ok(/\nsprinklr_top AS \(\n[^]*JOIN sprinklr_base b ON c\.post_id = b\.post_id\n[^]*GROUP BY c\.post_id\n\)/.test(spr.sql), spr.sql);
-    assert.ok(spr.sql.includes('  FROM sprinklr_base b LEFT JOIN sprinklr_top t ON t.post_id = b.post_id\n'), spr.sql);
+    assert.ok(spr.sql.includes('  FROM sprinklr_base b\n  LEFT JOIN sprinklr_top t ON t.post_id = b.post_id\n'), spr.sql);
     assert.ok(!/\(SELECT STRING_AGG|WHERE c\.post_id = v\.post_id/.test(spr.sql), 'a correlated subquery');
     eq([Object.keys(spr.params), Object.keys(bmie.params)], [['comment_noise_rx', 'minutes'], ['minutes']]);
-    // Both look back only the BigQuery lookback (B31; 60 minutes here): the posts that went live in it
+    // Both look back the BigQuery lookback (B31; 60 minutes here) over the approved US tables
     eq([spr.params.minutes, spr.types.minutes, bmie.params.minutes, bmie.types.minutes], ['60', 'INT64', '60', 'INT64']);
-    assert.ok(spr.sql.includes('  WHERE v.post_published_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE)\n'), spr.sql);
-    assert.ok(bmie.sql.includes('  WHERE m.ingestionTimestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE) AND ' +
-      'm.postTime >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE)\n'), bmie.sql);
+    assert.ok(spr.sql.includes('post_published_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE)'), spr.sql);
+    assert.ok(bmie.sql.includes('WHERE d.ingestion_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE)') &&
+      bmie.sql.includes('AND m.load_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE)'), bmie.sql);
     eq([sprLog.params.urls, bmieLog.params.urls], [SPR_URL, BMIE_URL]);
     assert.ok(!/bsip-s-bsip-gg-26-2cf3/.test(d.map(c => c.sql).join('\n')), 'a us-central1 table in a US query');
     eq(synth(t.chat, TEST_FEED).map(linkOf), [SPR_URL, BMIE_URL]);
@@ -206,7 +206,9 @@ module.exports = H => {
     d = direct(calls).slice(4);
     eq(d.map(c => [kindOf(c), c.location]), [['spr', 'US'], ['bmie', 'US'], ['bsip', 'us-central1'], ['log', 'US']]);
     const [bsip, log] = d.slice(2);
-    assert.ok(!/brand-social-central-data\./.test(bsip.sql), 'a US table in a us-central1 query');
+    assert.ok(!/brand-social-central-data\.(?:reporting_data|raw_data|DSD|slrr_alerts|social_alerts_dataset)/.test(bsip.sql), 'a US table in a us-central1 query');
+    assert.ok(bsip.sql.includes('`bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw`') &&
+      bsip.sql.includes('`brand-social-central-data.google_tubular_mentions.tubular_videos`'), bsip.sql);
     eq([bsip.params, bsip.types], [{ minutes: '60', min_total: '500', max_age_hours: '48' },
       { minutes: 'INT64', min_total: 'INT64', max_age_hours: 'INT64' }]);
     eq([log.params.urls, log.params.ids], [BSIP_URL, '2112000000000000001']);

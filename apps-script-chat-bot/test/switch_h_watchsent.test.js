@@ -615,9 +615,9 @@ module.exports = H => {
     eq(w.bot.bqPostEngagement_('https://x.com/ICannot_Enough/status/2111814207448514693', S), 61234);
     const [q] = calls;
     eq(q.location, 'us-central1');
-    assert.match(q.query, /^SELECT \(COALESCE\(likes, 0\) \+ COALESCE\(comments, 0\) \+ COALESCE\(shares, 0\)\) AS interactions\nFROM `bsip-s-bsip-gg-26-2cf3\.google_bg\.sonar_post_aggregates_7d_materialized`/);
+    assert.match(q.query, /^SELECT MAX\(IFNULL\(engagement_likes, 0\)\) \+ MAX\(IFNULL\(engagement_comments, 0\)\) \+ MAX\(IFNULL\(engagement_shares, 0\)\) AS interactions\nFROM `bsip-s-bsip-gg-26-2cf3\.google_bg\.sonar_raw`/);
     assert.ok(!/insert|update|delete|merge/i.test(q.query.replace(/last_received_at/g, '')));
-    eq(q.queryParameters.map(p => [p.name, p.parameterValue.value]), [['url', 'https://x.com/ICannot_Enough/status/2111814207448514693'], ['post_id', WAYMO]]);
+    eq(q.queryParameters.map(p => [p.name, p.parameterValue.value]), [['url', 'https://x.com/ICannot_Enough/status/2111814207448514693'], ['post_id', WAYMO], ['hours', '24']]);
     answer = { jobComplete: true, schema: { fields: [{ name: 'interactions', type: 'INTEGER' }] }, rows: [] };
     eq(w.bot.bqPostEngagement_('https://x.com/a/status/123456', S), null);
     answer = null;

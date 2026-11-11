@@ -236,7 +236,8 @@ function tryAlert() {
   }
   let knowledgeNote = 'none (the Resources tab\'s documents haven\'t been read: run refreshKnowledge())';
   try {  // the knowledge base, as a review gets it (Knowledge.gs)
-    parsed.knowledge = knowledgeFor_(loadKnowledge_(openStore_(false)), knowledgeQuery_(parsed), { budget: KNOWLEDGE_REVIEW_CHARS_ });
+    parsed.knowledge = knowledgeForCtx_({ knowledge: loadKnowledge_(openStore_(false)), deadline: Date.now() + 60 * 1000,
+      log: t => console.log(t) }, knowledgeQuery_(parsed), { budget: KNOWLEDGE_REVIEW_CHARS_, pin: true });
     if (parsed.knowledge.docs.length) knowledgeNote = knowledgeBrief_(parsed.knowledge);
   } catch (e) {
     knowledgeNote = 'unavailable (' + e.message + ')';
@@ -322,6 +323,10 @@ function poll() {
     setTestCopy_(null);  // Config.gs: no Burson test copy until B26 is read below
     setRunLive_(false);  // Config.gs: Testing until runMode_ says otherwise (fail closed)
     ss = openStore_(false);
+    // The shared alert memory (AlertMemory.gs), once this run for every flow below (the Mirror, the Auto-correct and
+    // Other alerts spaces, the Watch alerts, the Early wave, Direct BigQuery): read only when a flow needs it, written
+    // in the finally below. No post or story is emailed twice, whichever flow or source meets it
+    alertMemoryStart_(ss, { deadline: runStart + RUN_HARD_STOP_MS_ });
     if (typeof syncBrandSafetyGroups_ === 'function') syncBrandSafetyGroups_(ss);
     control = controlTab_(ss) || ensureControlTab_(ss, Session.getEffectiveUser().getEmail());
     ensureSwitchRows_(control);  // rows 11-24, 27-29, 32, 34 and 36 on a tab from before them (OFF)
@@ -390,12 +395,13 @@ function poll() {
     if (acStandalone) {
       mode = { live: false, why: 'working in the Auto-correct space (B10)' };
       const needs = sfb.space ? [] : sfbNeeds_(wanted, null);
+      const memNote = amControlNote_();  // AlertMemory.gs: its memory couldn't be read lately ('' when it could)
       writeControlStatus_(control, {
         bursonNote: '\u2014 not used (working in Auto-correct space, B10)',
         analystNote: '',
-        status: needs.length ? `\u26a0\ufe0f ${sfbProblemText_(sfb, needs)}` : okStatusText_(),
+        status: needs.length ? `\u26a0\ufe0f ${sfbProblemText_(sfb, needs)}` : (memNote ? `\u26a0\ufe0f ${memNote}` : okStatusText_()),
         lastCheck: nowLabel_(),
-        today: todayText_(readStats_(), dayKey_(), wanted.switches.noWait),
+        today: todayText_(readStats_(), dayKey_(), wanted.switches.noWait) + amTodayText_(),
       });
       props.setProperty('FAIL_STREAK', '0');
       return;
@@ -585,11 +591,12 @@ function poll() {
       : cfg.outboundBlocked
         ? { bursonNote: '✓ ' + cfg.burson.name }
         : { bursonNote: outside ? outsideBursonNote_(cfg.burson) : '✓ ' + cfg.burson.name, analystNote: '✓ ' + cfg.analyst.name };
+    const memNote = amControlNote_();  // AlertMemory.gs: its memory couldn't be read lately ('' when it could)
     const status = sfbStatus || (issues.length ? `⚠️ Something needs another try: ${truncate_(issues[0], 240)} The bot keeps retrying.`
-      : (notice ? `⚠️ ${notice}` : direct.space ? directB25StatusText_(cfg.burson) : okStatusText_()));
+      : (notice ? `⚠️ ${notice}` : memNote ? `⚠️ ${memNote}` : direct.space ? directB25StatusText_(cfg.burson) : okStatusText_()));
     writeControlStatus_(control, Object.assign(statusNotes, {
       status: mode && mode.live ? `${LIVE_STATUS_PREFIX_}${status}` : status,
-      lastCheck: nowLabel_(), today: todayText_(today, day, wanted.switches.noWait),
+      lastCheck: nowLabel_(), today: todayText_(today, day, wanted.switches.noWait) + amTodayText_(),
     }));
     if (issues.length) healthFail_(new Error(issues[0]), cfg.outboundBlocked ? null : cfg);
     else healthOk_(ctx);
@@ -620,8 +627,11 @@ function poll() {
         // Working directly in B25 (row 32): no S-F Burson this run (sfbFlows), so it doesn't run, and C10 says why
         const allowAcEarlyWave = !String(wanted.mirror || '').trim() &&
           (!mainCtx || Boolean(earlyWaveRefusal_(mainCtx)));
+        const allowAcDirectBq = !String(wanted.mirror || '').trim() &&
+          (!mainCtx || Boolean(bqDirectRefusal_(mainCtx, cfg && cfg.burson && cfg.burson.id)));
         const ac = runAutoCorrect_(control, wanted, ss, cfg, runStart, sfbFlows || sfb, {
           allowEarlyWave: allowAcEarlyWave,
+          allowDirectBq: allowAcDirectBq,
           lookbackMinutes: lookback ? lookback.minutes : BQ_LOOKBACK_DEFAULT_MIN_,
         });
         if (ac) activity += activityOf_(ac.report);
@@ -696,6 +706,9 @@ function poll() {
       console.error('could not update the switches on the Control tab: ' + ((e && e.message) || e));
     }
     try { outboxRunEnd_(); } catch (e) { console.error('Burson outbox: ' + e); }  // what this run withheld or queued
+    // The shared alert memory (AlertMemory.gs): what every flow learned this run, written once (never throws), then gone
+    alertMemoryFlush_();
+    alertMemoryEnd_();
     releaseRun_();  // RUN_OWNER, if this run still holds it
     lock.releaseLock();
   }
@@ -874,7 +887,8 @@ function buildCtx_(cfg, ss, switches) {
     spaces: { burson: cfg.burson, analyst: cfg.analyst },
     sfBurson,  // this run's S-F Burson (Control tab B25): {id, name, externalUserAllowed}, or null when none is known
     get store() {  // the log tabs are only read when a run has something new to look up
-      if (!store) store = makeStore_(sheetBackend_(ss), () => Date.now(), partition, readOnly ? 'ac|' : '');
+      // amStoreObserver_ (AlertMemory.gs): the shared alert memory sees every row this store reads (every space's) or adds
+      if (!store) store = makeStore_(sheetBackend_(ss), () => Date.now(), partition, readOnly ? 'ac|' : '', amStoreObserver_());
       return store;
     },
     get resources() {  // the Resources tab, read only when someone asks a question
@@ -937,6 +951,8 @@ function buildCtx_(cfg, ss, switches) {
   // or queued on the Burson outbox tab (ON and LIVE), by the run's own switches, and only ever for this run's S-F Burson
   ctx.outbox = bursonOutbox_(ss, () => ctx.switches, sfBurson ? sfBurson.id : '', () => ctx.live === true);
   ctx.chat = guardedChat_(cfg, settings, ctx.outbox);
+  // The shared alert memory (AlertMemory.gs): this run's, for every flow (one that knows nothing outside poll())
+  ctx.memory = alertMemory_();
   return ctx;
 }
 

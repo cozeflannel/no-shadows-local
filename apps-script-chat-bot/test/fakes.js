@@ -234,6 +234,22 @@ class FakeChat {
 // Vertex AI (Gemini)
 // ------------------------------------------------------------------------------------------------------------
 
+// A stand-in for text-embedding-005: 768 numbers from the text's words (lowercased, 3+ letters, a trailing s dropped),
+// each word hashed to one dimension and a sign, the vector normalized. Texts sharing words get close vectors.
+function fakeEmbedding_(text) {
+  const v = new Array(768).fill(0);
+  const words = String(text || '').toLowerCase().match(/[a-z0-9]{3,}/g) || [];
+  words.forEach(w0 => {
+    const w = w0.length > 3 ? w0.replace(/s$/, '') : w0;
+    let h = 2166136261;
+    for (let i = 0; i < w.length; i++) { h ^= w.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    v[h % 768] += (h >>> 31) ? -1 : 1;
+  });
+  if (!words.length) v[0] = 1;
+  const n = Math.sqrt(v.reduce((a, x) => a + x * x, 0)) || 1;
+  return v.map(x => x / n);
+}
+
 class FakeVertex {
   constructor() {
     this.assess = () => ({ checks: [] });          // (payload) => ASSESS_SCHEMA_ object
@@ -263,10 +279,25 @@ class FakeVertex {
     // (payload) => the web searches behind the answer (groundingMetadata: {webSearchQueries, groundingChunks}) | null
     this.grounding = null;
     this.calls = [];
+    // Embeddings (Vectors.gs, text-embedding-005 :predict): (texts) => number[768][]; default fakeEmbedding_, a hashed
+    // bag of words (texts sharing words are close, unrelated ones far apart). embedFail: (payload) => {code, body} | null
+    this.embed = null;
+    this.embedFail = null;
+    this.embedCalls = [];
+  }
+
+  predict(url, payload) {
+    this.embedCalls.push({ url, payload });
+    const injected = this.embedFail && this.embedFail(payload);
+    if (injected) return injected;
+    const texts = (payload.instances || []).map(i => String((i && i.content) || ''));
+    const vecs = typeof this.embed === 'function' ? this.embed(texts) : texts.map(fakeEmbedding_);
+    return ok({ predictions: vecs.map(v => ({ embeddings: { values: v, statistics: { truncated: false, token_count: 10 } } })) });
   }
 
   handle(url, params) {
     const payload = JSON.parse(params.payload);
+    if (/:predict$/.test(String(url).split('?')[0])) return this.predict(url, payload);
     this.calls.push({ url, payload });
     const injected = this.fail && this.fail(payload);
     if (injected) return injected;
@@ -1084,5 +1115,6 @@ function loadBot(services, clock, opts) {
   return sandbox;
 }
 
-module.exports = { FakeChat, FakeVertex, FakeGmail, FakeSheet, FakeSpreadsheet, decodeMime, makeGoogle, loadBot, CHAT_POSTS };
+module.exports = { FakeChat, FakeVertex, FakeGmail, FakeSheet, FakeSpreadsheet, decodeMime, makeGoogle, loadBot, CHAT_POSTS,
+  fakeEmbedding_ };
 

@@ -232,13 +232,20 @@ function escalationFor_(ctx, review, history) {
   const fu = review.followUp;
   const fuRow = (fu && fu.original && fu.original.row) || null;
   const kiRow = (review && review.knownIssueRow) || null;
-  const related = (fuRow && fuRow.email_status === 'sent' && fuRow.email_thread ? fuRow : null) ||
+  const memRel = typeof memoryRelated_ === 'function' ? memoryRelated_(review) : { post: null, story: null, ongoing: false };
+  let related = (fuRow && fuRow.email_status === 'sent' && fuRow.email_thread ? fuRow : null) ||
+    memRel.post ||
     relatedAlert_(review, history, ctx.now()) ||
-    (kiRow && kiRow.email_status === 'sent' && kiRow.email_thread ? kiRow : null) || fuRow || kiRow;
+    (kiRow && kiRow.email_status === 'sent' && kiRow.email_thread ? kiRow : null) || memRel.story || fuRow || kiRow;
   const ongoing = !!related || !!(fu && fu.original && fu.original.outcome === 'alerted') ||
-    !!(review && review.knownIssue && review.knownIssue.matches);
-  const esc = escalation_(review.fields, { status: ongoing ? 'ONGOING' : undefined, now: ctx.now() });
-  return { related, esc: kbStarted_(ctx, review, esc) || esc };
+    !!(review && review.knownIssue && review.knownIssue.matches) || !!memRel.ongoing;
+  const baseEsc = escalation_(review.fields, { status: ongoing ? 'ONGOING' : undefined, now: ctx.now() });
+  const esc = kbStarted_(ctx, review, baseEsc) || baseEsc;
+  const upd = typeof memoryUpdate_ === 'function' ? memoryUpdate_(review, esc) : null;
+  if (upd && upd.rel && upd.rel.o === 'e' && upd.rel.th && !(related && related.email_status === 'sent' && related.email_thread)) {
+    related = amRelatedRow_(upd.rel, upd.rel.nm, '');
+  }
+  return { related, esc };
 }
 
 /**
@@ -285,7 +292,7 @@ function noteKbStart_(ctx, review, basis) {
  * say (in the IMs' log, under 3% of those were marked ❌).
  */
 function aiVeto_(review, esc) {
-  const repeat = followUpSkip_(review, esc);
+  const repeat = followUpSkip_(review, esc) || (typeof memorySkip_ === 'function' ? memorySkip_(review, esc) : '');
   if (repeat) return repeat;
   const sa = review && review.socialAlert;
   if (!sa || sa.warranted !== false) return '';
@@ -424,6 +431,7 @@ function watchDraft_(ctx, alertId) { setWatched_(ctx, watched_(ctx).concat([aler
  */
 function onEmailSent_(ctx, row, report) {
   const steps = [  // [name, fn(ctx, row, report)]: the switches that act on a sent Social Alert add theirs here
+    ['Alert memory', amEmailSent_],
     ['the write-back to SLRR BigQuery', bqWriteBackSent_],  // Write back to SLRR BigQuery (BigQuery.gs)
     ['Watch sent alerts', watchSentAlert_],  // Watch.gs: on the watch list for a day
     ['Track post-alert outcomes', watchOutcome_],  // Outcomes.gs: its email thread's replies read for a week
@@ -461,6 +469,8 @@ function tryDraft_(ctx, row, report) {
   const D = ctx.drafts;
   let tnsNote = '';
   if (!runOwned_()) return;  // another run took over: the row stays pending for it, no try counted
+  const alreadyOut = !!(row.email_draft || (standInSent_(ctx, row.alert_id) && standInSent_(ctx, row.alert_id).sent));
+  if (!alreadyOut && typeof amSendGate_ === 'function' && !amSendGate_(ctx, row, report)) return;
   try {
     tnsNote = autoSubmitTns_(ctx, row, row.email_input || {}, report);  // '' while Auto-submit T&S form is OFF
     const input = row.email_input || {};
@@ -486,6 +496,7 @@ function tryDraft_(ctx, row, report) {
     // second one, and no auto-send while a person has it). Gone from Gmail: maintainDrafts_ works out sent or deleted.
     const kept = row.email_draft ? reusedDraft_(ctx, row, mime) : null;
     if (kept && kept.gone) return;
+    if (!kept && typeof amClaimSend_ === 'function') amClaimSend_(ctx, row);
     const auto = !kept && autoSendOn_(ctx) ? autoSend_(ctx, row, input, plan, email, mime, report, tnsNote) : null;
     if (auto && (auto.sent || auto.later)) return;  // it went out (or goes out on the next run): no draft
     const draft = kept || ctx.gmail.createDraft(mime, row.email_thread || null);
@@ -510,6 +521,7 @@ function tryDraft_(ctx, row, report) {
     ctx.store.updateAlert(row, { email_status: final ? 'failed' : 'pending', email_attempts: attempts, email_error: truncate_(message, 300) });
     ctx.log(`Social Alert ${what} for ${row.alert_id} failed (attempt ${attempts}): ${message}`);
     if (final) {
+      if (!row.email_draft && row.email_status !== 'sent' && typeof amReleaseSend_ === 'function') amReleaseSend_(ctx, row);
       report.errors.push(`couldn't ${what} the Social Alert for ${row.alert_id} after ${attempts} tries: ${message}`);
       bqWriteBack_(ctx, row, 'failed', report);  // Write back to SLRR BigQuery (nothing while it's OFF)
       if (tnsNote) {  // Auto-submit T&S form: what it did for T&S (or the link) still goes under the alert
@@ -607,11 +619,13 @@ function sendToStandIn_(ctx, row, input, plan, report, tnsNote) {
     inline: email.inline, inReplyTo: row.email_reply_to || '', references: row.email_reply_to || '' });
   if (!runOwned_()) return;  // another run took over (Main.gs): it sends this one
   noteStandInSend_(ctx, { id, at: ctx.now() });  // first: when it can't be noted, this throws and nothing is sent
+  if (typeof amClaimSend_ === 'function') amClaimSend_(ctx, row);
   let sent;
   try {
     sent = ctx.gmail.sendMessage(mime, row.email_thread || null);
   } catch (e) {  // Gmail refused it, so nothing went out: the next try sends it
     forgetStandInSend_(ctx, id);
+    if (typeof amReleaseSend_ === 'function') amReleaseSend_(ctx, row);
     throw e;
   }
   const at = ctx.now();
@@ -1394,7 +1408,7 @@ function markEmojis_(ctx, row, emojis) {
 function noEmailNeeded_(ctx, row, review, history, report) {
   if (!draftsOn_(ctx) || !(ctx.settings && ctx.settings.react)) return;
   const { esc } = escalationFor_(ctx, review, history);
-  const repeat = followUpSkip_(review, esc);
+  const repeat = followUpSkip_(review, esc) || (typeof memoryRepeat_ === 'function' ? memoryRepeat_(review, esc) : '');
   const veto = aiVeto_(review, esc);
   const decide = text => { try { ctx.store.updateAlert(row, { decision: truncate_(text, 300) }); } catch (e) { /* a log column only */ } };
   if (!repeat && esc.action === 'YOUTUBE_CHAT_ONLY') {
@@ -1415,6 +1429,11 @@ function noEmailNeeded_(ctx, row, review, history, report) {
   }
   decide(`❌ ${repeat || veto || noEmailWhy_(esc)}`);
   if (markNoAction_(ctx, row)) ctx.log(`${row.alert_id}: ❌ no Social Alert needed (${veto || noEmailWhy_(esc)})`);
+  const mv = review && review.memory && review.memory.verdict;
+  if (mv && mv.skip && typeof amHeldTrace_ === 'function') {
+    amHeldTrace_(ctx, row, mv);
+    if (mv.fold && typeof amHeldNoteText_ === 'function') postDraftNote_(ctx, row, amHeldNoteText_(mv), 'amheld:' + row.alert_id);
+  }
   bqWriteBack_(ctx, row, 'decided', report);
 }
 
@@ -1776,6 +1795,7 @@ function maintainDrafts_(ctx, report) {
         markAutoSentFound_(ctx, row, found, report, false);
       } else {  // deleted in Gmail without being sent: no email went out, so ❌ No action taken (as the IM would mark it)
         ctx.store.updateAlert(row, { email_status: 'discarded' });
+        if (typeof amReleaseSend_ === 'function') amReleaseSend_(ctx, row);
         markNoAction_(ctx, row);
         bqWriteBack_(ctx, row, 'discarded', report);  // Write back to SLRR BigQuery (nothing while it's OFF)
       }
@@ -1831,6 +1851,7 @@ function draftReactions_(ctx, fm, report) {
     if (entries.some(e => e.kind === 'close')) {
       ctx.gmail.deleteDraft(row.email_draft);
       ctx.store.updateAlert(row, { email_status: 'deleted' });
+      if (typeof amReleaseSend_ === 'function') amReleaseSend_(ctx, row);
       setWatched_(ctx, watched_(ctx).filter(id => id !== row.alert_id));
       bqWriteBack_(ctx, row, 'deleted', report);  // Write back to SLRR BigQuery (nothing while it's OFF)
       return true;

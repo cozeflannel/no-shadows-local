@@ -1,7 +1,7 @@
 // Proactive watch (Control tab row 34, proactiveWatch, ProactiveWatch.gs): spotting Google brand-safety
 // issues before Burson's alert space does. With the switch ON (it starts OFF, like every switch), every 5 minutes the bot
-// sends two read-only BigQuery scripts, one a location (us-central1: Pendulum's sonar_raw, Tubular's videos and Sprinklr's
-// export of Google's own posts; US: Brandwatch's BMIE mentions, the comments on Google's own posts, the DSD story
+// sends two read-only BigQuery scripts, one a location (us-central1: Pendulum's sonar_raw and Tubular's videos; US:
+// Brandwatch's mentions table, Sprinklr's report of Google's own posts, the comments on Google's own posts, the DSD story
 // selection feed, the Other alerts space's alerts from the Alert log and the Brandwatch query "2026 Election Alerts"
 // read straight from Brandwatch's API). Each keeps its sources' new rows in a temporary table, then asks Gemini inside
 // BigQuery (AI.IF for each watch ON on the Watches tab, AI.SCORE and AI.CLASSIFY for the posts that match). A later run
@@ -25,11 +25,18 @@ module.exports = H => {
   const POST2 = 'https://www.tiktok.com/@phonehackz1/video/7702553392157134102';
   const C1 = 'us-central1';
   const US = 'US';
-  const C1_SOURCES = ['sonar', 'tubular', 'outbound'];
-  const US_SOURCES = ['bmie', 'comments', 'story', 'chat', 'bwq'];
+  const C1_SOURCES = ['sonar', 'tubular'];
+  const US_SOURCES = ['bwm', 'owned', 'comments', 'story', 'chat', 'bwq'];
   const BWQ = 'Brandwatch: 2026 Election Alerts';
-  const SOURCE_NAMES = ['Sonar', 'Tubular', 'Sprinklr outbound', 'Brandwatch (BMIE)', 'Sprinklr comments', 'DSD story selection',
-    'Other alerts space', BWQ];
+  const BWM = 'Brandwatch mentions';
+  const OWNED = 'Sprinklr owned posts';
+  const SOURCE_NAMES = ['Sonar', 'Tubular', BWM, OWNED, 'Sprinklr comments', 'DSD story selection', 'Other alerts space', BWQ];
+  const NETWORKS = "IN ('twitter', 'reddit', 'bluesky', 'facebook', 'instagram', 'youtube', 'tiktok')";
+  // The only tables the watch may read (the team's approved list, Nov 11), and the two it read before then
+  const APPROVED = ['bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw', 'brand-social-central-data.google_tubular_mentions.tubular_videos',
+    'brand-social-central-data.raw_data.brandwatch_raw_mentions_base', 'brand-social-central-data.reporting_data.sprinklr_outbound_reporting',
+    'brand-social-central-data.reporting_data.sprinklr_inbound_comments', 'brand-social-central-data.DSD.DSD-story-selection'];
+  const DROPPED_TABLES = /all_sundar_mentions|stg_sprinklr_outbound/;
   // A look's result columns (pwSql_'s final SELECT): 'hit' rows (a post a watch) and 'src' rows (a source)
   const COLS = [['kind'], ['source'], ['why'], ['idx', 'INTEGER'], ['watch'], ['post_url'], ['platform'], ['author'], ['followers', 'INTEGER'],
     ['eng', 'INTEGER'], ['posted_ms', 'INTEGER'], ['seen_ms', 'INTEGER'], ['issue'], ['issue_new', 'BOOLEAN'], ['summary'],
@@ -163,6 +170,16 @@ module.exports = H => {
     watches(w.t).getRange(3, 2).setValue('ON');
     return w;
   };
+  /** A lane's look ending at `until` for `list` (pwSql_), each source starting where `marks` say, `today` its day's numbers. */
+  const lookSql = (lane, list, until, marks, today) =>
+    B.pwSql_(lane, list, { since: until - 15 * MIN, until, froms: B.pwFroms_(marks || {}, until, today), chat: [] });
+  /** A source's block in a look's SQL: from its SELECT to its EXCEPTION ('' when it isn't there). */
+  const blockOf = (sql, key) => {
+    const at = sql.indexOf(`SELECT '${key}', ROW_NUMBER()`);
+    return at < 0 ? '' : sql.slice(at, sql.indexOf('EXCEPTION WHEN ERROR THEN', at));
+  };
+  /** A source's cap in a look's SQL (what Gemini gets of it at most). */
+  const capIn = (sql, key) => Number((sql.match(new RegExp(`STRUCT\\('${key}' AS source, (\\d+) AS cap\\)`)) || [])[1]);
 
   // ===========================================================================================================
   // OFF
@@ -214,7 +231,7 @@ module.exports = H => {
     eq(t.bot.status().proactive_watch, 'ON (Watch alerts, row 35, is OFF: nothing is posted)');
   });
 
-  test('proactive watch: with a watch ON, a look goes out as two read-only BigQuery scripts, one a location: us-central1 (Sonar\'s new posts, Tubular\'s new videos, Sprinklr\'s export of Google\'s own posts only when it changed) and US (BMIE, the comments on Google\'s own posts, the DSD story selection feed, the Other alerts space\'s alerts), each source in a block of its own; the window the last 15 minutes up to a minute ago, every other source from its first-look start; the watch\'s words only as query parameters; a 5 GB cap and its label; a later run collects both: each post at or above the bar, and each near miss, goes on the Watch detections tab once, with its source and the Rating dropdown; C34, the watch\'s status and the Watch sources tab say how it\'s doing; nothing is posted or emailed', () => {
+  test('proactive watch: with a watch ON, a look goes out as two read-only BigQuery scripts, one a location: us-central1 (Sonar\'s new posts, Tubular\'s new videos) and US (Brandwatch\'s mentions table and Sprinklr\'s report of Google\'s own posts, each only when its table changed, the comments on Google\'s own posts, the DSD story selection feed, the Other alerts space\'s alerts), each source in a block of its own; the window the last 15 minutes up to a minute ago, every other source from its first-look start; the watch\'s words only as query parameters; a 5 GB cap and its label; a later run collects both: each post at or above the bar, and each near miss, goes on the Watch detections tab once, with its source and the Rating dropdown; C34, the watch\'s status and the Watch sources tab say how it\'s doing; nothing is posted or emailed', () => {
     const { t, bq } = watching();
     const chatWrites = writes(t);
     const sent0 = t.g.gmail.sentMessages().length;
@@ -242,28 +259,30 @@ module.exports = H => {
     eq([c1[0].body.location, us[0].body.location], [C1, US]);
     for (const piece of ['FROM `bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw`', 'w.followers >= 1000 OR w.eng >= 100', 'INTERVAL 24 HOUR',
       "WHEN NOT p.was_eligible THEN 'grew'", "WHEN w.eng >= 1000 AND w.eng >= 10 * GREATEST(IFNULL(p.eng_before, 0), 1) THEN 'broke out'",
-      "INTERVAL IF(why = 'new', 24, 72) HOUR",
-      '`brand-social-central-data.google_tubular_mentions.tubular_videos`', 'IF pw_out_mod > @outbound_mod THEN',
-      '`brand-social-central-data.external_data_share.stg_sprinklr_outbound_media_assets_json_source`',
-      "STRUCT('sonar' AS source, 150 AS cap), STRUCT('tubular' AS source, 60 AS cap), STRUCT('outbound' AS source, 40 AS cap)"]) {
+      "INTERVAL IF(why = 'new', 24, 72) HOUR", '`brand-social-central-data.google_tubular_mentions.tubular_videos`',
+      "caps AS (SELECT * FROM UNNEST([STRUCT('sonar' AS source, 150 AS cap), STRUCT('tubular' AS source, 60 AS cap)])),"]) {
       assert.ok(c1[0].sql.includes(piece), piece);
     }
-    for (const piece of ['`brand-social-central-data.social_alerts_dataset.all_sundar_mentions`',
+    assert.ok(!/IF pw_mod_|DECLARE pw_mod_/.test(c1[0].sql), 'no table us-central1 reads waits for a change');
+    for (const piece of ['DECLARE pw_mod_bwm INT64 DEFAULT NULL;', 'DECLARE pw_mod_owned INT64 DEFAULT NULL;',
+      'IF pw_mod_bwm > @bwm_mod THEN', '`brand-social-central-data.raw_data.brandwatch_raw_mentions_base`',
+      'IF pw_mod_owned > @owned_mod THEN', '`brand-social-central-data.reporting_data.sprinklr_outbound_reporting`',
       'APPENDS(TABLE `brand-social-central-data.reporting_data.sprinklr_inbound_comments`',
-      '`brand-social-central-data.DSD.DSD-story-selection`', 'FROM UNNEST(@chat) c',
-      "CASE WHEN full_q THEN 'brand-safety query' WHEN neg THEN 'negative' WHEN kof_author THEN 'KOF author'",
-      "WHEN risk THEN 'risk words' WHEN ABS(MOD(FARM_FINGERPRINT(url), 100)) < 5 THEN 'sample' ELSE 'skipped' END AS why",
-      `r'${B.ev('PW_BMIE_FULL_RX_')}'`, `r'${B.ev('PW_RISK_WORDS_RX_')}'`, "IFNULL(n.why, '') != 'skipped'"]) {
+      '`brand-social-central-data.DSD.DSD-story-selection`', 'FROM UNNEST(@chat) c', "IFNULL(n.why, '') != 'skipped'",
+      "STRUCT('bwm' AS source, 60 AS cap), STRUCT('owned' AS source, 40 AS cap), STRUCT('comments' AS source, 30 AS cap), " +
+        "STRUCT('story' AS source, 40 AS cap), STRUCT('chat' AS source, 30 AS cap), STRUCT('bwq' AS source, 100 AS cap)"]) {
       assert.ok(us[0].sql.includes(piece), piece);
     }
     assert.ok(!/brandwatch_daily|content_vectors|reddit_items_raw/.test(us[0].sql + c1[0].sql), 'the stale feeds are not read');
-    assert.ok(!us[0].sql.includes('sonar_raw') && !c1[0].sql.includes('all_sundar_mentions'), 'each location reads only its own tables');
+    assert.ok(!DROPPED_TABLES.test(us[0].sql + c1[0].sql), 'nor the tables dropped Nov 11');
+    assert.ok(!us[0].sql.includes('sonar_raw') && !c1[0].sql.includes('brandwatch_raw_mentions_base'), 'each location reads only its own tables');
     assert.ok(c1[0].sql.includes("['AI answers and Gemini', 'Privacy and security', 'Scams and fraud', 'Product failure or outage', " +
       "'Legal and regulation', 'Bias or censorship claims', 'Executives and workplace', 'Elections and civics', 'Other']"));
-    // a first look: every source that keeps its own place starts its firstMs back; the export hasn't been read yet
-    eq([c1[0].params.tubular_from, c1[0].params.outbound_from, c1[0].params.outbound_mod].map(Number), [until - 24 * HOUR, until - 72 * HOUR, 0]);
-    eq([us[0].params.bmie_from, us[0].params.story_from].map(Number), [until - 15 * MIN, until - 2 * HOUR]);
-    eq(Object.keys(us[0].params).filter(k => /^(bwdaily|vectors|reddit)_/.test(k)), []);
+    // a first look: every source that keeps its own place starts its firstMs back; neither table that waits for a change was read yet
+    eq(Number(c1[0].params.tubular_from), until - 24 * HOUR);
+    eq([us[0].params.bwm_from, us[0].params.bwm_upto, us[0].params.bwm_skip, us[0].params.bwm_mod, us[0].params.owned_from,
+      us[0].params.owned_mod, us[0].params.story_from].map(Number), [until - 2 * HOUR, until, 0, 0, until - 30 * HOUR, 0, until - 2 * HOUR]);
+    eq(Object.keys(us[0].params).concat(Object.keys(c1[0].params)).filter(k => /^(bwdaily|vectors|reddit|bmie|outbound)_/.test(k)), []);
     eq([us[0].types.chat, us[0].arrays.chat, c1[0].types.chat], ['ARRAY', [], undefined]);
     eq([us[0].types.bwq, us[0].types.bwq_err, c1[0].types.bwq, c1[0].types.bwq_err], ['ARRAY', 'STRING', undefined, undefined]);
     eq(JSON.parse(t.g.props.get('PW_JOB')), { since: sentAt - 16 * MIN, until, at: sentAt, tries: 0, id: 'pwjob_1',
@@ -279,7 +298,7 @@ module.exports = H => {
           issue: 'Tubular', issue_new: false, summary: '=HYPERLINK("x") a data leak video', topic: 'Privacy and security', seen_ms: seen + MIN })]
         .concat(srcs(C1_SOURCES, { sonar: { found: 27, checked: 27, newest_ms: seen + MIN, mod_ms: sentAt - 2 * MIN },
           tubular: { found: 300, checked: 60, newest_ms: seen } })) },
-      [US]: { rows: srcs(US_SOURCES, { bmie: { found: 12, checked: 12 } }) },
+      [US]: { rows: srcs(US_SOURCES, { bwm: { found: 12, checked: 12 } }) },
     };
     t.poll();
     eq([bq.gets.length, t.g.props.get('PW_JOB'), t.g.props.get('PW_US_JOB'), Number(t.g.props.get('PW_SINCE')),
@@ -300,13 +319,14 @@ module.exports = H => {
     assert.match(watches(t).cell(3, 8), /^✓ watched · today: 1 flagged, 1 near miss · last look \d+:\d\d [AP]M$/);
     eq(watches(t).cell(2, 8), 'OFF: not watched');
     const today = JSON.parse(t.g.props.get('PW_TODAY'));
-    eq([today.looks, today.checked, today.flagged, today.near, today.w, today.src.sonar, today.src.tubular, today.src.bmie, today.src.story],
+    eq([today.looks, today.checked, today.flagged, today.near, today.w, today.src.sonar, today.src.tubular, today.src.bwm, today.src.story],
       [2, 99, 1, 1, { [BRAND]: [1, 1] }, [27, 1], [60, 0], [12, 0], [0, 0]]);
     eq(JSON.parse(t.g.props.get('PW_MARKS')), { tubular: seen });  // Sonar goes by the window; the others had nothing new
     const s = sources(t).rows;
     eq([s[3][3], s[3][4], s[3][5], s[3][6], s[3][7], s[3][8]],
       ['✓ live: 27 new at the last look', B.pwTime_(sentAt - 2 * MIN), B.pwTime_(seen + MIN), '27 / 27', 27, 1]);
-    eq([s[4][3], s[4][6], s[4][7], s[6][3], s[6][6]], ['✓ live: 300 new at the last look', '300 / 60', 60, '✓ live: 12 new at the last look', '12 / 12']);
+    eq([s[4][3], s[4][6], s[4][7], s[5][0], s[5][3], s[5][6]],
+      ['✓ live: 300 new at the last look', '300 / 60', 60, BWM, '✓ live: 12 new at the last look', '12 / 12']);
     eq([writes(t), t.g.gmail.sentMessages().length], [chatWrites, sent0]);  // nothing posted in Chat, nothing emailed
     assert.match(t.bot.status().proactive_watch_status, /^✓ ON \(Watch alerts, row 35, is OFF/);
   });
@@ -351,7 +371,7 @@ module.exports = H => {
     const start = c1()[0].params.since_ms;
     eq([t.g.props.get('PW_TRIES'), t.g.props.get('PW_SINCE'), t.g.props.get('PW_JOB'), t.g.props.get('PW_US_TRIES'), lanes(bq).us.length],
       ['1', start, undefined, undefined, 1]);
-    assert.match(note(t), / · ⚠️ the last look at Sonar, Tubular and Sprinklr outbound failed \(BigQuery HTTP 500: Backend error\); it tries again at the next look$/);
+    assert.match(note(t), / · ⚠️ the last look at Sonar and Tubular failed \(BigQuery HTTP 500: Backend error\); it tries again at the next look$/);
     for (let i = 0; i < 4; i++) t.poll();
     eq(c1().length, 1, 'not again before 5 minutes');
     t.poll();  // try 2
@@ -359,10 +379,10 @@ module.exports = H => {
     for (let i = 0; i < 4; i++) t.poll();  // try 3, 5 minutes after try 2
     eq([c1().length, c1().map(l => l.params.since_ms)], [3, [start, start, start]]);
     eq([t.g.props.get('PW_TRIES'), t.g.props.get('PW_SINCE')], [undefined, c1()[2].params.until_ms]);
-    assert.match(note(t), / · ⚠️ skipped \d\d:\d\d-\d\d:\d\d for Sonar, Tubular and Sprinklr outbound after 3 tries \(BigQuery HTTP 500: Backend error\); the next look carries on$/);
+    assert.match(note(t), / · ⚠️ skipped \d\d:\d\d-\d\d:\d\d for Sonar and Tubular after 3 tries \(BigQuery HTTP 500: Backend error\); the next look carries on$/);
     // the skipped window moved the location's other sources past it
     const marks = JSON.parse(t.g.props.get('PW_MARKS'));
-    eq([marks.tubular, marks.outbound], [Number(c1()[2].params.until_ms), Number(c1()[2].params.until_ms)]);
+    eq([marks.tubular, marks.outbound], [Number(c1()[2].params.until_ms), undefined]);
     eq(Number(lanes(bq).us[lanes(bq).us.length - 1].params.since_ms) > Number(start), true, 'US carried on meanwhile');
     // the next look carries on from there; this one stays "running"
     bq.submit = null;
@@ -377,7 +397,7 @@ module.exports = H => {
     eq([bq.cancels.length, c1().length, retry.tries, retry.since, t.g.props.get('PW_TRIES')],
       [1, 5, 1, Number(c1()[3].params.since_ms), '1']);
     assert.match(bq.cancels[0], new RegExp(`/projects/brand-social-central-data/jobs/${c1()[3].jobId}/cancel\\?location=us-central1$`));
-    assert.match(note(t), / · ⚠️ the last look at Sonar, Tubular and Sprinklr outbound failed \(BigQuery took more than 4 minutes\); it tries again at the next look$/);
+    assert.match(note(t), / · ⚠️ the last look at Sonar and Tubular failed \(BigQuery took more than 4 minutes\); it tries again at the next look$/);
   });
 
   test('proactive watch: while the bot is paused nothing is looked at; back ON, the watch starts afresh from the last 15 minutes (not from where it stopped), every source from its first-look start', () => {
@@ -442,29 +462,34 @@ module.exports = H => {
     eq(lanes(bq).us[1].arrays.chat.map(x => x.u), ['https://x.com/ballots/status/2116390716536770002']);
   });
 
-  test('proactive watch: each source that keeps its own place starts where it stopped (the newest item it handed over), never further back than its limit; a source that failed starts where it was; Sprinklr\'s export is read again only once it changed', () => {
+  test('proactive watch: each source that keeps its own place starts where it stopped (the newest item it handed over), never further back than its limit; a source that failed starts where it was; a table read only when it changed is read again only once it changed again (one that changed after a look\'s end counts as unread, so the next look reads it); the places of the sources dropped Nov 11 are forgotten', () => {
     const { t, bq } = watching();
+    t.g.props.set('PW_MARKS', JSON.stringify({ bmie: 99, outbound: 96, outbound_mod: 95 }));  // left from before Nov 11
     t.poll();
     const T0 = t.g.clock.now;
+    const end0 = T0 - MIN;  // the first look's end
     bq.answers = {
-      [C1]: { rows: srcs(C1_SOURCES, { tubular: { found: 900, checked: 60, newest_ms: T0 - 3 * HOUR },
-        outbound: { found: 1400, checked: 40, newest_ms: T0 - 30 * HOUR, mod_ms: T0 - 20 * HOUR } }) },
-      [US]: { rows: srcs(US_SOURCES, { bmie: { found: 40, checked: 40, newest_ms: T0 - 2 * MIN },
-        story: { err: 'Access Denied: Table brand-social-central-data:DSD.DSD-story-selection' } }) },
+      [C1]: { rows: srcs(C1_SOURCES, { tubular: { found: 900, checked: 60, newest_ms: T0 - 3 * HOUR } }) },
+      [US]: { rows: srcs(US_SOURCES, { bwm: { found: 40, checked: 40, newest_ms: T0 - 2 * HOUR, mod_ms: T0 - 3 * HOUR },
+        owned: { found: 2, checked: 2, newest_ms: T0 - 20 * HOUR, mod_ms: T0 + 30 * 1000 },  // its table changed after the look's end
+        story: { err: 'Access Denied: Table brand-social-central-data:DSD.DSD-story-selection', newest_ms: T0 } }) },
     };
     t.poll();
-    eq(JSON.parse(t.g.props.get('PW_MARKS')), { tubular: T0 - 3 * HOUR, outbound: T0 - 30 * HOUR, outbound_mod: T0 - 20 * HOUR, bmie: T0 - 2 * MIN });
+    eq(JSON.parse(t.g.props.get('PW_MARKS')), { tubular: T0 - 3 * HOUR, bwm: T0 - 2 * HOUR, bwm_mod: T0 - 3 * HOUR,
+      owned: T0 - 20 * HOUR, owned_mod: end0 });
     for (let i = 0; i < 4; i++) t.poll();  // the next look, 5 minutes after the first
     const { c1, us } = lanes(bq);
     eq([c1.length, us.length], [2, 2]);
     const until = Number(c1[1].params.until_ms);
-    eq([c1[1].params.tubular_from, c1[1].params.outbound_from, c1[1].params.outbound_mod].map(Number), [T0 - 3 * HOUR, T0 - 30 * HOUR, T0 - 20 * HOUR]);
-    eq([us[1].params.bmie_from, us[1].params.story_from].map(Number), [T0 - 2 * MIN, until - 2 * HOUR]);
-    // never further back than a source's limit (BMIE: 30 minutes; Tubular: 24 hours); never moved back; a failed source stays put
-    eq([B.pwFroms_({ bmie: 1000, tubular: until - 30 * HOUR }, until).bmie, B.pwFroms_({ tubular: until - 30 * HOUR }, until).tubular],
-      [until - 30 * MIN, until - 24 * HOUR]);
-    eq(B.pwAdvanceMarks_({ bmie: 5000 }, [src('bmie', { newest_ms: 4000 }), src('story', { newest_ms: 9000, err: 'x' }),
-      src('sonar', { newest_ms: 7000 }), src('outbound', { mod_ms: 8000, err: 'y' })]), { bmie: 5000 });
+    eq(Number(c1[1].params.tubular_from), T0 - 3 * HOUR);
+    eq([us[1].params.bwm_from, us[1].params.bwm_mod, us[1].params.owned_from, us[1].params.owned_mod, us[1].params.story_from].map(Number),
+      [T0 - 2 * HOUR, T0 - 3 * HOUR, T0 - 20 * HOUR, end0, until - 2 * HOUR]);
+    // never further back than a source's limit (Brandwatch's mentions: 6 hours; Tubular: 24 hours); never moved back; a failed source stays put
+    eq([B.pwFroms_({ bwm: 1000, tubular: until - 30 * HOUR }, until).bwm, B.pwFroms_({ tubular: until - 30 * HOUR }, until).tubular],
+      [until - 6 * HOUR, until - 24 * HOUR]);
+    eq(B.pwAdvanceMarks_({ owned: 5000, owned_mod: 3000, bmie: 9, outbound_mod: 7 }, [src('owned', { newest_ms: 4000 }),
+      src('tubular', { newest_ms: 9000, err: 'x' }), src('sonar', { newest_ms: 7000 }), src('owned', { mod_ms: 8000, err: 'y' })], until),
+    { owned: 5000, owned_mod: 3000 });
   });
 
   test('proactive watch: the DSD story selection feed (Brandwatch\'s HIGH and KOF alert emails, one row a post) is read in the US look, in a block of its own: what was ingested since the newest post it handed over (2 hours back on a first look, never more than 6), posted within 72 hours, with text; no reach floor (the feed has no follower or engagement counts; all zeros or 500/500/500/2000 go to Gemini as unknown), KOF first, 40 a look; a post it hands over is recorded as DSD story selection; its row says stale after 6 hours without a change', () => {
@@ -513,13 +538,14 @@ module.exports = H => {
     assert.match(row[3], /^⚠️ stale: its table hasn't changed since /);
   });
 
-  test('proactive watch: the stale feeds (the daily Brandwatch export, the DSD content vectors, Reddit Pulse: no new rows since Sep 20, Sep 24 and Oct 25) are read in neither look, with no parameter for them; a Watch sources tab made when the watch read more sources loses its leftover rows at its next write, keeping one row a current source', () => {
+  test('proactive watch: the stale feeds (the daily Brandwatch export, the DSD content vectors, Reddit Pulse: no new rows since Sep 20, Sep 24 and Oct 25) and the two tables dropped Nov 11 (BMIE\'s alert mentions, Sprinklr\'s older export of Google\'s own posts) are read in neither look, with no parameter for them; a Watch sources tab made when the watch read other sources loses its leftover rows at its next write, keeping one row a current source', () => {
     const until = Date.UTC(2026, 9, 14, 12, 0);
     const watch = B.pwWatchFrom_([BRAND, 'ON', 'Q?', '', '', '', '', ''], 3);
     ['c1', 'us'].forEach(lane => {
       const q = B.pwSql_(lane, [watch], { since: until - 15 * MIN, until, froms: B.pwFroms_({}, until), chat: [] });
-      assert.ok(!/brandwatch_daily|content_vectors|reddit_pulse|'bwdaily'|'vectors'|'reddit'/.test(q.sql), lane);
-      eq(q.params.filter(p => /^(bwdaily|vectors|reddit)_/.test(p.name)).map(p => p.name), []);
+      assert.ok(!/brandwatch_daily|content_vectors|reddit_pulse|'bwdaily'|'vectors'|'reddit'\s+AS|'bmie'|'outbound'/.test(q.sql), lane);
+      assert.ok(!DROPPED_TABLES.test(q.sql), lane);
+      eq(q.params.filter(p => /^(bwdaily|vectors|reddit|bmie|outbound)(_|$)/.test(p.name)).map(p => p.name), []);
     });
     eq(B.ev('PW_SOURCES_').map(s => s.key), C1_SOURCES.concat(US_SOURCES));
     // a tab from before (rows for 10 sources): the rows below the 8 current ones are cleared, the current ones kept
@@ -538,7 +564,7 @@ module.exports = H => {
     bq.answers = {
       [C1]: { rows: [hit({ seen_ms: now - 2 * MIN })].concat(srcs(C1_SOURCES, { sonar: { found: 27, checked: 27, newest_ms: now - 2 * MIN, mod_ms: now - MIN } })) },
       [US]: { rows: srcs(US_SOURCES, { story: { mod_ms: now - 2 * 24 * HOUR }, comments: { mod_ms: now - 3 * HOUR },
-        bmie: { err: 'Access Denied: Table brand-social-central-data:social_alerts_dataset.all_sundar_mentions' } }) },
+        bwm: { err: 'Access Denied: Table brand-social-central-data:raw_data.brandwatch_raw_mentions_base' } }) },
     };
     t.poll();
     const row = name => sources(t).rows.slice(3).find(r => r[0] === name);
@@ -547,28 +573,29 @@ module.exports = H => {
       [`⚠️ stale: its table hasn't changed since ${B.pwTime_(now - 2 * 24 * HOUR)} ET (its rows count again once it has new ones)`,
         B.pwTime_(now - 2 * 24 * HOUR)]);
     assert.match(row('Sprinklr comments')[3], /^⚠️ stale: /);
-    eq(row('Brandwatch (BMIE)')[3], '⚠️ error at the last look: Access Denied: Table brand-social-central-data:social_alerts_dataset.all_sundar_mentions ' +
+    eq(row(BWM)[3], '⚠️ error at the last look: Access Denied: Table brand-social-central-data:raw_data.brandwatch_raw_mentions_base ' +
       '(tried again at the next look)');
-    eq([row('Tubular')[3], row('Other alerts space')[3]], ['✓ live: nothing new at the last look', '✓ live: nothing new at the last look']);
-    assert.match(note(t), / · sources: 5 live, 2 stale, 1 failing: Brandwatch \(BMIE\) \(Watch sources tab\)$/);
+    eq([row('Tubular')[3], row(OWNED)[3], row('Other alerts space')[3]],
+      ['✓ live: nothing new at the last look', '✓ live: nothing new at the last look', '✓ live: nothing new at the last look']);
+    assert.match(note(t), / · sources: 5 live, 2 stale, 1 failing: Brandwatch mentions \(Watch sources tab\)$/);
     const st = t.bot.status().proactive_watch_sources;
     eq(st.length, 8);
     assert.ok(st.some(x => /^DSD story selection: ⚠️ stale/.test(x)) && st.includes('Sonar: ✓ live: 27 new at the last look'), st.join('\n'));
     eq(B.pwSourcesSummary_({}, now), '');
   });
 
-  test('proactive watch: the same post from two sources (Sonar in us-central1, BMIE in US as twitter.com/.../statuses/...) goes on the tab once a watch, from the source collected first; a source that hands a post over late never claims a lead it couldn\'t have had (seen is the look\'s window start at the earliest)', () => {
+  test('proactive watch: the same post from two sources (Sonar in us-central1, Brandwatch\'s mentions in US as twitter.com/.../statuses/...) goes on the tab once a watch, from the source collected first; a source that hands a post over late never claims a lead it couldn\'t have had (seen is the look\'s window start at the earliest)', () => {
     const { t, bq } = watching();
     t.poll();
     const job = JSON.parse(t.g.props.get('PW_US_JOB'));
     bq.answers = {
       [C1]: { rows: [hit({ seen_ms: t.g.clock.now - 3 * MIN })] },
-      [US]: { rows: [hit({ source: 'bmie', post_url: 'http://twitter.com/newsdesk/statuses/2116390716536770729', seen_ms: t.g.clock.now - 20 * HOUR }),
-        hit({ source: 'bmie', post_url: POST2, platform: 'tiktok', seen_ms: t.g.clock.now - 20 * HOUR })] },
+      [US]: { rows: [hit({ source: 'bwm', post_url: 'http://twitter.com/newsdesk/statuses/2116390716536770729', seen_ms: t.g.clock.now - 20 * HOUR }),
+        hit({ source: 'bwm', post_url: POST2, platform: 'tiktok', seen_ms: t.g.clock.now - 20 * HOUR })] },
     };
     t.poll();
     const rows = dataRows(t);
-    eq(rows.map(r => [r[5], r[6]]), [[POST1, 'Sonar'], [POST2, 'Brandwatch (BMIE)']]);
+    eq(rows.map(r => [r[5], r[6]]), [[POST1, 'Sonar'], [POST2, BWM]]);
     eq([rows[1][0], JSON.parse(rows[1][18]).s], [B.pwTime_(job.since), job.since]);
   });
 
@@ -591,7 +618,7 @@ module.exports = H => {
     eq(lanes(bq).c1[1].params.since_ms, first.params.since_ms, 'Sonar\'s window is looked at again');
   });
 
-  test('proactive watch: what may not be noticeable at first still gets a look: a Sonar post that grew past the reach floor later, or broke out after it was checked; BMIE checks every mention from the brand-safety and Google product queries and, from the other queries, those with a sign something is wrong plus a sample of the rest; each row says why it was asked about when it isn\'t the usual reason, and the Watch sources tab shows the breakdown, how many were not sent too', () => {
+  test('proactive watch: what may not be noticeable at first still gets a look: a Sonar post that grew past the reach floor later, or broke out after it was checked; Brandwatch mentions checks negative SLRR exposure-tagged mentions on Google product configs; each row says why it was asked about when it isn\'t the usual reason, and the Watch sources tab shows the breakdown, how many were not sent too', () => {
     const { t, bq } = watching();
     t.poll();
     const now = t.g.clock.now;
@@ -600,31 +627,22 @@ module.exports = H => {
         hit({ why: 'grew', post_url: 'https://www.tiktok.com/@smallacct/video/7702553392157130001', platform: 'tiktok', seen_ms: now - 2 * MIN }),
         hit({ why: 'broke out', post_url: 'https://x.com/viral/status/2116390716536770003', impact: 9, seen_ms: now - 2 * MIN })]
         .concat(srcs(C1_SOURCES, { sonar: { found: 24, checked: 24, newest_ms: now - 2 * MIN, detail: 'new 21, grew 2, broke out 1' } })) },
-      [US]: { rows: [hit({ source: 'bmie', why: 'brand-safety query', post_url: 'http://twitter.com/critic/statuses/2116390716536770004', seen_ms: now - 2 * MIN }),
-        hit({ source: 'bmie', why: 'negative', post_url: 'http://twitter.com/apac/statuses/2116390716536770005', seen_ms: now - 2 * MIN }),
-        hit({ source: 'bmie', why: 'sample', post_url: 'http://twitter.com/nba/statuses/2116390716536770006', impact: 5, seen_ms: now - 2 * MIN })]
-        .concat(srcs(US_SOURCES, { bmie: { found: 41, checked: 41, newest_ms: now - 2 * MIN,
-          detail: 'brand-safety query 30, negative 6, KOF author 2, sample 3, not sent 120' } })) },
+      [US]: { rows: [hit({ source: 'bwm', why: 'negative', post_url: 'https://www.reddit.com/r/google/comments/1a/post1/', platform: 'reddit', seen_ms: now - 2 * MIN }),
+        hit({ source: 'bwm', why: 'KOF author', post_url: 'https://bsky.app/profile/critic.bsky.social/post/3m4p2', platform: 'bluesky', seen_ms: now - 2 * MIN }),
+        hit({ source: 'bwm', why: 'exposure tag', post_url: 'https://www.facebook.com/user/posts/10006', platform: 'facebook', impact: 5, seen_ms: now - 2 * MIN })]
+        .concat(srcs(US_SOURCES, { bwm: { found: 41, checked: 41, newest_ms: now - 2 * MIN,
+          detail: 'negative 38, KOF author 3, not sent 120' } })) },
     };
     t.poll();
-    eq(dataRows(t).map(r => r[6]), ['Sonar', 'Sonar · grew', 'Sonar · broke out', 'Brandwatch (BMIE)', 'Brandwatch (BMIE) · negative',
-      'Brandwatch (BMIE) · sample']);
+    eq(dataRows(t).map(r => r[6]), ['Sonar', 'Sonar · grew', 'Sonar · broke out', BWM, `${BWM} · KOF author`,
+      `${BWM} · exposure tag`]);
     const row = name => sources(t).rows.slice(3).find(r => r[0] === name);
-    eq([row('Sonar')[6], row('Brandwatch (BMIE)')[6]], ['24 / 24 (new 21, grew 2, broke out 1)',
-      '41 / 41 (brand-safety query 30, negative 6, KOF author 2, sample 3, not sent 120)']);
-    assert.match(row('Brandwatch (BMIE)')[1], /every one from the brand-safety and Google product queries.*5% sample of the rest/);
+    eq([row('Sonar')[6], row(BWM)[6]], ['24 / 24 (new 21, grew 2, broke out 1)',
+      '41 / 41 (negative 38, KOF author 3, not sent 120)']);
+    assert.match(row(BWM)[1], /Brandwatch's mentions of Google's products.*SLRR exposure tag/);
     assert.match(row('Sonar')[1], /grew past the reach floor later, and posts that broke out \(10x the engagements, 1,000\+\)$/);
-    // the queries checked in full, and the words that count as a sign of trouble
-    const full = new RegExp(B.ev('PW_BMIE_FULL_RX_'));
-    eq(['all slrr kofs/inf', 'all sundar', 'google spikes', 'ai digest - general criticism', 'ai digest - sustainability & environment',
-      'v2 policy mar - elections', 'googlers posting on x', 'chrome overall', 'today in android', 'search', 'gemini', 'g4d developer ai 2']
-      .filter(q => !full.test(q)), []);
-    eq(['apac vt', 'today in nba', 'nfl', 'culture accounts - ind', 'new ai digest approach', 'ai digest - openai', 'searching for growth']
-      .filter(q => full.test(q)), []);
-    const risk = new RegExp(B.ev('PW_RISK_WORDS_RX_'));
-    eq(['google faces an antitrust lawsuit', 'gmail is down again', 'a data breach at', 'chrome zero-day exploited', 'ai overviews hallucinated',
-      'deforestation for a data center'].filter(x => !risk.test(x)), []);
-    eq(['great game last night', 'the biased coin', 'download the app'].filter(x => risk.test(x)), ['the biased coin']);
+    eq(B.ev('PW_BWM_CONFIGS_'), ['Google Search', 'Google AI', 'Google Cloud', 'Gemini', 'Google Pixel', 'Google Glasses', 'Googlebook']);
+    eq(B.ev('PW_BWM_NETWORKS_'), ['reddit', 'bluesky', 'facebook', 'instagram']);
   });
 
   test('proactive watch: the Brandwatch query "2026 Election Alerts" (project 1998344909, query 2004167929) is read straight from Brandwatch\'s API when the US look goes out: the shared token from Secret Manager (billed to the project; never in a query, the sheet or the logs), what Brandwatch added since the last look (an hour back on a first look, never after the look\'s end), posted within 72 hours, the newest added first; X posts\' text from X\'s embed data in one go (an X post X won\'t show is counted, never asked about); the mentions are a query parameter, never SQL; a post it hands over is recorded with its source, its place moves to the newest one, and the next look asks only for what came after', () => {
@@ -711,7 +729,7 @@ module.exports = H => {
     eq([lanes(bq).us.length, lanes(bq).us[1].arrays.bwq.map(r => r.u), bw.calls.map(c => c.host)], [2, [REDDIT], ['secret', 'brandwatch']]);
   });
 
-  test('proactive watch: posts by Grok (X\'s AI account, @grok) are left out from every source: Gemini is never asked about them (Sonar\'s and BMIE\'s twitter.com/grok links, the Brandwatch query\'s x.com/grok ones, @grok as the author), they aren\'t counted as checked and the Watch sources tab counts them as "Grok left out"; one in a look sent before the change is never recorded, so never a watch alert; people\'s posts that mention or reply to Grok stay in', () => {
+  test('proactive watch: posts by Grok (X\'s AI account, @grok) are left out from every source: Gemini is never asked about them (Sonar\'s and Brandwatch mentions\' twitter.com/grok links, the Brandwatch query\'s x.com/grok ones, @grok as the author), they aren\'t counted as checked and the Watch sources tab counts them as "Grok left out"; one in a look sent before the change is never recorded, so never a watch alert; people\'s posts that mention or reply to Grok stay in', () => {
     // the JavaScript test and the same pattern in the SQL (BigQuery reads it as RE2, which agrees with JavaScript here)
     const grok = ['http://twitter.com/grok/statuses/2117021393208438919', 'https://twitter.com/grok/status/2116482042229670165',
       'https://x.com/grok/status/2117199347171385704', 'https://mobile.twitter.com/Grok/status/1', 'https://www.x.com/grok/status/2'];
@@ -739,9 +757,9 @@ module.exports = H => {
     const now = t.g.clock.now;
     const PERSON = 'https://x.com/ElectionWatcher/status/2117095906554290591';
     bq.answers = {
-      [US]: { rows: [hit({ source: 'bmie', post_url: grok[0], author: '@grok', followers: 9300000, seen_ms: now - 2 * MIN }),
+      [US]: { rows: [hit({ source: 'bwm', post_url: grok[0], author: '@grok', followers: 9300000, seen_ms: now - 2 * MIN }),
         hit({ source: 'bwq', post_url: grok[2], author: '@grok', seen_ms: now - 2 * MIN }),
-        hit({ source: 'bmie', post_url: PERSON, author: '@ElectionWatcher', seen_ms: now - 2 * MIN })].concat(srcs(US_SOURCES)) },
+        hit({ source: 'bwm', post_url: PERSON, author: '@ElectionWatcher', seen_ms: now - 2 * MIN })].concat(srcs(US_SOURCES)) },
       [C1]: { rows: [hit({ post_url: grok[1], author: 'Grok', followers: 9260628, seen_ms: now - 2 * MIN })].concat(srcs(C1_SOURCES)) },
     };
     t.poll();
@@ -938,7 +956,7 @@ module.exports = H => {
 
   test('proactive watch: no cell it writes comes near the 49,000-character cap (each text capped, the Other alerts space\'s alerts too), and a look\'s rows with no post (a source\'s row, or no hit at all) are none', () => {
     const big = 'y'.repeat(60000);
-    const d = B.pwDetections_([hit({ summary: big, issue: big, author: big, topic: big, source: big, post_url: `https://x.com/a/status/1${'9'.repeat(10)}`, seen_ms: 1 }),
+    const d = B.pwDetections_([hit({ summary: big, issue: big, author: big, topic: big, source: 'sonar', post_url: `https://x.com/a/status/1${'9'.repeat(10)}`, seen_ms: 1 }),
       { checked: 12, watch: null, post_url: null, impact: null }, src('sonar', { found: 3, checked: 3 })], new Set());
     eq(d.rows.length, 1);
     assert.ok(d.rows[0].every(c => String(c).length <= 500), 'every cell capped');

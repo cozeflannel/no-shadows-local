@@ -682,7 +682,7 @@ function handleAlert_(ctx, m, parsed, report) {
   if (switchOn_(ctx, 'noWait')) parsed.noWait = true;
   // The knowledge base (Knowledge.gs): the Resources tab's documents, the parts that bear on this alert
   try {
-    parsed.knowledge = knowledgeFor_(ctx.knowledge, knowledgeQuery_(parsed), { budget: KNOWLEDGE_REVIEW_CHARS_ });
+    parsed.knowledge = knowledgeForCtx_(ctx, knowledgeQuery_(parsed), { budget: KNOWLEDGE_REVIEW_CHARS_, pin: true });
   } catch (e) {
     parsed.knowledge = null;
     ctx.log('knowledge base unavailable for this review: ' + ((e && e.message) || e));
@@ -690,9 +690,19 @@ function handleAlert_(ctx, m, parsed, report) {
   if (parsed.knowledge && parsed.knowledge.docs.length) ctx.log(`knowledge: ${knowledgeBrief_(parsed.knowledge)}`);
   // Learn from IM calls (Control tab row 17): the IMs' past calls on alerts like this one (the Learned precedents tab)
   if (switchOn_(ctx, 'learnIm')) imPrecedentsFor_(ctx, parsed);
+  if (typeof vecTagHints_ === 'function' && typeof vecTagHintLine_ === 'function') {
+    try {
+      const hText = [parsed.fields.issue_name || parsed.fields.alert_name || '', parsed.fields.summary || '',
+        (parsed.post && parsed.post.text) || parsed.fields.post_content || ''].filter(Boolean).join(' — ').slice(0, 1200);
+      const hint = hText ? (vecTagHints_([hText], { deadline: ctx.deadline }) || [])[0] : null;
+      if (hint) parsed.tagHintLine = vecTagHintLine_(hint);
+    } catch (e) {}
+  }
+  const memoryStory = typeof amNoveltyFor_ === 'function' ? amNoveltyFor_(ctx, parsed.fields) : null;
   // Gemini's review, with the crash guard and the hold for the next run (guardedAssess_)
   const { llm, llmError, held } = guardedAssess_(ctx, m, parsed, now);
-  const review = reviewAlert_(parsed, { llm, llmError, now, settings: S, history, mediaHeld: held });
+  const review = reviewAlert_(parsed, { llm, llmError, now, settings: S, history, mediaHeld: held, memoryStory });
+  review.memory = typeof amFactsFor_ === 'function' ? amFactsFor_(ctx, review.fields, { live: amLiveOf_(ctx, m) }) : null;
   if (review.knowledgeUsed.length) {
     ctx.log(`knowledge used: ${review.knowledgeUsed.map(u => u.document + (u.used_for ? ` (${u.used_for})` : '')).join('; ')}`);
   }
@@ -1030,8 +1040,10 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
   // 1. Analysts: the corrected alert in Burson's own format (+ what was corrected). When outbounds are blocked (Mirror
   //    training space), the mirrored post in this space serves as the alert post so all thread notes and emoji reactions
   //    work in-place without forwarding to any other space.
-  const fwd = ctx.outboundBlocked ? { name: m.name, thread: m.thread || '' } : forwardAlert_(ctx, m, parsed, review, '');
-  if (fwd && !ctx.outboundBlocked) report.forwarded++;
+  const inPlace = Boolean(ctx.outboundBlocked || (ctx.sourceReadOnly && parsed && parsed.ingested && m.name &&
+    ctx.spaces && ctx.spaces.analyst && String(m.name).indexOf(ctx.spaces.analyst.id + '/messages/') === 0));
+  const fwd = inPlace ? { name: m.name, thread: m.thread || '' } : forwardAlert_(ctx, m, parsed, review, '');
+  if (fwd && !inPlace) report.forwarded++;
   const alertId = ctx.store.nextAlertId();
   const draft = draftPlan_(ctx, review, history);  // escalated: a Social Alert draft is due (made after Burson's side)
   const row = ctx.store.addAlert(Object.assign({
@@ -1467,7 +1479,7 @@ function handleHuman_(ctx, m, report) {
     // The documents Burson can see (marked Yes on the Resources tab, and nothing internal): the parts that bear on this
     let knowledge = null;
     try {
-      knowledge = knowledgeFor_(ctx.knowledge, knowledgeQueryFor_(m.text, alert),
+      knowledge = knowledgeForCtx_(ctx, knowledgeQueryFor_(m.text, alert),
         { budget: KNOWLEDGE_BURSON_CHARS_, onlyUrls: new Set(resources.map(r => r.url)) });
     } catch (e) {
       ctx.log('knowledge base unavailable for this answer: ' + ((e && e.message) || e));
@@ -1509,7 +1521,7 @@ function directAnswer_(ctx, m, rawAlert, report) {
   const alert = mergedAlertRow_(ctx, rawAlert);
   let knowledge = null;  // every document on the Resources tab: the parts that bear on this question
   try {
-    knowledge = knowledgeFor_(ctx.knowledge, knowledgeQueryFor_(m.text, alert), { budget: KNOWLEDGE_ANSWER_CHARS_ });
+    knowledge = knowledgeForCtx_(ctx, knowledgeQueryFor_(m.text, alert), { budget: KNOWLEDGE_ANSWER_CHARS_ });
   } catch (e) {
     ctx.log('knowledge base unavailable for this answer: ' + ((e && e.message) || e));
   }
@@ -1582,6 +1594,40 @@ function pollAnalystMessages_(ctx, report) {
         continue;
       }
     }
+    // Auto-correct space (B10) standalone Direct-BQ cards (when B9 is blank and row 15 is ON)
+    if (ctx.sourceReadOnly && !m.threadReply && typeof bqIngestedSource_ === 'function') {
+      const bqSrc = bqIngestedSource_(ctx, m);
+      if (bqSrc) {
+        if (ctx.recent.has(m.name) || ctx.store.isDone(m.name)) {
+          ctx.recent.add(m.name, m.createTime);
+          advance(m);
+          continue;
+        }
+        const parsedBq = parseAlert_(m.text);
+        if (parsedBq.isAlert) {
+          if (report.handled >= S.max_messages_per_run) { blocked = true; break; }
+          report.handled++;
+          report.alerts++;
+          try {
+            handleAlert_(ctx, m, parsedBq, report);
+            ctx.recent.add(m.name, m.createTime);
+            advance(m);
+          } catch (e) {
+            if (e && e.holdReview) {
+              report.handled--;
+              report.alerts--;
+              report.held = (report.held || 0) + 1;
+              ctx.log(`held ${m.name} for the next run: ${e.message}`);
+              blocked = true;
+              break;
+            }
+            report.errors.push(`${m.name}: ${(e && e.message) || e}`);
+            blocked = true;
+          }
+          continue;
+        }
+      }
+    }
     if (ctx.recent.has(m.name) || isOwnMessage_(ctx, m) || COPIED_ROW_RX_.test(String(m.text || ''))) {  // incl. old test-feed reposts
       ctx.recent.add(m.name, m.createTime);
       advance(m);
@@ -1635,7 +1681,7 @@ function pollAnalystMessages_(ctx, report) {
     let raw = '';
     let knowledge = null;  // every document on the Resources tab: the parts that bear on this question
     try {
-      knowledge = knowledgeFor_(ctx.knowledge, knowledgeQueryFor_(m.text, alert), { budget: KNOWLEDGE_ANSWER_CHARS_ });
+      knowledge = knowledgeForCtx_(ctx, knowledgeQueryFor_(m.text, alert), { budget: KNOWLEDGE_ANSWER_CHARS_ });
     } catch (e) {
       ctx.log('knowledge base unavailable for this answer: ' + ((e && e.message) || e));
     }

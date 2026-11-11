@@ -1,30 +1,29 @@
 /**
- * BigQuery.gs — live BigQuery enrichment + Vector Database semantic intelligence (Mode A, replacing manual analyst
- * verification) and direct Sprinklr + BMIE/Brandwatch + BSIP Sonar/Collection alert ingestion (Mode B, replacing manual
- * Burson alert entry), with shared URL deduplication so nothing is ever processed or posted twice while the current
- * Zapier setup remains active.
+ * BigQuery.gs — live BigQuery enrichment (Mode A, replacing manual analyst verification) and direct Sprinklr, DSD story
+ * selection and Sonar alert ingestion (Mode B, replacing manual Burson alert entry), with shared URL deduplication so
+ * nothing is ever processed or posted twice while the current Zapier setup remains active.
  *
- * Models & Tables queried in `brand-social-central-data` (US) and cross-project `bsip-s-bsip-gg-26-2cf3.google_bg` (us-central1):
- *   1. Remote AI & Embedding Models:
- *      - `brand-social-central-data.DSD.gemini_analyzer` (`ML.GENERATE_TEXT` via `brand-social-central-data.us.gemini-connection`)
- *      - `brand-social-central-data.DSD.text_embedding_model` (`text-embedding-005`, 768-dim via `ML.GENERATE_EMBEDDING`)
- *   2. Vector Databases (`ARRAY<FLOAT64>` + `ML.DISTANCE(..., 'COSINE')`):
- *      - `brand-social-central-data.DSD.evergreen_vectors` (16 evergreen noise topics: `google_as_verb`, `maps_jokes`, `shot_on_pixel`, etc.)
- *      - `brand-social-central-data.DSD.content_vectors` (partitioned historical social content vectors for 14-day semantic duplicate/ongoing detection)
- *      - `brand-social-central-data.reporting_data.sprinklr_inbound_posts_vectors` (Sprinklr owned-post vector + comment statistics lookup)
- *      - `brand-social-central-data.social_alerts_dataset.trend_learning_examples` (human-reviewed trend vector examples)
- *   3. Sprinklr Owned Posts & Screened Comments + Cloud Storage Video Candidates:
- *      - `brand-social-central-data.reporting_data.vw_high_negativity_posts_ai_analysis`
- *      - `brand-social-central-data.reporting_data.sprinklr_inbound_comments` (with DSD comment screening for ad/promo/redirect/bot noise)
- *      - `brand-social-central-data.DSD.video_candidates` (GCS object table `gs://brand-social-dsd-curation/*` for multimodal video analysis)
- *   4. Brandwatch / BMIE Earned Alerts & Master SLRR Archive:
- *      - `brand-social-central-data.social_alerts_dataset.all_sundar_mentions`
- *      - `brand-social-central-data.slrr_alerts.slrr_alerts`
- *   5. Brandy BSIP Cross-Project Social Listening Tables (`us-central1`):
- *      - `bsip-s-bsip-gg-26-2cf3.google_bg.sonar_post_aggregates_7d_materialized`
- *      - `bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw`
- *      - `bsip-s-bsip-gg-26-2cf3.google_bg.collection_alerts`
- *      - `bsip-s-bsip-gg-26-2cf3.google_bg.slrr`
+ * Social data is read ONLY from these tables (read-only; a test fails if another social table comes back):
+ *   US (`brand-social-central-data`):
+ *      - `reporting_data.sprinklr_inbound_comments` (comments on Google's own posts; the high-negativity owned-post logic of
+ *        the former view `vw_high_negativity_posts_ai_analysis` is inlined against it, with DSD comment screening for
+ *        ad/promo/redirect/bot noise)
+ *      - `reporting_data.sprinklr_outbound_reporting` (Sprinklr's own reporting of those posts: engagements, impressions;
+ *        joined on Outbound_Post_ID = post_id, or the link)
+ *      - `DSD.DSD-story-selection` (Brandwatch's HIGH and KOF alerts about Google, the DSD desk's story pool)
+ *      - `raw_data.brandwatch_raw_mentions_base` is approved but not read here: it lands 17-23+ hours after a post (none
+ *        of 557 SLRR alerts from Nov 8-11 was in it when the alert came in) and a lookup costs 0.4-0.8 GB
+ *   us-central1:
+ *      - `bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw` (Pendulum's Sonar events: counts, tags, influencer lists, and in its
+ *        `payload` JSON the author, summary, issue name and snippets; JSON is read over 48 hours at most, so a query stays
+ *        under BQ_MAX_BYTES_BILLED_, which BigQuery checks against the JSON's upper bound)
+ *      - `brand-social-central-data.google_tubular_mentions.tubular_videos` (Tubular's video counts)
+ * Not social data, kept:
+ *   - the SLRR alert history `slrr_alerts.slrr_alerts` and `slrr_feedback.alert_sends` (US): "already alerted", the
+ *     14-day issue list, Direct BigQuery alerts' "each post once", the Results tab and Write back to SLRR BigQuery
+ *   - the remote model `DSD.gemini_analyzer` (`ML.GENERATE_TEXT` via the `US.gemini-connection`): Gemini.gs's fallback
+ * The evergreen-noise gate isn't in BigQuery any more: Vectors.gs embeds the alert's text with Vertex AI (vecEvergreen_).
+ * One job reads one location: the US tables and the us-central1 ones are never in the same query.
  *
  * Write back to SLRR BigQuery (the Control tab's row 16, OFF until someone turns it on) is the only code that writes to
  * BigQuery: a finished alert streamed into `slrr_alerts.slrr_alerts` (live only) and a sent one into
@@ -34,31 +33,33 @@
  * before that they're exactly as they were. Mode B's "already in the log" keeps them (a post the bot finished was
  * Burson's alert: never one to post again). While it's OFF there is no insert, DML or other write.
  * Watch sent alerts (Control tab switch, Watch.gs): `bqPostEngagement_` reads only a sent alert's post's live count in
- * `sonar_post_aggregates_7d_materialized` (likes + comments + shares), every 30 minutes for a day. A read, never a write.
+ * Sonar (`sonar_raw`: likes + comments + shares, the last BQ_SONAR_COUNT_LOOKBACK_H_ hours), every 30 minutes for a
+ * day. A read, never a write.
  *
  * Auto-find missing links (Control row 14, autoFindLinks, OFF unless switched ON): an alert Burson sent without its link
- * (or its author) gets them from the listening feeds before it's processed: one read-only `us-central1` query over
- * `sonar_post_aggregates_7d_materialized` (posts seen in the last 48 hours) and BSIP's `slrr` (the same issue name), used
- * only when exactly one post clearly matches (never another network or author). bqFindMissingLink_, called from Bot.gs
- * handleAlert_ as ctx.findLink only while the switch is ON.
+ * (or its author) gets them from the listening feeds before it's processed: a read-only `us-central1` query over Sonar
+ * (`sonar_raw`: posts seen in the last 48 hours), after a small US read of the SLRR alert log for the posts it has under
+ * the same issue name (they can make a guess ambiguous), used only when exactly one post clearly matches (never another
+ * network or author). bqFindMissingLink_, called from Bot.gs handleAlert_ as ctx.findLink only while the switch is ON.
  *
  * Direct BigQuery alerts (Control row 15, directBq, OFF unless switched ON): poll() turns on the Mode B poll for its run,
- * with all three sources: Sprinklr and BMIE (a US query each, so a query BigQuery refuses for one never silences the
- * other) and BSIP (Pendulum's posts: a separate `us-central1` query), each followed by a small US check of the SLRR alert
- * log for the posts left (any link to them). Each source looks back only the BigQuery lookback (Control tab B31, 15 to
- * 60 minutes: bqLookbackMinutes_ in BqLookback.gs): Sprinklr and BMIE only posts that went live in that time (BMIE's,
- * too, that Brandwatch took in in that time); BSIP posts Pendulum saw in that time that went live in the last
- * BQ_BSIP_MAX_AGE_H_ hours (they reach its engagement floor hours after going live). The candidates left then go
+ * with all three sources: Sprinklr (owned posts) and the DSD story selection (a US query each, so a query BigQuery
+ * refuses for one never silences the other) and Sonar (Pendulum's posts: a separate `us-central1` query), each followed
+ * by a small US check of the SLRR alert log for the posts left (any link to them). Each source looks back only the
+ * BigQuery lookback (Control tab B31, 15 to 60 minutes: bqLookbackMinutes_ in BqLookback.gs): Sprinklr only posts that
+ * went live in that time; DSD posts the feed took in in that time that went live in the last BQ_DSD_MAX_AGE_H_ hours
+ * (Brandwatch alerts on a post hours or days after it went live); Sonar posts Pendulum saw in that time that went live in
+ * the last BQ_BSIP_MAX_AGE_H_ hours (they reach its engagement floor hours after going live). The candidates left then go
  * through Step 1 of the 3-step evaluation (evaluateBqDualTrack_:
  * substantive Google relevance, no passive "google it" slang, and never a post or topic already alerted on unless it brings
  * a new development; Gemini judges it when it can, the rules always apply). An engagement count is never made up: the source's
- * own, else the post's real count (Sonar, or the post itself: bqRealEngagement_); a BMIE post with none is posted only as
+ * own, else the post's real count (Sonar, or the post itself: bqRealEngagement_); a DSD post with none is posted only as
  * a KOF's (VIRAL KOF, no count), else not at all. At most once every BQ_DIRECT_EVERY_MS_ and BQ_POLL_MAX_PER_RUN_ posts a
  * check, and none while the Burson space's alerts wait (the last run ran out of time, or posts it took aren't reviewed
  * yet); each post at most once (the bot's own Alert log, the posts it already took, the SLRR alert log). The posts go
  * into the Burson-role space only when it's a test feed or the Mirror space: never the live Burson space, a space people
- * outside Google can join, or a dry run. Their Alert-log rows say where they came from (`ingested`), so the Results tab
- * leaves them out.
+ * outside Google can join, or a dry run. Their Alert-log rows say where they came from (`ingested`: BQ_SOURCE_LABELS_),
+ * so the Results tab leaves them out.
  *
  * Early detection (clusters & velocity) (Control row 19, earlyWave, OFF unless switched ON): after the main run's alerts,
  * at most every EW_EVERY_MS_, one read-only `US` query over `early_detection.vw_chatbot_pending_early_alerts` (pending
@@ -79,24 +80,17 @@ const BQ_CACHE_TTL_SEC_ = 600;       // 10-minute cache per normalized URL for M
 const BQ_POLL_MAX_PER_RUN_ = 2;
 // BigQuery lookback constants & helpers (BQ_LOOKBACK_*, bqLookbackMinutes_, bqLookbackText_) live in BqLookback.gs.
 
-// Evergreen noise topics in `DSD.evergreen_vectors` that are categorically excluded by the SLRR playbook when matched closely
-const BQ_STRICT_NOISE_TOPICS_ = new Set([
-  'google_as_verb',
-  'google_me',
-  'shot_on_pixel',
-  'sponsored_sports',
-  'maps_jokes',
-  'maps_exploring',
-  'gmail_accounts',
-  'captain_america',
-]);
-const BQ_EVERGREEN_NOISE_MAX_DIST_ = 0.28;  // cosine distance <= 0.28 (~72%+ similarity) to a strict noise topic
-const BQ_SEMANTIC_ONGOING_MAX_DIST_ = 0.22; // cosine distance <= 0.22 (~78%+ similarity) to a recent 14d post
+// The evergreen-noise gate ("just Google it", "Shot on Pixel" with no commentary, sponsored sports posts…) is Vectors.gs's
+// vecEvergreen_ / vecIsEvergreenNoise_ (the 16 topics embedded with Vertex AI, its calibrated bar VEC_EVERGREEN_MIN_SIM_),
+// called once an alert's enrichment has its text (bqEvergreenOf_). The "same story alerted lately" match by meaning is
+// AlertMemory.gs's: an enrichment no longer carries semantic_ongoing_match or nearest_content_* (the consumers read them
+// null-safe).
 
 // Regex mirroring DSD's `screenComments` categories (`ad`, `sponsored_or_paid`, `self_promotion`, `redirect`, `spam_or_bot`)
 const DSD_COMMENT_NOISE_RX_ = '(#ad\\b|#sponsored|#partner|paid partnership|check out my (?:page|channel|bio|link)|link in bio|dm me for|follow me|use my code|whatsapp|\\btelegram\\b|crypto|airdrop|giveaway)';
 
-// Map Sprinklr / BMIE product & alert_source names to canonical SLRR distribution products.
+// Map Sprinklr product / brand names, Brandwatch query names (the DSD story selection) and Sonar's brand classifications
+// (`sonar_raw.brand_classification`, e.g. "Search & Shopping", "AIOverviews") to canonical SLRR distribution products.
 const BQ_PRODUCT_MAP_ = {
   'gemini': 'Gemini App',
   'gemini app': 'Gemini App',
@@ -118,6 +112,8 @@ const BQ_PRODUCT_MAP_ = {
   'google play': 'Google Play',
   'search': 'Search',
   'google search': 'Search',
+  'search & shopping': 'Search',
+  'aioverviews': 'AI Overviews',
   'youtube': 'YouTube',
   'waymo': 'Waymo',
   'cloud': 'Cloud',
@@ -134,19 +130,19 @@ const BQ_PRODUCT_MAP_ = {
   'brand': 'Brand',
 };
 
-// Non-Google Brandwatch / BMIE `alert_source` feeds (sports, culture, and competitor-only streams) that share
-// `social_alerts_dataset.all_sundar_mentions` and must never be ingested as Google alerts.
+// Non-Google Brandwatch feeds and queries (sports, culture, and competitor-only streams): a DSD story selection post
+// whose query is one of them is never ingested as a Google alert (isGoogleRelevantBqRow_).
 const BQ_NON_GOOGLE_SOURCES_RX_ =
   '^(?:nfl|today in nba|psg\\b|culture accounts|positive culture|brand fit|positive opps|america 250|' +
   'posts by google|ai digest - (?:openai|anthropic|xai|meta ai|deepseek|microsoft ai|perplexity)|' +
   'play competitors|android competitors|chrome - competitors)';
 
-// BSIP `issue_name` values where Pendulum itself labels a post as irrelevant or promotional noise.
+// Sonar `issue_name` values where Pendulum itself labels a post as irrelevant or promotional noise.
 const BQ_NON_GOOGLE_ISSUE_RX_ =
   '^(?:irrelevant|unrelated|promotional)\\b|\\b(?:hair salon|salon post|game downloads|game promotions|youtube promotion)\\b';
 
-// BSIP smart tags that represent positive/lifestyle/praise categories (en-dash `–`, or explicit praise/lifestyle/fan/win
-// labels) rather than criticism/exposure; a BSIP candidate must have at least one non-positive smart tag.
+// Sonar smart tags that represent positive/lifestyle/praise categories (en-dash `–`, or explicit praise/lifestyle/fan/win
+// labels) rather than criticism/exposure; a Sonar candidate must have at least one non-positive smart tag.
 const BQ_BSIP_POSITIVE_TAG_RX_ =
   '^(?:brand|product)\\s*(?:–|-\\s*(?:passion point alignment|google praise|lifestyle imagery|use case amplification|' +
   'fan query|feature spotlight|comparison win|experience share))';
@@ -200,8 +196,10 @@ function isGoogleRelevantText_(text) {
 }
 
 /**
- * True only when a direct-poll BigQuery row (`SPRINKLR`, `BMIE`, or `BSIP`) is actually about Google, its brands/products,
- * KOFs discussing Google, employees/executives, business dealings, or politics involving Google. Pure.
+ * True only when a direct-poll BigQuery row is actually about Google, its brands/products, KOFs discussing Google,
+ * employees/executives, business dealings, or politics involving Google. Its `source_kind` is the poll's internal code:
+ * `SPRINKLR` (Sprinklr's owned posts), `BMIE` (the earned feed: the DSD story selection, Brandwatch's HIGH and KOF
+ * alerts) or `BSIP` (Sonar's posts, in the BSIP project). Pure.
  */
 function isGoogleRelevantBqRow_(row) {
   if (!row || typeof row !== 'object') return false;
@@ -769,104 +767,117 @@ function extractPostIdFromUrl_(url) {
 }
 
 /**
- * Evaluates vector cosine distances returned from `DSD.evergreen_vectors` and `DSD.content_vectors` / `trend_learning_examples`
- * to classify evergreen noise (`is_evergreen_noise`) and semantic 14-day ongoing matches (`semantic_ongoing_match`). Pure.
+ * The alert's closest evergreen-noise topic by meaning (Vectors.gs vecEvergreen_: `text` embedded with Vertex AI's
+ * text-embedding-005 and compared with the 16 DSD evergreen topics, in Apps Script; no BigQuery table): {id, label,
+ * strict, sim}, or null (no text, no Vectors.gs, or Vertex AI gave no vector). opts.deadline (ms): no Vertex AI call
+ * starts too close to it. Never throws.
  */
-function classifyVectorIntelligence_(row, postUrl) {
-  if (!row || typeof row !== 'object') return { is_evergreen_noise: false, semantic_ongoing_match: false };
-  const evTopic = String(row.ev_topic_id || '').trim();
-  const evDist = typeof row.ev_dist === 'number' ? row.ev_dist : null;
-  const cvUrl = String(row.cv_url || '').trim();
-  const cvDist = typeof row.cv_dist === 'number' ? row.cv_dist : null;
-  const trDist = typeof row.tr_dist === 'number' ? row.tr_dist : null;
-
-  // Evergreen noise gate: nearest evergreen topic is a strict non-actionable noise topic with cosine distance <= 0.28,
-  // and no known real trend is closer.
-  const isStrictTopic = BQ_STRICT_NOISE_TOPICS_.has(evTopic);
-  const beatsTrend = trDist === null || evDist < trDist;
-  const isEvergreenNoise = Boolean(isStrictTopic && evDist !== null && evDist <= BQ_EVERGREEN_NOISE_MAX_DIST_ && beatsTrend);
-
-  // Semantic 14-day ongoing issue match: a different post URL in `content_vectors` from the last 14 days has cosine distance <= 0.22
-  const samePost = Boolean(postUrl && cvUrl && recordKey_({ post_url: postUrl }) === recordKey_({ post_url: cvUrl }));
-  const semanticOngoing = Boolean(!samePost && cvUrl && cvDist !== null && cvDist <= BQ_SEMANTIC_ONGOING_MAX_DIST_);
-
-  return {
-    is_evergreen_noise: isEvergreenNoise,
-    evergreen_topic_id: evTopic || null,
-    evergreen_topic_label: row.ev_label || null,
-    evergreen_cosine_distance: evDist,
-    semantic_ongoing_match: semanticOngoing,
-    nearest_content_url: cvUrl || null,
-    nearest_content_snippet: row.cv_snippet || null,
-    nearest_content_cosine_distance: cvDist,
-    nearest_trend_name: row.tr_name || null,
-    nearest_trend_cosine_distance: trDist,
-  };
+function bqEvergreenOf_(text, opts) {
+  const t = String(text || '').trim();
+  if (!t || typeof vecEvergreen_ !== 'function') return null;
+  try {
+    const m = (vecEvergreen_([t], opts && opts.deadline ? { deadline: opts.deadline } : {}) || [])[0];
+    return m && typeof m === 'object' && typeof m.sim === 'number' && isFinite(m.sim) ? m : null;
+  } catch (e) {
+    console.warn('Evergreen noise check skipped: ' + ((e && e.message) || e));
+    return null;
+  }
 }
 
 /**
- * Optional second-pass lookup against Brandy's cross-project BSIP dataset (`bsip-s-bsip-gg-26-2cf3.google_bg` in `us-central1`):
- *   - `sonar_post_aggregates_7d_materialized` (7-day engagement velocity, `criticality`, `smart_tags`, `language`, and the
- *     post as Pendulum captured it: its text by where it was found (`snippets`: description, title, OCR of images and
- *     video frames, transcript, image description), Pendulum's `summary` and `issue_name`). Clustered by `post_url`,
- *     ~200 MB: a lookup costs a fraction of a cent, and nothing touches Brandwatch.
- *   - `collection_alerts` (`collection_tier`, `is_kol`, `priority_flag`, `issue_status`, and `content`: the post's text as
- *     Burson's collection stored it)
- *   - `slrr` (`kof_vertical`, `issue_name_novelty`)
- * A post id also matches inside a link (`/1x9vsi4/` in a Reddit link that ends with the title). Never throws; returns
- * `{}` if unavailable.
+ * An enrichment's evergreen-noise fields for `match` (bqEvergreenOf_): is_evergreen_noise (Vectors.gs
+ * vecIsEvergreenNoise_: one of the strict topics, at its calibrated bar), the topic's id and label, the similarity, and
+ * the same as a cosine distance (1 - similarity). Without a match: not noise, the rest null. Pure.
+ */
+function bqEvergreenFields_(match) {
+  const m = match && typeof match === 'object' && typeof match.sim === 'number' && isFinite(match.sim) ? match : null;
+  return {
+    is_evergreen_noise: !!m && typeof vecIsEvergreenNoise_ === 'function' && vecIsEvergreenNoise_(m) === true,
+    evergreen_topic_id: m && m.id ? String(m.id) : null,
+    evergreen_topic_label: m && m.label ? String(m.label) : null,
+    evergreen_similarity: m ? Math.round(m.sim * 1000) / 1000 : null,
+    evergreen_cosine_distance: m ? Math.round((1 - m.sim) * 1000) / 1000 : null,
+  };
+}
+
+// Sonar and Tubular (us-central1). sonar_raw holds one row per Pendulum event (a post seen, or its counts updated), is
+// partitioned by day on received_at (30 days kept) and has no clustering: a read costs its columns over the days it
+// spans, whatever post it looks for. A post's author, summary, issue name and snippets are only in the `payload` JSON,
+// whose upper bound (~2.1 GB a day) BigQuery checks against BQ_MAX_BYTES_BILLED_ (a 7-day JSON read is refused): JSON
+// is read over 48 hours at most (BQ_SONAR_JSON_LOOKBACK_H_, BQ_LINK_LOOKBACK_H_; actually read: ~0.1-0.3 GB).
+// Pendulum's counts (engagement_*) are the post's at that event and only grow: the highest is the latest.
+const BQ_SONAR_TABLE_ = '`bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw`';
+const BQ_TUBULAR_TABLE_ = '`brand-social-central-data.google_tubular_mentions.tubular_videos`';
+const BQ_SONAR_JSON_LOOKBACK_H_ = 48;   // Mode A: the post's events, with their JSON, from the last 48 hours
+const BQ_SONAR_COUNT_LOOKBACK_H_ = 24;  // a post's count alone (no JSON, ~0.16-0.2 GB a read): a watched post is re-read every 30 min
+const BQ_TUBULAR_LOOKBACK_D_ = 7;       // Tubular's daily snapshots looked at (it lists a video a day or two after it went up)
+
+/** SQL matching Sonar's rows for the post at @url, or with @post_id in its link (a Reddit id before the title slug too). Pure. */
+function bqSonarPostSql_() {
+  return '(post_url = @url OR (@post_id != "" AND (ENDS_WITH(post_url, @post_id) OR STRPOS(post_url, CONCAT("/", @post_id, "/")) > 0)))';
+}
+
+/**
+ * Mode A's second pass, one `us-central1` query (never with the US tables):
+ *   - Sonar (`sonar_raw`): the post's events from the last BQ_SONAR_JSON_LOOKBACK_H_ hours: its latest criticality and
+ *     language, its count (likes + comments + shares), its smart tags, the influencer lists its author is on (a KOF:
+ *     Burson counts any of them, e.g. "CAM Tech/AI (INFs)" or "3rd Party Legal Experts (KOFs)"), and from the events'
+ *     JSON the post as Pendulum captured it: its summary, its issue name and the pieces of its text by where they were
+ *     found (description, title, OCR of images and video frames, transcript, image description).
+ *   - Tubular (`tubular_videos`): the video's latest counts (views, engagements, the creator's followers), when Tubular
+ *     tracks it.
+ * The KOF check against the KOF lists themselves is the review's (the Resources tab's KOF lists document). A post id also
+ * matches inside a link (`/1x9vsi4/` in a Reddit link that ends with the title). Never throws; returns `{}` if unavailable.
  */
 function enrichFromBsip_(postUrl, postId) {
   if (!postUrl && !postId) return {};
+  const latest = expr => `ARRAY_AGG(${expr} IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)]`;
+  const json = path => `JSON_VALUE(payload, "${path}")`;
   const sql = [
-    'WITH sonar AS (',
-    '  SELECT',
-    '    criticality, language,',
-    '    (COALESCE(likes, 0) + COALESCE(comments, 0) + COALESCE(shares, 0)) AS sonar_interactions,',
-    '    likes AS sonar_likes, comments AS sonar_comments, shares AS sonar_shares, views AS sonar_views,',
-    '    ARRAY_TO_STRING(smart_tags, ", ") AS sonar_smart_tags,',
-    '    SUBSTR(summary, 1, 800) AS sonar_summary, issue_name AS sonar_issue_name,',
-    '    TO_JSON_STRING(ARRAY(SELECT AS STRUCT s.source, SUBSTR(s.text, 1, 900) AS text FROM UNNEST(snippets) s',
-    '      WHERE TRIM(IFNULL(s.text, "")) != "" LIMIT 8)) AS sonar_snippets_json',
-    '  FROM `bsip-s-bsip-gg-26-2cf3.google_bg.sonar_post_aggregates_7d_materialized`',
-    '  WHERE post_url = @url OR (@post_id != "" AND (post_id = @post_id OR ENDS_WITH(post_url, @post_id)',
-    '    OR STRPOS(post_url, CONCAT("/", @post_id, "/")) > 0))',
-    '  ORDER BY last_received_at DESC LIMIT 1',
+    'WITH ev AS (',
+    '  SELECT received_at, language, alert_criticality, smart_tag, influencer_list,',
+    '    engagement_likes, engagement_comments, engagement_shares, payload',
+    `  FROM ${BQ_SONAR_TABLE_}`,
+    '  WHERE received_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @hours HOUR)',
+    `    AND ${bqSonarPostSql_()}`,
     '),',
-    'ca AS (',
-    '  SELECT',
-    '    collection_tier, is_kol, priority_flag, issue_status, exposure_tag, product, language,',
-    '    SUBSTR(content, 1, 1500) AS ca_content',
-    '  FROM `bsip-s-bsip-gg-26-2cf3.google_bg.collection_alerts`',
-    '  WHERE url = @url OR (@post_id != "" AND (ENDS_WITH(url, @post_id) OR STRPOS(url, CONCAT("/", @post_id, "/")) > 0))',
-    '  ORDER BY created_at DESC LIMIT 1',
+    'sonar AS (',
+    '  SELECT COUNT(1) AS events,',
+    `    ${latest('alert_criticality')} AS criticality,`,
+    `    ${latest('language')} AS language,`,
+    '    MAX(IFNULL(engagement_likes, 0)) + MAX(IFNULL(engagement_comments, 0)) + MAX(IFNULL(engagement_shares, 0)) AS sonar_interactions,',
+    '    ARRAY_TO_STRING(ARRAY_AGG(DISTINCT smart_tag IGNORE NULLS LIMIT 8), ", ") AS sonar_smart_tags,',
+    `    ${latest('NULLIF(TRIM(influencer_list), "")')} AS influencer_list,`,
+    `    SUBSTR(${latest(json('$.detail.classification.summary'))}, 1, 800) AS sonar_summary,`,
+    `    ${latest(json('$.detail.classification.issue_name'))} AS sonar_issue_name,`,
+    `    TO_JSON_STRING(ARRAY_AGG(IF(TRIM(IFNULL(${json('$.detail.post.snippet.text')}, "")) != "",`,
+    `      STRUCT(${json('$.detail.post.snippet.source')} AS source, SUBSTR(${json('$.detail.post.snippet.text')}, 1, 900) AS text),`,
+    '      NULL) IGNORE NULLS ORDER BY received_at DESC LIMIT 12)) AS sonar_snippets_json',
+    '  FROM ev',
     '),',
-    'bsip_slrr AS (',
-    '  SELECT issue_name, issue_name_novelty, kof_vertical',
-    '  FROM `bsip-s-bsip-gg-26-2cf3.google_bg.slrr`',
-    '  WHERE post_link = @url OR (@post_id != "" AND ENDS_WITH(post_link, @post_id))',
-    '  LIMIT 1',
+    'tubular AS (',
+    '  SELECT views, total_engagements, creator_followers_or_subscribers',
+    `  FROM ${BQ_TUBULAR_TABLE_}`,
+    '  WHERE snapshot_date >= DATE_SUB(CURRENT_DATE(), INTERVAL @tubular_days DAY)',
+    '    AND (video_url = @url OR (@post_id != "" AND (youtube_video_id = @post_id OR ENDS_WITH(RTRIM(video_url, "/"), @post_id)',
+    '      OR STRPOS(video_url, CONCAT("/", @post_id, "/")) > 0)))',
+    '  ORDER BY snapshot_date DESC, report_run_at_utc DESC LIMIT 1',
     ')',
     'SELECT',
     '  sonar.criticality AS sonar_criticality,',
-    '  COALESCE(sonar.language, ca.language) AS bsip_language,',
-    '  sonar.sonar_interactions, sonar.sonar_likes, sonar.sonar_comments, sonar.sonar_shares, sonar.sonar_views,',
-    '  sonar.sonar_smart_tags,',
+    '  sonar.language AS bsip_language,',
+    '  sonar.sonar_interactions, sonar.sonar_smart_tags,',
     '  sonar.sonar_summary, sonar.sonar_issue_name, sonar.sonar_snippets_json,',
-    '  ca.collection_tier AS bsip_collection_tier,',
-    '  ca.is_kol AS bsip_is_kol,',
-    '  ca.priority_flag AS bsip_priority_flag,',
-    '  ca.exposure_tag AS bsip_exposure_tag,',
-    '  ca.product AS bsip_product,',
-    '  ca.ca_content AS bsip_post_text,',
-    '  bsip_slrr.kof_vertical AS bsip_kof_vertical',
-    'FROM (SELECT 1) d',
-    'LEFT JOIN sonar ON TRUE',
-    'LEFT JOIN ca ON TRUE',
-    'LEFT JOIN bsip_slrr ON TRUE',
+    '  IF(sonar.events > 0, sonar.influencer_list IS NOT NULL, NULL) AS bsip_is_kol,',
+    '  sonar.influencer_list AS bsip_kof_vertical,',
+    '  tubular.views AS tubular_views, tubular.total_engagements AS tubular_engagements,',
+    '  tubular.creator_followers_or_subscribers AS tubular_followers',
+    'FROM sonar',
+    'LEFT JOIN tubular ON TRUE',
   ].join('\n');
   try {
-    const rows = bqQuery_(sql, { url: postUrl, post_id: postId }, 6000, 'us-central1');
+    const rows = bqQuery_(sql, { url: postUrl, post_id: postId, hours: BQ_SONAR_JSON_LOOKBACK_H_,
+      tubular_days: BQ_TUBULAR_LOOKBACK_D_ }, 6000, 'us-central1');
     return rows[0] || {};
   } catch (e) {
     return {};
@@ -874,23 +885,25 @@ function enrichFromBsip_(postUrl, postId) {
 }
 
 /**
- * The post's live engagement in Sonar (BSIP `sonar_post_aggregates_7d_materialized`: likes + comments + shares), for
- * Watch sent alerts (Watch.gs): one small query (the table is clustered by post_url), not the whole enrichment. null when
- * BigQuery is off (settings.bq_enrich / bq_bsip_enrich), the post isn't there, or the query fails. Never throws.
+ * The post's live engagement in Sonar (`sonar_raw`: its highest likes + comments + shares over the last
+ * BQ_SONAR_COUNT_LOOKBACK_H_ hours, i.e. the latest), for Watch sent alerts (Watch.gs) and a Direct BigQuery card that
+ * has no count of its own (bqRealEngagement_): one small read of the top-level columns (no JSON), not the whole
+ * enrichment. null when BigQuery is off (settings.bq_enrich / bq_bsip_enrich), Sonar hasn't seen the post in that time,
+ * or the query fails. Never throws.
  */
 function bqPostEngagement_(postUrl, settings) {
   const S = settings || GEN.settings || {};
   const url = String(postUrl || '').trim();
   if (!url || S.bq_enrich === false || S.bq_bsip_enrich === false) return null;
   const sql = [
-    'SELECT (COALESCE(likes, 0) + COALESCE(comments, 0) + COALESCE(shares, 0)) AS interactions',
-    'FROM `bsip-s-bsip-gg-26-2cf3.google_bg.sonar_post_aggregates_7d_materialized`',
-    'WHERE post_url = @url OR (@post_id != "" AND (post_id = @post_id OR ENDS_WITH(post_url, @post_id)',
-    '  OR STRPOS(post_url, CONCAT("/", @post_id, "/")) > 0))',
-    'ORDER BY last_received_at DESC LIMIT 1',
+    'SELECT MAX(IFNULL(engagement_likes, 0)) + MAX(IFNULL(engagement_comments, 0)) + MAX(IFNULL(engagement_shares, 0)) AS interactions',
+    `FROM ${BQ_SONAR_TABLE_}`,
+    'WHERE received_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @hours HOUR)',
+    `  AND ${bqSonarPostSql_()}`,
   ].join('\n');
   try {
-    const rows = bqQuery_(sql, { url, post_id: extractPostIdFromUrl_(url) }, 6000, 'us-central1');
+    const rows = bqQuery_(sql, { url, post_id: extractPostIdFromUrl_(url), hours: BQ_SONAR_COUNT_LOOKBACK_H_ }, 6000,
+      'us-central1');
     const n = rows[0] ? rows[0].interactions : null;
     return typeof n === 'number' && isFinite(n) ? n : null;
   } catch (e) {
@@ -899,7 +912,7 @@ function bqPostEngagement_(postUrl, settings) {
   }
 }
 
-// Where in the post Pendulum found each piece of text (`snippets.source`), in the order Gemini reads them
+// Where in the post Pendulum found each piece of text (Sonar's `detail.post.snippet.source`), in the order Gemini reads them
 const FEED_SNIPPET_LABELS_ = {
   description: 'Post text',
   title: 'Title',
@@ -937,8 +950,8 @@ function parseFeedSnippets_(json) {
 }
 
 /**
- * The prompt section with the post as the listening feeds captured it: Pendulum's pieces of its text (else the text in
- * Burson's collection), Brandwatch's copy, and Pendulum's own summary and issue name. It's what the bot checks Burson's
+ * The prompt section with the post as the listening feeds captured it: Pendulum's pieces of its text (Sonar), Brandwatch's
+ * copy (the DSD story selection's snippet), and Pendulum's own summary and issue name. It's what the bot checks Burson's
  * write-up against when it can't open the post (Facebook, Reddit and others show posts only to people signed in;
  * Instagram's embed page, when Instagram serves it: Post.gs). Read from BigQuery, so nothing counts against the
  * Brandwatch mention allowance. '' when there's none. Pure.
@@ -946,8 +959,11 @@ function parseFeedSnippets_(json) {
 function feedTextPrompt_(bq) {
   if (!bq || typeof bq !== 'object') return '';
   const q = s => `"${truncate_(String(s || '').replace(/\s+/g, ' ').trim(), 900)}"`;
-  const lines = (bq.feed_snippets || []).map(s => `- ${FEED_SNIPPET_LABELS_[s.source] || `Text (${s.source})`}: ${q(s.text)}`);
-  if (!lines.length && bq.feed_post_text) lines.push(`- Post text (as Burson's collection stored it): ${q(bq.feed_post_text)}`);
+  const snippets = bq.feed_snippets || [];
+  const lines = snippets.map(s => `- ${FEED_SNIPPET_LABELS_[s.source] || `Text (${s.source})`}: ${q(s.text)}`);
+  if (bq.feed_post_text && !snippets.some(s => s.source === 'description')) {
+    lines.push(`- Post text (as Burson's collection stored it): ${q(bq.feed_post_text)}`);
+  }
   if (bq.bmie_snippet) lines.push(`- Post text as Brandwatch captured it: ${q(bq.bmie_snippet)}`);
   if (bq.feed_summary) lines.push(`- Pendulum's own summary (another AI's reading of the post, not the post): ${q(bq.feed_summary)}`);
   if (bq.feed_issue_name) lines.push(`- Pendulum's issue name: ${q(bq.feed_issue_name)}`);
@@ -966,28 +982,74 @@ function feedBrief_(bq) {
   const bits = [];
   const pieces = (bq.feed_snippets || []).map(s => s.source);
   if (pieces.length) bits.push(`Pendulum: ${pieces.join(', ')}`);
-  else if (bq.feed_post_text) bits.push("Burson's collection: post text");
+  if (bq.feed_post_text && !pieces.includes('description')) bits.push("Burson's collection: post text");
   if (bq.feed_summary) bits.push('Pendulum summary');
   if (bq.bmie_snippet) bits.push('Brandwatch');
   return bits.join(' · ');
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Mode A: Live Alert Verification, Vector Database Intelligence & Multi-Source Enrichment
+// Mode A: Live Alert Verification & Multi-Source Enrichment (6 Approved Social Tables + SLRR History + Vertex Vectors)
 // ---------------------------------------------------------------------------------------------------------------
 
+// The approved US social tables Mode A and the direct poll read
+const BQ_SPRINKLR_COMMENTS_TABLE_ = '`brand-social-central-data.reporting_data.sprinklr_inbound_comments`';
+const BQ_SPRINKLR_OUTBOUND_TABLE_ = '`brand-social-central-data.reporting_data.sprinklr_outbound_reporting`';
+const BQ_BRANDWATCH_RAW_TABLE_ = '`brand-social-central-data.raw_data.brandwatch_raw_mentions_base`';
+const BQ_DSD_TABLE_ = '`brand-social-central-data.DSD.DSD-story-selection`';
+const BQ_SPRINKLR_DAYS_ = 30;
+const BQ_SPRINKLR_EARLY_COMMENTS_D_ = 2;
+
 /**
- * Queries BigQuery for live metrics, vector embeddings (`ML.GENERATE_EMBEDDING` + `ML.DISTANCE`), and multimodal GCS video links:
- *   - Sprinklr owned post stats (`vw_high_negativity_posts_ai_analysis`, `sprinklr_inbound_posts_vectors`, and screened `sprinklr_inbound_comments`)
- *   - DSD Cloud Storage video candidate URI (`DSD.video_candidates` -> `gs://brand-social-dsd-curation/...`)
- *   - Vector semantic intelligence (`DSD.text_embedding_model` against `DSD.evergreen_vectors`, `DSD.content_vectors`, `trend_learning_examples`)
- *   - BMIE / Brandwatch earned alert metadata (`social_alerts_dataset.all_sundar_mentions`)
- *   - Master `slrr_alerts.slrr_alerts` 14-day matching history, plus the author's earlier alerts (90 days, newest 5): who
- *     the Incident Manager sent them to, and what a follow-up post may be following up on
- *   - Brandy BSIP `us-central1` enrichment (`sonar_post_aggregates_7d_materialized`, `collection_alerts`, `slrr`)
+ * Per-post Sprinklr comment statistics inlined directly against `sprinklr_inbound_comments` (partition-pruned on
+ * `comment_timestamp` instead of scanning an unpruned view). Pure.
+ */
+function bqSprinklrPostStatsSql_(publishedSince, commentsSince, withCaption) {
+  return [
+    '  SELECT post_id, post_url, account_name, account_page_id, platform, Product, brand, Country, Region, post_published_date,',
+    withCaption ? '    ARRAY_AGG(post_caption IGNORE NULLS ORDER BY comment_timestamp DESC LIMIT 1)[SAFE_OFFSET(0)] AS post_caption,' : '',
+    '    COUNT(DISTINCT comment_id) AS total_comments,',
+    '    COUNT(DISTINCT IF(sentiment = "Negative", comment_id, NULL)) AS neg_comments,',
+    '    SAFE_DIVIDE(COUNT(DISTINCT IF(sentiment = "Negative", comment_id, NULL)), COUNT(DISTINCT comment_id)) AS negative_sentiment_ratio',
+    `  FROM ${BQ_SPRINKLR_COMMENTS_TABLE_}`,
+    `  WHERE comment_timestamp >= ${commentsSince}`,
+    `    AND post_published_date >= ${publishedSince}`,
+    '  GROUP BY ALL',
+  ].filter(Boolean).join('\n');
+}
+
+/**
+ * High-negativity Sprinklr owned-post filter with 30-post account and platform/product rolling baselines. Pure.
+ */
+function bqSprinklrHighNegSql_(statsCte) {
+  return [
+    '  SELECT * FROM (',
+    '    SELECT *,',
+    '      AVG(negative_sentiment_ratio) OVER (PARTITION BY account_name ORDER BY post_published_date',
+    '        ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING) AS account_30d_avg_neg_ratio,',
+    '      AVG(negative_sentiment_ratio) OVER (PARTITION BY platform, Product ORDER BY post_published_date',
+    '        ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING) AS platform_pa_30d_avg_neg_ratio',
+    `    FROM ${statsCte}`,
+    '  )',
+    '  WHERE total_comments >= 10 AND (',
+    '    (negative_sentiment_ratio >= account_30d_avg_neg_ratio * 2.0 AND negative_sentiment_ratio > 0.10)',
+    '    OR (negative_sentiment_ratio >= platform_pa_30d_avg_neg_ratio * 1.5 AND negative_sentiment_ratio > 0.15)',
+    '    OR negative_sentiment_ratio >= 0.30)',
+  ].join('\n');
+}
+
+/**
+ * Reads what BigQuery knows about the alert's post, from the 6 approved social tables + SLRR alert history only
+ * (two queries: US, then us-central1) plus Vertex AI `text-embedding-005` evergreen-noise classification (`Vectors.gs`):
+ *   - Sprinklr owned posts (`sprinklr_inbound_comments` + `sprinklr_outbound_reporting`): comment counts, negative share,
+ *     rolling 30-post baseline, top screened negative comments, and outbound post engagements/impressions
+ *   - DSD story selection (`DSD.DSD-story-selection`) & Brandwatch raw mentions (`raw_data.brandwatch_raw_mentions_base`):
+ *     alert tier, KOF status, sentiment, and captured post snippet
+ *   - SLRR alert history (`slrr_alerts.slrr_alerts`): 14-day match, author's 90-day alerts, and related thread/quote alerts
+ *   - Sonar (`bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw`) and Tubular (`google_tubular_mentions.tubular_videos`) in `us-central1`
  * Never throws: returns `null` if the alert has no URL/text or if BigQuery is disabled/unreachable.
  */
-function enrichAlertFromBigQuery_(parsed, settings) {
+function enrichAlertFromBigQuery_(parsed, settings, opts) {
   const S = settings || GEN.settings || {};
   if (S.bq_enrich === false) return null;
   const f = (parsed && parsed.fields) || {};
@@ -1012,29 +1074,26 @@ function enrichAlertFromBigQuery_(parsed, settings) {
   }
 
   const postId = extractPostIdFromUrl_(postUrl);
-  // Earlier alerts from the same author in the SLRR alert log (display name, URL @handle, and fetched post handle)
   const author = Array.from(authorHandles_(f.author, postUrl, post))
     .map(s => s.replace(/,/g, '').trim()).filter(Boolean).join(',');
-  // never the bot's own write-backs (Write back to SLRR BigQuery), once it has written any: until then, as before
   const notBot = bqWriteBackEver_() ? [`      AND ${bqNotBotRowSql_()}`] : [];
+  const postMatch = 'post_url = @url OR (@post_id != "" AND ENDS_WITH(post_url, @post_id))';
   const sql = [
-    'WITH sprinklr_post AS (',
+    'WITH sprinklr_daily AS (',
+    bqSprinklrPostStatsSql_(`TIMESTAMP(DATE_SUB(CURRENT_DATE(), INTERVAL ${BQ_SPRINKLR_DAYS_} DAY))`,
+      `TIMESTAMP(DATE_SUB(CURRENT_DATE(), INTERVAL ${BQ_SPRINKLR_DAYS_ + BQ_SPRINKLR_EARLY_COMMENTS_D_} DAY))`, false),
+    '),',
+    'sprinklr_view AS (',
+    bqSprinklrHighNegSql_('sprinklr_daily'),
+    '),',
+    'sprinklr_post AS (',
     '  SELECT',
     '    post_id, account_name, platform, Product AS sprinklr_product, brand,',
     '    total_comments, neg_comments,',
     '    ROUND(negative_sentiment_ratio * 100, 1) AS neg_pct,',
     '    ROUND(account_30d_avg_neg_ratio * 100, 1) AS acct_baseline_pct',
-    '  FROM `brand-social-central-data.reporting_data.vw_high_negativity_posts_ai_analysis`',
-    '  WHERE post_url = @url OR (@post_id != "" AND ENDS_WITH(post_url, @post_id))',
-    '  ORDER BY post_published_date DESC LIMIT 1',
-    '),',
-    'sprinklr_vec_post AS (',
-    '  SELECT',
-    '    post_id, account_name, platform, total_comments,',
-    '    negative_count AS neg_comments,',
-    '    ROUND(negative_ratio * 100, 1) AS neg_pct',
-    '  FROM `brand-social-central-data.reporting_data.sprinklr_inbound_posts_vectors`',
-    '  WHERE post_url = @url OR (@post_id != "" AND (post_id = @post_id OR ENDS_WITH(post_url, @post_id)))',
+    '  FROM sprinklr_view',
+    `  WHERE ${postMatch}`,
     '  ORDER BY post_published_date DESC LIMIT 1',
     '),',
     'sprinklr_all_comments AS (',
@@ -1045,24 +1104,35 @@ function enrichAlertFromBigQuery_(parsed, settings) {
     '    ROUND(SAFE_DIVIDE(COUNT(DISTINCT CASE WHEN sentiment = "Negative" THEN comment_id END), COUNT(DISTINCT comment_id)) * 100, 1) AS neg_pct,',
     '    STRING_AGG(CASE WHEN sentiment = "Negative" AND NOT REGEXP_CONTAINS(LOWER(comment_text), @comment_noise_rx)',
     '      THEN SUBSTR(REPLACE(comment_text, "\\n", " "), 1, 140) END, " | " ORDER BY comment_like_count DESC LIMIT 8) AS top_neg_comments',
-    '  FROM `brand-social-central-data.reporting_data.sprinklr_inbound_comments`',
+    `  FROM ${BQ_SPRINKLR_COMMENTS_TABLE_}`,
     '  WHERE comment_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)',
     '    AND is_deleted = "false" AND is_spam = "false" AND is_hidden = "false"',
-    '    AND (post_url = @url OR (@post_id != "" AND ENDS_WITH(post_url, @post_id)))',
+    `    AND (${postMatch})`,
     '),',
-    'gcs_vid AS (',
-    '  SELECT uri, content_type, size',
-    '  FROM `brand-social-central-data.DSD.video_candidates`',
-    '  WHERE @post_id != "" AND CONTAINS_SUBSTR(uri, @post_id)',
-    '  ORDER BY updated DESC LIMIT 1',
+    'sprinklr_outbound AS (',
+    '  SELECT Engagements AS engagements, Impressions_Views AS impressions',
+    `  FROM ${BQ_SPRINKLR_OUTBOUND_TABLE_}`,
+    `  WHERE Report_Date >= DATE_SUB(CURRENT_DATE(), INTERVAL ${BQ_SPRINKLR_DAYS_} DAY)`,
+    `    AND (Post_Permalink = @url OR Outbound_Post_ID IN (SELECT post_id FROM sprinklr_daily WHERE ${postMatch})`,
+    '      OR (@post_id != "" AND (ENDS_WITH(RTRIM(Post_Permalink, "/"), @post_id) OR STRPOS(Post_Permalink, CONCAT("/", @post_id, "/")) > 0)))',
+    '  ORDER BY Snapshot_Timestamp_UTC DESC LIMIT 1',
     '),',
-    'bmie AS (',
-    '  SELECT',
-    '    alert_source, engagement, KOF, Sentiment, followers, engagementScore, SUBSTR(snippet, 1, 900) AS snippet',
-    '  FROM `brand-social-central-data.social_alerts_dataset.all_sundar_mentions`',
-    '  WHERE ingestionTimestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)',
-    '    AND (url = @url OR (@post_id != "" AND (ENDS_WITH(url, @post_id) OR STRPOS(url, CONCAT("/", @post_id, "/")) > 0)))',
-    '  ORDER BY ingestionTimestamp DESC LIMIT 1',
+    'dsd AS (',
+    '  SELECT query_name, alert_type, follower_count, engagement_score, SUBSTR(snippet, 1, 900) AS snippet',
+    `  FROM ${BQ_DSD_TABLE_}`,
+    '  WHERE ingestion_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)',
+    '    AND (url = @url OR (@post_id != "" AND (ENDS_WITH(RTRIM(url, "/"), @post_id) OR STRPOS(url, CONCAT("/", @post_id, "/")) > 0)))',
+    '  ORDER BY ingestion_time DESC LIMIT 1',
+    '),',
+    'bwm AS (',
+    '  SELECT product_config_name, sentiment, engagement_score,',
+    '    (SELECT t.name FROM UNNEST(tags) t WHERE STARTS_WITH(UPPER(TRIM(IFNULL(t.name, ""))), "KOF") LIMIT 1) AS kof_tag,',
+    '    SUBSTR(COALESCE(NULLIF(TRIM(mention_text), ""), snippet), 1, 900) AS snippet',
+    `  FROM ${BQ_BRANDWATCH_RAW_TABLE_}`,
+    '  WHERE report_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)',
+    '    AND (post_url = @url OR (@post_id != "" AND (guid = @post_id OR ENDS_WITH(RTRIM(post_url, "/"), @post_id)',
+    '      OR STRPOS(post_url, CONCAT("/", @post_id, "/")) > 0)))',
+    '  ORDER BY load_timestamp DESC LIMIT 1',
     '),',
     'slrr AS (',
     '  SELECT issue_name, novelty, exposure_tag, product, status, emojis, engagements, overview, first_added',
@@ -1096,7 +1166,6 @@ function enrichAlertFromBigQuery_(parsed, settings) {
     '  )',
     '  WHERE d >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY)',
     '),',
-    // Alerted posts this one replies under or quotes (anyone's): their ids come from the post itself (Post.gs)
     'related_alerts AS (',
     '  SELECT TO_JSON_STRING(ARRAY_AGG(STRUCT(date_added, url, author_handle, issue_name, novelty, exposure_tag, risk_tag,',
     '    product, engagements, overview, emojis) ORDER BY d DESC LIMIT 5)) AS rows_json',
@@ -1113,78 +1182,38 @@ function enrichAlertFromBigQuery_(parsed, settings) {
     '    QUALIFY ROW_NUMBER() OVER (PARTITION BY url ORDER BY ingestion_timestamp DESC) = 1',
     '  )',
     '  WHERE d >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)',
-    '),',
-    'qvec AS (',
-    '  SELECT ml_generate_embedding_result AS vec',
-    '  FROM ML.GENERATE_EMBEDDING(',
-    '    MODEL `brand-social-central-data.DSD.text_embedding_model`,',
-    '    (SELECT content FROM UNNEST([@query_text]) AS content WHERE content != ""),',
-    '    STRUCT(TRUE AS flatten_json_output, "RETRIEVAL_QUERY" AS task_type)',
-    '  )',
-    '  WHERE ARRAY_LENGTH(ml_generate_embedding_result) = 768',
-    '),',
-    'ev AS (',
-    '  SELECT e.topic_id, e.topic_label, ROUND(ML.DISTANCE(qvec.vec, e.embedding, "COSINE"), 4) AS dist',
-    '  FROM `brand-social-central-data.DSD.evergreen_vectors` e',
-    '  CROSS JOIN qvec',
-    '  WHERE ARRAY_LENGTH(e.embedding) = 768',
-    '  ORDER BY dist ASC LIMIT 1',
-    '),',
-    'cv AS (',
-    '  SELECT c.url, SUBSTR(REPLACE(c.snippet, "\\n", " "), 1, 160) AS snippet, c.platform, c.alert_type,',
-    '    ROUND(ML.DISTANCE(qvec.vec, c.embedding, "COSINE"), 4) AS dist',
-    '  FROM `brand-social-central-data.DSD.content_vectors` c',
-    '  CROSS JOIN qvec',
-    '  WHERE c.publish_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)',
-    '    AND ARRAY_LENGTH(c.embedding) = 768',
-    '  ORDER BY dist ASC LIMIT 1',
-    '),',
-    'tr AS (',
-    '  SELECT t.trend_name, SUBSTR(REPLACE(t.original_text, "\\n", " "), 1, 140) AS sample_text,',
-    '    ROUND(ML.DISTANCE(qvec.vec, t.embedding, "COSINE"), 4) AS dist',
-    '  FROM `brand-social-central-data.social_alerts_dataset.trend_learning_examples` t',
-    '  CROSS JOIN qvec',
-    '  WHERE ARRAY_LENGTH(t.embedding) = 768',
-    '  ORDER BY dist ASC LIMIT 1',
     ')',
     'SELECT',
-    '  COALESCE(sp.account_name, svp.account_name, sc.account_name) AS sprinklr_account,',
-    '  COALESCE(sp.total_comments, svp.total_comments, sc.total_comments) AS sprinklr_total_comments,',
-    '  COALESCE(sp.neg_comments, svp.neg_comments, sc.neg_comments) AS sprinklr_neg_comments,',
-    '  COALESCE(sp.neg_pct, svp.neg_pct, sc.neg_pct) AS sprinklr_neg_pct,',
+    '  COALESCE(sp.account_name, sc.account_name) AS sprinklr_account,',
+    '  COALESCE(sp.total_comments, sc.total_comments) AS sprinklr_total_comments,',
+    '  COALESCE(sp.neg_comments, sc.neg_comments) AS sprinklr_neg_comments,',
+    '  COALESCE(sp.neg_pct, sc.neg_pct) AS sprinklr_neg_pct,',
     '  sp.acct_baseline_pct AS sprinklr_baseline_pct,',
     '  sc.top_neg_comments AS sprinklr_top_neg_comments,',
-    '  gcs_vid.uri AS gcs_video_uri,',
-    '  gcs_vid.content_type AS gcs_video_mime,',
-    '  bmie.alert_source AS bmie_alert_source,',
-    '  bmie.engagement AS bmie_engagement_tier,',
-    '  bmie.KOF AS bmie_kof,',
-    '  bmie.Sentiment AS bmie_sentiment,',
-    '  bmie.followers AS bmie_followers,',
-    '  bmie.engagementScore AS bmie_engagement_score,',
-    '  bmie.snippet AS bmie_snippet,',
+    '  so.engagements AS sprinklr_engagements, so.impressions AS sprinklr_impressions,',
+    '  COALESCE(dsd.query_name, bwm.product_config_name) AS bmie_alert_source,',
+    '  dsd.alert_type AS bmie_engagement_tier,',
+    '  COALESCE(IF(dsd.alert_type = "KOF", "KOF", NULL), bwm.kof_tag) AS bmie_kof,',
+    '  bwm.sentiment AS bmie_sentiment,',
+    '  dsd.follower_count AS bmie_followers,',
+    '  COALESCE(NULLIF(dsd.engagement_score, 0), NULLIF(bwm.engagement_score, 0)) AS bmie_engagement_score,',
+    '  COALESCE(dsd.snippet, bwm.snippet) AS bmie_snippet,',
     '  slrr.issue_name AS slrr_issue_name,',
     '  slrr.status AS slrr_status,',
     '  slrr.emojis AS slrr_emojis,',
     '  slrr.first_added AS slrr_first_added, slrr.engagements AS slrr_engagements, slrr.overview AS slrr_overview,',
     '  slrr.exposure_tag AS slrr_exposure_tag, slrr.product AS slrr_product,',
-    '  ev.topic_id AS ev_topic_id, ev.topic_label AS ev_label, ev.dist AS ev_dist,',
-    '  cv.url AS cv_url, cv.snippet AS cv_snippet, cv.dist AS cv_dist,',
-    '  tr.trend_name AS tr_name, tr.sample_text AS tr_text, tr.dist AS tr_dist,',
     '  author_alerts.rows_json AS author_alerts_json,',
     '  related_alerts.rows_json AS related_alerts_json',
     'FROM (SELECT 1) d',
     'LEFT JOIN sprinklr_post sp ON TRUE',
-    'LEFT JOIN sprinklr_vec_post svp ON TRUE',
     'LEFT JOIN sprinklr_all_comments sc ON sc.total_comments > 0',
-    'LEFT JOIN gcs_vid ON TRUE',
-    'LEFT JOIN bmie ON TRUE',
+    'LEFT JOIN sprinklr_outbound so ON TRUE',
+    'LEFT JOIN dsd ON TRUE',
+    'LEFT JOIN bwm ON TRUE',
     'LEFT JOIN slrr ON TRUE',
     'LEFT JOIN author_alerts ON TRUE',
     'LEFT JOIN related_alerts ON TRUE',
-    'LEFT JOIN ev ON TRUE',
-    'LEFT JOIN cv ON TRUE',
-    'LEFT JOIN tr ON TRUE',
   ].join('\n');
 
   try {
@@ -1193,58 +1222,56 @@ function enrichAlertFromBigQuery_(parsed, settings) {
       post_id: postId,
       author,
       related_ids: relatedIds.join(','),
-      query_text: queryText,
       comment_noise_rx: DSD_COMMENT_NOISE_RX_,
     }, 9000);
     const r = rows[0] || null;
     if (!r) return null;
-    const vecInfo = classifyVectorIntelligence_(r, postUrl);
     const bsip = S.bq_bsip_enrich !== false ? enrichFromBsip_(postUrl, postId) : {};
+    const num = v => (typeof v === 'number' && isFinite(v) ? v : null);
+    const count = v => (num(v) === null ? null : Math.round(v));
+    const text = v => (v ? String(v).trim() || null : null);
     const out = Object.assign({
       is_owned_post: Boolean(r.sprinklr_account && r.sprinklr_total_comments !== null),
       sprinklr_account: r.sprinklr_account || null,
-      sprinklr_total_comments: typeof r.sprinklr_total_comments === 'number' ? r.sprinklr_total_comments : null,
-      sprinklr_neg_comments: typeof r.sprinklr_neg_comments === 'number' ? r.sprinklr_neg_comments : null,
-      sprinklr_neg_pct: typeof r.sprinklr_neg_pct === 'number' ? r.sprinklr_neg_pct : null,
-      sprinklr_baseline_pct: typeof r.sprinklr_baseline_pct === 'number' ? r.sprinklr_baseline_pct : null,
+      sprinklr_total_comments: num(r.sprinklr_total_comments),
+      sprinklr_neg_comments: num(r.sprinklr_neg_comments),
+      sprinklr_neg_pct: num(r.sprinklr_neg_pct),
+      sprinklr_baseline_pct: num(r.sprinklr_baseline_pct),
       sprinklr_top_neg_comments: r.sprinklr_top_neg_comments || null,
-      gcs_video_uri: r.gcs_video_uri || null,
-      gcs_video_mime: r.gcs_video_mime || null,
+      sprinklr_engagements: count(r.sprinklr_engagements),
+      sprinklr_impressions: count(r.sprinklr_impressions),
       bmie_alert_source: r.bmie_alert_source || null,
       bmie_engagement_tier: r.bmie_engagement_tier || null,
       bmie_kof: r.bmie_kof || null,
       bmie_sentiment: r.bmie_sentiment || null,
-      bmie_followers: typeof r.bmie_followers === 'number' ? r.bmie_followers : null,
-      bmie_engagement_score: typeof r.bmie_engagement_score === 'number' ? r.bmie_engagement_score : null,
-      bmie_snippet: r.bmie_snippet ? String(r.bmie_snippet).trim() || null : null,
+      bmie_followers: num(r.bmie_followers),
+      bmie_engagement_score: num(r.bmie_engagement_score),
+      bmie_snippet: text(r.bmie_snippet),
       slrr_issue_name: r.slrr_issue_name || null,
       slrr_status: r.slrr_status || null,
       slrr_emojis: r.slrr_emojis ? String(r.slrr_emojis).trim() : null,
-      // the first day this post was in the SLRR alert log (Escalate.gs earlierAlerts_: an earlier day = already alerted)
       slrr_first_alerted: r.slrr_first_added || null,
-      slrr_engagements: typeof r.slrr_engagements === 'number' ? r.slrr_engagements : null,
+      slrr_engagements: num(r.slrr_engagements),
       slrr_overview: r.slrr_overview || null,
       slrr_exposure_tag: r.slrr_exposure_tag || null,
       slrr_product: r.slrr_product || null,
       author_alerts: parseAuthorAlerts_(r.author_alerts_json),
       related_alerts: parseAuthorAlerts_(r.related_alerts_json),
       sonar_criticality: bsip.sonar_criticality || null,
-      sonar_interactions: typeof bsip.sonar_interactions === 'number' ? bsip.sonar_interactions : null,
+      sonar_interactions: num(bsip.sonar_interactions),
       sonar_smart_tags: bsip.sonar_smart_tags || null,
       bsip_language: bsip.bsip_language || null,
-      bsip_collection_tier: bsip.bsip_collection_tier || null,
       bsip_is_kol: typeof bsip.bsip_is_kol === 'boolean' ? bsip.bsip_is_kol : null,
-      bsip_priority_flag: bsip.bsip_priority_flag || null,
       bsip_kof_vertical: bsip.bsip_kof_vertical || null,
-      // the post as the listening feeds captured it (feedTextPrompt_): what the bot checks Burson's write-up against
       feed_snippets: parseFeedSnippets_(bsip.sonar_snippets_json),
-      feed_summary: bsip.sonar_summary ? String(bsip.sonar_summary).trim() || null : null,
-      feed_issue_name: bsip.sonar_issue_name ? String(bsip.sonar_issue_name).trim() || null : null,
-      feed_post_text: bsip.bsip_post_text ? String(bsip.bsip_post_text).trim() || null : null,
-    }, vecInfo);
+      feed_summary: text(bsip.sonar_summary),
+      feed_issue_name: text(bsip.sonar_issue_name),
+      tubular_views: count(bsip.tubular_views),
+      tubular_engagements: count(bsip.tubular_engagements),
+      tubular_followers: count(bsip.tubular_followers),
+    }, bqEvergreenFields_(bqEvergreenOf_(queryText, opts)));
 
-    const ignoreKeys = new Set(['is_owned_post', 'is_evergreen_noise', 'semantic_ongoing_match', 'author_alerts', 'related_alerts',
-      'feed_snippets']);
+    const ignoreKeys = new Set(['is_owned_post', 'is_evergreen_noise', 'author_alerts', 'related_alerts', 'feed_snippets']);
     const hasAny = out.author_alerts.length > 0 || out.related_alerts.length > 0 || out.feed_snippets.length > 0 ||
       Object.keys(out).some(k => !ignoreKeys.has(k) && out[k] !== null && out[k] !== undefined);
     if (!hasAny) return null;
@@ -1350,43 +1377,40 @@ function formatBqPromptContext_(bq) {
   if (bq.sprinklr_total_comments !== null && bq.sprinklr_total_comments !== undefined) {
     lines.push(`- Sprinklr Owned Post Metrics (account: ${bq.sprinklr_account || 'Google owned'}): ` +
       `${bq.sprinklr_total_comments} total comments, ${bq.sprinklr_neg_comments || 0} negative (${bq.sprinklr_neg_pct || 0}% negative` +
-      (bq.sprinklr_baseline_pct ? `, vs 30d account baseline ${bq.sprinklr_baseline_pct}%` : '') + '). ' +
+      (bq.sprinklr_baseline_pct ? `, vs 30d account baseline ${bq.sprinklr_baseline_pct}%` : '') +
+      (bq.sprinklr_engagements ? `, outbound engagements=${bq.sprinklr_engagements}` : '') +
+      (bq.sprinklr_impressions ? `, impressions=${bq.sprinklr_impressions}` : '') + '). ' +
       'Remember: "Content - Negative reaction to owned social post" requires >=30 comments AND >=30% negativity.');
   }
   if (bq.sprinklr_top_neg_comments) {
     lines.push(`- Top Screened Negative Comments from Sprinklr (ads/spam/promos removed): ${String(bq.sprinklr_top_neg_comments).slice(0, 900)}`);
   }
-  if (bq.bmie_alert_source || bq.bmie_engagement_tier || bq.bmie_kof) {
-    lines.push(`- BMIE / Brandwatch Stream: source="${bq.bmie_alert_source || ''}", tier="${bq.bmie_engagement_tier || ''}", ` +
+  if (bq.bmie_alert_source || bq.bmie_engagement_tier || bq.bmie_kof || bq.bmie_sentiment) {
+    lines.push(`- DSD / Brandwatch Stream: source="${bq.bmie_alert_source || ''}", tier="${bq.bmie_engagement_tier || ''}", ` +
       `KOF="${bq.bmie_kof || 'No'}", sentiment="${bq.bmie_sentiment || ''}"` +
       (bq.bmie_followers ? `, followers=${bq.bmie_followers}` : ''));
   }
   if (bq.sonar_interactions !== null && bq.sonar_interactions !== undefined) {
-    lines.push(`- BSIP Sonar 7d Live Aggregates: ${bq.sonar_interactions} total interactions` +
+    lines.push(`- BSIP Sonar Live Events: ${bq.sonar_interactions} total interactions` +
       (bq.sonar_criticality ? `, criticality="${bq.sonar_criticality}"` : '') +
       (bq.sonar_smart_tags ? `, smart_tags=[${bq.sonar_smart_tags}]` : '') +
       (bq.bsip_language ? `, language="${bq.bsip_language}"` : ''));
   }
-  if (bq.bsip_collection_tier || bq.bsip_is_kol || bq.bsip_kof_vertical) {
-    lines.push(`- BSIP Collection / SLRR Metadata: tier="${bq.bsip_collection_tier || ''}", ` +
-      `is_kol=${Boolean(bq.bsip_is_kol)}, kof_vertical="${bq.bsip_kof_vertical || ''}"`);
+  if (bq.bsip_is_kol || bq.bsip_kof_vertical) {
+    lines.push(`- BSIP Influencer Metadata: is_kol=${Boolean(bq.bsip_is_kol)}, kof_vertical="${bq.bsip_kof_vertical || ''}"`);
+  }
+  if (bq.tubular_views || bq.tubular_engagements) {
+    lines.push(`- Tubular Video Metrics: views=${bq.tubular_views || 0}, engagements=${bq.tubular_engagements || 0}` +
+      (bq.tubular_followers ? `, creator_followers=${bq.tubular_followers}` : ''));
   }
   if (bq.slrr_issue_name || bq.slrr_emojis) {
     lines.push(`- Prior SLRR Master Log Match (last 14d): issue="${bq.slrr_issue_name || ''}", status="${bq.slrr_status || ''}", emojis="${bq.slrr_emojis || ''}"`);
   }
   if (bq.evergreen_topic_id && typeof bq.evergreen_cosine_distance === 'number') {
-    lines.push(`- Vector Database Evergreen Similarity (DSD.evergreen_vectors): nearest topic="${bq.evergreen_topic_label || bq.evergreen_topic_id}" ` +
+    lines.push(`- Vertex AI Embedding Evergreen Similarity (text-embedding-005): nearest topic="${bq.evergreen_topic_label || bq.evergreen_topic_id}" ` +
       `(cosine distance=${bq.evergreen_cosine_distance}${bq.is_evergreen_noise ? ' -> FLAGGED AS EVERGREEN NOISE' : ''})`);
   }
-  if (bq.nearest_content_url && typeof bq.nearest_content_cosine_distance === 'number') {
-    lines.push(`- Vector Database 14d Content Match (DSD.content_vectors): cosine distance=${bq.nearest_content_cosine_distance} ` +
-      `to ${bq.nearest_content_url} ("${String(bq.nearest_content_snippet || '').slice(0, 140)}")` +
-      (bq.semantic_ongoing_match ? ' -> SEMANTIC ONGOING ISSUE MATCH' : ''));
-  }
-  if (bq.nearest_trend_name && typeof bq.nearest_trend_cosine_distance === 'number') {
-    lines.push(`- Vector Database Trend Match (trend_learning_examples): trend="${bq.nearest_trend_name}" (cosine distance=${bq.nearest_trend_cosine_distance})`);
-  }
-  return lines.length ? 'LIVE BIGQUERY GROUND TRUTH (Sprinklr / BMIE / BSIP / DSD Vectors):\n' + lines.join('\n') : '';
+  return lines.length ? 'LIVE BIGQUERY GROUND TRUTH (Sprinklr / Brandwatch / DSD / Sonar / Tubular / Vertex Vectors):\n' + lines.join('\n') : '';
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1488,7 +1512,7 @@ function formatSprinklrOwnedAlertText_(row) {
     `[Social Network]: ${network}`,
     `[Exposure Tag]: ${tag}`,
     `[Sensitive Topic]: -`,
-    `[KOF]: No`,
+    `[KOF]: ${row.kof && String(row.kof).toLowerCase() !== 'no' ? 'Yes (' + one(row.kof) + ')' : 'No'}`,
     '',
     summary,
     '',
@@ -1628,7 +1652,7 @@ function bsipProduct_(names) {
 }
 
 /**
- * Builds a standard SLRR Zapier-format alert card from a BSIP Pendulum post row (`sonar_post_aggregates_7d_materialized`:
+ * Builds a standard SLRR Zapier-format alert card from a BSIP Pendulum post row (`sonar_raw`:
  * {url, handle, network, alert_names_json, tags, criticality, followers, total, summary, issue_name, post_time}), ready
  * to be reviewed like Burson's: Pendulum's issue name and summary, the network from the link, the product from its alert
  * names, the first of its smart tags that is an exposure tag (else the general criticism tag). Pure.
@@ -1721,10 +1745,16 @@ function bqDirectRefusal_(ctx, targetSpaceId) {
   if (isSfBurson_(ctx && ctx.sfBurson, targetSpaceId)) {
     return 'the Burson space is the live one (this works only in a test feed or the Mirror space)';
   }
-  if (ctx && ctx.sourceReadOnly) return 'the auto-correct space only reads the live Burson space';
+  if (ctx && ctx.sourceReadOnly && !ctx.allowDirectBq) return 'the auto-correct space only reads the live Burson space';
   if (ctx && ctx.direct) return `${DIRECT_B25_MODE_WHY_}, so its own alerts aren't mixed with BigQuery's`;
-  if (burson && burson.id && targetSpaceId !== burson.id) return 'that isn\'t the space the bot reads alerts from';
-  if (burson && burson.externalUserAllowed) return 'the Burson space allows people outside Google';
+  const analyst = (ctx && ctx.spaces && ctx.spaces.analyst) || null;
+  if (ctx && ctx.sourceReadOnly && ctx.allowDirectBq) {
+    if (!analyst || analyst.id !== targetSpaceId) return 'that isn\'t the auto-correct space';
+    if (analyst.externalUserAllowed) return 'the auto-correct space allows people outside Google';
+  } else {
+    if (burson && burson.id && targetSpaceId !== burson.id) return 'that isn\'t the space the bot reads alerts from';
+    if (burson && burson.externalUserAllowed) return 'the Burson space allows people outside Google';
+  }
   if (S.dry_run) return 'dry run (nothing is posted)';
   return '';
 }
@@ -1758,12 +1788,15 @@ function bqDirectUsSql_(sprinklr, bmie) {
   ]];
   if (sprinklr) {
     blocks.push([
+      'sprinklr_stats AS (',
+      bqSprinklrPostStatsSql_(since, since, true),
+      ')',
+    ], [
       'sprinklr_base AS (',
       '  SELECT v.post_id, v.post_url, v.account_name, v.platform, v.Product, v.brand, v.total_comments, v.neg_comments,',
       '    v.negative_sentiment_ratio, v.post_caption, v.post_published_date',
-      '  FROM `brand-social-central-data.reporting_data.vw_high_negativity_posts_ai_analysis` v',
-      `  WHERE v.post_published_date >= ${since}`,
-      '    AND v.total_comments >= 30 AND v.negative_sentiment_ratio >= 0.30',
+      '  FROM sprinklr_stats v',
+      '  WHERE v.total_comments >= 30 AND v.negative_sentiment_ratio >= 0.30',
       `    AND ${bqGoogleTextSql_('CONCAT(IFNULL(v.account_name, ""), " ", IFNULL(v.Product, ""), " ", IFNULL(v.brand, ""), " ", IFNULL(v.post_caption, ""))')}`,
       '    AND NOT EXISTS (SELECT 1 FROM existing_slrr e WHERE e.url = v.post_url)',
       `  ORDER BY v.post_published_date DESC LIMIT ${BQ_POLL_CANDIDATES_}`,
@@ -1772,12 +1805,21 @@ function bqDirectUsSql_(sprinklr, bmie) {
       'sprinklr_top AS (',
       '  SELECT c.post_id,',
       '    STRING_AGG(SUBSTR(REPLACE(c.comment_text, "\\n", " "), 1, 120), " | " ORDER BY c.comment_like_count DESC LIMIT 5) AS top_neg_comments',
-      '  FROM `brand-social-central-data.reporting_data.sprinklr_inbound_comments` c',
+      `  FROM ${BQ_SPRINKLR_COMMENTS_TABLE_} c`,
       '  JOIN sprinklr_base b ON c.post_id = b.post_id',
-      '  WHERE c.sentiment = "Negative" AND c.is_deleted = "false" AND c.is_spam = "false"',
+      '  WHERE c.sentiment = "Negative" AND c.is_deleted = "false" AND c.is_spam = "false" AND c.is_hidden = "false"',
       '    AND c.comment_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)',
       '    AND NOT REGEXP_CONTAINS(LOWER(c.comment_text), @comment_noise_rx)',
       '  GROUP BY c.post_id',
+      ')',
+    ], [
+      'sprinklr_out AS (',
+      '  SELECT Outbound_Post_ID AS post_id,',
+      '    ARRAY_AGG(Engagements IGNORE NULLS ORDER BY Snapshot_Timestamp_UTC DESC LIMIT 1)[SAFE_OFFSET(0)] AS engagements',
+      `  FROM ${BQ_SPRINKLR_OUTBOUND_TABLE_}`,
+      '  WHERE Report_Date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)',
+      '    AND Outbound_Post_ID IN (SELECT post_id FROM sprinklr_base)',
+      '  GROUP BY Outbound_Post_ID',
       ')',
     ], [
       'sprinklr_candidates AS (',
@@ -1796,41 +1838,76 @@ function bqDirectUsSql_(sprinklr, bmie) {
       '    CAST(b.post_published_date AS STRING) AS post_time,',
       '    CAST(NULL AS STRING) AS kof,',
       '    CAST(NULL AS STRING) AS tier,',
-      '    0 AS followers,',
+      '    COALESCE(CAST(o.engagements AS INT64), 0) AS followers,',
       '    t.top_neg_comments AS top_neg_comments',
-      '  FROM sprinklr_base b LEFT JOIN sprinklr_top t ON t.post_id = b.post_id',
+      '  FROM sprinklr_base b',
+      '  LEFT JOIN sprinklr_top t ON t.post_id = b.post_id',
+      '  LEFT JOIN sprinklr_out o ON o.post_id = b.post_id',
       ')',
     ]);
   }
   if (bmie) {
     blocks.push([
-      'bmie_candidates AS (',
+      'dsd_earned AS (',
       '  SELECT',
-      '    "BMIE" AS source_kind,',
-      '    CAST(FARM_FINGERPRINT(m.url) AS STRING) AS id,',
-      '    m.url AS url,',
-      '    m.authorHandle AS handle,',
-      '    m.SocialNetwork AS network,',
-      '    m.product AS product,',
-      '    m.alert_source AS brand,',
-      '    COALESCE(m.engagementScore, 0) AS total_comments,',
-      '    0 AS neg_comments,',
-      '    0.0 AS neg_pct,',
-      '    m.snippet AS snippet,',
-      '    CAST(m.postTime AS STRING) AS post_time,',
-      '    m.KOF AS kof,',
-      '    m.engagement AS tier,',
-      '    COALESCE(m.followers, 0) AS followers,',
-      '    CAST(NULL AS STRING) AS top_neg_comments',
-      '  FROM `brand-social-central-data.social_alerts_dataset.all_sundar_mentions` m',
-      `  WHERE m.ingestionTimestamp >= ${since} AND m.postTime >= ${since}`,
-      '    AND LOWER(m.Sentiment) = "negative"',
-      '    AND (UPPER(m.engagement) IN ("MODERATE", "HIGH") OR (m.KOF IS NOT NULL AND LOWER(m.KOF) != "no" AND m.KOF != ""))',
-      `    AND NOT REGEXP_CONTAINS(LOWER(IFNULL(m.alert_source, "")), r"${BQ_NON_GOOGLE_SOURCES_RX_}")`,
-      `    AND ${bqGoogleTextSql_('IFNULL(m.snippet, "")')}`,
-      `    AND NOT ${nonEnglishScriptSql_('IFNULL(m.snippet, "")')}`,
-      '    AND NOT EXISTS (SELECT 1 FROM existing_slrr e WHERE e.url = m.url)',
-      `  ORDER BY m.ingestionTimestamp DESC LIMIT ${BQ_POLL_CANDIDATES_}`,
+      '    1 AS is_dsd, d.ingestion_time AS seen_at,',
+      '    CAST(FARM_FINGERPRINT(d.url) AS STRING) AS id,',
+      '    d.url AS url,',
+      '    d.author AS handle,',
+      '    d.platform AS network,',
+      '    CAST(NULL AS STRING) AS product,',
+      '    d.query_name AS brand,',
+      '    COALESCE(CAST(d.total_engagements AS INT64), 0) AS total_comments,',
+      '    d.snippet AS snippet,',
+      '    CAST(d.post_time AS STRING) AS post_time,',
+      '    IF(UPPER(IFNULL(d.alert_type, "")) = "KOF", "KOF", "No") AS kof,',
+      '    d.alert_type AS tier,',
+      '    COALESCE(CAST(d.follower_count AS INT64), 0) AS followers',
+      `  FROM ${BQ_DSD_TABLE_} d`,
+      `  WHERE d.ingestion_time >= ${since}`,
+      '    AND d.post_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 72 HOUR)',
+      '    AND UPPER(IFNULL(d.alert_type, "")) IN ("HIGH", "KOF")',
+      `    AND NOT REGEXP_CONTAINS(LOWER(IFNULL(d.query_name, "")), r"${BQ_NON_GOOGLE_SOURCES_RX_}")`,
+      `    AND ${bqGoogleTextSql_('IFNULL(d.snippet, "")')}`,
+      `    AND NOT ${nonEnglishScriptSql_('IFNULL(d.snippet, "")')}`,
+      '    AND NOT EXISTS (SELECT 1 FROM existing_slrr e WHERE e.url = d.url)',
+      ')',
+    ], [
+      'bwm_earned AS (',
+      '  SELECT',
+      '    0 AS is_dsd, m.load_timestamp AS seen_at,',
+      '    CAST(FARM_FINGERPRINT(m.post_url) AS STRING) AS id,',
+      '    m.post_url AS url,',
+      '    m.author AS handle,',
+      '    m.platform AS network,',
+      '    m.product_config_name AS product,',
+      '    m.product_config_name AS brand,',
+      '    COALESCE(CAST(IFNULL(m.like_count, 0) + IFNULL(m.comment_count, 0) + IFNULL(m.reply_count, 0) + IFNULL(m.retweet_count, 0) + IFNULL(m.share_count, 0) AS INT64), 0) AS total_comments,',
+      '    COALESCE(NULLIF(TRIM(m.mention_text), ""), m.snippet) AS snippet,',
+      '    CAST(m.published_timestamp AS STRING) AS post_time,',
+      '    COALESCE((SELECT t.name FROM UNNEST(m.tags) t WHERE STARTS_WITH(UPPER(TRIM(IFNULL(t.name, ""))), "KOF") LIMIT 1), "No") AS kof,',
+      '    IF(COALESCE(m.engagement_score, 0) >= 50, "HIGH", "MODERATE") AS tier,',
+      '    0 AS followers',
+      `  FROM ${BQ_BRANDWATCH_RAW_TABLE_} m`,
+      '  WHERE m.report_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 2 DAY)',
+      `    AND m.load_timestamp >= ${since}`,
+      '    AND m.published_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 48 HOUR)',
+      '    AND m.post_url IS NOT NULL AND LOWER(IFNULL(m.sentiment, "")) = "negative"',
+      `    AND NOT REGEXP_CONTAINS(LOWER(IFNULL(m.product_config_name, "")), r"${BQ_NON_GOOGLE_SOURCES_RX_}")`,
+      `    AND ${bqGoogleTextSql_('CONCAT(IFNULL(m.product_config_name, ""), " ", COALESCE(NULLIF(TRIM(m.mention_text), ""), IFNULL(m.snippet, "")))')}`,
+      `    AND ${englishLangSql_('m.language')} AND NOT ${nonEnglishScriptSql_('COALESCE(NULLIF(TRIM(m.mention_text), ""), IFNULL(m.snippet, ""))')}`,
+      '    AND (COALESCE(IFNULL(m.like_count, 0) + IFNULL(m.comment_count, 0) + IFNULL(m.reply_count, 0) + IFNULL(m.retweet_count, 0) + IFNULL(m.share_count, 0), 0) >= 100',
+      '      OR COALESCE(m.engagement_score, 0) >= 25',
+      '      OR EXISTS (SELECT 1 FROM UNNEST(m.tags) t WHERE STARTS_WITH(UPPER(TRIM(IFNULL(t.name, ""))), "KOF")))',
+      '    AND NOT EXISTS (SELECT 1 FROM existing_slrr e WHERE e.url = m.post_url)',
+      ')',
+    ], [
+      'bmie_candidates AS (',
+      '  SELECT "BMIE" AS source_kind, id, url, handle, network, product, brand, total_comments,',
+      '    0 AS neg_comments, 0.0 AS neg_pct, snippet, post_time, kof, tier, followers, CAST(NULL AS STRING) AS top_neg_comments',
+      '  FROM (SELECT * FROM dsd_earned UNION ALL SELECT * FROM bwm_earned)',
+      '  QUALIFY ROW_NUMBER() OVER (PARTITION BY url ORDER BY is_dsd DESC, seen_at DESC) = 1',
+      `  ORDER BY is_dsd DESC, seen_at DESC LIMIT ${BQ_POLL_CANDIDATES_}`,
       ')',
     ]);
   }
@@ -1847,27 +1924,86 @@ function bqDirectUsSql_(sprinklr, bmie) {
 }
 
 /**
- * BSIP's candidates (us-central1, one query): Pendulum's posts that pass the placeholder rule (see
- * BQ_BSIP_MIN_ENGAGEMENTS_: tagged, seen by Pendulum within the BigQuery lookback, `minutes`: bqLookbackMinutes_; gone
- * live within the last BQ_BSIP_MAX_AGE_H_ hours; BQ_BSIP_MIN_ENGAGEMENTS_ engagements), the most engaged first, each post
- * once. Throws when BigQuery fails or doesn't finish in time (nothing is posted then).
+ * BSIP & Tubular candidates (`us-central1`, one query over `sonar_raw` and `tubular_videos`):
+ *   - Phase 1 filters `sonar_raw` on top-level columns only (fast, low bytes) for posts received in `@minutes`,
+ *     posted within `@max_age_hours`, English, non-positive smart tag, and meeting `@min_total` engagements or KOF list;
+ *   - Phase 2 extracts JSON payload fields (`author`, `summary`, `issue_name`, `smart_alert_names`) only for those top URLs;
+ *   - Unions high-engagement Google videos from `tubular_videos` seen in the window.
+ * Throws when BigQuery fails or doesn't finish in time (nothing is posted then).
  */
 function bqBsipCandidates_(minutes) {
-  const total = '(COALESCE(likes, 0) + COALESCE(comments, 0) + COALESCE(shares, 0))';
+  const latest = expr => `ARRAY_AGG(${expr} IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)]`;
+  const json = path => `JSON_VALUE(payload, "${path}")`;
   const sql = [
-    'SELECT "BSIP" AS source_kind, post_id AS id, post_url AS url, TRIM(IFNULL(author, "")) AS handle, platform AS network,',
-    '  TO_JSON_STRING(smart_alert_names) AS alert_names_json, ARRAY_TO_STRING(smart_tags, " | ") AS tags,',
-    '  IFNULL(criticality, "") AS criticality, COALESCE(SAFE_CAST(followers AS INT64), 0) AS followers,',
-    `  ${total} AS total, SUBSTR(IFNULL(summary, ""), 1, 600) AS summary, TRIM(IFNULL(issue_name, "")) AS issue_name,`,
-    '  IFNULL(language, "") AS language, CAST(post_timestamp AS STRING) AS post_time',
-    `FROM ${BQ_SONAR_TABLE_}`,
-    'WHERE last_received_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE)',
-    '  AND post_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @max_age_hours HOUR)',
-    `  AND post_url IS NOT NULL AND ARRAY_LENGTH(smart_tags) > 0 AND ${bqBsipGoogleSql_()}`,
-    `  AND ${englishLangSql_('language')} AND NOT ${nonEnglishScriptSql_('IFNULL(summary, "")')}`,
-    `  AND ${total} >= @min_total`,
-    'QUALIFY ROW_NUMBER() OVER (PARTITION BY post_url ORDER BY last_received_at DESC) = 1',
-    `ORDER BY total DESC, last_received_at DESC LIMIT ${BQ_POLL_CANDIDATES_}`,
+    'WITH sonar_top AS (',
+    '  SELECT post_url,',
+    '    ANY_VALUE(post_id) AS post_id,',
+    '    ANY_VALUE(platform) AS platform,',
+    '    ARRAY_AGG(language IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS language,',
+    '    ARRAY_AGG(alert_criticality IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS criticality,',
+    '    ARRAY_AGG(NULLIF(TRIM(influencer_list), "") IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS kof,',
+    '    MAX(IFNULL(follower_count, 0)) AS followers,',
+    '    MAX(IFNULL(engagement_likes, 0)) + MAX(IFNULL(engagement_comments, 0)) + MAX(IFNULL(engagement_shares, 0)) AS total,',
+    '    ARRAY_AGG(DISTINCT smart_tag IGNORE NULLS LIMIT 8) AS smart_tags,',
+    '    MIN(SAFE_CAST(post_timestamp AS TIMESTAMP)) AS post_ts,',
+    '    MAX(received_at) AS last_received_at',
+    `  FROM ${BQ_SONAR_TABLE_}`,
+    '  WHERE received_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE)',
+    '    AND post_url IS NOT NULL',
+    `    AND ${englishLangSql_('language')}`,
+    '  GROUP BY post_url',
+    '  HAVING post_ts >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @max_age_hours HOUR)',
+    '    AND (total >= @min_total OR kof IS NOT NULL)',
+    `    AND EXISTS (SELECT 1 FROM UNNEST(smart_tags) t WHERE TRIM(IFNULL(t, "")) != "" AND NOT REGEXP_CONTAINS(LOWER(t), r"${BQ_BSIP_POSITIVE_TAG_RX_}"))`,
+    `  ORDER BY total DESC, last_received_at DESC LIMIT ${BQ_POLL_CANDIDATES_ * 2}`,
+    '),',
+    'sonar_json AS (',
+    '  SELECT s.post_url,',
+    `    ${latest(json('$.detail.channel.username'))} AS author,`,
+    `    TO_JSON_STRING(ARRAY_AGG(DISTINCT ${json('$.detail.smart_alert.name')} IGNORE NULLS LIMIT 8)) AS alert_names_json,`,
+    `    SUBSTR(${latest(json('$.detail.classification.summary'))}, 1, 600) AS summary,`,
+    `    ${latest(json('$.detail.classification.issue_name'))} AS issue_name`,
+    `  FROM ${BQ_SONAR_TABLE_} s`,
+    '  JOIN sonar_top t ON t.post_url = s.post_url',
+    '  WHERE s.received_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @max_age_hours HOUR)',
+    '  GROUP BY s.post_url',
+    '),',
+    'sonar_candidates AS (',
+    '  SELECT "BSIP" AS source_kind, t.post_id AS id, t.post_url AS url, TRIM(IFNULL(j.author, "")) AS handle, t.platform AS network,',
+    '    IFNULL(j.alert_names_json, "[]") AS alert_names_json, ARRAY_TO_STRING(t.smart_tags, " | ") AS tags,',
+    '    IFNULL(t.criticality, "") AS criticality, CAST(t.followers AS INT64) AS followers,',
+    '    CAST(t.total AS INT64) AS total, IFNULL(j.summary, "") AS summary, TRIM(IFNULL(j.issue_name, "")) AS issue_name,',
+    '    IFNULL(t.language, "") AS language, CAST(t.post_ts AS STRING) AS post_time, IFNULL(t.kof, "") AS kof,',
+    '    t.last_received_at AS seen_at',
+    '  FROM sonar_top t',
+    '  LEFT JOIN sonar_json j ON j.post_url = t.post_url',
+    `  WHERE NOT REGEXP_CONTAINS(LOWER(IFNULL(j.issue_name, "")), r"${BQ_NON_GOOGLE_ISSUE_RX_}")`,
+    `    AND ${bqGoogleTextSql_('IF(TRIM(IFNULL(j.summary, "")) != "", j.summary, IFNULL(j.issue_name, ""))')}`,
+    `    AND NOT ${nonEnglishScriptSql_('IFNULL(j.summary, "")')}`,
+    '),',
+    'tubular_candidates AS (',
+    '  SELECT "BSIP" AS source_kind, COALESCE(NULLIF(youtube_video_id, ""), CAST(FARM_FINGERPRINT(video_url) AS STRING)) AS id,',
+    '    video_url AS url, TRIM(IFNULL(creator, "")) AS handle, platform AS network,',
+    '    "[]" AS alert_names_json, "" AS tags, "" AS criticality,',
+    '    COALESCE(SAFE_CAST(creator_followers_or_subscribers AS INT64), 0) AS followers,',
+    '    COALESCE(SAFE_CAST(total_engagements AS INT64), 0) AS total,',
+    '    SUBSTR(IFNULL(video_title, ""), 1, 600) AS summary, SUBSTR(TRIM(IFNULL(video_title, "")), 1, 180) AS issue_name,',
+    '    "en" AS language, CAST(published_at_utc AS STRING) AS post_time, "" AS kof,',
+    '    report_run_at_utc AS seen_at',
+    `  FROM ${BQ_TUBULAR_TABLE_}`,
+    '  WHERE snapshot_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 2 DAY)',
+    '    AND report_run_at_utc >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE)',
+    '    AND published_at_utc >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @max_age_hours HOUR)',
+    '    AND video_url IS NOT NULL AND COALESCE(total_engagements, 0) >= @min_total',
+    `    AND ${bqGoogleTextSql_('CONCAT(IFNULL(video_title, ""), " ", IFNULL(topics, ""))')}`,
+    `    AND NOT ${nonEnglishScriptSql_('IFNULL(video_title, "")')}`,
+    '  QUALIFY ROW_NUMBER() OVER (PARTITION BY video_url ORDER BY snapshot_date DESC, report_run_at_utc DESC) = 1',
+    ')',
+    'SELECT source_kind, id, url, handle, network, alert_names_json, tags, criticality, followers, total, summary,',
+    '  issue_name, language, post_time, kof',
+    'FROM (SELECT * FROM sonar_candidates UNION ALL SELECT * FROM tubular_candidates)',
+    'QUALIFY ROW_NUMBER() OVER (PARTITION BY url ORDER BY total DESC, seen_at DESC) = 1',
+    `ORDER BY total DESC, seen_at DESC LIMIT ${BQ_POLL_CANDIDATES_}`,
   ].join('\n');
   return bqQuery_(sql, {
     minutes: bqLookbackMinutes_({ bq_lookback_minutes: minutes }),
@@ -1960,9 +2096,15 @@ function bqSpaceMessages_(ctx, spaceId, S, now) {
 function bqWaitingKeys_(ctx, spaceId, S, now, msgs) {
   const keys = new Set();
   (msgs || bqSpaceMessages_(ctx, spaceId, S, now)).forEach(m => {
-    if (!m || m.threadReply || !m.text) return;
-    const key = recordKey_(parseAlert_(m.text).fields);
-    if (key) keys.add(key);
+    if (!m || m.threadReply) return;
+    if (m.text) {
+      const key = recordKey_(parseAlert_(m.text).fields);
+      if (key) keys.add(key);
+    }
+    (m.links || []).forEach(u => {
+      const lk = recordKey_({ post_url: u });
+      if (lk) keys.add(lk);
+    });
   });
   return keys;
 }
@@ -2078,9 +2220,11 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
     try { return !!(cache && cache.get(step1Key(key))); } catch (e) { return false; }
   };
   let storeAlerts = null;  // the log tabs are read only once there's a candidate
+  const mem = typeof amOf_ === 'function' ? amOf_(ctx) : null;
   const isNew = url => {
     if (!storeAlerts) storeAlerts = (ctx && ctx.store && ctx.store.alerts) || [];
     const key = recordKey_({ post_url: url });
+    if (mem && mem.active && mem.seenPost(url)) return false;
     return shouldIngestBqUrl_(url, storeAlerts, seen) && !waiting.has(key) && !leftOut(key);
   };
   const counts = { SPRINKLR: 0, BMIE: 0, BSIP: 0 };
@@ -2098,10 +2242,12 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
     (late ? lateFor : refusedFor).push(what);
     console.warn(`BigQuery direct poll (${what}): ${late ? 'BigQuery didn\'t finish the query in time' : 'BigQuery refused the query'}: ${msg}`);
   };
-  const post = (kind, url, text) => {
+  const post = (kind, url, text, info) => {
     const key = recordKey_({ post_url: url });
+    if (mem && mem.active && mem.seenPost(url)) { skipped++; return; }
     try {
       const msg = bqPostCard_(targetSpaceId, text, `bq:${kind}:${key}`, url, timeLeft(BQ_DIRECT_PIC_LEFT_MS_));
+      if (mem && mem.active) mem.claim(url, 'bq', info);
       seen.add(key);
       counts[kind]++;
       if (msg && msg.name) posted.push([hashText_(String(msg.name)), BQ_SOURCE_LABELS_[kind]]);
@@ -2181,8 +2327,8 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
         soloOnly: true, priorAlerts: bqPriorAlerts_(ctx, now), gemini: ctx && ctx.gemini,
         // Gemini only with time for it and for posting after it: no try in the run's last minute
         deadline: ctx && ctx.deadline ? ctx.deadline - 60 * 1000 : 0,
-        knowledge: items => knowledgeFor_(ctx.knowledge, items.slice(0, 30).map(v => v.issue || v.text).join(' '),
-          { budget: BQ_EVAL_KNOWLEDGE_CHARS_ }),
+        knowledge: items => knowledgeForCtx_(ctx, knowledgeQueryForRecords_(items),
+          { budget: BQ_EVAL_KNOWLEDGE_CHARS_, pin: true, logAs: 'Step 1 of the 3-step BigQuery evaluation' }),
         guidance: () => ctx.guidance || [],
       });
       passed = new Set(step.solo_alerts.map(s => String(s.id)));
@@ -2211,12 +2357,13 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
     if (total() >= BQ_POLL_MAX_PER_RUN_ || !timeLeft(30 * 1000)) break;
     const r = c.row;
     let text = null;
-    if (c.kind === 'SPRINKLR') {  // its rule goes by Sprinklr's comments and negativity (on the card): no lookup
+    if (c.kind === 'SPRINKLR') {  // its rule goes by Sprinklr's comments and negativity (plus outbound engagements when present)
       text = formatSprinklrOwnedAlertText_({
         post_id: r.id, post_url: r.url, account_name: r.handle, platform: r.network,
         Product: r.product, brand: r.brand, total_comments: r.total_comments,
         neg_comments: r.neg_comments, neg_pct: r.neg_pct, post_caption: r.snippet,
         post_published_date: r.post_time, top_neg_comments: r.top_neg_comments,
+        engagement_total: Number(r.followers) > 0 ? Number(r.followers) : 0,
       });
     } else if (c.kind === 'BMIE') {
       const score = Math.max(0, Math.round(Number(r.total_comments) || 0));  // Brandwatch's engagementScore (0: none)
@@ -2234,7 +2381,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
       noCount++;
       continue;
     }
-    post(c.kind, r.url, text);
+    post(c.kind, r.url, text, { author: r.handle, network: r.network, engagement: r.total || r.total_comments || 0 });
   }
   if (step1Out || noCount) {
     console.log(`BigQuery direct poll: ${step1Out} candidate(s) left out by Step 1 of the 3-step evaluation, ` +
@@ -2347,7 +2494,7 @@ function bqRealEngagement_(ctx, url) {
 // Auto-find missing links (Control row 14, autoFindLinks): the post for an alert Burson sent without its link or author
 // ---------------------------------------------------------------------------------------------------------------
 
-const BQ_LINK_LOOKBACK_H_ = 48;             // posts the listening feeds saw in the last 48 hours
+const BQ_LINK_LOOKBACK_H_ = 48;             // posts Sonar saw in the last 48 hours (its JSON: never more, see BQ_SONAR_TABLE_)
 const BQ_LINK_MAX_CANDIDATES_ = 15;         // Pendulum posts read per lookup, the closest first
 const BQ_LINK_MIN_CONFIDENCE_ = 0.9;        // the best match must be at least this sure...
 const BQ_LINK_RUNNER_UP_MAX_ = 0.75;        // ...and no other post this close, else it's a guess (none is taken)
@@ -2359,7 +2506,8 @@ const BQ_LINK_MISS_CACHE_SEC_ = 600;        // "nothing sure" is kept 10 minutes
 const BQ_LINK_TIMEOUT_MS_ = 6000;           // how long BigQuery may take (the lookup is part of the alert's review)
 const BQ_LINK_MIN_LEFT_MS_ = 30 * 1000;     // with less of the run left, no lookup: processed without it, as with the switch OFF
 const BQ_LINK_MAX_PER_RUN_ = 10;            // lookups per run at most, so a burst of link-less alerts can't use up the run
-const BQ_SONAR_TABLE_ = '`bsip-s-bsip-gg-26-2cf3.google_bg.sonar_post_aggregates_7d_materialized`';
+const BQ_LINK_LOGGED_DAYS_ = 14;            // the SLRR alert log's posts under the same issue name, from the last 14 days
+const BQ_LINK_LOGGED_MAX_ = 5;              // ...at most this many
 
 /** A handle as the feeds and Burson both write it, to compare: "@Foo" / "u/foo" -> "foo"; a subreddit ("r/…") is no one. Pure. */
 function linkHandle_(s) {
@@ -2498,58 +2646,76 @@ function bqLinkCandidates_(fields) {
   const author = linkHandle_(fields.author);
   const kws = linkKeywords_(fields);
   if (!issue && !author && !kws) return [];
-  const sql = [
-    'WITH sonar AS (',
-    '  SELECT post_url, TRIM(IFNULL(author, "")) AS author, platform, TRIM(IFNULL(issue_name, "")) AS issue_name,',
-    '    LOWER(TRIM(REGEXP_REPLACE(TRIM(IFNULL(author, "")), r"^(?:@+|/?[uU]/)", ""))) AS author_key,',
-    '    LOWER(REGEXP_REPLACE(TRIM(IFNULL(issue_name, "")), r"\\s+", " ")) AS issue_key,',
-    '    SUBSTR(IFNULL(summary, ""), 1, 300) AS summary,',
-    '    (COALESCE(likes, 0) + COALESCE(comments, 0) + COALESCE(shares, 0)) AS interactions,',
-    '    CAST(post_timestamp AS STRING) AS posted_at',
+  const latest = expr => `ARRAY_AGG(${expr} IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)]`;
+  const json = path => `JSON_VALUE(payload, "${path}")`;
+  const sonarSql = [
+    'WITH sonar_agg AS (',
+    '  SELECT post_url,',
+    `    TRIM(IFNULL(${latest(json('$.detail.channel.username'))}, "")) AS author,`,
+    '    ANY_VALUE(platform) AS platform,',
+    `    TRIM(IFNULL(${latest(json('$.detail.classification.issue_name'))}, "")) AS issue_name,`,
+    `    SUBSTR(IFNULL(${latest(json('$.detail.classification.summary'))}, ""), 1, 300) AS summary,`,
+    '    MAX(IFNULL(engagement_likes, 0)) + MAX(IFNULL(engagement_comments, 0)) + MAX(IFNULL(engagement_shares, 0)) AS interactions,',
+    '    CAST(MIN(SAFE_CAST(post_timestamp AS TIMESTAMP)) AS STRING) AS posted_at',
     `  FROM ${BQ_SONAR_TABLE_}`,
-    '  WHERE last_received_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @hours HOUR) AND post_url IS NOT NULL',
-    '  QUALIFY ROW_NUMBER() OVER (PARTITION BY post_url ORDER BY last_received_at DESC) = 1',
+    '  WHERE received_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @hours HOUR) AND post_url IS NOT NULL',
+    '  GROUP BY post_url',
+    '),',
+    'sonar AS (',
+    '  SELECT post_url, author, platform, issue_name, summary, interactions, posted_at,',
+    '    LOWER(TRIM(REGEXP_REPLACE(author, r"^(?:@+|/?[uU]/)", ""))) AS author_key,',
+    '    LOWER(REGEXP_REPLACE(issue_name, r"\\s+", " ")) AS issue_key',
+    '  FROM sonar_agg',
     '),',
     'feed AS (',
     '  SELECT "sonar" AS src, post_url AS url, author, platform AS network, issue_name, summary, interactions, posted_at,',
     '    TRUE AS in_feeds, (@issue != "" AND issue_key = @issue) AS same_issue,',
     '    (@author != "" AND author_key = @author) AS same_author,',
-    // STRPOS, not CONTAINS_SUBSTR: BigQuery only lets CONTAINS_SUBSTR look for a constant, and k changes per word.
-    // The words (linkKeywords_) are already lower-case letters and digits, so the lower-case text is enough.
     '    (SELECT COUNT(1) FROM UNNEST(SPLIT(@kws, ",")) k',
     '      WHERE k != "" AND STRPOS(LOWER(CONCAT(issue_name, " ", summary)), k) > 0) AS kw_hits',
     '  FROM sonar',
-    '),',
-    'picked AS (',
-    '  SELECT * FROM feed WHERE same_issue OR same_author OR kw_hits > 0',
-    `  ORDER BY same_issue DESC, same_author DESC, kw_hits DESC, posted_at DESC LIMIT ${BQ_LINK_MAX_CANDIDATES_}`,
-    '),',
-    'logged AS (',
-    '  SELECT "slrr" AS src, l.post_link AS url, IFNULL(s.author, "") AS author, s.platform AS network,',
-    '    TRIM(IFNULL(l.issue_name, "")) AS issue_name, IFNULL(s.summary, "") AS summary, s.interactions, s.posted_at,',
-    '    s.post_url IS NOT NULL AS in_feeds, 0 AS kw_hits',
-    '  FROM `bsip-s-bsip-gg-26-2cf3.google_bg.slrr` l LEFT JOIN sonar s ON s.post_url = l.post_link',
-    '  WHERE @issue != "" AND l.post_link IS NOT NULL',
-    '    AND LOWER(REGEXP_REPLACE(TRIM(IFNULL(l.issue_name, "")), r"\\s+", " ")) = @issue',
-    '  LIMIT 5',
     ')',
-    'SELECT src, url, author, network, issue_name, summary, interactions, posted_at, in_feeds, kw_hits FROM picked',
-    'UNION ALL',
-    'SELECT src, url, author, network, issue_name, summary, interactions, posted_at, in_feeds, kw_hits FROM logged',
+    'SELECT src, url, author, network, issue_name, summary, interactions, posted_at, in_feeds, kw_hits',
+    'FROM feed WHERE same_issue OR same_author OR kw_hits > 0',
+    `ORDER BY same_issue DESC, same_author DESC, kw_hits DESC, posted_at DESC LIMIT ${BQ_LINK_MAX_CANDIDATES_}`,
   ].join('\n');
-  return bqQuery_(sql, { issue, author, kws, hours: BQ_LINK_LOOKBACK_H_ }, BQ_LINK_TIMEOUT_MS_, 'us-central1', true);
+  const picked = bqQuery_(sonarSql, { issue, author, kws, hours: BQ_LINK_LOOKBACK_H_ }, BQ_LINK_TIMEOUT_MS_, 'us-central1', true);
+  if (!issue) return picked;
+  const feedUrls = new Set((picked || []).map(r => String((r && r.url) || '').trim()).filter(Boolean));
+  let logged = [];
+  try {
+    const slrrSql = [
+      'SELECT "slrr" AS src, url, TRIM(IFNULL(author_handle, "")) AS author, CAST(NULL AS STRING) AS network,',
+      '  TRIM(IFNULL(issue_name, "")) AS issue_name, SUBSTR(REPLACE(IFNULL(overview, ""), "\\n", " "), 1, 300) AS summary,',
+      '  engagements_actual AS interactions, date_added AS posted_at',
+      'FROM `brand-social-central-data.slrr_alerts.slrr_alerts`',
+      'WHERE ingestion_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)',
+      '  AND url IS NOT NULL AND LOWER(REGEXP_REPLACE(TRIM(IFNULL(issue_name, "")), r"\\s+", " ")) = @issue',
+      'QUALIFY ROW_NUMBER() OVER (PARTITION BY url ORDER BY ingestion_timestamp DESC) = 1',
+      `ORDER BY ingestion_timestamp DESC LIMIT ${BQ_LINK_LOGGED_MAX_}`,
+    ].join('\n');
+    logged = (bqQuery_(slrrSql, { issue, days: BQ_LINK_LOGGED_DAYS_ }, BQ_LINK_TIMEOUT_MS_, 'US', true) || []).map(r => Object.assign({}, r, {
+      in_feeds: feedUrls.has(String(r.url || '').trim()),
+      kw_hits: 0,
+    }));
+  } catch (e) {
+    logged = [];
+  }
+  return (picked || []).concat(logged);
 }
 
-/** Pendulum's entry for the alert's own link (us-central1): [{url, author, network}], at most one. Throws when BigQuery fails. */
+/** Pendulum's entry for the alert's own link (`sonar_raw`, us-central1): [{url, author, network}], at most one. Throws when BigQuery fails. */
 function bqAuthorRows_(postUrl) {
   const sql = [
-    `SELECT post_url AS url, TRIM(IFNULL(author, "")) AS author, platform AS network FROM ${BQ_SONAR_TABLE_}`,
-    'WHERE (post_url = @url OR (@post_id != "" AND (post_id = @post_id OR ENDS_WITH(post_url, @post_id))))',
-    '  AND TRIM(IFNULL(author, "")) != ""',
-    'ORDER BY last_received_at DESC LIMIT 1',
+    'SELECT post_url AS url, TRIM(IFNULL(JSON_VALUE(payload, "$.detail.channel.username"), "")) AS author, platform AS network',
+    `FROM ${BQ_SONAR_TABLE_}`,
+    'WHERE received_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @hours HOUR)',
+    `  AND ${bqSonarPostSql_()}`,
+    '  AND TRIM(IFNULL(JSON_VALUE(payload, "$.detail.channel.username"), "")) != ""',
+    'ORDER BY received_at DESC LIMIT 1',
   ].join('\n');
-  return bqQuery_(sql, { url: String(postUrl || '').trim(), post_id: extractPostIdFromUrl_(postUrl) }, BQ_LINK_TIMEOUT_MS_,
-    'us-central1', true);
+  return bqQuery_(sql, { url: String(postUrl || '').trim(), post_id: extractPostIdFromUrl_(postUrl), hours: BQ_LINK_LOOKBACK_H_ },
+    BQ_LINK_TIMEOUT_MS_, 'us-central1', true);
 }
 
 /**
@@ -2614,7 +2780,6 @@ function bqFindMissingLink_(parsed) {
 // Early detection (clusters & velocity) (Control row 19, earlyWave): low-tier semantic clusters & velocity spikes
 // ---------------------------------------------------------------------------------------------------------------
 
-const BQ_EARLY_DETECTION_VIEW_ = 'brand-social-central-data.early_detection.vw_chatbot_pending_early_alerts';
 const ED_ALERT_ID_PREFIX_ = 'client-zeda-';   // Relay.gs RELAY_ID_RX_ treats this as the bot's own; Bot.gs triages it
 const ED_ALERT_INGESTED_ = 'Early detection'; // Alert log `ingested` tag (excluded from Results parity & SLRR writeback)
 const ED_ALERT_SOURCE_ = 'Early Detection';
@@ -2627,7 +2792,7 @@ const EW_DRAIN_MIN_LEFT_MS_ = 90 * 1000;      // a review starts only with this 
 const EW_TIMEOUT_MS_ = 8000;                  // BigQuery query timeout
 const EW_QUERY_MAX_ROWS_ = 25;                // max pending rows read per poll
 const EW_LOOKBACK_MARGIN_MIN_ = 20;           // read back this far past the last check (pipeline run time & created_at skew)
-const EW_LOOKBACK_MAX_MIN_ = 180;             // never past vw_chatbot_pending_early_alerts' own 3-hour window
+const EW_LOOKBACK_MAX_MIN_ = 180;             // never past EarlyWaveSource's own 3-hour signal buffer
 const EW_SEEN_MS_ = 24 * 3600 * 1000;         // same-story dedup window: alert_id / cluster_id / signal_key / primary_url and story cards
 const EW_SEEN_MAX_ = 200;                     // cap stored hashes well under ScriptProperties 9 KB limit
 const EW_SEEN_MAX_CHARS_ = 8800;              // the seen map's JSON (ScriptProperties: 9 KB a value)
@@ -2657,74 +2822,16 @@ function ewText_(s) {
   return String(s === undefined || s === null ? '' : s).replace(/[<>|\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-/** Validates a parameterized `project.dataset.view` identifier before interpolating backticks in SQL. Pure. */
-function edSafeViewRef_(viewRef) {
-  const ref = String(viewRef || BQ_EARLY_DETECTION_VIEW_).trim().replace(/^`|`$/g, '');
-  if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(ref)) {
-    throw new Error(`Invalid BigQuery view reference: ${ref}`);
-  }
-  return ref;
-}
-
 /**
- * Parameterized read-only `US` query over `vw_chatbot_pending_early_alerts`, bounded by Control B31 (`@minutes`) and
- * `@max_rows`. Pure.
- */
-function earlyDetectionSql_(viewRef) {
-  const safeRef = edSafeViewRef_(viewRef);
-  return [
-    'SELECT',
-    '  CAST(alert_id AS STRING) AS alert_id,',
-    '  FORMAT_TIMESTAMP("%Y-%m-%d %H:%M UTC", created_at) AS created_utc,',
-    '  UPPER(TRIM(IFNULL(signal_type, ""))) AS signal_type,',
-    '  UPPER(TRIM(IFNULL(velocity_grain, ""))) AS velocity_grain,',
-    '  TRIM(IFNULL(cluster_id, "")) AS cluster_id,',
-    '  TRIM(IFNULL(signal_key, "")) AS signal_key,',
-    '  TRIM(IFNULL(headline, "")) AS headline,',
-    '  TRIM(IFNULL(topic_product, "")) AS topic_product,',
-    '  UPPER(TRIM(IFNULL(priority_hint, ""))) AS priority_hint,',
-    '  COALESCE(unique_low_tier_authors, 0) AS unique_low_tier_authors,',
-    '  COALESCE(mention_count, 0) AS mention_count,',
-    '  COALESCE(platform_count, 0) AS platform_count,',
-    '  ARRAY_TO_STRING(platforms, ", ") AS platforms_csv,',
-    '  ROUND(COALESCE(baseline_authors, 0), 2) AS baseline_authors,',
-    '  ROUND(COALESCE(velocity_ratio, 0), 2) AS velocity_ratio,',
-    '  ROUND(COALESCE(absolute_author_delta, 0), 2) AS absolute_author_delta,',
-    '  TRIM(IFNULL(primary_url, "")) AS primary_url,',
-    '  IFNULL(FORMAT_TIMESTAMP("%Y-%m-%dT%H:%M:%SZ", window_start), "") AS window_start_utc,',
-    '  IFNULL(FORMAT_TIMESTAMP("%Y-%m-%dT%H:%M:%SZ", window_end), "") AS window_end_utc,',
-    '  IFNULL(representative_posts_json, "[]") AS representative_posts_json,',
-    '  TRIM(IFNULL(chatbot_card_text, "")) AS chatbot_card_text,',
-    '  TRIM(IFNULL(update_of_alert_id, "")) AS update_of_alert_id,',
-    '  COALESCE(update_of_authors, 0) AS update_of_authors',
-    `FROM \`${safeRef}\``,
-    'WHERE created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE)',
-    'ORDER BY',
-    '  CASE UPPER(TRIM(IFNULL(priority_hint, ""))) WHEN "P0" THEN 0 WHEN "P1" THEN 1 ELSE 2 END ASC,',
-    '  COALESCE(velocity_ratio, 0) DESC,',
-    '  COALESCE(unique_low_tier_authors, 0) DESC,',
-    '  created_at ASC',
-    'LIMIT @max_rows',
-  ].join('\n');
-}
-
-/**
- * Fetches pending low-tier cluster emergence & velocity alerts from BigQuery (`US`) created in the last `minutes`
+ * Produces and reads pending low-tier cluster emergence & velocity signals from the bot's own EarlyWaveSource.gs
+ * producer (over the 6 approved BigQuery tables + Vertex AI `text-embedding-005`) created in the last `minutes`
  * (edLookbackMinutes_: at least the B31 lookback, held to 15-180). Throws on BigQuery failure or timeout.
  */
-function bqEarlyDetectionRows_(minutes, viewRef) {
+function bqEarlyDetectionRows_(minutes) {
   const n = Math.round(Number(minutes));
-  return bqQuery_(
-    earlyDetectionSql_(viewRef),
-    {
-      minutes: isFinite(n) && n > 0 ? Math.min(EW_LOOKBACK_MAX_MIN_, Math.max(BQ_LOOKBACK_SHORTEST_MIN_, n))
-        : BQ_LOOKBACK_DEFAULT_MIN_,
-      max_rows: EW_QUERY_MAX_ROWS_,
-    },
-    EW_TIMEOUT_MS_,
-    'US',
-    true
-  );
+  const clamped = isFinite(n) && n > 0 ? Math.min(EW_LOOKBACK_MAX_MIN_, Math.max(BQ_LOOKBACK_SHORTEST_MIN_, n))
+    : BQ_LOOKBACK_DEFAULT_MIN_;
+  return ewsRows_(clamped);
 }
 
 /**
@@ -3211,7 +3318,7 @@ function edQueuePrune_(props, now) {
 
 /**
  * Early detection (clusters & velocity) (Control row 19, OFF unless switched ON): at most every 15 minutes (`EW_EVERY_MS_`),
- * queries `brand-social-central-data.early_detection.vw_chatbot_pending_early_alerts` for signals created since just
+ * runs EarlyWaveSource.gs (`ewsRows_`) over the 6 approved BigQuery tables + Vertex AI embeddings for signals created since just
  * before its last check (edLookbackMinutes_: at least the B31 lookback, `@minutes`): newly emerged low-tier semantic
  * clusters (`CLUSTER_EMERGENCE`) and multi-grain low-tier velocity spikes (`VELOCITY_SPIKE`). Queues up to
  * `EW_MAX_PER_CHECK_` new ones for review, EW_MAX_PER_DAY_ a day (once that many are queued, it doesn't even read
@@ -3245,11 +3352,10 @@ function earlyWaveCheck_(ctx) {
     return { queued: 0, failed: 0, capped: true };
   }
   const minutes = edLookbackMinutes_(ctx.settings, last, now);
-  const viewRef = (ctx.settings && ctx.settings.early_detection_view) || BQ_EARLY_DETECTION_VIEW_;
 
   let rows;
   try {
-    rows = bqEarlyDetectionRows_(minutes, viewRef);
+    rows = bqEarlyDetectionRows_(minutes);
   } catch (e) {
     const errMsg = String((e && e.message) || e);
     console.warn('Early detection check skipped: ' + errMsg);

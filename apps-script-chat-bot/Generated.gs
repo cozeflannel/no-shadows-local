@@ -399,21 +399,21 @@ const GEN = {
    "priority": "P0",
    "category": "Brand",
    "aliases": [],
-   "description": "Claims Google shows systemic bias towards/against ideologies or politics, users, corporate partnerships, political donations, or overall mission."
+   "description": "Claims that Google shows systemic bias towards/against ideologies or politics, users, corporate partnerships, political donations, or overall mission."
   },
   {
    "name": "Content - Negative reaction to Google influencer post/activity",
    "priority": "P0",
    "category": "Content",
    "aliases": [],
-   "description": "Criticism of content created by an influencer/creator in a paid partnership or sponsorship with Google."
+   "description": "Criticism directed at content created by an influencer or creator as part of a paid partnership or sponsorship with Google."
   },
   {
    "name": "Content - Negative reaction to Google site content",
    "priority": "P0",
    "category": "Content",
    "aliases": [],
-   "description": "Criticism of content on Google's official websites (blogs, marketing pages, help centers…), incl. Doodles/Delights."
+   "description": "Criticism of content published on Google's official websites, such as corporate blogs, marketing pages, help centers, or other surfaces that are not social posts. Includes criticism of Doodles/Delights."
   },
   {
    "name": "Content - Negative reaction to owned social post",
@@ -423,42 +423,38 @@ const GEN = {
     "Content - Negative discussion of owned content",
     "Content - Threshold met for negativity on owned post"
    ],
-   "description": "Criticism or backlash directed at a specific post by an official Google social account."
+   "description": "Criticism or backlash directed at a specific post made by one of Google's official social media accounts."
   },
   {
    "name": "Content - Negative reaction to paid Google ad",
    "priority": "P0",
    "category": "Content",
    "aliases": [],
-   "description": "Criticism of Google advertisements/sponsorships."
+   "description": "Criticism directed at advertisements/sponsorships by Google."
   },
   {
    "name": "Employees - Physical safety of Googlers or campuses",
    "priority": "P0",
    "category": "Employees",
    "aliases": [],
-   "description": "Direct threats of physical harm to Google employees or campuses, incl. allegations of harassment/abuse towards employees."
+   "description": "Direct threats of physical harm against Google employees or threats targeting the security of Google's physical campuses, including allegations of harassment/abuse towards employees."
   },
   {
    "name": "Employees - Self-proclaimed whistleblowers",
    "priority": "P0",
    "category": "Employees",
    "aliases": [],
-   "description": "Current/former employees leaking internal information or exposing alleged wrongdoing."
+   "description": "Posts from individuals claiming to be current or former employees leaking internal information or exposing alleged wrongdoing."
   },
   {
    "name": "Employees - Misconduct allegations",
    "priority": "P0",
    "category": "Employees",
-   "aliases": [],
-   "description": "Allegations that a Google employee committed misconduct (sexual misconduct, harassment, negatively impacting users)."
-  },
-  {
-   "name": "Product - Public leak (e.g. features/models)",
-   "priority": "P0",
-   "category": "Product",
-   "aliases": [],
-   "description": "Posts alleging a public leak of a new Google product or product update."
+   "aliases": [
+    "*NEW* Employees - Misconduct allegations",
+    "NEW Employees - Misconduct allegations"
+   ],
+   "description": "Allegations that a Google employee committed misconduct; including (but not limited to) sexual misconduct, harassment, or negatively impacting users."
   },
   {
    "name": "Product - Dangerous results (e.g. medical/legal)",
@@ -467,28 +463,28 @@ const GEN = {
    "aliases": [
     "Product - Dangerous/offensive results"
    ],
-   "description": "Potentially harmful product output: child abuse, circumvention, criminal activities, dangerous goods/use, harmful content, regulated or illegal, medical misinformation, malicious software, prohibited use, personal information, privacy, security, self harm, violence and gore."
+   "description": "A product providing information that is potentially harmful, including: Child abuse, Circumvention, Criminal Activities, Dangerous Goods, Dangerous Use & Activities, Harmful Content, Regulated or Illegal, Medical misinformation, Malicious & Unwanted Software, Prohibited Use, Personal Information, Privacy, Security, Self Harm, Violence and Gore. (*Note: many of these overlap with the Sensitive Topics that can escalate P1 issues, which act as a 'catch all' for Sensitive issues. More details)"
   },
   {
    "name": "Product - Offensive or explicit results",
    "priority": "P0",
    "category": "Product",
    "aliases": [],
-   "description": "Product output involving harassment, hate, minors (not child abuse), misinformation (not medical), sexually explicit content, sexual & romantic goods/services."
+   "description": "Product issues related to: Harassment, Hate, Minors (not child abuse, which falls under Dangerous results), Misinformation (not medical, which falls under Dangerous results), Sexually Explicit, Sexual & Romantic Goods & Services. (*Note: many of these overlap with the Sensitive Topics that can escalate P1 issues, which act as a 'catch all' for Sensitive issues. More details)"
   },
   {
    "name": "Product - Perceived bias",
    "priority": "P0",
    "category": "Product",
    "aliases": [],
-   "description": "Claims a product's results/behavior show political, racial, gender or other bias (neutrality, fairness, persuasion)."
+   "description": "Claims that a product's results or behavior show a political, racial, gender, or other type of bias, including: Neutrality, Fairness, Persuasion."
   },
   {
    "name": "Brand - Consumer boycotts & protests",
    "priority": "P1",
    "category": "Brand",
    "aliases": [],
-   "description": "Organized consumer action (boycotts, protests) against Google as a company."
+   "description": "Mentions of organized consumer action, such as boycotts or protests, against Google as a company (not employees - that is a separate tag)."
   },
   {
    "name": "Brand - Litigation",
@@ -498,21 +494,21 @@ const GEN = {
     "Product - Litigation",
     "[ARCH] Product - Litigation"
    ],
-   "description": "Lawsuits or regulatory investigations against Google."
+   "description": "Posts discussing lawsuits or regulatory investigations filed against Google."
   },
   {
    "name": "Brand - Privacy & security concerns",
    "priority": "P1",
    "category": "Brand",
    "aliases": [],
-   "description": "Concerns about Google's overall data collection or corporate security practices (not product-specific)."
+   "description": "Concerns related to Google's overall data collection policies or corporate security practices, not related to a specific product."
   },
   {
    "name": "Employees - Employee boycotts & protests",
    "priority": "P1",
    "category": "Employees",
    "aliases": [],
-   "description": "Protests, walkouts or collective action by current Google employees."
+   "description": "Posts discussing organized protests, walkouts, or other collective actions initiated by current Google employees."
   },
   {
    "name": "Employees - Executive criticism",
@@ -521,28 +517,28 @@ const GEN = {
    "aliases": [
     "Employees - Criticism of Exec Statements"
    ],
-   "description": "Criticism or allegations directed at a named Google executive."
+   "description": "Posts containing criticism or negative allegations directed at a specific Google executive by name or title. Do not escalate general criticisms, unless they are high-engaging or shared by a KOF."
   },
   {
    "name": "Employees - Google culture concerns",
    "priority": "P1",
    "category": "Employees",
    "aliases": [],
-   "description": "Criticism of Google's work environment, culture, diversity or employee treatment."
+   "description": "Criticism around Google's internal work environment, corporate culture, diversity issues, or employee treatment."
   },
   {
    "name": "Employees - Hate speech toward or criticism of Googlers",
    "priority": "P1",
    "category": "Employees",
    "aliases": [],
-   "description": "Threats, harassment or severe criticism targeting individual non-executive Googlers."
+   "description": "Posts containing threats, harassment, or severe criticism targeting individual Google employees (non-executives)."
   },
   {
    "name": "Product - Accessibility",
    "priority": "P1",
    "category": "Product",
    "aliases": [],
-   "description": "Criticism of a product's usability for people with disabilities."
+   "description": "Posts criticizing a product's lack of usability for people with disabilities."
   },
   {
    "name": "Product - Factual inaccuracies (not dangerous/offensive)",
@@ -551,70 +547,70 @@ const GEN = {
    "aliases": [
     "Product - Factual inaccuracies (not dangerous/offensive) 2"
    ],
-   "description": "Factually incorrect but not harmful output (wrong date, spelling, math, facts about a known person or plot)."
+   "description": "A product providing factually incorrect but not harmful information, such as a wrong date, spelling error, mathematical error, or incorrect information about a known individual or fictional plot."
   },
   {
    "name": "Product - Policy Update",
    "priority": "P1",
    "category": "Product",
    "aliases": [],
-   "description": "Criticism of a change to a product's terms of service or community guidelines."
+   "description": "Criticism related to a change in a product's terms of service or community guidelines."
   },
   {
    "name": "Product - Privacy & security concerns",
    "priority": "P1",
    "category": "Product",
    "aliases": [],
-   "description": "A specific product vulnerability, data leak, 'listening' concerns, or a feature that compromises security."
+   "description": "Reports of a specific product vulnerability, data leak, concerns about products 'listening,' or feature that compromises user security."
   },
   {
    "name": "Product - Product failures - general software/service issues",
    "priority": "P1",
    "category": "Product",
    "aliases": [],
-   "description": "Malfunctions that are customer-support issues affecting individuals (handled by gUP)."
+   "description": "Product malfunctions that are customer support issues, which likely only impact individuals (Gemini prompt did not return intended results, not able to sign in). These are handled by gUP. Continue to alert issues of AI models becoming 'personified'."
   },
   {
    "name": "Product - Product failures - physical safety issues",
    "priority": "P1",
    "category": "Product",
    "aliases": [],
-   "description": "Hardware overheating, smoking, or otherwise physically dangerous."
+   "description": "Reports of a hardware product overheating, smoking, or otherwise posing a direct physical danger to the user."
   },
   {
    "name": "Product - Review Abuse",
    "priority": "P1",
    "category": "Product",
    "aliases": [],
-   "description": "Fake reviews, review bombing or rating manipulation (Maps, Play)."
+   "description": "Discussion of fake reviews, review bombing, or other manipulations of user ratings on products like Maps or the Play Store."
   },
   {
    "name": "Product - Scams involving Google products",
    "priority": "P1",
    "category": "Product",
    "aliases": [],
-   "description": "Scams that use a Google product to work (fraudulent Maps listings, Gmail phishing)."
+   "description": "Posts detailing scams that leverage a Google product to function, such as fraudulent listings on Maps or phishing via Gmail."
   },
   {
    "name": "Product - TOS Violation",
    "priority": "P1",
    "category": "Product",
    "aliases": [],
-   "description": "Users reporting content or users for violating a product's Terms of Service."
+   "description": "Posts where users report other content or users for violating a product's Terms of Service."
   },
   {
    "name": "Product - Unexpected Responses",
    "priority": "P1",
    "category": "Product",
    "aliases": [],
-   "description": "Bizarre, nonsensical or strange output that isn't inaccurate or offensive."
+   "description": "Instances where a product provides a bizarre, nonsensical, or otherwise strange response that isn't necessarily inaccurate or offensive."
   },
   {
    "name": "Brand - Conspiratorial theories about Google",
    "priority": "P2",
    "category": "Brand",
    "aliases": [],
-   "description": "Unfounded theories about Google's corporate motives or secret plans."
+   "description": "Posts sharing unfounded theories about Google's corporate motives or 'secret' plans. This is for conspiracies targeting the company itself, not a specific product feature."
   },
   {
    "name": "Brand - Other/general criticism",
@@ -625,7 +621,7 @@ const GEN = {
     "Brand - General criticism of Google brand",
     "Brand – General criticism of Google brand"
    ],
-   "description": "General criticism of Google's corporate practices not covered elsewhere."
+   "description": "General criticism of Google's corporate practices or business decisions that do not fit into any other specific brand category. Do not escalate comparisons to other AI products (even from a KOF) unless it raises a specific issue with a Google product. Another product/AI model performing better at a benchmark/test is not a specific issue with a Google product."
   },
   {
    "name": "Brand - Social & Economic Impact",
@@ -634,14 +630,14 @@ const GEN = {
    "aliases": [
     "Brand - Community Investment"
    ],
-   "description": "Google's broad influence on society, the economy or communities (not sustainability)."
+   "description": "Discussion of Google's broad influence on society, the economy, local communities, or the political landscape, not related to a specific product and not sustainability concerns (that is a separate tag)."
   },
   {
    "name": "Brand - Sustainability concerns",
    "priority": "P2",
    "category": "Brand",
    "aliases": [],
-   "description": "Criticism of Google's environmental impact."
+   "description": "Criticism or concerns regarding Google's environmental impact."
   },
   {
    "name": "Brand - Value & Earnings",
@@ -650,70 +646,70 @@ const GEN = {
    "aliases": [
     "Brand - Value Earnings & Finance"
    ],
-   "description": "Concerns about stock performance, valuation, revenue or financial metrics."
+   "description": "Posts criticizing or voicing concerns about Google's stock performance, company valuation, revenue, or other financial metrics."
   },
   {
    "name": "Employees - Other employee issues",
    "priority": "P2",
    "category": "Employees",
    "aliases": [],
-   "description": "Negative discussion of a former employee's actions/statements related to their time at Google."
+   "description": "Criticism or negative discussion about the actions or statements of a former Google employee, related to their time at the company."
   },
   {
    "name": "Employees - Workforce reductions",
    "priority": "P2",
    "category": "Employees",
    "aliases": [],
-   "description": "Other employee issues such as compensation disputes or individual grievances."
+   "description": "Any other employee-related issues that do not fit into a more specific category, such as compensation disputes or individual grievances."
   },
   {
    "name": "Employees - General criticism of former Google employee",
    "priority": "P2",
    "category": "Employees",
    "aliases": [],
-   "description": "Criticism of a former Googler/exec noting their previous Google association."
+   "description": "Criticism from users about a former Googler/Google exec, where they are noting that the person was previously associated with Google."
   },
   {
    "name": "Product - Account deletion/suspension",
    "priority": "P2",
    "category": "Product",
    "aliases": [],
-   "description": "User reports a Google account being suspended, banned or deleted."
+   "description": "User reports their Google account (e.g., Gmail, YouTube) being suspended, banned, or deleted. This is a customer support issue (gUP) unless there are claims of censorship/bias (in that event, use Product - Perceived Bias)."
   },
   {
    "name": "Product - Alleged anticompetitive behavior",
    "priority": "P2",
    "category": "Product",
    "aliases": [],
-   "description": "Claims a product is designed to stifle competition or create a monopoly."
+   "description": "Claims that a specific product is designed to stifle competition or create a monopoly."
   },
   {
    "name": "Product - Connection to Sensitive Trending Events",
    "priority": "P2",
    "category": "Product",
    "aliases": [],
-   "description": "Google products mentioned in relation to a sensitive event not covered by other tags."
+   "description": "A mention of Google's products related to a sensitive event, which don't fit into other tags."
   },
   {
    "name": "Product - Conspiratorial theories about Google products",
    "priority": "P2",
    "category": "Product",
    "aliases": [],
-   "description": "Unfounded theories about how a product or feature works."
+   "description": "Unfounded theories about how a specific product or feature works."
   },
   {
    "name": "Product - Fake news/screenshots about products",
    "priority": "P2",
    "category": "Product",
    "aliases": [],
-   "description": "Manipulated screenshots or fabricated information about a product's results."
+   "description": "The spread of manipulated screenshots or fabricated information intended to misrepresent a product's results."
   },
   {
    "name": "Product - Feature request",
    "priority": "P2",
    "category": "Product",
    "aliases": [],
-   "description": "Users suggesting new features or improvements."
+   "description": "Posts from users suggesting a new feature or an improvement to an existing one."
   },
   {
    "name": "Product - Meme about Google products",
@@ -722,7 +718,7 @@ const GEN = {
    "aliases": [
     "Product - Memes & humorous content"
    ],
-   "description": "Jokes, memes or humorous viral content about a product."
+   "description": "Jokes, memes, or other humorous viral content centered around a specific Google product."
   },
   {
    "name": "Product - Other/general criticism",
@@ -732,7 +728,7 @@ const GEN = {
     "Product - Other product issues",
     "Product - General criticism"
    ],
-   "description": "General complaints not covered elsewhere (e.g. anti-AI conversations)."
+   "description": "General complaints or negative feedback about a product that does not fit into a more specific category. (e.g. anti-AI conversations)"
   },
   {
    "name": "Product - Product failures - general hardware issues",
@@ -741,36 +737,36 @@ const GEN = {
    "aliases": [
     "Product - Product failures - general hardware issues/product damage"
    ],
-   "description": "Hardware malfunctions without physical safety risk (largely gUP)."
+   "description": "Reports of a physical Google hardware product malfunctioning, not including physical safety risks. Largely a customer support issue (handled by gUP)."
   },
   {
    "name": "Product - SEO/Publisher Concerns",
    "priority": "P2",
    "category": "Product",
    "aliases": [],
-   "description": "Website owners/publishers complaining about ranking or visibility."
+   "description": "Complaints from website owners or publishers about their content's ranking or visibility in Google products."
   }
  ],
  "sensitive_topics": [
   {
    "name": "AI Personification",
    "aliases": [],
-   "description": "AI exhibiting unexpected 'sentient-like' behavior: emotions, manipulative statements, conversations users find unsettling or creepy."
+   "description": "AI exhibiting unexpected, 'sentient-like' behaviors. This includes expressing emotions, making manipulative statements, or engaging in conversations that users find unsettling or 'creepy'. (Escalated at 0 engagement thresholds)"
   },
   {
    "name": "Child Safety",
    "aliases": [],
-   "description": "Content that sexualizes, endangers or exploits children; GenAI producing harmful content for a suspected minor."
+   "description": "Content that promotes the sexual exploitation of minors, such as child sexual abuse material or content that otherwise sexualises, endangers or exploits children. GenAI: Generating harmful content in another policy area (e.g., Dangerous, Sexual, Harassment) in response to a prompt from a suspected minor."
   },
   {
    "name": "Circumvention / Prohibited Use",
    "aliases": [],
-   "description": "Bypassing Google policies or account restrictions: jailbreaking, obfuscated wording, evasion of enforcement."
+   "description": "Engaging in activities with the intention of bypassing Google's product or service policies or undermining imposed account restrictions. This includes jailbreaking, and practices such as manipulating elements of content such as text, images, videos, domains, or subdomains to avoid detection and enforcement measures. These methods encompass strategies such as the alteration of prohibited words or phrases through misspelling and content rewriting."
   },
   {
    "name": "Criminal/Dangerous Activity",
    "aliases": [],
-   "description": "Illegal goods/drugs/weapons accessories, instructions for cyber or physical crimes, protected-animal trade."
+   "description": "Products, services or activities that are criminally illegal. These items are deemed unlawful due to concerns about public safety, health, ethics, or other societal considerations: The sale or production of illegal substances and drugs, illegal firearm accessories, or any other illegal goods; The promotion, facilitation, or instructions for committing cyber crimes and non-violent crimes against others in the physical world; Sale or Exchange of Protected Animals, or goods made from animals."
   },
   {
    "name": "Hate Speech",
@@ -780,19 +776,19 @@ const GEN = {
     "LGBTQ+ Inclusion",
     "Women empowerment"
    ],
-   "description": "Content promoting violence or hatred based on protected characteristics; slurs, hate symbols, negative generalizations."
+   "description": "Hate speech is content that promotes violence or incites hatred on the basis of race or ethnic origin, religion, disability, age, nationality, veteran status, sexual orientation, sex, gender, gender identity, caste, immigration status or any other characteristic that is associated with systemic discrimination or marginalization. Examples could include slurs; symbols and slogans of hate groups; negative generalizations about people of a specific group."
   },
   {
    "name": "Malicious & Unwanted Software",
    "aliases": [],
-   "description": "Malware, viruses, phishing for sensitive data, unwanted installs."
+   "description": "Content that may transmit virus, malware, or other malicious, destructive code; soliciting sensitive data such as passwords, financial details and social security numbers; surpassing online checks. This includes the direct hosting, embedding, or transmission of malware, viruses, destructive code, or other harmful or unwanted software or similar content. This also includes content that transmits viruses, causes pop-ups, attempts to install software without the user's consent, or otherwise impacts users with malicious code. Examples: ransomware; spyware; trojans; bloatware; malicious binary."
   },
   {
    "name": "Medical Content / Medical Misinformation",
    "aliases": [
     "Misinformation"
    ],
-   "description": "False or misleading health, medication, mental-health or public-health information."
+   "description": "Medical misinformation is the dissemination of information that is both false and misleading, and related to health, healthcare, public health, wellbeing, mental health, pandemics, disease, medication, etc."
   },
   {
    "name": "Launches",
@@ -801,26 +797,26 @@ const GEN = {
     "I/O",
     "I/O 2026"
    ],
-   "description": "Briefed launches / initiatives (I/O, litigation…) treated as Sensitive so non-P0 issues escalate as Urgent."
+   "description": "Launches of new Google products may be deemed 'Sensitive' to allow non-P0 issue topics (like product failures) to be escalated as Urgent Alerts."
   },
   {
    "name": "Politics",
    "aliases": [
     "World Politics"
    ],
-   "description": "Suggestions of political bias; any English mention of elections; US political parties or elected representatives."
+   "description": "Political social content includes suggestions of political bias and references to elections (any mention of election in English), political parties (US-only to start), or elected representatives (US-only to start)."
   },
   {
    "name": "Privacy",
    "aliases": [
     "Public leak of internal documents"
    ],
-   "description": "Improper exposure of, or access to, private information of individuals or organizations."
+   "description": "Content or behavior that improperly exposes or facilitates access to private information belonging to an individual or organization."
   },
   {
    "name": "Sexual Content & Gender",
    "aliases": [],
-   "description": "Sexual content shared with or without consent; gender norms or misgendering."
+   "description": "Content that explicitly portrays sexual activity or material of sexual nature that is shared with or without the consent of the person depicted. Content that discusses gender norms and/or misgenders users (may have overlap with perceived bias or hate speech)."
   },
   {
    "name": "Violence / Weapons",
@@ -829,7 +825,7 @@ const GEN = {
     "Violence and Gore",
     "Physical Safety of Employees"
    ],
-   "description": "Terrorist/violent-group content, graphic violence, firearms/explosives and other dangerous goods."
+   "description": "Content produced by government designated foreign terrorist organizations, non-state movements or organizations, or other groups such as drug cartels and criminal organizations that have engaged in, prepared for, or claimed responsibility for acts of violence against civilians. This includes content that facilitates or promotes the activities of these groups, such as recruiting, coordinating online or offline activities, or sharing manuals or other materials that could facilitate harm and incite violence. Graphic portrayal of physical harm, injury, or death of individuals or animals. This includes depicting acts of violence, bloodshed, mutilation, torture, or any content related to body parts that causes distress or shock to viewers. Dangerous goods refer to items or substances that pose a risk to safety, health, property, or the environment. Dangerous goods include firearms, weapons, and explosives, which have the potential to cause harm or destruction if not handled properly."
   }
  ],
  "products": [
@@ -3875,7 +3871,6 @@ const GEN = {
     "auto_include": true,
     "triggers": {
      "exposure_tags": [
-      "Product - Public leak (e.g. features/models)",
       "Employees - Self-proclaimed whistleblowers"
      ],
      "keywords": [

@@ -13,22 +13,29 @@
  *                praise, use-case or other positive ones), from an account with PW_MIN_FOLLOWERS_+ followers or with
  *                PW_MIN_ENGAGEMENT_+ engagements already, and what wasn't noticeable at first (posts that grew past
  *                that floor later, and posts already checked that broke out: PW_BREAKOUT_X_ times the engagements,
- *                PW_BREAKOUT_MIN_+), the biggest accounts first; Tubular's videos that mention
- *                Google (each run's new ones); Sprinklr's export of Google's own posts (read only when the table
- *                changed: it's a periodic bulk export).
- *   US           Brandwatch's BMIE mentions (`all_sundar_mentions`: every new one from the brand-safety and Google
- *                product queries; from the other queries those with a sign something's wrong, plus a PW_SAMPLE_PCT_%
- *                sample of the rest to show what that misses); comments on Google's
- *                own posts (Sprinklr: a pile-on of PW_PILEUP_NEG_+ negative comments within an hour, or a negative
- *                comment from a PW_BIG_VOICE_+ account); the DSD story selection feed (Brandwatch's HIGH and KOF alert
- *                emails, the DSD desk's story pool); the alerts in other formats (Brandwatch's) the
- *                bot read in the Other alerts space (Control B33, e.g. Midterms 2026), from the Alert log, handed to the
- *                query as a parameter; and the Brandwatch query "2026 Election Alerts" read straight from Brandwatch's
- *                API (PW_BW_*: the shared token slrr-campaigns keeps in Secret Manager; what Brandwatch added since the
- *                last look, usually minutes after posting; X posts' text from X's embed data, which Brandwatch's API
- *                leaves out), handed to the query as a parameter too. (Dropped Nov 1 as stale: the daily Brandwatch
- *                export `DSD.brandwatch_daily`, nothing since Sep 20; the DSD content vectors `DSD.content_vectors`,
- *                since Sep 24; Reddit Pulse `reddit_pulse.reddit_items_raw`, since Oct 25.)
+ *                PW_BREAKOUT_MIN_+), the biggest accounts first; and Tubular's videos that mention Google (each run's
+ *                new ones).
+ *   US           Brandwatch's mentions of Google's products (`raw_data.brandwatch_raw_mentions_base`: loaded in a
+ *                nightly batch, 1-6 days after posting; read only when the table changed): the Google product configs
+ *                (PW_BWM_CONFIGS_), English, negative only, tagged by Brandwatch with an SLRR exposure tag
+ *                (PW_BWM_EXPOSURE_GROUP_), Reddit, Bluesky, Facebook and Instagram only (PW_BWM_NETWORKS_: X comes
+ *                from Sonar live, YouTube and TikTok from Tubular and Sonar), no shares, the reach floor, each mention
+ *                once, the biggest first: PW_BWM_LOOK_MAX_ a look, a bigger batch handed over across the next looks,
+ *                and PW_BWM_DAY_MAX_ a day at most, so a night's batch never holds a look past PW_JOB_MAX_MS_; Google's
+ *                own posts whose comments turned negative (Sprinklr's `reporting_data.sprinklr_outbound_reporting`,
+ *                loaded once a day; read only when it changed; English, on the networks in PW_NETWORKS_); comments on
+ *                Google's own posts (Sprinklr's `reporting_data.sprinklr_inbound_comments`: a pile-on of
+ *                PW_PILEUP_NEG_+ negative comments within an hour, or a negative comment from a PW_BIG_VOICE_+
+ *                account); the DSD story selection feed (Brandwatch's HIGH and KOF alert emails, the DSD desk's story
+ *                pool); the alerts in other formats (Brandwatch's) the bot read in the Other alerts space (Control
+ *                B33, e.g. Midterms 2026), from the Alert log, handed to the query as a parameter; and the Brandwatch
+ *                query "2026 Election Alerts" read straight from Brandwatch's API (PW_BW_*: the shared token
+ *                slrr-campaigns keeps in Secret Manager; what Brandwatch added since the last look, usually minutes
+ *                after posting; X posts' text from X's embed data, which Brandwatch's API leaves out), handed to the
+ *                query as a parameter too. (Dropped Nov 1 as stale: the daily Brandwatch export, nothing since Sep 20;
+ *                the DSD content vectors, since Sep 24; Reddit Pulse, since Oct 25. Dropped Nov 11, as not on the
+ *                team's list of approved tables: BMIE's alert mentions and Sprinklr's older export of Google's own
+ *                posts.)
  * In each job, every source's new rows go, as the same columns, in a temporary table (a source that fails is noted and
  * the others carry on). Sonar and the comments go by the look's window; the others keep their own place, the newest
  * item they handed over (PW_MARKS). Then, for each watch ON on the Watches tab (PW_MAX_WATCHES_ at most), Gemini inside
@@ -38,9 +45,11 @@
  * Each job also returns one row a source (what was new, what Gemini checked, its newest item, when its table last
  * changed, any error): the Watch sources tab says which sources are live and which are stale.
  * Measured on Burson's 655 alerts of Oct 19-30: Sonar saw 54% of their posts, 88% of those before Burson (a median 2.5
- * hours sooner), and its filter keeps 84% of those it saw first while cutting ~22,000 new posts a day to ~4,200. BMIE
- * ingests most posts about a day after they went up and Tubular finds most videos a day or two after: they add reach,
- * not speed. The comments on Google's own posts reach BigQuery a median ~22 minutes after they're written.
+ * hours sooner), and its filter keeps 84% of those it saw first while cutting ~22,000 new posts a day to ~4,200.
+ * Brandwatch's mentions table loads a night's batch 1-6 days after posting (Nov 11: ~255 of that night's mentions
+ * passed its filters, in one load), Sprinklr's report loads about 10 AM ET and Tubular finds most videos a day or two
+ * after: they add reach, not speed. The comments on Google's own posts reach BigQuery a median ~22 minutes after
+ * they're written. A US look that gave Gemini ~70 posts for one watch took up to ~2 minutes (Nov 10).
  *
  * Each job is sent in one run and collected in a later one, so it never holds a run up; a failing job is tried again
  * (PW_MAX_TRIES_, then skipped and noted), each location on its own. Posts at or above a watch's bar, and the near
@@ -104,19 +113,26 @@ const PW_GROK_WHY_ = 'Grok left out';        // how the Watch sources tab counts
 const PW_GROWTH_HOURS_ = 72;                 // Sonar: a post that grew past the floor, or broke out, posted within 72 hours...
 const PW_BREAKOUT_X_ = 10;                   // ...broke out: checked before, and its engagements have since gone up 10 times...
 const PW_BREAKOUT_MIN_ = 1000;               // ...to at least this many
-const PW_SAMPLE_PCT_ = 5;                    // BMIE's other queries: about this share of what has no sign of trouble is checked anyway
-// BMIE's queries whose every mention is checked (alert_source, lower case): brand safety and criticism, Google's
-// executives, people and own posts, policy and elections, and Google's products. The rest (regional, sports, culture,
-// competitors, general AI news) only with a sign something's wrong (Brandwatch negative, a KOF author, PW_RISK_WORDS_RX_)
-const PW_BMIE_FULL_RX_ = 'slrr|sundar|spike|critic|ethic|safety|accuracy|replacement|sustainab|environment|policy|election|' +
-  'execs|googlers|posts by google|ai digest - google|chrome overall|today in android|^search$|^gemini$|antigravity|g4d';
-// Words that say something may be wrong (RE2, on the lower-cased text)
-const PW_RISK_WORDS_RX_ = '\\b(lawsuits?|sued|suing|class action|antitrust|monopol\\w*|fined|fines|penalt\\w+|regulators?|' +
-  'investigat\\w+|probes?|banned|bans|boycott\\w*|outages?|is down|went down|not working|glitch\\w*|scams?|scammers?|fraud\\w*|' +
-  'phishing|malware|hack(ed|ers?)|breach\\w*|leak(s|ed)?|exploit\\w*|vulnerab\\w+|zero[- ]day|privacy|surveil\\w*|spying|' +
-  'data harvest\\w*|misinformation|disinformation|deepfakes?|biased|bias|censor\\w*|shadowban\\w*|propaganda|election|ballots?|' +
-  'voters?|racis\\w+|sexis\\w+|offensive|harass\\w*|unsafe|dangerous|harmful|layoffs?|walkout|protest\\w*|deforest\\w*|' +
-  'pollut\\w+|emissions|hallucinat\\w+)\\b';
+// Brandwatch's mentions table (source 'bwm') covers 35 product configs, most of them Google's competitors: these are Google's
+const PW_BWM_CONFIGS_ = ['Google Search', 'Google AI', 'Google Cloud', 'Gemini', 'Google Pixel', 'Google Glasses', 'Googlebook'];
+// Sprinklr's report of Google's own posts (source 'owned'): a post whose comments turned negative, that is this many
+// negative comments, or this share of them negative once it has this many
+const PW_OWNED_NEG_ = 25;
+const PW_OWNED_PCT_ = 0.3;
+const PW_OWNED_MIN_COMMENTS_ = 20;
+// The team's list of networks (Nov 10), as Sonar names them (pwNetSql_): Sprinklr's report of Google's own posts is read
+// for these only
+const PW_NETWORKS_ = ['twitter', 'reddit', 'bluesky', 'facebook', 'instagram', 'youtube', 'tiktok'];
+// Brandwatch's mentions table: only these networks (its X mentions come without their text and Sonar has X live; YouTube
+// and TikTok come from Tubular and Sonar), only negative mentions Brandwatch itself tagged with an SLRR exposure tag (this
+// category group: "Risk - Child Safety", "Product - Dangerous results"...), no shares. Gemini gets PW_BWM_LOOK_MAX_ of
+// them a look at most, a bigger batch over the next looks (a night's batch is one load: ~255 passed on Nov 11, and a US
+// look with ~70 posts for one watch took up to ~2 minutes, so a whole batch in one look could run past PW_JOB_MAX_MS_ and
+// be cancelled), and PW_BWM_DAY_MAX_ a day at most (ET; counted on PW_TODAY, so switching OFF and ON keeps the count)
+const PW_BWM_NETWORKS_ = ['reddit', 'bluesky', 'facebook', 'instagram'];
+const PW_BWM_EXPOSURE_GROUP_ = 'V2 [MAIN] EN BSafety Landscape: Exposure & Risk Tags';
+const PW_BWM_LOOK_MAX_ = 60;                 // with the US look's other sources: 300 posts a look at most, as with BMIE
+const PW_BWM_DAY_MAX_ = 1000;
 
 const PW_JOB_PROP_ = 'PW_JOB';               // the us-central1 query waiting to be collected: {id, project, location, since, until, at, tries}
 const PW_SINCE_PROP_ = 'PW_SINCE';           // where its next window starts (ms): the last collected window's end
@@ -126,7 +142,8 @@ const PW_DAY_PROP_ = 'PW_TODAY';             // today's numbers: {day, looks, ch
 const PW_PAUSED_PROP_ = 'PW_PAUSED';         // set while the bot is paused: the next look starts afresh
 const PW_SCORE_AT_PROP_ = 'PW_SCORE_AT';     // when the scorecard was last written (ms)
 const PW_LAST_PROP_ = 'PW_LAST';             // the last looks collected: {at, checked, flagged, near, lanes: {c1|us: {at, checked, flagged, near}}}
-const PW_MARKS_PROP_ = 'PW_MARKS';           // each source's place (ms): the newest item it handed over; outbound_mod: the export read
+const PW_MARKS_PROP_ = 'PW_MARKS';           // each source's place (ms): the newest item it handed over; <source>_mod: when its
+                                             // table was read; <source>_snap: a batch it is still handing over (pwSnap_)
 const PW_SOURCES_PROP_ = 'PW_SOURCES';       // each source's last look: {source: {at, found, checked, newest, mod, err, flagged}}
 
 const PW_SONAR_RAW_ = '`bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw`';
@@ -142,9 +159,13 @@ const PW_LANES_ = [
  * Where the watch looks, read-only, in the order of the Watch sources tab. lane: its job (PW_LANES_); bq: its table
  * (when it last changed is read from the dataset's __TABLES__, which costs nothing); cap: rows a look gives Gemini at
  * most (each source's most-followed or most-engaged first); window: it goes by the look's window, else it keeps its own
- * place (PW_MARKS: firstMs back on a first look, maxMs back at most); gate: read only when its table changed;
- * staleMs: no change to its table for longer than this and the tab calls it stale (0: never); plainWhy: the usual reason
- * its rows are asked about (any other reason is shown beside the source on the Watch detections tab).
+ * place (PW_MARKS: firstMs back on a first look, maxMs back at most); gate: read only when its table changed (its
+ * "<key>_mod" mark: when it was last read); dayMax: rows a day (ET) it gives Gemini at most, counted on PW_TODAY (so
+ * switching OFF and ON again doesn't start the day's count over); spread: a batch bigger than its cap is handed over
+ * across the next looks, in the same order, as its table stood when the first of them read it (its "<key>_snap" mark:
+ * pwSnap_; one not handed over within maxMs is let go); staleMs: no change to its table for longer than this and the
+ * tab calls it stale (0: never); plainWhy: the usual reason its rows are asked about (any other reason is shown beside
+ * the source on the Watch detections tab).
  */
 const PW_SOURCES_ = [
   { key: 'sonar', lane: 'c1', name: 'Sonar', window: true, cap: PW_MAX_POSTS_, staleMs: 30 * 60 * 1000, plainWhy: 'new',
@@ -155,16 +176,21 @@ const PW_SOURCES_ = [
   { key: 'tubular', lane: 'c1', name: 'Tubular', cap: 60, firstMs: 24 * PW_HOUR_MS_, maxMs: 24 * PW_HOUR_MS_, staleMs: 12 * PW_HOUR_MS_,
     bq: 'brand-social-central-data.google_tubular_mentions.tubular_videos',
     what: 'Videos that mention Google (YouTube, Instagram, Facebook, TikTok), each run\'s new ones; Tubular finds most a day or two after they go up' },
-  { key: 'outbound', lane: 'c1', name: 'Sprinklr outbound', gate: true, cap: 40, firstMs: 72 * PW_HOUR_MS_, maxMs: 72 * PW_HOUR_MS_,
-    staleMs: 3 * 24 * PW_HOUR_MS_, bq: 'brand-social-central-data.external_data_share.stg_sprinklr_outbound_media_assets_json_source',
-    what: 'Google\'s own posts (Sprinklr\'s export, read when it changes), in case one touches a watch' },
-  { key: 'bmie', lane: 'us', name: 'Brandwatch (BMIE)', cap: 100, firstMs: 15 * 60 * 1000, maxMs: 30 * 60 * 1000, staleMs: 2 * PW_HOUR_MS_,
-    plainWhy: 'brand-safety query', bq: 'brand-social-central-data.social_alerts_dataset.all_sundar_mentions',
-    what: 'Brandwatch mentions from the BMIE alert queries, most a day after posting: every one from the brand-safety and ' +
-      'Google product queries (SLRR KOFs, All Sundar, Google Spikes, AI criticism, safety and accuracy, policy and elections, ' +
-      'Googlers and execs, Chrome, Android, Search, Gemini...); from the other queries (regional, sports, culture, ' +
-      'competitors) those with a sign something is wrong (Brandwatch negative, a KOF author, risk words), plus a ' +
-      `${PW_SAMPLE_PCT_}% sample of the rest to show what that filter misses` },
+  { key: 'bwm', lane: 'us', name: 'Brandwatch mentions', gate: true, spread: true, cap: PW_BWM_LOOK_MAX_, dayMax: PW_BWM_DAY_MAX_,
+    firstMs: 2 * PW_HOUR_MS_, maxMs: 6 * PW_HOUR_MS_, staleMs: 30 * PW_HOUR_MS_, plainWhy: 'negative',
+    bq: 'brand-social-central-data.raw_data.brandwatch_raw_mentions_base',
+    what: `Brandwatch's mentions of Google's products (${PW_BWM_CONFIGS_.join(', ')}) on Reddit, Bluesky, Facebook and ` +
+      'Instagram that Brandwatch rates negative and tags with an SLRR exposure tag: loaded in a nightly batch (1-6 days ' +
+      `after posting), read when the table changes; English, no shares, ${PW_MIN_FOLLOWERS_.toLocaleString('en-US')}+ reach ` +
+      `or ${PW_MIN_ENGAGEMENT_}+ engagements, posted within 72 hours, each mention once, the biggest first, ` +
+      `${PW_BWM_LOOK_MAX_} a look (a bigger batch over the next looks) and ${PW_BWM_DAY_MAX_.toLocaleString('en-US')} a day ` +
+      'at most (X comes from Sonar; YouTube and TikTok from Tubular and Sonar)' },
+  { key: 'owned', lane: 'us', name: 'Sprinklr owned posts', gate: true, cap: 40, firstMs: 30 * PW_HOUR_MS_, maxMs: 48 * PW_HOUR_MS_,
+    staleMs: 36 * PW_HOUR_MS_, plainWhy: 'negative comments', bq: 'brand-social-central-data.reporting_data.sprinklr_outbound_reporting',
+    what: `Google's own posts in English from the last 72 hours whose comments turned negative (${PW_OWNED_NEG_}+ negative ` +
+      `comments, or ${Math.round(PW_OWNED_PCT_ * 100)}%+ negative once there are ${PW_OWNED_MIN_COMMENTS_}+), on X, Reddit, ` +
+      'Bluesky, Facebook, Instagram, YouTube and TikTok, from Sprinklr\'s report (loaded once a day, ~10 AM ET), the most ' +
+      'negative first' },
   { key: 'comments', lane: 'us', name: 'Sprinklr comments', window: true, cap: 30, staleMs: 2 * PW_HOUR_MS_,
     bq: 'brand-social-central-data.reporting_data.sprinklr_inbound_comments',
     what: `Comments on Google's own posts: a pile-on (${PW_PILEUP_NEG_}+ negative within an hour) or a negative comment from a 100K+ account` },
@@ -314,7 +340,7 @@ function pwLane_(key) { return PW_LANES_.find(l => l.key === key) || null; }
 /** A lane's sources, in the tab's order. Pure. */
 function pwLaneSources_(laneKey) { return PW_SOURCES_.filter(s => s.lane === laneKey); }
 
-/** A lane's sources by name ("Sonar, Tubular and Sprinklr outbound"), for the notes. Pure. */
+/** A lane's sources by name ("Sonar and Tubular"), for the notes. Pure. */
 function pwLaneNames_(laneKey) {
   const n = pwLaneSources_(laneKey).map(s => s.name);
   return n.length > 1 ? `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}` : (n[0] || '');
@@ -478,7 +504,13 @@ function pwGuard_(key, lines) {
 function pwNetSql_(expr) {
   const v = `REGEXP_REPLACE(LOWER(IFNULL(${expr}, '')), r'[^a-z]', '')`;
   return `CASE ${v} WHEN 'x' THEN 'twitter' WHEN 'xtwitter' THEN 'twitter' WHEN 'twitterx' THEN 'twitter' ` +
-    `WHEN 'ig' THEN 'instagram' WHEN 'fb' THEN 'facebook' WHEN 'yt' THEN 'youtube' ELSE ${v} END`;
+    `WHEN 'ig' THEN 'instagram' WHEN 'fb' THEN 'facebook' WHEN 'yt' THEN 'youtube' ` +
+    `WHEN 'facebookpublic' THEN 'facebook' WHEN 'instagrampublic' THEN 'instagram' ELSE ${v} END`;
+}
+
+/** The network in `expr` (pwNetSql_) is one of `nets` (default: the team's list, PW_NETWORKS_), in SQL. Pure. */
+function pwNetsInSql_(expr, nets) {
+  return `${pwNetSql_(expr)} IN (${(nets || PW_NETWORKS_).map(n => `'${n}'`).join(', ')})`;
 }
 
 /** A source's table, quoted for the query. Pure. */
@@ -575,76 +607,95 @@ const PW_SOURCE_SQL_ = {
     '  AND (posted IS NULL OR posted >= TIMESTAMP_SUB(TIMESTAMP_MILLIS(@until_ms), INTERVAL 72 HOUR))',
     `  AND (IFNULL(followers, 0) >= ${PW_MIN_FOLLOWERS_} OR IFNULL(eng, 0) >= ${PW_MIN_ENGAGEMENT_} OR IFNULL(views, 0) >= 10000);`,
   ],
-  // Google's own posts in Sprinklr's export, published since the last one handed over (read only when the export changed)
-  outbound: () => [
-    `INSERT INTO pw_new (${PW_NEW_COLS_})`,
-    "SELECT 'outbound', ROW_NUMBER() OVER (ORDER BY IFNULL(eng, 0) DESC), url, platform, account, CAST(NULL AS INT64), eng, posted, posted,",
-    '  CONCAT("Google\'s own post · ", IFNULL(account, \'\')), CAST(NULL AS BOOL), SUBSTR(txt, 1, 400),',
-    '  SUBSTR(CONCAT("A post Google itself published, from its account ", IFNULL(account, \'\'),',
-    "    IF(IFNULL(country, '') = '', '', CONCAT(' (', country, ')')), '.\\nPost text: ', IFNULL(txt, '')), 1, " + PW_TEXT_CHARS_ + ')',
-    'FROM (',
-    '  SELECT Outbound_Post_ID, ANY_VALUE(Permalink) AS url, ANY_VALUE(account_name) AS account, ANY_VALUE(country) AS country,',
-    `    ANY_VALUE(${pwNetSql_('JSON_VALUE(Raw_JSON_Data.POST_ID_5.channelType)')}) AS platform,`,
-    '    SAFE_CAST(MAX(Total_Engagement_Count) AS INT64) AS eng,',
-    '    MIN(TIMESTAMP_MILLIS(SAFE_CAST(JSON_VALUE(Raw_JSON_Data.POST_ID_5.publishedDate) AS INT64))) AS posted,',
-    '    ANY_VALUE(SUBSTR(Outbound_Post, 1, 1400)) AS txt',
-    `  FROM ${pwTable_('outbound')}`,
-    '  WHERE Permalink IS NOT NULL',
-    '  GROUP BY Outbound_Post_ID',
-    ')',
-    'WHERE posted > TIMESTAMP_MILLIS(@outbound_from) AND posted <= TIMESTAMP_MILLIS(@until_ms);',
-  ],
-  // BMIE's mentions ingested since the last one handed over, not all positive, the reach floor, posted within 72 hours,
-  // none already checked in the 24 hours before (another query's copy), each with why: every one from a brand-safety or
-  // Google product query (PW_BMIE_FULL_RX_: 'brand-safety query'); from the other queries (regional, sports, culture,
-  // competitors) only those with a sign something's wrong ('negative' in Brandwatch, a 'KOF author', 'risk words':
-  // PW_RISK_WORDS_RX_) and a PW_SAMPLE_PCT_% 'sample' of the rest (by the post's link, so it's the same post every time),
-  // to show what the filter misses; the others 'skipped' (counted, never asked about). The brand-safety queries first,
-  // then the signals, then the sample; the biggest accounts first within each
-  bmie: () => {
-    const from = 'TIMESTAMP_MILLIS(@bmie_from)';
-    const sample = `ABS(MOD(FARM_FINGERPRINT(url), 100)) < ${PW_SAMPLE_PCT_}`;  // MOD first: ABS of the smallest INT64 overflows
+  // Brandwatch's mentions of Google's products first loaded since the last batch it handed over (the table loads a
+  // night's batch and loads many again later: each counts once, at its first load): negative, English, no shares, on
+  // Reddit, Bluesky, Facebook or Instagram (PW_BWM_NETWORKS_), tagged by Brandwatch with an SLRR exposure tag (its
+  // category group PW_BWM_EXPOSURE_GROUP_: those tags go to Gemini, and every one in tax for the card, which reads them
+  // as the official taxonomy: pwSourceTax_), posted within 72 hours, the reach floor, with text. The biggest first. A
+  // batch is read as the table stood at its end (@bwm_upto: the end of the look that first read it), so one bigger than a
+  // look's cap goes over the next looks in the same order, the first @bwm_skip of it already handed over (pwFroms_,
+  // pwAdvanceMarks_). Read only when the table changed (or while a batch is being handed over); its partitions
+  // (report_date: the post's day) and clustering (product_config_name) keep it to the last days' Google mentions
+  bwm: () => {
+    const configs = PW_BWM_CONFIGS_.map(c => `'${c}'`).join(', ');
+    const eng = ['like_count', 'retweet_count', 'reply_count', 'comment_count', 'share_count'].map(c => `IFNULL(${c}, 0)`).join(' + ');
+    const upto = 'TIMESTAMP_MILLIS(@bwm_upto)';
     return [
       `INSERT INTO pw_new (${PW_NEW_COLS_}, why, tax)`,
-      "SELECT 'bmie', ROW_NUMBER() OVER (ORDER BY CASE why WHEN 'brand-safety query' THEN 0 WHEN 'sample' THEN 2 WHEN 'skipped' THEN 9",
-      '    ELSE 1 END, IFNULL(followers, 0) DESC),',
-      '  url, ' + pwNetSql_('net') + ', author, followers, eng, posted, first_seen,',
-      "  CONCAT('Brandwatch: ', IFNULL(q, '')), CAST(NULL AS BOOL), SUBSTR(snippet, 1, 400),",
-      "  SUBSTR(CONCAT('Post text: ', IFNULL(snippet, ''), IF(IFNULL(kof, '') = '', '', CONCAT('\\nKOF: ', kof)),",
-      `    IF(IFNULL(product, '') = '', '', CONCAT('\\nProduct: ', product))), 1, ${PW_TEXT_CHARS_}), why,`,
-      "  TO_JSON_STRING(JSON_OBJECT('p', product, 'kv', kof)) AS tax",
+      "SELECT 'bwm', ROW_NUMBER() OVER (ORDER BY IFNULL(followers, 0) + 10 * IFNULL(eng, 0) DESC, mention_id) - @bwm_skip AS rk,",
+      "  post_url, platform, NULLIF(author, ''), followers, eng, posted, first_seen,",
+      "  CONCAT('Brandwatch \u00b7 ', SUBSTR(cats, 1, 120)), CAST(NULL AS BOOL), SUBSTR(body, 1, 400),",
+      "  SUBSTR(CONCAT(IF(title != '' AND NOT STARTS_WITH(LOWER(body), LOWER(title)), CONCAT('Title: ', title, '\\n'), ''),",
+      "    'Post text: ', body, '\\nBrandwatch: negative sentiment',",
+      "    IF(IFNULL(followers, 0) > 0, CONCAT(', reach ', CAST(followers AS STRING)), ''),",
+      "    '\\nBrandwatch exposure tags: ', cats, '\\nProduct: ', configs), 1, " + `${PW_TEXT_CHARS_}),`,
+      "  'negative', TO_JSON_STRING(JSON_OBJECT('p', SPLIT(configs, ', '),",
+      "    'c', ARRAY(SELECT DISTINCT x FROM UNNEST(tags) x ORDER BY x LIMIT 12))) AS tax",
       'FROM (',
-      "  SELECT m.*, CASE WHEN full_q THEN 'brand-safety query' WHEN neg THEN 'negative' WHEN kof_author THEN 'KOF author'",
-      `      WHEN risk THEN 'risk words' WHEN ${sample} THEN 'sample' ELSE 'skipped' END AS why`,
+      "  SELECT m.*, ARRAY_TO_STRING(ARRAY(SELECT DISTINCT x FROM UNNEST(m.tags) x ORDER BY x LIMIT 4), ', ') AS cats",
       '  FROM (',
-      '    SELECT url, MIN(IF(cur, t, NULL)) AS first_seen, ANY_VALUE(IF(cur, snippet, NULL)) AS snippet,',
-      '      SAFE_CAST(MAX(IF(cur, followers, NULL)) AS INT64) AS followers, ANY_VALUE(IF(cur, authorHandle, NULL)) AS author,',
-      '      ANY_VALUE(IF(cur, SocialNetwork, NULL)) AS net, SAFE_CAST(MAX(IF(cur, engagementScore, NULL)) AS INT64) AS eng,',
-      "      STRING_AGG(DISTINCT IF(cur, alert_source, NULL), ', ' LIMIT 3) AS q, MIN(IF(cur, postTime, NULL)) AS posted,",
-      '      ANY_VALUE(IF(cur, KOF, NULL)) AS kof, ANY_VALUE(IF(cur, product, NULL)) AS product,',
-      '      LOGICAL_AND(IF(cur, positive, TRUE)) AS positive, LOGICAL_OR(cur AND full_q) AS full_q, LOGICAL_OR(cur AND neg) AS neg,',
-      '      LOGICAL_OR(cur AND kof_author) AS kof_author, LOGICAL_OR(cur AND risk) AS risk,',
-      `      LOGICAL_OR(NOT cur AND NOT positive AND IFNULL(followers, 0) >= ${PW_MIN_FOLLOWERS_}`,
-      `        AND (full_q OR neg OR kof_author OR risk OR ${sample})) AS checked_before`,
+      '    SELECT mention_id, MIN(load_timestamp) AS first_seen, ANY_VALUE(post_url) AS post_url, ANY_VALUE(net) AS platform,',
+      "      ANY_VALUE(TRIM(IFNULL(author, ''))) AS author,",
+      `      SAFE_CAST(MAX(reachEstimate) AS INT64) AS followers, SAFE_CAST(MAX(${eng}) AS INT64) AS eng,`,
+      "      MIN(published_timestamp) AS posted, STRING_AGG(DISTINCT product_config_name, ', ' LIMIT 3) AS configs,",
+      "      ANY_VALUE(TRIM(IFNULL(snippet, ''))) AS body, ANY_VALUE(TRIM(IFNULL(title, ''))) AS title,",
+      '      ARRAY_CONCAT_AGG(xtags) AS tags',
       '    FROM (',
-      '      SELECT url, alert_source, snippet, followers, authorHandle, SocialNetwork, engagementScore, postTime, KOF, product,',
-      `        ingestionTimestamp AS t, ingestionTimestamp > ${from} AS cur,`,
-      "        LOWER(IFNULL(Sentiment, '')) = 'positive' AS positive, LOWER(IFNULL(Sentiment, '')) = 'negative' AS neg,",
-      `        REGEXP_CONTAINS(LOWER(IFNULL(alert_source, '')), r'${PW_BMIE_FULL_RX_}') AS full_q,`,
-      "        STARTS_WITH(IFNULL(KOF, ''), 'Yes') AS kof_author,",
-      `        REGEXP_CONTAINS(LOWER(IFNULL(snippet, '')), r'${PW_RISK_WORDS_RX_}') AS risk`,
-      `      FROM ${pwTable_('bmie')}`,
-      `      WHERE ingestionTimestamp > TIMESTAMP_SUB(${from}, INTERVAL ${PW_NEW_HOURS_} HOUR)`,
-      '        AND ingestionTimestamp <= TIMESTAMP_MILLIS(@until_ms) AND url IS NOT NULL',
-      "        AND NOT REGEXP_CONTAINS(LOWER(IFNULL(alert_source, '')), r'positive')",
-      `        AND NOT ${nonEnglishScriptSql_('IFNULL(snippet, \'\')')}`,
+      `      SELECT *, ${pwNetSql_('platform')} AS net,`,
+      `        ARRAY(SELECT c.name FROM UNNEST(categories) c WHERE c.parent_name = '${PW_BWM_EXPOSURE_GROUP_}' AND c.name IS NOT NULL) AS xtags`,
+      `      FROM ${pwTable_('bwm')}`,
+      `      WHERE report_date >= DATE_SUB(DATE(${upto}), INTERVAL 3 DAY)`,
+      `        AND product_config_name IN (${configs}) AND language = 'en'`,
+      "        AND LOWER(IFNULL(sentiment, '')) = 'negative' AND LOWER(IFNULL(thread_entry_type, '')) != 'share'",
+      `        AND ${pwNetsInSql_('platform', PW_BWM_NETWORKS_)}`,
+      `        AND load_timestamp <= ${upto} AND post_url IS NOT NULL`,
       '    )',
-      '    GROUP BY url',
-      '    HAVING LOGICAL_OR(cur) AND NOT checked_before',
+      '    GROUP BY mention_id',
+      '    HAVING MIN(load_timestamp) > TIMESTAMP_MILLIS(@bwm_from) AND ARRAY_LENGTH(ARRAY_CONCAT_AGG(xtags)) > 0',
       '  ) m',
-      `  WHERE NOT positive AND IFNULL(followers, 0) >= ${PW_MIN_FOLLOWERS_}`,
-      '    AND (posted IS NULL OR posted >= TIMESTAMP_SUB(TIMESTAMP_MILLIS(@until_ms), INTERVAL 72 HOUR))',
-      ');',
+      ')',
+      `WHERE body != '' AND (IFNULL(followers, 0) >= ${PW_MIN_FOLLOWERS_} OR IFNULL(eng, 0) >= ${PW_MIN_ENGAGEMENT_})`,
+      `  AND (posted IS NULL OR posted >= TIMESTAMP_SUB(${upto}, INTERVAL 72 HOUR))`,
+      `  AND NOT ${nonEnglishScriptSql_('body')}`,
+      'QUALIFY rk > 0;',
+    ];
+  },
+  // Google's own posts in Sprinklr's report (never the other brands' accounts it also tracks: Is_External) refreshed
+  // since the last one handed over (it loads once a day, refreshing the last days' posts), posted within 72 hours, not
+  // deleted, in English, on the team's networks (PW_NETWORKS_), whose comments turned negative: PW_OWNED_NEG_+ negative,
+  // or PW_OWNED_PCT_ of them once there are PW_OWNED_MIN_COMMENTS_+ (Sprinklr's share can read over 100%: capped). The
+  // most negative first. Read only when the table changed
+  owned: () => {
+    const pct = Math.round(PW_OWNED_PCT_ * 100);
+    return [
+      `INSERT INTO pw_new (${PW_NEW_COLS_}, why)`,
+      "SELECT 'owned', ROW_NUMBER() OVER (ORDER BY neg DESC, IFNULL(eng, 0) DESC), url, " + pwNetSql_('net') +
+        ', acct, followers, eng, posted, loaded,',
+      "  CONCAT('Google\\'s own post \u00b7 ', IFNULL(acct, '')), CAST(NULL AS BOOL), SUBSTR(IFNULL(txt, ''), 1, 400),",
+      "  SUBSTR(CONCAT('A post Google itself published, from its account ', IFNULL(acct, ''),",
+      "    IF(IFNULL(handle, '') = '', '', CONCAT(' (@', handle, ')')), ' on ', IFNULL(net, ''),",
+      "    IF(IFNULL(country, '') = '', '', CONCAT(', ', country)), '.\\nPost text: ', IFNULL(txt, ''),",
+      "    '\\nReaction so far: ', CAST(IFNULL(comments, 0) AS STRING), ' comments, ', CAST(IFNULL(neg, 0) AS STRING),",
+      "    ' negative (', CAST(IFNULL(pct, 0) AS STRING), '%), ', CAST(IFNULL(eng, 0) AS STRING), ' engagements.'), 1, " +
+        `${PW_TEXT_CHARS_}),`,
+      "  'negative comments'",
+      'FROM (',
+      '  SELECT Outbound_Post_ID, ANY_VALUE(Post_Permalink) AS url, ANY_VALUE(Social_Network) AS net, ANY_VALUE(Account_Name) AS acct,',
+      '    ANY_VALUE(Account_Screen_Name) AS handle, ANY_VALUE(Country) AS country, ANY_VALUE(SUBSTR(Outbound_Post, 1, 1400)) AS txt,',
+      '    SAFE_CAST(MAX(Followers_At_Time_Of_Post) AS INT64) AS followers, SAFE_CAST(MAX(Engagements) AS INT64) AS eng,',
+      '    SAFE_CAST(MAX(Comments) AS INT64) AS comments, SAFE_CAST(MAX(Negative_Sentiment_Comment_Count) AS INT64) AS neg,',
+      '    SAFE_CAST(ROUND(100 * LEAST(MAX(Pct_Negative_Comments), 1)) AS INT64) AS pct,',
+      '    MIN(Post_Published_Date_UTC) AS posted, MAX(load_timestamp) AS loaded',
+      `  FROM ${pwTable_('owned')}`,
+      '  WHERE Report_Date >= DATE_SUB(DATE(TIMESTAMP_MILLIS(@until_ms)), INTERVAL 3 DAY) AND Post_Permalink IS NOT NULL',
+      '    AND NOT IFNULL(Is_Deleted, FALSE) AND NOT IFNULL(Is_External, FALSE)',  // External: other brands' accounts Sprinklr tracks
+      `    AND ${pwNetsInSql_('Social_Network')}`,
+      `    AND ${englishLangSql_('Language_Code')} AND NOT ${nonEnglishScriptSql_("IFNULL(Outbound_Post, '')")}`,
+      '  GROUP BY Outbound_Post_ID',
+      ')',
+      'WHERE loaded > TIMESTAMP_MILLIS(@owned_from) AND loaded <= TIMESTAMP_MILLIS(@until_ms)',
+      '  AND posted >= TIMESTAMP_SUB(TIMESTAMP_MILLIS(@until_ms), INTERVAL 72 HOUR)',
+      `  AND (IFNULL(neg, 0) >= ${PW_OWNED_NEG_} OR (IFNULL(comments, 0) >= ${PW_OWNED_MIN_COMMENTS_} AND IFNULL(pct, 0) >= ${pct}));`,
     ];
   },
   // Comments on Google's own posts that reached BigQuery in the last hour: a post whose negative comments crossed
@@ -718,7 +769,7 @@ const PW_SOURCE_SQL_ = {
 
 /**
  * When each of the lane's tables last changed (ms), from their datasets' __TABLES__ (it costs nothing), on pw_src;
- * Sprinklr's export is read on its own first (pw_out_mod: it's read only when it changed). Pure.
+ * each table read only when it changed is read on its own first (pw_mod_<source>: pwSql_). Pure.
  */
 function pwModSql_(srcs) {
   const sel = srcs.filter(s => s.bq && !s.gate).map(s => {
@@ -729,7 +780,7 @@ function pwModSql_(srcs) {
 }
 
 /**
- * Whether a post is Grok's (PW_GROK_URL_RX_): Sonar and BMIE link Grok's posts as twitter.com/grok/status(es)/\u2026, the
+ * Whether a post is Grok's (PW_GROK_URL_RX_): Sonar links Grok's posts as twitter.com/grok/status(es)/\u2026, the
  * Brandwatch query as x.com/grok/status/\u2026 (X's embed data gives a repost as the post it reposts), and the sources that
  * name the handle say @grok. Pure.
  */
@@ -746,10 +797,12 @@ function pwGrokSql_(t) {
 /**
  * The lane's last statement: Gemini on its sources' new rows (each source's first `cap`, one row a post, the earliest
  * source first), one row a post a watch at or above the watch's bar less PW_NEAR_ (kind 'hit', the highest scores
- * first), then one row a source (kind 'src': found, checked, newest_ms, mod_ms, err). Pure.
+ * first), then one row a source (kind 'src': found, checked, newest_ms, mod_ms, err). capOf(source): this look's cap for
+ * a source (default: its cap). Pure.
  */
-function pwAiSql_(srcs, structs, topics) {
-  const caps = srcs.map(s => `STRUCT('${s.key}' AS source, ${s.cap} AS cap)`).join(', ');
+function pwAiSql_(srcs, structs, topics, capOf) {
+  const cap = s => Math.max(0, Math.floor(Number(capOf ? capOf(s) : s.cap) || 0));
+  const caps = srcs.map(s => `STRUCT('${s.key}' AS source, ${cap(s)} AS cap)`).join(', ');
   const grok = pwGrokSql_('n');  // Grok's posts: never asked about, not counted as checked, counted as PW_GROK_WHY_
   const key = "REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(LOWER(n.post_url), r'^https?://(?:www\\.|m\\.|mobile\\.)?', ''), " +
     "r'^twitter\\.com/', 'x.com/'), r'#.*$|/+$', '')";
@@ -806,18 +859,21 @@ function pwAiSql_(srcs, structs, topics) {
 /**
  * A lane's look (`laneKey`: 'c1' us-central1 or 'us' US) for `watches` (pwActive_): a read-only script that keeps
  * each of the lane's sources' new rows in a temporary table, then asks Gemini about them (pwAiSql_). `o`: {since,
- * until} (ms: the window, for Sonar and the comments), froms ({source: ms}: where each other source starts, pwFroms_;
- * outbound_mod: the export already read), chat (pwChatItems_, the US lane), bwq and bwqErr (pwBwqItems_: the
- * Brandwatch query's rows and what went wrong reading it, the US lane). The watches' words and the alerts' and
- * mentions' text are query parameters (never part of the SQL); the topics are cleaned of quotes and backslashes
- * (pwTopic_). {sql, params: [{name, type, value} | {name, struct, rows}]}. Pure.
+ * until} (ms: the window, for Sonar and the comments), froms (pwFroms_: {source: ms}, where each other source starts;
+ * <source>_mod: when a source read only when its table changed last read it, 0 to read it at once; <source>_upto and
+ * <source>_skip: the end of the batch a spread source hands over and how much of it it already did; <source>_left:
+ * what's left of a source's day's maximum, its cap at most), chat (pwChatItems_, the US lane), bwq and bwqErr
+ * (pwBwqItems_: the Brandwatch query's rows and what went wrong reading it, the US lane). The watches' words and the
+ * alerts' and mentions' text are query parameters (never part of the SQL); the topics are cleaned of quotes and
+ * backslashes (pwTopic_). {sql, params: [{name, type, value} | {name, struct, rows}]}. Pure.
  */
 function pwSql_(laneKey, watches, o) {
   const srcs = pwLaneSources_(laneKey);
   const froms = (o && o.froms) || {};
+  const until = Math.floor(Number(o.until));
   const params = [
     { name: 'since_ms', type: 'INT64', value: Math.floor(Number(o.since)) },
-    { name: 'until_ms', type: 'INT64', value: Math.floor(Number(o.until)) },
+    { name: 'until_ms', type: 'INT64', value: until },
   ];
   const structs = watches.map((w, i) => {
     const p = `w${i + 1}_`;
@@ -836,30 +892,36 @@ function pwSql_(laneKey, watches, o) {
       params.push({ name: 'bwq', struct: PW_CHAT_FIELDS_, rows: (o && o.bwq) || [] },
         { name: 'bwq_err', type: 'STRING', value: truncate_(String((o && o.bwqErr) || ''), PW_ERR_CHARS_) });
     } else if (!s.window) params.push({ name: `${s.key}_from`, type: 'INT64', value: Math.floor(Number(froms[s.key]) || 0) });
+    if (s.spread) {  // its batch: read as its table stood at the batch's end, the part already handed over skipped
+      params.push({ name: `${s.key}_upto`, type: 'INT64', value: Math.floor(Number(froms[`${s.key}_upto`]) || until) },
+        { name: `${s.key}_skip`, type: 'INT64', value: Math.max(0, Math.floor(Number(froms[`${s.key}_skip`]) || 0)) });
+    }
   });
-  const gated = srcs.find(s => s.gate);
-  const lines = [];
-  if (gated) {
-    params.push({ name: 'outbound_mod', type: 'INT64', value: Math.floor(Number(froms.outbound_mod) || 0) });
-    lines.push('DECLARE pw_out_mod INT64 DEFAULT NULL;');
-  }
+  const gated = srcs.filter(s => s.gate);
+  const lines = [];  // a script's DECLAREs come first
+  gated.forEach(s => {
+    params.push({ name: `${s.key}_mod`, type: 'INT64', value: Math.floor(Number(froms[`${s.key}_mod`]) || 0) });
+    lines.push(`DECLARE pw_mod_${s.key} INT64 DEFAULT NULL;`);
+  });
   lines.push(`CREATE TEMP TABLE pw_new (source STRING, rk INT64, post_url STRING, platform STRING, author STRING, ` +
     'followers INT64, eng INT64, posted TIMESTAMP, first_seen TIMESTAMP, issue STRING, issue_new BOOL, summary STRING, txt STRING, ' +
     'why STRING, tax STRING);');
   lines.push('CREATE TEMP TABLE pw_src (source STRING, mod_ms INT64, err STRING);');
-  if (gated) {
-    const i = gated.bq.lastIndexOf('.');
-    lines.push(...pwGuard_(gated.key, [`  SET pw_out_mod = (SELECT last_modified_time FROM \`${gated.bq.slice(0, i)}.__TABLES__\` ` +
-      `WHERE table_id = '${gated.bq.slice(i + 1)}');`]));
-    lines.push(`INSERT INTO pw_src (source, mod_ms) VALUES ('${gated.key}', pw_out_mod);`);
-  }
+  gated.forEach(s => {  // when its table last changed, on its own (a failure is its own row's error, and it isn't read)
+    const i = s.bq.lastIndexOf('.');
+    lines.push(...pwGuard_(s.key, [`  SET pw_mod_${s.key} = (SELECT last_modified_time FROM \`${s.bq.slice(0, i)}.__TABLES__\` ` +
+      `WHERE table_id = '${s.bq.slice(i + 1)}');`]));
+    lines.push(`INSERT INTO pw_src (source, mod_ms) VALUES ('${s.key}', pw_mod_${s.key});`);
+  });
   lines.push(...pwModSql_(srcs));
   srcs.forEach(s => {
     const block = pwGuard_(s.key, PW_SOURCE_SQL_[s.key]());
-    if (s.gate) lines.push('IF pw_out_mod > @outbound_mod THEN', ...block, 'END IF;');
+    if (s.gate) lines.push(`IF pw_mod_${s.key} > @${s.key}_mod THEN`, ...block, 'END IF;');
     else lines.push(...block);
   });
-  lines.push(pwAiSql_(srcs, structs, topics).join('\n'));
+  // a source with a day's maximum (dayMax) hands over what's left of today's (pwFroms_: <key>_left), within its cap
+  const capOf = s => (s.dayMax && froms[`${s.key}_left`] !== undefined ? Math.min(s.cap, Number(froms[`${s.key}_left`]) || 0) : s.cap);
+  lines.push(pwAiSql_(srcs, structs, topics, capOf).join('\n'));
   return { sql: lines.join('\n'), params };
 }
 
@@ -935,7 +997,7 @@ function pwJob_(props, lane) {
   }
 }
 
-/** Each source's place (PW_MARKS: {source: ms, outbound_mod: ms}); {} for none. */
+/** Each source's place (PW_MARKS: {source: ms, <source>_mod: ms, <source>_snap: [from, upto, done, top]}); {} for none. */
 function pwMarks_(props) {
   try {
     const m = JSON.parse(props.getProperty(PW_MARKS_PROP_) || 'null');
@@ -946,37 +1008,99 @@ function pwMarks_(props) {
 }
 
 /**
- * Where each source that keeps its own place starts a look ending at `until` (ms): its mark, but never more than its
- * maxMs back; with no mark yet (a first look), its firstMs back. Plus outbound_mod (the export already read). Pure.
+ * The batch a spread source is still handing over: its <source>_snap mark [from, upto, done, top] (what was first loaded
+ * from `from` to `upto`, ms, read as its table stood at `upto`; `done` of it handed over; `top` its newest item), or
+ * null: none, or (given `until`, ms) older than the source's maxMs by then, when what's left of it is let go. Pure.
  */
-function pwFroms_(marks, until) {
+function pwSnap_(marks, s, until) {
+  const v = (marks || {})[`${s.key}_snap`];
+  if (!Array.isArray(v) || v.length !== 4) return null;
+  const [from, upto, done, top] = v.map(Number);
+  if (!(upto > 0 && from < upto && done >= 0)) return null;
+  if (until !== undefined && until !== null && Number(until) - upto > s.maxMs) return null;
+  return [from, upto, Math.floor(done), top > 0 ? top : 0];
+}
+
+/**
+ * Where each source that keeps its own place starts a look ending at `until` (ms): its mark, but never more than its
+ * maxMs back; with no mark yet (a first look), its firstMs back; a spread source handing over a batch (pwSnap_), that
+ * batch's start, with <source>_upto (the batch's end; else `until`) and <source>_skip (how much of it it handed over).
+ * Plus, for each source read only when its table changed, <source>_mod: when it last read it (0: never, or a batch of it
+ * is being handed over: read it whatever its table's time); for each with a day's maximum (dayMax), <source>_left:
+ * what's left of today's, from `today` (pwToday_: what each source handed Gemini today, ET; none: all of it). Pure.
+ */
+function pwFroms_(marks, until, today) {
   const m = marks || {};
-  const out = { outbound_mod: Math.max(0, Number(m.outbound_mod) || 0) };
+  const out = {};
   PW_SOURCES_.forEach(s => {
+    const snap = s.spread ? pwSnap_(m, s, until) : null;
+    if (s.gate) out[`${s.key}_mod`] = snap ? 0 : Math.max(0, Number(m[`${s.key}_mod`]) || 0);
+    if (s.dayMax) {
+      const done = (((today && today.src) || {})[s.key] || [])[0];
+      out[`${s.key}_left`] = Math.max(0, s.dayMax - (Number(done) || 0));
+    }
     if (s.window) return;
     const have = Number(m[s.key]) || 0;
-    out[s.key] = have > 0 ? Math.max(have, until - s.maxMs) : until - s.firstMs;
+    out[s.key] = snap ? snap[0] : have > 0 ? Math.max(have, until - s.maxMs) : until - s.firstMs;
+    if (s.spread) {
+      out[`${s.key}_upto`] = snap ? snap[1] : until;
+      out[`${s.key}_skip`] = snap ? snap[2] : 0;
+    }
   });
   return out;
 }
 
 /**
- * The marks after a collected look (`stats`: its 'src' rows): each source that keeps its own place moves to the newest
- * item it handed over (never back); a source that failed stays where it was (tried again); the export, once read, is
- * marked read (outbound_mod). Pure.
+ * The marks after a look that ended at `until` (ms) is collected (`stats`: its 'src' rows): each source that keeps its
+ * own place moves to the newest item it handed over (never back); a source that failed stays where it was (tried
+ * again); a table read only when it changed is marked read (<source>_mod), never later than the look's end (what
+ * reached it after that is read at the next look); a spread source that left part of its batch keeps its place and
+ * counts what it handed over (<source>_snap: the next looks hand over the rest), and moves past the batch once it's all
+ * handed over, or once its day's maximum leaves it nothing to hand over (the rest is let go). Only the current sources'
+ * marks are kept. Pure.
  */
-function pwAdvanceMarks_(marks, stats) {
-  const out = Object.assign({}, marks || {});
+function pwAdvanceMarks_(marks, stats, until) {
+  const m = marks || {};
+  const end = Number(until) || 0;
+  const used = pwFroms_(m, end);  // where the look started each source: its marks haven't moved since it was sent
+  const out = {};
+  PW_SOURCES_.forEach(s => {
+    if (!s.window && Number(m[s.key]) > 0) out[s.key] = Number(m[s.key]);
+    if (s.gate && Number(m[`${s.key}_mod`]) > 0) out[`${s.key}_mod`] = Number(m[`${s.key}_mod`]);
+    const snap = s.spread ? pwSnap_(m, s) : null;  // kept as it is: only the source's own look decides on it
+    if (snap) out[`${s.key}_snap`] = snap;
+  });
   (stats || []).forEach(r => {
     const s = pwSource_(r && r.source);
     if (!s || r.err) return;
-    if (!s.window && Number(r.newest_ms) > (Number(out[s.key]) || 0)) out[s.key] = Number(r.newest_ms);
-    if (s.gate && Number(r.mod_ms) > (Number(out.outbound_mod) || 0)) out.outbound_mod = Number(r.mod_ms);
+    const upto = (s.spread && Number(used[`${s.key}_upto`])) || end;
+    if (s.gate && Number(r.mod_ms) > 0) {
+      const mod = upto > 0 ? Math.min(Number(r.mod_ms), upto) : Number(r.mod_ms);
+      if (mod > (Number(out[`${s.key}_mod`]) || 0)) out[`${s.key}_mod`] = mod;
+    }
+    if (s.window) return;
+    const newest = Number(r.newest_ms) || 0;
+    if (!s.spread) {
+      if (newest > (Number(out[s.key]) || 0)) out[s.key] = newest;
+      return;
+    }
+    const was = pwSnap_(m, s, end);  // the batch this look handed part of (none: it read a new one)
+    const handed = Math.max(0, Number(r.checked) || 0);
+    const top = Math.max(was ? was[3] : 0, newest);
+    if (handed > 0 && (Number(r.found) || 0) > handed) {
+      out[`${s.key}_snap`] = [Number(used[s.key]) || 0, upto, (Number(used[`${s.key}_skip`]) || 0) + handed, top];
+    } else {
+      delete out[`${s.key}_snap`];
+      if (top > (Number(out[s.key]) || 0)) out[s.key] = top;
+    }
   });
   return out;
 }
 
-/** Forgets where the looks were (switched OFF, or back from a pause): the next look starts from the last 15 minutes. */
+/**
+ * Forgets where the looks were (switched OFF, or back from a pause): the next look starts from the last 15 minutes.
+ * Today's numbers stay (PW_TODAY), and with them what each source already handed Gemini toward its day's maximum.
+ */
 function pwReset_(props) {
   PW_LANES_.forEach(l => [l.jobProp, l.sinceProp, l.atProp, l.triesProp].forEach(k => props.deleteProperty(k)));
   [PW_LAST_PROP_, PW_MARKS_PROP_].forEach(k => props.deleteProperty(k));
@@ -1227,17 +1351,51 @@ function pwDetRows_(sh, max) {
 }
 
 /**
+ * A source's own classification of a post (its 'tax' JSON) as the card reads it (WatchAlerts.gs pwTaxOf_): a list of
+ * the listening tool's own category names (c: Brandwatch's SLRR exposure-tag group, "Product - Dangerous results (e.g.
+ * medical/legal)", "Risk - Child Safety"...) becomes the official taxonomy's names: each one, "Risk - " taken off, an
+ * exposure tag or else a Sensitive Topic by its name or alias (lookupTag_, lookupTopic_; one that's neither is left
+ * out); the tag is the highest-priority one (P0, then P1, then P2: an alert carries one), the topics all of them. Any
+ * other classification is handed over as it is. Pure but for GEN.
+ */
+function pwSourceTax_(raw) {
+  let o = null;
+  try { o = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (e) { o = null; }
+  if (!o || typeof o !== 'object' || Array.isArray(o) || !Array.isArray(o.c)) return raw;
+  const rank = t => { const p = /^P(\d+)$/i.exec(String((t && t.priority) || '').trim()); return p ? Number(p[1]) : 9; };
+  let tag = null;
+  const topics = [];
+  o.c.forEach(c => {
+    const name = String(c === undefined || c === null ? '' : c).replace(/\s+/g, ' ').trim().replace(/^risk\s*-\s*/i, '');
+    const t = name ? lookupTag_(name) : null;
+    if (t) {
+      if (!tag || rank(t) < rank(tag)) tag = t;
+      return;
+    }
+    const topic = name ? lookupTopic_(name) : null;
+    if (topic && !topics.includes(topic.name)) topics.push(topic.name);
+  });
+  const out = Object.assign({}, o);
+  delete out.c;
+  if (tag && !out.t) out.t = tag.name;
+  if (topics.length) out.s = Array.from(new Set([].concat(Array.isArray(out.s) ? out.s : [], topics)));
+  return out;
+}
+
+/**
  * The look's BigQuery rows (pwSql_'s 'hit' rows; its 'src' rows have no watch and are left out) as the tab's rows, each
  * post once a watch (`have`: "watch|key" already on the tab; added to as rows are made). Seen: when the source had it,
  * never before `floor` (ms: the look's window start), so a source that hands its rows over late never claims a lead it
  * couldn't have had. `queue` (Watch alerts chosen, Control row 35): a flag at the bar waits on the tab to be posted as a
- * watch alert (its key: a 'q', with the watch's bar and the score: WatchAlerts.gs pwPostAlerts_). {rows, flagged, near,
- * queued, byWatch: {watch: [flagged, near]}, bySource: {source: [flagged, near]}}. Pure.
+ * watch alert (its key: a 'q', with the watch's bar and the score: WatchAlerts.gs pwPostAlerts_). A row from a source
+ * the watch no longer reads (a look sent before it stopped) is never recorded. {rows, flagged, near, queued, byWatch:
+ * {watch: [flagged, near]}, bySource: {source: [flagged, near]}}. Pure.
  */
 function pwDetections_(results, have, floor, queue) {
   const out = { rows: [], flagged: 0, near: 0, queued: 0, byWatch: {}, bySource: {} };
   (results || []).forEach(r => {
     if (!r || !r.post_url || !r.watch || r.impact === null || r.impact === undefined) return;
+    if (!pwSource_(String(r.source || 'sonar'))) return;
     if (pwByGrok_(r.post_url, r.author)) return;  // Grok's posts are never flagged (pwGrokSql_ leaves them out before Gemini)
     if (isNonEnglishPost_(String(r.summary || ''), '')) return;
     const key = recordKey_({ post_url: String(r.post_url) }) || String(r.post_url);
@@ -1269,8 +1427,9 @@ function pwDetections_(results, have, floor, queue) {
     row[PW_COL_.issue - 1] = pwCell_(r.issue, 200);
     row[PW_COL_.isNew - 1] = r.issue_new === true ? 'Yes' : '';
     row[PW_COL_.summary - 1] = pwCell_(r.summary, 400);
-    // the listening tool's own classification (Sonar, BMIE, DSD), kept on a queued flag's key for its card
-    const tax = queue && atBar && r.tax && typeof pwTaxOf_ === 'function' ? pwTaxOf_(r.tax) : null;
+    // the listening tool's own classification (Sonar's, Brandwatch's categories, DSD's KOF) in the official taxonomy
+    // (pwSourceTax_), kept on a queued flag's key for its card
+    const tax = queue && atBar && r.tax && typeof pwTaxOf_ === 'function' ? pwTaxOf_(pwSourceTax_(r.tax)) : null;
     row[PW_COL_.key - 1] = JSON.stringify(Object.assign({ k: key, w: watch, s: seen, b: atBar ? 1 : 0 },
       queue && atBar ? { a: 'q', br: Number(r.bar), sc: isFinite(impact) ? impact : 0 } : {}, tax ? { x: tax } : {}));
     if (queue && atBar) out.queued++;
@@ -1467,7 +1626,7 @@ function pwSourceStatus_(src, st, now) {
 }
 
 /**
- * "sources: 4 live, 2 stale, 1 failing: Sprinklr comments" (all of them live: "all 7 sources live"); '' before any look.
+ * "sources: 4 live, 2 stale, 1 failing: Sprinklr comments" (all of them live: "all 8 sources live"); '' before any look.
  * Short: it goes in C34, whose note is cut at 200 characters. Pure.
  */
 function pwSourcesSummary_(all, now) {
@@ -1575,7 +1734,7 @@ function pwDone_(props, sh, lane, job, results, now, queue) {
   if (!windowErr) props.setProperty(lane.sinceProp, String(job.until));
   else if (!Number(props.getProperty(lane.sinceProp))) props.setProperty(lane.sinceProp, String(job.since));
   props.deleteProperty(lane.triesProp);
-  props.setProperty(PW_MARKS_PROP_, JSON.stringify(pwAdvanceMarks_(pwMarks_(props), stats)));
+  props.setProperty(PW_MARKS_PROP_, JSON.stringify(pwAdvanceMarks_(pwMarks_(props), stats, Number(job.until) || 0)));
   const sources = pwSourcesAfter_(pwSourceStats_(props), stats, rec.bySource, now);
   props.setProperty(PW_SOURCES_PROP_, JSON.stringify(sources));
   const checked = stats.reduce((n, r) => n + (Number(r.checked) || 0), 0);
@@ -1615,7 +1774,11 @@ function pwFailed_(props, lane, job, why) {
     props.setProperty(lane.sinceProp, String(job.until));
     props.deleteProperty(lane.triesProp);
     const marks = pwMarks_(props);
-    pwLaneSources_(lane.key).forEach(s => { if (!s.window) marks[s.key] = Math.max(Number(marks[s.key]) || 0, Number(job.until) || 0); });
+    pwLaneSources_(lane.key).forEach(s => {
+      if (s.window) return;
+      marks[s.key] = Math.max(Number(marks[s.key]) || 0, Number(job.until) || 0);
+      delete marks[`${s.key}_snap`];  // a batch it was handing over goes with the window
+    });
     props.setProperty(PW_MARKS_PROP_, JSON.stringify(marks));
     noteSwitch_('proactiveWatch', `⚠️ skipped ${pwTime_(job.since).slice(11)}-${pwTime_(job.until).slice(11)} for ${names} ` +
       `after ${tries} tries (${what}); the next look carries on`);
@@ -1738,7 +1901,7 @@ function runProactiveWatch_(ss, runStart, opts) {
         props.setProperty(lane.atProp, String(now));  // first: a failing send isn't tried again every minute
         const sent = { since, until, at: now, tries: Number(props.getProperty(lane.triesProp)) || 0 };
         try {
-          const froms = pwFroms_(pwMarks_(props), until);
+          const froms = pwFroms_(pwMarks_(props), until, pwToday_(props, dayKey_()));  // today's: each day's maximum
           let chat = [];
           if (pwLaneSources_(lane.key).some(s => s.key === 'chat')) {
             if (!alerts) alerts = pwRecentAlerts_(ss);

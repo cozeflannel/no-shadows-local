@@ -793,6 +793,12 @@ function pwPreRead_(items, recent, deadline) {
     Object.keys(o).forEach(k => { if (o[k] === '' || o[k] === null) delete o[k]; });
     return o;
   });
+  if (typeof vecTagHints_ === 'function' && typeof vecTagHintLine_ === 'function') {
+    try {
+      const hints = vecTagHints_(posts.map(p => [p.issue || '', p.text || ''].filter(Boolean).join(' — ')), { deadline }) || [];
+      posts.forEach((p, i) => { const ln = vecTagHintLine_(hints[i]); if (ln) p.semantic_hint = ln; });
+    } catch (e) {}
+  }
   const prior = (recent || []).map((r, i) => ({ ref: `R${i + 1}`, story: r.story, author: r.author, network: r.network }));
   const p = pwPreReadPrompts_(posts, prior);
   const out = geminiGenerate_(p.system, p.prompt, p.schema, {
@@ -846,6 +852,12 @@ function pwRecentStories_(block, dest, now) {
       story: truncate_(String(k.st || cell('issue') || cell('summary')).replace(/\s+/g, ' '), 160),
       author: cell('author'), network: cell('network'), eng: Number(v[PW_COL_.eng - 1]) || 0, kof: !!(k.x && k.x.k === true) });
   });
+  if (typeof alertMemory_ === 'function') {
+    const seenMsgs = new Set(out.map(x => x.m));
+    (alertMemory_().recentStories(spaceId, PW_STORY_WINDOW_MS_ / (3600 * 1000), PW_STORY_RECENT_MAX_) || []).forEach(r => {
+      if (r && r.m && !seenMsgs.has(r.m)) { seenMsgs.add(r.m); out.push(r); }
+    });
+  }
   return out.sort((a, b) => b.at - a.at).slice(0, PW_STORY_RECENT_MAX_);
 }
 
@@ -1086,6 +1098,12 @@ function pwPostStories_(items, pre, recent, c) {
     }
     if (!pick) continue;
     const it = items[pick.i];
+    const mem = typeof alertMemory_ === 'function' ? alertMemory_() : null;
+    if (mem && mem.active && mem.seenPost(it.a.url)) {
+      c.same(it.q);
+      res.dup++;
+      continue;
+    }
     const others = members.filter(i => i !== pick.i);
     const listed = replies < PW_STORY_REPLIES_MAX_ ? others : [];  // the ones its thread gets this run
     let msg = null;
@@ -1096,6 +1114,9 @@ function pwPostStories_(items, pre, recent, c) {
     } catch (e) {
       failed(e);
       break;
+    }
+    if (mem && mem.active) {
+      mem.claim(it.a.url, 'watch', { author: it.a.author, network: it.a.network, engagement: it.a.eng });
     }
     const story = truncate_(String((pr(pick.i) && pr(pick.i).story) || it.a.issue || it.a.summary || '').replace(/\s+/g, ' ').trim(), 100);
     c.mark(it.q, Object.assign({ a: 'p', m: (msg && msg.name) || '' }, at, msg && msg.thread ? { t: msg.thread } : {},
@@ -1153,7 +1174,8 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       const qUrl = String(q.v[PW_COL_.post - 1] || '').replace(/^'/, '').trim();
       const qPid = postIdOf_(qUrl);
       const qSum = String(q.v[PW_COL_.summary - 1] || '').replace(/^'/, '').trim();
-      if (done.has(q.k.k) || String(q.v[PW_COL_.bursonAt - 1] || '').trim() || (qPid && doneThreadIds.has(qPid)) ||
+      const memSeen = typeof alertMemory_ === 'function' ? alertMemory_().seenPost(qUrl) : null;
+      if (done.has(q.k.k) || memSeen || String(q.v[PW_COL_.bursonAt - 1] || '').trim() || (qPid && doneThreadIds.has(qPid)) ||
           isNonEnglishPost_(qSum, '')) {
         same(q);
         return false;

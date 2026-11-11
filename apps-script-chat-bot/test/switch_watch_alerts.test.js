@@ -588,9 +588,23 @@ module.exports = H => {
     const w = world(MIRRORED);
     const { t } = w;
     t.control().getRange(22, 2).setValue('ON');  // Relay with S-F Burson
-    t.g.vertex.triage = triage();
-    const url = n => `https://x.com/CorrDove/status/19800000000000001${n}`;
-    look(w, [hit({ post_url: url(1), impact: 5 }), hit({ post_url: url(2), impact: 7 }), hit({ post_url: url(3), impact: 6 })]);
+    const stories = {
+      1: ['Atlanta precinct queue claims', 'An X post claiming Atlanta polling queues are linked to Google Maps directions.'],
+      2: ['Phoenix ballot scanner glitch claims', 'An X post alleging Phoenix optical ballot scanners run Google firmware.'],
+      3: ['Milwaukee registration portal claims', 'An X post claiming Search hid Wisconsin voter registration deadlines.'],
+    };
+    t.g.vertex.triage = payload => {
+      const txt = payload.contents[0].parts.map(p => p.text || '').join('\n');
+      const n = ((txt.match(/19800000000000001(\d)/) || [])[1]) || '1';
+      const [issue_name, summary] = stories[n];
+      return triage({ issue_name, summary })();
+    };
+    const url = n => `https://x.com/Author${n}/status/19800000000000001${n}`;
+    look(w, [
+      hit({ post_url: url(1), author: '@Author1', impact: 5, issue: stories[1][0], summary: stories[1][1] }),
+      hit({ post_url: url(2), author: '@Author2', impact: 7, issue: stories[2][0], summary: stories[2][1] }),
+      hit({ post_url: url(3), author: '@Author3', impact: 6, issue: stories[3][0], summary: stories[3][1] }),
+    ]);
     let out = posted(t, MIRROR);
     eq(out.map(m => (m.text.match(/status\/(\d+)\|/) || [])[1]), ['198000000000000012', '198000000000000013']);  // 7, then 6
     eq(posted(t, MID), []);

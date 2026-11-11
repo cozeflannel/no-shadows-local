@@ -198,7 +198,7 @@ cases:
     description: URGENT-eligible post where YouTube is the subject, below 2K and not sensitive -> no action (sql/02 YouTube rule)
     alert:
       product: YouTube
-      exposure_tag: Product - Public leak (e.g. features/models)
+      exposure_tag: Employees - Self-proclaimed whistleblowers
       issue_name: YouTube redesign leaked
       alert_name: "[URGENT] [NEW] YouTube – redesign leaked"
       summary: Screenshots of an unreleased YouTube redesign

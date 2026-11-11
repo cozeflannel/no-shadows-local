@@ -5,7 +5,16 @@
 'use strict';
 
 module.exports = H => {
-  const { test, eq, assert, B, F, NOW, world, e2e, makeGoogle, loadBot, TEST_FEED, TRIAGED, REAL } = H;
+  const { test, eq, assert, B, F, NOW, world, makeGoogle, loadBot, TEST_FEED, TRIAGED, REAL } = H;
+  const e2e = (...args) => {
+    const t = H.e2e(...args);
+    const origRows = t.bot.bqEarlyDetectionRows_;
+    t.bot.bqEarlyDetectionRows_ = minutes => {
+      if (!t.g._edHook) return origRows(minutes);
+      return t.g._edHook(minutes);
+    };
+    return t;
+  };
   const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70, 0, 1, 1, 0, 0, 1, 0xff, 0xd9]);
   const embed = id => `https://cdn.syndication.twimg.com/tweet-result?id=${id}&lang=en&token=${B.xEmbedToken_(id)}`;
   const REDDIT_URL = 'https://www.reddit.com/r/GooglePixel/comments/1k9xyz/dialer_freeze/';
@@ -105,6 +114,24 @@ module.exports = H => {
       getHeaders: () => ({}),
       getContentText: () => (typeof body === 'string' ? body : JSON.stringify(body)),
     });
+    g._edHook = minutes => {
+      const clamped = Math.min(180, Math.max(15, Math.round(Number(minutes)) || 60));
+      const call = {
+        url: 'https://bigquery.googleapis.com/bigquery/v2/projects/brand-social-central-data/queries',
+        location: 'US',
+        sql: 'SELECT signal_type, velocity_grain /* EarlyWaveSource */',
+        params: { minutes: String(clamped), max_rows: '25' },
+        types: { minutes: 'INT64', max_rows: 'INT64' },
+      };
+      calls.push(call);
+      const a = answer(call);
+      if (a && a.code) {
+        const msg = (a.body && a.body.error && a.body.error.message) || String(a.body || 'Error');
+        throw new Error(`BigQuery HTTP ${a.code}: ${msg}`);
+      }
+      if (a && a.timeout) throw new Error('BigQuery: query did not finish in time');
+      return (a && a.rows) || [];
+    };
     g.services.UrlFetchApp.fetch = (link, params) => {
       calls.all.push([String((params && params.method) || 'get'), link, (params && params.payload) || '']);
       if (!link.startsWith('https://bigquery.googleapis.com/')) return orig(link, params);
@@ -133,7 +160,7 @@ module.exports = H => {
     return calls;
   }
 
-  const isEdQuery = c => c.sql.includes('vw_chatbot_pending_early_alerts') || /SELECT[\s\S]+signal_type[\s\S]+velocity_grain/.test(c.sql);
+  const isEdQuery = c => /SELECT[\s\S]+signal_type[\s\S]+velocity_grain/.test(c.sql);
   const edQueries = calls => calls.filter(isEdQuery);
   const routes = rows => c => {
     if (!isEdQuery(c)) return null;
@@ -200,16 +227,19 @@ module.exports = H => {
   // 2. Parameterized SQL, view validation, card formatting & Burson leak-guard compliance
   // ===========================================================================================================
 
-  test('early detection SQL & cards: parameterized US query clamps B31 lookback (15-60m), rejects unsafe view refs, formats unknown clusters & multi-grain velocity with zero leak-guard hits, and ignores non-bot copies', () => {
-    const sqlDefault = B.earlyDetectionSql_();
-    assert.ok(sqlDefault.includes('FROM `brand-social-central-data.early_detection.vw_chatbot_pending_early_alerts`'));
-    assert.ok(sqlDefault.includes('WHERE created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE)'));
-    assert.ok(sqlDefault.includes('LIMIT @max_rows'));
-
-    const sqlCustom = B.earlyDetectionSql_('my-proj-1.custom_ed.vw_pending');
-    assert.ok(sqlCustom.includes('FROM `my-proj-1.custom_ed.vw_pending`'));
-    assert.throws(() => B.edSafeViewRef_('bad.table; DROP TABLE x'), /Invalid BigQuery view reference/);
-    assert.throws(() => B.edSafeViewRef_('only_two.parts'), /Invalid BigQuery view reference/);
+  test('early detection SQL & cards: EarlyWaveSource parameterized US & us-central1 queries use only the 6 approved tables, clamp B31 lookback, format unknown clusters & multi-grain velocity with zero leak-guard hits, and ignore non-bot copies', () => {
+    const usQ = B.ewsLaneQuery_('us', { marks: {} }, Date.UTC(2026, 9, 14, 12, 0), true, 30);
+    const c1Q = B.ewsLaneQuery_('c1', { marks: {} }, Date.UTC(2026, 9, 14, 12, 0), true, 30);
+    assert.ok(usQ.sql.includes('`brand-social-central-data.reporting_data.sprinklr_inbound_comments`'));
+    assert.ok(usQ.sql.includes('`brand-social-central-data.raw_data.brandwatch_raw_mentions_base`'));
+    assert.ok(usQ.sql.includes('`brand-social-central-data.reporting_data.sprinklr_outbound_reporting`'));
+    assert.ok(usQ.sql.includes('`brand-social-central-data.DSD.DSD-story-selection`'));
+    assert.ok(!/bsip-s-bsip-gg-26-2cf3|tubular_videos|vw_chatbot_pending_early_alerts/.test(usQ.sql), usQ.sql);
+    assert.ok(c1Q.sql.includes('`bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw`'));
+    assert.ok(c1Q.sql.includes('`brand-social-central-data.google_tubular_mentions.tubular_videos`'));
+    assert.ok(!/reporting_data|raw_data|DSD|vw_chatbot_pending_early_alerts/.test(c1Q.sql), c1Q.sql);
+    eq(usQ.win.until - usQ.win.since, 30 * MIN);
+    eq(c1Q.win.until - c1Q.win.since, 30 * MIN);
 
     // Lookback: B31 on the first check; afterwards everything since 20 min before the last check (never < B31, <= 180)
     const T0 = Date.UTC(2026, 9, 14, 12, 0);

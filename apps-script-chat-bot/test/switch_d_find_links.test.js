@@ -64,7 +64,8 @@ module.exports = H => {
     return calls;
   }
   const isLinkQuery = c => /"sonar" AS src/.test(c.sql);
-  const isAuthorQuery = c => /SELECT post_url AS url, TRIM\(IFNULL\(author, ""\)\) AS author/.test(c.sql);
+  const isSlrrLinkQuery = c => /"slrr" AS src/.test(c.sql);
+  const isAuthorQuery = c => /SELECT post_url AS url, TRIM\(IFNULL\(JSON_VALUE\(payload, "\$\.detail\.channel\.username"\), ""\)\) AS author/.test(c.sql);
   const feedRow = o => Object.assign({ src: 'sonar', url: SAM, author: 'WasSamLowryEsq', network: 'Twitter', issue_name: ISSUE,
     summary: 'An X user says Search results about the Paris riots are biased.', interactions: 3, posted_at: '2026-10-13 07:19:00+00',
     in_feeds: true, kw_hits: 4 }, o);
@@ -180,18 +181,20 @@ module.exports = H => {
     eq(B.authorForPost_(B.parseAlert_(INSTA_NO_AUTHOR).fields, [{ url: 'https://www.instagram.com/p/DPq1aBcDeFg/?igsh=abc', author: 'paris.watch' }]).author, '@paris.watch');
   });
 
-  test('auto-find links ON, the real lookup: one read-only us-central1 query over Pendulum\'s table and BSIP\'s SLRR log (no US table, no write), and a clear match is used', () => {
+  test('auto-find links ON, the real lookup: read-only us-central1 query over sonar_raw plus US query over slrr_alerts (no cross-region mix, no write), and a clear match is used', () => {
     const w = world();
     const calls = fakeBq(w.g, c => (isLinkQuery(c) ? { rows: [feedRow(), feedRow({ url: 'https://x.com/someoneElse/status/2109952063492990001', author: 'someoneElse' })] } : null));
     const alert = w.paste(F.NO_LINK);
     const report = runWith(w, { switches: switches(w, true), findLink: realFind(w) });
-    eq(calls.length, 1);
-    const [q] = calls;
+    eq(calls.length, 2);
+    const [q, qSlrr] = calls;
     eq([q.method, q.location, q.url], ['post', 'us-central1', 'https://bigquery.googleapis.com/bigquery/v2/projects/brand-social-central-data/queries']);
-    assert.ok(q.sql.includes('`bsip-s-bsip-gg-26-2cf3.google_bg.sonar_post_aggregates_7d_materialized`'));
-    assert.ok(q.sql.includes('`bsip-s-bsip-gg-26-2cf3.google_bg.slrr` l'));
+    assert.ok(q.sql.includes('`bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw`'));
     assert.ok(!/brand-social-central-data\./.test(q.sql), 'a US table in a us-central1 query');
-    assert.ok(!/\b(INSERT|UPDATE|DELETE|MERGE)\b/i.test(q.sql) && !/insertAll/.test(q.url));
+    eq([qSlrr.method, qSlrr.location], ['post', 'US']);
+    assert.ok(qSlrr.sql.includes('`brand-social-central-data.slrr_alerts.slrr_alerts`'));
+    assert.ok(!/bsip-s-bsip-gg-26-2cf3\./.test(qSlrr.sql), 'a us-central1 table in a US query');
+    assert.ok(calls.every(c => !/\b(INSERT|UPDATE|DELETE|MERGE)\b/i.test(c.sql) && !/insertAll/.test(c.url)));
     assert.match(q.sql, /INTERVAL @hours HOUR/);
     eq(q.params, { issue: ISSUE.toLowerCase(), author: 'wassamlowryesq', kws: 'reporting,search,paris,bias', hours: '48' });
     eq(q.types.hours, 'INT64');
@@ -199,7 +202,7 @@ module.exports = H => {
     assert.ok(w.analystPosts()[0].text.startsWith(F.P0_OK));
     // The same alert again (a retry, or the other flow): the find is kept, no second query
     eq(w.bot.bqFindMissingLink_(B.parseAlert_(F.NO_LINK)), { post_url: SAM, author: '', confidence: 0.97, how: 'author and issue name' });
-    eq(calls.length, 1);
+    eq(calls.length, 2);
     // A kept answer is only ever for the same alert: another alert whose short key is the same is looked up itself
     const [key] = Array.from(w.g.cache.keys()).filter(k => k.startsWith('bq_link:'));
     const other = B.parseAlert_(NO_LINK_NO_AUTHOR.split('Paris Riots').join('Lyon Floods'));
@@ -207,7 +210,7 @@ module.exports = H => {
       w.bot.linkKeywords_(other.fields), other.fields.post_date, 1]));
     w.g.cache.set(otherKey, w.g.cache.get(key));  // as if the two keys were the same: the kept answer names the other alert
     eq(w.bot.bqFindMissingLink_(other), null);
-    eq(calls.length, 2);
+    eq(calls.length, 4);
     assert.match(JSON.parse(w.g.cache.get(otherKey)).ident, /lyon floods/);  // the same key: now the other alert's own answer
     // A malformed find changes nothing in the review
     const plainReview = B.reviewAlert_(B.parseAlert_(F.NO_LINK), { now: NOW, history: [] });
@@ -260,7 +263,8 @@ module.exports = H => {
       const calls = fakeBq(w.g, c => (isLinkQuery(c) ? answer : null));
       const alert = w.paste(F.NO_LINK);
       const report = runWith(w, { switches: switchesNoWait(w, true), findLink: realFind(w) });
-      eq(calls.length, 1, name);
+      const failed = /error|slow/.test(name);
+      eq(calls.length, failed ? 1 : 2, name);
       const out = outcome(w, alert, report);
       eq([report.link_lookups, report.links_found, report.errors], [1, undefined, []], name);
       delete out.report.link_lookups;
@@ -269,7 +273,7 @@ module.exports = H => {
       assert.match(JSON.parse(w.g.props.get('SWITCH_NOTES')).autoFindLinks.text, /^found 0 of 1 today · /, name);
       // "Nothing sure" is kept a while; a BigQuery failure isn't (the next try asks again)
       w.bot.bqFindMissingLink_(B.parseAlert_(F.NO_LINK));
-      eq(calls.length, /error|slow/.test(name) ? 2 : 1, name);
+      eq(calls.length, 2, name);
     });
   });
 
@@ -458,7 +462,7 @@ module.exports = H => {
     const calls = fakeBq(w.g, c => (isLinkQuery(c) ? { rows: [feedRow()] } : isAuthorQuery(c) ? { cols: AUTHOR_COLS, rows: [] } : null));
     w.bot.bqFindMissingLink_(B.parseAlert_(F.NO_LINK));
     w.bot.bqFindMissingLink_(B.parseAlert_(INSTA_NO_AUTHOR));
-    eq(calls.map(c => [isLinkQuery(c), isAuthorQuery(c)]), [[true, false], [false, true]]);
+    eq(calls.map(c => [isLinkQuery(c), isSlrrLinkQuery(c), isAuthorQuery(c)]), [[true, false, false], [false, true, false], [false, false, true]]);
     calls.forEach(c => containsSubstrArgs(c.sql).forEach(args => {
       eq(args.length, 2, c.sql);
       assert.match(args[1], /^(?:@\w+|"[^"]*")$/, `CONTAINS_SUBSTR(${args.join(', ')}) looks for a value that changes per row`);

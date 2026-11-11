@@ -627,7 +627,7 @@ module.exports = H => {
       const part = q.body.query.split(cte)[1].split('\n),')[0];
       assert.ok(part.includes(`AND ${NOT_BOT}`), cte);
     });
-    eq(q.body.queryParameters.map(p => p.name), ['url', 'post_id', 'author', 'related_ids', 'query_text', 'comment_noise_rx']);
+    eq(q.body.queryParameters.map(p => p.name), ['url', 'post_id', 'author', 'related_ids', 'comment_noise_rx']);
     eq(writes(w.g), []);
   });
 

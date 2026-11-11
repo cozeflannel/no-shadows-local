@@ -834,10 +834,13 @@ function ensureResourcesTab_(ss) {
 }
 
 /**
- * The Resources tab as [{row, name, url, covers, burson, status}] (row: the sheet row). A link can be the cell's text or
- * a link on it (Sheets may turn a pasted link into a chip that shows the document's title). burson: "Burson can see
- * it?" is Yes. An install from before this tab existed gets it now, once; one from before the knowledge base gets its
- * last two columns. A renamed Resources tab is still found (resourcesTab_), so it's never made a second time.
+ * The Resources tab as [{row, name, url, covers, burson, status, pin}] (row: the sheet row). A link can be the cell's
+ * text or a link on it (Sheets may turn a pasted link into a chip that shows the document's title). burson: "Burson can
+ * see it?" is Yes. pin: the optional column "Always read in full?" (RESOURCES_PIN_HEADER_RX_: one people may add after
+ * Bot status; the bot never writes it): true (Yes, or a ticked checkbox), false (No, or an unticked one), null (blank,
+ * or no such column: Knowledge.gs knowledgePinned_ then reads the Collection Requirements in full). An install from
+ * before this tab existed gets it now, once; one from before the knowledge base gets its last two columns. A renamed
+ * Resources tab is still found (resourcesTab_), so it's never made a second time.
  */
 function readResourceRows_(ss) {
   let sh = resourcesTab_(ss);
@@ -845,7 +848,8 @@ function readResourceRows_(ss) {
   if (sh && String(sh.getRange(1, 4).getValue()).trim() !== RESOURCES_HEADER_[3]) sh = ensureResourcesTab_(ss);
   if (!sh || sh.getLastRow() < 2) return [];
   const n = Math.min(sh.getLastRow() - 1, RESOURCES_MAX_ROWS_);
-  const values = sh.getRange(2, 1, n, RESOURCES_HEADER_.length).getValues();
+  const pinCol = resourcesPinColumn_(sh);
+  const values = sh.getRange(2, 1, n, Math.max(RESOURCES_HEADER_.length, pinCol)).getValues();
   const links = sh.getRange(2, 2, n, 1).getRichTextValues();
   return values.map((r, i) => {
     const text = String(r[1] === undefined || r[1] === null ? '' : r[1]).trim();
@@ -857,8 +861,33 @@ function readResourceRows_(ss) {
       covers: String(r[2] || '').trim(),
       burson: r[3] === true || /^\s*(yes|y|true|✓|✔)\s*$/i.test(String(r[3] === undefined || r[3] === null ? '' : r[3])),
       status: String(r[4] || '').trim(),
+      pin: pinCol ? resourcesPinOf_(r[pinCol - 1]) : null,
     };
   });
+}
+
+// "Always read in full?" (or without the ?), any case: an optional Resources column people may add after Bot status, so
+// a document is always read in full in reviews (Yes) or never (No). The bot only reads it.
+const RESOURCES_PIN_HEADER_RX_ = /^always read in full\s*\??$/i;
+
+/** The column (1-based) of "Always read in full?" on the Resources tab, after Bot status; 0 when there's none. */
+function resourcesPinColumn_(sh) {
+  const last = Math.min(sh.getLastColumn(), 26);
+  if (last <= RESOURCES_HEADER_.length) return 0;
+  const head = sh.getRange(1, 1, 1, last).getValues()[0];
+  for (let c = RESOURCES_HEADER_.length; c < head.length; c++) {
+    if (RESOURCES_PIN_HEADER_RX_.test(String(head[c] === undefined || head[c] === null ? '' : head[c]).trim())) return c + 1;
+  }
+  return 0;
+}
+
+/** An "Always read in full?" cell: true (Yes / a ticked box), false (No / an unticked box), null (blank or anything else). Pure. */
+function resourcesPinOf_(v) {
+  if (v === true || v === false) return v;
+  const s = String(v === undefined || v === null ? '' : v).trim();
+  if (/^(yes|y|true|✓|✔)$/i.test(s)) return true;
+  if (/^(no|n|false|✗|✘)$/i.test(s)) return false;
+  return null;
 }
 
 /**

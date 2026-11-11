@@ -302,7 +302,12 @@ function isShortAck_(text) {
   return words.length <= 10 && words.every(w => ACK_WORDS_.has(w));
 }
 
-/** ": description" for the Burson-facing requirements, or nothing when the description mentions internal process. */
+/**
+ * ": description" for the Burson-facing requirements (the official description in full: VOICE_DESC_MAX_ is above the
+ * longest), or nothing when the description mentions internal process.
+ */
+const VOICE_DESC_MAX_ = 1200;  // the official taxonomy's longest description is 992 characters
+
 function burDesc_(text, n) {
   const d = truncate_(String(text || '').trim(), n);
   return d && !guardHits_(d).length ? `: ${d}` : '';
@@ -311,21 +316,18 @@ function burDesc_(text, n) {
 function requirementsLines_() {
   const lines = ['Exposure tags (one per alert; the priority banner must match the tag\'s priority):'];
   ['P0', 'P1', 'P2'].forEach(p => GEN.exposure_tags.filter(t => t.priority === p)
-    .forEach(t => lines.push(`- [${p}] ${t.name}${burDesc_(t.description, 160)}`)));
+    .forEach(t => lines.push(`- [${p}] ${t.name}${burDesc_(t.description, VOICE_DESC_MAX_)}`)));
   const renamedTags = GEN.exposure_tags.filter(t => (t.aliases || []).length)
     .map(t => `${t.aliases.join(' / ')} -> ${t.name}`);
   if (renamedTags.length) lines.push('Renamed exposure tags: ' + renamedTags.join('; '));
   lines.push('Sensitive Topics:');
-  GEN.sensitive_topics.forEach(t => lines.push(`- ${t.name}${burDesc_(t.description, 140)}` +
+  GEN.sensitive_topics.forEach(t => lines.push(`- ${t.name}${burDesc_(t.description, VOICE_DESC_MAX_)}` +
     ((t.aliases || []).length ? ` (formerly ${t.aliases.join(', ')})` : '')));
   lines.push('Product names: ' + GEN.products.filter(p => !p.deprecated).map(p => p.name).join(', '));
   const removed = GEN.products.filter(p => p.deprecated).map(p => `${p.name} -> ${(p.redirect_to || []).join(' or ')}`);
   if (removed.length) lines.push('Products no longer used: ' + removed.join('; '));
   lines.push('Engagement levels: ' + GEN.engagement_levels.map(l => `${l.name} from ${l.min.toLocaleString('en-US')}`).join(', ') +
     `; a KOF author's alert shows the level for its count (or ${GEN.viral_kof_label}).`);
-  lines.push('Collection thresholds: standard posts require 100+ engagements (likes + comments/replies + reposts/shares + quotes; ' +
-    'views and impressions are not counted). P0 exposure tags and KOF authors have a 0-engagement minimum. Negative replies on ' +
-    'Google-owned social posts require 20+ likes. Posts must be within 72 hours of going live.');
   lines.push('KOF (Key Opinion Former): the KOF or influencer list(s) the author is on, as Burson\'s tools show them (for example ' +
     '"Viral KOFs (KOFs)" or "CAM Tech/AI (INFs)"), or No. An author on any of those lists counts as a KOF, whatever the ' +
     'engagement or follower count.');
@@ -336,16 +338,43 @@ function requirementsLines_() {
   lines.push('Summary & formatting: 1-2 neutral sentences attributing claims to the author, including follower count when 5,000+ ' +
     'and video timestamp [MM:SS] when relevant. [Name] is "<Issue Name> / <Issue Status>" and [Code] is ' +
     '"<Exposure Tag>,<Engagements>,<Author>,<Sensitive Topic or ->,<Product>,<Issue Status>".');
-  lines.push('When alerts are escalated (Social Alert email): P0 exposure tags are always escalated immediately (24/7). ' +
-    'P1 exposure tags are escalated when engagement is MODERATE/HIGH/VIRAL KOF (1,000+ engagements, or 100+ for negative ' +
-    'reactions on owned social posts, or a KOF author), or when Sensitive Topics or briefed launches apply. ' +
-    'P2 exposure tags are escalated when engagement is HIGH (2,000+ engagements) or from a KOF author. ' +
-    'Ongoing issues only trigger a new escalation email when a KOF posts or engagement reaches 2,000+.');
+  escalationRuleLines_().forEach(l => lines.push(l));
   lines.push('Trust & Safety (✍️): flagged for scams/phishing, doxxing/PII, self-harm, child safety, graphic violence, hate speech, ' +
     'Gemini hallucinations on sensitive topics, or viral KOF posts.');
   lines.push('Emoji reactions on alerts: 👍 = received; ⬇️ = addressed on updated post below; 📦 = escalation email sent; ' +
     '✍️ = Trust & Safety form submitted; ❌ = reviewed, no escalation needed; group emojis (📰 💬 💼 💧 1️⃣ 🦺 ⛑️ 🌎 ⚖️ 🌱 📸) = ' +
     'stakeholder groups included in the escalation.');
+  return lines;
+}
+
+/**
+ * When an alert gets a Social Alert email, worded from the official config (GEN: the Collection Requirements'
+ * thresholds and the data Escalate.gs escalation_ applies, plus the owned-post rule from the judgment rules), so the
+ * prompts, Burson's answers and the analysts' answers never state a number the config doesn't. Each line starts
+ * "Escalation thresholds" (Review.gs playbookText_ keeps them for every review and triage). Pure (reads GEN).
+ */
+function escalationRuleLines_() {
+  const R = GEN.escalation_rules || {};
+  const bar = `${fmtInt_(R.high_engagement_threshold)}+ engagements`;
+  const always = (R.always_alert_tags || []).filter(Boolean);
+  const briefed = (R.briefed_topics || []).filter(b => b && b.active && b.label).map(b => b.label);
+  const us = (R.politics_us_locations || []).filter(Boolean);
+  const pair = (R.redundant_pairs || []).find(p => Array.isArray(p) && p[0] && p[1]);
+  const ownedRx = /^Content - Negative reaction to owned social post:\s*/i;
+  const owned = (GEN.judgment_rules || []).find(r => ownedRx.test(String(r || '')));
+  const lines = [
+    'Escalation thresholds (when an alert gets a Social Alert email): URGENT at any engagement (from 0) for a new issue ' +
+      `with a P0 exposure tag, a Sensitive Topic, a briefed topic${briefed.length ? ` (now: ${briefed.join(', ')})` : ''} or a ` +
+      `KOF author; HIGH ENGAGEMENT at ${bar} for any other issue (a P1 or P2 exposure tag with no Sensitive Topic and no KOF ` +
+      'author). Engagements are likes + comments + shares; views don\'t count.',
+    `Escalation thresholds, ongoing issues: when the same issue was already alerted in the last ${GEN.novelty_days} days, it ` +
+      `is escalated again only for a KOF author or at ${bar} (as an update on the earlier email)` +
+      (always.length ? `, except these exposure tags, escalated whatever the issue status: ${always.join('; ')}.` : '.'),
+    `Escalation thresholds, Sensitive Topics: Politics counts only for a ${us[0] || 'US'} (or unknown) location or an ` +
+      'English-language mention of an election' + (pair ? `; a topic that only restates the exposure tag (for example ${pair[1]} ` +
+      `on "${pair[0]}") doesn't make an alert urgent.` : '.'),
+  ];
+  if (owned) lines.push(`Escalation thresholds, owned social posts: ${String(owned).replace(ownedRx, '')}`);
   return lines;
 }
 

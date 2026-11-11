@@ -1237,7 +1237,7 @@ test('the Resources tab: an older install gets it on its next run, link chips wo
   t.poll();
   t.chat.say(TEST_FEED, 'where do the KOF rules come from?', { thread: alert.thread.name, sender: 'users/bot' });
   t.poll();
-  eq(tabs(), ['Control', 'Resources', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)']);
+  eq(tabs(), ['Control', 'Resources', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)', 'Alert memory (bot)']);
   assert.ok(answerPrompts()[0].includes(`- KOF lists: ${RES()[1].url}`), answerPrompts()[0]);
 
   const tab = t.sheet().getSheetByName('Resources');  // a pasted link Sheets shows as the document's title (a chip)
@@ -1915,25 +1915,26 @@ test('auto-correct space (B10) beside the Mirror space: each live Zapier alert i
   assert.match(mirrorReplies[0].text, /^The alert has been updated, so there is no need to resend it\. The following updates were made:/);
   assert.strictEqual(t.chat.botPosts(TRIAGED).length, 1);  // only the setup hello
 
-  // The auto-correct space: the corrected alert in Burson's own format (no footer), what changed in its thread, and the
-  // Social Alert's emojis (no ⬇️: nothing was asked of Burson)
+  // The auto-correct space: the corrected alert in Burson's own format (no footer), what changed in its thread, and
+  // AlertMemory prevents sending a duplicate second Social Alert to B30 when Mirror already emailed it in the same tier
   const acTop = t.chat.botPosts(AC).filter(m => !m.threadReply);
   const acReplies = t.chat.botPosts(AC).filter(m => m.threadReply);
   assert.strictEqual(acTop.length, 1);
   assert.strictEqual(acTop[0].text, F.MISTAKES_FIXED);
-  eq(t.chat.botReactions(acTop[0].name), ['📰', '📦']);
-  eq(acReplies.map(m => m.text), ['Updates made to this alert:\n- Product updated from Gems to Gemini App\n- Social Network updated from Instagram to X\n' +
-    '- Priority banner updated from P2 to P0\n- Engagement updated from LOW to HIGH']);
-  // One Social Alert per space, both only to the tester; the auto-correct one says so in its subject
+  eq(t.chat.botReactions(acTop[0].name), ['❌']);
+  eq(acReplies.map(m => m.text), [
+    'Updates made to this alert:\n- Product updated from Gems to Gemini App\n- Social Network updated from Instagram to X\n' +
+      '- Priority banner updated from P2 to P0\n- Engagement updated from LOW to HIGH',
+  ]);
+  // One Social Alert total (Mirror's), only to the tester — zero duplicate email from B10!
   const sent = t.g.gmail.sentMessages();
-  eq(sent.map(m => m.to), [['tester@testing.test'], ['tester@testing.test']]);
-  eq(sent.map(m => m.subject.indexOf('[Auto-correct test] ') === 0), [false, true]);
+  eq(sent.map(m => m.to), [['tester@testing.test']]);
   // Its own rows in the Alert log, and its own line on the Control tab
   const log = t.sheet().getSheetByName('Alert log');
   const col = name => log.rows[0].indexOf(name);
   const acRows = log.rows.slice(1).filter(r => / \(auto-correct\)$/.test(String(r[col('space')])));
   eq(acRows.map(r => [r[col('space')], r[col('source_message')], r[col('forward_message')]]), [[`${REAL} > ${AC} (auto-correct)`, zapLive.name, acTop[0].name]]);
-  assert.strictEqual(t.control().cell(10, 3), '✓ SLRR Auto-correct Test · today: 1 alert, 1 corrected, 1 Social Alert sent, 0 questions answered');
+  assert.strictEqual(t.control().cell(10, 3), '✓ SLRR Auto-correct Test · today: 1 alert, 1 corrected, 0 Social Alerts sent, 0 questions answered');
 
   // A question in the auto-correct space is answered in its thread
   t.g.vertex.answer = () => 'Gems was retired, so the product is *Gemini App*.';
@@ -2373,38 +2374,35 @@ test('DSD & Brandy AI/Vector/Multimodal upgrades: gs:// & inline base64 media, s
   assert.strictEqual(rAcc.media.story_accuracy, 'needs_review');
   assert.strictEqual(rAcc.media.tone, 'satirical');
 
-  // 3. Vector Database Intelligence (`classifyVectorIntelligence_`):
-  //    a) Evergreen noise topic (`google_as_verb` at cosine distance 0.19) -> is_evergreen_noise = true -> vetoed (`warranted: false`)
-  const vecNoise = B.classifyVectorIntelligence_({
-    ev_topic_id: 'google_as_verb',
-    ev_label: 'Google used as a verb / without using Google',
-    ev_dist: 0.19,
-    cv_url: null,
-    cv_dist: null,
-    tr_name: null,
-    tr_dist: null,
-  }, 'https://x.com/someone/status/111');
+  // 3. Vertex AI Vector Intelligence (`bqEvergreenFields_` + `AlertMemory` 14-day semantic Ongoing Issue):
+  //    a) Evergreen noise topic (`google_as_verb` at cosine similarity 0.85, strict) -> is_evergreen_noise = true -> vetoed (`warranted: false`)
+  const vecNoise = B.bqEvergreenFields_({
+    id: 'google_as_verb',
+    label: 'Google used as a verb / without using Google',
+    strict: true,
+    sim: 0.85,
+  });
   assert.strictEqual(vecNoise.is_evergreen_noise, true);
+  assert.strictEqual(vecNoise.evergreen_cosine_distance, 0.15);
   const parsedNoise = B.parseAlert_(F.AIO);
   parsedNoise.bq = vecNoise;
   const revNoise = B.reviewAlert_(parsedNoise);
   assert.strictEqual(revNoise.socialAlert.warranted, false);
   assert.match(revNoise.socialAlert.reason, /evergreen noise topic/);
 
-  //    b) Semantic 14-day Ongoing Issue match (`DSD.content_vectors` cosine distance 0.15 to an earlier post) -> New becomes Ongoing Issue
-  const vecOngoing = B.classifyVectorIntelligence_({
-    ev_topic_id: 'product_quality_drop',
-    ev_label: 'Perceived drop in product quality',
-    ev_dist: 0.39,
-    cv_url: 'https://x.com/earlier_author/status/999888777',
-    cv_snippet: 'Earlier report of the exact same AI Overviews issue',
-    cv_dist: 0.15,
-  }, 'https://x.com/TheChiefNerd/status/2109500000000000001');
+  //    b) Non-strict evergreen topic + 14-day semantic Ongoing Issue match (`AlertMemory` `memoryStory`) -> New becomes Ongoing Issue
+  const vecOngoing = B.bqEvergreenFields_({
+    id: 'product_quality_drop',
+    label: 'Perceived drop in product quality',
+    strict: false,
+    sim: 0.86,
+  });
   assert.strictEqual(vecOngoing.is_evergreen_noise, false);
-  assert.strictEqual(vecOngoing.semantic_ongoing_match, true);
   const parsedOngoing = B.parseAlert_(F.AIO);
   parsedOngoing.bq = vecOngoing;
-  const revOngoing = B.reviewAlert_(parsedOngoing);
+  const revOngoing = B.reviewAlert_(parsedOngoing, {
+    memoryStory: { issue_name: 'Hallucinated AI Overview medical advice', alert_id: 'QA-1001', sim: 0.89, how: 'vector' },
+  });
   assert.strictEqual(revOngoing.fields.issue_status, 'Ongoing Issue');
 
   // 4. Brandy "Thick-Skin Pragmatist" Critic/Arbiter proportionality (`signal_class: 'routine_snark'` / `'vocal_fringe'`)
@@ -2447,7 +2445,7 @@ test('DSD & Brandy AI/Vector/Multimodal upgrades: gs:// & inline base64 media, s
   assert.strictEqual(revBsip.fields.engagement_level, 'HIGH');  // a KOF keeps the level for its count
   assert.ok(revBsip.notes.some(n => n.includes('Translated from Spanish:')));
   const bqPrompt = B.assessPrompts_(parsedBsip);
-  assert.match(bqPrompt.system, /BSIP Sonar 7d Live Aggregates: 31200 total interactions/);
+  assert.match(bqPrompt.system, /BSIP Sonar Live Events: 31200 total interactions/);
   assert.match(bqPrompt.system, /kof_vertical="LATAM Tech Press"/);
 
   // 6. Tier-3 Fallback: when Direct Vertex AI returns 503 across all tries, Gemini.gs falls back to BigQuery ML.GENERATE_TEXT (`DSD.gemini_analyzer`)
@@ -2948,14 +2946,16 @@ test('feed text: for posts the bot can\'t open (Instagram, Facebook, Reddit), Ge
   //    post id inside a Reddit link; every request goes to BigQuery
   const g = makeGoogle(NOW);
   const calls = [];
+  const origFetch = g.services.UrlFetchApp.fetch;
   g.services.UrlFetchApp.fetch = (url, params) => {
+    if (!String(url).startsWith('https://bigquery.googleapis.com/')) return origFetch(url, params);
     const body = JSON.parse(params.payload);
     calls.push({ url, location: body.location || 'US', sql: body.query, params: body.queryParameters || [] });
     const central = body.location === 'us-central1';
     const cols = central
       ? [['sonar_summary', 'Reddit user asks about GPS on the Pixel 10.'], ['sonar_issue_name', 'Pixel 10 GPS'],
         ['sonar_snippets_json', JSON.stringify([{ source: 'description', text: 'My Pixel 10 Pro GPS is broken, RMA?' }])],
-        ['bsip_post_text', 'My Pixel 10 Pro GPS is broken'], ['sonar_interactions', '12', 'INTEGER']]
+        ['sonar_interactions', '12', 'INTEGER']]
       : [['bmie_snippet', 'Pixel 10 Pro GPS broken'], ['bmie_alert_source', 'Today in Android']];
     return {
       getResponseCode: () => 200, getHeaders: () => ({}),
@@ -2967,15 +2967,15 @@ test('feed text: for posts the bot can\'t open (Instagram, Facebook, Reddit), Ge
   const reddit = bot.parseAlert_(F.MISTAKES.replace('https://x.com/edervolcelazz/status/2109566527900926417',
     'https://www.reddit.com/r/GooglePixel/comments/1x9vsi4/pixel_10_pro_gps_rma/'));
   const enr = bot.enrichAlertFromBigQuery_(reddit, bot.ev('GEN').settings);
-  eq([enr.feed_summary, enr.feed_issue_name, enr.feed_snippets.map(s => s.text), enr.feed_post_text, enr.bmie_snippet, enr.sonar_interactions],
-    ['Reddit user asks about GPS on the Pixel 10.', 'Pixel 10 GPS', ['My Pixel 10 Pro GPS is broken, RMA?'], 'My Pixel 10 Pro GPS is broken',
+  eq([enr.feed_summary, enr.feed_issue_name, enr.feed_snippets.map(s => s.text), enr.bmie_snippet, enr.sonar_interactions],
+    ['Reddit user asks about GPS on the Pixel 10.', 'Pixel 10 GPS', ['My Pixel 10 Pro GPS is broken, RMA?'],
       'Pixel 10 Pro GPS broken', 12]);
   eq(calls.map(c => [c.url.startsWith('https://bigquery.googleapis.com/'), c.location]), [[true, 'US'], [true, 'us-central1']]);
   const central = calls[1];
-  assert.match(central.sql, /FROM UNNEST\(snippets\) s/);
+  assert.match(central.sql, /JSON_VALUE\(payload, "\$\.detail\.post\.snippet\.text"\)/);
   assert.match(central.sql, /STRPOS\(post_url, CONCAT\("\/", @post_id, "\/"\)\) > 0/);
   eq(central.params.find(p => p.name === 'post_id').parameterValue.value, '1x9vsi4');
-  assert.match(calls[0].sql, /SUBSTR\(snippet, 1, 900\) AS snippet/);
+  assert.match(calls[0].sql, /COALESCE\(dsd\.snippet, bwm\.snippet\)/);
   assert.match(B.feedTextPrompt_(enr), /- Post text: "My Pixel 10 Pro GPS is broken, RMA\?"\n- Post text as Brandwatch captured it: "Pixel 10 Pro GPS broken"/);
 
   // 5. Burson never hears where the bot got it: Gemini is told not to name the feeds, and the guard holds back anything that does
@@ -4035,13 +4035,14 @@ test('knowledge base: what a Resources link is (a Doc, a Sheet and its tab, Slid
 
 test('knowledge base: every document goes in whole when they fit; otherwise the short ones whole and the passages that bear on the alert (the author\'s KOF row, the product\'s rules), never the rest', () => {
   const q = { text: 'AI Overviews gave dangerous medical advice about a health question', phrases: ['AI Overviews'], handles: ['@TheChiefNerd'] };
-  const k = B.knowledgeFor_(KB(), q, { budget: 5400 });
-  eq(k.docs, [{ name: 'SLRR Collection Requirements', url: KB().docs[0].url, whole: true, chars: KB_DOC1.length },
-    { name: 'KOF lists', url: KB().docs[1].url, whole: false, chars: 1799 },
-    { name: 'Escalation playbook', url: KB().docs[2].url, whole: false, chars: 1799 }]);
+  const k = B.knowledgeFor_(KB(), q, { budget: 3600 });
+  eq([k.docs[0], k.docs[1].name, k.docs[1].whole, k.docs[1].lookup, k.docs[2].name, k.docs[2].whole, k.docs[2].chars > 500],
+    [{ name: 'SLRR Collection Requirements', url: KB().docs[0].url, whole: true, chars: KB_DOC1.length },
+      'KOF lists', false, 'looked up: 1 row for the author',
+      'Escalation playbook', false, true]);
   assert.ok(k.text.startsWith('[1] SLRR Collection Requirements: The alert requirements (the whole document below)\n' +
-    '[2] KOF lists: Who counts as a KOF (the parts that bear on this, below)\n' +
-    '[3] Escalation playbook: Which team gets which alert (the parts that bear on this, below)\n\n'), k.text.slice(0, 400));
+    '[2] KOF lists: Who counts as a KOF (a KOF list, looked up by the alert\'s author: 1 matching row below, with its tab\'s header row)\n' +
+    '[3] Escalation playbook: Which team gets which alert (the parts that bear on this, below)\n\n'), k.text.slice(0, 450));
   assert.ok(k.text.includes(`=== [1] SLRR Collection Requirements ===\n${KB_DOC1}`));
   assert.ok(k.text.includes('@TheChiefNerd | Viral KOFs (KOFs)') && k.text.includes('Any AI Overview that gives dangerous medical advice is P0'));
   assert.ok(!k.text.includes('@user1 |') && !k.text.includes('Doodle complaints') && !k.text.includes('Waymo posts about remote operators'));

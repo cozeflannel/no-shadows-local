@@ -63,9 +63,20 @@ function resendOpen_(a, noWait) {
   return !!noWait && a.status === 'fixed' && !!a.resend_of;
 }
 
-function makeStore_(backend, nowFn, partition, msgPrefix) {
+/**
+ * `observer` (optional: Main.gs buildCtx_ passes AlertMemory.gs amStoreObserver_): {loaded(rows), added(row)}, told of
+ * every Alert-log row this store reads (every space's) and adds, so the shared alert memory sees what every flow
+ * handled. Its failures never reach the store.
+ */
+function makeStore_(backend, nowFn, partition, msgPrefix, observer) {
   const now = nowFn || (() => Date.now());
   const all = backend.loadAlerts();
+  const tell = (what, arg) => {
+    if (observer && typeof observer[what] === 'function') {
+      try { observer[what](arg); } catch (e) { /* the memory's own problem: the store goes on */ }
+    }
+  };
+  tell('loaded', all);
   const alerts = all.filter(a => !partition || a.space === partition);
   const messages = backend.loadMessages().slice();
   const byMessage = new Map(messages.map(r => [r.message, r]));
@@ -112,6 +123,7 @@ function makeStore_(backend, nowFn, partition, msgPrefix) {
       const row = backend.appendAlert(Object.assign(
         { created_at: now(), updated_at: now(), space: partition || '', mirrored: '', feedback: '', resend_of: '' }, obj));
       alerts.push(row);
+      tell('added', row);
       return row;
     },
 

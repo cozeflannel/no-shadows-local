@@ -116,7 +116,7 @@ const BQ_NEW_DEV_RX_ =
   /\b(?:new\s+development|breaking\s+update|update\s*:|official\s+(?:statement|response)|google\s+(?:responded|confirmed|issued|announced|apologized)|lawsuit\s+filed|class\s+action|regulator|investigation\s+launched|recall(?:ed)?|new\s+(?:video|footage|evidence|leaked|screenshot)|confirmed\s+outage|widespread\s+outage)\b/i;
 
 const BQ_PRIOR_ALERT_DAYS_ = 2;
-const BQ_EVAL_KNOWLEDGE_CHARS_ = 30000;
+const BQ_EVAL_KNOWLEDGE_CHARS_ = 60000;  // the always-read Collection Requirements (~37K) plus the parts that bear on the records
 const BQ_EVAL_RECORDS_CHARS_ = 32000;
 
 /**

@@ -105,9 +105,24 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
     ctx.settings.bq_lookback_minutes = (opts && opts.lookbackMinutes) ||
       bqLookbackFrom_(wanted && wanted.bqLookback).minutes;
     ctx.allowEarlyWave = Boolean(opts && opts.allowEarlyWave);
+    ctx.allowDirectBq = Boolean(opts && opts.allowDirectBq);
     ctx.deadline = Math.min(Date.now() + AC_BUDGET_MS_, latest);
     startFromAutoCorrect_(props, cfg, ctx);
+    let bqPolled = null;
+    if (ctx.allowDirectBq && switchOn_(ctx, 'directBq')) {
+      Object.assign(ctx.settings, { bq_direct_poll: true, bq_poll_sprinklr: true, bq_poll_bmie: true, bq_poll_bsip: true });
+      if (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', false)) {
+        try { bqPolled = pollBigQuerySources_(ctx, space.id); } catch (e) {
+          console.error('auto-correct direct BigQuery alerts: ' + ((e && e.message) || e));
+        }
+      }
+    }
     const report = runOnce_(ctx);
+    if (bqPolled && (bqPolled.sprinklr || bqPolled.bmie)) {
+      report.bq_sprinklr = bqPolled.sprinklr;
+      report.bq_bmie = bqPolled.bmie;
+    }
+    if (bqPolled && bqPolled.bsip) report.bq_bsip = bqPolled.bsip;
     const slaBusy = Boolean(report && (report.held > 0 || report.handled >= ctx.settings.max_messages_per_run ||
       (report.errors || []).some(e => /^time budget/.test(String(e)))));
     ctx.slaBusy = slaBusy;

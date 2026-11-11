@@ -85,6 +85,8 @@ function existingIssueOf_(review, related, known, similar) {
   }
   const simName = alerted(similar) ? rowName(similar) : '';
   if (simName) return { name: simName, by: 'similar', why: 'an earlier alert on the same issue uses that name', ref: similar.alert_id || '' };
+  const memStory = typeof memoryIssue_ === 'function' ? memoryIssue_(r.memoryStory) : null;
+  if (memStory) return memStory;
   const ki = r.knownIssue;
   if (ki && ki.matches) {
     const kn = issueNameText_(ki.entry && ki.entry.issue_name) || knownIssueName_(ki.issue_name, known);

@@ -242,9 +242,22 @@ function edPrepare_(ctx, ed, now) {
   }
   try {
     const query = knowledgeQuery_({ fields: Object.assign({ alert_name: ed.headline }, parsed.fields), post: parsed.post });
-    parsed.knowledge = knowledgeFor_(ctx.knowledge, query, { budget: KNOWLEDGE_REVIEW_CHARS_ });
+    parsed.knowledge = typeof knowledgeForCtx_ === 'function'
+      ? knowledgeForCtx_(ctx, query, { budget: KNOWLEDGE_REVIEW_CHARS_, pin: true })
+      : knowledgeFor_(ctx.knowledge, query, { budget: KNOWLEDGE_REVIEW_CHARS_ });
   } catch (e) {
     parsed.knowledge = null;
+  }
+  if (parsed.knowledge && parsed.knowledge.docs.length && ctx && typeof ctx.log === 'function') {
+    ctx.log(`knowledge: ${knowledgeBrief_(parsed.knowledge)}`);
+  }
+  if (ed.taxonomyHint) parsed.tagHintLine = ed.taxonomyHint;
+  else if (typeof vecTagHints_ === 'function' && typeof vecTagHintLine_ === 'function') {
+    try {
+      const hText = [ed.headline || '', parsed.fields.summary || '', ed.text || ''].filter(Boolean).join(' — ').slice(0, 1200);
+      const hint = hText ? (vecTagHints_([hText], { deadline: ctx.deadline }) || [])[0] : null;
+      if (hint) parsed.tagHintLine = vecTagHintLine_(hint);
+    } catch (e) {}
   }
   return { parsed, history };
 }
@@ -365,6 +378,8 @@ function edNoEmail_(ctx, row, d, report) {
   }
   decide(`\u274c ${d.why || 'benign low-tier chatter'}`);
   if (markNoAction_(ctx, row)) ctx.log(`${row.alert_id}: \u274c dismissed (${d.why || 'benign low-tier chatter'})`);
+  const mv = d && d.review && d.review.memory && d.review.memory.verdict;
+  if (mv && mv.skip && typeof amHeldTrace_ === 'function') amHeldTrace_(ctx, row, mv);
 }
 
 /** Initial SLRR-shaped fields extracted from an Early Detection card prior to Gemini classification. Pure. */
@@ -467,7 +482,11 @@ function edBuildEscalation_(ctx, review, history, rev, ed) {
 /** Decides `escalate` vs `monitor` (👍) vs `dismiss` (❌) for an open-world Early Detection signal. Pure. */
 function edDecide_(ctx, parsed, rev, llm, history, now) {
   const fields = edMergedFields_(parsed, rev);
+  const memStory = typeof amNoveltyFor_ === 'function' ? amNoveltyFor_(ctx, fields) : null;
+  if (memStory && !fields.issue_status) fields.issue_status = 'Ongoing Issue';
   const review = edBuildReview_(parsed, rev, fields, llm, now);
+  if (memStory) review.memoryStory = memStory;
+  review.memory = typeof amFactsFor_ === 'function' ? amFactsFor_(ctx, review.fields) : null;
   const baseEsc = escalation_(fields, { now });
   const aiReasons = Object.assign({}, review.groupReasons || {});
   if (rev && rev.disposition === 'dismiss' && !(rev.slrr && rev.slrr.is)) delete aiReasons.tns;
@@ -524,7 +543,8 @@ function edDecide_(ctx, parsed, rev, llm, history, now) {
   }
 
   const repeat = followUpSkip_(review, baseEsc) ||
-    (typeof knownIssueSkip_ === 'function' ? knownIssueSkip_(review, baseEsc) : '');
+    (typeof knownIssueSkip_ === 'function' ? knownIssueSkip_(review, baseEsc) : '') ||
+    (typeof memorySkip_ === 'function' ? memorySkip_(review, baseEsc) : '');
   if (repeat) return fin({ disposition: 'dismiss', basis: 'repeat', why: repeat });
 
   const p0Confirmed = !!(rev.slrr && rev.slrr.is && rev.slrr.priority === 'P0' && rev.slrr.confidence >= ED_SLRR_TAG_MIN_CONFIDENCE_ &&
@@ -533,7 +553,8 @@ function edDecide_(ctx, parsed, rev, llm, history, now) {
   if ((rev.disposition === 'escalate' && rev.confidence >= ED_ESCALATE_MIN_CONFIDENCE_) || p0Confirmed) {
     const built = edBuildEscalation_(ctx, review, history, rev, parsed.ed);
     const escRepeat = followUpSkip_(review, built.esc) ||
-      (typeof knownIssueSkip_ === 'function' ? knownIssueSkip_(review, built.esc) : '');
+      (typeof knownIssueSkip_ === 'function' ? knownIssueSkip_(review, built.esc) : '') ||
+      (typeof memorySkip_ === 'function' ? memorySkip_(review, built.esc) : '');
     if (escRepeat) return fin({ disposition: 'dismiss', basis: 'repeat', why: escRepeat });
     return fin({
       disposition: 'escalate',
@@ -788,6 +809,7 @@ function edReviewPrompts_(parsed, media) {
     '- `previous_card` (only on an update): analysts already have a card on this story, and `whats_new` says what changed ' +
     'since. Open `story` with that change, make `story_title` name the new development, and weigh the change for `known_issue.adds_materially_new`.\n\n' +
     `EXPOSURE TAGS:\n${tags}\n\nSENSITIVE TOPICS:\n${topics}\n\nPRODUCTS (distribution names): ${products}\n\n` +
+    (parsed && parsed.tagHintLine ? `${parsed.tagHintLine}\n\n` : '') +
     `SLRR PLAYBOOK:\n${playbookText_()}\n\n` +
     'TEAMS (recommended_groups):\n' + teamGuideText_() +
     knowledgePrompt_(parsed && parsed.knowledge) +

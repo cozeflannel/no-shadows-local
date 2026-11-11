@@ -126,7 +126,7 @@ TEMPLATES: list[dict] = [
          summary="Employees share that several Cloud sales teams were cut this morning.",
          content="Just found out my whole team in Cloud sales was let go. 8 years. Open to opportunities.",
          platforms=["LinkedIn", "X"], kof=0.1),
-    dict(key="pixel_leak", product="Pixel", tag="Product - Public leak (e.g. features/models)", topics=[],
+    dict(key="pixel_leak", product="Pixel", tag="Employees - Self-proclaimed whistleblowers", topics=[],
          issue="Leaked Pixel 12 renders", title="Leaked Pixel 12 renders and specs circulate",
          summary="A leaker posts alleged official renders and a spec sheet for an unannounced Pixel.",
          content="EXCLUSIVE: first official renders of Pixel 12 + full spec sheet. Launch date inside. (leak)",

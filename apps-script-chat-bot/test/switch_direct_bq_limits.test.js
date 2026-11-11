@@ -72,13 +72,13 @@ module.exports = H => {
     eq(w.bot.pollBigQuerySources_(onCtx(w), w.BUR), res({ bsip: 2 }));
     eq(synth(w.chat, w.BUR).map(linkOf), [url(1), url(2)]);  // as BigQuery ranked them, 2 a check
     const bsip = calls.find(c => kindOf(c) === 'bsip');
-    assert.ok(/\n {2}AND \(COALESCE\(likes, 0\) \+ COALESCE\(comments, 0\) \+ COALESCE\(shares, 0\)\) >= @min_total\n/.test(bsip.sql), bsip.sql);
+    assert.ok(/total >= @min_total/.test(bsip.sql), bsip.sql);
     assert.ok(!/criticality, ""\)\) = "HIGH"|OR UPPER/.test(bsip.sql), 'the HIGH-only branch is gone');
-    assert.ok(bsip.sql.includes('\nWHERE last_received_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE)\n'));  // partition
-    assert.ok(bsip.sql.includes('\n  AND post_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @max_age_hours HOUR)\n'), bsip.sql);
+    assert.ok(bsip.sql.includes('WHERE received_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE)'), bsip.sql);  // partition
+    assert.ok(bsip.sql.includes('HAVING post_ts >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @max_age_hours HOUR)'), bsip.sql);
     // A go-live window as short as the lookback let no BSIP post through (none reaches 500 engagements that fast)
-    assert.ok(!/post_timestamp >= TIMESTAMP_SUB\(CURRENT_TIMESTAMP\(\), INTERVAL @minutes MINUTE\)/.test(bsip.sql), bsip.sql);
-    assert.ok(/\nORDER BY total DESC, last_received_at DESC LIMIT 15$/.test(bsip.sql), bsip.sql);
+    assert.ok(!/post_ts >= TIMESTAMP_SUB\(CURRENT_TIMESTAMP\(\), INTERVAL @minutes MINUTE\)/.test(bsip.sql), bsip.sql);
+    assert.ok(/\nORDER BY total DESC, seen_at DESC LIMIT 15$/.test(bsip.sql), bsip.sql);
     eq([bsip.location, bsip.params], ['us-central1', { minutes: '60', min_total: '500', max_age_hours: '48' }]);
     // A HIGH post with no engagement isn't a candidate any more (the rule is in the SQL; here BigQuery returns none)
     const card = B.formatBsipSonarAlertText_(bsipRow(4, 0));

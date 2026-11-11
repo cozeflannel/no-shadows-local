@@ -87,9 +87,11 @@ module.exports = H => {
     return calls;
   };
   // The queries that look back: Direct BigQuery alerts' Sprinklr, BMIE (a US query each) and BSIP (us-central1) queries,
-  // and Early detection's pending view query (US)
+  // and EarlyWaveSource's US and us-central1 queries (which start at B31 on the first check and advance incrementally)
   const kindOf = c => (/sprinklr_candidates AS/.test(c.sql) ? 'spr' : /bmie_candidates AS/.test(c.sql) ? 'bmie'
-    : /"BSIP" AS source_kind/.test(c.sql) ? 'bsip' : /vw_chatbot_pending_early_alerts/.test(c.sql) ? 'ew' : '?');
+    : /"BSIP" AS source_kind/.test(c.sql) ? 'bsip'
+      : /sprinklr_inbound_comments/.test(c.sql) && /'post' AS kind/.test(c.sql) ? 'ew_us'
+        : /sonar_raw/.test(c.sql) && /'post' AS kind/.test(c.sql) ? 'ew_c1' : '?');
 
   // ===========================================================================================================
   // What B31 says
@@ -283,7 +285,7 @@ module.exports = H => {
   // End to end
   // ===========================================================================================================
 
-  test('BigQuery lookback end to end (poll()): with Direct BigQuery alerts (row 15) and the Early wave check (row 19) ON, each Direct BigQuery query (Sprinklr, BMIE, BSIP) carries B31 as the INT64 parameter minutes (15 minutes -> 15; 30 minutes -> 30; "2 hours" -> 60; blank -> 60) and the early detection query carries at least B31, widened back to just before its previous check; while paused C31 still follows B31', () => {
+  test('BigQuery lookback end to end (poll()): with Direct BigQuery alerts (row 15) and the Early wave check (row 19) ON, each Direct BigQuery query (Sprinklr, BMIE, BSIP) carries B31 as the INT64 parameter minutes (15 minutes -> 15; 30 minutes -> 30; "2 hours" -> 60; blank -> 60) and the early detection producer starts at B31 on its first check and advances incrementally across subsequent/paused windows; while paused C31 still follows B31', () => {
     const t = e2e();
     t.bot.setup();
     const sh = t.control();
@@ -300,26 +302,40 @@ module.exports = H => {
       const after = Number(t.g.props.get('EARLY_DETECTION_AT')) || 0;
       ew = b31 => String(t.bot.edLookbackMinutes_({ bq_lookback_minutes: b31 }, before, after));
       all = calls.length - from;
-      return calls.slice(from).filter(c => /@minutes\b/.test(c.sql)).map(c => [kindOf(c), c.params.minutes, c.types.minutes]);
+      return calls.slice(from).filter(c => kindOf(c) !== '?').map(c => {
+        const k = kindOf(c);
+        if (k === 'ew_us' || k === 'ew_c1') {
+          const span = String(Math.round((Number(c.params.until_ms) - Number(c.params.since_ms)) / MIN));
+          return [k, span, c.types.since_ms];
+        }
+        return [k, c.params.minutes, c.types.minutes];
+      });
     };
-    const each = (m, e) => [['spr', m, 'INT64'], ['bmie', m, 'INT64'], ['bsip', m, 'INT64'], ['ew', e === undefined ? m : e, 'INT64']];
+    const each = (m, span) => [
+      ['spr', m, 'INT64'], ['bmie', m, 'INT64'], ['bsip', m, 'INT64'],
+      ['ew_us', span || m, 'INT64'], ['ew_c1', span || m, 'INT64'],
+    ];
 
     sh.getRange(31, 2).setValue('15 minutes');
-    eq(run(), each('15'));  // the first early detection check: B31 itself
+    eq(run(), each('15', '15'));  // the first early detection check: B31 itself (15 min) on both US and us-central1 lanes
     eq([row(sh, 31), t.bot.status().bigquery_lookback], [['BigQuery lookback', '15 minutes', OK_15], '15 minutes (Control tab B31)']);
 
     sh.getRange(31, 2).setValue('30 minutes');
-    eq(run(15 * MIN), each('30', ew(30)));
+    const second = run(15 * MIN);
+    eq(second.slice(0, 3), [['spr', '30', 'INT64'], ['bmie', '30', 'INT64'], ['bsip', '30', 'INT64']]);
+    assert.ok(Number(second[3][1]) >= 15 && Number(second[3][1]) <= 16 && second[3][1] === second[4][1], JSON.stringify(second));
     assert.ok(Number(ew(30)) > 30, ew(30));  // 16 minutes since its last check + 20: nothing between two checks is missed
     eq([row(sh, 31), t.bot.status().bigquery_lookback], [['BigQuery lookback', '30 minutes', OK_30], '30 minutes (Control tab B31)']);
 
     sh.getRange(31, 2).setValue('2 hours');
-    eq(run(15 * MIN), each('60', ew(60)));
+    const third = run(15 * MIN);
+    eq(third.slice(0, 3), [['spr', '60', 'INT64'], ['bmie', '60', 'INT64'], ['bsip', '60', 'INT64']]);
     eq(ew(60), '60');
     eq([row(sh, 31), t.bot.status().bigquery_lookback], [['BigQuery lookback', '2 hours', tooLong(120)], '60 minutes (Control tab B31)']);
 
     sh.getRange(31, 2).setValue('');
-    eq(run(15 * MIN), each('60', ew(60)));
+    const fourth = run(15 * MIN);
+    eq(fourth.slice(0, 3), [['spr', '60', 'INT64'], ['bmie', '60', 'INT64'], ['bsip', '60', 'INT64']]);
     eq(row(sh, 31), ['BigQuery lookback', '', BLANK_NOTE]);
 
     // Paused: nothing is checked, but C31 is kept current
@@ -328,8 +344,10 @@ module.exports = H => {
     eq([run(15 * MIN), all], [[], 0]);
     eq([sh.cell(31, 3), t.get('B5')], [OK_45, '⏸ Paused: Bot is OFF. Set it to ON to restart.']);
     t.set('B2', 'ON');
-    eq(run(15 * MIN), each('45', ew(45)));
-    assert.ok(Number(ew(45)) > 45, ew(45));  // the paused half hour is read too
+    const resumed = run(15 * MIN);
+    eq(resumed.slice(0, 3), [['spr', '45', 'INT64'], ['bmie', '45', 'INT64'], ['bsip', '45', 'INT64']]);
+    assert.ok(Number(resumed[3][1]) >= 30 && resumed[3][1] === resumed[4][1], JSON.stringify(resumed));  // the paused half hour is read too
+    assert.ok(Number(ew(45)) > 45, ew(45));
     eq([sh.cell(31, 3), t.get('B5')], [OK_45, '✅ Working']);
   });
 };

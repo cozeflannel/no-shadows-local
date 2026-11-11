@@ -303,7 +303,7 @@ groups:
     auto_include: true
     recipients: []
     triggers:
-      exposure_tags: ["Product - Public leak (e.g. features/models)", "Employees - Self-proclaimed whistleblowers"]
+      exposure_tags: ["Employees - Self-proclaimed whistleblowers"]
       keywords: ["\\bleak(s|ed|ing)?\\b|whistle-?blow"]
   - name: Influencer Team
     action_code: influencer_team

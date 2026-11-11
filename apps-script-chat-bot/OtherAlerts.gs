@@ -358,12 +358,20 @@ function handleOtherAlert_(ctx, m, other, report) {
   try {
     // the stream's own words count too: a Resources document about the stream is found by them
     const query = knowledgeQuery_({ fields: Object.assign({ alert_name: other.header }, parsed.fields), post: parsed.post });
-    parsed.knowledge = knowledgeFor_(ctx.knowledge, query, { budget: KNOWLEDGE_REVIEW_CHARS_ });
+    parsed.knowledge = knowledgeForCtx_(ctx, query, { budget: KNOWLEDGE_REVIEW_CHARS_, pin: true });
   } catch (e) {
     parsed.knowledge = null;
     ctx.log('knowledge base unavailable for this triage: ' + ((e && e.message) || e));
   }
   if (parsed.knowledge && parsed.knowledge.docs.length) ctx.log(`knowledge: ${knowledgeBrief_(parsed.knowledge)}`);
+  if (typeof vecTagHints_ === 'function' && typeof vecTagHintLine_ === 'function') {
+    try {
+      const hText = [other.header || '', parsed.fields.summary || '', (parsed.post && parsed.post.text) || other.text || '']
+        .filter(Boolean).join(' — ').slice(0, 1200);
+      const hint = hText ? (vecTagHints_([hText], { deadline: ctx.deadline }) || [])[0] : null;
+      if (hint) parsed.tagHintLine = vecTagHintLine_(hint);
+    } catch (e) {}
+  }
   const preNonEn = otherNonEnglishWhy_(parsed, null);
   const { llm, llmError, held } = preNonEn ? { llm: null, llmError: '', held: null } : guardedAssess_(ctx, m, parsed, now);
   const tri = otherTriageOf_(llm, parsed);
@@ -461,6 +469,8 @@ function otherNoEmail_(ctx, row, d, report) {
   }
   decide(`\u274c ${d.why || 'no action needed'}`);
   if (markNoAction_(ctx, row)) ctx.log(`${row.alert_id}: \u274c no Social Alert needed (${d.why || 'no action needed'})`);
+  const mv = d && d.review && d.review.memory && d.review.memory.verdict;
+  if (mv && mv.skip && typeof amHeldTrace_ === 'function') amHeldTrace_(ctx, row, mv);
 }
 
 /** Non-English exclusion reason for an Other/Watch alert, or '' when English. Pure. */
@@ -492,7 +502,11 @@ function otherDecide_(ctx, parsed, tri, llm, history, now) {
   const view = tri && tri.slrr;
   const sure = !!(view && view.is && view.confidence >= OTHER_SLRR_MIN_CONFIDENCE_);
   const fields = otherFields_(parsed, tri, eng, sure);
+  const memStory = typeof amNoveltyFor_ === 'function' ? amNoveltyFor_(ctx, fields) : null;
+  if (memStory && !fields.issue_status) fields.issue_status = 'Ongoing Issue';
   const review = otherReview_(parsed, tri, fields, llm, now);
+  if (memStory) review.memoryStory = memStory;
+  review.memory = typeof amFactsFor_ === 'function' ? amFactsFor_(ctx, review.fields) : null;
   const d = { action: 'flag', basis: 'failed', why: '', esc: null, draft: null, fields, review, tri, eng, slrr: null, tnsInput: null,
     stream: String((parsed.other && parsed.other.topic) || ''), watch: (parsed.other && parsed.other.watch) || null };
   if (sure) {
@@ -528,7 +542,9 @@ function otherDecide_(ctx, parsed, tri, llm, history, now) {
   // known/ongoing issues, KB, Guidance and web context before escalating (no blind rubber-stamp)
   if (d.watch) {
     const we = otherWatchEsc_(ctx, review, history, d.watch);
-    const repeat = followUpSkip_(review, we.esc) || knownIssueSkip_(review, we.esc);
+    const repeat = followUpSkip_(review, we.esc) || knownIssueSkip_(review, we.esc) ||
+      (typeof memorySkip_ === 'function' ? memorySkip_(review, we.esc) : '') ||
+      (we.esc && we.esc.suppression === 'ongoing_no_kof' ? noEmailWhy_(we.esc) : '');
     if (repeat) return Object.assign(d, { action: 'no_action', basis: 'repeat', why: repeat });
     if ((rulesWould && s.sure && s.collected === true) ||
         (tri.action === 'escalate' && tri.confidence >= OTHER_WATCH_MIN_CONFIDENCE_)) {
@@ -554,13 +570,17 @@ function otherDecide_(ctx, parsed, tri, llm, history, now) {
   if (earlyRepeat) return Object.assign(d, { action: 'no_action', basis: 'repeat', why: earlyRepeat });
   // 1. SLRR first: sure of the view, collected, and the rules escalate it
   if (rulesWould && s.sure && s.collected === true) {
+    const slrrRepeat = typeof memorySkip_ === 'function' ? memorySkip_(review, s.esc) : '';
+    if (slrrRepeat) return Object.assign(d, { action: 'no_action', basis: 'repeat', why: slrrRepeat });
     return Object.assign(d, { action: 'escalate', basis: 'slrr', esc: s.esc, why: `the SLRR rules: ${escalationWhyText_(s.esc)}`,
       draft: draftPlan_(ctx, review, history) });
   }
   // 2. The stream's own call: escalate when Gemini is sure enough (never twice for the same post or known issue with nothing new)
   if (tri.action === 'escalate' && tri.confidence >= OTHER_MIN_CONFIDENCE_) {
     const se = otherStreamEsc_(ctx, review, history, tri, parsed.other);
-    const repeat = followUpSkip_(review, se.esc) || knownIssueSkip_(review, se.esc);
+    const repeat = followUpSkip_(review, se.esc) || knownIssueSkip_(review, se.esc) ||
+      (typeof memorySkip_ === 'function' ? memorySkip_(review, se.esc) : '') ||
+      (se.esc && se.esc.suppression === 'ongoing_no_kof' ? noEmailWhy_(se.esc) : '');
     if (repeat) return Object.assign(d, { action: 'no_action', basis: 'repeat', why: repeat });
     return Object.assign(d, { action: 'escalate', basis: 'stream', esc: se.esc, why: tri.reason || 'the stream triage',
       draft: draftsOn_(ctx) ? draftRowFor_(ctx, review, se.esc, se.related) : null });
@@ -590,6 +610,7 @@ function otherDecide_(ctx, parsed, tri, llm, history, now) {
  */
 function otherStreamEsc_(ctx, review, history, tri, other) {
   const { related, esc } = escalationFor_(ctx, review, history);
+  if (esc.suppression === 'ongoing_no_kof' && related && related.email_status === 'sent') return { related, esc };
   const stream = String((other && other.topic) || '').trim();
   return {
     related,
@@ -608,6 +629,7 @@ function otherStreamEsc_(ctx, review, history, tri, other) {
  */
 function otherWatchEsc_(ctx, review, history, watch) {
   const { related, esc } = escalationFor_(ctx, review, history);
+  if (esc.suppression === 'ongoing_no_kof' && related && related.email_status === 'sent') return { related, esc };
   return {
     related,
     esc: Object.assign({}, esc, {
@@ -1123,6 +1145,7 @@ function otherTriagePrompts_(parsed, media) {
     'below (thick-skinned: everyday snark and fringe grumbling never warrant one)? why: one short clause.\n' +
     'Don\'t judge the author\'s KOF status or SLRR\'s engagement thresholds: the bot checks those itself.\n\n' +
     `EXPOSURE TAGS:\n${tags}\n\nSENSITIVE TOPICS:\n${topics}\n\nPRODUCTS (distribution names): ${products}\n\n` +
+    (parsed && parsed.tagHintLine ? `${parsed.tagHintLine}\n\n` : '') +
     `SLRR PLAYBOOK:\n${playbookText_()}\n\n` +
     'TEAMS (recommended_groups): the teams that should get a Social Alert about it, each with a one-sentence reason (read ' +
     'by Google analysts only). Leave a team out when unsure.\n' + teamGuideText_() + '\n\n' +

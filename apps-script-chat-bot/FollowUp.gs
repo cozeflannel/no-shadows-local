@@ -564,7 +564,7 @@ function followupAnswerFacts_(ctx, row, st, question) {
   const esc = input.escalation || {};
   let knowledge = '';
   try {
-    knowledge = knowledgeFor_(ctx.knowledge, knowledgeQueryFor_(question, { forwarded_fields: f }), { budget: KNOWLEDGE_ANSWER_CHARS_ }).text || '';
+    knowledge = knowledgeForCtx_(ctx, knowledgeQueryFor_(question, { forwarded_fields: f }), { budget: KNOWLEDGE_ANSWER_CHARS_ }).text || '';
   } catch (e) {
     ctx.log(`knowledge base unavailable for the answer on ${row.alert_id}: ${(e && e.message) || e}`);
   }
