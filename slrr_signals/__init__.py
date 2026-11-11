@@ -8,6 +8,9 @@ before any LLM; Gemini classifies the survivors against the playbook taxonomy; t
 Track 2 (radar, exploratory): the early_detection embedding clusters (and the sources' own issue groupings) with their
 velocity; Gemini estimates whether each will meet Track 1 if left alone; rows go to radar_clusters.
 
-Nothing here posts in Chat or emails anyone. Qualifying Track 1 rows wait in v_track1_ready for the existing chatbot,
-which reads them only when its own hand-off switch is ON.
+The service itself posts nothing in Chat and emails no one: the existing chatbot hands its results to the chat
+(apps-script-chat-bot/Signals.gs), into the flows the sheet's Control tab already routes. Qualifying Track 1 rows are
+posted as watch alerts where Watch alerts (Control row 35) says, and worked there like any alert; the clusters Track 2
+promoted or rated likely to become an alert join the bot's Early detection review (Control row 19). Each hand-off is
+recorded in slrr_signals.handoffs.
 """

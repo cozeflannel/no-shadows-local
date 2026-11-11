@@ -3126,7 +3126,9 @@ function edQueueCompact_(row) {
   ['alert_id', 'created_utc', 'signal_type', 'velocity_grain', 'cluster_id', 'signal_key', 'headline', 'topic_product',
     'priority_hint', 'unique_low_tier_authors', 'mention_count', 'platform_count', 'platforms_csv', 'baseline_authors',
     'velocity_ratio', 'absolute_author_delta', 'primary_url', 'window_start_utc', 'window_end_utc',
-    'update_of_alert_id', 'update_of_authors'].forEach(k => {
+    'update_of_alert_id', 'update_of_authors',
+    // a radar alert's (Signals.gs sigRadarRow_: signal_type RADAR): where its cluster came from and the radar's outlook
+    'radar_origin', 'radar_likelihood', 'radar_action', 'radar_tag', 'radar_why'].forEach(k => {
     const v = r[k];
     if (v === undefined || v === null || v === '') return;
     keep[k] = typeof v === 'string' ? truncate_(v, k === 'primary_url' ? 1000 : 300) : v;

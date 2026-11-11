@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS `brand-social-central-data.slrr_signals.classified_me
 )
 PARTITION BY DATE(classified_at)
 CLUSTER BY qualifies, exposure_priority, mention_key
-OPTIONS (description = 'Track 1 (official, strict): playbook classifications. Only qualifying rows may reach the chatbot, and only once the bot\'s hand-off switch is ON.');
+OPTIONS (description = 'Track 1 (official, strict): playbook classifications. The chatbot hands each qualifying row to the chat once, as a watch alert where Control row 35 says (handoffs records it).');
 
 -- Track 2 output: one row per assessment of a cluster (the latest per cluster is the current one: v_radar_latest)
 CREATE TABLE IF NOT EXISTS `brand-social-central-data.slrr_signals.radar_clusters` (
@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS `brand-social-central-data.slrr_signals.radar_cluster
 )
 PARTITION BY DATE(assessed_at)
 CLUSTER BY likelihood, action, cluster_id
-OPTIONS (description = 'Track 2 (radar, exploratory): predictive assessments of sub-threshold clusters. Never posted to the official chat unless promoted.');
+OPTIONS (description = 'Track 2 (radar, exploratory): predictive assessments of sub-threshold clusters. The chatbot hands the promoted or high-likelihood ones to its Early detection review (Control row 19) once; never S-F Burson.');
 
 -- Taxonomy: exposure tags, Sensitive Topics, thresholds, keywords and exclusions (edited on the sheet's Watch tags tab)
 CREATE TABLE IF NOT EXISTS `brand-social-central-data.slrr_signals.taxonomy` (
@@ -235,4 +235,4 @@ CREATE TABLE IF NOT EXISTS `brand-social-central-data.slrr_signals.handoffs` (
   outcome STRING
 )
 PARTITION BY DATE(handed_at)
-OPTIONS (description = 'Track 1 rows the chatbot took (only while its hand-off switch is ON).');
+OPTIONS (description = 'What the chatbot handed to the chat, once each: Track 1 rows (mention_key, outcome watch_alerts) and radar assessments (mention_key radar:<cluster>@<ms>, outcome early_detection_queue).');

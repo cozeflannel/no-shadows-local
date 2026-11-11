@@ -6,7 +6,8 @@ POST /reprocess  ?hours=N: classify again what landed in the last N hours under 
 GET  /healthz    liveness
 GET  /metrics    each source's health and today's numbers
 One request at a time (Cloud Run concurrency 1, max instances 1, plus a lock here): runs never overlap. Every run
-writes a run_log row. Nothing here posts in Chat or emails anyone.
+writes a run_log row. The service posts nothing in Chat and emails no one: the chatbot hands its results to the chat
+(apps-script-chat-bot/Signals.gs).
 """
 
 from __future__ import annotations

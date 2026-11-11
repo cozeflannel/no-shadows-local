@@ -35,8 +35,12 @@
  *                      in each source, read-only in BigQuery (Sonar, Tubular, Brandwatch's mentions, Sprinklr's report
  *                      of Google's own posts and the comments on them, and the Brandwatch query "2026 Election Alerts"
  *                      read from Brandwatch's API) against the watches ON on the Watches tab (the exposure tags they
- *                      pick on the Watch tags tab); a shadow test: what it would flag goes on the Watch detections tab
- *                      (the Watch sources tab: which sources are live), nothing is posted or emailed; C34 how it's doing
+ *                      pick on the Watch tags tab); what it flags goes on the Watch detections tab (the Watch sources
+ *                      tab: which sources are live) and out as watch alerts where B35 says (B35 OFF: nothing is posted
+ *                      or emailed); C34 how it's doing
+ *   B35                Watch alerts (WatchAlerts.gs): where the watch's flags and the classified alerts (Signals.gs,
+ *                      Track 1) are posted: OFF, the Other alerts space (B33), the Mirror space (B9) or the Auto-correct
+ *                      space (B10); C35 how it's going
  *   A36...             How it works
  *
  * Plus the Resources tab: the bot's knowledge base (Knowledge.gs). Name · Link · What it covers · Burson can see it? ·
@@ -125,7 +129,9 @@ const CONTROL_HELP_ = [
   '• Early wave & velocity check: row 19, OFF unless you turn it ON. Every 15 minutes the bot reads pending low-tier ' +
     'semantic clusters and multi-grain velocity spikes from BigQuery (early_detection) and posts an Early Detection Alert ' +
     'card in the Mirror space or test feed (never S-F Burson), so the bot reviews it, marks its emojis, and drafts a ' +
-    'Social Alert, Temp Check query, or T&S intake behind human review when warranted.',
+    'Social Alert, Temp Check query, or T&S intake behind human review when warranted. The two-track radar\'s alerts ' +
+    '(emerging stories Gemini promoted or rated likely to become an alert: the Signals tab) join the same review and get ' +
+    'the same card, only while this row is ON.',
   '• BigQuery lookback (B31): how far back Direct BigQuery alerts and Early detection look: 15, 30, 45 or 60 minutes ' +
     '(blank: 60; never more than an hour). Sprinklr and BMIE posts count only if they went live in that time; BSIP ' +
     'posts count if Pendulum saw them in that time and they went live in the last 48 hours. Brandwatch (BMIE) takes in ' +
@@ -196,28 +202,29 @@ const CONTROL_HELP_ = [
     'the SLRR rules decide, exactly as for Burson\'s alerts; otherwise a Social Alert goes out only when Gemini is 90%+ ' +
     'sure it\'s needed, and the rest get 👍 (worth a person\'s look) or ❌ (no action). Its note is in the alert\'s ' +
     'thread. Guidance rows and Resources documents about that topic steer it.',
-  '• Proactive watch: row 34, a shadow test of spotting issues before Burson does. Every 5 minutes the bot reads, ' +
-    'read-only in BigQuery, what is new since its last look in each source: the posts Pendulum (Sonar) first saw ' +
-    '(accounts with 1,000+ followers or posts with 100+ engagements, risk tags only) and the ones that grew past that ' +
-    'later or broke out, Brandwatch\'s BMIE mentions (every one from the brand-safety and product queries; from the ' +
-    'others, those with a sign of trouble plus a sample), comments piling up on Google\'s own posts (Sprinklr), ' +
-    'Google\'s own posts, Tubular\'s videos, the DSD story selection feed (Brandwatch\'s HIGH and KOF alerts), the ' +
-    'alerts the bot read in the Other alerts space (B33) and the Brandwatch query "2026 Election Alerts" (straight from ' +
-    'Brandwatch, usually minutes after posting). Gemini answers each ' +
-    'watch ON on the Watches tab: does the post match its question, how likely is it to become an issue in the next 6 ' +
-    'hours (1-10), and what is it about. What scores at a watch\'s bar (and the near misses) goes on the Watch ' +
-    'detections tab, with its source and a Rating column for you; the scorecard at its top compares it with Burson\'s ' +
-    'alerts (how many it caught, and how much sooner). The Watch sources tab says which sources are live and which are ' +
-    'stale. Nothing is posted or emailed unless Watch alerts (row 35) says where its flags go, and nothing is written to ' +
-    'BigQuery. The tabs appear the first time it\'s ON, with two watches, both OFF: set a watch\'s On to ON, or add your ' +
-    'own. C34 shows how it\'s doing.',
-  '• Watch alerts: row 35, OFF until you choose where the Proactive watch\'s flags go. "Other alerts space (B33)" posts ' +
-    'each one in the space in B33 (paste another space in B33 and the next ones go there); "Mirror space (B9)" posts ' +
-    'them in the Mirror space, beside Burson\'s alerts (the Mirror and the Relay work as before, and nothing the bot ' +
-    'posts goes to S-F Burson). Each one is a 🔭 Watch alert, never in Zapier\'s format, and the bot works it like any ' +
-    'alert: ❌ when Gemini finds the same story was already alerted (no second email), else a Social Alert to the right ' +
-    'teams (only the testers while Testing) and T&S when the post\'s rules say so. A flag waits up to 3 hours to go out; ' +
-    'at most 5 a run go in B33, 2 in the Mirror space. C35 shows how it\'s doing.',
+  '• Proactive watch: row 34, spotting issues before Burson does. Every 5 minutes the bot reads, read-only in ' +
+    'BigQuery, what is new since its last look in each source: the posts Pendulum (Sonar) first saw (accounts with ' +
+    '1,000+ followers or posts with 100+ engagements, risk tags only) and the ones that grew past that later or broke ' +
+    'out, Tubular\'s videos (YouTube and TikTok first), Brandwatch\'s mentions (negative, English, SLRR-tagged, at most ' +
+    '1,000 a day), Google\'s own posts whose comments turned negative and the comments piling up on them (Sprinklr), and ' +
+    'the Brandwatch query "2026 Election Alerts" (straight from Brandwatch, usually minutes after posting); only X, ' +
+    'Reddit, Bluesky, Facebook, Instagram, YouTube and TikTok, never Grok\'s posts. Gemini answers each watch ON on the ' +
+    'Watches tab (the exposure tags it picks on the Watch tags tab): does the post match, how likely is it to become an ' +
+    'issue in the next 6 hours (1-10), and which tags fit. What scores at a watch\'s bar (and the near misses) goes on ' +
+    'the Watch detections tab, with its source and a Rating column for you; the scorecard at its top compares it with ' +
+    'Burson\'s alerts (how many it caught, and how much sooner). The Watch sources tab says which sources are live. ' +
+    'Watch alerts (row 35) says where its flags are posted (OFF: nothing is posted or emailed). The tabs appear the first ' +
+    'time it\'s ON, with two watches, both OFF: set a watch\'s On to ON, or add your own. C34 shows how it\'s doing.',
+  '• Watch alerts: row 35, OFF until you choose where flagged posts go: the Proactive watch\'s flags and the classified ' +
+    'alerts (the two-track system\'s Track 1: posts that met the Collection Requirements after its rules and Gemini, ' +
+    'posted even while row 34 is OFF; see the Signals tab). "Other alerts space (B33)" posts each one in the space in B33 ' +
+    '(paste another space in B33 and the next ones go there); "Mirror space (B9)" posts them in the Mirror space, beside ' +
+    'Burson\'s alerts (the Mirror and the Relay work as before, and nothing the bot posts goes to S-F Burson); ' +
+    '"Auto-correct space (B10)" posts them in the Auto-correct space, beside the corrected Burson alerts. Each one is a ' +
+    '🔭 Watch alert, never in Zapier\'s format, and the bot works it like any alert: ❌ when Gemini finds the same story ' +
+    'was already alerted (no second email), else a Social Alert to the right teams (only the testers while Testing) and ' +
+    'T&S when the post\'s rules say so. A flag waits up to 3 hours to go out; at most 5 a run go in B33, 2 in the ' +
+    'Mirror or Auto-correct space. OFF: nothing is posted. C35 shows how it\'s doing.',
   '• Temp checks: row 36, OFF until you turn it ON. In a thread in the Mirror space or the Other alerts space (B33), ' +
     'write "temp check" and the Brandwatch query\'s name (as the team names them, e.g. [G EVENT] NOV26 Issue name, in ' +
     '[SLRR] Private), or its link. After the next run\'s alerts the bot emails the temp check from its account to the ' +
@@ -299,13 +306,38 @@ function ensureControlTab_(ss, owner) {
   return sh;
 }
 
-/** "How it works" from row 38, under a blank row (rewritten by setup(), so it stays current; nobody edits it). */
+/**
+ * "How it works" from row 38, under a blank row (rewritten by setup(), and by ensureControlHelp_ whenever its words
+ * changed, so it stays current; nobody edits it). Notes the words it wrote (CONTROL_HELP_HASH_PROP_).
+ */
 function writeControlHelp_(sh) {
   const lines = [['How it works']].concat(CONTROL_HELP_.map(line => [line]));
   while (lines.length < CONTROL_HELP_ROWS_) lines.push(['']);
   sh.getRange(CONTROL_HELP_ROW_ - 1, 1, lines.length + 1, 1).setValues([['']].concat(lines));
   sh.getRange(CONTROL_HELP_ROW_, 1).setFontWeight('bold');
   sh.getRange(CONTROL_HELP_ROW_ + 1, 1, lines.length - 1, 1).setFontWeight('normal');
+  try { PropertiesService.getScriptProperties().setProperty(CONTROL_HELP_HASH_PROP_, controlHelpHash_()); } catch (e) { /* rewritten next run */ }
+}
+
+const CONTROL_HELP_HASH_PROP_ = 'CONTROL_HELP_HASH';  // the "How it works" words last written to the tab (a hash)
+
+/** A hash of the "How it works" words. Pure but for Utilities. */
+function controlHelpHash_() {
+  return hashText_(CONTROL_HELP_.join('\n'));
+}
+
+/**
+ * Every run, paused or not: "How it works" is rewritten when its words changed since they were last written (a new
+ * build's words reach the tab without setup()); otherwise one property read. Never throws.
+ */
+function ensureControlHelp_(sh) {
+  try {
+    if (!sh) return;
+    if (PropertiesService.getScriptProperties().getProperty(CONTROL_HELP_HASH_PROP_) === controlHelpHash_()) return;
+    writeControlHelp_(sh);
+  } catch (e) {
+    console.warn('could not refresh the Control tab\'s "How it works": ' + ((e && e.message) || e));
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -435,20 +467,20 @@ const CONTROL_SWITCHES_ = [
   { key: 'directB25', label: 'Work directly in B25 (Google-only)', row: 32,
     off: 'OFF (B25 is the real S-F Burson: the bot posts nothing there itself, only Burson outbox rows set to Send)',
     on: (standIn, live, sw, extra) => directB25OnText_(extra && extra.directB25, testersWho_(standIn, extra)) },
-  // Row 34, below the Other alerts space (33): Proactive watch (ProactiveWatch.gs). A shadow test: every 5 minutes Gemini
-  // checks, inside BigQuery, what is new in each source (Sonar, Tubular, Brandwatch, Sprinklr) against the watches ON on
-  // the Watches tab (the exposure tags they pick), and what it would flag goes on the Watch detections tab, with a
-  // scorecard against Burson's alerts. It posts and emails nothing, unless Watch alerts (row 35, WatchAlerts.gs;
-  // extra.watchAlerts: 'other' | 'mirror' this run) says where its flags go
+  // Row 34, below the Other alerts space (33): Proactive watch (ProactiveWatch.gs). Every 5 minutes Gemini checks, inside
+  // BigQuery, what is new in each source (Sonar, Tubular, Brandwatch, Sprinklr) against the watches ON on the Watches tab
+  // (the exposure tags they pick); what it flags goes on the Watch detections tab, with a scorecard against Burson's
+  // alerts, and out as watch alerts where Watch alerts (row 35, WatchAlerts.gs; extra.watchAlerts: 'other' | 'mirror' |
+  // 'autocorrect' this run) says; with row 35 OFF it posts and emails nothing
   { key: 'proactiveWatch', label: 'Proactive watch', row: 34,
     off: 'OFF (the bot reviews only the alerts posted in Chat)',
     on: (standIn, live, sw, extra) => (extra && extra.watchAlerts
       ? `✓ ON (its flags go out as watch alerts: row 35, ${pwAlertsWhere_(extra.watchAlerts)}): every 5 min, Gemini ` +
         'checks what\'s new in Sonar, Brandwatch, Sprinklr and Tubular against the watches ON on the Watches tab (the ' +
         'exposure tags they pick); what it flags goes on the Watch detections tab'
-      : '✓ ON (shadow test: nothing is posted or emailed): every 5 min, Gemini checks what\'s new in Sonar, ' +
-        'Brandwatch, Sprinklr and Tubular against the watches ON on the Watches tab (the exposure tags they pick); what ' +
-        'it would flag goes on the Watch detections tab') },
+      : '✓ ON (Watch alerts, row 35, is OFF: nothing is posted or emailed): every 5 min, Gemini checks what\'s new in ' +
+        'Sonar, Brandwatch, Sprinklr and Tubular against the watches ON on the Watches tab (the exposure tags they pick); ' +
+        'what it flags is listed on the Watch detections tab') },
   // Row 36, below Watch alerts (35): Temp checks (TempCheck.gs). "temp check" and a Brandwatch query's name in a thread of
   // the Mirror space (B9) or the Other alerts space (B33) gets the team's temp check emailed to the testers (B30, else the
   // stand-in), the thread told it was, after the run's alerts; a feature note says how the last one went

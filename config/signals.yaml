@@ -1,7 +1,9 @@
 # slrr-signals (Cloud Run): the two-track SLRR system. docs/TWO_TRACK_SIGNALS.md explains every setting.
 # Track 1 (official, strict): deterministic rules, then Gemini, then the Collection Requirements engine
 # (triage_agent.qa.requirements, the same one that QAs Burson's alerts). Track 2 (radar): the early_detection
-# clusters and velocity, then Gemini's outlook. Both write only to the slrr_signals dataset: nothing here posts in Chat.
+# clusters and velocity, then Gemini's outlook. Both write only to the slrr_signals dataset; the chatbot hands their
+# results to the chat (Signals.gs): Track 1's qualifying rows as watch alerts (Control row 35), Track 2's promoted or
+# high-likelihood clusters to its Early detection review (Control row 19).
 
 project: brand-social-central-data
 dataset: slrr_signals

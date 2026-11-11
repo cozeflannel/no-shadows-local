@@ -1,16 +1,22 @@
 /**
- * WatchAlerts.gs — Watch alerts (Control tab row 35, OFF until a person chooses where they go): the Proactive watch's
- * flags (ProactiveWatch.gs: a watch's yes and a score at its bar) posted as alerts of the bot's own, so the bot works
- * them like any alert there: the same story already alerted gets ❌ and no second email; anything else gets its Social
- * Alert to the right teams (only the testers while Testing) and its marks, and T&S when the post's rules say so.
+ * WatchAlerts.gs — Watch alerts (Control tab row 35, OFF until a person chooses where they go): the flags on the Watch
+ * detections tab posted as alerts of the bot's own, so the bot works them like any alert there: the same story already
+ * alerted gets ❌ and no second email; anything else gets its Social Alert to the right teams (only the testers while
+ * Testing) and its marks, and T&S when the post's rules say so. The flags are the Proactive watch's (ProactiveWatch.gs:
+ * a watch's yes and a score at its bar) and the two-track system's classified alerts (Signals.gs: Track 1's qualifying
+ * classifications, watch "Classification (Collection Requirements)", their card's SLRR lines Track 1's own); those go
+ * out even while the Proactive watch (row 34) is OFF (pwPostWaitingOnly_).
  *
- *   B35 "Watch alerts"   OFF                        the watch only lists what it would flag (the Watch detections tab)
+ *   B35 "Watch alerts"   OFF                        nothing is posted: the watch only lists its flags (the Watch
+ *                                                   detections tab), and no classified alert is handed over
  *                        Other alerts space (B33)   posted in the Other alerts space (OtherSpace.gs: a midterms space,
  *                                                   say), a place of their own, always Testing there; paste another
  *                                                   space in B33 and the next ones go there
  *                        Mirror space (B9)          posted in the Mirror space, beside Burson's alerts: the Mirror and
  *                                                   the Relay carry on exactly as before (nothing the bot posts is ever
  *                                                   relayed to S-F Burson: Relay.gs relayBotsOwn_)
+ *                        Auto-correct space (B10)   posted in the Auto-correct space, worked by its flow beside the
+ *                                                   corrected Burson alerts (always Testing there)
  *
  * Each alert is posted once, in the bot's own format (pwAlertText_: "(telescope) Watch alert · <watch>", which neither
  * Burson nor a monitoring tool writes, so it never looks like a Zapier alert), with an id of its own
@@ -85,7 +91,8 @@ function pwAlertsRule_() {
 
 /** C35 while B35 is OFF. Pure. */
 function pwAlertsOffText_() {
-  return 'OFF (the Proactive watch only lists what it would flag, on the Watch detections tab)';
+  return 'OFF (nothing is posted: the Proactive watch only lists its flags on the Watch detections tab, and classified ' +
+    'alerts wait in BigQuery)';
 }
 
 /**
@@ -207,7 +214,7 @@ function pwAlertsNoteText_(dest, res, watchOn, today, grouped) {
   const choice = dest && dest.choice;
   if (!choice) return pwAlertsOffText_();
   const where = pwAlertsWhere_(choice);
-  if (!watchOn) return `\u26a0\ufe0f ${where} chosen, but the Proactive watch (row 34) is OFF: nothing to post`;
+  if (!watchOn) return `\u26a0\ufe0f ${where} chosen, but the Proactive watch (row 34) is OFF: only classified alerts are posted (none waiting)`;
   const counts = ` \u00b7 today: ${fmtInt_(today || 0)} posted${grouped ? `, +${fmtInt_(grouped)} in their story's thread` : ''}` +
     `${res && res.waiting ? `, ${fmtInt_(res.waiting)} waiting` : ''}`;
   const problem = (dest && dest.problem) || (res && res.problem) || (!dest.space ? 'no space to post in this run' : '');
@@ -671,7 +678,9 @@ function pwTaxOf_(raw) {
     lists = k.lists || (kind ? kind[1].trim() : '');
   }
   if (!products.length && !tag && !topics.length && kof === null) return null;
-  return { p: products.slice(0, 4), t: tag ? tag.name : '', s: topics.slice(0, 6), k: kof, l: truncate_(lists, 120) };
+  const out = { p: products.slice(0, 4), t: tag ? tag.name : '', s: topics.slice(0, 6), k: kof, l: truncate_(lists, 120) };
+  if (o.f) out.f = 1;  // Track 1's classification (Signals.gs): the card shows it as it is (pwCardOf_)
+  return out;
 }
 
 /** The AI pre-read's answer shape (pwPreRead_): one entry a flag. Pure. */
@@ -937,13 +946,14 @@ function pwCardSummary_(a, p, post) {
 function pwCardOf_(it, p, post, others) {
   const a = Object.assign({}, it.a);
   const tax = a.tax || null;
+  const firm = !!(tax && tax.f);  // Track 1's classification (Signals.gs): its lines stand, whatever the pre-read says
   a.summary = pwCardSummary_(it.a, p, post);
-  if (p && p.about === false && !(tax && tax.p.length)) {
+  if (p && p.about === false && !firm && !(tax && tax.p.length)) {
     a.notGoogle = true;
   } else {
-    a.products = p && p.products.length ? p.products : (tax ? tax.p : []);
-    a.tag = (p && p.tag) || (tax && tax.t ? pwTagText_(tax.t) : '');
-    a.topics = p ? p.topics : (tax ? tax.s : null);
+    a.products = firm && tax.p.length ? tax.p : p && p.products.length ? p.products : (tax ? tax.p : []);
+    a.tag = (firm && tax.t ? pwTagText_(tax.t) : '') || (p && p.tag) || (tax && tax.t ? pwTagText_(tax.t) : '');
+    a.topics = firm ? tax.s : p ? p.topics : (tax ? tax.s : null);
     a.classified = !!(p || tax);
   }
   a.kof = tax ? tax.k : null;
@@ -1131,17 +1141,18 @@ function pwPostStories_(items, pre, recent, c) {
  * is dropped (a: 'x'); one for a post or conversation thread already alerted (by another watch, Burson, or any flow in
  * the Alert log) isn't posted again (a: 'd'); one with nothing to show (no summary, text or picture) is never posted as
  * a bare link (a: 'n'). Nothing goes out while B35 is OFF or the destination can't take them (they wait), nor while the
- * destination space's flow ran out of time. `left`: ms of the run left; `opts`: {ss, otherBusy, acBusy}. {posted,
- * grouped, waiting, dropped, problem, error}. Never throws.
+ * destination space's flow ran out of time. `left`: ms of the run left; `opts`: {ss, otherBusy, acBusy, only (a watch:
+ * only its flags are looked at)}. {posted, grouped, waiting, dropped, problem, error}. Never throws.
  */
 function pwPostAlerts_(sh, dest, now, left, opts) {
   const out = { posted: 0, grouped: 0, waiting: 0, dropped: 0, problem: '', error: false };
   try {
     const block = pwDetRows_(sh, PW_DET_READ_ROWS_);
+    const only = opts && opts.only ? String(opts.only) : '';
     const queued = [];
     block.values.forEach((v, i) => {
       const k = pwKeyOf_(v[PW_COL_.key - 1]);
-      if (k && k.a === 'q') queued.push({ i, k, v });
+      if (k && k.a === 'q' && (!only || k.w === only)) queued.push({ i, k, v });
     });
     if (!queued.length) return out;
     const { done, doneThreadIds } = pwAlertedState_(opts && opts.ss, block, dest && dest.choice);
@@ -1212,6 +1223,32 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     console.error('Watch alerts: ' + ((e && e.stack) || e));
   }
   return out;
+}
+
+/**
+ * The Proactive watch (row 34) OFF: the classified alerts Signals.gs queued on the Watch detections tab (Track 1, watch
+ * SIG_T1_WATCH_; the watch's own flags stay put) still go out where row 35 says, as runProactiveWatch_ posts them, a few
+ * a run; C35 says how it's going. `opts`: {alerts (this run's pwAlertsDest_), control, otherBusy, acBusy}. Nothing when
+ * none wait or row 35 is OFF. Never throws. pwPostAlerts_'s result, or null when it didn't try.
+ */
+function pwPostWaitingOnly_(ss, runStart, opts) {
+  try {
+    const o = opts || {};
+    const dest = o.alerts || null;
+    const props = PropertiesService.getScriptProperties();
+    if (!dest || !dest.choice || typeof SIG_T1_WATCH_ === 'undefined' || !props.getProperty(SIG_T1_PENDING_PROP_)) return null;
+    const left = () => Number(runStart) + RUN_HARD_STOP_MS_ - Date.now();
+    if (left() < PW_MIN_LEFT_MS_) return null;
+    const dt = pwDetectionsTab_(ss, false);
+    if (!dt.sh) return null;
+    const res = pwPostAlerts_(dt.sh, dest, Date.now(), left, { ss, otherBusy: !!o.otherBusy, acBusy: !!o.acBusy, only: SIG_T1_WATCH_ });
+    if (!res.error && !res.waiting) props.deleteProperty(SIG_T1_PENDING_PROP_);  // the watch's own flags keep theirs
+    if (o.control) writeWatchAlertsNote_(o.control, pwAlertsNoteText_(dest, res, true, pwAlertDay_(0), pwAlertDayGrouped_()));
+    return res;
+  } catch (e) {
+    console.error('Watch alerts (classified): ' + ((e && e.stack) || e));
+    return null;
+  }
 }
 
 /**

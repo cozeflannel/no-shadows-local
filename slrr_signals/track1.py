@@ -4,7 +4,9 @@ Every landed post gets one row: posts the rules stop are logged (passed_rules = 
 chat. Survivors get Gemini's structured classification, then triage_agent.qa.requirements.evaluate (the same engine
 that QAs Burson's alerts) decides whether it meets the Collection Requirements. A row qualifies only when it meets
 them, Gemini is at least track1.min_confidence sure, it is relevant, and the post wasn't reported in the last 14 days.
-Qualifying rows wait in v_track1_ready: only the chatbot, with its own hand-off switch ON, ever takes them.
+The chatbot (apps-script-chat-bot/Signals.gs) hands each qualifying row to the chat: a flag on the sheet's Watch
+detections tab, posted as a watch alert where Watch alerts (Control row 35) says and worked there like any alert;
+slrr_signals.handoffs records each one so it goes once.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from triage_agent.models import Case, CaseStatus
 from triage_agent.qa import requirements
 
 from . import guards
-from .classify import DISPLAY_NETWORK, Track1Classification, tags_from_config, track1_prompt, track1_system
+from .classify import DISPLAY_NETWORK, Track1Classification, strip_priority, tags_from_config, track1_prompt, track1_system
 from .guards import Budget
 from .ingest import ET
 from .rules import Rules, norm
@@ -137,8 +139,9 @@ def run_track1(wh: Warehouse, settings: Settings, agent_cfg: Any, llm: Any, web:
             c: Track1Classification = llm.generate_json(model=model, system=system, prompt=track1_prompt(m, res.track, res.reasons),
                                                         schema=Track1Classification, temperature=0.1, purpose="signals.track1")
             llm_left -= 1
-            pri_name = priority_of.get(norm(c.exposure_tag)) if c.exposure_tag else None
-            risk = priority_of.get(norm(c.risk_tag)) if c.risk_tag else None
+            # a tag Gemini gave as its "P0 · <name>" label counts as that name
+            pri_name = priority_of.get(norm(strip_priority(c.exposure_tag)[0])) if c.exposure_tag else None
+            risk = priority_of.get(norm(strip_priority(c.risk_tag)[0])) if c.risk_tag else None
             exposure_tag = pri_name[1] if pri_name and pri_name[0] in ("P0", "P1", "P2") else None
             priority = pri_name[0] if exposure_tag else None
             risk_tag = risk[1] if risk and risk[0] == "Sensitive" else None

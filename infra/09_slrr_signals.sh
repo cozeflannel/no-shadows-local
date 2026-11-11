@@ -9,7 +9,8 @@
 # What it makes: the service account slrr-signals (reads the source tables, writes slrr_signals, calls Gemini), the
 # scheduler account slrr-signals-sched (may only invoke the service), the private Cloud Run service slrr-signals (one
 # request at a time, never two instances: runs can't overlap), and two Cloud Scheduler jobs (/tick every minute,
-# /radar every 15 minutes). It posts nothing in Chat and touches no existing table, job or service.
+# /radar every 15 minutes). The service posts nothing in Chat (the chatbot hands its results to the chat: Signals.gs)
+# and touches no existing table, job or service.
 set -euo pipefail
 
 export CLOUDSDK_METRICS_ENVIRONMENT="${CLOUDSDK_METRICS_ENVIRONMENT:+$CLOUDSDK_METRICS_ENVIRONMENT }datacloud.antigravity"

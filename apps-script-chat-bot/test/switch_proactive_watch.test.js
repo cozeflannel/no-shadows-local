@@ -1,5 +1,5 @@
-// Proactive watch (Control tab row 34, proactiveWatch, ProactiveWatch.gs): a shadow test of spotting Google brand-safety
-// issues before Burson's alert space does. With the switch ON (it starts OFF, like every switch), every 5 minutes the bot
+// Proactive watch (Control tab row 34, proactiveWatch, ProactiveWatch.gs): spotting Google brand-safety issues before
+// Burson's alert space does. With the switch ON (it starts OFF, like every switch), every 5 minutes the bot
 // sends two read-only BigQuery scripts, one a location (us-central1: Pendulum's sonar_raw and Tubular's videos; US:
 // Brandwatch's mentions of Google's products, Sprinklr's report of Google's own posts and the Brandwatch query "2026
 // Election Alerts" read straight from Brandwatch's API). Each keeps its sources' new rows in a temporary table, then asks
@@ -7,7 +7,8 @@
 // Sensitive Topics make, from the Watch tags tab; AI.SCORE for the posts that match, AI.CLASSIFY for the exposure tags of
 // those at or near its bar). A later run collects them and records what scores at a watch's bar (and the near misses)
 // on the Watch detections tab, whose scorecard compares it with Burson's alerts in the Alert log; the Watch sources tab
-// says which sources are live. Nothing is posted or emailed; a tab of the same name people made is never touched.
+// says which sources are live. With Watch alerts (row 35) OFF, as here, nothing is posted or emailed (switch_watch_alerts
+// covers the posting); a tab of the same name people made is never touched.
 'use strict';
 
 module.exports = H => {
@@ -15,9 +16,9 @@ module.exports = H => {
   const ROW = 34;
   const MIN = 60 * 1000;
   const HOUR = 60 * MIN;
-  const ON_TEXT = '✓ ON (shadow test: nothing is posted or emailed): every 5 min, Gemini checks what\'s new in Sonar, ' +
-    'Brandwatch, Sprinklr and Tubular against the watches ON on the Watches tab (the exposure tags they pick); what ' +
-    'it would flag goes on the Watch detections tab';
+  const ON_TEXT = '✓ ON (Watch alerts, row 35, is OFF: nothing is posted or emailed): every 5 min, Gemini checks what\'s new in ' +
+    'Sonar, Brandwatch, Sprinklr and Tubular against the watches ON on the Watches tab (the exposure tags they pick); ' +
+    'what it flags is listed on the Watch detections tab';
   const OFF_TEXT = 'OFF (the bot reviews only the alerts posted in Chat)';
   const BRAND = 'Google brand safety (all)';
   const MIDTERMS = 'Midterms 2026 × Google';
@@ -242,7 +243,7 @@ module.exports = H => {
     t.poll();
     eq([t.sheet().sheets.filter(x => x.name === 'Watches').length, w.cell(2, 7), w.rows[3].slice(0, 7), w.cell(4, 11), g.cell(2, 3)],
       [1, 'My own question?', ['My watch', 'OFF', '', '', '', '', 'Is it about Pixel batteries?'], 'OFF: not watched', 'Our own words for it']);
-    eq(t.bot.status().proactive_watch, 'ON (shadow test: nothing is posted)');
+    eq(t.bot.status().proactive_watch, 'ON (Watch alerts row 35 is OFF: its flags are only listed)');
   });
 
   test('proactive watch: with a watch ON, a look goes out as two read-only BigQuery scripts, one a location: us-central1 (Sonar\'s new posts, Tubular\'s new videos) and US (Brandwatch\'s mentions of Google\'s products and Sprinklr\'s report of Google\'s own posts, each read only when its table changed, and the Brandwatch query), each source in a block of its own; the window the last 15 minutes up to a minute ago, every other source from its first-look start; the watch\'s question built from its tags, its words and the tags only as query parameters; a 5 GB cap and its label; a later run collects both: each post at or above the bar, and each near miss, goes on the Watch detections tab once, with its exposure tags, its source and the Rating dropdown; C34, the watch\'s status and the Watch sources tab say how it\'s doing; nothing is posted or emailed', () => {
@@ -347,7 +348,7 @@ module.exports = H => {
       ['✓ live: 27 new at the last look', B.pwTime_(sentAt - 2 * MIN), B.pwTime_(seen + MIN), '27 / 27', 27, 1]);
     eq([s[4][3], s[4][6], s[4][7], s[5][3], s[5][6]], ['✓ live: 300 new at the last look', '300 / 60', 60, '✓ live: 12 new at the last look', '12 / 12']);
     eq([writes(t), t.g.gmail.sentMessages().length], [chatWrites, sent0]);  // nothing posted in Chat, nothing emailed
-    assert.match(t.bot.status().proactive_watch_status, /^✓ ON \(shadow test/);
+    assert.match(t.bot.status().proactive_watch_status, /^✓ ON \(Watch alerts, row 35, is OFF: nothing is posted or emailed\)/);
   });
 
   test('proactive watch: looks go out at most every 5 minutes, each location\'s window starting where its last one ended (none skipped, none twice); a post a watch already flagged isn\'t recorded again (nor its copy from the other location), another watch flagging it is; after a long gap only the last 30 minutes are looked at', () => {

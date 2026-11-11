@@ -3,10 +3,14 @@
 This explains everything built for the two-track system, how to turn each part on, and how to run it. It covers:
 - the Cloud Run service `slrr-signals`;
 - the BigQuery dataset `slrr_signals`;
-- the bot's new **Signals** tab, and the archive, long memory and stuck-loop watchdog it controls;
+- how both tracks' results reach the chat (the bot's Signals.gs), and the bot's **Signals** tab with the archive, long memory and stuck-loop watchdog it controls;
 - the reworked Proactive watch (the five tables, the Watch tags tab, Brandwatch held under 1,000 a day).
 
-**Google Chat doesn't change.** Nothing in this system posts, reacts or emails. Classification happens before anything reaches a space. Track 1 runs in shadow mode, and its results go only to BigQuery and the sheet.
+**Google Chat looks as it does today.** Classification happens before anything reaches a space, and the results arrive through the flows the Control tab already routes:
+- **Track 1 (classification):** each post that meets the Collection Requirements is posted as a 🔭 Watch alert where **Watch alerts (row 35)** says, and the space's flow auto-corrects it like any alert (❌ for a repeat, else the Social Alert, only to the B30 testers while Testing).
+- **Track 2 (early detection):** each cluster Gemini promotes or rates likely to become an alert joins the **Early detection** review (row 19) and gets its usual story card.
+
+The Cloud Run service itself never posts; the bot does, as for its own finds. Set row 35 or row 19 to OFF and that track stops reaching the chat.
 
 ---
 
@@ -16,8 +20,11 @@ This explains everything built for the two-track system, how to turn each part o
 |---|---|---|
 | The bot (Control `B2`) | **OFF** (you paused it) | The new Apps Script code is deployed and waiting. On its first run back ON it converts the Watches tab, makes the Watch tags tab and cleans Watch detections (section 7). |
 | Proactive watch (Control row 34) | ON, but **every watch is OFF** | Nothing is asked of Gemini until you set a watch's On to ON. |
-| Signals tab (all 4 switches) | **OFF** | It's already on the sheet, after *Watch sources*. Nothing is sent, shown, archived or paused until you turn a row ON. |
-| Cloud Run `slrr-signals` | Deployed; both schedules **PAUSED** | Its account can't read four of the five source tables yet (403). The dataset owners must grant read access (section 10). |
+| Watch alerts (Control row 35) | **Auto-correct space (B10)** | Track 1's classified alerts (and the watches' flags) are posted there and worked by its flow. |
+| Early wave & velocity check (Control row 19) | **ON** | Track 2's radar alerts join its review; their cards go where its cards go (the Mirror space B9, or B10 while B9 is blank). |
+| Signals tab (3 switches) | **OFF** | Sync, Archive and Watchdog wait for you. Its last two rows (B9, B10) show each track's hand-off and the Cloud Run engine's health. |
+| Cloud Run `slrr-signals` radar (Track 2) | **Running**, every 15 min | It reads `early_detection`, which its account can already read. Its alerts reach the chat once the bot is ON (row 19 is ON). |
+| Cloud Run `slrr-signals` tick (ingest + Track 1) | **PAUSED** until the source tables are shared | Its account can't read the five source tables yet (403). Once the dataset owners grant read access (section 10), resume it with the command in section 10. Kept paused meanwhile so its per-source breakers don't back off for hours before the grant. |
 
 > [!IMPORTANT]
 > **"Last modified" isn't the same as fresh posts.** Measured Nov 10:
@@ -43,18 +50,19 @@ flowchart LR
   Sources --> CR["Cloud Run slrr-signals /tick (every min)"] --> RM["raw_mentions"]
   RM --> T1["Track 1: rules, then Gemini, then the Collection Requirements engine"] --> CM["classified_mentions"]
   ED["early_detection clusters"] --> T2["Track 2 /radar (every 15 min): Gemini outlook"] --> RC["radar_clusters"]
-  CM --> SH["Sheet: Track 1 (shadow) tab"]
-  RC --> SR["Sheet: Radar tab"]
+  CM -- "qualifying, once each" --> WA["Watch alerts (Control row 35): posted and auto-corrected in the chat space"]
+  RC -- "promoted or high, once each" --> EDR["Early detection review (Control row 19): story card in the chat space"]
   SHEET["Sheet: Watch tags, Alert log, ratings"] -- "Signals sync" --> TX["taxonomy / issue_history / feedback_corrections"]
   LOG["Alert log, Message log, Relay (old rows)"] -- "Signals archive" --> AR["sheet_archive"] --> MEM["v_memory: the bot's long memory"]
 ```
 
 | Piece | Runs where | How often | Default |
 |---|---|---|---|
-| Proactive watch (shadow test + Watch alerts) | Apps Script (the bot) | every 5 min | Row 34 ON, every watch OFF |
+| Proactive watch (+ Watch alerts) | Apps Script (the bot) | every 5 min | Row 34 ON, every watch OFF |
+| Hand-offs to the chat: Track 1 → row 35, Track 2 → row 19 | Apps Script (`Signals.gs`) | every 2 / 5 min | Follow rows 35 and 19 |
 | Ingest + Track 1 (`/tick`) | Cloud Run `slrr-signals` | every minute | Paused |
 | Track 2 radar (`/radar`) | Cloud Run `slrr-signals` | every 15 min | Paused |
-| Sync, Show, Archive, Watchdog | Apps Script, Signals tab | sync/show every 10 min, archive once a day | OFF |
+| Sync, Archive, Watchdog | Apps Script, Signals tab | sync every 10 min, archive once a day | OFF |
 
 ---
 
@@ -109,7 +117,12 @@ Code: [`slrr_signals/rules.py`](../slrr_signals/rules.py), [`track1.py`](../slrr
    - it wasn't reported in the last 14 days.
 5. A qualifying row gets a **Google Search check of public coverage**, up to 150 a day.
 
-Results go to `classified_mentions`. The rows that qualify wait in `v_track1_ready`. **Shadow mode:** nothing takes them yet (section 11). To see them, set the Signals tab's *Show* row to ON: they appear on the **Track 1 (shadow)** tab.
+Results go to `classified_mentions`. **Into the chat:** every 2 minutes the bot hands each qualifying row it hasn't handed over yet (classified in the last 3 hours; at most 10 a look, 200 a day) to Watch alerts:
+1. It becomes a flag on the *Watch detections* tab: watch **Classification (Collection Requirements)**, scored by Gemini's confidence out of 10 against a bar of 8.
+2. The next run posts it as a 🔭 Watch alert where row 35 says, even with the Proactive watch (row 34) OFF. The card's Product, Exposure Tag and Sensitive Topic lines are Track 1's classification.
+3. The space's flow works it like any alert: ❌ when Gemini finds the story already alerted; otherwise the Social Alert (only to the B30 testers while Testing), its marks, and T&S when the post's rules say so.
+
+Each hand-off is recorded in `handoffs`, so a post goes once. With row 35 OFF nothing is handed over (the rows wait in BigQuery; a flag still unposted 3 hours on is dropped, as any watch alert).
 
 Caps: 40 Gemini classifications a tick, 1,500 a day.
 
@@ -125,7 +138,8 @@ Code: [`slrr_signals/track2.py`](../slrr_signals/track2.py).
    - the closest exposure tag;
    - an **action** (promote, watch or discard);
    - why.
-3. Results go to `radar_clusters`. With *Show* ON they appear on the **Radar** tab, high likelihood first.
+3. Results go to `radar_clusters`.
+4. **Into the chat:** every 5 minutes the bot hands each cluster Gemini promoted, or rated high likelihood, in the last 3 hours (at most 3 a look, 12 a day) to the Early detection review queue (row 19). It gets the same review and story card as the bot's other early signals, posted where row 19 posts them. A dismissal is filtered out, and a repeat of a story already carded is held back unless it grew. Medium and low stay in BigQuery. Each hand-off is recorded in `handoffs`; with row 19 OFF nothing is handed over.
 
 Each cluster is re-assessed every 6 h, or sooner once its authors double. The radar assesses at most 12 clusters a run and 250 a day.
 
@@ -144,16 +158,17 @@ The DDL is versioned in [`analytics/slrr_signals/01_dataset_and_tables.sql`](../
 | `radar_clusters` | Track 2 assessments | Cloud Run |
 | `taxonomy` | The Watch tags tab, versioned (plus keywords and thresholds) | Bot (Signals sync) |
 | `issue_history` | Alerts the bot forwarded (the previously-reported check) | Bot (Signals sync) |
-| `feedback_corrections` | People's ratings: Watch detections, Track 1 and Radar reviews | Bot (Signals sync) |
+| `feedback_corrections` | People's ratings on the Watch detections tab (a classified alert's counts as Track 1's) | Bot (Signals sync) |
 | `sheet_archive` | Rows trimmed from the sheet, whole (JSON) | Bot (Signals archive) |
 | `kof_list` | KOF accounts (empty for now: section 11) | n/a |
-| `source_state`, `run_log`, `dead_letter`, `handoffs` | Watermarks and breakers, every run, items set aside, future hand-offs | Cloud Run |
+| `handoffs` | What the bot handed to the chat, once each (Track 1 rows; radar assessments) | Bot (Signals hand-offs) |
+| `source_state`, `run_log`, `dead_letter` | Watermarks and breakers, every run, items set aside | Cloud Run |
 
 | View | Use |
 |---|---|
 | `v_taxonomy_current` | The latest taxonomy version |
-| `v_track1_latest` / `v_track1_ready` | Latest classification per post / the ones that qualify |
-| `v_radar_latest` / `v_radar_review` | Latest assessment per cluster / high-likelihood ones for people |
+| `v_track1_latest` / `v_track1_ready` | Latest classification per post / the qualifying ones not handed to the chat yet |
+| `v_radar_latest` / `v_radar_review` | Latest assessment per cluster / the notable ones (high or medium) |
 | `v_issue_history_14d` | The 14-day previously-reported window |
 | `v_memory` | **The bot's long memory**: issue history plus the archive, one row per alert |
 | `v_source_health` / `v_metrics_daily` | Each source's health / each day's numbers |
@@ -167,20 +182,16 @@ It's after *Watch sources* and made by the bot. Only the Value column (B) is you
 
 | Row | Setting | Default | What ON does |
 |---|---|---|---|
-| B3 | Sync taxonomy, alert history and ratings to BigQuery | OFF | Every 10 min, the Watch tags tab goes to `taxonomy` (when it changed, else once a day). The Alert log's forwarded alerts go to `issue_history`, and new ratings go to `feedback_corrections`. |
-| B4 | Show Track 1 and the radar on this sheet | OFF | Every 10 min, it refreshes the **Track 1 (shadow)** and **Radar** tabs from BigQuery. |
-| B5 | Archive old rows to BigQuery, then trim them here | OFF | Once a day, after 3 AM ET (section 8). |
-| B6 | Archive: days of the Alert log kept on the sheet | 21 | Never below 15 (the 14-day already-reported check reads it on the sheet) |
-| B7 | Archive: days of the Message log kept on the sheet | 14 | Never below 7 |
-| B8 | Archive: days of the Relay tab kept on the sheet | 30 | Never below 7 (protects old thread pairs) |
-| B9 | Pause a background step that keeps getting stuck (30 min) | OFF | The watchdog pauses steps instead of only reporting them (section 9). |
+| B3 | Sync taxonomy, alert history and ratings to BigQuery | OFF | Every 10 min, the Watch tags tab goes to `taxonomy` (when it changed, else once a day). The Alert log's forwarded alerts go to `issue_history` (Track 1's previously-reported check), and new ratings on Watch detections go to `feedback_corrections`. |
+| B4 | Archive old rows to BigQuery, then trim them here | OFF | Once a day, after 3 AM ET (section 8). |
+| B5 | Archive: days of the Alert log kept on the sheet | 21 | Never below 15 (the 14-day already-reported check reads it on the sheet) |
+| B6 | Archive: days of the Message log kept on the sheet | 14 | Never below 7 |
+| B7 | Archive: days of the Relay tab kept on the sheet | 30 | Never below 7 (protects old thread pairs) |
+| B8 | Pause a background step that keeps getting stuck (30 min) | OFF | The watchdog pauses steps instead of only reporting them (section 9). |
+| B9 | Classified alerts (Track 1): posted as Watch alerts | `Control row 35` | Status only: how the hand-off is going, the engine's last run and how many sources are live. Controlled on the Control tab. |
+| B10 | Radar alerts (Track 2): reviewed as Early detection | `Control row 19` | Status only: the same for the radar. Controlled on the Control tab. |
 
-Column C shows what each part is doing and is written by the bot, only when it changes.
-
-### Track 1 (shadow) and Radar tabs
-The bot makes these when *Show* is ON, after the Signals tab, protected with a warning. The **Review** column is yours, and your choice is kept across refreshes and synced once as feedback:
-- **Track 1:** Correct · Wrong tag · Not an issue · Should be urgent
-- **Radar:** Promote · Watch · Discard
+Column C shows what each part is doing and is written by the bot, only when it changes. A Signals tab from before Nov 11 (with a "Show Track 1 and the radar" row) is laid out anew on the bot's next run, keeping every value you set.
 
 ### Proactive watch tabs (reworked)
 - **Watches:** each watch picks exposure tags by priority, in columns: P0 exposure tags · P1 · P2 · Sensitive topics (`All`, blank, or tag names). Then come extra instructions, the impact rubric, *Flag at score*, Networks and Status. The bot converts the old tab in place on its first run and keeps each watch's On as it was. *Google brand safety (all)* picks All tags at a bar of 10. Both watches start OFF.
@@ -189,14 +200,14 @@ The bot makes these when *Show* is ON, after the Signals tab, protected with a w
   - Its labeling (AI.CLASSIFY) uses the **full description**.
   - Edit it freely: the bot never rewrites it. With Sync ON, your edits become a new `taxonomy` version.
 - **Watch sources:** the sources in section 3, each with its health.
-- **Watch detections:** rows from the dropped sources are removed once: Brandwatch (BMIE), DSD story selection, Other alerts space, and the old Sprinklr outbound export. Rows from Sprinklr comments are kept. On Nov 11 that's 1,043 of 5,115 rows; a full copy of the tab from before the clean-up is saved locally at `data/watch_detections_backup_2026-11-11.csv` (git-ignored).
+- **Watch detections:** its title now says what it holds (the watches' and the classification's flags, posted where row 35 says). Classified alerts are listed there too, as watch *Classification (Collection Requirements)*, and rate like any row. Rows from the dropped sources are removed once: Brandwatch (BMIE), DSD story selection, Other alerts space, and the old Sprinklr outbound export. Rows from Sprinklr comments are kept. On Nov 11 that's 1,043 of 5,115 rows; a full copy of the tab from before the clean-up is saved locally at `data/watch_detections_backup_2026-11-11.csv` (git-ignored).
 
 ---
 
 ## 8. The archive and the bot's long memory
 
-**What it does** (Signals B5 ON), once a day on the first quiet run after 3 AM ET, for each of the Alert log, Message log and Relay:
-1. It takes the rows from the top that are older than the days set (B6–B8), up to 3,000 a tab a day. It never takes a row younger than 7 days (15 for the Alert log), and stops at the first row that's newer or has no date.
+**What it does** (Signals B4 ON), once a day on the first quiet run after 3 AM ET, for each of the Alert log, Message log and Relay:
+1. It takes the rows from the top that are older than the days set (B5–B7), up to 3,000 a tab a day. It never takes a row younger than 7 days (15 for the Alert log), and stops at the first row that's newer or has no date.
 2. It **copies** them whole to `sheet_archive`, each with an insert id so a retry never doubles a row.
 3. It **counts** them in BigQuery. If BigQuery doesn't have every row, nothing is trimmed and the status says so.
 4. It checks the same rows are still at the top. Only then does it **delete** them from the sheet.
@@ -208,17 +219,18 @@ It only touches these three bot-made tabs, and never *Brand safety groups* or an
 **Sizing:** today the Alert log has about 5,300 rows, the Message log about 10,000 and the Relay about 5,600. The sheet is at about 15% of its 10M-cell limit and was on course to fill around mid-2027. With the archive ON, it stays roughly flat.
 
 > [!NOTE]
-> The Results tab looks back `speed_days` + 2 days (9 by default), and the 14-day previously-reported check reads the Alert log on the sheet. So the bot never keeps fewer than 15 days of the Alert log, whatever B6 says. The default of 21 covers both.
+> The Results tab looks back `speed_days` + 2 days (9 by default), and the 14-day previously-reported check reads the Alert log on the sheet. So the bot never keeps fewer than 15 days of the Alert log, whatever B5 says. The default of 21 covers both.
 
 ---
 
 ## 9. Stuck loops and runaway calls
 
 **In the bot (Apps Script):**
-- **Watchdog** ([`Watchdog.gs`](../apps-script-chat-bot/Watchdog.gs)). Each background step marks itself as running and clears the mark when it ends. The steps are: Early detection check and review, Temp checks, Proactive watch, the Results, Follow-up and Analysis tabs, and Signals.
+- **Watchdog** ([`Watchdog.gs`](../apps-script-chat-bot/Watchdog.gs)). Each background step marks itself as running and clears the mark when it ends. The steps are: Early detection check and review, Temp checks, Proactive watch, Watch alerts (classified alerts while row 34 is OFF), the Results, Follow-up and Analysis tabs, and Signals.
   - If Apps Script stops a run partway (a hang, or a loop hitting the 6-minute limit), the mark stays. The next run counts it against that step.
-  - After **3 stops within an hour**, the step is paused for 30 minutes, if B9 is ON. If B9 is OFF, it's only reported.
+  - After **3 stops within an hour**, the step is paused for 30 minutes, if B8 is ON. If B8 is OFF, it's only reported.
   - **The alerts themselves are never wrapped, so they are never paused.**
+- The hand-offs are capped (Track 1: 10 a look, 200 a day; Track 2: 3 a look, 12 a day), each recorded once in `handoffs`, and they read the engine's health only every 10 minutes (one try then, even when it fails).
 - These existing limits stay in place:
   - `ApiGuard` (background work defers while Gemini or BigQuery calls run high);
   - 3-try limits on messages, write-backs, relays and drafts;
@@ -258,13 +270,13 @@ Already granted: WRITER on `slrr_signals` and READER on `early_detection`, plus 
 | Task | Command |
 |---|---|
 | Start the ingest + Track 1 | `gcloud scheduler jobs resume slrr-signals-tick --location=us-central1 --project=brand-social-central-data` |
-| Start the radar | `gcloud scheduler jobs resume slrr-signals-radar --location=us-central1 --project=brand-social-central-data` |
+| Start the radar (running since Nov 11) | `gcloud scheduler jobs resume slrr-signals-radar --location=us-central1 --project=brand-social-central-data` |
 | Stop either | `gcloud scheduler jobs pause slrr-signals-tick --location=us-central1 --project=brand-social-central-data` (same with `slrr-signals-radar`) |
 | Run one now (once resumed) | `gcloud scheduler jobs run slrr-signals-tick --location=us-central1 --project=brand-social-central-data` |
 | Recent runs | `bq query --use_legacy_sql=false 'SELECT endpoint, status, started_at, TO_JSON_STRING(stats) AS stats, error FROM \`brand-social-central-data.slrr_signals.run_log\` ORDER BY started_at DESC LIMIT 10'` |
 | Source health | `bq query --use_legacy_sql=false 'SELECT * FROM \`brand-social-central-data.slrr_signals.v_source_health\`'` |
 | Service logs | `gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="slrr-signals"' --limit=30 --project=brand-social-central-data` |
-| Redeploy after a code change | `./infra/09_slrr_signals.sh` (keeps the schedules paused; `START=1 ./infra/09_slrr_signals.sh` resumes them) |
+| Redeploy after a code change | `./infra/09_slrr_signals.sh` (it leaves both schedules **paused**: resume the ones you run afterwards; `START=1 ./infra/09_slrr_signals.sh` resumes both) |
 | Re-classify the last N hours | `POST /reprocess?hours=N` (an OIDC call as the scheduler account) |
 | Tests | `TRIAGE_LLM=fake .venv/bin/python -m pytest -q tests/test_slrr_signals.py` and `node apps-script-chat-bot/test/run_tests.js "signals"` |
 
@@ -282,13 +294,11 @@ Already granted: WRITER on `slrr_signals` and READER on `early_detection`, plus 
 
 | Item | Why it waits |
 |---|---|
-| Track 1 → chatbot hand-off (qualifying rows posted through the bot's existing cards) | Shadow first. Score Track 1 against Burson on the Track 1 tab before it goes live behind a new Control switch (default OFF). |
-| Promote on the Radar tab feeding Track 1 | Today a Promote is recorded as feedback only. |
-| Sonar fallback (the bot copies Sonar rows into `raw_mentions` if Burson won't grant access) | Waiting on Burson's answer. |
+| Sonar fallback (the bot copies Sonar rows into `raw_mentions` if Burson won't grant access) | Waiting on Burson's answer (section 10). |
 | Filling `kof_list` from the team's KOF lists | Track 1 uses Sonar's own KOF lists until then. |
 | A date-based Alert log read (in place of the fixed last 4,000 rows) | The archive keeps the tab small, so it's lower priority now. |
 | A Cloud Monitoring alert on repeated `slrr-signals` errors or growing lag | `run_log` and `v_source_health` show both today. |
-| The Watch sources tab reading Cloud Run's `source_state` | The tab shows the Apps Script watch's own source health. |
+| Cloud Run's source health on the Watch sources tab itself | The Signals tab's B9 and B10 show it (the engine's last run, sources live N of 5). |
 | The web "discovery sweep" (search the web for Google + the ON tags) | Experimental: social coverage is thin. Web search is used for enrichment only. |
 | An evaluation set built from `feedback_corrections` (Phase 5) | Needs a few weeks of reviews first. |
 
@@ -296,10 +306,11 @@ Already granted: WRITER on `slrr_signals` and READER on `early_detection`, plus 
 
 | Path | What |
 |---|---|
-| [`apps-script-chat-bot/Signals.gs`](../apps-script-chat-bot/Signals.gs) | The Signals tab: sync, show, archive, memory |
+| [`apps-script-chat-bot/Signals.gs`](../apps-script-chat-bot/Signals.gs) | The hand-offs to the chat (Track 1 → Watch alerts, Track 2 → Early detection) and the Signals tab: sync, archive, memory |
+| [`apps-script-chat-bot/WatchAlerts.gs`](../apps-script-chat-bot/WatchAlerts.gs), [`EarlyDetection.gs`](../apps-script-chat-bot/EarlyDetection.gs) | Where the hand-offs are posted: Watch alerts (classified alerts even with row 34 OFF; their card lines Track 1's own) and the Early detection review (RADAR signals) |
 | [`apps-script-chat-bot/Watchdog.gs`](../apps-script-chat-bot/Watchdog.gs) | The stuck-step watchdog |
 | [`apps-script-chat-bot/ProactiveWatch.gs`](../apps-script-chat-bot/ProactiveWatch.gs) | The reworked watch (sources, tags, migration) |
-| `apps-script-chat-bot/Main.gs`, `Bot.gs`, `Voice.gs` | Hooks: the watchdog around background steps, Signals at the end of the run, memory in analyst answers |
+| `apps-script-chat-bot/Main.gs`, `Bot.gs`, `Voice.gs` | Hooks: the watchdog around background steps, the classified alerts' posting while row 34 is OFF, Signals at the end of the run (with rows 35 and 19 passed to it), memory in analyst answers |
 | [`slrr_signals/`](../slrr_signals/) | The Cloud Run service (ingest, rules, Track 1, Track 2, guards) |
 | [`config/signals.yaml`](../config/signals.yaml) | Every service setting |
 | [`analytics/slrr_signals/`](../analytics/slrr_signals/) | The dataset's DDL |

@@ -5,7 +5,9 @@ Two kinds of cluster, read-only:
   topic-agnostic pipeline, never written to here;
 - the sources' own issue groupings in raw_mentions (Pendulum's issue names) that Track 1 didn't qualify.
 Each is assessed at most every track2.reassess_hours (sooner when its authors doubled), track2.max_per_run a run and
-track2.max_per_day a day. Nothing is posted anywhere: high-likelihood clusters wait in v_radar_review for people.
+track2.max_per_day a day. The chatbot (apps-script-chat-bot/Signals.gs) hands the clusters Gemini promoted or rated high
+to its Early detection review (Control row 19), which reviews each and posts its story card (dismissals filtered out);
+slrr_signals.handoffs records each one so it goes once.
 """
 
 from __future__ import annotations
@@ -16,8 +18,9 @@ import logging
 from typing import Any
 
 from . import guards
-from .classify import Track2Assessment, tags_from_config, track2_prompt, track2_system
+from .classify import Track2Assessment, strip_priority, tags_from_config, track2_prompt, track2_system
 from .guards import Budget
+from .rules import norm
 from .settings import Settings
 from .track1 import day_start
 from .warehouse import Warehouse
@@ -167,16 +170,21 @@ def run_track2(wh: Warehouse, settings: Settings, agent_cfg: Any, llm: Any, web:
         try:
             a: Track2Assessment = llm.generate_json(model=model, system=system, prompt=track2_prompt(c), schema=Track2Assessment,
                                                     temperature=0.2, purpose="signals.track2")
-            pri = next((str(t.get("priority")) for t in tax if a.closest_tag and str(t.get("name")) == a.closest_tag), None)
+            # the closest tag by its bare name (Gemini may give its "P0 · <name>" label), else the priority it carried
+            tag_name, tag_pri = strip_priority(a.closest_tag)
+            match = next((t for t in tax if tag_name and norm(t.get("name")) == norm(tag_name)), None)
+            closest_tag = str(match.get("name")) if match else (tag_name or None)
+            pri = str(match.get("priority")) if match else tag_pri
             row = {
                 "cluster_id": c["cluster_id"], "assessed_at": now, "origin": c["origin"], "origin_ref": str(c["origin_ref"]),
                 "headline": (a.headline or c.get("label") or "")[:300],
+                # one entry a post in both, in the same order ('' for a post without a link): the bot pairs them
                 "representative_texts": [str(p.get("text") or "")[:400] for p in c.get("posts", [])][:8],
-                "post_urls": [str(p.get("url")) for p in c.get("posts", []) if p.get("url")][:8],
+                "post_urls": [str(p.get("url") or "") for p in c.get("posts", [])][:8],
                 "mentions": c.get("mentions"), "authors": c.get("authors"), "platforms": c.get("platforms", []),
                 "velocity_ratio": c.get("velocity_ratio"), "growth_per_hour": c.get("growth_per_hour"),
                 "first_seen": guards._ts(c.get("first_seen")), "last_seen": guards._ts(c.get("last_seen")),
-                "likelihood": a.likelihood, "closest_tag": a.closest_tag, "closest_priority": pri, "action": a.action,
+                "likelihood": a.likelihood, "closest_tag": closest_tag, "closest_priority": pri, "action": a.action,
                 "rationale": a.rationale[:1000], "confidence": float(a.confidence), "model": model,
                 "prompt_version": settings.get("track2.prompt_version"),
             }

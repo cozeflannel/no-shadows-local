@@ -1,8 +1,9 @@
 /**
- * ProactiveWatch.gs — Proactive watch (Control tab row 34, proactiveWatch, OFF unless switched ON): a shadow test of
- * catching Google brand-safety issues before Burson's alert space does. Nothing here posts in Chat, emails anyone or
- * writes outside the bot's own sheet: it records what it would have flagged, for people to rate and for its scorecard to
- * compare with Burson's alerts.
+ * ProactiveWatch.gs — Proactive watch (Control tab row 34, proactiveWatch, OFF unless switched ON): catching Google
+ * brand-safety issues before Burson's alert space does. What the watches flag goes on the Watch detections tab, for
+ * people to rate and for its scorecard to compare with Burson's alerts, and out as watch alerts where Watch alerts
+ * (row 35, WatchAlerts.gs) says; with row 35 OFF nothing is posted or emailed. Nothing here writes outside the bot's own
+ * sheet. (The two-track system's classified alerts join the same tab and the same posting: Signals.gs.)
  *
  * Every PW_EVERY_MS_ (Main.gs poll()'s finally, after the other spaces, while the bot and the switch are ON), a look
  * reads what is new in each of its sources (PW_SOURCES_) since the last look, read-only, where the data already is: no
@@ -325,7 +326,10 @@ const PW_TAG_SEEDS_ = [
 // --------------------------------------------------------------------------------------------------------------
 
 const PW_DET_TAB_ = 'Watch detections';
-const PW_DET_TITLE_ = 'Proactive watch: what the bot would have flagged (a shadow test: nothing is posted or emailed)';
+const PW_DET_TITLE_ = 'Watch detections: what the watches and the classification flagged (Watch alerts, Control row 35, ' +
+  'says where they are posted)';
+// The tab's title before Nov 11 (the bot's own tab still: its title is brought up to date on its next run)
+const PW_DET_OLD_TITLE_RX_ = /^Proactive watch: what the bot would have flagged\b/;
 const PW_DET_NOTE_ = 'Scorecard (updated every 10 minutes): Burson\'s alerts are the posts in the Alert log that reached ' +
   'S-F Burson that day; caught means a watch flagged the same post at its bar; lead is how much sooner the watch flagged ' +
   'it than Burson\'s alert reached S-F Burson. Rate the rows below (Useful or Noise) to tune the watches.';
@@ -614,7 +618,12 @@ function isPwTagsTab_(sh) {
 
 /** The bot's own Watch detections tab: its A1 is the title the bot writes there. */
 function isPwDetectionsTab_(sh) {
-  try { return String(sh.getRange(1, 1).getDisplayValue()).trim() === PW_DET_TITLE_; } catch (e) { return false; }
+  try {
+    const a1 = String(sh.getRange(1, 1).getDisplayValue()).trim();
+    return a1 === PW_DET_TITLE_ || PW_DET_OLD_TITLE_RX_.test(a1);
+  } catch (e) {
+    return false;
+  }
 }
 
 /** The bot's own Watch sources tab: its A1 is the title the bot writes there. */
@@ -712,7 +721,13 @@ function pwTagsTab_(ss, create) {
  */
 function pwDetectionsTab_(ss, create) {
   let sh = ss.getSheetByName(PW_DET_TAB_);
-  if (sh) return isPwDetectionsTab_(sh) ? { sh, foreign: false } : { sh: null, foreign: true };
+  if (sh) {
+    if (!isPwDetectionsTab_(sh)) return { sh: null, foreign: true };
+    try {  // the title from before Nov 11, brought up to date
+      if (String(sh.getRange(1, 1).getDisplayValue()).trim() !== PW_DET_TITLE_) sh.getRange(1, 1).setValue(PW_DET_TITLE_);
+    } catch (e) { /* the tab works with its old title */ }
+    return { sh, foreign: false };
+  }
   if (!create) return { sh: null, foreign: false };
   const watches = ss.getSheetByName(PW_WATCHES_TAB_);
   const sheets = ss.getSheets();

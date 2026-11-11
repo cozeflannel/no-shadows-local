@@ -12,7 +12,7 @@ import re
 import pytest
 
 from slrr_signals import guards, ingest, rules, sources, track1, track2
-from slrr_signals.classify import Track1Classification, Track2Assessment, track1_prompt, track1_system
+from slrr_signals.classify import Track1Classification, Track2Assessment, strip_priority, track1_prompt, track1_system
 from slrr_signals.guards import Budget, SourceState
 from slrr_signals.settings import Settings, load_settings
 from triage_agent.config import load_config
@@ -318,7 +318,8 @@ def test_track2_assesses_new_or_grown_clusters_within_its_limits(settings, agent
         ("early_detection.active_clusters", [{"cluster_id": "c1", "cluster_label": "Pixel battery swelling", "dominant_topic_hint": "Pixel",
                                               "total_mentions_24h": 9, "unique_authors_24h": 7, "created_at": NOW,
                                               "last_seen_at": NOW, "authors_3h": 6, "authors_before": 1,
-                                              "posts": [{"platform": "reddit", "text": "my pixel battery swelled", "url": "https://r/x"}],
+                                              "posts": [{"platform": "reddit", "text": "my pixel battery swelled", "url": "https://r/x"},
+                                                        {"platform": "twitter", "text": "mine too, no link kept", "url": None}],
                                               "platforms": ["reddit", "twitter"]}]),
         ("JSON_VALUE(r.extra, '$.issue') AS issue", []),
         ("v_radar_latest", []),
@@ -335,7 +336,25 @@ def test_track2_assesses_new_or_grown_clusters_within_its_limits(settings, agent
     assert (row["cluster_id"], row["likelihood"], row["action"], row["closest_priority"], row["velocity_ratio"]) == \
         ("ed:c1", "high", "promote", "P1", 4.0)
     assert row["web_context"] and len(web.calls) == 1
+    # each post's text with its own link, in the same order ('' for one without): the bot pairs them by position
+    assert (row["representative_texts"], row["post_urls"]) == (["my pixel battery swelled", "mine too, no link kept"], ["https://r/x", ""])
     assert Track2Assessment.model_validate({}).action == "watch"
+    # a tag Gemini gives as its "P0 · <name>" label is read by its name (and keeps that priority when it isn't listed)
+    assert strip_priority("P0 · Product - Public leak (e.g. features/models)") == ("Product - Public leak (e.g. features/models)", "P0")
+    assert strip_priority("Sensitive: Politics") == ("Politics", "Sensitive")
+    assert strip_priority("Product - Dangerous results (e.g. medical/legal)") == ("Product - Dangerous results (e.g. medical/legal)", None)
+    wh2 = FakeWh([
+        ("COUNT(*) AS n, COUNTIF(web_context IS NOT NULL)", [{"n": 0, "web": 0}]),
+        ("early_detection.active_clusters", [{"cluster_id": "c9", "cluster_label": "x", "total_mentions_24h": 5, "unique_authors_24h": 4,
+                                              "created_at": NOW, "last_seen_at": NOW, "authors_3h": 2, "authors_before": 1, "posts": [],
+                                              "platforms": ["reddit"]}]),
+        ("JSON_VALUE(r.extra, '$.issue') AS issue", []), ("v_radar_latest", []), ("dead_letter", []), ("v_taxonomy_current", []),
+    ])
+    llm2 = FakeLLM().on("signals.track2", {"headline": "h", "likelihood": "high", "action": "promote", "rationale": "r", "confidence": 0.8,
+                                           "closest_tag": "P1 · Product - Product failures - physical safety issues"})
+    track2.run_track2(wh2, settings, agent_cfg, llm2, None, NOW, Budget(200))
+    row2 = wh2.inserts["radar_clusters"][0]
+    assert (row2["closest_tag"], row2["closest_priority"]) == ("Product - Product failures - physical safety issues", "P1")
     full = FakeWh([("COUNT(*) AS n, COUNTIF(web_context IS NOT NULL)", [{"n": 250, "web": 0}])])
     assert track2.run_track2(full, settings, agent_cfg, llm, None, NOW, Budget(200))["status"] == "day maximum reached"
 

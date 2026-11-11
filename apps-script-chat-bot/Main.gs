@@ -30,10 +30,12 @@
  *                   earlyWaveCheck_); a failure there never stops the run. Both
  *                   look back only the BigQuery lookback (Control tab B31: 15 to 60 minutes). With Proactive watch ON
  *                   (Control row 34), after the other spaces it looks (every 5 minutes at most) at what is new in each
- *                   of its sources (Sonar, Brandwatch, Sprinklr, Tubular, the DSD story selection feed, the Other alerts
- *                   space's alerts and the Brandwatch query "2026 Election Alerts" from Brandwatch's API), with the
- *                   watches ON on the Watches tab (ProactiveWatch.gs runProactiveWatch_): a
- *                   shadow test that records what it would flag on the Watch detections tab and posts nothing.
+ *                   of its sources (Sonar, Tubular, Brandwatch's mentions, Sprinklr's owned posts and the comments on
+ *                   them, and the Brandwatch query "2026 Election Alerts" from Brandwatch's API), with the watches ON
+ *                   on the Watches tab (ProactiveWatch.gs runProactiveWatch_): what they flag goes on the Watch
+ *                   detections tab and out as watch alerts where Watch alerts (row 35) says. Last, the two-track
+ *                   system (Signals.gs runSignals_) hands its classified alerts to Watch alerts (row 35) and its radar
+ *                   alerts to the Early detection review (row 19), so they reach the chat the same way.
  */
 
 const TRIGGER_HANDLER_ = 'poll';
@@ -160,7 +162,7 @@ function status() {
     info.other_alerts_space = wanted.otherSpace || 'off';
     const waChoice = pwAlertsChoice_(wanted.watchAlerts);
     info.proactive_watch = !wanted.switches.proactiveWatch ? 'OFF'
-      : waChoice ? `ON (its flags go out as watch alerts: ${pwAlertsWhere_(waChoice)})` : 'ON (shadow test: nothing is posted)';
+      : waChoice ? `ON (its flags go out as watch alerts: ${pwAlertsWhere_(waChoice)})` : 'ON (Watch alerts row 35 is OFF: its flags are only listed)';
     info.watch_alerts = waChoice ? pwAlertsWhere_(waChoice) : 'OFF';
     info.bigquery_lookback = `${bqLookbackFrom_(wanted.bqLookback).minutes} minutes (Control tab B31)`;
     if (control) {
@@ -332,6 +334,7 @@ function poll() {
     ensureBqLookbackRow_(control);  // row 31 (BigQuery lookback, 60 minutes) on a tab from before it
     ensureOtherSpaceRow_(control);  // row 33 (Other alerts space, blank) on a tab from before it
     ensureWatchAlertsRow_(control);  // row 35 (Watch alerts, OFF) on a tab from before it; the help is at row 38
+    ensureControlHelp_(control);  // the help (row 38 on) rewritten when a new build changed its words, paused or not
     wanted = readControl_(control);
     testers = testersFor_(wanted.testers, control);  // C30 is kept current even while the bot is paused
     lookback = bqLookbackFor_(wanted.bqLookback, control);  // and C31
@@ -345,6 +348,10 @@ function poll() {
       // Signals.gs: its tab (every setting OFF) is there to set up while the bot is paused; nothing else of it runs
       if (typeof sigTab_ === 'function') {
         try { sigTab_(ss, true); } catch (e) { console.warn('Signals tab not made: ' + ((e && e.message) || e)); }
+      }
+      // the Watch detections tab's title brought up to date (a read when it is), paused or not; nothing else of it runs
+      if (typeof pwDetectionsTab_ === 'function') {
+        try { pwDetectionsTab_(ss, false); } catch (e) { console.warn('Watch detections title: ' + ((e && e.message) || e)); }
       }
       writeControlStatus_(control, { status: pausedStatusText_(), lastCheck: nowLabel_(), today: todayText_(readStats_(), dayKey_(), wanted.switches.noWait) });
       return;
@@ -636,27 +643,35 @@ function poll() {
         // can't be done waits for the next run): emailed to this run's testers (B30, else the stand-in), the thread told
         // it was; OFF, nothing waits. Never throws
         bgStep_('tempChecks', () => runTempChecks_(runStart, wanted.switches, { testers: testers && testers.testers }));
-        // Proactive watch (Control row 34, ProactiveWatch.gs): a shadow test over Pendulum's posts in BigQuery; what it
-        // would flag goes on its own tabs. Nothing is posted or emailed unless Watch alerts (row 35, WatchAlerts.gs) says
-        // where its flags go: B33, B9, or B10, where their flows work them next run like any alert.
+        // Proactive watch (Control row 34, ProactiveWatch.gs): every 5 minutes Gemini, inside BigQuery, checks what is new
+        // in its sources against the watches ON on the Watches tab; what it flags goes on the Watch detections tab, and out
+        // as watch alerts where Watch alerts (row 35, WatchAlerts.gs) says: B33, B9 or B10, where their flows work them
+        // next run like any alert (row 35 OFF: nothing is posted). The classified alerts Signals.gs queues there (Track 1)
+        // go out the same way, even while row 34 is OFF.
+        const waChoice = pwAlertsChoice_(wanted.watchAlerts);
+        const toOther = waChoice === 'other';
+        const toAc = waChoice === 'autocorrect';
+        const alertsDest = () => pwAlertsDest_(
+          wanted.watchAlerts,
+          toOther ? pwOtherSpaceFor_(os, wanted, cfg, sfb) : null,
+          cfg,
+          toAc ? pwAutoCorrectSpaceFor_(ac, wanted, cfg, sfbFlows || sfb) : null
+        );
+        const otherBusy = Boolean(toOther && os && os.report &&
+          ((os.report.errors || []).some(e => /^time budget/.test(String(e))) || os.report.held > 0));
+        const acBusy = Boolean(toAc && ac && ac.report &&
+          ((ac.report.errors || []).some(e => /^time budget/.test(String(e))) || ac.report.held > 0));
         if (wanted.switches.proactiveWatch) {
-          const waChoice = pwAlertsChoice_(wanted.watchAlerts);
-          const toOther = waChoice === 'other';
-          const toAc = waChoice === 'autocorrect';
-          const alerts = pwAlertsDest_(
-            wanted.watchAlerts,
-            toOther ? pwOtherSpaceFor_(os, wanted, cfg, sfb) : null,
-            cfg,
-            toAc ? pwAutoCorrectSpaceFor_(ac, wanted, cfg, sfbFlows || sfb) : null
-          );
-          const otherBusy = Boolean(toOther && os && os.report &&
-            ((os.report.errors || []).some(e => /^time budget/.test(String(e))) || os.report.held > 0));
-          const acBusy = Boolean(toAc && ac && ac.report &&
-            ((ac.report.errors || []).some(e => /^time budget/.test(String(e))) || ac.report.held > 0));
+          const alerts = alertsDest();
           bgStep_('proactiveWatch', () => runProactiveWatch_(ss, runStart, { alerts, control, otherBusy, acBusy, slaBusy: bgBusy }));
         } else {
           proactiveWatchOff_();
-          pwAlertsIdle_(control, wanted.watchAlerts, false);
+          const waiting = waChoice && typeof pwPostWaitingOnly_ === 'function' && typeof SIG_T1_PENDING_PROP_ !== 'undefined' &&
+            PropertiesService.getScriptProperties().getProperty(SIG_T1_PENDING_PROP_);
+          const sent = waiting
+            ? bgStep_('watchAlerts', () => pwPostWaitingOnly_(ss, runStart, { alerts: alertsDest(), control, otherBusy, acBusy }))
+            : null;
+          if (!sent) pwAlertsIdle_(control, wanted.watchAlerts, false);
         }
         const any = mainCtx || (ac && ac.ctx);
         const bgIdleOk = typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', bgBusy);
@@ -684,10 +699,14 @@ function poll() {
             }));
           }
         }
-        // Signals (Signals.gs, its own tab, every setting OFF until a person turns it ON): the two-track system's sync,
-        // its Track 1 and Radar tabs, and the daily archive of old rows to BigQuery. Last, as the archive trims rows.
-        // Never throws; never posts or emails
-        if (typeof runSignals_ === 'function') bgStep_('signals', () => runSignals_(ss, runStart, { busy: bgBusy || !bgIdleOk }));
+        // Signals (Signals.gs, its own tab): the two-track system's hand-offs to the chat (its classified alerts to Watch
+        // alerts, row 35; its radar alerts to the Early detection review, row 19: posted from there next run, as theirs
+        // are), the sync and the daily archive of old rows to BigQuery (each OFF until a person turns it ON there). Last,
+        // as the archive trims rows. Never throws; posts and emails nothing itself
+        if (typeof runSignals_ === 'function') {
+          bgStep_('signals', () => runSignals_(ss, runStart, { busy: bgBusy || !bgIdleOk, watchAlerts: wanted.watchAlerts,
+            earlyWave: !!wanted.switches.earlyWave }));
+        }
       }
     } catch (e) {
       console.error('after the run: ' + ((e && e.stack) || e));

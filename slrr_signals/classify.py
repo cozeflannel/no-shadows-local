@@ -9,11 +9,25 @@ malformed answer is an error, never a guess.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 log = logging.getLogger("slrr_signals.classify")
+
+# The prompts list each tag as "P0 · <name>"; Gemini sometimes answers with that whole label
+_PRIORITY_PREFIX = re.compile(r"^\s*(P[012]|Sensitive)\s*[·:\-–—]\s*", re.IGNORECASE)
+
+
+def strip_priority(raw: Any) -> tuple[str, str | None]:
+    """A tag as Gemini may give it ("P0 · Product - Public leak ..."): (its bare name, the priority it carried or None)."""
+    s = str(raw or "").strip()
+    m = _PRIORITY_PREFIX.match(s)
+    if not m:
+        return s, None
+    pri = m.group(1)
+    return s[m.end():].strip(), ("Sensitive" if pri.lower() == "sensitive" else pri.upper())
 
 DISPLAY_NETWORK = {"twitter": "X", "reddit": "Reddit", "bluesky": "Bluesky", "facebook": "Facebook",
                    "instagram": "Instagram", "youtube": "YouTube", "tiktok": "TikTok"}

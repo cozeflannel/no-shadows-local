@@ -17,8 +17,8 @@ SELECT * EXCEPT (rn) FROM (
   WHERE classified_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)
 ) WHERE rn = 1;
 
--- Track 1 rows ready for the chatbot: qualifying, from the last 24 hours, never handed over. The chatbot reads this only
--- while its hand-off switch is ON (Signals tab); nothing else posts them anywhere.
+-- Track 1 rows not handed to the chat yet: qualifying, from the last 24 hours. The chatbot (Signals.gs) hands each one
+-- over once, as a watch alert where Control row 35 says; this view is for looking (the bot reads the table itself).
 CREATE OR REPLACE VIEW `brand-social-central-data.slrr_signals.v_track1_ready` AS
 SELECT l.*
 FROM `brand-social-central-data.slrr_signals.v_track1_latest` l
@@ -33,7 +33,8 @@ SELECT * EXCEPT (rn) FROM (
   WHERE assessed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
 ) WHERE rn = 1;
 
--- The radar review queue: high or medium likelihood, not discarded, from the last 3 days, the likeliest first
+-- The radar's notable clusters: high or medium likelihood, not discarded, from the last 3 days (the chatbot hands the
+-- promoted or high ones to its Early detection review: Signals.gs)
 CREATE OR REPLACE VIEW `brand-social-central-data.slrr_signals.v_radar_review` AS
 SELECT *
 FROM `brand-social-central-data.slrr_signals.v_radar_latest`

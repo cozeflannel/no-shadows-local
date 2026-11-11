@@ -1057,7 +1057,7 @@ test('setup(): one run creates the control sheet (ready for testing), starts the
   // shared with the bot's account), and the summary and each row's Bot status say so
   assert.strictEqual(s.knowledge, 'Read 0 of 2 documents (0 characters). 2 couldn\'t be read: see the Bot status column on the Resources tab.');
   eq(Object.keys(leftovers).filter(k => g.props.has(k)), []);
-  eq(Array.from(g.props.keys()).sort(), ['BOT_USER', 'GUIDANCE_TAB_MADE', 'KNOWLEDGE_STATE', 'LAST_ANALYST_NAME', 'LAST_ANALYST_SPACE', 'RESOURCES_TAB_MADE',
+  eq(Array.from(g.props.keys()).sort(), ['BOT_USER', 'CONTROL_HELP_HASH', 'GUIDANCE_TAB_MADE', 'KNOWLEDGE_STATE', 'LAST_ANALYST_NAME', 'LAST_ANALYST_SPACE', 'RESOURCES_TAB_MADE',
     'SOMEONE_ELSES_SETTING', 'SPACE_ID:SLRR Test Feed (Burson Sim)', 'STORE_SHEET_ID']);
   assert.strictEqual(s.control_sheet, 'https://docs.google.com/spreadsheets/d/sheet1');
   eq(t.sheet().sheets.map(sh => sh.name), ['Control', 'Resources', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)']);
