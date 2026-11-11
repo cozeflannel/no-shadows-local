@@ -112,7 +112,8 @@ function edParseCard_(text, links) {
     (chanRaw ? (snapEnum_(chanRaw, (fieldSpec_('social_network') || {}).allowed || []) || chanRaw) : '');
   const author = kv.handle || kv.author || (url ? authorFromUrl_(url) || '' : '');
   const areaRaw = kv.area || kv.product || '';
-  const product = areaRaw ? (normalizeProposal_('product', areaRaw) || areaRaw) : '';
+  const areaSplit = areaRaw ? splitProductField_(areaRaw, true) : { product: '', other_products: [] };
+  const product = areaSplit.product ? [areaSplit.product].concat(areaSplit.other_products).join(', ') : areaRaw;
 
   const clusterMatch = String(kv.cluster_spread || kv.cluster_size || '')
     .match(/([\d,]+)\s+distinct\s+authors?\s*\(([\d,]+)\s+low-tier\s+mentions?(?:\s+across\s+([^)]+))?\)/i);
@@ -395,14 +396,23 @@ function edBaseFields_(ed) {
   put('post_content', ed.text ? truncate_(ed.text, 3000) : '');
   put('summary', ed.summary ? truncate_(ed.summary, 1000) : '');
   put('post_date', ed.date);
-  put('product', ed.product ? (normalizeProposal_('product', ed.product) || '') : '');
+  if (ed.product) {
+    const sp = splitProductField_(ed.product, true);
+    put('product', sp.product);
+    if (sp.other_products.length) {
+      f.other_products = sp.other_products;
+      f.product_targets = [sp.product].concat(sp.other_products);
+    }
+  }
   put('issue_name', ed.headline ? truncate_(ed.headline, 120) : '');
   return f;
 }
 
 /** Merges Gemini's open-world discovery taxonomy and neutral summary onto the SLRR fields. Pure. */
 function edMergedFields_(parsed, rev) {
-  const f = Object.assign({}, parsed.fields);
+  const baseFields = (parsed && parsed.fields) || {};
+  const f = Object.assign({}, baseFields);
+  const cardProds = Array.isArray(baseFields.product_targets) ? baseFields.product_targets : [];
   if (rev && rev.issue) f.issue_name = rev.issue;
   if (rev && rev.summary) f.summary = rev.summary;
   if (rev && rev.knownIssue && rev.knownIssue.matches && !f.issue_status) f.issue_status = 'Ongoing Issue';
@@ -411,13 +421,22 @@ function edMergedFields_(parsed, rev) {
     if (s.tag) f.exposure_tag = s.tag;
     if (s.priority) f.priority = s.priority;
     if (s.product) f.product = s.product;
-    if (s.others.length) f.other_products = s.others;
+    const mergedOthers = dedupeProducts_(f.product, (cardProds.length > 1 ? cardProds : []).concat(s.others || []), true);
+    if (mergedOthers.length) f.other_products = mergedOthers;
     if (s.topics.length) f.risk_tags = s.topics;
     if (!f.location && s.location) f.location = s.location;
   } else if (s && s.product && !f.product) {
     f.product = s.product;
+    if (s.others && s.others.length && !f.other_products) f.other_products = dedupeProducts_(f.product, s.others, true);
+  } else if (f.product && Array.isArray(f.other_products) && f.other_products.length) {
+    f.other_products = dedupeProducts_(f.product, f.other_products.concat((s && s.others) || []), true);
   }
   if (!f.product) f.product = 'Brand';
+  if (cardProds.length > 1 && f.product) {
+    const nextTargets = [f.product].concat(dedupeProducts_(f.product, cardProds, true));
+    if (nextTargets.length >= 2) f.product_targets = nextTargets;
+    else delete f.product_targets;
+  }
   if (!f.priority) {
     const hint = String((parsed.ed && parsed.ed.priorityHint) || '').toUpperCase();
     f.priority = /^P[012]$/.test(hint) ? hint : 'P2';

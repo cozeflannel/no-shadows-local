@@ -283,11 +283,13 @@ function sendWatchUpdate_(ctx, row, update, report) {
   let open = null;
   let problem = '';
   try {
+    const sentTargets = typeof rowSentThreads_ === 'function' ? rowSentThreads_(row)
+      : [{ thread: row.email_thread, message_id: row.email_message_id || '', subject: row.email_subject || '' }];
     const drafts = new Set(watched_(ctx));  // the Social Alerts the draft check is still waiting on (Drafts.gs)
-    open = (ctx.store.alerts || []).find(a => a.alert_id !== row.alert_id && a.email_thread === row.email_thread &&
+    open = (ctx.store.alerts || []).find(a => a.alert_id !== row.alert_id &&
+      sentTargets.some(st => st.thread && a.email_thread === st.thread) &&
       (a.email_status === 'pending' || a.email_status === 'drafted') && drafts.has(a.alert_id)) || null;
     if (open) throw new Error(`the follow-up Social Alert ${open.alert_id} on this thread isn't sent yet`);
-    const r = watchRecipients_(ctx, row);
     const footer = testing ? 'Testing: live, this reply would go to everyone the Social Alert went to.' : '';
     // which post: a thread can carry follow-up Social Alerts about other posts
     const url = String(((row.email_input || {}).fields || {}).post_url || '').trim();
@@ -297,9 +299,14 @@ function sendWatchUpdate_(ctx, row, update, report) {
     const html = div('font-size: 14px; color: #202124;', htmlEsc_(update.line)) +
       (post ? div('font-size: 14px; color: #202124;', `The post: <a href="${htmlEsc_(post)}">${htmlEsc_(post)}</a>`) : '') +
       (footer ? div('font-size: 12px; color: #555555; margin-top: 12px;', htmlEsc_(footer)) : '');
-    const ref = row.email_message_id || '';
-    ctx.gmail.sendMessage(buildMime_({ from: D.from, to: r.to, cc: r.cc, bcc: r.bcc, subject: r.subject, text, html,
-      inReplyTo: ref, references: ref }), row.email_thread);
+    sentTargets.forEach(st => {
+      const subRow = Object.assign({}, row, { email_thread: st.thread, email_message_id: st.message_id || '',
+        email_subject: st.subject || row.email_subject || '' });
+      const r = watchRecipients_(ctx, subRow);
+      const ref = subRow.email_message_id || '';
+      ctx.gmail.sendMessage(buildMime_({ from: D.from, to: r.to, cc: r.cc, bcc: r.bcc, subject: r.subject, text, html,
+        inReplyTo: ref, references: ref }), st.thread);
+    });
   } catch (err) {
     problem = String((err && err.message) || err);
     ctx.log(`couldn't send the watch update (${update.kind}) for ${row.alert_id}: ${problem}`);

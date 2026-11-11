@@ -659,7 +659,16 @@ function otherBaseFields_(o) {
   put('location', o.location);
   if (o.kof === true || o.kof === false) f.kof = o.kof;
   put('kof_lists', o.kofLists);
-  put('product', o.product ? normalizeProposal_('product', o.product) : '');
+  const cardProducts = (((o.unknown || []).find(u => u && u.label === 'card_products')) || {}).value || '';
+  const rawProd = cardProducts || o.product || '';
+  if (rawProd) {
+    const sp = splitProductField_(rawProd, true);
+    put('product', sp.product);
+    if (sp.other_products.length) {
+      f.other_products = sp.other_products;
+      f.product_targets = [sp.product].concat(sp.other_products);
+    }
+  }
   put('issue_name', o.topic ? truncate_(o.topic, 120) : '');
   return f;
 }
@@ -671,7 +680,9 @@ function otherBaseFields_(o) {
  * else the listening data (never Gemini's guess). Pure.
  */
 function otherFields_(parsed, tri, eng, withView) {
-  const f = Object.assign({}, parsed.fields);
+  const baseFields = (parsed && parsed.fields) || {};
+  const f = Object.assign({}, baseFields);
+  const cardProds = Array.isArray(baseFields.product_targets) ? baseFields.product_targets : [];
   if (tri && tri.issue) f.issue_name = tri.issue;
   if (tri && tri.summary) f.summary = tri.summary;
   if (tri && tri.knownIssue && tri.knownIssue.matches && !f.issue_status) f.issue_status = 'Ongoing Issue';
@@ -680,12 +691,20 @@ function otherFields_(parsed, tri, eng, withView) {
     f.exposure_tag = v.tag;
     f.priority = v.priority;
     if (v.product) f.product = v.product;
-    if (v.others.length) f.other_products = v.others;
+    const mergedOthers = dedupeProducts_(f.product, (cardProds.length > 1 ? cardProds : []).concat(v.others || []), true);
+    if (mergedOthers.length) f.other_products = mergedOthers;
     if (v.topics.length) f.risk_tags = v.topics;
     if (!f.location && v.location) f.location = v.location;
   } else if (v && v.product && !f.product) {
     f.product = v.product;  // for the routing of the stream's own Social Alert
-    if (v.others && v.others.length && !f.other_products) f.other_products = v.others;
+    if (v.others && v.others.length && !f.other_products) f.other_products = dedupeProducts_(f.product, v.others, true);
+  } else if (f.product && Array.isArray(f.other_products) && f.other_products.length) {
+    f.other_products = dedupeProducts_(f.product, f.other_products.concat((v && v.others) || []), true);
+  }
+  if (cardProds.length > 1 && f.product) {
+    const nextTargets = [f.product].concat(dedupeProducts_(f.product, cardProds, true));
+    if (nextTargets.length >= 2) f.product_targets = nextTargets;
+    else delete f.product_targets;
   }
   const n = eng.n !== null ? eng.n : eng.min;
   if (Number.isFinite(n)) f.total_engagement = Math.round(n);

@@ -398,6 +398,13 @@ function draftRowFor_(ctx, review, esc, related) {
   // Check outage & comms docs (Control tab row 20): Google's status and the holding statement, at the bottom of the email
   if (review.commsContext && switchOn_(ctx, 'outageComms')) input.comms_context = commsEmailInput_(review.commsContext);
   const reply = related && related.email_status === 'sent' && related.email_thread ? related : null;
+  if (reply) {
+    const relTeams = Array.isArray(reply.team_emails) ? reply.team_emails
+      : (reply.email_input && Array.isArray(reply.email_input.team_emails) ? reply.email_input.team_emails : []);
+    if (relTeams.length) input.related_team_emails = relTeams;
+    const relProd = String((reply.fields && reply.fields.product) || (((reply.email_input || {}).fields || {}).product) || '').trim();
+    if (relProd) input.related_product = relProd;
+  }
   const replyTo = reply ? { subject: reply.email_subject } : null;
   return {
     email_status: 'pending', email_input: input, email_attempts: 0, email_error: '',
@@ -422,6 +429,60 @@ function aiTeamsWithAddresses_(input) {
 }
 
 function watchDraft_(ctx, alertId) { setWatched_(ctx, watched_(ctx).concat([alertId])); }
+
+/** All open Gmail draft IDs tracked on `row` (multi-team `team_emails` drafts + `row.email_draft`). Pure. */
+function rowDraftIds_(row) {
+  const out = [];
+  const add = id => {
+    const s = String(id || '').trim();
+    if (s && !out.includes(s)) out.push(s);
+  };
+  const tms = row && row.email_input && Array.isArray(row.email_input.team_emails) ? row.email_input.team_emails : [];
+  tms.forEach(te => { if (te && te.status === 'drafted' && te.draft) add(te.draft); });
+  String((row && row.email_draft) || '').split(/[\s,]+/).forEach(add);
+  return out;
+}
+
+/** All sent per-team thread descriptors on `row` (`[{key, product, distro, thread, message_id, subject}]`). Pure. */
+function rowSentThreads_(row) {
+  const tms = row && row.email_input && Array.isArray(row.email_input.team_emails) ? row.email_input.team_emails : [];
+  const sent = tms.filter(te => te && te.status === 'sent' && te.thread).map(te => ({
+    key: String(te.key || ''),
+    product: String(te.product || ''),
+    distro: String(te.distro || ''),
+    thread: String(te.thread),
+    message_id: String(te.message_id || ''),
+    subject: String(te.subject || ''),
+  }));
+  if (sent.length) return sent;
+  return row && row.email_thread ? [{
+    key: '', product: '', distro: '', thread: String(row.email_thread),
+    message_id: String(row.email_message_id || ''), subject: String(row.email_subject || ''),
+  }] : [];
+}
+
+/** Deduplicated Gmail thread IDs across all sent Social Alerts on `row`. Pure. */
+function rowSentThreadIds_(row) {
+  return Array.from(new Set(rowSentThreads_(row).map(x => x.thread).filter(Boolean)));
+}
+
+/** True when any Social Alert draft or send for `row` has already gone out or been created. */
+function rowAlreadyOut_(ctx, row) {
+  if (!row) return false;
+  if (rowDraftIds_(row).length > 0) return true;
+  if (standInSent_(ctx, row.alert_id) && standInSent_(ctx, row.alert_id).sent) return true;
+  const tms = row.email_input && Array.isArray(row.email_input.team_emails) ? row.email_input.team_emails : [];
+  if (tms.some(te => te && (te.status === 'sent' || te.draft))) return true;
+  const prefix = String(row.alert_id || '') + '#';
+  if (prefix.length > 1) {
+    if (ctx && ctx.standInSends && Object.keys(ctx.standInSends).some(k => k.indexOf(prefix) === 0 && ctx.standInSends[k].sent)) return true;
+    try {
+      if (standInSendLog_(ctx).some(e => e && e.sent && String(e.id || '').indexOf(prefix) === 0)) return true;
+      if (autoSendLog_(ctx).some(e => e && e.sent && String(e.id || '').indexOf(prefix) === 0)) return true;
+    } catch (e) {}
+  }
+  return false;
+}
 
 /**
  * A Social Alert just went out (the stand-in's copy, a person sending the draft, or Auto-send): what the switches do
@@ -458,23 +519,25 @@ function emailScreenshot_(input) {
  * The Social Alert for a pending row. Testing (a stand-in): sent now, to the stand-in only, and the alert gets its emojis.
  * Live with Auto-send Social Alerts ON: sent now to its distros (autoSend_). Otherwise (or when that can't send it): the
  * Gmail draft and its note under the forwarded alert. A failure is retried on the next runs. Never throws.
- * With Auto-submit T&S form ON, the T&S form goes in first (autoSubmitTns_), so the email says T&S: Yes; its note takes
- * the place of the T&S form details. A retry never submits it again, and one that fails for good still posts that note.
- * Once the email went out or the draft exists, nothing brings the row back to pending (a retry would send or draft it
- * again): the draft's id goes on the row at once (saveDraft_) and each later step is on its own; a pending row that
- * already names a draft gets that draft brought up to date (reusedDraft_). Nothing at all is tried once another run
- * took over (Main.gs runOwned_): that run does it.
+ * Multi-product alerts spanning 2+ distinct product teams (e.g. "Product: Gemini Model, Devs Products") formulate and
+ * deliver one dedicated Social Alert email per product team (`tryMultiDraft_`).
  */
 function tryDraft_(ctx, row, report) {
   const D = ctx.drafts;
   let tnsNote = '';
   if (!runOwned_()) return;  // another run took over: the row stays pending for it, no try counted
-  const alreadyOut = !!(row.email_draft || (standInSent_(ctx, row.alert_id) && standInSent_(ctx, row.alert_id).sent));
+  const alreadyOut = rowAlreadyOut_(ctx, row);
   if (!alreadyOut && typeof amSendGate_ === 'function' && !amSendGate_(ctx, row, report)) return;
   try {
     tnsNote = autoSubmitTns_(ctx, row, row.email_input || {}, report);  // '' while Auto-submit T&S form is OFF
     const input = row.email_input || {};
-    const plan = planRecipients_(input.escalation, input.escalation.text, groupsOf_(row));
+    if (!input.escalation) throw new Error('missing escalation input');
+    const targets = productEmailTargets_(input, groupsOf_(row), row);
+    if (targets.length > 1) {
+      tryMultiDraft_(ctx, row, input, targets, report, tnsNote);
+      return;
+    }
+    const plan = targets[0].plan;
     if (draftsTesters_(ctx).length) {
       sendToStandIn_(ctx, row, input, plan, report, tnsNote);
       return;
@@ -521,7 +584,7 @@ function tryDraft_(ctx, row, report) {
     ctx.store.updateAlert(row, { email_status: final ? 'failed' : 'pending', email_attempts: attempts, email_error: truncate_(message, 300) });
     ctx.log(`Social Alert ${what} for ${row.alert_id} failed (attempt ${attempts}): ${message}`);
     if (final) {
-      if (!row.email_draft && row.email_status !== 'sent' && typeof amReleaseSend_ === 'function') amReleaseSend_(ctx, row);
+      if (!rowAlreadyOut_(ctx, row) && row.email_status !== 'sent' && typeof amReleaseSend_ === 'function') amReleaseSend_(ctx, row);
       report.errors.push(`couldn't ${what} the Social Alert for ${row.alert_id} after ${attempts} tries: ${message}`);
       bqWriteBack_(ctx, row, 'failed', report);  // Write back to SLRR BigQuery (nothing while it's OFF)
       if (tnsNote) {  // Auto-submit T&S form: what it did for T&S (or the link) still goes under the alert
@@ -534,6 +597,417 @@ function tryDraft_(ctx, row, report) {
       }
     }
   }
+}
+
+/**
+ * Multi-product Social Alert dispatcher (`targets.length >= 2`): formulates and sends/drafts one dedicated Social Alert
+ * email per product team (e.g. one for Gemini Model team and one for Devs Products team), while running T&S, Alert
+ * memory, emojis, and post-send switches cleanly once across the alert.
+ */
+function tryMultiDraft_(ctx, row, input, targets, report, tnsNote) {
+  if (draftsTesters_(ctx).length) {
+    sendMultiToStandIn_(ctx, row, input, targets, report, tnsNote);
+    return;
+  }
+  if (ctx.b30Blank) {
+    const why = 'Testing: enter an email address in Control!B30 (Testing: send to) to receive test emails';
+    ctx.store.updateAlert(row, { email_status: 'pending', email_error: why });
+    ctx.log(`Social Alerts (${targets.length} teams) for ${row.alert_id} waiting on Control!B30`);
+    return;
+  }
+  liveOrDraftMulti_(ctx, row, input, targets, report, tnsNote);
+}
+
+/**
+ * Testing mode (`Control!B29 = ON` / `Control!B30` set) for a multi-product alert: sends one real Social Alert email per
+ * product team directly to the inbox(es) in `Control!B30`, each formulated with that team's Subject, Product row, and
+ * `Would have gone to: To: <Team> alert POCs...` footer. Crash-safe per-team keys `${id}#${slug}` prevent duplicate sends.
+ */
+function sendMultiToStandIn_(ctx, row, input, targets, report, tnsNote) {
+  const D = ctx.drafts;
+  const id = row.alert_id;
+  const testers = draftsTesters_(ctx);
+  const prevList = Array.isArray(input.team_emails) ? input.team_emails : [];
+  const prevByKey = new Map(prevList.filter(x => x && x.key).map(x => [x.key, x]));
+  const screenshot = emailScreenshot_(input);
+  const results = [];
+  const stoppedMidSend = [];
+  let claimed = rowAlreadyOut_(ctx, row);
+
+  for (const t of targets) {
+    const sendKey = `${id}#${t.slug}`;
+    const prev = prevByKey.get(t.key);
+    const before = standInSent_(ctx, sendKey);
+    if ((prev && prev.status === 'sent') || (before && before.sent)) {
+      const thread = (prev && prev.thread) || (before && before.thread) || t.replyThread || '';
+      const sentAt = Number((prev && prev.sent_at) || (before && before.at)) || ctx.now();
+      const subj = (prev && prev.subject) ||
+        taggedSubject_(socialAlertSubject_(t.input, t.replySubject ? { subject: t.replySubject } : null),
+          ctx.flowTag || '', t.replySubject ? { subject: t.replySubject } : null);
+      results.push({
+        key: t.key, slug: t.slug, product: t.productLabel, distro: t.distroName,
+        status: 'sent', draft: '', thread,
+        message_id: (prev && prev.message_id) || '',
+        reply_to: t.replyTo || '', subject: subj, sent_at: sentAt,
+      });
+      continue;
+    }
+    if (before) {
+      stoppedMidSend.push(t.productLabel);
+      results.push({
+        key: t.key, slug: t.slug, product: t.productLabel, distro: t.distroName,
+        status: 'failed', draft: '', thread: t.replyThread || '', message_id: '',
+        reply_to: t.replyTo || '', subject: '', sent_at: 0,
+      });
+      continue;
+    }
+    const email = socialAlertEmail_(t.input, t.plan, {
+      standIn: testers, sendId: sendKey, footer: wouldHaveGoneTo_(t.plan, t.input), tag: ctx.flowTag || '',
+      reply: t.replySubject ? { subject: t.replySubject } : null, screenshot,
+    });
+    const mime = buildMime_({
+      from: D.from, to: email.to, cc: [], bcc: [], subject: email.subject, text: email.text, html: email.html,
+      inline: email.inline, inReplyTo: t.replyTo || '', references: t.replyTo || '',
+    });
+    if (!runOwned_()) {
+      if (results.some(r => r.status === 'sent')) {
+        try { ctx.store.updateAlert(row, { email_input: Object.assign({}, input, { team_emails: results }) }); } catch (e) {}
+      }
+      return;
+    }
+    noteStandInSend_(ctx, { id: sendKey, at: ctx.now() });
+    if (!claimed) {
+      if (typeof amClaimSend_ === 'function') amClaimSend_(ctx, row);
+      claimed = true;
+    }
+    let sent;
+    try {
+      sent = ctx.gmail.sendMessage(mime, t.replyThread || null);
+    } catch (e) {
+      forgetStandInSend_(ctx, sendKey);
+      if (results.some(r => r.status === 'sent')) {
+        try { ctx.store.updateAlert(row, { email_input: Object.assign({}, input, { team_emails: results }) }); } catch (err) {}
+      } else if (typeof amReleaseSend_ === 'function') {
+        amReleaseSend_(ctx, row);
+      }
+      throw e;
+    }
+    const at = ctx.now();
+    const thread = (sent && sent.threadId) || t.replyThread || '';
+    const entry = { id: sendKey, at, thread, msg: (sent && sent.id) || '', sent: true };
+    (ctx.standInSends = ctx.standInSends || {})[sendKey] = entry;
+    try {
+      noteStandInSend_(ctx, entry);
+    } catch (e) {
+      ctx.log(`couldn't note that the ${t.productLabel} Social Alert for ${id} went to the testers: ${(e && e.message) || e}`);
+    }
+    let messageId = '';
+    try {
+      const m = thread && sent && sent.id ? ctx.gmail.getThread(thread).find(x => x.id === sent.id) : null;
+      messageId = (m && m.headers && m.headers['message-id']) || '';
+    } catch (e) {
+      ctx.log(`couldn't read the Message-ID of the ${t.productLabel} Social Alert for ${id}: ${(e && e.message) || e}`);
+    }
+    report.drafts_sent++;
+    results.push({
+      key: t.key, slug: t.slug, product: t.productLabel, distro: t.distroName,
+      status: 'sent', draft: '', thread, message_id: messageId,
+      reply_to: t.replyTo || '', subject: email.subject, sent_at: at,
+    });
+  }
+
+  const sentResults = results.filter(r => r.status === 'sent');
+  if (!sentResults.length && stoppedMidSend.length) {
+    const why = `an earlier try may have sent the Social Alert (${stoppedMidSend.join(', ')}) to the testers (check Sent in Gmail), so it wasn't sent again`;
+    ctx.store.updateAlert(row, { email_status: 'failed', email_error: why, email_input: Object.assign({}, input, { team_emails: results }) });
+    ctx.log(`the Social Alerts for ${id}: ${why}`);
+    (report.notices = report.notices || []).push(`The Social Alerts for ${id}: ${why}.`);
+    return;
+  }
+
+  const first = sentResults[0];
+  const lastAt = sentResults[sentResults.length - 1].sent_at || ctx.now();
+  const errText = stoppedMidSend.length
+    ? `check Sent in Gmail for ${stoppedMidSend.join(', ')} (an earlier try stopped mid-send)` : '';
+  const step = (failed, fn) => {
+    try { fn(); } catch (e) { ctx.log(`${failed}: ${(e && e.message) || e}`); }
+  };
+  step(`couldn't mark the Social Alerts for ${id} sent`, () => {
+    const was = row.email_status;
+    try {
+      ctx.store.updateAlert(row, {
+        email_status: 'sent', email_draft: '', email_thread: first.thread, email_message_id: first.message_id,
+        email_subject: first.subject || row.email_subject || '', email_at: lastAt, email_sent_at: lastAt,
+        email_sent_by: D.mailbox || '', email_error: errText,
+        email_input: Object.assign({}, input, { team_emails: results }),
+      });
+    } catch (e) {
+      row.email_status = was;
+      throw e;
+    }
+  });
+  step(`couldn't mark the emojis for the Social Alerts for ${id}`,
+    () => { report.mirrored += markEmojis_(ctx, row, escalationEmojisForRow_(row, null, false)).length; });
+  step(`after the Social Alerts for ${id} were sent, the after-send steps failed`, () => onEmailSent_(ctx, row, report));
+  const noteLines = [
+    `${sentResults.length} Social Alerts sent (1 per product team, to the testers while testing): ` +
+      `${sentResults.map(r => r.product).join(', ')}.`,
+  ];
+  if (input.escalation && input.escalation.kb_basis) {
+    noteLines.push(`- Why: ${escalationWhyText_(input.escalation)}`);
+  }
+  if (tnsWhy_(input)) {
+    noteLines.push(tnsNote || tnsFormText_(input));
+    step(`couldn't watch ${id} for the T&S confirmation`, () => watchTns_(ctx, id));
+  }
+  step(`couldn't post the multi-team note for ${id}`, () => postDraftNote_(ctx, row, noteLines.join('\n'), 'multisend:' + id));
+}
+
+/**
+ * Live / non-stand-in execution for a multi-product alert (`targets.length >= 2`):
+ * - With Auto-send Social Alerts ON (`autoSendOn_(ctx)`): sends 1 dedicated Social Alert email per product team directly
+ *   to that team's Google Group POCs from `Brand safety groups` (any team missing contacts or blocked by a safety check
+ *   falls back cleanly to a Gmail draft).
+ * - With Auto-send Social Alerts OFF: creates 1 dedicated Gmail draft per product team and posts a consolidated note.
+ */
+function liveOrDraftMulti_(ctx, row, input, targets, report, tnsNote) {
+  const D = ctx.drafts;
+  const id = row.alert_id;
+  const prevList = Array.isArray(input.team_emails) ? input.team_emails : [];
+  const prevByKey = new Map(prevList.filter(x => x && x.key).map(x => [x.key, x]));
+  const screenshot = emailScreenshot_(input);
+  const autoOn = autoSendOn_(ctx);
+  const results = [];
+  const madeDraftIds = [];
+  const wsNotes = [];
+  const noteMeta = [];
+  let claimed = rowAlreadyOut_(ctx, row);
+  let hitDeadline = false;
+
+  const waitingOn = (Array.isArray(row.requested) ? row.requested : []).filter(x => x && x.problem);
+  const linkFound = linkFoundRow_(row);
+
+  for (const t of targets) {
+    const sendKey = `${id}#${t.slug}`;
+    const prev = prevByKey.get(t.key);
+    const email = socialAlertEmail_(t.input, t.plan, {
+      test: !D.live, mailbox: D.mailbox, sendId: sendKey, tag: ctx.flowTag || '',
+      reply: t.replySubject ? { subject: t.replySubject } : null, screenshot,
+    });
+    const mime = buildMime_({
+      from: D.from, to: email.to, cc: email.cc, bcc: email.bcc, subject: email.subject, text: email.text,
+      html: email.html, inline: email.inline, inReplyTo: t.replyTo || '', references: t.replyTo || '',
+    });
+    if (!runOwned_()) {
+      if (results.length) {
+        try { ctx.store.updateAlert(row, { email_input: Object.assign({}, input, { team_emails: results }) }); } catch (e) {}
+      }
+      return;
+    }
+
+    if (prev && prev.status === 'sent') {
+      results.push(prev);
+      noteMeta.push({ t, email, status: 'sent', warn: '' });
+      continue;
+    }
+    if (prev && prev.draft) {
+      const cur = ctx.gmail.getDraftRaw(prev.draft);
+      if (cur) {
+        const th = cur.threadId || prev.thread || t.replyThread || '';
+        ctx.gmail.updateDraft(prev.draft, mime, th || null);
+        results.push(Object.assign({}, prev, { thread: th, subject: email.subject }));
+      } else {
+        results.push(prev);  // gone from Gmail: maintainMultiDrafts_ checks whether sent or discarded
+      }
+      noteMeta.push({ t, email, status: 'drafted', warn: prev.warn || '' });
+      continue;
+    }
+
+    if (!claimed) {
+      if (typeof amClaimSend_ === 'function') amClaimSend_(ctx, row);
+      claimed = true;
+    }
+
+    let autoWarn = '';
+    let autoTried = 0;
+    if (autoOn) {
+      const before = autoSendLog_(ctx).find(e => e.id === sendKey);
+      if (before && before.sent) {
+        const at = Number(before.at) || ctx.now();
+        const thread = before.thread || t.replyThread || '';
+        results.push({
+          key: t.key, slug: t.slug, product: t.productLabel, distro: t.distroName,
+          status: 'sent', draft: '', thread, message_id: '', reply_to: t.replyTo || '',
+          subject: email.subject, sent_at: at, sent_by: 'bot',
+          recipients: email.to.concat(email.cc, email.bcc || []),
+        });
+        noteMeta.push({ t, email, status: 'sent', warn: '' });
+        try { const w = submitWorkspaceForm_(t.input, D.live); if (w) wsNotes.push(w); } catch (e) {}
+        continue;
+      }
+      if (before) {
+        autoWarn = `already tried auto-sending ${t.productLabel}: ${AUTO_SEND_CHECK_SENT_}`;
+        autoTried = Number(before.at) || ctx.now();
+      } else if (!email.to.length || !t.plan.to.length) {
+        autoWarn = `${t.productLabel} has no alert contacts on file (add recipients in Gmail, then send)`;
+      } else if (waitingOn.length) {
+        const what = truncate_(waitingOn.map(x => `${burLabel_(x.field)} (${x.problem})`).join(', '), 240);
+        autoWarn = switchOn_(ctx, 'noWait')
+          ? `alert has a problem the bot can't fix itself (${what}): fix in Gmail, then send`
+          : `asked Burson to fix ${what}: fix in Gmail, then send`;
+      } else if (linkFound) {
+        const sure = Math.round((Number(row.forwarded_fields.link_found.confidence) || 0) * 100);
+        autoWarn = `link was found in the listening feeds (${sure}% sure): check it's the right post, then send`;
+      } else if (ctx.now() > ctx.deadline) {
+        hitDeadline = true;
+        break;
+      } else {
+        let noteOk = false;
+        const tried = ctx.now();
+        try {
+          noteAutoSend_(ctx, { id: sendKey, at: tried });
+          noteOk = true;
+        } catch (e) {
+          autoWarn = `couldn't note the send first (${truncate_(String((e && e.message) || e), 140)}): review and send`;
+        }
+        if (noteOk) {
+          let sent = null;
+          try {
+            sent = ctx.gmail.sendMessage(mime, t.replyThread || null);
+          } catch (e) {
+            const why = String((e && e.message) || e);
+            ctx.log(`auto-send of the ${t.productLabel} Social Alert for ${id} failed, making a draft instead: ${why}`);
+            autoWarn = `Gmail said "${truncate_(why, 160)}" (it may have gone out anyway: ${AUTO_SEND_CHECK_SENT_})`;
+            autoTried = tried;
+          }
+          if (sent) {
+            const at = ctx.now();
+            const thread = sent.threadId || t.replyThread || '';
+            try {
+              noteAutoSend_(ctx, { id: sendKey, at, thread, msg: sent.id || '', sent: true });
+            } catch (e) {
+              ctx.log(`couldn't note that the ${t.productLabel} Social Alert for ${id} was sent: ${(e && e.message) || e}`);
+            }
+            let messageId = '';
+            try {
+              const msgs = thread ? ctx.gmail.getThread(thread) : [];
+              const m = sent.id ? msgs.find(x => x.id === sent.id) : null;
+              messageId = (m && m.headers && m.headers['message-id']) || '';
+            } catch (e) {}
+            report.auto_sent = (report.auto_sent || 0) + 1;
+            report.drafts_sent++;
+            results.push({
+              key: t.key, slug: t.slug, product: t.productLabel, distro: t.distroName,
+              status: 'sent', draft: '', thread, message_id: messageId, reply_to: t.replyTo || '',
+              subject: email.subject, sent_at: at, sent_by: 'bot',
+              recipients: email.to.concat(email.cc, email.bcc || []),
+            });
+            noteMeta.push({ t, email, status: 'sent', warn: '' });
+            try { const w = submitWorkspaceForm_(t.input, D.live); if (w) wsNotes.push(w); } catch (e) {}
+            continue;
+          }
+        }
+      }
+    }
+
+    const draft = ctx.gmail.createDraft(mime, t.replyThread || null);
+    madeDraftIds.push(draft.id);
+    report.drafts++;
+    const entry = {
+      key: t.key, slug: t.slug, product: t.productLabel, distro: t.distroName,
+      status: 'drafted', draft: draft.id, thread: draft.threadId || t.replyThread || '',
+      reply_to: t.replyTo || '', subject: email.subject, at: ctx.now(),
+    };
+    if (autoTried) entry.auto_send_try = autoTried;
+    if (autoWarn) entry.warn = autoWarn;
+    results.push(entry);
+    noteMeta.push({ t, email, status: 'drafted', warn: autoWarn });
+    try { const w = submitWorkspaceForm_(t.input, D.live); if (w) wsNotes.push(w); } catch (e) {}
+  }
+
+  if (hitDeadline) {
+    ctx.store.updateAlert(row, { email_status: 'pending', email_input: Object.assign({}, input, { team_emails: results }) });
+    ctx.log(`remaining team Social Alerts for ${id} continue on the next run: this run is out of time`);
+    return;
+  }
+
+  const openDrafts = results.filter(r => r.status === 'drafted');
+  const sentTeams = results.filter(r => r.status === 'sent');
+  const now = ctx.now();
+
+  if (!openDrafts.length && sentTeams.length) {
+    const first = sentTeams[0];
+    ctx.store.updateAlert(row, {
+      email_status: 'sent', email_draft: '', email_thread: first.thread, email_message_id: first.message_id || '',
+      email_subject: first.subject || row.email_subject || '', email_at: now, email_sent_at: now,
+      email_sent_by: 'bot', email_error: '',
+      email_input: Object.assign({}, input, { team_emails: results }),
+    });
+    const allRecips = [];
+    sentTeams.forEach(s => (s.recipients || []).forEach(a => { if (a) allRecips.push(a); }));
+    try {
+      const got = { headers: { from: D.from, to: allRecips.join(', '), cc: '' } };
+      report.mirrored += markEmojis_(ctx, row, escalationEmojisForRow_(row, got, true)).length;
+    } catch (e) {
+      ctx.log(`after auto-sending the Social Alerts for ${id}, emojis failed: ${(e && e.message) || e}`);
+    }
+    try {
+      postDraftNote_(ctx, row, multiDraftNoteText_(D, noteMeta, input, wsNotes, ctx, tnsNote, true), 'sent:' + id);
+    } catch (e) {}
+    try { if (tnsWhy_(input)) watchTns_(ctx, id); } catch (e) {}
+    onEmailSent_(ctx, row, report);
+    try {
+      const today = etDay_(now);
+      const n = autoSendLog_(ctx).filter(e => e.sent && etDay_(Number(e.at)) === today).length;
+      noteSwitch_('autoSend', `${Math.max(n, sentTeams.length)} sent today · last ${id} (${sentTeams.length} teams) at ${autoSendWhen_(now)}`);
+    } catch (e) {}
+    return;
+  }
+
+  try {
+    const primaryOpen = openDrafts[0] || results[0];
+    ctx.store.updateAlert(row, {
+      email_status: 'drafted', email_draft: openDrafts.map(d => d.draft).join(' '),
+      email_thread: primaryOpen.thread || row.email_thread || '',
+      email_subject: primaryOpen.subject || row.email_subject || '',
+      email_at: now, email_error: '',
+      email_input: Object.assign({}, input, { team_emails: results }),
+    });
+  } catch (e) {
+    madeDraftIds.forEach(did => {
+      try { ctx.gmail.deleteDraft(did); } catch (err) {}
+    });
+    throw e;
+  }
+  try {
+    postDraftNote_(ctx, row, multiDraftNoteText_(D, noteMeta, input, wsNotes, ctx, tnsNote, false), 'draft:' + id);
+  } catch (e) {}
+  try { if (tnsWhy_(input)) watchTns_(ctx, id); } catch (e) {}
+}
+
+/** Consolidated analyst Chat thread note for multi-product Social Alert drafts or auto-sends. Pure. */
+function multiDraftNoteText_(D, noteMeta, input, wsNotes, ctx, tnsNote, allSent) {
+  const esc = (input && input.escalation) || {};
+  const lines = [
+    allSent
+      ? `${noteMeta.length} Social Alerts sent (1 per product team — Auto-send Social Alerts is ON):`
+      : `${imMention_(ctx)} ${noteMeta.length} Social Alert drafts are in Gmail Drafts (1 per product team): review and send each, or delete to skip.`,
+    `- Why: ${escalationWhyText_(esc)}`,
+  ];
+  noteMeta.forEach(({ t, email, status, warn }) => {
+    const productGroups = t.plan.groups.filter(g => t.plan.reasons[g] === 'product alert POCs');
+    const teamLabel = productGroups.length ? productGroups.join(', ') : t.productLabel;
+    const ccGroups = t.plan.groups.filter(g => t.plan.reasons[g] !== 'product alert POCs');
+    const toCount = D.live ? email.to.length : t.plan.to.length;
+    const ccCount = D.live ? email.cc.length : t.plan.cc.length;
+    const stateTag = !allSent && status === 'sent' ? ' [auto-sent]' : '';
+    const toDesc = toCount ? `${teamLabel} alert POCs (${toCount})` : `empty (${teamLabel} has no alert contacts on file)`;
+    const ccDesc = `${ccGroups.length ? ccGroups.join(', ') + ' + ' : ''}standard CC (${ccCount})` + (D.live ? '' : ' (test draft, only to you)');
+    lines.push(`- *${t.productLabel}*${stateTag}: To ${toDesc} · Cc ${ccDesc}${warn ? ` — ⚠️ ${warn}` : ''}`);
+  });
+  if (tnsWhy_(input)) lines.push(tnsNote || tnsFormText_(input));
+  Array.from(new Set((wsNotes || []).filter(Boolean))).forEach(w => lines.push(`- ${w}`));
+  return lines.join('\n');
 }
 
 /**
@@ -1774,6 +2248,11 @@ function maintainDrafts_(ctx, report) {
     }
     if (row.email_status !== 'drafted' || ctx.now() - Number(row.email_at || 0) > DRAFT_WATCH_DAYS_ * DAY_MS_) return;
     try {
+      const tms = row.email_input && Array.isArray(row.email_input.team_emails) ? row.email_input.team_emails : null;
+      if (tms && tms.length > 1) {
+        if (maintainMultiDraftRow_(ctx, row, tms, report)) keep.push(id);
+        return;
+      }
       if (ctx.gmail.draftExists(row.email_draft)) {
         // Auto-send: the bot's own send, which Gmail said failed, may be in Sent after all: the draft is then removed
         const lookInSent = autoSendTry_(row) && ctx.now() - Number(row.email_at || 0) <= AUTO_SEND_FIND_MS_;
@@ -1808,11 +2287,128 @@ function maintainDrafts_(ctx, report) {
 }
 
 /**
+ * Checks every open per-team Gmail draft on a multi-product row (`tms`): returns true while at least one draft is still
+ * open in Gmail; finalizes the row as `sent` (when >=1 team draft was sent) or `discarded` (when all were deleted) once
+ * no open drafts remain.
+ */
+function maintainMultiDraftRow_(ctx, row, tms, report) {
+  const nextTeams = tms.map(te => Object.assign({}, te));
+  let changed = false;
+  nextTeams.forEach(te => {
+    if (te.status !== 'drafted') return;
+    const subRow = {
+      alert_id: `${row.alert_id}#${te.slug || te.key}`,
+      email_at: Number(te.at) || Number(row.email_at) || 0,
+      email_subject: te.subject || row.email_subject || '',
+      email_reply_to: te.reply_to || '',
+      email_input: te.auto_send_try ? { auto_send_try: te.auto_send_try } : {},
+    };
+    if (te.draft && ctx.gmail.draftExists(te.draft)) {
+      const lookInSent = te.auto_send_try && ctx.now() - subRow.email_at <= AUTO_SEND_FIND_MS_;
+      const found = lookInSent ? autoSentFound_(ctx, subRow) : null;
+      if (!found) return;
+      ctx.gmail.deleteDraft(te.draft);
+      Object.assign(te, {
+        status: 'sent', draft: '', thread: found.threadId || te.thread || '',
+        message_id: (found.headers && found.headers['message-id']) || '',
+        sent_at: found.at, sent_by: 'bot',
+        recipients: Array.from(sentRecipients_(found) || []),
+      });
+      report.drafts_sent++;
+      changed = true;
+      return;
+    }
+    const sent = te.thread ? sentMessage_(ctx.gmail.getThread(te.thread), subRow) : null;
+    const found = !sent && te.auto_send_try ? autoSentFound_(ctx, subRow) : null;
+    const hit = sent || found;
+    if (hit) {
+      Object.assign(te, {
+        status: 'sent', draft: '', thread: hit.threadId || te.thread || '',
+        message_id: (hit.headers && hit.headers['message-id']) || '',
+        sent_at: hit.at, sent_by: found ? 'bot' : senderOf_(hit),
+        recipients: Array.from(sentRecipients_(hit) || []),
+      });
+      report.drafts_sent++;
+      changed = true;
+    } else {
+      Object.assign(te, { status: 'discarded', draft: '' });
+      changed = true;
+    }
+  });
+
+  const openDrafts = nextTeams.filter(te => te.status === 'drafted' && te.draft);
+  const nextInput = Object.assign({}, row.email_input || {}, { team_emails: nextTeams });
+  if (openDrafts.length) {
+    if (changed) {
+      ctx.store.updateAlert(row, {
+        email_draft: openDrafts.map(d => d.draft).join(' '),
+        email_thread: openDrafts[0].thread || row.email_thread || '',
+        email_input: nextInput,
+      });
+    }
+    return true;
+  }
+
+  const sentTeams = nextTeams.filter(te => te.status === 'sent');
+  if (sentTeams.length) {
+    const first = sentTeams[0];
+    const lastAt = sentTeams[sentTeams.length - 1].sent_at || ctx.now();
+    ctx.store.updateAlert(row, {
+      email_status: 'sent', email_draft: '',
+      email_thread: first.thread || row.email_thread || '',
+      email_message_id: first.message_id || '',
+      email_subject: first.subject || row.email_subject || '',
+      email_sent_at: lastAt, email_sent_by: first.sent_by || '',
+      email_input: nextInput,
+    });
+    const allRecips = [];
+    sentTeams.forEach(s => (s.recipients || []).forEach(a => { if (a) allRecips.push(a); }));
+    const live = !!(ctx.drafts && ctx.drafts.live);
+    const got = live && allRecips.length ? { headers: { to: allRecips.join(', '), cc: '' } } : null;
+    report.mirrored += markEmojis_(ctx, row, escalationEmojisForRow_(row, got, live && !!got)).length;
+    onEmailSent_(ctx, row, report);
+  } else {
+    ctx.store.updateAlert(row, { email_status: 'discarded', email_draft: '', email_input: nextInput });
+    if (typeof amReleaseSend_ === 'function') amReleaseSend_(ctx, row);
+    markNoAction_(ctx, row);
+    bqWriteBack_(ctx, row, 'discarded', report);
+  }
+  return false;
+}
+
+/**
  * ✍️ on an alert whose Social Alert is still a draft: the draft's T&S row becomes "Yes". A test draft is rebuilt; a
  * live one only gets that row changed. Returns false when the live draft can't be changed safely (edited in Gmail).
  */
 function markTnsSubmitted_(ctx, row, input) {
   try {
+    const tms = input && Array.isArray(input.team_emails) ? input.team_emails : null;
+    if (tms && tms.length > 1) {
+      const targets = productEmailTargets_(input, groupsOf_(row).filter(g => g !== 'tns'), row);
+      const screenshot = !ctx.drafts.live ? emailScreenshot_(input) : null;
+      let allOk = true;
+      tms.forEach(te => {
+        if (!te || te.status !== 'drafted' || !te.draft) return;
+        const current = ctx.gmail.getDraftRaw(te.draft);
+        if (!current) return;
+        let raw = null;
+        if (ctx.drafts.live) {
+          raw = setTnsInMime_(current.raw, 'Yes');
+        } else {
+          const t = targets.find(x => x.key === te.key);
+          if (t) {
+            const email = socialAlertEmail_(t.input, t.plan, { test: true, mailbox: ctx.drafts.mailbox,
+              sendId: `${row.alert_id}#${t.slug}`, reply: t.replySubject ? { subject: t.replySubject } : null,
+              screenshot, tag: ctx.flowTag || '' });
+            raw = buildMime_({ from: ctx.drafts.from, to: email.to, cc: [], subject: email.subject, text: email.text,
+              html: email.html, inline: email.inline, inReplyTo: t.replyTo || '', references: t.replyTo || '' });
+          }
+        }
+        if (!raw) { allOk = false; return; }
+        ctx.gmail.updateDraft(te.draft, raw, current.threadId);
+      });
+      return allOk;
+    }
     const current = ctx.gmail.getDraftRaw(row.email_draft);
     if (!current) return true;  // gone: maintainDrafts_ works out whether it was sent
     let raw = null;
@@ -1848,19 +2444,56 @@ function draftReactions_(ctx, fm, report) {
   }
   if (!row || row.email_status !== 'drafted') return true;
   try {
+    const input = row.email_input || {};
+    const tms = Array.isArray(input.team_emails) && input.team_emails.length > 1 ? input.team_emails : null;
     if (entries.some(e => e.kind === 'close')) {
-      ctx.gmail.deleteDraft(row.email_draft);
-      ctx.store.updateAlert(row, { email_status: 'deleted' });
+      rowDraftIds_(row).forEach(did => ctx.gmail.deleteDraft(did));
+      const patch = { email_status: 'deleted', email_draft: '' };
+      if (tms) {
+        patch.email_input = Object.assign({}, input, {
+          team_emails: tms.map(te => te && te.status === 'drafted' ? Object.assign({}, te, { status: 'deleted', draft: '' }) : te),
+        });
+      }
+      ctx.store.updateAlert(row, patch);
       if (typeof amReleaseSend_ === 'function') amReleaseSend_(ctx, row);
       setWatched_(ctx, watched_(ctx).filter(id => id !== row.alert_id));
       bqWriteBack_(ctx, row, 'deleted', report);  // Write back to SLRR BigQuery (nothing while it's OFF)
       return true;
     }
     const have = groupsOf_(row);
-    const input = row.email_input || {};
     const adding = entries.filter(e => e.kind === 'add_group' && e.group && !have.includes(e.group));
     if (!adding.length) return true;
     const groups = have.concat(adding.map(e => e.group));
+    if (tms) {
+      const targets = productEmailTargets_(input, groups.filter(g => g !== 'tns'), row);
+      const screenshot = !ctx.drafts.live ? emailScreenshot_(input) : null;
+      let updatedAny = false;
+      tms.forEach(te => {
+        if (!te || te.status !== 'drafted' || !te.draft) return;
+        const current = ctx.gmail.getDraftRaw(te.draft);
+        if (!current) return;
+        const t = targets.find(x => x.key === te.key);
+        if (!t) return;
+        if (ctx.drafts.live) {
+          const res = addRecipientsToMime_(current.raw, t.plan.to, t.plan.cc);
+          if (res.added.length) {
+            ctx.gmail.updateDraft(te.draft, res.raw, current.threadId);
+            updatedAny = true;
+          }
+        } else {
+          const email = socialAlertEmail_(t.input, t.plan, { test: true, mailbox: ctx.drafts.mailbox,
+            sendId: `${row.alert_id}#${t.slug}`, reply: t.replySubject ? { subject: t.replySubject } : null,
+            screenshot, tag: ctx.flowTag || '' });
+          ctx.gmail.updateDraft(te.draft, buildMime_({ from: ctx.drafts.from, to: email.to, cc: [], subject: email.subject,
+            text: email.text, html: email.html, inline: email.inline, inReplyTo: t.replyTo || '', references: t.replyTo || '' }),
+            current.threadId);
+          updatedAny = true;
+        }
+      });
+      ctx.store.updateAlert(row, { email_groups: groups.join(' ') });
+      if (updatedAny) report.drafts_updated++;
+      return true;
+    }
     const plan = planRecipients_(input.escalation, input.escalation.text, groups.filter(g => g !== 'tns'));
     const current = ctx.gmail.getDraftRaw(row.email_draft);
     if (!current) return true;  // gone: maintainDrafts_ works out whether it was sent

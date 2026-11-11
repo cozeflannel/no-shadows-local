@@ -185,11 +185,23 @@ function checkOutcome_(ctx, e, report, threads) {
   const row = ctx.store.alertById(e.id);
   if (!row || row.email_status !== 'sent' || !row.email_thread) return false;
   const since = Number(row.email_sent_at) || Number(row.email_at) || Number(e.at) || 0;
-  let msgs = threads.get(row.email_thread);
-  if (!msgs) {
-    msgs = ctx.gmail.getThread(row.email_thread) || [];
-    threads.set(row.email_thread, msgs);
-  }
+  const threadIds = typeof rowSentThreadIds_ === 'function' ? rowSentThreadIds_(row) : [row.email_thread].filter(Boolean);
+  let msgs = [];
+  const seenMsgIds = new Set();
+  threadIds.forEach(tid => {
+    let tMsgs = threads.get(tid);
+    if (!tMsgs) {
+      tMsgs = ctx.gmail.getThread(tid) || [];
+      threads.set(tid, tMsgs);
+    }
+    (tMsgs || []).forEach(m => {
+      const mid = (m && m.id) || JSON.stringify(m);
+      if (!seenMsgIds.has(mid)) {
+        seenMsgIds.add(mid);
+        msgs.push(m);
+      }
+    });
+  });
   const found = [];  // [{label, m}]: the first reply that shows each
   outcomeReplies_(ctx, msgs, since, row).forEach(m => outcomeOf_(row, m).forEach(label => {
     if (!found.some(f => f.label === label)) found.push({ label, m });

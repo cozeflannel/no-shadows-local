@@ -651,7 +651,9 @@ function speedFindImEmail_(p, gmail, sender, own) {
 function botEmailThreads_(rows) {
   const out = new Set();
   (rows || []).forEach(a => {
-    [a.email_thread, ((a.email_input || {}).tns_auto || {}).t].forEach(t => { if (t) out.add(String(t)); });
+    const inp = (a && a.email_input) || {};
+    [a.email_thread, (inp.tns_auto || {}).t].forEach(t => { if (t) out.add(String(t)); });
+    (Array.isArray(inp.team_emails) ? inp.team_emails : []).forEach(te => { if (te && te.thread) out.add(String(te.thread)); });
   });
   return out;
 }

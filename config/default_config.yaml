@@ -217,8 +217,8 @@ alert_template:
   llm_checks:
     - {id: exposure_tag_fit, correctable_field: exposure_tag, severity: blocking, fields: [exposure_tag, post_content, summary, alert_name],
        instruction: "The Exposure Tag must be the single best tag from the taxonomy (P0 > P1 > P2 when several apply; use context clues for product failures / Google mistakes). Propose the correct tag if not."}
-    - {id: product_fit, correctable_field: product, severity: blocking, fields: [product, post_content, summary, alert_name],
-       instruction: "The Product must be the Google product the post is about, using distribution names (Gems -> Gemini App; AI Studio / Antigravity -> Devs Products; Central AI -> Gemini Model, Gemini App, DeepMind, Devs Products or Brand)."}
+    - {id: product_fit, correctable_field: product, severity: blocking, fields: [product, other_products, post_content, summary, alert_name],
+       instruction: "The Product (together with other_products when multiple Google products apply) must be the Google product(s) the post is about, using distribution names (Gems -> Gemini App; AI Studio / Antigravity -> Devs Products; Central AI -> Gemini Model, Gemini App, DeepMind, Devs Products or Brand). When other_products already lists the additional product(s) involved, mark ok=true as long as product + other_products accurately cover the post."}
     - {id: sensitive_topics_fit, correctable_field: risk_tags, severity: blocking, fields: [risk_tags, post_content, summary, location],
        instruction: "Risk Tags must list the Sensitive Topics that apply (Politics only for US/unknown location or English election content)."}
     - {id: kof_fit, correctable_field: kof, severity: warning, fields: [kof, author, followers, kof_lists],

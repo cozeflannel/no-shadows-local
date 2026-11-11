@@ -195,6 +195,7 @@ function reviewAlert_(parsed, opts) {
   // 6. Gemini judgment (exposure tag, product, other_products, Sensitive Topics, KOF, issue name, summary)
   if (opts.llm) {
     const fixSeverities = S.llm_fix_severities || ['blocking'];
+    let llmExtraProducts = [];
     (opts.llm.checks || []).forEach(c => {
       const spec = GEN.llm_checks.find(x => x.id === c.id);
       if (!spec || c.ok) return;
@@ -202,12 +203,30 @@ function reviewAlert_(parsed, opts) {
       const conf = Math.max(0, Math.min(1, Number(c.confidence) || 0));
       const finding = String(c.finding || '').trim().slice(0, 300);
       let proposed = target ? normalizeProposal_(target, c.proposed_value) : null;
+      if (target === 'product' && proposed === null && c.proposed_value) {
+        const sp = splitProductField_(c.proposed_value, true);
+        if (sp.product && sp.other_products.length) {
+          proposed = sp.product;
+          if (conf >= S.llm_min_confidence && fixSeverities.includes(spec.severity)) {
+            llmExtraProducts = llmExtraProducts.concat(sp.other_products);
+          }
+        }
+      }
       if (Array.isArray(proposed) && !proposed.length) proposed = null;
       // The author is on a KOF / influencer list Burson named: that's Burson's tooling, not a judgment call
       if (target === 'kof' && proposed === false && Array.isArray(f.kof_lists) && f.kof_lists.length) return;
       if (target && proposed !== null && !sameValue_(proposed, f[target])) {
-        if (conf >= S.llm_min_confidence && fixSeverities.includes(spec.severity)) fix(target, proposed, finding || 'doesn\'t match the post', 'llm', conf);
-        else unsure.push({ field: target, proposed, confidence: conf, finding });
+        if (conf >= S.llm_min_confidence && fixSeverities.includes(spec.severity)) {
+          // If the incoming alert already named multiple products and Gemini merely swapped their order, keep the prior primary too
+          if (target === 'product' && Array.isArray(orig.other_products) && orig.other_products.length &&
+              orig.other_products.some(op => productCanonKey_(op) === productCanonKey_(proposed)) &&
+              orig.product && lookupProduct_(orig.product) && !lookupProduct_(orig.product).deprecated) {
+            llmExtraProducts = [orig.product].concat(llmExtraProducts);
+          }
+          fix(target, proposed, finding || 'doesn\'t match the post', 'llm', conf);
+        } else {
+          unsure.push({ field: target, proposed, confidence: conf, finding });
+        }
       } else if (finding && conf >= 0.5) {
         unsure.push({ field: target || (spec.fields || [])[0], proposed: null, confidence: conf, finding });
       }
@@ -218,9 +237,10 @@ function reviewAlert_(parsed, opts) {
       fix('product', recl, `${p.name} is no longer used; this post is about ${recl}`, 'llm', 0.9);
     }
     const rawLlmOthers = normalizeProposal_('other_products', opts.llm.other_products);
-    const llmOthers = Array.isArray(rawLlmOthers) ? rawLlmOthers.filter(x => productCanonKey_(x) !== 'brand') : null;
-    if (Array.isArray(f.other_products) || (Array.isArray(llmOthers) && llmOthers.length)) {
-      const mergedOthers = dedupeProducts_(f.product, [].concat(f.other_products || [], llmOthers || []), true).slice(0, 3);
+    const llmOthers = [].concat(llmExtraProducts, Array.isArray(rawLlmOthers) ? rawLlmOthers : [])
+      .filter(x => x && productCanonKey_(x) !== 'brand');
+    if (Array.isArray(f.other_products) || llmOthers.length) {
+      const mergedOthers = dedupeProducts_(f.product, [].concat(f.other_products || [], llmOthers), true).slice(0, 3);
       if (!sameValue_(mergedOthers, f.other_products || [])) {
         if (mergedOthers.length) {
           fix('other_products', mergedOthers, `the post also involves ${mergedOthers.join(', ')}`, 'llm', 0.92);
@@ -229,8 +249,23 @@ function reviewAlert_(parsed, opts) {
         }
       }
     }
+    if (llmExtraProducts.length) {
+      const nextTargets = [f.product].concat(dedupeProducts_(f.product,
+        [].concat(f.product_targets || [], llmExtraProducts), true));
+      if (nextTargets.length >= 2) f.product_targets = nextTargets;
+    }
   } else if (opts.llmError) {
     notes.push('AI checks were unavailable, so this alert was reviewed with the rules only');
+  }
+  if (Array.isArray(f.product_targets) && f.product_targets.length) {
+    const mappedTargets = f.product_targets.map(tp => {
+      const pTp = lookupProduct_(tp);
+      if (pTp && pTp.deprecated && (pTp.redirect_to || []).length === 1) return pTp.redirect_to[0];
+      return tp;
+    });
+    const normTargets = [f.product].concat(dedupeProducts_(f.product, mappedTargets, true));
+    if (normTargets.length >= 2) f.product_targets = normTargets;
+    else delete f.product_targets;
   }
 
   // 7. Values that are still invalid after all corrections: only Burson can fix them

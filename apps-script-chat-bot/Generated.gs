@@ -980,6 +980,10 @@ const GEN = {
    "name": "Devs Products",
    "aliases": [
     "Dev Products",
+    "Developers",
+    "Developer Products",
+    "Google for Developers",
+    "Google Developers",
     "Devs Products (include AI Studio & Antigravity)",
     "AI Studio",
     "Google AI Studio",
@@ -1030,6 +1034,7 @@ const GEN = {
    "name": "Gemini App",
    "aliases": [
     "Gemini",
+    "Gemini Apps",
     "Gemini Live",
     "Bard"
    ]
@@ -1038,6 +1043,7 @@ const GEN = {
    "name": "Gemini Model",
    "aliases": [
     "Gemini model",
+    "Gemini Models",
     "Gemini 3",
     "Gemini 4",
     "Gemini Pro",
@@ -1584,11 +1590,12 @@ const GEN = {
    "severity": "blocking",
    "fields": [
     "product",
+    "other_products",
     "post_content",
     "summary",
     "alert_name"
    ],
-   "instruction": "The Product must be the Google product the post is about, using distribution names (Gems -> Gemini App; AI Studio / Antigravity -> Devs Products; Central AI -> Gemini Model, Gemini App, DeepMind, Devs Products or Brand)."
+   "instruction": "The Product (together with other_products when multiple Google products apply) must be the Google product(s) the post is about, using distribution names (Gems -> Gemini App; AI Studio / Antigravity -> Devs Products; Central AI -> Gemini Model, Gemini App, DeepMind, Devs Products or Brand). When other_products already lists the additional product(s) involved, mark ok=true as long as product + other_products accurately cover the post."
   },
   {
    "id": "sensitive_topics_fit",
@@ -3447,6 +3454,10 @@ const GEN = {
     "group_name": "Devs Products",
     "aliases": [
      "Dev Products",
+     "Developers",
+     "Developer Products",
+     "Google for Developers",
+     "Google Developers",
      "Devs Products (include AI Studio & Antigravity)",
      "AI Studio",
      "Google AI Studio",
@@ -3503,6 +3514,7 @@ const GEN = {
     "group_name": "Gemini App",
     "aliases": [
      "Gemini",
+     "Gemini Apps",
      "Gemini Live",
      "Bard"
     ]
@@ -3512,6 +3524,7 @@ const GEN = {
     "group_name": "Gemini Model",
     "aliases": [
      "Gemini model",
+     "Gemini Models",
      "Gemini 3",
      "Gemini 4",
      "Gemini Pro",

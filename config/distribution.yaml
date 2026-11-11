@@ -89,7 +89,7 @@ products:
     pa: []
   - name: Devs Products
     group_name: Devs Products
-    aliases: [Dev Products, Devs Products (include AI Studio & Antigravity), AI Studio, Google AI Studio, Gemini API, Firebase]
+    aliases: [Dev Products, Developers, Developer Products, Google for Developers, Google Developers, Devs Products (include AI Studio & Antigravity), AI Studio, Google AI Studio, Gemini API, Firebase]
     pa: []
   - name: Doodles
     group_name: Doodles
@@ -113,11 +113,11 @@ products:
     pa: []
   - name: Gemini App
     group_name: Gemini App
-    aliases: [Gemini, Gemini Live, Bard]
+    aliases: [Gemini, Gemini Apps, Gemini Live, Bard]
     pa: []
   - name: Gemini Model
     group_name: Gemini Model
-    aliases: [Gemini model, Gemini 3, Gemini 4, Gemini Pro, Gemini Flash]
+    aliases: [Gemini model, Gemini Models, Gemini 3, Gemini 4, Gemini Pro, Gemini Flash]
     pa: []
   - name: Gems
     deprecated: true

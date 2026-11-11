@@ -96,6 +96,63 @@ function allProductsText_(fields, esc, fallback) {
   return all.length ? all.join(', ') : (fallback === undefined ? '' : fallback);
 }
 
+/**
+ * Splits a raw Product field (string or list, e.g. "Gemini Model, Devs Products" or "Gemini Model & Devs Products")
+ * into `{ product, other_products }` without splitting single taxonomy names that contain commas, slashes or ampersands
+ * (such as "Ads/Merchant Center", "Android (Android OS & Google TV)", or "AI Overviews (AIM, Web Guide)").
+ * When `canonicalize` is true, maps recognized aliases/single-target redirects to canonical distribution names. Pure.
+ */
+function splitProductField_(raw, canonicalize) {
+  const mapOne = v => {
+    const s = String(v === undefined || v === null ? '' : v).trim();
+    if (!s) return '';
+    if (!canonicalize) return s;
+    const p = lookupProduct_(s);
+    if (!p) return '';
+    if (p.deprecated) return (p.redirect_to || []).length === 1 ? p.redirect_to[0] : '';
+    return p.name;
+  };
+  if (Array.isArray(raw)) {
+    const items = raw.map(v => String(v === undefined || v === null ? '' : v).trim()).filter(Boolean);
+    const mapped = canonicalize ? items.map(mapOne).filter(Boolean) : items;
+    if (!mapped.length) return { product: '', other_products: [] };
+    return { product: mapped[0], other_products: dedupeProducts_(mapped[0], mapped.slice(1), !!canonicalize) };
+  }
+  const s = String(raw === undefined || raw === null ? '' : raw).trim();
+  if (!s) return { product: '', other_products: [] };
+  if (lookupProduct_(s)) return { product: mapOne(s), other_products: [] };
+  let parts = parseListValue_(s);
+  if (parts.length < 2 && /(?:\s*(?:\/|\+|&)\s*|\s+and\s+)/i.test(s)) {
+    const cand = [];
+    let cur = '';
+    let depth = 0;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch === '(' || ch === '[') { depth++; cur += ch; continue; }
+      if (ch === ')' || ch === ']') { depth = Math.max(0, depth - 1); cur += ch; continue; }
+      if (depth === 0) {
+        const rest = s.slice(i);
+        const sep = rest.match(/^(?:\s*(?:\/|\+|&)\s*|\s+and\s+)/i);
+        if (sep && cur.trim()) {
+          cand.push(cur.trim());
+          cur = '';
+          i += sep[0].length - 1;
+          continue;
+        }
+      }
+      cur += ch;
+    }
+    if (cur.trim()) cand.push(cur.trim());
+    if (cand.length >= 2 && cand.filter(p => lookupProduct_(p)).length >= 2) parts = cand;
+  }
+  if (parts.length >= 2 && parts.filter(p => lookupProduct_(p)).length >= 2) {
+    const mapped = canonicalize ? parts.map(mapOne).filter(Boolean) : parts;
+    if (!mapped.length) return { product: '', other_products: [] };
+    return { product: mapped[0], other_products: dedupeProducts_(mapped[0], mapped.slice(1), !!canonicalize) };
+  }
+  return { product: canonicalize ? mapOne(s) : s, other_products: [] };
+}
+
 function legendByCode_(code) { return GEN.legend.find(a => a.code === code) || null; }
 
 function legendByEmoji_(emoji) {
@@ -388,18 +445,27 @@ function parseAlert_(text) {
     fields[name] = normalizeValue_(spec, raw[name]);
   });
   if (fields.issue_status === NEW_STATUS_SUFFIX_) fields.issue_status = 'NEW';
-  // Split multi-product [Product] lines (e.g. "Gemini App, AI Overviews (AIM, Web Guide)" or "Pixel / Android")
-  // when the whole string isn't already a single known product or alias (such as "Doodles, Easter Eggs and Delight Features").
-  if (typeof fields.product === 'string' && fields.product && !lookupProduct_(fields.product)) {
-    let parts = parseListValue_(fields.product);
-    if (parts.length < 2 && /\s*(?:\/|\+)\s*/.test(fields.product)) {
-      const cand = fields.product.split(/\s*(?:\/|\+)\s*/).map(p => p.trim()).filter(Boolean);
-      if (cand.filter(p => lookupProduct_(p)).length >= 2) parts = cand;
-    }
-    if (parts.length >= 2 && parts.filter(p => lookupProduct_(p)).length >= 2) {
-      fields.product = parts[0];
-      const merged = dedupeProducts_(parts[0], parts.slice(1).concat(fields.other_products || []), false);
+  if (!fields.product && extra.header_parts && extra.header_parts.product) {
+    fields.product = extra.header_parts.product;
+  }
+  // Split multi-product [Product] lines (e.g. "Gemini Model, Devs Products", "Gemini App, AI Overviews (AIM, Web Guide)",
+  // or "Pixel / Android") when the whole string isn't already a single known product or alias.
+  if (typeof fields.product === 'string' && fields.product) {
+    const sp = splitProductField_(fields.product, false);
+    if (sp.other_products.length) {
+      fields.product = sp.product;
+      const explicitOthers = dedupeProducts_(sp.product, sp.other_products, false);
+      const merged = dedupeProducts_(sp.product, sp.other_products.concat(fields.other_products || []), false);
       if (merged.length) fields.other_products = merged;
+      if (explicitOthers.length) fields.product_targets = [sp.product].concat(explicitOthers);
+    } else if (extra.header_parts && extra.header_parts.product) {
+      const hsp = splitProductField_(extra.header_parts.product, false);
+      if (hsp.other_products.length && productCanonKey_(hsp.product) === productCanonKey_(fields.product)) {
+        const explicitOthers = dedupeProducts_(fields.product, hsp.other_products, false);
+        const merged = dedupeProducts_(fields.product, hsp.other_products.concat(fields.other_products || []), false);
+        if (merged.length) fields.other_products = merged;
+        if (explicitOthers.length) fields.product_targets = [fields.product].concat(explicitOthers);
+      }
     }
   }
   extra.raw = raw;

@@ -35,7 +35,7 @@ const SOCIAL_ALERT_LINKS_ = {
 const HEADER_COLORS_ = { 'VERY LOW': '#d2d4d8', LOW: '#e1aa26', MODERATE: '#de7525', HIGH: '#e6392d' };
 const EMAIL_INPUT_FIELDS_ = ['issue_name', 'issue_status', 'engagement_level', 'total_engagement', 'product', 'social_network',
   'exposure_tag', 'risk_tags', 'kof', 'kof_lists', 'summary', 'post_url', 'post_date', 'code', 'author', 'location',
-  'post_content', 'other_products', 'alert_name', 'priority', 'video_timestamp'];
+  'post_content', 'other_products', 'product_targets', 'alert_name', 'priority', 'video_timestamp'];
 
 /**
  * What an alert's email (and its recipients) is built from: the corrected values + the escalation. Stored on the row.
@@ -57,6 +57,7 @@ function emailInput_(fields, esc, noWait) {
     },
   };
   if (Array.isArray(esc.other_products) && esc.other_products.length) input.escalation.other_products = esc.other_products.slice();
+  if (Array.isArray(esc.product_targets) && esc.product_targets.length >= 2) input.escalation.product_targets = esc.product_targets.slice();
   if (esc.kb_basis) input.escalation.kb_basis = truncate_(String(esc.kb_basis), 200);
   // the stream triage's reason (OtherAlerts.gs: an alert in another format it escalated), for analysts' "Why" only
   if (esc.triage_basis) input.escalation.triage_basis = truncate_(String(esc.triage_basis), 200);

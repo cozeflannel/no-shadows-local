@@ -424,6 +424,11 @@ function amEmailOfRow_(r, lv) {
   const sent = String(r.email_status || '') === 'sent';
   const f = amRowFields_(r);
   const tf = amSyntheticFeedOf_(r.space);
+  const tms = Array.isArray((r.email_input || {}).team_emails)
+    ? r.email_input.team_emails.filter(te => te && te.key && te.thread).slice(0, 6)
+        .map(te => ({ k: String(te.key), th: truncate_(String(te.thread), 120), mid: truncate_(String(te.message_id || ''), 200),
+          sub: truncate_(String(te.subject || ''), 200) }))
+    : [];
   const out = {
     id: String(r.alert_id || ''), at: Number(r.email_sent_at) || Number(r.email_at) || Number(r.created_at) || 0,
     o: sent ? 'e' : 'c', lv: !!lv, fl: amFlowOf_(r.space), lm: amRowLive_(r),
@@ -431,7 +436,9 @@ function amEmailOfRow_(r, lv) {
     sub: truncate_(String(r.email_subject || ''), 300), cs: amChatSpaceOf_(r.space),
     ct: truncate_(String(r.forward_thread || ''), 200), cm: truncate_(String(r.forward_message || ''), 200),
     nm: truncate_(typeof issueNameText_ === 'function' ? issueNameText_(f.issue_name) : String(f.issue_name || ''), 200),
+    pr: truncate_(String(f.product || ''), 80),
   };
+  if (tms.length) out.tm = tms;
   if (tf) out.tf = tf;
   return out;
 }
@@ -511,8 +518,12 @@ function memoryUpdate_(review, esc) {
 
 /** An earlier email the memory keeps, as the Alert-log row an update replies on (Drafts.gs escalationFor_). Pure. */
 function amRelatedRow_(e, name, tag) {
-  return { alert_id: e.id, email_status: 'sent', email_thread: e.th, email_message_id: e.mid || '', email_subject: e.sub || '',
-    created_at: Number(e.at) || 0, exposure_tag: tag || '', fields: { issue_name: name || e.nm || '' }, from_memory: true };
+  const row = { alert_id: e.id, email_status: 'sent', email_thread: e.th, email_message_id: e.mid || '', email_subject: e.sub || '',
+    created_at: Number(e.at) || 0, exposure_tag: tag || '', fields: { issue_name: name || e.nm || '', product: e.pr || '' }, from_memory: true };
+  if (Array.isArray(e.tm) && e.tm.length) {
+    row.team_emails = e.tm.map(x => ({ key: x.k, thread: x.th, message_id: x.mid || '', subject: x.sub || '', status: 'sent' }));
+  }
+  return row;
 }
 
 /**
@@ -1118,7 +1129,7 @@ function makeAlertMemory_(ss, opts) {
       if (spaceId) info.cs = String(spaceId);
       const sent = rec => {
         if (!rec || rec.id !== id) return;
-        ['th', 'mid', 'sub', 'cs', 'ct', 'cm', 'nm'].forEach(k => { if (info[k]) rec[k] = info[k]; });
+        ['th', 'mid', 'sub', 'cs', 'ct', 'cm', 'nm', 'pr', 'tm'].forEach(k => { if (info[k]) rec[k] = info[k]; });
         rec.o = 'e';
       };
       if (p) {
@@ -1471,8 +1482,11 @@ function amSendGate_(ctx, row, report) {
   }
   const why = String(v.why || 'already emailed');
   try {
-    if (row.email_draft && ctx.gmail && typeof ctx.gmail.deleteDraft === 'function') {
-      try { ctx.gmail.deleteDraft(row.email_draft); } catch (e) { ctx.log(`couldn't delete the draft for ${row.alert_id}: ${(e && e.message) || e}`); }
+    const draftIds = typeof rowDraftIds_ === 'function' ? rowDraftIds_(row) : [row.email_draft].filter(Boolean);
+    if (draftIds.length && ctx.gmail && typeof ctx.gmail.deleteDraft === 'function') {
+      draftIds.forEach(did => {
+        try { ctx.gmail.deleteDraft(did); } catch (e) { ctx.log(`couldn't delete the draft for ${row.alert_id}: ${(e && e.message) || e}`); }
+      });
     }
     ctx.store.updateAlert(row, { email_status: 'deleted', email_draft: '', email_error: '', decision: truncate_(`\u274c ${why}`, 300) });
   } catch (e) {
@@ -1493,8 +1507,17 @@ function amThreadUpdate_(ctx, row, update) {
     const rel = update && update.rel;
     ctx.log(`${row.alert_id}: its Social Alert goes out as an update on ${update.ref}'s (${amTierWords_(update.tiers)})`);
     if (!rel || rel.o !== 'e' || !rel.th || row.email_draft || row.email_thread === rel.th) return;
-    ctx.store.updateAlert(row, { email_thread: rel.th, email_reply_to: rel.mid || '',
-      email_subject: socialAlertSubject_(row.email_input || {}, { subject: rel.sub || row.email_subject || '' }) });
+    const patch = { email_thread: rel.th, email_reply_to: rel.mid || '',
+      email_subject: socialAlertSubject_(row.email_input || {}, { subject: rel.sub || row.email_subject || '' }) };
+    if ((Array.isArray(rel.tm) && rel.tm.length) || rel.pr) {
+      const nextInput = Object.assign({}, row.email_input || {});
+      if (Array.isArray(rel.tm) && rel.tm.length) {
+        nextInput.related_team_emails = rel.tm.map(x => ({ key: x.k, thread: x.th, message_id: x.mid || '', subject: x.sub || '', status: 'sent' }));
+      }
+      if (rel.pr) nextInput.related_product = String(rel.pr);
+      patch.email_input = nextInput;
+    }
+    ctx.store.updateAlert(row, patch);
   } catch (e) {
     ctx.log(`alert memory: couldn't put ${row.alert_id} on ${update && update.ref}'s thread: ${(e && e.message) || e}`);
   }

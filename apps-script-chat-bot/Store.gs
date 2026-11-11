@@ -172,6 +172,7 @@ function makeStore_(backend, nowFn, partition, msgPrefix, observer) {
             forward_message: a.forward_message, fields: live.forwarded_fields || a.forwarded_fields || {},
             mirrored: live.mirrored || a.mirrored || '', email_status: a.email_status || '', email_thread: a.email_thread || '',
             email_message_id: a.email_message_id || '', email_subject: a.email_subject || '',
+            team_emails: Array.isArray((a.email_input || {}).team_emails) ? a.email_input.team_emails : undefined,
             ingested: a.ingested || '', decision: live.decision || a.decision || '',
             tns_submitted: Number(live.tns_submitted || a.tns_submitted) || 0 };
         });
@@ -208,6 +209,7 @@ function makeStore_(backend, nowFn, partition, msgPrefix, observer) {
             email_thread: cross ? '' : (a.email_thread || ''),
             email_message_id: cross ? '' : (a.email_message_id || ''),
             email_subject: cross ? '' : (a.email_subject || ''),
+            team_emails: !cross && Array.isArray((a.email_input || {}).team_emails) ? a.email_input.team_emails : undefined,
             ingested: a.ingested || '', decision: live.decision || a.decision || '',
             tns_submitted: Number(live.tns_submitted || a.tns_submitted) || 0,
             cross_space: cross, space: a.space || '' };
