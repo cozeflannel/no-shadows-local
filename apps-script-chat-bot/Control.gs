@@ -32,11 +32,11 @@
  *   B33                Other alerts space (OtherSpace.gs): a Google-only space with other alerts (a campaign space),
  *                      worked directly every minute beside the Mirror space, always Testing; C33 its status
  *   B34                Proactive watch: one more switch (ProactiveWatch.gs). ON, every 5 minutes Gemini checks what's new
- *                      in each source, read-only in BigQuery (Sonar, Brandwatch, Sprinklr, Tubular, the DSD story
- *                      selection feed, the Other alerts space's alerts, the Brandwatch query "2026 Election Alerts"
- *                      read from Brandwatch's API) against the watches ON on the Watches tab; a shadow
- *                      test: what it would flag goes on the Watch detections tab (the Watch sources tab: which sources
- *                      are live), nothing is posted or emailed; C34 how it's doing
+ *                      in each source, read-only in BigQuery (Sonar, Tubular, Brandwatch's mentions, Sprinklr's report
+ *                      of Google's own posts and the comments on them, and the Brandwatch query "2026 Election Alerts"
+ *                      read from Brandwatch's API) against the watches ON on the Watches tab (the exposure tags they
+ *                      pick on the Watch tags tab); a shadow test: what it would flag goes on the Watch detections tab
+ *                      (the Watch sources tab: which sources are live), nothing is posted or emailed; C34 how it's doing
  *   A36...             How it works
  *
  * Plus the Resources tab: the bot's knowledge base (Knowledge.gs). Name · Link · What it covers · Burson can see it? ·
@@ -436,18 +436,18 @@ const CONTROL_SWITCHES_ = [
     off: 'OFF (B25 is the real S-F Burson: the bot posts nothing there itself, only Burson outbox rows set to Send)',
     on: (standIn, live, sw, extra) => directB25OnText_(extra && extra.directB25, testersWho_(standIn, extra)) },
   // Row 34, below the Other alerts space (33): Proactive watch (ProactiveWatch.gs). A shadow test: every 5 minutes Gemini
-  // checks, inside BigQuery, what is new in each source (Sonar, Brandwatch, Sprinklr, Tubular, the DSD story selection
-  // feed and the Other alerts space's alerts) against the watches ON on the Watches tab, and what it would flag goes on
-  // the Watch detections tab, with a scorecard against Burson's alerts. It posts and emails nothing, unless Watch alerts
-  // (row 35, WatchAlerts.gs; extra.watchAlerts: 'other' | 'mirror' this run) says where its flags go
+  // checks, inside BigQuery, what is new in each source (Sonar, Tubular, Brandwatch, Sprinklr) against the watches ON on
+  // the Watches tab (the exposure tags they pick), and what it would flag goes on the Watch detections tab, with a
+  // scorecard against Burson's alerts. It posts and emails nothing, unless Watch alerts (row 35, WatchAlerts.gs;
+  // extra.watchAlerts: 'other' | 'mirror' this run) says where its flags go
   { key: 'proactiveWatch', label: 'Proactive watch', row: 34,
     off: 'OFF (the bot reviews only the alerts posted in Chat)',
     on: (standIn, live, sw, extra) => (extra && extra.watchAlerts
       ? `✓ ON (its flags go out as watch alerts: row 35, ${pwAlertsWhere_(extra.watchAlerts)}): every 5 min, Gemini ` +
-        'checks what\'s new in Sonar, Brandwatch, Sprinklr, Tubular and the Other alerts space against the watches ON on ' +
-        'the Watches tab; what it flags goes on the Watch detections tab'
+        'checks what\'s new in Sonar, Brandwatch, Sprinklr and Tubular against the watches ON on the Watches tab (the ' +
+        'exposure tags they pick); what it flags goes on the Watch detections tab'
       : '✓ ON (shadow test: nothing is posted or emailed): every 5 min, Gemini checks what\'s new in Sonar, ' +
-        'Brandwatch, Sprinklr, Tubular and the Other alerts space against the watches ON on the Watches tab; what ' +
+        'Brandwatch, Sprinklr and Tubular against the watches ON on the Watches tab (the exposure tags they pick); what ' +
         'it would flag goes on the Watch detections tab') },
   // Row 36, below Watch alerts (35): Temp checks (TempCheck.gs). "temp check" and a Brandwatch query's name in a thread of
   // the Mirror space (B9) or the Other alerts space (B33) gets the team's temp check emailed to the testers (B30, else the

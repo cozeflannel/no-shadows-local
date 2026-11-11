@@ -1203,7 +1203,7 @@ test('the Resources tab: an older install gets it on its next run, link chips wo
   t.poll();
   t.chat.say(TEST_FEED, 'where do the KOF rules come from?', { thread: alert.thread.name, sender: 'users/bot' });
   t.poll();
-  eq(tabs(), ['Control', 'Resources', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)']);
+  eq(tabs(), ['Control', 'Resources', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)', 'Signals']);
   assert.ok(answerPrompts()[0].includes(`- KOF lists: ${RES()[1].url}`), answerPrompts()[0]);
 
   const tab = t.sheet().getSheetByName('Resources');  // a pasted link Sheets shows as the document's title (a chip)
@@ -4334,7 +4334,7 @@ test('knowledge base: renaming the Resources tab (even to "Knowledge", as happen
   t.poll();
   t.bot.setup();
   t.poll();
-  eq(ss.sheets.map(sh => sh.name), ['Control', 'Knowledge', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)']);
+  eq(ss.sheets.map(sh => sh.name), ['Control', 'Knowledge', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)', 'Signals']);
   eq(typed(), before);
   assert.match(String(res.rows[3][4]), new RegExp(`^✓ Read Oct 14, \\d{1,2}:\\d\\d [AP]M EDT · Google Doc · ${SAFE_DOC_TEXT.length} characters$`));
   eq(t.bot.loadKnowledge_(ss).docs.map(d => [d.name, d.burson, d.text]), [['Escalation playbook', false, SAFE_DOC_TEXT]]);
@@ -4359,7 +4359,7 @@ test('knowledge base: the bot never reads, clears, hides or writes a tab it didn
   const forced = t.bot.refreshKnowledge();
   const s = t.bot.setup();
   t.poll();
-  eq(ss.sheets.map(sh => sh.name), ['Control', 'Knowledge cache (bot)', 'Guidance', 'Alert log', 'Message log']);  // nothing made, nothing doubled
+  eq(ss.sheets.map(sh => sh.name), ['Control', 'Knowledge cache (bot)', 'Guidance', 'Alert log', 'Message log', 'Signals']);  // nothing made, nothing doubled
   eq(typed(), before);
   eq([res.isSheetHidden(), res.protections.length], [false, protections]);
   eq(res.rows.slice(1).map(r => r[4]), [1, 2, 3].map(() => `✗ Not read: ${inTheWay}`));
@@ -4370,7 +4370,7 @@ test('knowledge base: the bot never reads, clears, hides or writes a tab it didn
 
   res.setName('Resources');  // renamed back: the next run makes the bot's own tab and reads the documents
   t.poll();
-  eq(ss.sheets.map(sh => sh.name), ['Control', 'Resources', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)']);
+  eq(ss.sheets.map(sh => sh.name), ['Control', 'Resources', 'Guidance', 'Alert log', 'Message log', 'Signals', 'Knowledge cache (bot)']);
   eq(typed(), before);
   assert.match(String(res.rows[3][4]), /^✓ Read Oct 14, \d{1,2}:\d\d [AP]M EDT · Google Doc · \d+ characters$/);
   eq(t.bot.loadKnowledge_(ss).docs.map(d => d.name), ['Escalation playbook']);
@@ -4391,7 +4391,7 @@ test('knowledge base: the live mix-up and its fix: the earlier build wrote its t
   const oldRows = JSON.stringify(old.rows);
   t.poll();
   eq([JSON.stringify(old.rows) === oldRows, old.isSheetHidden(), old.protections.length], [true, false, 0]);
-  eq(ss.sheets.map(sh => sh.name), ['Control', 'Resources', 'Knowledge', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)']);
+  eq(ss.sheets.map(sh => sh.name), ['Control', 'Resources', 'Knowledge', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)', 'Signals']);
 
   // The fix: the person's rows, copied from version history (a tab from before the knowledge base: three columns), in
   // place of the tab the earlier build made. Found by its header row even before it's renamed.
@@ -4406,7 +4406,7 @@ test('knowledge base: the live mix-up and its fix: the earlier build wrote its t
   eq(t.bot.loadKnowledge_(ss).docs.map(d => [d.name, d.burson]), [['Escalation playbook', false]]);
   back.setName('Resources');
   t.poll();
-  eq(ss.sheets.map(sh => sh.name), ['Control', 'Resources', 'Knowledge', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)']);
+  eq(ss.sheets.map(sh => sh.name), ['Control', 'Resources', 'Knowledge', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)', 'Signals']);
   eq(t.bot.loadKnowledge_(ss).docs.map(d => d.name), ['Escalation playbook']);
   assert.strictEqual(JSON.stringify(old.rows), oldRows);
 });

@@ -538,6 +538,10 @@ function answerAnalystPrompts_(question, alertRow, botCtx, knowledge) {
     '5. Special protocols: For YouTube issues (@YouTube / @TeamYouTube / YouTube Blog), ping the YouTube Escalations chat space ' +
       '(All hands on deck for P0, This is fine for P1). For Google Doodle issues, tag @raghava and @devinp in the Doodle Chat space.',
     '6. SLAs: P0 = within 30 minutes (24/7); P1 = within 2 hours; P2 = within 6 hours or EOD report.');
+  if (botCtx && Array.isArray(botCtx.memory) && botCtx.memory.length) {  // Signals.gs signalsMemoryFor_ (the Archive is ON)
+    ctx.push('', '[Earlier alerts on this post, from the bot\'s long memory (the BigQuery archive of rows trimmed from the sheet)]',
+      ...botCtx.memory.slice(0, 10));
+  }
   ctx.push('', '[Alert Requirements & Taxonomy]', ...requirementsLines_());
   if (knowledge && knowledge.text) {
     ctx.push('', '[Knowledge base: the team\'s reference documents on the Resources tab, the parts that bear on this question]',

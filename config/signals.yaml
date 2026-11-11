@@ -1,0 +1,116 @@
+# slrr-signals (Cloud Run): the two-track SLRR system. docs/TWO_TRACK_SIGNALS.md explains every setting.
+# Track 1 (official, strict): deterministic rules, then Gemini, then the Collection Requirements engine
+# (triage_agent.qa.requirements, the same one that QAs Burson's alerts). Track 2 (radar): the early_detection
+# clusters and velocity, then Gemini's outlook. Both write only to the slrr_signals dataset: nothing here posts in Chat.
+
+project: brand-social-central-data
+dataset: slrr_signals
+dataset_location: US
+agent_config: config/default_config.yaml   # Collection Requirements, exposure tags, Sensitive Topics, patterns
+labels: {app: slrr-signals}
+
+# The only networks read, from every source (the team's list), as Sonar names them
+networks: [twitter, reddit, bluesky, facebook, instagram, youtube, tiktok]
+
+# Guards against stuck work and runaway calls
+guards:
+  tick_budget_seconds: 50          # a /tick stops starting new work after this (Scheduler calls it every minute)
+  radar_budget_seconds: 240        # a /radar run's limit (every 15 minutes)
+  breaker_failures: 3              # a source that fails this many times in a row pauses...
+  breaker_pause_minutes: 15        # ...for this long, doubling with each further failure...
+  breaker_max_pause_minutes: 360   # ...up to 6 hours, then one probe each time
+  dead_letter_tries: 3             # an item that fails this many times is set aside for good (never retried)
+  max_query_bytes: 6000000000      # BigQuery refuses a read over ~6 GB
+  max_rows_per_source: 500         # rows a source lands per read at most (the biggest first)
+
+sources:
+  sonar:                           # Pendulum's posts, current to the minute (needs read access: see the docs)
+    enabled: true
+    location: us-central1
+    table: bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw
+    every_minutes: 5
+    first_minutes: 15
+    max_minutes: 30
+    min_followers: 1000
+    min_engagement: 100
+  tubular:                         # videos; most appear 1-3 days after posting
+    enabled: true
+    location: us-central1
+    table: brand-social-central-data.google_tubular_mentions.tubular_videos
+    every_minutes: 15
+    first_hours: 24
+    max_hours: 24
+    min_followers: 1000
+    min_engagement: 100
+    min_views: 10000
+  bwm:                             # Brandwatch raw mentions: nightly batch, 1-6 days after posting
+    enabled: true
+    location: US
+    table: brand-social-central-data.raw_data.brandwatch_raw_mentions_base
+    every_minutes: 15
+    first_hours: 2
+    max_hours: 6
+    day_max: 1000                  # never more than this many a day
+    networks: [reddit, bluesky, facebook, instagram]   # X from Sonar; YouTube/TikTok from Tubular and Sonar
+    exposure_group: "V2 [MAIN] EN BSafety Landscape: Exposure & Risk Tags"
+    configs: [Google Search, Google AI, Google Cloud, Gemini, Google Pixel, Google Glasses, Googlebook]
+    min_followers: 1000
+    min_engagement: 100
+  owned:                           # Google's own posts turning negative (Sprinklr outbound, daily)
+    enabled: true
+    location: US
+    table: brand-social-central-data.reporting_data.sprinklr_outbound_reporting
+    every_minutes: 15
+    first_hours: 30
+    max_hours: 48
+    min_negative: 25
+    min_comments: 20
+    min_negative_share: 0.3
+  comments:                        # pile-ons on Google's own posts (Sprinklr inbound, within the hour)
+    enabled: true
+    location: US
+    table: brand-social-central-data.reporting_data.sprinklr_inbound_comments
+    every_minutes: 5
+    pileup_negative: 5
+    big_voice_followers: 100000
+
+track1:
+  enabled: true
+  max_per_tick: 40                 # Gemini classifications a tick at most
+  max_per_day: 1500                # ...and a day
+  min_confidence: 0.8              # a classification below this never qualifies
+  high_engagement: 2000            # the 2K+ track (else urgent: P0 hint, Sensitive Topic keyword or KOF)
+  novelty_days: 14
+  rules_version: "2026-11-10.1"
+  prompt_version: "t1-2026-11-10.1"
+  web_check: true                  # qualifying rows get a Google Search grounded check of public coverage
+  web_max_per_day: 150
+  # Sensitive Topic language that forces urgent handling (case-insensitive regexes; the taxonomy table's
+  # sensitive_keyword rows override these when present)
+  sensitive_keywords:
+    Child Safety: "\\b(child(ren)?|minor|underage|kid|teen|csam|grooming|pedophil\\w*)\\b"
+    Hate Speech: "\\b(racis[mt]\\w*|antisemit\\w*|islamophob\\w*|homophob\\w*|transphob\\w*|nazi\\w*|white supremac\\w*|slur)\\b"
+    Violent Extremism: "\\b(terroris[mt]\\w*|extremis[mt]\\w*|jihad\\w*|isis|mass shooting|bomb(ing)?|massacre)\\b"
+    Self-Harm: "\\b(suicid\\w*|self[- ]harm|kill (my|him|her|them)sel(f|ves)|eating disorder)\\b"
+    Politics: "\\b(elections?|ballots?|midterms?|voter fraud|rigged|democrats?|republicans?|trump|harris|congress|senate)\\b"
+    Criminal/Dangerous Activity: "\\b(weapons?|firearms?|guns?|drugs?|fentanyl|explosives?|how to make a bomb)\\b"
+    Sexually Explicit: "\\b(porn\\w*|nsfw|explicit|nude|deepfake porn|sexuali[sz]\\w*)\\b"
+    Privacy: "\\b(doxx?\\w*|leaked (data|emails?|messages)|data breach|spying|surveillance)\\b"
+  # P0 hints before Gemini (any of these lets a 0-engagement post through to Gemini)
+  p0_keywords: "\\b(dangerous|harmful|offensive|explicit|bias(ed)?|censor\\w*|lawsuit|sued|leak(ed)?|whistleblow\\w*|boycott\\w*|protest\\w*|outage|recall|fire|explod\\w*|injur\\w*)\\b"
+
+track2:
+  enabled: true
+  max_per_run: 12                  # clusters assessed a run at most
+  max_per_day: 250
+  reassess_hours: 6                # a cluster is assessed again only after this, or when it doubled
+  lookback_hours: 24
+  prompt_version: "t2-2026-11-10.1"
+  web_check: true
+  web_max_per_day: 60
+
+models:
+  classify: gemini-3.8-flash
+  radar: gemini-3.8-flash
+  web: gemini-3.8-flash
+  location: global

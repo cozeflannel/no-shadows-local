@@ -290,6 +290,8 @@ function poll() {
     lock.releaseLock();
     return;
   }
+  // Watchdog.gs: a background step the last run never finished (Apps Script stopped it) counts against that step
+  if (typeof wdStartRun_ === 'function') wdStartRun_();
   if (runTookOver_) {  // the run before ended partway (out of memory, a time limit): a failed run, as an error makes one
     try {
       healthFail_(new Error(`the run that started at ${runOwnerWhen_(runTookOver_)} ended without finishing: Apps Script ` +
@@ -340,6 +342,10 @@ function poll() {
       props.setProperty('OS_PAUSED', 'true');  // and the Other alerts space (OtherSpace.gs)
       props.setProperty(PW_PAUSED_PROP_, 'true');  // and the Proactive watch (ProactiveWatch.gs): it starts afresh
       props.setProperty('FAIL_STREAK', '0');
+      // Signals.gs: its tab (every setting OFF) is there to set up while the bot is paused; nothing else of it runs
+      if (typeof sigTab_ === 'function') {
+        try { sigTab_(ss, true); } catch (e) { console.warn('Signals tab not made: ' + ((e && e.message) || e)); }
+      }
       writeControlStatus_(control, { status: pausedStatusText_(), lastCheck: nowLabel_(), today: todayText_(readStats_(), dayKey_(), wanted.switches.noWait) });
       return;
     }
@@ -548,12 +554,12 @@ function poll() {
     // single story card, at most 2 a run (EarlyDetection.gs edDrainQueue_). After the alerts; its failures stay isolated.
     if (switchOn_(ctx, 'earlyWave') && (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', slaBusy))) {
       try {
-        earlyWaveCheck_(ctx);
+        bgStep_('earlyWaveCheck', () => earlyWaveCheck_(ctx));
       } catch (e) {
         console.error('early detection check: ' + ((e && e.message) || e));
       }
       try {
-        const drained = edDrainQueue_(ctx, report);
+        const drained = bgStep_('earlyDetectionReview', () => edDrainQueue_(ctx, report));
         if (drained && (drained.posted || drained.dropped || drained.dismissed)) console.log(`early detection review: ${JSON.stringify(drained)}`);
       } catch (e) {
         console.error('early detection review: ' + ((e && e.message) || e));
@@ -629,7 +635,7 @@ function poll() {
         // alerts space (queued by their flows above), worked now, after the alerts, in what's left of the run (one that
         // can't be done waits for the next run): emailed to this run's testers (B30, else the stand-in), the thread told
         // it was; OFF, nothing waits. Never throws
-        runTempChecks_(runStart, wanted.switches, { testers: testers && testers.testers });
+        bgStep_('tempChecks', () => runTempChecks_(runStart, wanted.switches, { testers: testers && testers.testers }));
         // Proactive watch (Control row 34, ProactiveWatch.gs): a shadow test over Pendulum's posts in BigQuery; what it
         // would flag goes on its own tabs. Nothing is posted or emailed unless Watch alerts (row 35, WatchAlerts.gs) says
         // where its flags go: B33, B9, or B10, where their flows work them next run like any alert.
@@ -647,7 +653,7 @@ function poll() {
             ((os.report.errors || []).some(e => /^time budget/.test(String(e))) || os.report.held > 0));
           const acBusy = Boolean(toAc && ac && ac.report &&
             ((ac.report.errors || []).some(e => /^time budget/.test(String(e))) || ac.report.held > 0));
-          runProactiveWatch_(ss, runStart, { alerts, control, otherBusy, acBusy, slaBusy: bgBusy });
+          bgStep_('proactiveWatch', () => runProactiveWatch_(ss, runStart, { alerts, control, otherBusy, acBusy, slaBusy: bgBusy }));
         } else {
           proactiveWatchOff_();
           pwAlertsIdle_(control, wanted.watchAlerts, false);
@@ -656,28 +662,32 @@ function poll() {
         const bgIdleOk = typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', bgBusy);
         if (any) {
           if (activity > 0 || bgIdleOk) {
-            maybeRefreshSpeed_(ss, any, {  // the Results tab: right after anything happened, else every 10 minutes
+            bgStep_('resultsTab', () => maybeRefreshSpeed_(ss, any, {  // the Results tab: right after anything happened, else every 10 minutes
               activity: activity > 0, deadline: runStart + RUN_HARD_STOP_MS_,
               flows: resultsFlows_(mainCtx, ac && ac.ctx, cfg),
-            });
+            }));
           }
           // The Follow-up tab (FollowUp.gs, Track post-alert outcomes ON only): right after a new reply or draft, else
           // every 10 minutes; never touches the run (its failures are logged)
           if (followActivity > 0 || bgIdleOk) {
-            maybeRefreshFollowUp_(ss, any, {
+            bgStep_('followUpTab', () => maybeRefreshFollowUp_(ss, any, {
               activity: followActivity > 0, deadline: runStart + RUN_HARD_STOP_MS_,
               flows: resultsFlows_(mainCtx, ac && ac.ctx, cfg),
-            });
+            }));
           }
           // The Analysis tab (Analysis.gs): side-by-side bot vs. analyst responses, logic & KB snippets (on "Run now",
           // filter edits, new activity/Q&A, or every 10 minutes; reuses Results' cached BigQuery state)
           if (activity > 0 || bgIdleOk) {
-            maybeRefreshAnalysis_(ss, any, {
+            bgStep_('analysisTab', () => maybeRefreshAnalysis_(ss, any, {
               activity: activity > 0, deadline: runStart + RUN_HARD_STOP_MS_,
               flows: resultsFlows_(mainCtx, ac && ac.ctx, cfg),
-            });
+            }));
           }
         }
+        // Signals (Signals.gs, its own tab, every setting OFF until a person turns it ON): the two-track system's sync,
+        // its Track 1 and Radar tabs, and the daily archive of old rows to BigQuery. Last, as the archive trims rows.
+        // Never throws; never posts or emails
+        if (typeof runSignals_ === 'function') bgStep_('signals', () => runSignals_(ss, runStart, { busy: bgBusy || !bgIdleOk }));
       }
     } catch (e) {
       console.error('after the run: ' + ((e && e.stack) || e));

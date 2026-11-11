@@ -42,8 +42,8 @@ module.exports = H => {
     issue_new: true, summary: 'An X reply (@CorrDove, 1.7K followers) claims Google helped rig the midterms.', impact: 6, bar: 4,
     topic: 'Elections and civics' }, o || {});
   const src = source => ({ kind: 'src', source, found: 0, checked: 0, newest_ms: null, mod_ms: null, err: null });
-  const C1_ROWS = ['sonar', 'tubular', 'outbound'].map(src);
-  const US_ROWS = ['bmie', 'comments', 'story', 'chat', 'bwq'].map(src);
+  const C1_ROWS = ['sonar', 'tubular'].map(src);
+  const US_ROWS = ['bwm', 'owned', 'bwq'].map(src);
 
   /** A fake BigQuery for the watch's looks (as in switch_proactive_watch.test.js): sent pending, collected from bq.answers. */
   function fakeBq(g) {

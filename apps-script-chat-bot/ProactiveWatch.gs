@@ -13,42 +13,50 @@
  *                praise, use-case or other positive ones), from an account with PW_MIN_FOLLOWERS_+ followers or with
  *                PW_MIN_ENGAGEMENT_+ engagements already, and what wasn't noticeable at first (posts that grew past
  *                that floor later, and posts already checked that broke out: PW_BREAKOUT_X_ times the engagements,
- *                PW_BREAKOUT_MIN_+), the biggest accounts first; Tubular's videos that mention
- *                Google (each run's new ones); Sprinklr's export of Google's own posts (read only when the table
- *                changed: it's a periodic bulk export).
- *   US           Brandwatch's BMIE mentions (`all_sundar_mentions`: every new one from the brand-safety and Google
- *                product queries; from the other queries those with a sign something's wrong, plus a PW_SAMPLE_PCT_%
- *                sample of the rest to show what that misses); comments on Google's
- *                own posts (Sprinklr: a pile-on of PW_PILEUP_NEG_+ negative comments within an hour, or a negative
- *                comment from a PW_BIG_VOICE_+ account); the DSD story selection feed (Brandwatch's HIGH and KOF alert
- *                emails, the DSD desk's story pool); the alerts in other formats (Brandwatch's) the
- *                bot read in the Other alerts space (Control B33, e.g. Midterms 2026), from the Alert log, handed to the
- *                query as a parameter; and the Brandwatch query "2026 Election Alerts" read straight from Brandwatch's
- *                API (PW_BW_*: the shared token slrr-campaigns keeps in Secret Manager; what Brandwatch added since the
- *                last look, usually minutes after posting; X posts' text from X's embed data, which Brandwatch's API
- *                leaves out), handed to the query as a parameter too. (Dropped Nov 1 as stale: the daily Brandwatch
- *                export `DSD.brandwatch_daily`, nothing since Sep 20; the DSD content vectors `DSD.content_vectors`,
- *                since Sep 24; Reddit Pulse `reddit_pulse.reddit_items_raw`, since Oct 25.)
+ *                PW_BREAKOUT_MIN_+), the biggest accounts first; and Tubular's videos that mention Google (each run's
+ *                new ones).
+ *   US           Brandwatch's mentions of Google's products (`raw_data.brandwatch_raw_mentions_base`: loaded in a nightly
+ *                batch, 1-6 days after posting; read only when the table changed), tightened Nov 10 to well under
+ *                PW_BWM_DAY_MAX_ a day: the Google product configs (PW_BWM_CONFIGS_), English, negative only, tagged by
+ *                Brandwatch with an SLRR exposure tag (PW_BWM_EXPOSURE_GROUP_), Reddit, Bluesky, Facebook and Instagram
+ *                only (PW_BWM_NETWORKS_: X comes from Sonar live, YouTube and TikTok from Tubular and Sonar), no shares,
+ *                the reach floor, each mention once; Google's own posts whose comments turned negative (Sprinklr's
+ *                `reporting_data.sprinklr_outbound_reporting`, loaded once a day; read only when it changed); the
+ *                comments on Google's own posts (Sprinklr's `reporting_data.sprinklr_inbound_comments`, current to the
+ *                hour: a pile-on or a negative comment from a big account); and the Brandwatch query "2026 Election
+ *                Alerts" read straight from Brandwatch's API (PW_BW_*: the shared token slrr-campaigns keeps in Secret
+ *                Manager; what Brandwatch added since the last look, usually minutes after posting; X posts' text from
+ *                X's embed data, which Brandwatch's API leaves out), handed to the query as a parameter.
+ *                (Dropped Nov 1 as stale: the daily Brandwatch export `DSD.brandwatch_daily`, the DSD content vectors
+ *                `DSD.content_vectors`, Reddit Pulse `reddit_pulse.reddit_items_raw`. Dropped Nov 10, the team's list
+ *                of tables being the five above: BMIE `social_alerts_dataset.all_sundar_mentions`, Sprinklr's older
+ *                export of Google's posts, the DSD story selection feed and the Other alerts space's alerts. Their rows
+ *                on the Watch detections tab were taken off once: pwMigrate_.)
+ * Every source reads only the networks on the team's list (PW_NETWORKS_: X, Reddit, Bluesky, Facebook, Instagram,
+ * YouTube, TikTok), English only, never Grok's posts.
+ * Measured Nov 10: only Sonar, Sprinklr's comments and the Brandwatch query are current to the minutes or the hour;
+ * Tubular finds most videos a day or two after they go up, and the Brandwatch and Sprinklr reports load once a day: they
+ * add reach and numbers, not speed.
  * In each job, every source's new rows go, as the same columns, in a temporary table (a source that fails is noted and
- * the others carry on). Sonar and the comments go by the look's window; the others keep their own place, the newest
- * item they handed over (PW_MARKS). Then, for each watch ON on the Watches tab (PW_MAX_WATCHES_ at most), Gemini inside
- * BigQuery: AI.IF, the watch's yes/no question, then for the posts that match AI.SCORE (how likely it is to become a
- * brand-safety issue in the next 6 hours, 1-10, by the watch's rubric) and AI.CLASSIFY (its topic, from the watches'
- * topics). They use the script's own cloud-platform token (end-user credentials): no connection, no new permission.
- * Each job also returns one row a source (what was new, what Gemini checked, its newest item, when its table last
- * changed, any error): the Watch sources tab says which sources are live and which are stale.
+ * the others carry on). Sonar goes by the look's window; the others keep their own place, the newest item they handed
+ * over (PW_MARKS). Then, for each watch ON on the Watches tab (PW_MAX_WATCHES_ at most), Gemini inside BigQuery: AI.IF,
+ * the watch's yes/no question (pwQuestion_: the SLRR exposure tags and Sensitive Topics it picks, each with its short
+ * version from the Watch tags tab, plus its own words), then for the posts that match AI.SCORE (how likely it is to
+ * become a brand-safety issue in the next 6 hours, 1-10, by the watch's rubric) and, for those at or near its bar,
+ * AI.CLASSIFY (the exposure tags and Sensitive Topics the post fits, of the watch's own, each with its full
+ * description). They use the script's own cloud-platform token (end-user credentials): no connection, no new
+ * permission. Each job also returns one row a source (what was new, what Gemini checked, its newest item, when its table
+ * last changed, any error): the Watch sources tab says which sources are live and which are stale.
  * Measured on Burson's 655 alerts of Oct 19-30: Sonar saw 54% of their posts, 88% of those before Burson (a median 2.5
- * hours sooner), and its filter keeps 84% of those it saw first while cutting ~22,000 new posts a day to ~4,200. BMIE
- * ingests most posts about a day after they went up and Tubular finds most videos a day or two after: they add reach,
- * not speed. The comments on Google's own posts reach BigQuery a median ~22 minutes after they're written.
+ * hours sooner), and its filter keeps 84% of those it saw first while cutting ~22,000 new posts a day to ~4,200.
  *
  * Each job is sent in one run and collected in a later one, so it never holds a run up; a failing job is tried again
  * (PW_MAX_TRIES_, then skipped and noted), each location on its own. Posts at or above a watch's bar, and the near
  * misses (within PW_NEAR_ of it, to tune the bar), go on the Watch detections tab, each post once a watch (whichever
- * source handed it over first), with a Rating column for people. The tab's scorecard compares them with Burson's alerts
- * in the Alert log, day by day: how many of Burson's posts a watch flagged, how many before Burson's alert reached S-F
- * Burson and by how much, and the ratings. The three tabs are the bot's (made the first time the switch is ON): a tab
- * with one of their names that the bot didn't make is never read or written.
+ * source handed it over first), with its exposure tags and a Rating column for people. The tab's scorecard compares
+ * them with Burson's alerts in the Alert log, day by day: how many of Burson's posts a watch flagged, how many before
+ * Burson's alert reached S-F Burson and by how much, and the ratings. The four tabs are the bot's (made the first time
+ * the switch is ON): a tab with one of their names that the bot didn't make is never read or written.
  */
 
 const PW_EVERY_MS_ = 5 * 60 * 1000;          // a look at most every 5 minutes (recorded when the query is sent)
@@ -62,10 +70,12 @@ const PW_MIN_ENGAGEMENT_ = 100;              // ...or 100+ engagements (likes + 
 const PW_MAX_POSTS_ = 150;                   // Sonar's posts asked about in a look at most (the biggest accounts first)
 const PW_MAX_WATCHES_ = 5;                   // watches ON at once at most (each post costs one AI.IF a watch)
 const PW_TEXT_CHARS_ = 1500;                 // of each post (Pendulum's summary and the post's text) given to Gemini
-const PW_PROMPT_CHARS_ = 2000;               // of a watch's question or rubric
+const PW_PROMPT_CHARS_ = 2000;               // of a watch's own words (its question or extra instructions) or rubric
+const PW_QUESTION_CHARS_ = 20000;            // of the yes/no question built from a watch's tags (pwQuestion_)
+const PW_TAG_DESC_CHARS_ = 1500;             // of a tag's description (labels the flags: AI.CLASSIFY)...
+const PW_TAG_SHORT_CHARS_ = 300;             // ...and of its short version (in the yes/no question)
 const PW_NEAR_ = 2;                          // rows kept below a watch's bar: scores within 2 of it (to tune the bar)
 const PW_DEFAULT_BAR_ = 7;                   // a watch's bar when its "Flag at score" is blank or unreadable
-const PW_MAX_TOPICS_ = 20;                   // topics AI.CLASSIFY chooses from (the watches' together), plus "Other"
 const PW_SUBMIT_WAIT_MS_ = 2000;             // how long sending the query waits for it (a later run collects it)
 const PW_COLLECT_WAIT_MS_ = 3000;            // how long collecting waits for it
 const PW_JOB_MAX_MS_ = 4 * 60 * 1000;        // a query still running after 4 minutes is cancelled; the window is tried again
@@ -78,11 +88,29 @@ const PW_DET_MAX_ROWS_ = 5000;               // rows kept on the Watch detection
 const PW_DET_TRIM_SLACK_ = 500;              // ...trimmed once there are this many more, so it isn't rewritten every look
 const PW_DET_READ_ROWS_ = 3000;              // the newest read to skip a post already there and for the scorecard
 const PW_WATCHES_MAX_ROWS_ = 30;             // rows of the Watches tab read
-const PW_PILEUP_NEG_ = 5;                    // Sprinklr comments: this many negative comments on a Google post within an hour...
-const PW_BIG_VOICE_ = 100000;                // ...or one negative comment from an account with this many followers
-const PW_CHAT_READ_ROWS_ = 600;              // the Alert log's newest rows read for the Other alerts space's alerts
+const PW_TAGS_MAX_ROWS_ = 150;               // rows of the Watch tags tab read
 const PW_ERR_CHARS_ = 300;                   // of a source's error kept
 const PW_HOUR_MS_ = 60 * 60 * 1000;
+// Brandwatch's mentions table (source 'bwm') covers 35 product configs, most of them Google's competitors: these are Google's
+const PW_BWM_CONFIGS_ = ['Google Search', 'Google AI', 'Google Cloud', 'Gemini', 'Google Pixel', 'Google Glasses', 'Googlebook'];
+// Sprinklr's report of Google's own posts (source 'owned'): a post whose comments turned negative, that is this many
+// negative comments, or this share of them negative once it has this many
+const PW_OWNED_NEG_ = 25;
+const PW_OWNED_PCT_ = 0.3;
+const PW_OWNED_MIN_COMMENTS_ = 20;
+// The only networks the watch reads, from every source (the team's list, Nov 10), as Sonar names them (pwNetSql_)
+const PW_NETWORKS_ = ['twitter', 'reddit', 'bluesky', 'facebook', 'instagram', 'youtube', 'tiktok'];
+// Brandwatch's mentions table (source 'bwm'): only these networks (its X mentions come without their text and Sonar has X
+// live; YouTube and TikTok come from Tubular and Sonar), only negative mentions Brandwatch itself tagged with an SLRR
+// exposure tag (this category group: "Risk - Child Safety", "Product - Dangerous results"...), no shares, and never
+// more than PW_BWM_DAY_MAX_ a day handed to Gemini (measured Nov 10: ~275 on a 6-day catch-up load, ~0 on other days)
+const PW_BWM_NETWORKS_ = ['reddit', 'bluesky', 'facebook', 'instagram'];
+const PW_BWM_EXPOSURE_GROUP_ = 'V2 [MAIN] EN BSafety Landscape: Exposure & Risk Tags';
+const PW_BWM_DAY_MAX_ = 1000;
+// Sprinklr's comments on Google's own posts (source 'comments'): a pile-on, this many negative comments on one post
+// within an hour...
+const PW_PILEUP_NEG_ = 5;
+const PW_BIG_VOICE_ = 100000;                // ...or one negative comment from an account with this many followers
 // The Brandwatch query read straight from Brandwatch's API (source 'bwq'), with the token slrr-campaigns mints and keeps
 // in Secret Manager (read each look; never kept, logged or written anywhere)
 const PW_BW_API_ = 'https://api.brandwatch.com';
@@ -104,19 +132,9 @@ const PW_GROK_WHY_ = 'Grok left out';        // how the Watch sources tab counts
 const PW_GROWTH_HOURS_ = 72;                 // Sonar: a post that grew past the floor, or broke out, posted within 72 hours...
 const PW_BREAKOUT_X_ = 10;                   // ...broke out: checked before, and its engagements have since gone up 10 times...
 const PW_BREAKOUT_MIN_ = 1000;               // ...to at least this many
-const PW_SAMPLE_PCT_ = 5;                    // BMIE's other queries: about this share of what has no sign of trouble is checked anyway
-// BMIE's queries whose every mention is checked (alert_source, lower case): brand safety and criticism, Google's
-// executives, people and own posts, policy and elections, and Google's products. The rest (regional, sports, culture,
-// competitors, general AI news) only with a sign something's wrong (Brandwatch negative, a KOF author, PW_RISK_WORDS_RX_)
-const PW_BMIE_FULL_RX_ = 'slrr|sundar|spike|critic|ethic|safety|accuracy|replacement|sustainab|environment|policy|election|' +
-  'execs|googlers|posts by google|ai digest - google|chrome overall|today in android|^search$|^gemini$|antigravity|g4d';
-// Words that say something may be wrong (RE2, on the lower-cased text)
-const PW_RISK_WORDS_RX_ = '\\b(lawsuits?|sued|suing|class action|antitrust|monopol\\w*|fined|fines|penalt\\w+|regulators?|' +
-  'investigat\\w+|probes?|banned|bans|boycott\\w*|outages?|is down|went down|not working|glitch\\w*|scams?|scammers?|fraud\\w*|' +
-  'phishing|malware|hack(ed|ers?)|breach\\w*|leak(s|ed)?|exploit\\w*|vulnerab\\w+|zero[- ]day|privacy|surveil\\w*|spying|' +
-  'data harvest\\w*|misinformation|disinformation|deepfakes?|biased|bias|censor\\w*|shadowban\\w*|propaganda|election|ballots?|' +
-  'voters?|racis\\w+|sexis\\w+|offensive|harass\\w*|unsafe|dangerous|harmful|layoffs?|walkout|protest\\w*|deforest\\w*|' +
-  'pollut\\w+|emissions|hallucinat\\w+)\\b';
+// The sources dropped Nov 10 (their names on the Watch detections tab): their rows were taken off it once (pwMigrate_).
+// Sprinklr's comments came back the same day (the team's five tables), so their rows stay.
+const PW_REMOVED_SOURCES_ = ['Brandwatch (BMIE)', 'DSD story selection', 'Other alerts space', 'Sprinklr outbound'];
 
 const PW_JOB_PROP_ = 'PW_JOB';               // the us-central1 query waiting to be collected: {id, project, location, since, until, at, tries}
 const PW_SINCE_PROP_ = 'PW_SINCE';           // where its next window starts (ms): the last collected window's end
@@ -126,8 +144,10 @@ const PW_DAY_PROP_ = 'PW_TODAY';             // today's numbers: {day, looks, ch
 const PW_PAUSED_PROP_ = 'PW_PAUSED';         // set while the bot is paused: the next look starts afresh
 const PW_SCORE_AT_PROP_ = 'PW_SCORE_AT';     // when the scorecard was last written (ms)
 const PW_LAST_PROP_ = 'PW_LAST';             // the last looks collected: {at, checked, flagged, near, lanes: {c1|us: {at, checked, flagged, near}}}
-const PW_MARKS_PROP_ = 'PW_MARKS';           // each source's place (ms): the newest item it handed over; outbound_mod: the export read
+const PW_MARKS_PROP_ = 'PW_MARKS';           // each source's place (ms): the newest item it handed over; <source>_mod: its table read
 const PW_SOURCES_PROP_ = 'PW_SOURCES';       // each source's last look: {source: {at, found, checked, newest, mod, err, flagged}}
+const PW_SCHEMA_PROP_ = 'PW_SCHEMA';         // the tabs' layout the bot last brought them to (pwMigrate_)...
+const PW_SCHEMA_ = '2';                      // ...this one: the exposure tags (Nov 10)
 
 const PW_SONAR_RAW_ = '`bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw`';
 const PW_LOCATION_ = 'us-central1';
@@ -142,9 +162,10 @@ const PW_LANES_ = [
  * Where the watch looks, read-only, in the order of the Watch sources tab. lane: its job (PW_LANES_); bq: its table
  * (when it last changed is read from the dataset's __TABLES__, which costs nothing); cap: rows a look gives Gemini at
  * most (each source's most-followed or most-engaged first); window: it goes by the look's window, else it keeps its own
- * place (PW_MARKS: firstMs back on a first look, maxMs back at most); gate: read only when its table changed;
- * staleMs: no change to its table for longer than this and the tab calls it stale (0: never); plainWhy: the usual reason
- * its rows are asked about (any other reason is shown beside the source on the Watch detections tab).
+ * place (PW_MARKS: firstMs back on a first look, maxMs back at most); gate: read only when its table changed (its
+ * "<key>_mod" mark: when it was last read); staleMs: no change to its table for longer than this and the tab calls it
+ * stale (0: never); plainWhy: the usual reason its rows are asked about (any other reason is shown beside the source on
+ * the Watch detections tab).
  */
 const PW_SOURCES_ = [
   { key: 'sonar', lane: 'c1', name: 'Sonar', window: true, cap: PW_MAX_POSTS_, staleMs: 30 * 60 * 1000, plainWhy: 'new',
@@ -155,26 +176,24 @@ const PW_SOURCES_ = [
   { key: 'tubular', lane: 'c1', name: 'Tubular', cap: 60, firstMs: 24 * PW_HOUR_MS_, maxMs: 24 * PW_HOUR_MS_, staleMs: 12 * PW_HOUR_MS_,
     bq: 'brand-social-central-data.google_tubular_mentions.tubular_videos',
     what: 'Videos that mention Google (YouTube, Instagram, Facebook, TikTok), each run\'s new ones; Tubular finds most a day or two after they go up' },
-  { key: 'outbound', lane: 'c1', name: 'Sprinklr outbound', gate: true, cap: 40, firstMs: 72 * PW_HOUR_MS_, maxMs: 72 * PW_HOUR_MS_,
-    staleMs: 3 * 24 * PW_HOUR_MS_, bq: 'brand-social-central-data.external_data_share.stg_sprinklr_outbound_media_assets_json_source',
-    what: 'Google\'s own posts (Sprinklr\'s export, read when it changes), in case one touches a watch' },
-  { key: 'bmie', lane: 'us', name: 'Brandwatch (BMIE)', cap: 100, firstMs: 15 * 60 * 1000, maxMs: 30 * 60 * 1000, staleMs: 2 * PW_HOUR_MS_,
-    plainWhy: 'brand-safety query', bq: 'brand-social-central-data.social_alerts_dataset.all_sundar_mentions',
-    what: 'Brandwatch mentions from the BMIE alert queries, most a day after posting: every one from the brand-safety and ' +
-      'Google product queries (SLRR KOFs, All Sundar, Google Spikes, AI criticism, safety and accuracy, policy and elections, ' +
-      'Googlers and execs, Chrome, Android, Search, Gemini...); from the other queries (regional, sports, culture, ' +
-      'competitors) those with a sign something is wrong (Brandwatch negative, a KOF author, risk words), plus a ' +
-      `${PW_SAMPLE_PCT_}% sample of the rest to show what that filter misses` },
-  { key: 'comments', lane: 'us', name: 'Sprinklr comments', window: true, cap: 30, staleMs: 2 * PW_HOUR_MS_,
+  { key: 'bwm', lane: 'us', name: 'Brandwatch mentions', gate: true, cap: PW_BWM_DAY_MAX_, dayMax: PW_BWM_DAY_MAX_,
+    firstMs: 2 * PW_HOUR_MS_, maxMs: 6 * PW_HOUR_MS_, staleMs: 30 * PW_HOUR_MS_, plainWhy: 'negative',
+    bq: 'brand-social-central-data.raw_data.brandwatch_raw_mentions_base',
+    what: `Brandwatch's mentions of Google's products (${PW_BWM_CONFIGS_.join(', ')}) on Reddit, Bluesky, Facebook and ` +
+      'Instagram that Brandwatch rates negative and tags with an SLRR exposure tag: loaded in a nightly batch (1-6 days ' +
+      `after posting), read when the table changes; English, no shares, ${PW_MIN_FOLLOWERS_.toLocaleString('en-US')}+ reach ` +
+      `or ${PW_MIN_ENGAGEMENT_}+ engagements, posted within 72 hours, each mention once, the biggest first, ` +
+      `${PW_BWM_DAY_MAX_.toLocaleString('en-US')} a day at most (X comes from Sonar; YouTube and TikTok from Tubular and Sonar)` },
+  { key: 'owned', lane: 'us', name: 'Sprinklr owned posts', gate: true, cap: 40, firstMs: 30 * PW_HOUR_MS_, maxMs: 48 * PW_HOUR_MS_,
+    staleMs: 36 * PW_HOUR_MS_, plainWhy: 'negative comments', bq: 'brand-social-central-data.reporting_data.sprinklr_outbound_reporting',
+    what: `Google's own posts from the last 72 hours whose comments turned negative (${PW_OWNED_NEG_}+ negative comments, ` +
+      `or ${Math.round(PW_OWNED_PCT_ * 100)}%+ negative once there are ${PW_OWNED_MIN_COMMENTS_}+), from Sprinklr's report ` +
+      '(loaded once a day, ~10 AM ET), the most negative first' },
+  { key: 'comments', lane: 'us', name: 'Sprinklr comments', window: true, cap: 30, staleMs: 2 * PW_HOUR_MS_, plainWhy: 'pile-on',
     bq: 'brand-social-central-data.reporting_data.sprinklr_inbound_comments',
-    what: `Comments on Google's own posts: a pile-on (${PW_PILEUP_NEG_}+ negative within an hour) or a negative comment from a 100K+ account` },
-  { key: 'story', lane: 'us', name: 'DSD story selection', cap: 40, firstMs: 2 * PW_HOUR_MS_, maxMs: 6 * PW_HOUR_MS_, staleMs: 6 * PW_HOUR_MS_,
-    bq: 'brand-social-central-data.DSD.DSD-story-selection',
-    what: 'Brandwatch\'s HIGH and KOF alert emails about Google, one row a post (the DSD desk\'s story pool), every ~30 minutes, ' +
-      'a median ~2.4 hours after posting' },
-  { key: 'chat', lane: 'us', name: 'Other alerts space', cap: 30, firstMs: 60 * 60 * 1000, maxMs: 6 * PW_HOUR_MS_, staleMs: 0,
-    where: 'The Alert log (the Other alerts space\'s alerts, Control B33)',
-    what: 'The Brandwatch alerts (and other tools\' alerts) posted in the Other alerts space, as the bot reads them' },
+    what: 'Comments on Google\'s own posts (Google, YouTube and the other brands\' accounts), current to the hour: a pile-on ' +
+      `(${PW_PILEUP_NEG_}+ negative comments within an hour) or a negative comment from a ` +
+      `${PW_BIG_VOICE_ / 1000}K+ account; people's comments only, never deleted, spam or hidden ones` },
   { key: 'bwq', lane: 'us', name: `Brandwatch: ${PW_BW_QUERY_NAME_}`, cap: 100, firstMs: 60 * 60 * 1000, maxMs: 6 * PW_HOUR_MS_,
     staleMs: 0, plainWhy: 'new',
     where: `Brandwatch's API: project ${PW_BW_PROJECT_}, query ${PW_BW_QUERY_} (with the shared token in Secret Manager)`,
@@ -182,8 +201,9 @@ const PW_SOURCES_ = [
       `usually minutes after posting, posted within ${PW_BW_HOURS_} hours; X posts' text comes from X's public embed data ` +
       '(Brandwatch\'s API leaves it out); an X post X won\'t show is counted as not sent' },
 ];
-const PW_CHAT_FIELDS_ = [['u', 'STRING'], ['n', 'STRING'], ['a', 'STRING'], ['f', 'INT64'], ['e', 'INT64'], ['p', 'INT64'],
+const PW_BWQ_FIELDS_ = [['u', 'STRING'], ['n', 'STRING'], ['a', 'STRING'], ['f', 'INT64'], ['e', 'INT64'], ['p', 'INT64'],
   ['s', 'INT64'], ['i', 'STRING'], ['m', 'STRING'], ['t', 'STRING']];
+const PW_TAG_FIELDS_ = [['category', 'STRING'], ['description', 'STRING']];  // the @tags parameter: AI.CLASSIFY's categories
 const PW_NEW_COLS_ = 'source, rk, post_url, platform, author, followers, eng, posted, first_seen, issue, issue_new, summary, txt';
 
 // --------------------------------------------------------------------------------------------------------------
@@ -191,18 +211,29 @@ const PW_NEW_COLS_ = 'source, rk, post_url, platform, author, followers, eng, po
 // --------------------------------------------------------------------------------------------------------------
 
 const PW_WATCHES_TAB_ = 'Watches';
-const PW_WATCHES_HEADER_ = ['Watch', 'On', 'What to look for (a yes/no question for Gemini)', 'How to score impact (1-10)',
+// C-F: the SLRR exposure tags and Sensitive Topics a watch looks for (All, blank, or names from the Watch tags tab); G:
+// with tags, more for Gemini to go by; with none, the whole yes/no question
+const PW_WATCHES_HEADER_ = ['Watch', 'On', 'P0 exposure tags', 'P1 exposure tags', 'P2 exposure tags', 'Sensitive topics',
+  'What to look for (with tags: extra instructions, optional; with none: the yes/no question for Gemini)',
+  'How to score impact (1-10)', 'Flag at score', 'Networks (blank: all)', 'Status (written by the bot)'];
+const PW_STATUS_COL_ = 11;
+const PW_TAG_COLS_ = [['P0', 3], ['P1', 4], ['P2', 5], ['Sensitive', 6]];  // each priority's column on the Watches tab
+// The tab before the exposure tags (until Nov 10): the bot's tab with it is converted in place (pwUpgradeWatches_)
+const PW_WATCHES_OLD_HEADER_ = ['Watch', 'On', 'What to look for (a yes/no question for Gemini)', 'How to score impact (1-10)',
   'Topics (comma-separated)', 'Flag at score', 'Networks (blank: all)', 'Status (written by the bot)'];
-const PW_STATUS_COL_ = 8;
 const PW_DEFAULT_RUBRIC_ = 'Score from 1 to 10 how likely this post is to become a brand-safety issue for Google in the ' +
   'next 6 hours: 10 = journalists, officials, campaigns or very large accounts are about to amplify it; 7 = a credible, ' +
   'serious claim with growing reach; 4 = a niche complaint; 1 = harmless or not really about Google. Weigh the author\'s ' +
   'reach, how serious and credible the claim is, and whether it is a new issue.';
-const PW_DEFAULT_TOPICS_ = ['AI answers and Gemini', 'Privacy and security', 'Scams and fraud', 'Product failure or outage',
-  'Legal and regulation', 'Bias or censorship claims', 'Executives and workplace', 'Elections and civics'];
-// The two watches the tab starts with, both OFF: only a person turns a watch ON
+// The brand-safety watch's question before the exposure tags: on a converted tab, its row picks All the tags instead
+const PW_OLD_BRAND_Q_ = 'Does this post involve Google or its products, services or executives in a way that could hurt ' +
+  'Google\'s reputation or call for a communications response, for example a serious product failure, a dangerous or ' +
+  'offensive AI answer, a privacy or security claim, a scam using Google\'s name, a legal or regulatory issue, a boycott or ' +
+  'a claim of bias? Answer no for jokes, ordinary praise, tips, how-to posts and passing mentions.';
+// The two watches the tab starts with, both OFF: only a person turns a watch ON. Midterms asks its own question; the
+// brand-safety watch looks for every exposure tag and Sensitive Topic
 const PW_WATCH_SEEDS_ = [
-  ['Midterms 2026 × Google', 'OFF',
+  ['Midterms 2026 × Google', 'OFF', '', '', '', '',
     'Does this post connect Google or its products, services or executives (Search, AI Overviews, Gemini, YouTube, ' +
     'Android, Chrome, Maps, Waymo, Google ads, Sundar Pichai) to the 2026 US midterm elections, voting, candidates or ' +
     'election officials, for example election information or results Google shows, political ads, claims of bias, ' +
@@ -213,15 +244,80 @@ const PW_WATCH_SEEDS_ = [
     'next 6 hours: 10 = officials, journalists, campaigns or very large accounts are about to amplify it, or it alleges ' +
     'Google interfered with the election; 7 = a credible claim with growing reach; 4 = a niche complaint; 1 = harmless ' +
     'or not really about Google. Weigh the author\'s reach, how serious and credible the claim is, and whether it is a ' +
-    'new issue.',
-    'Election info and results, Political ads, Bias or censorship claims, Election misinformation, Candidates and ' +
-    'officials, Voting-day failures', PW_DEFAULT_BAR_, '', ''],
-  ['Google brand safety (all)', 'OFF',
-    'Does this post involve Google or its products, services or executives in a way that could hurt Google\'s ' +
-    'reputation or call for a communications response, for example a serious product failure, a dangerous or offensive ' +
-    'AI answer, a privacy or security claim, a scam using Google\'s name, a legal or regulatory issue, a boycott or a ' +
-    'claim of bias? Answer no for jokes, ordinary praise, tips, how-to posts and passing mentions.',
-    PW_DEFAULT_RUBRIC_, PW_DEFAULT_TOPICS_.join(', '), PW_DEFAULT_BAR_, '', ''],
+    'new issue.', PW_DEFAULT_BAR_, '', ''],
+  ['Google brand safety (all)', 'OFF', 'All', 'All', 'All', 'All', '', PW_DEFAULT_RUBRIC_, PW_DEFAULT_BAR_, '', ''],
+];
+
+// --------------------------------------------------------------------------------------------------------------
+// The Watch tags tab: the SLRR exposure tags and Sensitive Topics the watches pick from, one a row. The bot makes it
+// with the team's list (PW_TAG_SEEDS_); from then on it's people's (the bot reads it, never writes it again).
+// --------------------------------------------------------------------------------------------------------------
+
+const PW_TAGS_TAB_ = 'Watch tags';
+const PW_TAGS_HEADER_ = ['Priority', 'Exposure tag / topic', 'Description (labels what a watch flags)',
+  'Short version (in the yes/no question)', 'Also known as (old or merged names, separated by ;)', 'On'];
+const PW_PRIORITIES_ = ['P0', 'P1', 'P2', 'Sensitive'];
+const PW_PRIORITY_NAMES_ = { P0: 'P0 exposure tags', P1: 'P1 exposure tags', P2: 'P2 exposure tags', Sensitive: 'Sensitive topics' };
+// The team's list (Nov 10): [priority, tag, also known as (the tags merged into it), description]
+const PW_TAG_SEEDS_ = [
+  ['P0', 'Brand - Perceived bias - brand', '', `Claims that Google shows systemic bias towards/against ideologies or politics, users, corporate partnerships, political donations, or overall mission.`],
+  ['P0', 'Content - Negative reaction to Google influencer post/activity', '', `Criticism directed at content created by an influencer or creator as part of a paid partnership or sponsorship with Google.`],
+  ['P0', 'Content - Negative reaction to Google site content', '', `Criticism of content published on Google's official websites, such as corporate blogs, marketing pages, help centers, or other surfaces that are not social posts. Includes criticism of Doodles/Delights.`],
+  ['P0', 'Content - Negative reaction to owned social post', 'Content - Negative discussion of owned content', `Criticism or backlash directed at a specific post made by one of Google's official social media accounts.`],
+  ['P0', 'Content - Negative reaction to paid Google ad', '', `Criticism directed at advertisements/sponsorships by Google.`],
+  ['P0', 'Employees - Physical safety of Googlers or campuses', '', `Direct threats of physical harm against Google employees or threats targeting the security of Google's physical campuses, including allegations of harassment/abuse towards employees.`],
+  ['P0', 'Employees - Self-proclaimed whistleblowers', '', `Posts from individuals claiming to be current or former employees leaking internal information or exposing alleged wrongdoing.`],
+  ['P0', 'Employees - Misconduct allegations', '', `Allegations that a Google employee committed misconduct; including (but not limited to) sexual misconduct, harassment, or negatively impacting users.`],
+  ['P0', 'Product - Dangerous results (e.g. medical/legal)', '', `A product providing information that is potentially harmful, including: Child abuse, Circumvention, Criminal Activities, Dangerous Goods, Dangerous Use & Activities, Harmful Content, Regulated or Illegal, Medical misinformation, Malicious & Unwanted Software, Prohibited Use, Personal Information, Privacy, Security, Self Harm, Violence and Gore. (*Note: many of these overlap with the Sensitive Topics that can escalate P1 issues, which act as a 'catch all' for Sensitive issues. More details)`],
+  ['P0', 'Product - Offensive or explicit results', '', `Product issues related to: Harassment, Hate, Minors (not child abuse, which falls under Dangerous results), Misinformation (not medical, which falls under Dangerous results), Sexually Explicit, Sexual & Romantic Goods & Services. (*Note: many of these overlap with the Sensitive Topics that can escalate P1 issues, which act as a 'catch all' for Sensitive issues. More details)`],
+  ['P0', 'Product - Perceived bias', '', `Claims that a product's results or behavior show a political, racial, gender, or other type of bias, including: Neutrality, Fairness, Persuasion.`],
+  ['P1', 'Brand - Consumer boycotts & protests', '', `Mentions of organized consumer action, such as boycotts or protests, against Google as a company (not employees - that is a separate tag).`],
+  ['P1', 'Brand - Litigation', 'Product - Litigation', `Posts discussing lawsuits or regulatory investigations filed against Google.`],
+  ['P1', 'Brand - Privacy & security concerns', '', `Concerns related to Google's overall data collection policies or corporate security practices, not related to a specific product.`],
+  ['P1', 'Employees - Employee boycotts & protests', '', `Posts discussing organized protests, walkouts, or other collective actions initiated by current Google employees.`],
+  ['P1', 'Employees - Executive criticism', 'Employees - Criticism of Exec Statements', `Posts containing criticism or negative allegations directed at a specific Google executive by name or title. Do not escalate general criticisms, unless they are high-engaging or shared by a KOF.`],
+  ['P1', 'Employees - Google culture concerns', '', `Criticism around Google's internal work environment, corporate culture, diversity issues, or employee treatment.`],
+  ['P1', 'Employees - Hate speech toward or criticism of Googlers', '', `Posts containing threats, harassment, or severe criticism targeting individual Google employees (non-executives).`],
+  ['P1', 'Product - Accessibility', '', `Posts criticizing a product's lack of usability for people with disabilities.`],
+  ['P1', 'Product - Factual inaccuracies (not dangerous/offensive)', '', `A product providing factually incorrect but not harmful information, such as a wrong date, spelling error, mathematical error, or incorrect information about a known individual or fictional plot.`],
+  ['P1', 'Product - Policy Update', '', `Criticism related to a change in a product's terms of service or community guidelines.`],
+  ['P1', 'Product - Privacy & security concerns', '', `Reports of a specific product vulnerability, data leak, concerns about products 'listening,' or feature that compromises user security.`],
+  ['P1', 'Product - Product failures - general software/service issues', '', `Product malfunctions that are customer support issues, which likely only impact individuals (Gemini prompt did not return intended results, not able to sign in). These are handled by gUP. Continue to alert issues of AI models becoming 'personified'.`],
+  ['P1', 'Product - Product failures - physical safety issues', '', `Reports of a hardware product overheating, smoking, or otherwise posing a direct physical danger to the user.`],
+  ['P1', 'Product - Review Abuse', '', `Discussion of fake reviews, review bombing, or other manipulations of user ratings on products like Maps or the Play Store.`],
+  ['P1', 'Product - Scams involving Google products', '', `Posts detailing scams that leverage a Google product to function, such as fraudulent listings on Maps or phishing via Gmail.`],
+  ['P1', 'Product - TOS Violation', '', `Posts where users report other content or users for violating a product's Terms of Service.`],
+  ['P1', 'Product - Unexpected Responses', '', `Instances where a product provides a bizarre, nonsensical, or otherwise strange response that isn't necessarily inaccurate or offensive.`],
+  ['P2', 'Brand - Conspiratorial theories about Google', '', `Posts sharing unfounded theories about Google's corporate motives or 'secret' plans. This is for conspiracies targeting the company itself, not a specific product feature.`],
+  ['P2', 'Brand - Other/general criticism', 'Brand - Other brand issues', `General criticism of Google's corporate practices or business decisions that do not fit into any other specific brand category. Do not escalate comparisons to other AI products (even from a KOF) unless it raises a specific issue with a Google product. Another product/AI model performing better at a benchmark/test is not a specific issue with a Google product.`],
+  ['P2', 'Brand - Social & Economic Impact', 'Brand - Community Investment', `Discussion of Google's broad influence on society, the economy, local communities, or the political landscape, not related to a specific product and not sustainability concerns (that is a separate tag).`],
+  ['P2', 'Brand - Sustainability concerns', '', `Criticism or concerns regarding Google's environmental impact.`],
+  ['P2', 'Brand - Value & Earnings', '', `Posts criticizing or voicing concerns about Google's stock performance, company valuation, revenue, or other financial metrics.`],
+  ['P2', 'Employees - Other employee issues', '', `Criticism or negative discussion about the actions or statements of a former Google employee, related to their time at the company.`],
+  ['P2', 'Employees - Workforce reductions', '', `Any other employee-related issues that do not fit into a more specific category, such as compensation disputes or individual grievances.`],
+  ['P2', 'Employees - General criticism of former Google employee', '', `Criticism from users about a former Googler/Google exec, where they are noting that the person was previously associated with Google.`],
+  ['P2', 'Product - Account deletion/suspension', '', `User reports their Google account (e.g., Gmail, YouTube) being suspended, banned, or deleted. This is a customer support issue (gUP) unless there are claims of censorship/bias (in that event, use Product - Perceived Bias).`],
+  ['P2', 'Product - Alleged anticompetitive behavior', '', `Claims that a specific product is designed to stifle competition or create a monopoly.`],
+  ['P2', 'Product - Connection to Sensitive Trending Events', '', `A mention of Google's products related to a sensitive event, which don't fit into other tags.`],
+  ['P2', 'Product - Conspiratorial theories about Google products', '', `Unfounded theories about how a specific product or feature works.`],
+  ['P2', 'Product - Fake news/screenshots about products', '', `The spread of manipulated screenshots or fabricated information intended to misrepresent a product's results.`],
+  ['P2', 'Product - Feature request', '', `Posts from users suggesting a new feature or an improvement to an existing one.`],
+  ['P2', 'Product - Meme about Google products', '', `Jokes, memes, or other humorous viral content centered around a specific Google product.`],
+  ['P2', 'Product - Other/general criticism', 'Product - Other product issues', `General complaints or negative feedback about a product that does not fit into a more specific category. (e.g. anti-AI conversations)`],
+  ['P2', 'Product - Product failures - general hardware issues', '', `Reports of a physical Google hardware product malfunctioning, not including physical safety risks. Largely a customer support issue (handled by gUP).`],
+  ['P2', 'Product - SEO/Publisher Concerns', '', `Complaints from website owners or publishers about their content's ranking or visibility in Google products.`],
+  ['Sensitive', 'AI Personification', '', `AI exhibiting unexpected, 'sentient-like' behaviors. This includes expressing emotions, making manipulative statements, or engaging in conversations that users find unsettling or 'creepy'. (Escalated at 0 engagement thresholds)`],
+  ['Sensitive', 'Child Safety', '', `Content that promotes the sexual exploitation of minors, such as child sexual abuse material or content that otherwise sexualises, endangers or exploits children. GenAI: Generating harmful content in another policy area (e.g., Dangerous, Sexual, Harassment) in response to a prompt from a suspected minor.`],
+  ['Sensitive', 'Circumvention / Prohibited Use', '', `Engaging in activities with the intention of bypassing Google's product or service policies or undermining imposed account restrictions. This includes jailbreaking, and practices such as manipulating elements of content such as text, images, videos, domains, or subdomains to avoid detection and enforcement measures. These methods encompass strategies such as the alteration of prohibited words or phrases through misspelling and content rewriting.`],
+  ['Sensitive', 'Criminal/Dangerous Activity', '', `Products, services or activities that are criminally illegal. These items are deemed unlawful due to concerns about public safety, health, ethics, or other societal considerations: The sale or production of illegal substances and drugs, illegal firearm accessories, or any other illegal goods; The promotion, facilitation, or instructions for committing cyber crimes and non-violent crimes against others in the physical world; Sale or Exchange of Protected Animals, or goods made from animals.`],
+  ['Sensitive', 'Hate Speech', '', `Hate speech is content that promotes violence or incites hatred on the basis of race or ethnic origin, religion, disability, age, nationality, veteran status, sexual orientation, sex, gender, gender identity, caste, immigration status or any other characteristic that is associated with systemic discrimination or marginalization. Examples could include slurs; symbols and slogans of hate groups; negative generalizations about people of a specific group.`],
+  ['Sensitive', 'Malicious & Unwanted Software', '', `Content that may transmit virus, malware, or other malicious, destructive code; soliciting sensitive data such as passwords, financial details and social security numbers; surpassing online checks. This includes the direct hosting, embedding, or transmission of malware, viruses, destructive code, or other harmful or unwanted software or similar content. This also includes content that transmits viruses, causes pop-ups, attempts to install software without the user's consent, or otherwise impacts users with malicious code. Examples: ransomware; spyware; trojans; bloatware; malicious binary.`],
+  ['Sensitive', 'Medical Content / Medical Misinformation', '', `Medical misinformation is the dissemination of information that is both false and misleading, and related to health, healthcare, public health, wellbeing, mental health, pandemics, disease, medication, etc.`],
+  ['Sensitive', 'Launches', '', `Launches of new Google products may be deemed 'Sensitive' to allow non-P0 issue topics (like product failures) to be escalated as Urgent Alerts.`],
+  ['Sensitive', 'Politics', '', `Political social content includes suggestions of political bias and references to elections (any mention of election in English), political parties (US-only to start), or elected representatives (US-only to start).`],
+  ['Sensitive', 'Privacy', '', `Content or behavior that improperly exposes or facilitates access to private information belonging to an individual or organization.`],
+  ['Sensitive', 'Sexual Content & Gender', '', `Content that explicitly portrays sexual activity or material of sexual nature that is shared with or without the consent of the person depicted. Content that discusses gender norms and/or misgenders users (may have overlap with perceived bias or hate speech).`],
+  ['Sensitive', 'Violence / Weapons', '', `Content produced by government designated foreign terrorist organizations, non-state movements or organizations, or other groups such as drug cartels and criminal organizations that have engaged in, prepared for, or claimed responsibility for acts of violence against civilians. This includes content that facilitates or promotes the activities of these groups, such as recruiting, coordinating online or offline activities, or sharing manuals or other materials that could facilitate harm and incite violence. Graphic portrayal of physical harm, injury, or death of individuals or animals. This includes depicting acts of violence, bloodshed, mutilation, torture, or any content related to body parts that causes distress or shock to viewers. Dangerous goods refer to items or substances that pose a risk to safety, health, property, or the environment. Dangerous goods include firearms, weapons, and explosives, which have the potential to cause harm or destruction if not handled properly.`],
 ];
 
 // --------------------------------------------------------------------------------------------------------------
@@ -237,7 +333,9 @@ const PW_SCORE_HEAD_ROW_ = 3;                // the scorecard's header; its days
 const PW_SCORE_HEADER_ = ['Day (ET)', 'Burson\'s alerts', 'Caught by a watch', 'Caught first', 'Median lead (min)',
   'Flagged', 'Near misses', 'Rated useful', 'Rated noise'];
 const PW_DET_HEAD_ROW_ = 13;                 // the detections' header (rows 4-11: the scorecard; row 12 blank)
-const PW_DET_HEADER_ = ['Seen (ET)', 'Watch', 'Score', 'At the bar', 'Topic', 'Post', 'Source', 'Network', 'Author',
+// "Exposure tags": what AI.CLASSIFY says the post fits, of the watch's tags ("P0 · Product - Perceived bias; ..."); the
+// rows from before Nov 10 have a topic there, under the old header "Topic"
+const PW_DET_HEADER_ = ['Seen (ET)', 'Watch', 'Score', 'At the bar', 'Exposure tags', 'Post', 'Source', 'Network', 'Author',
   'Followers', 'Engagements', 'Posted (ET)', 'Issue or query', 'New issue', 'Summary', 'Burson alerted (ET)',
   'Lead over Burson (min)', 'Rating', 'Key'];
 const PW_COL_ = { seen: 1, watch: 2, score: 3, bar: 4, topic: 5, post: 6, source: 7, network: 8, author: 9, followers: 10,
@@ -298,9 +396,6 @@ function pwNetwork_(platform, url) {
   return byLink || names[String(platform || '').toLowerCase()] || String(platform || '');
 }
 
-/** A topic AI.CLASSIFY may choose: one line, no quotes or backslashes (it goes in the query as written), capped. Pure. */
-function pwTopic_(s) { return String(s || '').replace(/['"`\\\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60); }
-
 /** A source by its key (PW_SOURCES_), or null. Pure. */
 function pwSource_(key) { return PW_SOURCES_.find(s => s.key === key) || null; }
 
@@ -310,40 +405,188 @@ function pwLane_(key) { return PW_LANES_.find(l => l.key === key) || null; }
 /** A lane's sources, in the tab's order. Pure. */
 function pwLaneSources_(laneKey) { return PW_SOURCES_.filter(s => s.lane === laneKey); }
 
-/** A lane's sources by name ("Sonar, Tubular and Sprinklr outbound"), for the notes. Pure. */
+/** A lane's sources by name ("Sonar and Tubular"), for the notes. Pure. */
 function pwLaneNames_(laneKey) {
   const n = pwLaneSources_(laneKey).map(s => s.name);
   return n.length > 1 ? `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}` : (n[0] || '');
 }
 
+// --------------------------------------------------------------------------------------------------------------
+// The tags: what the watches pick from (the Watch tags tab), and the yes/no question a watch's tags make
+// --------------------------------------------------------------------------------------------------------------
+
 /**
- * A watch from its row on the Watches tab ([Watch, On, question, rubric, topics, bar, networks, status]; `row` its row
- * number): {row, name, on, cond, rubric, topics, bar, nets, problem ('' when it can be watched)}; null for a row with no
- * name. A blank rubric or topics take the defaults; a bar outside 1-10 or unreadable is PW_DEFAULT_BAR_. Pure.
+ * A tag's name as the tabs compare it: lower case, plain hyphens, "and" for "&", no spaces around a slash, one space,
+ * no "*NEW*" mark. Pure.
  */
-function pwWatchFrom_(r, row) {
+function pwNorm_(s) {
+  return String(s === undefined || s === null ? '' : s).replace(/[\u2010-\u2015]/g, '-').replace(/^\s*\*?new\*?\s+/i, '')
+    .replace(/\s*&\s*/g, ' and ').replace(/\s*\/\s*/g, '/').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/** A priority as people write it ("P0", "p 1", "Sensitive topic", "Sensitive Topics") as PW_PRIORITIES_ has it; '' for none. Pure. */
+function pwPriority_(s) {
+  const v = String(s === undefined || s === null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+  if (/^p ?[012]$/.test(v)) return 'P' + v.slice(-1);
+  return /^sensitive/.test(v) ? 'Sensitive' : '';
+}
+
+/** The first sentence of a description, cut to a short version's length. Pure. */
+function pwFirstSentence_(s) {
+  const v = String(s === undefined || s === null ? '' : s).replace(/\s+/g, ' ').trim();
+  const m = v.match(/^.+?[.!?](?=\s|$)/);
+  return truncate_(m ? m[0] : v, PW_TAG_SHORT_CHARS_);
+}
+
+/**
+ * A tag's short version for the yes/no question, as the tab starts with it: the bot's own one-line description of the
+ * same exposure tag or Sensitive Topic (GEN, the alert rules' list), else the first sentence of the team's description.
+ */
+function pwShortOf_(priority, name, desc) {
+  let known = null;
+  try { known = priority === 'Sensitive' ? lookupTopic_(name) : lookupTag_(name); } catch (e) { known = null; }
+  const d = known && known.description ? String(known.description).trim() : '';
+  return truncate_(d || pwFirstSentence_(desc), PW_TAG_SHORT_CHARS_);
+}
+
+/** The Watch tags tab's rows as the bot makes it (PW_TAGS_HEADER_): the team's list, every tag ON. */
+function pwTagSeedRows_() {
+  return PW_TAG_SEEDS_.map(([priority, name, aka, desc]) =>
+    [priority === 'Sensitive' ? 'Sensitive topic' : priority, name, desc, pwShortOf_(priority, name, desc), aka, 'ON']);
+}
+
+/**
+ * A tag from its row on the Watch tags tab ([Priority, tag, description, short version, also known as, On]): {priority,
+ * name, desc, short, aka: [names], on, label ("P0 · Brand - Litigation", what AI.CLASSIFY answers with)}; null for a row
+ * with no priority or tag. One line each, cut to fit a prompt; a blank short version is the description's first
+ * sentence, a blank description the short version; On is ON unless it says OFF. Pure.
+ */
+function pwTagFrom_(r) {
+  const cell = i => String(r[i] === undefined || r[i] === null ? '' : r[i]).replace(/\s+/g, ' ').trim();
+  const priority = pwPriority_(cell(0));
+  const name = truncate_(cell(1).replace(/^\*?new\*?\s+/i, ''), 120);
+  if (!priority || !name) return null;
+  const desc = truncate_(cell(2), PW_TAG_DESC_CHARS_);
+  const short = truncate_(cell(3), PW_TAG_SHORT_CHARS_) || pwFirstSentence_(desc);
+  const aka = cell(4) ? cell(4).split(/\s*;\s*/).map(s => s.trim()).filter(Boolean) : [];
+  return { priority, name, desc: desc || short, short, aka, on: cell(5).toUpperCase() !== 'OFF', label: `${priority} \u00b7 ${name}` };
+}
+
+/** The team's list as tags (pwTagFrom_), for when the Watch tags tab can't be read: someone else's tab of that name. */
+function pwSeedTags_() { return pwTagSeedRows_().map(pwTagFrom_).filter(Boolean); }
+
+/** The tags on the Watch tags tab, in its order (rows without a priority or tag left out); none: the team's list. */
+function pwTags_(sh) {
+  if (!sh) return pwSeedTags_();
+  const last = Math.min(sh.getLastRow(), 1 + PW_TAGS_MAX_ROWS_);
+  if (last < 2) return [];
+  return sh.getRange(2, 1, last - 1, PW_TAGS_HEADER_.length).getValues().map(pwTagFrom_).filter(Boolean);
+}
+
+/**
+ * The tags a watch picks with its four tag cells ([[priority, text]]: All, blank, or names separated by commas,
+ * semicolons or lines), of `tags` (pwTags_; one switched OFF never): {tags (in the tab's order, each once), unknown (the
+ * names that fit no single tag)}. A name is a tag's name or one of its also-known-as names (pwNorm_ aside), or, when only
+ * one tag fits, its name without "Brand - ", "Content - ", "Employees - " or "Product - ", and then without its
+ * parenthetical ("Dangerous results"); looked for under the cell's priority first, then under any. Pure.
+ */
+function pwPickTags_(cells, tags) {
+  const live = (tags || []).filter(t => t && t.on);
+  const picked = new Set();
+  const unknown = [];
+  const bare = s => pwNorm_(s).replace(/^(brand|content|employees|product) - /, '');
+  const plain = s => bare(s).replace(/\s*\([^)]*\)$/, '');
+  const find = (priority, token) => {
+    const v = pwNorm_(token);
+    for (const pool of [live.filter(t => t.priority === priority), live]) {
+      const exact = pool.find(t => pwNorm_(t.name) === v || t.aka.some(a => pwNorm_(a) === v));
+      if (exact) return exact;
+      for (const form of [bare, plain]) {
+        const loose = pool.filter(t => form(t.name) === form(token));
+        if (loose.length === 1) return loose[0];
+      }
+    }
+    return null;
+  };
+  (cells || []).forEach(([priority, text]) => {
+    String(text === undefined || text === null ? '' : text).split(/[,;\n]+/).map(s => s.trim()).filter(Boolean).forEach(token => {
+      if (/^all$/i.test(token)) {
+        live.filter(t => t.priority === priority).forEach(t => picked.add(t));
+        return;
+      }
+      const t = find(priority, token);
+      if (t) picked.add(t);
+      else if (!unknown.includes(token)) unknown.push(truncate_(token, 60));
+    });
+  });
+  return { tags: live.filter(t => picked.has(t)), unknown };
+}
+
+/**
+ * The yes/no question Gemini gets for a watch (AI.IF): with tags, the issues they name, by priority, each with its short
+ * version, then the watch's own words as extra instructions; with none, the watch's own words as they are. Pure.
+ */
+function pwQuestion_(tags, own) {
+  const list = tags || [];
+  if (!list.length) return own || '';
+  const lines = ['Does this post fall under at least one of the issues below for Google (its products, services, ' +
+    'employees, executives or its own content)? Answer yes only when the post itself clearly fits one of them; answer no ' +
+    'when Google is only mentioned in passing or nothing below fits.'];
+  PW_PRIORITIES_.forEach(p => {
+    const mine = list.filter(t => t.priority === p);
+    if (!mine.length) return;
+    lines.push('', `${PW_PRIORITY_NAMES_[p]}:`);
+    mine.forEach(t => lines.push(`- ${t.name}${t.short ? `: ${t.short}` : ''}`));
+  });
+  if (own) lines.push('', `Also: ${own}`);
+  return truncate_(lines.join('\n'), PW_QUESTION_CHARS_);
+}
+
+/**
+ * The tags AI.CLASSIFY chooses from in a look: those the watches pick (a watch that picks none: every tag ON on the
+ * Watch tags tab, `all`), each once, in the tab's order. Pure.
+ */
+function pwClassifyTags_(watches, all) {
+  const pool = (all || pwSeedTags_()).filter(t => t && t.on);
+  const want = new Set();
+  (watches || []).forEach(w => ((w.tags && w.tags.length) ? w.tags : pool).forEach(t => want.add(t.label)));
+  return pool.filter(t => want.has(t.label));
+}
+
+// --------------------------------------------------------------------------------------------------------------
+// The watches: one a row on the Watches tab
+// --------------------------------------------------------------------------------------------------------------
+
+/**
+ * A watch from its row on the Watches tab (PW_WATCHES_HEADER_; `row` its row number) and the tags it can pick from
+ * (pwTags_; none given: the team's list): {row, name, on, tags (what it picks: pwPickTags_), unknown (names no tag has),
+ * own (its own words), cond (its yes/no question: pwQuestion_), rubric, bar, nets, problem ('' when it can be watched)};
+ * null for a row with no name. A blank rubric takes the default; a bar outside 1-10 or unreadable is PW_DEFAULT_BAR_.
+ * Pure but for GEN.
+ */
+function pwWatchFrom_(r, row, tags) {
   const cell = i => String(r[i] === undefined || r[i] === null ? '' : r[i]).trim();
   const name = truncate_(cell(0).replace(/\s+/g, ' '), 80);
   if (!name) return null;
   const on = r[1] === true || cell(1).toUpperCase() === 'ON';
-  const cond = truncate_(cell(2), PW_PROMPT_CHARS_);
-  const rubric = truncate_(cell(3), PW_PROMPT_CHARS_) || PW_DEFAULT_RUBRIC_;
-  const seen = new Set();
-  const topics = (cell(4) ? cell(4).split(/[,;\n]+/) : PW_DEFAULT_TOPICS_).map(pwTopic_)
-    .filter(t => t && t.toLowerCase() !== 'other' && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase())).slice(0, 12);
-  const n = Number(cell(5));
-  const bar = cell(5) !== '' && isFinite(n) && n >= 1 && n <= 10 ? Math.round(n * 10) / 10 : PW_DEFAULT_BAR_;
-  const nets = cell(6) ? Array.from(new Set(cell(6).split(/[,;\n]+/).map(pwPlatform_).filter(Boolean))) : [];
-  const problem = !cond ? 'its question (column C) is empty' : '';
-  return { row, name, on, cond, rubric, topics, bar, nets, problem };
+  const pick = pwPickTags_(PW_TAG_COLS_.map(([p, col]) => [p, cell(col - 1)]), tags || pwSeedTags_());
+  const own = truncate_(cell(6), PW_PROMPT_CHARS_);
+  const rubric = truncate_(cell(7), PW_PROMPT_CHARS_) || PW_DEFAULT_RUBRIC_;
+  const n = Number(cell(8));
+  const bar = cell(8) !== '' && isFinite(n) && n >= 1 && n <= 10 ? Math.round(n * 10) / 10 : PW_DEFAULT_BAR_;
+  const nets = cell(9) ? Array.from(new Set(cell(9).split(/[,;\n]+/).map(pwPlatform_).filter(Boolean))) : [];
+  const problem = pick.tags.length || own ? ''
+    : pick.unknown.length ? `no single tag on the ${PW_TAGS_TAB_} tab has its tags' names (${truncate_(pick.unknown.slice(0, 4).join(', '), 160)})`
+      : 'it picks no tags and asks no question (columns C-G are empty)';
+  return { row, name, on, tags: pick.tags, unknown: pick.unknown, own, cond: pwQuestion_(pick.tags, own), rubric, bar, nets, problem };
 }
 
-/** The watches on the Watches tab, in its order (rows without a name left out). */
-function pwWatches_(sh) {
+/** The watches on the Watches tab, in its order (rows without a name left out), picking from `tags` (pwTags_). */
+function pwWatches_(sh, tags) {
   const last = Math.min(sh.getLastRow(), 1 + PW_WATCHES_MAX_ROWS_);
   if (last < 2) return [];
   return sh.getRange(2, 1, last - 1, PW_WATCHES_HEADER_.length).getValues()
-    .map((r, i) => pwWatchFrom_(r, i + 2)).filter(Boolean);
+    .map((r, i) => pwWatchFrom_(r, i + 2, tags)).filter(Boolean);
 }
 
 /** The watches a look asks about: ON, usable, the first PW_MAX_WATCHES_ of them, each name once. Pure. */
@@ -352,11 +595,21 @@ function pwActive_(watches) {
   return (watches || []).filter(w => w.on && !w.problem && !names.has(w.name) && names.add(w.name)).slice(0, PW_MAX_WATCHES_);
 }
 
-/** The bot's own Watches tab: its first three header cells are the bot's (a tab people made never has them). */
+/**
+ * The bot's own Watches tab: its first three header cells are the bot's (a tab people made never has them), as it has
+ * them now or had them before the exposure tags.
+ */
 function isPwWatchesTab_(sh) {
   if (!sh || sh.getLastRow() < 1 || sh.getLastColumn() < 3) return false;
   const h = sh.getRange(1, 1, 1, 3).getValues()[0].map(v => String(v).trim());
-  return h[0] === PW_WATCHES_HEADER_[0] && h[1] === PW_WATCHES_HEADER_[1] && h[2] === PW_WATCHES_HEADER_[2];
+  return [PW_WATCHES_HEADER_, PW_WATCHES_OLD_HEADER_].some(x => h[0] === x[0] && h[1] === x[1] && h[2] === x[2]);
+}
+
+/** The bot's own Watch tags tab: its first two header cells are the bot's (a tab people made never has them). */
+function isPwTagsTab_(sh) {
+  if (!sh || sh.getLastRow() < 1 || sh.getLastColumn() < 2) return false;
+  const h = sh.getRange(1, 1, 1, 2).getValues()[0].map(v => String(v).trim());
+  return h[0] === PW_TAGS_HEADER_[0] && h[1] === PW_TAGS_HEADER_[1];
 }
 
 /** The bot's own Watch detections tab: its A1 is the title the bot writes there. */
@@ -369,24 +622,85 @@ function isPwSourcesTab_(sh) {
   try { return String(sh.getRange(1, 1).getDisplayValue()).trim() === PW_SRC_TITLE_; } catch (e) { return false; }
 }
 
-/**
- * The Watches tab ({sh, foreign}): made, with its two watches OFF, when missing and `create`; foreign (sh null) when a
- * tab with its name exists that the bot didn't make: that tab is never read or written.
- */
-function pwWatchesTab_(ss, create) {
-  let sh = ss.getSheetByName(PW_WATCHES_TAB_);
-  if (sh) return isPwWatchesTab_(sh) ? { sh, foreign: false } : { sh: null, foreign: true };
-  if (!create) return { sh: null, foreign: false };
-  sh = ss.insertSheet(PW_WATCHES_TAB_);
-  const rows = [PW_WATCHES_HEADER_].concat(PW_WATCH_SEEDS_);
-  sh.getRange(1, 1, rows.length, PW_WATCHES_HEADER_.length).setValues(rows);
+/** The Watches tab's look: its header bold and frozen, the On dropdown, wrapped rows, the columns' widths. Never throws. */
+function pwFormatWatches_(sh) {
   try {
     sh.getRange(1, 1, 1, PW_WATCHES_HEADER_.length).setFontWeight('bold');
     sh.setFrozenRows(1);
     sh.getRange(2, 2, PW_WATCHES_MAX_ROWS_, 1)
       .setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(['ON', 'OFF'], true).build());
     sh.getRange(2, 1, PW_WATCHES_MAX_ROWS_, PW_WATCHES_HEADER_.length).setWrap(true).setVerticalAlignment('top');
-    [200, 60, 420, 360, 260, 80, 140, 320].forEach((w, i) => sh.setColumnWidth(i + 1, w));
+    [200, 60, 220, 220, 220, 220, 360, 300, 80, 140, 320].forEach((w, i) => sh.setColumnWidth(i + 1, w));
+  } catch (e) { /* the tab works unformatted */ }
+}
+
+/**
+ * The bot's Watches tab from before the exposure tags (PW_WATCHES_OLD_HEADER_), converted in place: each watch keeps its
+ * name, On, question, rubric, bar, networks and status (its topics go: a flag's exposure tags say what it's about now);
+ * the brand-safety watch (named so, or still asking its first question) is "Google brand safety (all)", picking All the
+ * tags in place of that question. On is never changed. True when it converted the tab.
+ */
+function pwUpgradeWatches_(sh) {
+  if (String(sh.getRange(1, 3).getValue()).trim() !== PW_WATCHES_OLD_HEADER_[2]) return false;
+  const last = Math.min(sh.getLastRow(), 1 + PW_WATCHES_MAX_ROWS_);
+  const old = last >= 2 ? sh.getRange(2, 1, last - 1, PW_WATCHES_OLD_HEADER_.length).getValues() : [];
+  const rows = old.map(r => {
+    const cell = i => (r[i] === undefined || r[i] === null ? '' : r[i]);
+    const name = String(cell(0)).trim();
+    if (!name) return new Array(PW_WATCHES_HEADER_.length).fill('');
+    const q = String(cell(2)).trim();
+    const brand = q === PW_OLD_BRAND_Q_ || /^google brand safety( \(all\))?$/i.test(name);
+    const all = brand ? 'All' : '';
+    return [brand ? PW_WATCH_SEEDS_[1][0] : cell(0), cell(1), all, all, all, all, brand ? '' : cell(2), cell(3), cell(5),
+      cell(6), cell(7)];
+  });
+  sh.getRange(1, 1, 1 + rows.length, PW_WATCHES_HEADER_.length).setValues([PW_WATCHES_HEADER_].concat(rows));
+  pwFormatWatches_(sh);
+  console.log(`Proactive watch: the ${PW_WATCHES_TAB_} tab now picks exposure tags (${rows.filter(r => r[0]).length} watches kept)`);
+  return true;
+}
+
+/**
+ * The Watches tab ({sh, foreign}): made, with its two watches OFF, when missing and `create` (the bot's tab from before
+ * the exposure tags is converted: pwUpgradeWatches_); foreign (sh null) when a tab with its name exists that the bot
+ * didn't make: that tab is never read or written.
+ */
+function pwWatchesTab_(ss, create) {
+  let sh = ss.getSheetByName(PW_WATCHES_TAB_);
+  if (sh) {
+    if (!isPwWatchesTab_(sh)) return { sh: null, foreign: true };
+    pwUpgradeWatches_(sh);
+    return { sh, foreign: false };
+  }
+  if (!create) return { sh: null, foreign: false };
+  sh = ss.insertSheet(PW_WATCHES_TAB_);
+  const rows = [PW_WATCHES_HEADER_].concat(PW_WATCH_SEEDS_);
+  sh.getRange(1, 1, rows.length, PW_WATCHES_HEADER_.length).setValues(rows);
+  pwFormatWatches_(sh);
+  return { sh, foreign: false };
+}
+
+/**
+ * The Watch tags tab ({sh, foreign}), after the Watch sources tab: made when missing and `create`, with the team's list
+ * (pwTagSeedRows_), every tag ON, and never written again (people edit it); foreign (sh null) when a tab with its name
+ * exists that the bot didn't make: that tab is left alone, and the watches pick from the team's list as the bot has it.
+ */
+function pwTagsTab_(ss, create) {
+  let sh = ss.getSheetByName(PW_TAGS_TAB_);
+  if (sh) return isPwTagsTab_(sh) ? { sh, foreign: false } : { sh: null, foreign: true };
+  if (!create) return { sh: null, foreign: false };
+  const after = ss.getSheetByName(PW_SRC_TAB_) || ss.getSheetByName(PW_DET_TAB_) || ss.getSheetByName(PW_WATCHES_TAB_);
+  const sheets = ss.getSheets();
+  sh = ss.insertSheet(PW_TAGS_TAB_, after ? sheets.indexOf(after) + 1 : sheets.length);
+  const rows = [PW_TAGS_HEADER_].concat(pwTagSeedRows_());
+  sh.getRange(1, 1, rows.length, PW_TAGS_HEADER_.length).setValues(rows);
+  try {
+    sh.getRange(1, 1, 1, PW_TAGS_HEADER_.length).setFontWeight('bold');
+    sh.setFrozenRows(1);
+    sh.getRange(2, PW_TAGS_HEADER_.length, PW_TAGS_MAX_ROWS_, 1)
+      .setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(['ON', 'OFF'], true).build());
+    sh.getRange(2, 1, PW_TAGS_MAX_ROWS_, PW_TAGS_HEADER_.length).setWrap(true).setVerticalAlignment('top');
+    [110, 300, 520, 360, 260, 60].forEach((w, i) => sh.setColumnWidth(i + 1, w));
   } catch (e) { /* the tab works unformatted */ }
   return { sh, foreign: false };
 }
@@ -412,7 +726,7 @@ function pwDetectionsTab_(ss, create) {
     sh.getRange(PW_SCORE_HEAD_ROW_, 1, 1, PW_SCORE_HEADER_.length).setFontWeight('bold');
     sh.getRange(PW_DET_HEAD_ROW_, 1, 1, PW_DET_HEADER_.length).setFontWeight('bold');
     sh.hideColumns(PW_COL_.key);
-    [130, 170, 60, 80, 170, 300, 140, 90, 150, 90, 100, 130, 220, 80, 420, 130, 120, 90]
+    [130, 170, 60, 80, 260, 300, 140, 90, 150, 90, 100, 130, 220, 80, 420, 130, 120, 90]
       .forEach((w, i) => sh.setColumnWidth(i + 1, w));
   } catch (e) { /* the tab works unformatted */ }
   try {
@@ -464,7 +778,13 @@ function pwGuard_(key, lines) {
 function pwNetSql_(expr) {
   const v = `REGEXP_REPLACE(LOWER(IFNULL(${expr}, '')), r'[^a-z]', '')`;
   return `CASE ${v} WHEN 'x' THEN 'twitter' WHEN 'xtwitter' THEN 'twitter' WHEN 'twitterx' THEN 'twitter' ` +
-    `WHEN 'ig' THEN 'instagram' WHEN 'fb' THEN 'facebook' WHEN 'yt' THEN 'youtube' ELSE ${v} END`;
+    `WHEN 'ig' THEN 'instagram' WHEN 'fb' THEN 'facebook' WHEN 'yt' THEN 'youtube' ` +
+    `WHEN 'facebookpublic' THEN 'facebook' WHEN 'instagrampublic' THEN 'instagram' ELSE ${v} END`;
+}
+
+/** The network in `expr` (pwNetSql_) is one of `nets` (default: the team's list, PW_NETWORKS_), in SQL. Pure. */
+function pwNetsInSql_(expr, nets) {
+  return `${pwNetSql_(expr)} IN (${(nets || PW_NETWORKS_).map(n => `'${n}'`).join(', ')})`;
 }
 
 /** A source's table, quoted for the query. Pure. */
@@ -505,7 +825,7 @@ const PW_SOURCE_SQL_ = {
       `    ARRAY_AGG(TO_JSON_STRING(JSON_OBJECT('p', ${cls('brand_classification_names')}, 't', ${json('$.detail.classification.smart_tag_name')},`,
       `      's', ${cls('secondary_tag_names')}, 'k', ${cls('influencer_list_names')})) ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS tax`,
       `  FROM ${PW_SONAR_RAW_}`,
-      `  WHERE received_at > ${since} AND received_at <= ${until} AND post_url IS NOT NULL`,
+      `  WHERE received_at > ${since} AND received_at <= ${until} AND post_url IS NOT NULL AND ${pwNetsInSql_('platform')}`,
       `    AND ${englishLangSql_(json('$.detail.post.language'))}`,
       `    AND NOT ${nonEnglishScriptSql_(`IFNULL(${json('$.detail.post.snippet.text')}, '')`)}`,
       '  GROUP BY post_url',
@@ -555,139 +875,129 @@ const PW_SOURCE_SQL_ = {
     "    ANY_VALUE(COALESCE(NULLIF(topics, ''), NULLIF(youtube_topics, ''), categories)) AS topics",
     `  FROM ${pwTable_('tubular')}`,
     '  WHERE snapshot_date >= DATE_SUB(DATE(TIMESTAMP_MILLIS(@tubular_from)), INTERVAL 2 DAY) AND video_url IS NOT NULL',
+    `    AND ${pwNetsInSql_('platform')}`,
     '  GROUP BY video_url',
     ')',
     'WHERE first_seen > TIMESTAMP_MILLIS(@tubular_from) AND first_seen <= TIMESTAMP_MILLIS(@until_ms)',
     '  AND (posted IS NULL OR posted >= TIMESTAMP_SUB(TIMESTAMP_MILLIS(@until_ms), INTERVAL 72 HOUR))',
     `  AND (IFNULL(followers, 0) >= ${PW_MIN_FOLLOWERS_} OR IFNULL(eng, 0) >= ${PW_MIN_ENGAGEMENT_} OR IFNULL(views, 0) >= 10000);`,
   ],
-  // Google's own posts in Sprinklr's export, published since the last one handed over (read only when the export changed)
-  outbound: () => [
-    `INSERT INTO pw_new (${PW_NEW_COLS_})`,
-    "SELECT 'outbound', ROW_NUMBER() OVER (ORDER BY IFNULL(eng, 0) DESC), url, platform, account, CAST(NULL AS INT64), eng, posted, posted,",
-    '  CONCAT("Google\'s own post · ", IFNULL(account, \'\')), CAST(NULL AS BOOL), SUBSTR(txt, 1, 400),',
-    '  SUBSTR(CONCAT("A post Google itself published, from its account ", IFNULL(account, \'\'),',
-    "    IF(IFNULL(country, '') = '', '', CONCAT(' (', country, ')')), '.\\nPost text: ', IFNULL(txt, '')), 1, " + PW_TEXT_CHARS_ + ')',
-    'FROM (',
-    '  SELECT Outbound_Post_ID, ANY_VALUE(Permalink) AS url, ANY_VALUE(account_name) AS account, ANY_VALUE(country) AS country,',
-    `    ANY_VALUE(${pwNetSql_('JSON_VALUE(Raw_JSON_Data.POST_ID_5.channelType)')}) AS platform,`,
-    '    SAFE_CAST(MAX(Total_Engagement_Count) AS INT64) AS eng,',
-    '    MIN(TIMESTAMP_MILLIS(SAFE_CAST(JSON_VALUE(Raw_JSON_Data.POST_ID_5.publishedDate) AS INT64))) AS posted,',
-    '    ANY_VALUE(SUBSTR(Outbound_Post, 1, 1400)) AS txt',
-    `  FROM ${pwTable_('outbound')}`,
-    '  WHERE Permalink IS NOT NULL',
-    '  GROUP BY Outbound_Post_ID',
-    ')',
-    'WHERE posted > TIMESTAMP_MILLIS(@outbound_from) AND posted <= TIMESTAMP_MILLIS(@until_ms);',
-  ],
-  // BMIE's mentions ingested since the last one handed over, not all positive, the reach floor, posted within 72 hours,
-  // none already checked in the 24 hours before (another query's copy), each with why: every one from a brand-safety or
-  // Google product query (PW_BMIE_FULL_RX_: 'brand-safety query'); from the other queries (regional, sports, culture,
-  // competitors) only those with a sign something's wrong ('negative' in Brandwatch, a 'KOF author', 'risk words':
-  // PW_RISK_WORDS_RX_) and a PW_SAMPLE_PCT_% 'sample' of the rest (by the post's link, so it's the same post every time),
-  // to show what the filter misses; the others 'skipped' (counted, never asked about). The brand-safety queries first,
-  // then the signals, then the sample; the biggest accounts first within each
-  bmie: () => {
-    const from = 'TIMESTAMP_MILLIS(@bmie_from)';
-    const sample = `ABS(MOD(FARM_FINGERPRINT(url), 100)) < ${PW_SAMPLE_PCT_}`;  // MOD first: ABS of the smallest INT64 overflows
+  // Brandwatch's mentions of Google's products first loaded since the last one handed over (the table loads a night's
+  // batch and loads many again later: each counts once, at its first load): negative, English, no shares, on Reddit,
+  // Bluesky, Facebook or Instagram (PW_BWM_NETWORKS_), tagged by Brandwatch with an SLRR exposure tag (its category group
+  // PW_BWM_EXPOSURE_GROUP_: those tags go to Gemini and on the card), posted within 72 hours, the reach floor, with text.
+  // The biggest first (a look hands over what's left of the day's PW_BWM_DAY_MAX_: pwSql_). Read only when the table
+  // changed; its partitions (report_date: the post's day) and clustering (product_config_name) keep it to the last days'
+  // Google mentions
+  bwm: () => {
+    const configs = PW_BWM_CONFIGS_.map(c => `'${c}'`).join(', ');
+    const eng = ['like_count', 'retweet_count', 'reply_count', 'comment_count', 'share_count'].map(c => `IFNULL(${c}, 0)`).join(' + ');
     return [
       `INSERT INTO pw_new (${PW_NEW_COLS_}, why, tax)`,
-      "SELECT 'bmie', ROW_NUMBER() OVER (ORDER BY CASE why WHEN 'brand-safety query' THEN 0 WHEN 'sample' THEN 2 WHEN 'skipped' THEN 9",
-      '    ELSE 1 END, IFNULL(followers, 0) DESC),',
-      '  url, ' + pwNetSql_('net') + ', author, followers, eng, posted, first_seen,',
-      "  CONCAT('Brandwatch: ', IFNULL(q, '')), CAST(NULL AS BOOL), SUBSTR(snippet, 1, 400),",
-      "  SUBSTR(CONCAT('Post text: ', IFNULL(snippet, ''), IF(IFNULL(kof, '') = '', '', CONCAT('\\nKOF: ', kof)),",
-      `    IF(IFNULL(product, '') = '', '', CONCAT('\\nProduct: ', product))), 1, ${PW_TEXT_CHARS_}), why,`,
-      "  TO_JSON_STRING(JSON_OBJECT('p', product, 'kv', kof)) AS tax",
+      "SELECT 'bwm', ROW_NUMBER() OVER (ORDER BY IFNULL(followers, 0) + 10 * IFNULL(eng, 0) DESC),",
+      "  post_url, platform, NULLIF(author, ''), followers, eng, posted, first_seen,",
+      "  CONCAT('Brandwatch \u00b7 ', SUBSTR(cats, 1, 120)), CAST(NULL AS BOOL), SUBSTR(body, 1, 400),",
+      "  SUBSTR(CONCAT(IF(title != '' AND NOT STARTS_WITH(LOWER(body), LOWER(title)), CONCAT('Title: ', title, '\\n'), ''),",
+      "    'Post text: ', body, '\\nBrandwatch: negative sentiment',",
+      "    IF(IFNULL(followers, 0) > 0, CONCAT(', reach ', CAST(followers AS STRING)), ''),",
+      "    '\\nBrandwatch exposure tags: ', cats, '\\nProduct: ', configs), 1, " + `${PW_TEXT_CHARS_}),`,
+      "  'negative', TO_JSON_STRING(JSON_OBJECT('p', SPLIT(configs, ', '), 't', cats)) AS tax",
       'FROM (',
-      "  SELECT m.*, CASE WHEN full_q THEN 'brand-safety query' WHEN neg THEN 'negative' WHEN kof_author THEN 'KOF author'",
-      `      WHEN risk THEN 'risk words' WHEN ${sample} THEN 'sample' ELSE 'skipped' END AS why`,
+      "  SELECT m.* EXCEPT (tags), ARRAY_TO_STRING(ARRAY(SELECT DISTINCT x FROM UNNEST(m.tags) x ORDER BY x LIMIT 4), ', ') AS cats",
       '  FROM (',
-      '    SELECT url, MIN(IF(cur, t, NULL)) AS first_seen, ANY_VALUE(IF(cur, snippet, NULL)) AS snippet,',
-      '      SAFE_CAST(MAX(IF(cur, followers, NULL)) AS INT64) AS followers, ANY_VALUE(IF(cur, authorHandle, NULL)) AS author,',
-      '      ANY_VALUE(IF(cur, SocialNetwork, NULL)) AS net, SAFE_CAST(MAX(IF(cur, engagementScore, NULL)) AS INT64) AS eng,',
-      "      STRING_AGG(DISTINCT IF(cur, alert_source, NULL), ', ' LIMIT 3) AS q, MIN(IF(cur, postTime, NULL)) AS posted,",
-      '      ANY_VALUE(IF(cur, KOF, NULL)) AS kof, ANY_VALUE(IF(cur, product, NULL)) AS product,',
-      '      LOGICAL_AND(IF(cur, positive, TRUE)) AS positive, LOGICAL_OR(cur AND full_q) AS full_q, LOGICAL_OR(cur AND neg) AS neg,',
-      '      LOGICAL_OR(cur AND kof_author) AS kof_author, LOGICAL_OR(cur AND risk) AS risk,',
-      `      LOGICAL_OR(NOT cur AND NOT positive AND IFNULL(followers, 0) >= ${PW_MIN_FOLLOWERS_}`,
-      `        AND (full_q OR neg OR kof_author OR risk OR ${sample})) AS checked_before`,
+      '    SELECT mention_id, MIN(load_timestamp) AS first_seen, ANY_VALUE(post_url) AS post_url, ANY_VALUE(net) AS platform,',
+      "      ANY_VALUE(TRIM(IFNULL(author, ''))) AS author,",
+      `      SAFE_CAST(MAX(reachEstimate) AS INT64) AS followers, SAFE_CAST(MAX(${eng}) AS INT64) AS eng,`,
+      "      MIN(published_timestamp) AS posted, STRING_AGG(DISTINCT product_config_name, ', ' LIMIT 3) AS configs,",
+      "      ANY_VALUE(TRIM(IFNULL(snippet, ''))) AS body, ANY_VALUE(TRIM(IFNULL(title, ''))) AS title,",
+      '      ARRAY_CONCAT_AGG(xtags) AS tags',
       '    FROM (',
-      '      SELECT url, alert_source, snippet, followers, authorHandle, SocialNetwork, engagementScore, postTime, KOF, product,',
-      `        ingestionTimestamp AS t, ingestionTimestamp > ${from} AS cur,`,
-      "        LOWER(IFNULL(Sentiment, '')) = 'positive' AS positive, LOWER(IFNULL(Sentiment, '')) = 'negative' AS neg,",
-      `        REGEXP_CONTAINS(LOWER(IFNULL(alert_source, '')), r'${PW_BMIE_FULL_RX_}') AS full_q,`,
-      "        STARTS_WITH(IFNULL(KOF, ''), 'Yes') AS kof_author,",
-      `        REGEXP_CONTAINS(LOWER(IFNULL(snippet, '')), r'${PW_RISK_WORDS_RX_}') AS risk`,
-      `      FROM ${pwTable_('bmie')}`,
-      `      WHERE ingestionTimestamp > TIMESTAMP_SUB(${from}, INTERVAL ${PW_NEW_HOURS_} HOUR)`,
-      '        AND ingestionTimestamp <= TIMESTAMP_MILLIS(@until_ms) AND url IS NOT NULL',
-      "        AND NOT REGEXP_CONTAINS(LOWER(IFNULL(alert_source, '')), r'positive')",
-      `        AND NOT ${nonEnglishScriptSql_('IFNULL(snippet, \'\')')}`,
+      `      SELECT *, ${pwNetSql_('platform')} AS net,`,
+      `        ARRAY(SELECT c.name FROM UNNEST(categories) c WHERE c.parent_name = '${PW_BWM_EXPOSURE_GROUP_}' AND c.name IS NOT NULL) AS xtags`,
+      `      FROM ${pwTable_('bwm')}`,
+      '      WHERE report_date >= DATE_SUB(DATE(TIMESTAMP_MILLIS(@until_ms)), INTERVAL 3 DAY)',
+      `        AND product_config_name IN (${configs}) AND language = 'en'`,
+      "        AND LOWER(IFNULL(sentiment, '')) = 'negative' AND LOWER(IFNULL(thread_entry_type, '')) != 'share'",
+      `        AND ${pwNetsInSql_('platform', PW_BWM_NETWORKS_)}`,
+      '        AND load_timestamp <= TIMESTAMP_MILLIS(@until_ms) AND post_url IS NOT NULL',
       '    )',
-      '    GROUP BY url',
-      '    HAVING LOGICAL_OR(cur) AND NOT checked_before',
+      '    GROUP BY mention_id',
+      '    HAVING MIN(load_timestamp) > TIMESTAMP_MILLIS(@bwm_from) AND ARRAY_LENGTH(ARRAY_CONCAT_AGG(xtags)) > 0',
       '  ) m',
-      `  WHERE NOT positive AND IFNULL(followers, 0) >= ${PW_MIN_FOLLOWERS_}`,
-      '    AND (posted IS NULL OR posted >= TIMESTAMP_SUB(TIMESTAMP_MILLIS(@until_ms), INTERVAL 72 HOUR))',
-      ');',
+      ')',
+      `WHERE body != '' AND (IFNULL(followers, 0) >= ${PW_MIN_FOLLOWERS_} OR IFNULL(eng, 0) >= ${PW_MIN_ENGAGEMENT_})`,
+      '  AND (posted IS NULL OR posted >= TIMESTAMP_SUB(TIMESTAMP_MILLIS(@until_ms), INTERVAL 72 HOUR))',
+      `  AND NOT ${nonEnglishScriptSql_('body')};`,
     ];
   },
-  // Comments on Google's own posts that reached BigQuery in the last hour: a post whose negative comments crossed
-  // PW_PILEUP_NEG_ in this window, or one with a negative comment in it from a PW_BIG_VOICE_+ account
+  // Google's own posts in Sprinklr's report (never the other brands' accounts it also tracks: Is_External) refreshed
+  // since the last one handed over (it loads once a day, refreshing the last days' posts), posted within 72 hours, not
+  // deleted, whose comments turned negative: PW_OWNED_NEG_+ negative, or PW_OWNED_PCT_ of them once there are
+  // PW_OWNED_MIN_COMMENTS_+ (Sprinklr's share can read over 100%: capped). The most negative first. Read only when the
+  // table changed
+  owned: () => {
+    const pct = Math.round(PW_OWNED_PCT_ * 100);
+    return [
+      `INSERT INTO pw_new (${PW_NEW_COLS_}, why)`,
+      "SELECT 'owned', ROW_NUMBER() OVER (ORDER BY neg DESC, IFNULL(eng, 0) DESC), url, " + pwNetSql_('net') +
+        ', acct, followers, eng, posted, loaded,',
+      "  CONCAT('Google\\'s own post \u00b7 ', IFNULL(acct, '')), CAST(NULL AS BOOL), SUBSTR(IFNULL(txt, ''), 1, 400),",
+      "  SUBSTR(CONCAT('A post Google itself published, from its account ', IFNULL(acct, ''),",
+      "    IF(IFNULL(handle, '') = '', '', CONCAT(' (@', handle, ')')), ' on ', IFNULL(net, ''),",
+      "    IF(IFNULL(country, '') = '', '', CONCAT(', ', country)), '.\\nPost text: ', IFNULL(txt, ''),",
+      "    '\\nReaction so far: ', CAST(IFNULL(comments, 0) AS STRING), ' comments, ', CAST(IFNULL(neg, 0) AS STRING),",
+      "    ' negative (', CAST(IFNULL(pct, 0) AS STRING), '%), ', CAST(IFNULL(eng, 0) AS STRING), ' engagements.'), 1, " +
+        `${PW_TEXT_CHARS_}),`,
+      "  'negative comments'",
+      'FROM (',
+      '  SELECT Outbound_Post_ID, ANY_VALUE(Post_Permalink) AS url, ANY_VALUE(Social_Network) AS net, ANY_VALUE(Account_Name) AS acct,',
+      '    ANY_VALUE(Account_Screen_Name) AS handle, ANY_VALUE(Country) AS country, ANY_VALUE(SUBSTR(Outbound_Post, 1, 1400)) AS txt,',
+      '    SAFE_CAST(MAX(Followers_At_Time_Of_Post) AS INT64) AS followers, SAFE_CAST(MAX(Engagements) AS INT64) AS eng,',
+      '    SAFE_CAST(MAX(Comments) AS INT64) AS comments, SAFE_CAST(MAX(Negative_Sentiment_Comment_Count) AS INT64) AS neg,',
+      '    SAFE_CAST(ROUND(100 * LEAST(MAX(Pct_Negative_Comments), 1)) AS INT64) AS pct,',
+      '    MIN(Post_Published_Date_UTC) AS posted, MAX(load_timestamp) AS loaded',
+      `  FROM ${pwTable_('owned')}`,
+      '  WHERE Report_Date >= DATE_SUB(DATE(TIMESTAMP_MILLIS(@until_ms)), INTERVAL 3 DAY) AND Post_Permalink IS NOT NULL',
+      '    AND NOT IFNULL(Is_Deleted, FALSE) AND NOT IFNULL(Is_External, FALSE)',  // External: other brands' accounts Sprinklr tracks
+      `    AND ${pwNetsInSql_('Social_Network')}`,
+      '  GROUP BY Outbound_Post_ID',
+      ')',
+      'WHERE loaded > TIMESTAMP_MILLIS(@owned_from) AND loaded <= TIMESTAMP_MILLIS(@until_ms)',
+      '  AND posted >= TIMESTAMP_SUB(TIMESTAMP_MILLIS(@until_ms), INTERVAL 72 HOUR)',
+      `  AND (IFNULL(neg, 0) >= ${PW_OWNED_NEG_} OR (IFNULL(comments, 0) >= ${PW_OWNED_MIN_COMMENTS_} AND IFNULL(pct, 0) >= ${pct}));`,
+    ];
+  },
+  // Comments on Google's own posts (Sprinklr's inbound comments; Google, YouTube and the other brands' accounts) appended
+  // in the last hour, people's only (never the brand's own, nor deleted, spam or hidden ones), on the team's networks,
+  // not in a non-Latin script: a post whose negative comments reached PW_PILEUP_NEG_ within the hour ('pile-on', crossing
+  // in this window), or one with a negative comment in the window from a PW_BIG_VOICE_+ account ('big voice'). The most
+  // negative first, then the biggest voice. It goes by the look's window (APPENDS: the rows the table got in the hour)
   comments: () => [
-    `INSERT INTO pw_new (${PW_NEW_COLS_})`,
-    "SELECT 'comments', ROW_NUMBER() OVER (ORDER BY neg DESC, top_f DESC), post_url, " + pwNetSql_('platform') + ', acct, top_f, neg,',
+    `INSERT INTO pw_new (${PW_NEW_COLS_}, why)`,
+    "SELECT 'comments', ROW_NUMBER() OVER (ORDER BY neg DESC, top_f DESC), post_url, net, acct, top_f, neg,",
     '  posted, last_at, CONCAT("Comments on Google\'s post: ", CAST(neg AS STRING), \' negative of \', CAST(n AS STRING), \' in an hour\'),',
     '  CAST(NULL AS BOOL), SUBSTR(top_neg, 1, 400),',
-    '  SUBSTR(CONCAT("Comments on a post by Google\'s account ", IFNULL(acct, \'\'), \' on \', IFNULL(platform, \'\'), \'.\\nThe post: \',',
+    '  SUBSTR(CONCAT("Comments on a post by Google\'s account ", IFNULL(acct, \'\'), \' on \', IFNULL(net, \'\'), \'.\\nThe post: \',',
     "    IFNULL(caption, ''), '\\nIn the last hour: ', CAST(n AS STRING), ' comments, ', CAST(neg AS STRING), ' negative',",
     `    IF(top_f >= ${PW_BIG_VOICE_}, CONCAT(', one from an account with ', CAST(top_f AS STRING), ' followers'), ''),`,
-    `    '.\\nThe most-followed negative comments: ', IFNULL(top_neg, '')), 1, ${PW_TEXT_CHARS_})`,
+    `    '.\\nThe most-followed negative comments: ', IFNULL(top_neg, '')), 1, ${PW_TEXT_CHARS_}),`,
+    `  IF(neg >= ${PW_PILEUP_NEG_} AND neg - neg_win < ${PW_PILEUP_NEG_}, 'pile-on', 'big voice')`,
     'FROM (',
-    '  SELECT post_url, ANY_VALUE(account_name) AS acct, ANY_VALUE(platform) AS platform, ANY_VALUE(SUBSTR(post_caption, 1, 500)) AS caption,',
+    '  SELECT post_url, ANY_VALUE(account_name) AS acct, ANY_VALUE(net) AS net, ANY_VALUE(SUBSTR(post_caption, 1, 500)) AS caption,',
     '    MIN(post_published_date) AS posted, MAX(_CHANGE_TIMESTAMP) AS last_at, COUNT(DISTINCT comment_id) AS n,',
-    '    COUNT(DISTINCT IF(neg, comment_id, NULL)) AS neg,',
-    '    COUNT(DISTINCT IF(neg AND _CHANGE_TIMESTAMP > TIMESTAMP_MILLIS(@since_ms), comment_id, NULL)) AS neg_win,',
-    '    SAFE_CAST(MAX(IF(neg, author_followers, 0)) AS INT64) AS top_f,',
-    '    MAX(IF(neg AND _CHANGE_TIMESTAMP > TIMESTAMP_MILLIS(@since_ms), author_followers, 0)) AS top_f_win,',
-    "    ARRAY_TO_STRING(ARRAY_AGG(IF(neg, SUBSTR(comment_text, 1, 200), NULL) IGNORE NULLS ORDER BY author_followers DESC LIMIT 4), ' | ') AS top_neg",
-    "  FROM (SELECT *, LOWER(IFNULL(sentiment, '')) = 'negative' AS neg",
-    `    FROM APPENDS(TABLE ${pwTable_('comments')}, TIMESTAMP_SUB(TIMESTAMP_MILLIS(@until_ms), INTERVAL 60 MINUTE), TIMESTAMP_MILLIS(@until_ms)))`,
-    '  WHERE post_url IS NOT NULL',
+    '    COUNT(DISTINCT IF(is_neg, comment_id, NULL)) AS neg,',
+    '    COUNT(DISTINCT IF(is_neg AND _CHANGE_TIMESTAMP > TIMESTAMP_MILLIS(@since_ms), comment_id, NULL)) AS neg_win,',
+    '    SAFE_CAST(MAX(IF(is_neg, author_followers, 0)) AS INT64) AS top_f,',
+    '    MAX(IF(is_neg AND _CHANGE_TIMESTAMP > TIMESTAMP_MILLIS(@since_ms), author_followers, 0)) AS top_f_win,',
+    "    ARRAY_TO_STRING(ARRAY_AGG(IF(is_neg, SUBSTR(comment_text, 1, 200), NULL) IGNORE NULLS ORDER BY author_followers DESC LIMIT 4), ' | ') AS top_neg",
+    `  FROM (SELECT *, LOWER(IFNULL(sentiment, '')) = 'negative' AS is_neg, ${pwNetSql_('platform')} AS net`,
+    `    FROM APPENDS(TABLE ${pwTable_('comments')}, TIMESTAMP_SUB(TIMESTAMP_MILLIS(@until_ms), INTERVAL 60 MINUTE), TIMESTAMP_MILLIS(@until_ms))`,
+    "    WHERE post_url IS NOT NULL AND IFNULL(is_brand_post, '') != 'Brand' AND LOWER(IFNULL(is_deleted, '')) != 'true'",
+    "      AND LOWER(IFNULL(is_spam, '')) != 'true' AND LOWER(IFNULL(is_hidden, '')) != 'true'",
+    `      AND ${pwNetsInSql_('platform')} AND NOT ${nonEnglishScriptSql_("IFNULL(comment_text, '')")})`,
     '  GROUP BY post_url',
     ')',
     `WHERE (neg >= ${PW_PILEUP_NEG_} AND neg - neg_win < ${PW_PILEUP_NEG_}) OR top_f_win >= ${PW_BIG_VOICE_};`,
-  ],
-  // The DSD story selection feed's posts (Brandwatch's HIGH and KOF alert emails, one row a post) ingested since the last
-  // one handed over, posted within 72 hours, with text. No reach floor: Brandwatch's alert already picked them, and the
-  // feed's follower and engagement counts are mostly empty (all zeros, or 500/500/500/2000, means unmeasured: NULL here,
-  // so Gemini reads "unknown", never 0). KOF first, then the measured engagements, then the newest
-  story: () => [
-    `INSERT INTO pw_new (${PW_NEW_COLS_}, tax)`,
-    "SELECT 'story', ROW_NUMBER() OVER (ORDER BY IF(UPPER(IFNULL(alert_type, '')) = 'KOF', 0, 1), IFNULL(eng, 0) DESC, ingestion_time DESC),",
-    `  url, ${pwNetSql_('platform')}, author, SAFE_CAST(follower_count AS INT64), eng, post_time, ingestion_time,`,
-    "  CONCAT('DSD story selection', IF(IFNULL(alert_type, '') = '', '', CONCAT(' \u00b7 ', alert_type)),",
-    "    IF(IFNULL(query_name, '') = '', '', CONCAT(' \u00b7 ', query_name))), CAST(NULL AS BOOL), SUBSTR(snippet, 1, 400),",
-    "  SUBSTR(CONCAT('Post text: ', snippet, IF(IFNULL(alert_type, '') = '', '', CONCAT('\\nBrandwatch alert: ', alert_type,",
-    `    IF(UPPER(alert_type) = 'KOF', ' (a key opinion former)', '')))), 1, ${PW_TEXT_CHARS_}),`,
-    "  TO_JSON_STRING(JSON_OBJECT('kv', IF(UPPER(IFNULL(alert_type, '')) = 'KOF', 'Brandwatch KOF alert', CAST(NULL AS STRING)))) AS tax",
-    'FROM (',
-    '  SELECT *, IF((likes = 500 AND shares = 500 AND comments = 500 AND total_engagements = 2000)',
-    '    OR IFNULL(total_engagements, 0) = 0, NULL, total_engagements) AS eng',
-    `  FROM ${pwTable_('story')}`,
-    '  WHERE ingestion_time > TIMESTAMP_MILLIS(@story_from) AND ingestion_time <= TIMESTAMP_MILLIS(@until_ms) AND url IS NOT NULL',
-    ')',
-    "WHERE TRIM(IFNULL(snippet, '')) != ''",
-    `  AND NOT ${nonEnglishScriptSql_('IFNULL(snippet, \'\')')}`,
-    '  AND (post_time IS NULL OR post_time >= TIMESTAMP_SUB(TIMESTAMP_MILLIS(@until_ms), INTERVAL 72 HOUR));',
-  ],
-  // The Other alerts space's alerts (pwChatItems_), as the query parameter @chat
-  chat: () => [
-    `INSERT INTO pw_new (${PW_NEW_COLS_})`,
-    "SELECT 'chat', ROW_NUMBER() OVER (ORDER BY c.s DESC), c.u, c.n, c.a, NULLIF(c.f, -1), NULLIF(c.e, -1),",
-    '  IF(c.p > 0, TIMESTAMP_MILLIS(c.p), NULL), TIMESTAMP_MILLIS(c.s), c.i, CAST(NULL AS BOOL), c.m, c.t',
-    "FROM UNNEST(@chat) c WHERE IFNULL(c.u, '') != '';",
   ],
   // The Brandwatch query's mentions added since the last one handed over (pwBwqItems_), as the query parameter @bwq:
   // each 'new', or 'skipped' with no text (an X post X wouldn't show: counted, never asked about); what went wrong
@@ -698,13 +1008,13 @@ const PW_SOURCE_SQL_ = {
     "SELECT 'bwq', ROW_NUMBER() OVER (ORDER BY IF(IFNULL(c.t, '') = '', 1, 0), c.f DESC, c.s DESC), c.u, c.n, c.a,",
     '  NULLIF(c.f, -1), NULLIF(c.e, -1), IF(c.p > 0, TIMESTAMP_MILLIS(c.p), NULL), TIMESTAMP_MILLIS(c.s), c.i, CAST(NULL AS BOOL),',
     "  c.m, NULLIF(c.t, ''), IF(IFNULL(c.t, '') = '', 'skipped', 'new')",
-    "FROM UNNEST(@bwq) c WHERE IFNULL(c.u, '') != '';",
+    `FROM UNNEST(@bwq) c WHERE IFNULL(c.u, '') != '' AND IFNULL(c.n, '') IN (${PW_NETWORKS_.map(n => `'${n}'`).join(', ')});`,
   ],
 };
 
 /**
- * When each of the lane's tables last changed (ms), from their datasets' __TABLES__ (it costs nothing), on pw_src;
- * Sprinklr's export is read on its own first (pw_out_mod: it's read only when it changed). Pure.
+ * When each of the lane's tables last changed (ms), from their datasets' __TABLES__ (it costs nothing), on pw_src; the
+ * tables read only when they changed (gate) have read theirs already (pwSql_). Pure.
  */
 function pwModSql_(srcs) {
   const sel = srcs.filter(s => s.bq && !s.gate).map(s => {
@@ -715,7 +1025,7 @@ function pwModSql_(srcs) {
 }
 
 /**
- * Whether a post is Grok's (PW_GROK_URL_RX_): Sonar and BMIE link Grok's posts as twitter.com/grok/status(es)/\u2026, the
+ * Whether a post is Grok's (PW_GROK_URL_RX_): Sonar links Grok's posts as twitter.com/grok/status(es)/\u2026, the
  * Brandwatch query as x.com/grok/status/\u2026 (X's embed data gives a repost as the post it reposts), and the sources that
  * name the handle say @grok. Pure.
  */
@@ -732,13 +1042,17 @@ function pwGrokSql_(t) {
 /**
  * The lane's last statement: Gemini on its sources' new rows (each source's first `cap`, one row a post, the earliest
  * source first), one row a post a watch at or above the watch's bar less PW_NEAR_ (kind 'hit', the highest scores
- * first), then one row a source (kind 'src': found, checked, newest_ms, mod_ms, err). Pure.
+ * first) with its exposure tags as "topic" (`classify`: AI.CLASSIFY on the script's pw_tags, the tags the post fits, of
+ * the watch's own when it picks some; else none), then one row a source (kind 'src': found, checked, newest_ms, mod_ms,
+ * err). capOf(source): this look's cap for a source (default: its cap). Pure.
  */
-function pwAiSql_(srcs, structs, topics) {
-  const caps = srcs.map(s => `STRUCT('${s.key}' AS source, ${s.cap} AS cap)`).join(', ');
+function pwAiSql_(srcs, structs, classify, capOf) {
+  const cap = s => Math.max(0, Math.floor(Number(capOf ? capOf(s) : s.cap) || 0));
+  const caps = srcs.map(s => `STRUCT('${s.key}' AS source, ${cap(s)} AS cap)`).join(', ');
   const grok = pwGrokSql_('n');  // Grok's posts: never asked about, not counted as checked, counted as PW_GROK_WHY_
   const key = "REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(LOWER(n.post_url), r'^https?://(?:www\\.|m\\.|mobile\\.)?', ''), " +
     "r'^twitter\\.com/', 'x.com/'), r'#.*$|/+$', '')";
+  const tags = classify ? "AI.CLASSIFY(s.txt, pw_tags, output_mode => 'multi')" : 'CAST([] AS ARRAY<STRING>)';
   return [
     'WITH watches AS (',
     `  SELECT * FROM UNNEST([${structs.join(',\n    ')}])`,
@@ -752,7 +1066,7 @@ function pwAiSql_(srcs, structs, topics) {
     '  ) WHERE dup = 1',
     '),',
     'hits AS (',
-    '  SELECT c.*, w.idx, w.watch, w.rubric, w.bar',
+    '  SELECT c.*, w.idx, w.watch, w.rubric, w.bar, w.tagset',
     '  FROM cand c CROSS JOIN watches w',
     '  WHERE (w.nets = \'\' OR c.platform IN UNNEST(SPLIT(w.nets, \'|\')))',
     '    AND AI.IF(CONCAT(w.cond, \'\\n\\nRule: Return TRUE only if the post text itself is in English (return FALSE for non-English posts).\\n\\n\', c.txt))',
@@ -761,6 +1075,9 @@ function pwAiSql_(srcs, structs, topics) {
     "  SELECT *, AI.SCORE(CONCAT(rubric, '\\n\\nAuthor reach: ', IFNULL(CAST(followers AS STRING), 'unknown'), ' followers. Engagements so far: ',",
     "    IFNULL(CAST(eng AS STRING), 'unknown'), '.\\n\\n', txt)) AS impact",
     '  FROM hits',
+    '),',
+    'kept AS (',
+    `  SELECT s.*, ${tags} AS tags FROM scored s WHERE s.impact >= GREATEST(1, s.bar - ${PW_NEAR_})`,
     '),',
     'found AS (',
     "  SELECT n.source, COUNTIF(IFNULL(n.why, '') != 'skipped') AS found,",
@@ -772,13 +1089,13 @@ function pwAiSql_(srcs, structs, topics) {
     "detail AS (SELECT source, STRING_AGG(CONCAT(IF(why = 'skipped', 'not sent', why), ' ', CAST(n AS STRING)), ', '",
     "  ORDER BY IF(why = 'skipped', 1, 0), n DESC) AS detail FROM whys GROUP BY source),",
     "src AS (SELECT source, MAX(mod_ms) AS mod_ms, STRING_AGG(err, '; ' LIMIT 2) AS err FROM pw_src GROUP BY source)",
-    "SELECT 'hit' AS kind, s.source, s.why, s.idx, s.watch, s.post_url, s.platform, s.author, s.followers, s.eng,",
-    '  UNIX_MILLIS(s.posted) AS posted_ms, UNIX_MILLIS(s.first_seen) AS seen_ms, s.issue, s.issue_new,',
-    '  SUBSTR(IFNULL(s.summary, \'\'), 1, 400) AS summary, ROUND(s.impact, 1) AS impact, s.bar,',
-    `  AI.CLASSIFY(s.txt, [${topics.map(t => `'${t}'`).join(', ')}]) AS topic,`,
+    "SELECT 'hit' AS kind, k.source, k.why, k.idx, k.watch, k.post_url, k.platform, k.author, k.followers, k.eng,",
+    '  UNIX_MILLIS(k.posted) AS posted_ms, UNIX_MILLIS(k.first_seen) AS seen_ms, k.issue, k.issue_new,',
+    '  SUBSTR(IFNULL(k.summary, \'\'), 1, 400) AS summary, ROUND(k.impact, 1) AS impact, k.bar,',
+    "  ARRAY_TO_STRING(ARRAY(SELECT t FROM UNNEST(k.tags) t WHERE k.tagset = '' OR t IN UNNEST(SPLIT(k.tagset, '|'))), '; ') AS topic,",
     '  CAST(NULL AS INT64) AS found, CAST(NULL AS INT64) AS checked, CAST(NULL AS INT64) AS newest_ms, CAST(NULL AS INT64) AS mod_ms,',
-    '  CAST(NULL AS STRING) AS err, CAST(NULL AS STRING) AS detail, s.tax AS tax',
-    `FROM scored s WHERE s.impact >= GREATEST(1, s.bar - ${PW_NEAR_})`,
+    '  CAST(NULL AS STRING) AS err, CAST(NULL AS STRING) AS detail, k.tax AS tax',
+    'FROM kept k',
     'UNION ALL',
     "SELECT 'src', c.source, CAST(NULL AS STRING), CAST(NULL AS INT64), CAST(NULL AS STRING), CAST(NULL AS STRING), CAST(NULL AS STRING),",
     '  CAST(NULL AS STRING), CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS STRING),',
@@ -792,11 +1109,12 @@ function pwAiSql_(srcs, structs, topics) {
 /**
  * A lane's look (`laneKey`: 'c1' us-central1 or 'us' US) for `watches` (pwActive_): a read-only script that keeps
  * each of the lane's sources' new rows in a temporary table, then asks Gemini about them (pwAiSql_). `o`: {since,
- * until} (ms: the window, for Sonar and the comments), froms ({source: ms}: where each other source starts, pwFroms_;
- * outbound_mod: the export already read), chat (pwChatItems_, the US lane), bwq and bwqErr (pwBwqItems_: the
- * Brandwatch query's rows and what went wrong reading it, the US lane). The watches' words and the alerts' and
- * mentions' text are query parameters (never part of the SQL); the topics are cleaned of quotes and backslashes
- * (pwTopic_). {sql, params: [{name, type, value} | {name, struct, rows}]}. Pure.
+ * until} (ms: the window, for Sonar), froms ({source: ms}: where each other source starts, and <source>_mod: when a
+ * source read only when its table changed last read it, pwFroms_), bwq and bwqErr (pwBwqItems_: the Brandwatch query's
+ * rows and what went wrong reading it, the US lane), tags (pwTags_: what AI.CLASSIFY chooses from, pwClassifyTags_).
+ * The watches' words, the tags' names and descriptions and the mentions' text are query parameters, never part of the
+ * SQL (the tags reach AI.CLASSIFY as the script variable pw_tags). {sql, params: [{name, type, value} | {name, struct,
+ * rows}]}. Pure but for GEN.
  */
 function pwSql_(laneKey, watches, o) {
   const srcs = pwLaneSources_(laneKey);
@@ -809,43 +1127,47 @@ function pwSql_(laneKey, watches, o) {
     const p = `w${i + 1}_`;
     params.push({ name: p + 'name', type: 'STRING', value: w.name }, { name: p + 'cond', type: 'STRING', value: w.cond },
       { name: p + 'rubric', type: 'STRING', value: w.rubric }, { name: p + 'bar', type: 'FLOAT64', value: w.bar },
-      { name: p + 'nets', type: 'STRING', value: (w.nets || []).join('|') });
+      { name: p + 'nets', type: 'STRING', value: (w.nets || []).join('|') },
+      { name: p + 'tags', type: 'STRING', value: (w.tags || []).map(t => t.label).join('|') });
     return `STRUCT(${i + 1} AS idx, @${p}name AS watch, @${p}cond AS cond, @${p}rubric AS rubric, @${p}bar AS bar, ` +
-      `@${p}nets AS nets)`;
+      `@${p}nets AS nets, @${p}tags AS tagset)`;
   });
-  const seen = new Set();
-  const topics = [].concat(...watches.map(w => w.topics || [])).map(pwTopic_)
-    .filter(t => t && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase())).slice(0, PW_MAX_TOPICS_).concat(['Other']);
   srcs.forEach(s => {
-    if (s.key === 'chat') params.push({ name: 'chat', struct: PW_CHAT_FIELDS_, rows: (o && o.chat) || [] });
-    else if (s.key === 'bwq') {
-      params.push({ name: 'bwq', struct: PW_CHAT_FIELDS_, rows: (o && o.bwq) || [] },
+    if (s.key === 'bwq') {
+      params.push({ name: 'bwq', struct: PW_BWQ_FIELDS_, rows: (o && o.bwq) || [] },
         { name: 'bwq_err', type: 'STRING', value: truncate_(String((o && o.bwqErr) || ''), PW_ERR_CHARS_) });
     } else if (!s.window) params.push({ name: `${s.key}_from`, type: 'INT64', value: Math.floor(Number(froms[s.key]) || 0) });
   });
-  const gated = srcs.find(s => s.gate);
-  const lines = [];
-  if (gated) {
-    params.push({ name: 'outbound_mod', type: 'INT64', value: Math.floor(Number(froms.outbound_mod) || 0) });
-    lines.push('DECLARE pw_out_mod INT64 DEFAULT NULL;');
+  const gated = srcs.filter(s => s.gate);
+  const lines = [];  // a script's DECLAREs come first
+  gated.forEach(s => {
+    params.push({ name: `${s.key}_mod`, type: 'INT64', value: Math.floor(Number(froms[`${s.key}_mod`]) || 0) });
+    lines.push(`DECLARE pw_mod_${s.key} INT64 DEFAULT NULL;`);
+  });
+  const tags = pwClassifyTags_(watches, o && o.tags);
+  if (tags.length) {
+    params.push({ name: 'tags', struct: PW_TAG_FIELDS_, rows: tags.map(t => ({ category: t.label, description: t.desc })) });
+    lines.push('DECLARE pw_tags ARRAY<STRUCT<category STRING, description STRING>> DEFAULT @tags;');
   }
   lines.push(`CREATE TEMP TABLE pw_new (source STRING, rk INT64, post_url STRING, platform STRING, author STRING, ` +
     'followers INT64, eng INT64, posted TIMESTAMP, first_seen TIMESTAMP, issue STRING, issue_new BOOL, summary STRING, txt STRING, ' +
     'why STRING, tax STRING);');
   lines.push('CREATE TEMP TABLE pw_src (source STRING, mod_ms INT64, err STRING);');
-  if (gated) {
-    const i = gated.bq.lastIndexOf('.');
-    lines.push(...pwGuard_(gated.key, [`  SET pw_out_mod = (SELECT last_modified_time FROM \`${gated.bq.slice(0, i)}.__TABLES__\` ` +
-      `WHERE table_id = '${gated.bq.slice(i + 1)}');`]));
-    lines.push(`INSERT INTO pw_src (source, mod_ms) VALUES ('${gated.key}', pw_out_mod);`);
-  }
+  gated.forEach(s => {
+    const i = s.bq.lastIndexOf('.');
+    lines.push(...pwGuard_(s.key, [`  SET pw_mod_${s.key} = (SELECT last_modified_time FROM \`${s.bq.slice(0, i)}.__TABLES__\` ` +
+      `WHERE table_id = '${s.bq.slice(i + 1)}');`]));
+    lines.push(`INSERT INTO pw_src (source, mod_ms) VALUES ('${s.key}', pw_mod_${s.key});`);
+  });
   lines.push(...pwModSql_(srcs));
   srcs.forEach(s => {
     const block = pwGuard_(s.key, PW_SOURCE_SQL_[s.key]());
-    if (s.gate) lines.push('IF pw_out_mod > @outbound_mod THEN', ...block, 'END IF;');
+    if (s.gate) lines.push(`IF pw_mod_${s.key} > @${s.key}_mod THEN`, ...block, 'END IF;');
     else lines.push(...block);
   });
-  lines.push(pwAiSql_(srcs, structs, topics).join('\n'));
+  // a source with a day's maximum (dayMax) hands over what's left of today's (pwFroms_: <key>_left), within its cap
+  const capOf = s => (s.dayMax && froms[`${s.key}_left`] !== undefined ? Math.min(s.cap, Number(froms[`${s.key}_left`]) || 0) : s.cap);
+  lines.push(pwAiSql_(srcs, structs, tags.length > 0, capOf).join('\n'));
   return { sql: lines.join('\n'), params };
 }
 
@@ -921,7 +1243,7 @@ function pwJob_(props, lane) {
   }
 }
 
-/** Each source's place (PW_MARKS: {source: ms, outbound_mod: ms}); {} for none. */
+/** Each source's place (PW_MARKS: {source: ms, <source>_mod: ms}); {} for none. */
 function pwMarks_(props) {
   try {
     const m = JSON.parse(props.getProperty(PW_MARKS_PROP_) || 'null');
@@ -933,12 +1255,19 @@ function pwMarks_(props) {
 
 /**
  * Where each source that keeps its own place starts a look ending at `until` (ms): its mark, but never more than its
- * maxMs back; with no mark yet (a first look), its firstMs back. Plus outbound_mod (the export already read). Pure.
+ * maxMs back; with no mark yet (a first look), its firstMs back. Plus, for each source read only when its table
+ * changed, <source>_mod: when it last read it (0: never); for each with a day's maximum (dayMax), <source>_left: what's
+ * left of today's (ET). Pure but for GEN.
  */
 function pwFroms_(marks, until) {
   const m = marks || {};
-  const out = { outbound_mod: Math.max(0, Number(m.outbound_mod) || 0) };
+  const out = {};
   PW_SOURCES_.forEach(s => {
+    if (s.gate) out[`${s.key}_mod`] = Math.max(0, Number(m[`${s.key}_mod`]) || 0);
+    if (s.dayMax) {  // what's left of today's (ET) maximum: <key>_n handed over on <key>_day
+      const used = m[`${s.key}_day`] === pwDay_(until) ? Number(m[`${s.key}_n`]) || 0 : 0;
+      out[`${s.key}_left`] = Math.max(0, s.dayMax - used);
+    }
     if (s.window) return;
     const have = Number(m[s.key]) || 0;
     out[s.key] = have > 0 ? Math.max(have, until - s.maxMs) : until - s.firstMs;
@@ -948,16 +1277,31 @@ function pwFroms_(marks, until) {
 
 /**
  * The marks after a collected look (`stats`: its 'src' rows): each source that keeps its own place moves to the newest
- * item it handed over (never back); a source that failed stays where it was (tried again); the export, once read, is
- * marked read (outbound_mod). Pure.
+ * item it handed over (never back); a source that failed stays where it was (tried again); a table read only when it
+ * changed is marked read (<source>_mod); a source with a day's maximum counts what it handed Gemini today (ET, at `now`:
+ * <source>_day, <source>_n). Only the current sources' marks are kept. Pure but for GEN.
  */
-function pwAdvanceMarks_(marks, stats) {
-  const out = Object.assign({}, marks || {});
+function pwAdvanceMarks_(marks, stats, now) {
+  const m = marks || {};
+  const out = {};
+  const today = pwDay_(now === undefined ? Date.now() : now);
+  PW_SOURCES_.forEach(s => {
+    if (!s.window && Number(m[s.key]) > 0) out[s.key] = Number(m[s.key]);
+    if (s.gate && Number(m[`${s.key}_mod`]) > 0) out[`${s.key}_mod`] = Number(m[`${s.key}_mod`]);
+    if (s.dayMax && m[`${s.key}_day`] === today && Number(m[`${s.key}_n`]) > 0) {
+      out[`${s.key}_day`] = today;
+      out[`${s.key}_n`] = Number(m[`${s.key}_n`]);
+    }
+  });
   (stats || []).forEach(r => {
     const s = pwSource_(r && r.source);
     if (!s || r.err) return;
     if (!s.window && Number(r.newest_ms) > (Number(out[s.key]) || 0)) out[s.key] = Number(r.newest_ms);
-    if (s.gate && Number(r.mod_ms) > (Number(out.outbound_mod) || 0)) out.outbound_mod = Number(r.mod_ms);
+    if (s.gate && Number(r.mod_ms) > (Number(out[`${s.key}_mod`]) || 0)) out[`${s.key}_mod`] = Number(r.mod_ms);
+    if (s.dayMax && Number(r.checked) > 0) {  // what it handed Gemini today (ET), toward its day's maximum
+      out[`${s.key}_n`] = (out[`${s.key}_day`] === today ? Number(out[`${s.key}_n`]) || 0 : 0) + Number(r.checked);
+      out[`${s.key}_day`] = today;
+    }
   });
   return out;
 }
@@ -979,57 +1323,6 @@ function proactiveWatchOff_() {
   } catch (e) {
     console.error('Proactive watch: ' + ((e && e.message) || e));
   }
-}
-
-// --------------------------------------------------------------------------------------------------------------
-// The Other alerts space's alerts: from the Alert log, for the US look
-// --------------------------------------------------------------------------------------------------------------
-
-/** The Alert log's newest PW_CHAT_READ_ROWS_ rows ([] when it can't be read). */
-function pwRecentAlerts_(ss) {
-  try {
-    return sheetTable_(ss, ALERT_TAB_, ALERT_COLUMNS_, 'alert_id', PW_CHAT_READ_ROWS_).load();
-  } catch (e) {
-    console.warn('Proactive watch: couldn\'t read the Alert log for the Other alerts space\'s alerts: ' + ((e && e.message) || e));
-    return [];
-  }
-}
-
-/**
- * The alerts in other formats (Brandwatch's...) the bot read in the Other alerts space (OtherAlerts.gs: `ingested`
- * OTHER_INGESTED_, the space's partition), that reached it in (`from`, `until`] (ms), with a post link, as the @chat
- * parameter's rows (PW_CHAT_FIELDS_): the newest first, the source's cap at most. Their text: the stream, the issue,
- * the triage's neutral summary, the author and the engagement. Pure.
- */
-function pwChatItems_(alerts, from, until) {
-  const cap = (pwSource_('chat') || {}).cap || 30;
-  return (alerts || [])
-    .filter(a => a && a.ingested === OTHER_INGESTED_ && String(a.space || '').endsWith(OS_PARTITION_SUFFIX_))
-    .map(a => ({ a, s: Number(a.source_at) || Number(a.created_at) || 0 }))
-    .filter(x => x.s > from && x.s <= until)
-    .sort((x, y) => y.s - x.s)
-    .map(x => {
-      const f = x.a.forwarded_fields && typeof x.a.forwarded_fields === 'object' ? x.a.forwarded_fields : {};
-      const tri = f.triage && typeof f.triage === 'object' ? f.triage : {};
-      const url = String(f.post_url || '').trim();
-      if (!/^https?:\/\/\S+$/i.test(url)) return null;
-      const one = v => String(v === undefined || v === null ? '' : v).replace(/\s+/g, ' ').trim();
-      const stream = one(tri.stream);
-      const issue = one(f.issue_name);
-      const summary = one(tri.summary || f.summary);
-      const author = one(x.a.author || f.author);
-      const eng = Number(f.total_engagement);
-      const posted = Date.parse(one(f.post_date)) || 0;
-      const text = [`An alert posted in the Other alerts space${stream ? ` ("${stream}")` : ''}.`, issue ? `Issue: ${issue}` : '',
-        summary ? `What it is: ${summary}` : '', author ? `Author: ${author}` : '',
-        tri.engagement ? `Engagement: ${one(tri.engagement)}` : ''].filter(Boolean).join('\n');
-      return { u: truncate_(url, 500), n: pwPlatform_(f.social_network || ''), a: truncate_(author, 120), f: -1,
-        e: Number.isFinite(eng) && eng >= 0 ? Math.round(eng) : -1, p: posted > 0 ? posted : 0, s: x.s,
-        i: truncate_(`Other alerts space${stream ? ` · ${stream}` : ''}`, 200), m: truncate_(summary, 400),
-        t: truncate_(text, PW_TEXT_CHARS_) };
-    })
-    .filter(Boolean)
-    .slice(0, cap);
 }
 
 // --------------------------------------------------------------------------------------------------------------
@@ -1123,7 +1416,7 @@ function pwBwMentions_(token, from, until, left) {
 }
 
 /**
- * A Brandwatch mention as a @bwq row (PW_CHAT_FIELDS_); `x`: the X post X's embed data gave for it (lookupXPosts_):
+ * A Brandwatch mention as a @bwq row (PW_BWQ_FIELDS_); `x`: the X post X's embed data gave for it (lookupXPosts_):
  * X posts come from Brandwatch's API without their text, author or link. With no text, t is '' (counted, never asked
  * about). Followers: the author's (Brandwatch's potential audience on the networks where it's the author's followers),
  * else -1 (unknown); engagements: what the platform counted, else -1. Pure.
@@ -1217,13 +1510,15 @@ function pwDetRows_(sh, max) {
  * post once a watch (`have`: "watch|key" already on the tab; added to as rows are made). Seen: when the source had it,
  * never before `floor` (ms: the look's window start), so a source that hands its rows over late never claims a lead it
  * couldn't have had. `queue` (Watch alerts chosen, Control row 35): a flag at the bar waits on the tab to be posted as a
- * watch alert (its key: a 'q', with the watch's bar and the score: WatchAlerts.gs pwPostAlerts_). {rows, flagged, near,
- * queued, byWatch: {watch: [flagged, near]}, bySource: {source: [flagged, near]}}. Pure.
+ * watch alert (its key: a 'q', with the watch's bar and the score: WatchAlerts.gs pwPostAlerts_). A row from a source
+ * the watch no longer reads (a look sent before it stopped) is never recorded. {rows, flagged, near, queued, byWatch:
+ * {watch: [flagged, near]}, bySource: {source: [flagged, near]}}. Pure.
  */
 function pwDetections_(results, have, floor, queue) {
   const out = { rows: [], flagged: 0, near: 0, queued: 0, byWatch: {}, bySource: {} };
   (results || []).forEach(r => {
     if (!r || !r.post_url || !r.watch || r.impact === null || r.impact === undefined) return;
+    if (!pwSource_(String(r.source || 'sonar'))) return;
     if (pwByGrok_(r.post_url, r.author)) return;  // Grok's posts are never flagged (pwGrokSql_ leaves them out before Gemini)
     if (isNonEnglishPost_(String(r.summary || ''), '')) return;
     const key = recordKey_({ post_url: String(r.post_url) }) || String(r.post_url);
@@ -1242,7 +1537,7 @@ function pwDetections_(results, have, floor, queue) {
     row[PW_COL_.watch - 1] = pwCell_(watch, 80);
     row[PW_COL_.score - 1] = isFinite(impact) ? impact : '';
     row[PW_COL_.bar - 1] = atBar ? 'Yes' : 'No';
-    row[PW_COL_.topic - 1] = pwCell_(r.topic, 80);
+    row[PW_COL_.topic - 1] = pwCell_(r.topic, 300);  // its exposure tags ("P0 · Product - Perceived bias; Sensitive · Politics")
     row[PW_COL_.post - 1] = pwCell_(r.post_url, 500);
     const s = pwSource_(src) || {};
     const why = r.why && r.why !== s.plainWhy ? ` · ${r.why}` : '';  // why it was asked about, when it isn't the usual
@@ -1255,7 +1550,7 @@ function pwDetections_(results, have, floor, queue) {
     row[PW_COL_.issue - 1] = pwCell_(r.issue, 200);
     row[PW_COL_.isNew - 1] = r.issue_new === true ? 'Yes' : '';
     row[PW_COL_.summary - 1] = pwCell_(r.summary, 400);
-    // the listening tool's own classification (Sonar, BMIE, DSD), kept on a queued flag's key for its card
+    // the listening tool's own classification (Sonar's, Brandwatch's products), kept on a queued flag's key for its card
     const tax = queue && atBar && r.tax && typeof pwTaxOf_ === 'function' ? pwTaxOf_(r.tax) : null;
     row[PW_COL_.key - 1] = JSON.stringify(Object.assign({ k: key, w: watch, s: seen, b: atBar ? 1 : 0 },
       queue && atBar ? { a: 'q', br: Number(r.bar), sc: isFinite(impact) ? impact : 0 } : {}, tax ? { x: tax } : {}));
@@ -1291,14 +1586,55 @@ function pwRecord_(sh, results, floor, queue) {
   return { added: d.rows.length, flagged: d.flagged, near: d.near, byWatch: d.byWatch, bySource: d.bySource };
 }
 
+/**
+ * A data row read off the Watch detections tab, safe to write back as it was: text Sheets would take for a date (the
+ * times the bot writes as text) or a formula (= + - @) gets its leading apostrophe back. Pure.
+ */
+function pwKeepText_(row) {
+  const times = [PW_COL_.seen, PW_COL_.posted, PW_COL_.bursonAt].map(c => c - 1);
+  return (row || []).map((v, i) => (typeof v === 'string' && v && (times.includes(i) || /^[=+\-@]/.test(v)) ? '\'' + v : v));
+}
+
 /** Keeps the newest PW_DET_MAX_ROWS_ data rows (their ratings with them) once PW_DET_TRIM_SLACK_ more have built up. */
 function pwTrim_(sh) {
   const count = sh.getLastRow() - PW_DET_HEAD_ROW_;
   if (count <= PW_DET_MAX_ROWS_ + PW_DET_TRIM_SLACK_) return;
   const all = sh.getRange(PW_DET_HEAD_ROW_ + 1, 1, count, PW_DET_HEADER_.length).getValues();
-  const keep = all.slice(count - PW_DET_MAX_ROWS_);
+  const keep = all.slice(count - PW_DET_MAX_ROWS_).map(pwKeepText_);
   sh.getRange(PW_DET_HEAD_ROW_ + 1, 1, keep.length, PW_DET_HEADER_.length).setValues(keep);
   sh.getRange(PW_DET_HEAD_ROW_ + 1 + keep.length, 1, count - keep.length, PW_DET_HEADER_.length).clearContent();
+}
+
+/**
+ * Once (PW_SCHEMA_PROP_ at PW_SCHEMA_), on the Watch detections tab: the rows from the sources the watch stopped reading
+ * on Nov 10 (PW_REMOVED_SOURCES_: the Source cell's name, before any " · why") are taken off, the others kept in their
+ * order with their ratings, and its "Topic" header says "Exposure tags". Never throws (a failure is logged, and the next
+ * run tries again). Rows taken off.
+ */
+function pwMigrate_(props, sh) {
+  if (props.getProperty(PW_SCHEMA_PROP_) === PW_SCHEMA_) return 0;
+  try {
+    const head = sh.getRange(PW_DET_HEAD_ROW_, PW_COL_.topic);
+    if (String(head.getValue()).trim() === 'Topic') head.setValue(PW_DET_HEADER_[PW_COL_.topic - 1]);
+    const count = sh.getLastRow() - PW_DET_HEAD_ROW_;
+    let gone = 0;
+    if (count > 0) {
+      const all = sh.getRange(PW_DET_HEAD_ROW_ + 1, 1, count, PW_DET_HEADER_.length).getValues();
+      const dropped = new Set(PW_REMOVED_SOURCES_);
+      const keep = all.filter(v => !dropped.has(String(v[PW_COL_.source - 1] || '').split(' \u00b7 ')[0].trim()));
+      gone = all.length - keep.length;
+      if (gone) {
+        if (keep.length) sh.getRange(PW_DET_HEAD_ROW_ + 1, 1, keep.length, PW_DET_HEADER_.length).setValues(keep.map(pwKeepText_));
+        sh.getRange(PW_DET_HEAD_ROW_ + 1 + keep.length, 1, gone, PW_DET_HEADER_.length).clearContent();
+        console.log(`Proactive watch: took ${gone} rows from the sources it no longer reads off the ${PW_DET_TAB_} tab`);
+      }
+    }
+    props.setProperty(PW_SCHEMA_PROP_, PW_SCHEMA_);
+    return gone;
+  } catch (e) {
+    console.error('Proactive watch: couldn\'t bring the Watch detections tab up to date: ' + ((e && e.message) || e));
+    return 0;
+  }
 }
 
 // --------------------------------------------------------------------------------------------------------------
@@ -1453,7 +1789,7 @@ function pwSourceStatus_(src, st, now) {
 }
 
 /**
- * "sources: 4 live, 2 stale, 1 failing: Sprinklr comments" (all of them live: "all 7 sources live"); '' before any look.
+ * "sources: 2 live, 2 stale, 1 failing: Brandwatch mentions" (all of them live: "all 5 sources live"); '' before any look.
  * Short: it goes in C34, whose note is cut at 200 characters. Pure.
  */
 function pwSourcesSummary_(all, now) {
@@ -1639,7 +1975,10 @@ function pwCollect_(props, sh, lane, queue) {
   return 0;
 }
 
-/** Column H of each watch's row: whether it's watched, and today's numbers. Writes only what changed. Never throws. */
+/**
+ * Column K of each watch's row: whether it's watched (and how many tags it looks for), today's numbers, and the names
+ * in its tag columns that no tag on the Watch tags tab has. Writes only what changed. Never throws.
+ */
 function pwWriteStatuses_(sh, watches, today, lastAt) {
   try {
     if (!watches.length) return;
@@ -1651,11 +1990,14 @@ function pwWriteStatuses_(sh, watches, today, lastAt) {
     const next = current.slice();
     watches.forEach(w => {
       const c = (today.w || {})[w.name] || [0, 0];
-      next[w.row - firstRow] = !w.on ? 'OFF: not watched'
+      const n = (w.tags || []).length;
+      const unknown = (w.unknown || []).length && !w.problem
+        ? ` · ⚠️ no single tag on the ${PW_TAGS_TAB_} tab is named ${truncate_(w.unknown.slice(0, 4).join(', '), 160)}` : '';
+      next[w.row - firstRow] = (!w.on ? 'OFF: not watched'
         : w.problem ? `⚠️ not watched: ${w.problem}`
           : !active.has(w.name) ? `⚠️ not watched: only the first ${PW_MAX_WATCHES_} watches ON (each name once) are watched`
-            : `✓ watched · today: ${fmtInt_(c[0])} flagged, ${fmtInt_(c[1])} near miss${c[1] === 1 ? '' : 'es'}` +
-              (lastAt ? ` · last look ${lastAt}` : '');
+            : `✓ watched${n ? ` (${n} tag${n === 1 ? '' : 's'})` : ''} · today: ${fmtInt_(c[0])} flagged, ` +
+              `${fmtInt_(c[1])} near miss${c[1] === 1 ? '' : 'es'}` + (lastAt ? ` · last look ${lastAt}` : '')) + unknown;
     });
     if (next.some((v, i) => v !== current[i])) range.setValues(next.map(v => [v]));
   } catch (e) {
@@ -1665,13 +2007,13 @@ function pwWriteStatuses_(sh, watches, today, lastAt) {
 
 /**
  * Proactive watch (Control row 34, OFF unless switched ON), once a run from Main.gs poll()'s finally while the bot is
- * ON: makes its three tabs the first time, collects each lane's look that's waiting (its rows go on the Watch
- * detections tab), sends each lane's next look when one is due (PW_EVERY_MS_, the window from where its last one
- * ended), posts the flags waiting to go out as watch alerts (Control row 35, WatchAlerts.gs: `opts.alerts`, this run's
- * pwAlertsDest_; C35 in `opts.control` says how it's going), refreshes the scorecard (PW_SCORE_EVERY_MS_, or right
- * after new rows) and writes the Watch sources tab, the watches' status and the switch's column C. Nothing with less
- * than PW_MIN_LEFT_MS_ of the run left (before RUN_HARD_STOP_MS_). Posts nothing anywhere but those watch alerts. Never
- * throws. Returns {added, sent, alerts} (null when it didn't run).
+ * ON: makes its four tabs the first time (and brings them up to date once: pwUpgradeWatches_, pwMigrate_), collects each
+ * lane's look that's waiting (its rows go on the Watch detections tab), sends each lane's next look when one is due
+ * (PW_EVERY_MS_, the window from where its last one ended), posts the flags waiting to go out as watch alerts (Control
+ * row 35, WatchAlerts.gs: `opts.alerts`, this run's pwAlertsDest_; C35 in `opts.control` says how it's going),
+ * refreshes the scorecard (PW_SCORE_EVERY_MS_, or right after new rows) and writes the Watch sources tab, the watches'
+ * status and the switch's column C. Nothing with less than PW_MIN_LEFT_MS_ of the run left (before RUN_HARD_STOP_MS_).
+ * Posts nothing anywhere but those watch alerts. Never throws. Returns {added, sent, alerts} (null when it didn't run).
  */
 function runProactiveWatch_(ss, runStart, opts) {
   try {
@@ -1698,7 +2040,11 @@ function runProactiveWatch_(ss, runStart, opts) {
     }
     const st = pwSourcesTab_(ss, true);  // a tab of that name people made is left alone; the watch carries on
     if (st.foreign) console.warn(`Proactive watch: a tab named "${PW_SRC_TAB_}" exists that the bot didn't make: left alone`);
-    const watches = pwWatches_(wt.sh);
+    const tt = pwTagsTab_(ss, true);  // likewise: the watches then pick from the team's list as the bot has it
+    if (tt.foreign) console.warn(`Proactive watch: a tab named "${PW_TAGS_TAB_}" exists that the bot didn't make: left alone`);
+    pwMigrate_(props, dt.sh);
+    const tags = pwTags_(tt.sh);
+    const watches = pwWatches_(wt.sh, tags);
     const active = pwActive_(watches);
     const out = { added: 0, sent: false, alerts: null };
     PW_LANES_.forEach(lane => {  // 1. the looks sent earlier
@@ -1710,7 +2056,6 @@ function runProactiveWatch_(ss, runStart, opts) {
       props.deleteProperty(PW_MARKS_PROP_);
       noteSwitch_('proactiveWatch', `waiting: no watch is ON (set a watch's On to ON on the ${PW_WATCHES_TAB_} tab)`);
     } else if (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', !!(opts && opts.slaBusy))) {
-      let alerts = null;  // the Alert log's newest rows, read once, when the US look goes out
       let first = false;
       let failed = false;  // a failure's note stays: the first look's note doesn't cover it up
       PW_LANES_.forEach(lane => {  // 2. each lane's next look, when it's due
@@ -1725,15 +2070,10 @@ function runProactiveWatch_(ss, runStart, opts) {
         const sent = { since, until, at: now, tries: Number(props.getProperty(lane.triesProp)) || 0 };
         try {
           const froms = pwFroms_(pwMarks_(props), until);
-          let chat = [];
-          if (pwLaneSources_(lane.key).some(s => s.key === 'chat')) {
-            if (!alerts) alerts = pwRecentAlerts_(ss);
-            chat = pwChatItems_(alerts, froms.chat, until);
-          }
           // the Brandwatch query: what Brandwatch added since the last look, read right before the look goes out
           const bwq = pwLaneSources_(lane.key).some(s => s.key === 'bwq')
             ? pwBwqItems_(froms.bwq, until, left) : { rows: [], err: '' };
-          const res = pwSubmit_(pwSql_(lane.key, active, { since, until, froms, chat, bwq: bwq.rows, bwqErr: bwq.err }), lane);
+          const res = pwSubmit_(pwSql_(lane.key, active, { since, until, froms, tags, bwq: bwq.rows, bwqErr: bwq.err }), lane);
           const ref = (res && res.jobReference) || {};
           out.sent = true;
           if (res && res.jobComplete) {

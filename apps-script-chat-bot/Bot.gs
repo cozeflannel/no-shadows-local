@@ -1514,6 +1514,8 @@ function directAnswer_(ctx, m, rawAlert, report) {
     ctx.log('knowledge base unavailable for this answer: ' + ((e && e.message) || e));
   }
   let raw = '';
+  // the bot's long memory (Signals.gs: the BigQuery archive and issue history), only while the Archive is ON
+  ctx.memory = typeof signalsMemoryFor_ === 'function' ? signalsMemoryFor_(alert) : [];
   try {
     raw = ctx.gemini.answerAnalyst ? ctx.gemini.answerAnalyst(m.text, alert, ctx, knowledge) : ctx.gemini.answer(m.text, alert, []);
   } catch (e) {
@@ -1639,6 +1641,7 @@ function pollAnalystMessages_(ctx, report) {
     } catch (e) {
       ctx.log('knowledge base unavailable for this answer: ' + ((e && e.message) || e));
     }
+    ctx.memory = typeof signalsMemoryFor_ === 'function' ? signalsMemoryFor_(alert) : [];  // Signals.gs: the long memory
     try {
       raw = ctx.gemini.answerAnalyst ? ctx.gemini.answerAnalyst(m.text, alert, ctx, knowledge) : ctx.gemini.answer(m.text, alert, []);
     } catch (e) {
