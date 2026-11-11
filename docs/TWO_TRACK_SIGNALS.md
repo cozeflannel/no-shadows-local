@@ -189,7 +189,7 @@ The bot makes these when *Show* is ON, after the Signals tab, protected with a w
   - Its labeling (AI.CLASSIFY) uses the **full description**.
   - Edit it freely: the bot never rewrites it. With Sync ON, your edits become a new `taxonomy` version.
 - **Watch sources:** the sources in section 3, each with its health.
-- **Watch detections:** rows from the dropped sources are removed once: Brandwatch (BMIE), DSD story selection, Other alerts space, and the old Sprinklr outbound export. Rows from Sprinklr comments are kept.
+- **Watch detections:** rows from the dropped sources are removed once: Brandwatch (BMIE), DSD story selection, Other alerts space, and the old Sprinklr outbound export. Rows from Sprinklr comments are kept. On Nov 11 that's 1,043 of 5,115 rows; a full copy of the tab from before the clean-up is saved locally at `data/watch_detections_backup_2026-11-11.csv` (git-ignored).
 
 ---
 
