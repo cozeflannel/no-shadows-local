@@ -94,7 +94,7 @@ function ensureSidepanelTestAlertTab_(ss) {
     ['Sensitive Topic', 'None', 'Optional Sensitive Topic (or None)'],
     ['Platform', 'X', 'Social platform (avoid YouTube when testing standard PA emails)'],
     ['Author', '@test_routing_account', 'Sample handle used on the test card'],
-    ['Engagements', '500', '100+ engagements meets the SLRR collection threshold'],
+    ['Engagements', '2500', '2,000+ (HIGH) meets the SLRR Social Alert email threshold across P0/P1/P2'],
     ['KOF', 'No', 'Key Opinion Former (Yes / No)'],
     [
       'Summary',

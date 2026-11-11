@@ -362,6 +362,13 @@ function poll() {
     direct = directB25For_(wanted.switches, sfb);
     if (direct.space) setSfBurson_(null);
     sfbFlows = direct.space ? { space: null, blank: false, error: DIRECT_B25_MODE_WHY_, direct: true } : sfb;
+    if (typeof postSheetTestAlert_ === 'function') {
+      try {
+        postSheetTestAlert_(ss, wanted, sfbFlows || sfb);
+      } catch (e) {
+        console.error('sheet test alert post: ' + ((e && e.stack) || e));
+      }
+    }
     // The Burson test copy (Control tab B26), once this run, checked (TestCopy.gs); C26 says what the bot found. Never throws.
     rtc = direct.space ? directB25TestCopyOff_(control, wanted) : testCopyFor_(control, wanted, sfb);
     relaySeen_(wanted.switches.relay && !!sfbFlows.space);  // Relay.gs: OFF, or no S-F Burson, is noted before anything can fail
@@ -619,13 +626,6 @@ function poll() {
   } finally {
     try {
       if (ss && control && wanted && wanted.on) {
-        if (typeof runSheetTestAlert_ === 'function') {
-          try {
-            runSheetTestAlert_(ss, control, wanted, sfbFlows || sfb, mode, testers);
-          } catch (e) {
-            console.error('sheet test alert: ' + ((e && e.stack) || e));
-          }
-        }
         const bgBusy = !!(mainCtx && mainCtx.slaBusy);
         // The Other alerts space (Control tab B33, OtherSpace.gs): a Google-only space with other alerts, worked directly
         // and always Testing, with no S-F Burson. Its own status (C33) and time budget; it never touches the run above.

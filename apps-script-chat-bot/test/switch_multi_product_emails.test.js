@@ -437,10 +437,21 @@ module.exports = function (H) {
     eq(plain(q1.products), ['Gemini App', 'Waymo', 'Executives', 'Cloud']);
     eq(testSh.cell(2, 2), 'SEND NOW');
 
-    // Next 1-minute poll sends 3 separate formulated emails (Gemini App, Waymo, Executive Comms), skips Cloud, and resets B2 to Idle
-    t.poll();
+    // Step 1 verification: postSheetTestAlert_ ONLY posts the SOCIAL ALERT into the test Chat space (zero emails sent yet!)
+    const wanted1 = t.bot.readControl_(ctrl);
+    const sfb1 = t.bot.sfBursonFor_(ctrl, wanted1);
+    const posted1 = t.bot.postSheetTestAlert_(ss, wanted1, sfb1);
+    eq(posted1.posted, true);
+    eq(posted1.spaceId, AC_SPACE);
     eq(testSh.cell(2, 2), 'Idle');
-    assert.match(testSh.cell(2, 3), /^✅ Sent at /);
+    assert.match(testSh.cell(2, 3), /^📨 Posted to SLRR Agentic Assistant/);
+    eq(t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject)).length, 0);
+    const chatAlertMsg = t.chat.message(posted1.messageName);
+    assert.ok(chatAlertMsg && /🟧SOCIAL ALERT🟧: Gemini App, Waymo, Executives, Cloud/.test(chatAlertMsg.text));
+
+    // Step 2 verification: next Chat poll picks up that posted alert FROM the test Chat space, reacts on it, and sends the Social Alerts!
+    t.poll();
+    assert.match(testSh.cell(2, 3), /^✅ Picked up in Chat & Sent at /);
     assert.match(testSh.cell(3, 2), /Gemini App → sent to gemini-app-qa@testing\.test/);
     assert.match(testSh.cell(3, 2), /Waymo → sent to waymo-qa@testing\.test/);
     assert.match(testSh.cell(3, 2), /Executives → sent to exec-qa@testing\.test/);
@@ -451,11 +462,11 @@ module.exports = function (H) {
     eq(sent1[0].to, ['gemini-app-qa@testing.test']);
     eq(sent1[1].to, ['waymo-qa@testing.test']);
     eq(sent1[2].to, ['exec-qa@testing.test']);
-    // Zero messages posted in S-F Burson (REAL_SFB); synthetic card + result posted only in AC_SPACE
+    // Bot reacted with 📦 on the Chat alert message itself in AC_SPACE, and zero messages went to S-F Burson (REAL_SFB)
+    assert.ok(t.chat.reactionsOn(posted1.messageName).some(r => r[1] === '📦'));
     eq(t.chat.botPosts(REAL_SFB).length, 0);
-    assert.ok(t.chat.botPosts(AC_SPACE).length >= 2);
 
-    // Immediate second test with changed products (Clear Extra Products + comma list in B5) sends again without duplicate suppression!
+    // End-to-end single poll() with changed products: posts into AC_SPACE AND picks up in the same poll() without duplicate suppression!
     panelCtx.clearExtraTestProducts();
     eq([testSh.cell(6, 2), testSh.cell(7, 2), testSh.cell(8, 2)], ['', '', '']);
     testSh.getRange(5, 2).setValue('Waymo, Gemini App');

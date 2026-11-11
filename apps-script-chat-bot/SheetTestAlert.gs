@@ -1,20 +1,23 @@
 /**
- * SheetTestAlert.gs — Interactive `Test alert` worksheet for testing single-product and multi-product Social Alert
- * routing directly from the `slrr-agentic-assistant` Google Sheet (`🧪 Test Alert → 🚀 Send Test Alert` menu button or
- * setting `Test alert!B2` to `SEND NOW`).
+ * SheetTestAlert.gs — Interactive `Test alert` worksheet for posting single-product and multi-product test alerts into
+ * the test Google Chat space (`🧪 Test Alert → 🚀 Send Test Alert` menu button or setting `Test alert!B2` to `SEND NOW`),
+ * where the bot's Chat poller picks the alert up, works it in-place (emojis + thread note), and sends each product's
+ * formulated Social Alert email.
  *
  * Safety invariants:
  * - Zero hardcoded emails: recipients come strictly from `Brand safety groups` Column C (`Group test emails`, Control
  *   row 37 ON), `Control!B30` (`Safety valve`, row 29 ON with row 37 OFF), or `Brand safety groups` Column B (LIVE).
  * - Tab ownership safeguard: never overwrites or modifies a `Test alert` tab unless `A1` matches `SHEET_TEST_HEADER_`.
  *   `Brand safety groups` is strictly read-only.
- * - Zero Burson-space leaks: posts only to a Google-only internal space (`B9`, `B10`, `B33`, or internal `B4`/`B3`),
+ * - Zero Burson-space leaks: posts only to a Google-only internal test space (`B9`, `B10`, `B33`, or internal `B3`),
  *   never to `S-F Burson` (`B25`) or any external space, and never writes synthetic test rows to SLRR BigQuery.
  */
 
 const SHEET_TEST_TAB_ = 'Test alert';
 const SHEET_TEST_HEADER_ = 'SLRR Test Alert Sender';
 const SHEET_TEST_INGESTED_ = 'Sheet test alert';
+const SHEET_TEST_MSGS_PROP_ = 'SHEET_TEST_MSGS';
+const SHEET_TEST_MSGS_MAX_ = 50;
 let SHEET_TEST_SEQ_ = 0;
 
 const SHEET_TEST_TAGS_ = [
@@ -130,6 +133,14 @@ function ensureTestAlertTab_(ss) {
   const existing = ss.getSheetByName(SHEET_TEST_TAB_);
   if (existing) {
     if (!isTestAlertTab_(existing)) return null;
+    try {
+      if (String(existing.getRange(16, 2).getValue() || '').trim() === '500' &&
+          /100\+ engagements/.test(String(existing.getRange(16, 3).getValue() || ''))) {
+        existing.getRange(16, 2, 1, 2).setValues([
+          ['2500', '2,000+ (HIGH) meets the SLRR Social Alert email threshold across P0/P1/P2'],
+        ]);
+      }
+    } catch (e) {}
     applyTestAlertValidations_(ss, existing);
     return existing;
   }
@@ -161,17 +172,17 @@ function ensureTestAlertTab_(ss) {
     ['Product 4 (optional)', '', sheetTestRouteFormula_(8)],
     ['Product 5 (optional)', '', sheetTestRouteFormula_(9)],
     ['Alert Field', 'Value (editable — defaults trigger a Social Alert)', 'Notes'],
-    ['Issue Title', 'Test Multi-Product Social Alert', 'Shown in the Social Alert subject line and summary'],
+    ['Issue Title', 'Test Multi-Product Social Alert', 'Shown in the Chat alert and Social Alert subject line'],
     ['Exposure Tag', 'Product - Scams involving Google products', 'P0/P1 tag ensures the test alert escalates to email'],
     ['Sensitive Topic', 'None', 'Optional Sensitive Topic (or None)'],
     ['Platform', 'X', 'Social platform (avoid YouTube when testing standard PA emails)'],
     ['Author', '@test_routing_account', 'Sample handle used on the test card'],
-    ['Engagements', '500', '100+ engagements meets the SLRR collection threshold'],
+    ['Engagements', '2500', '2,000+ (HIGH) meets the SLRR Social Alert email threshold across P0/P1/P2'],
     ['KOF', 'No', 'Key Opinion Former (Yes / No)'],
     [
       'Summary',
-      'Synthetic test alert triggered from the Test alert tab to verify per-product Social Alert email routing.',
-      'Included in the Chat card and formulated Social Alert email(s)',
+      'Synthetic test alert posted into the test Chat space to verify Chat pickup and per-product Social Alert email routing.',
+      'Included in the Chat alert and formulated Social Alert email(s)',
     ],
   ];
   sh.getRange(1, 1, rows.length, 3).setValues(rows);
@@ -223,8 +234,9 @@ function readSheetTestProducts_(vals) {
 }
 
 /**
- * Resolves a strictly internal Google-only Chat space for posting the synthetic test card (`B9` Mirror, `B10`
- * Auto-correct, `B33` Other alerts, or internal `B4`/`B3`). Never returns `S-F Burson` (`B25`) or any external space.
+ * Resolves a strictly internal Google-only test Chat space where the bot polls incoming alerts (`B9` Mirror, `B10`
+ * Auto-correct, `B33` Other alerts, or internal `B3` test Burson feed). Never returns `S-F Burson` (`B25`) or any
+ * external space.
  */
 function resolveSheetTestSpace_(wanted, sfb) {
   const sfbId = sfb && sfb.space && sfb.space.id ? sfb.space.id : '';
@@ -232,7 +244,6 @@ function resolveSheetTestSpace_(wanted, sfb) {
     wanted && wanted.mirror,
     wanted && wanted.autocorrect,
     wanted && wanted.otherSpace,
-    wanted && wanted.analyst,
     wanted && wanted.burson,
   ];
   for (const raw of candidates) {
@@ -247,6 +258,76 @@ function resolveSheetTestSpace_(wanted, sfb) {
     } catch (e) {}
   }
   return null;
+}
+
+/** Records a newly posted test Chat message in `SHEET_TEST_MSGS` so the Chat poller recognizes and picks it up. */
+function rememberSheetTestMessage_(msgName, spaceName, products) {
+  if (!msgName) return;
+  try {
+    const props = PropertiesService.getScriptProperties();
+    let list = [];
+    try { list = JSON.parse(props.getProperty(SHEET_TEST_MSGS_PROP_) || '[]') || []; } catch (e) { list = []; }
+    const entry = [hashText_(String(msgName)), SHEET_TEST_INGESTED_, String(spaceName || ''), (products || []).slice()];
+    const next = (Array.isArray(list) ? list : []).concat([entry]).slice(-SHEET_TEST_MSGS_MAX_);
+    props.setProperty(SHEET_TEST_MSGS_PROP_, JSON.stringify(next));
+  } catch (e) {}
+}
+
+/** Lookup metadata for a Chat message posted by `postSheetTestAlert_`, or `null` if `m` is not a sheet test alert. */
+function sheetTestMeta_(ctx, m) {
+  try {
+    if (!m || !m.name) return null;
+    const copy = !!m.clientId && String(m.clientId).indexOf(MIRROR_CLIENT_ID_PREFIX_) === 0;
+    if (!copy && !(ctx && ctx.botUser && m.senderName === ctx.botUser)) return null;
+    const raw = PropertiesService.getScriptProperties().getProperty(SHEET_TEST_MSGS_PROP_);
+    if (!raw) return null;
+    const h = hashText_(String(m.name));
+    const hit = (JSON.parse(raw) || []).find(p => Array.isArray(p) && p[0] === h);
+    if (!hit) return null;
+    return {
+      ingested: String(hit[1] || SHEET_TEST_INGESTED_),
+      spaceName: String(hit[2] || ''),
+      products: Array.isArray(hit[3]) ? hit[3] : [],
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Returns `SHEET_TEST_INGESTED_` when Chat message `m` was posted into the test Chat space from the `Test alert` tab. */
+function sheetTestSource_(ctx, m) {
+  const meta = sheetTestMeta_(ctx, m);
+  return meta ? meta.ingested : '';
+}
+
+/**
+ * Preserves the exact user-selected `[Product]` targets and escalation intent when `handleAlert_` reviews a test alert
+ * picked up from the test Chat space (so Gemini never strips out a chosen product because of the synthetic URL/summary).
+ */
+function applySheetTestReviewOverrides_(parsed, review) {
+  if (!parsed || !review || !review.fields) return;
+  const pf = parsed.fields || {};
+  if (pf.product) review.fields.product = pf.product;
+  if (Array.isArray(pf.other_products) && pf.other_products.length) {
+    review.fields.other_products = pf.other_products.slice();
+  } else {
+    delete review.fields.other_products;
+  }
+  if (Array.isArray(pf.product_targets) && pf.product_targets.length >= 2) {
+    review.fields.product_targets = pf.product_targets.slice();
+  } else {
+    delete review.fields.product_targets;
+  }
+  if (pf.exposure_tag) review.fields.exposure_tag = pf.exposure_tag;
+  if (pf.issue_name) review.fields.issue_name = pf.issue_name;
+  if (Number.isInteger(pf.total_engagement)) review.fields.total_engagement = pf.total_engagement;
+  review.issues = [];
+  review.socialAlert = {
+    warranted: true,
+    source: 'rule',
+    confidence: 1,
+    reason: 'Test alert picked up from test Chat space',
+  };
 }
 
 /** Summarizes per-product Social Alert delivery outcomes for `Test alert!B3` and the Chat thread note. Pure. */
@@ -281,15 +362,16 @@ function summarizeSheetTestResult_(alertId, spaceName, products, row) {
   } else {
     parts.push(`${products.join(', ')} → ${status || 'processed'}`);
   }
-  const head = `${alertId}${spaceName ? ` · Posted in ${spaceName}` : ''}`;
+  const head = `${alertId}${spaceName ? ` · Picked up in ${spaceName}` : ''}`;
   return truncate_(`${head} · ${parts.join(' ; ')}`, 1500);
 }
 
 /**
- * Ensures `Test alert` exists when `Brand safety groups` is present, and executes a queued `SEND NOW` test alert
- * immediately using the bot's real `escalation_` + `productEmailTargets_` + `tryDraft_` pipeline.
+ * Step 1 (Sheet -> Test Chat Space): Ensures `Test alert` exists when `Brand safety groups` is present, and when `B2`
+ * is `SEND NOW` (set via `🧪 Test Alert → 🚀 Send Test Alert` or dropdown), posts a formatted `🟧SOCIAL ALERT🟧` message
+ * into the internal test Chat space so the bot's Chat poller picks it up from Chat and sends the Social Alert(s).
  */
-function runSheetTestAlert_(ss, control, wanted, sfb, mode, testersObj) {
+function postSheetTestAlert_(ss, wanted, sfb) {
   if (!ss) return null;
   let sh = ss.getSheetByName(SHEET_TEST_TAB_);
   if (!sh && ss.getSheetByName(BRAND_SAFETY_GROUPS_TAB_)) {
@@ -303,7 +385,7 @@ function runSheetTestAlert_(ss, control, wanted, sfb, mode, testersObj) {
 
   // Reset B2 to Idle immediately before any network call so a partial failure can never loop every minute
   sh.getRange(2, 2).setValue('Idle');
-  sh.getRange(2, 3).setValue('⏳ Sending test alert…');
+  sh.getRange(2, 3).setValue('⏳ Posting test alert to Chat space…');
 
   try {
     // Force-sync Brand safety groups right now so any Column B / Column C email edits made seconds ago apply immediately
@@ -314,162 +396,118 @@ function runSheetTestAlert_(ss, control, wanted, sfb, mode, testersObj) {
     const products = readSheetTestProducts_(vals);
     if (!products.length) {
       sh.getRange(2, 3).setValue('⚠️ Pick at least one product in B5:B9');
-      sh.getRange(3, 2).setValue('No alert sent: Product 1–5 (B5:B9) were all blank.');
-      return { sent: false, reason: 'no_products' };
+      sh.getRange(3, 2).setValue('No alert posted: Product 1–5 (B5:B9) were all blank.');
+      return { posted: false, reason: 'no_products' };
     }
 
     const space = resolveSheetTestSpace_(wanted, sfb);
     if (!space) {
-      sh.getRange(2, 3).setValue('⚠️ Configure an internal test space (B9, B10, or B33) on Control');
-      sh.getRange(3, 2).setValue('No alert sent: no Google-only internal Chat space found on the Control tab.');
-      return { sent: false, reason: 'no_space' };
+      sh.getRange(2, 3).setValue('⚠️ Configure an internal test space (B9, B10, B33, or test B3) on Control');
+      sh.getRange(3, 2).setValue('No alert posted: no Google-only internal Chat space found on the Control tab.');
+      return { posted: false, reason: 'no_space' };
     }
-
-    const sfbSpace = sfb && sfb.space ? sfb.space : null;
-    const testersList = testersObj && Array.isArray(testersObj.testers)
-      ? testersObj.testers
-      : testersFor_(wanted ? wanted.testers : '').testers;
-    const cfgBase = {
-      burson: space,
-      analyst: space,
-      mirror: space,
-      outboundBlocked: true,
-      sfBurson: sfbSpace,
-      testers: testersList,
-    };
-    cfgBase.mode = runMode_(wanted.switches, wanted.testCopy, sfbSpace, cfgBase);
-    const ctx = buildCtx_(cfgBase, ss, wanted.switches);
 
     const cellVal = (rowIdx, fallback) => {
       const v = String(((vals[rowIdx] || [])[1]) || '').trim();
       return v || fallback;
     };
-    const nowMs = ctx.now();
+    const nowMs = Date.now();
     SHEET_TEST_SEQ_ = (SHEET_TEST_SEQ_ || 0) + 1;
     const seq = SHEET_TEST_SEQ_;
     const issueTitle = cellVal(10, 'Test Multi-Product Social Alert');
     const exposureTag = cellVal(11, 'Product - Scams involving Google products');
     const sensitiveRaw = cellVal(12, 'None');
-    const sensitiveTopic = /^none$/i.test(sensitiveRaw) ? '' : sensitiveRaw;
+    const sensitiveTopic = /^none$/i.test(sensitiveRaw) ? 'None' : sensitiveRaw;
     const platform = cellVal(13, 'X');
     const authorRaw = cellVal(14, '@test_routing_account');
     const handleSlug = authorRaw.replace(/[^a-zA-Z0-9_]+/g, '') || 'test_routing_account';
-    const engagementsNum = Math.max(0, parseInt(String(cellVal(15, '500')).replace(/[^0-9]/g, ''), 10) || 500);
+    const engagementsNum = Math.max(0, parseInt(String(cellVal(15, '2500')).replace(/[^0-9]/g, ''), 10) || 2500);
+    const engLevel = engagementsNum >= 2000 ? 'HIGH' : 'LOW';
     const isKof = /^yes$|^true$/i.test(cellVal(16, 'No'));
     const summaryText = cellVal(
       17,
-      'Synthetic test alert triggered from the Test alert tab to verify per-product Social Alert email routing.'
+      'Synthetic test alert posted into the test Chat space to verify Chat pickup and per-product Social Alert email routing.'
     );
     const postUrl = `https://x.com/${handleSlug}/status/99${nowMs}${seq}`;
     const postedEt = typeof nowLabel_ === 'function' ? nowLabel_() : new Date(nowMs).toISOString();
+    const productListStr = products.join(', ');
 
-    const fields = {
-      issue_name: issueTitle,
-      issue_status: 'New',
-      exposure_tag: exposureTag,
-      risk_tags: sensitiveTopic ? [sensitiveTopic] : [],
-      sensitive_topics: sensitiveTopic ? [sensitiveTopic] : [],
-      product: products[0],
-      other_products: products.slice(1),
-      product_targets: products.slice(),
-      social_network: platform,
-      author: authorRaw,
-      post_url: postUrl,
-      post_date: postedEt,
-      total_engagement: engagementsNum,
-      engagement_level: engagementsNum >= 2000 ? 'HIGH' : 'LOW',
-      kof: isKof ? 'Yes' : 'No',
-      summary: summaryText,
-    };
+    const alertText = [
+      `🟧SOCIAL ALERT🟧: ${productListStr} | ${issueTitle} | ${platform} | ${engagementsNum} Engagements`,
+      `[Name]: ${issueTitle} / New / not previously reported over the past 14 days`,
+      `[Engagement]: ${engLevel} (${engagementsNum} engagements)`,
+      `[Product]: ${productListStr}`,
+      `[Social Network]: ${platform}`,
+      `[Exposure Tag]: ${exposureTag}`,
+      `[Sensitive Topic]: ${sensitiveTopic}`,
+      `[KOF]: ${isKof ? 'Viral KOFs (KOFs)' : 'No'}`,
+      '',
+      summaryText,
+      '',
+      `[Link]: ${postUrl}`,
+      '',
+      `[Time/Date Post Went Live]: ${postedEt}`,
+      '',
+      `[Code]: ${exposureTag},${engagementsNum},${handleSlug},${sensitiveTopic},${products[0]},New / not previously reported over the past 14 days`,
+    ].join('\n');
 
-    let esc = escalation_(fields, 'NEW');
-    esc = Object.assign({}, esc, {
-      escalated: true,
-      action: 'EMAIL_ALERT',
-      suppression: null,
-      product: products[0],
-      issue_name: issueTitle,
-    });
-    if (products.length >= 2) {
-      esc.other_products = products.slice(1);
-      esc.product_targets = products.slice();
-    }
+    const chatMsg = mirrorPostMessage_(space.id, alertText, `sheettest:${nowMs}:${seq}`);
+    rememberSheetTestMessage_(chatMsg && chatMsg.name, space.name, products);
 
-    const cardLines = [
-      `🧪 *Sheet Test Alert* · ${issueTitle}`,
-      `*Link:* <${postUrl}|View synthetic test post>`,
-      `*Author:* ${authorRaw} · ${platform} · ${fmtInt_(engagementsNum)} engagements`,
-      `*Product:* ${products.join(', ')}`,
-      `*Exposure Tag:* ${exposureTag}`,
-      `*Sensitive Topic:* ${sensitiveTopic || 'None'}`,
-      `*KOF:* ${isKof ? 'Yes' : 'No'}`,
-      `*Summary:* ${summaryText}`,
-    ];
-    const cardMsg = postTo_(ctx, space.id, cardLines.join('\n'), null, `sheettest:${nowMs}:${seq}`);
-    const alertId = ctx.store.nextAlertId();
+    sh.getRange(2, 3).setValue(`📨 Posted to ${space.name} — picking up from Chat…`);
+    sh.getRange(3, 2).setValue(`Posted test alert into ${space.name} (${productListStr}) — waiting on Chat pickup to send Social Alert(s)…`);
 
-    const review = {
-      fields,
-      recordKey: recordKey_(fields),
-      issueTokens: typeof issueTokens_ === 'function' ? issueTokens_(issueTitle) : [],
-      recommendedGroups: [],
-      groupReasons: {},
-      socialAlert: { warranted: true, source: 'rule', confidence: 1, reason: 'Triggered from Test alert sheet tab' },
-    };
-    const draft = draftRowFor_(ctx, review, esc, null);
-    const row = ctx.store.addAlert(Object.assign({
-      alert_id: alertId,
-      source_message: cardMsg.name,
-      source_thread: cardMsg.thread || '',
-      record_key: review.recordKey || `sheettest:${nowMs}`,
-      author: authorRaw,
-      issue_tokens: review.issueTokens,
-      exposure_tag: exposureTag,
-      status: 'ok',
-      requested: [],
-      forwarded_fields: snapshotFields_(fields),
-      forward_message: cardMsg.name,
-      forward_thread: cardMsg.thread || '',
-      burson_done: true,
-      source_at: nowMs,
-      seen_at: postedEt,
-      ingested: SHEET_TEST_INGESTED_,
-    }, draft || {}));
-
-    ctx.store.markDone(cardMsg.name, 'sheet_test_alert', alertId);
-    ctx.recent.add(cardMsg.name, cardMsg.createTime || nowMs);
-    ctx.recent.save();
-
-    const report = { seen: 1, handled: 1, alerts: 1, drafts: 0, drafts_sent: 0, errors: [] };
-    if (draft) {
-      watchDraft_(ctx, alertId);
-      tryDraft_(ctx, row, report);
-    }
-
-    const summary = summarizeSheetTestResult_(alertId, space.name, products, row);
-    const st = String(row.email_status || '');
-    const badge = st === 'sent'
-      ? `✅ Sent at ${postedEt} (${alertId})`
-      : st === 'drafted'
-        ? `📝 Drafted at ${postedEt} (${alertId})`
-        : st === 'skipped_no_test_email'
-          ? `⏭️ Skipped at ${postedEt} — no Col C test email set (${alertId})`
-          : `⚠️ ${st || 'Checked'} at ${postedEt} (${alertId})`;
-
-    sh.getRange(2, 3).setValue(badge);
-    sh.getRange(3, 2).setValue(summary);
-
-    try {
-      postTo_(ctx, space.id, `🧪 *Test Alert Result (${alertId}):*\n${summary}`, cardMsg.thread || null, `sheettestres:${alertId}`);
-    } catch (e) {}
-
-    return { sent: st === 'sent', status: st, alertId, products, summary };
+    return { posted: true, spaceId: space.id, spaceName: space.name, messageName: chatMsg && chatMsg.name, products };
   } catch (err) {
     const msg = truncate_(String((err && err.message) || err), 220);
     try {
-      sh.getRange(2, 3).setValue(`⚠️ Failed: ${msg}`);
-      sh.getRange(3, 2).setValue(`Error while sending test alert: ${msg}`);
+      sh.getRange(2, 3).setValue(`⚠️ Failed to post to Chat: ${msg}`);
+      sh.getRange(3, 2).setValue(`Error while posting test alert to Chat: ${msg}`);
     } catch (e2) {}
     throw err;
   }
+}
+
+/**
+ * Step 2 callback (Chat Space -> Social Alert Sent): Called by `Bot.gs` `handleNewAlert_` after the Chat poller picks up
+ * the posted test alert from the test Chat space and runs `tryDraft_`. Writes the per-product email delivery summary back
+ * onto `Test alert!C2` & `B3` and into the Chat alert's thread. Never throws.
+ */
+function onSheetTestAlertWorked_(ctx, m, row) {
+  try {
+    const meta = sheetTestMeta_(ctx, m);
+    const ff = (row && row.forwarded_fields) || {};
+    const products = (meta && meta.products && meta.products.length)
+      ? meta.products
+      : (Array.isArray(ff.product_targets) && ff.product_targets.length
+        ? ff.product_targets
+        : [ff.product].concat(ff.other_products || []).filter(Boolean));
+    const spaceName = (meta && meta.spaceName) ||
+      (ctx && ctx.spaces && ctx.spaces.analyst && ctx.spaces.analyst.name) || '';
+    const summary = summarizeSheetTestResult_(row.alert_id, spaceName, products, row);
+    const postedEt = typeof nowLabel_ === 'function' ? nowLabel_() : new Date(ctx.now()).toISOString();
+    const st = String((row && row.email_status) || '');
+    const badge = st === 'sent'
+      ? `✅ Picked up in Chat & Sent at ${postedEt} (${row.alert_id})`
+      : st === 'drafted'
+        ? `📝 Picked up in Chat & Drafted at ${postedEt} (${row.alert_id})`
+        : st === 'skipped_no_test_email'
+          ? `⏭️ Picked up in Chat — skipped (no Col C test email, ${row.alert_id})`
+          : `⚠️ Picked up in Chat — ${st || 'checked'} (${row.alert_id})`;
+
+    try {
+      const targetSpace = (ctx && ctx.spaces && (ctx.sourceReadOnly ? ctx.spaces.analyst.id : ctx.spaces.burson.id)) || '';
+      if (targetSpace) {
+        postTo_(ctx, targetSpace, `🧪 *Test Alert Delivery (${row.alert_id}):*\n${summary}`,
+          (row && row.forward_thread) || (m && m.thread) || null, `sheettestres:${row.alert_id}`);
+      }
+    } catch (e) {}
+
+    const ss = openStore_(false);
+    const sh = ss ? ss.getSheetByName(SHEET_TEST_TAB_) : null;
+    if (isTestAlertTab_(sh)) {
+      sh.getRange(2, 3).setValue(badge);
+      sh.getRange(3, 2).setValue(summary);
+    }
+  } catch (e) {}
 }

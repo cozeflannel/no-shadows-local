@@ -643,8 +643,9 @@ function handleAlert_(ctx, m, parsed, report) {
   if (existing) { finishAlert_(ctx, m, existing, report); return; }  // recorded on an earlier, interrupted attempt
   // Auto-find missing links (Control row 14): a missing link or author from the listening feeds, before anything uses them
   if (switchOn_(ctx, 'autoFindLinks')) findMissingLink_(ctx, parsed, report);
-  // Direct BigQuery alerts (Control row 15): a post the bot took from BigQuery itself (BigQuery.gs) isn't Burson's alert
-  const ingested = bqIngestedSource_(ctx, m);
+  // Direct BigQuery alerts (Control row 15) and Sheet test alerts (SheetTestAlert.gs): posted by the bot into the test space
+  const ingested = bqIngestedSource_(ctx, m) || (typeof sheetTestSource_ === 'function' ? sheetTestSource_(ctx, m) : '');
+  const isSheetTest = Boolean(ingested && typeof SHEET_TEST_INGESTED_ === 'string' && ingested === SHEET_TEST_INGESTED_);
   if (ingested) parsed.ingested = ingested;
   const key = recordKey_(parsed.fields);
   const tokens = issueTokens_(parsed.fields.issue_name || parsed.fields.alert_name);
@@ -656,11 +657,11 @@ function handleAlert_(ctx, m, parsed, report) {
   // found keeps that link (Burson was never asked for it)
   if (pending && switchOn_(ctx, 'autoFindLinks')) keepFoundLink_(ctx, parsed, pending);
   // The post itself (Post.gs): its own words, the thread it's in, what it quotes, and its video / photos for Gemini
-  if (parsed.post === undefined && S.post_lookup !== false && typeof ctx.post === 'function') {
+  if (!isSheetTest && parsed.post === undefined && S.post_lookup !== false && typeof ctx.post === 'function') {
     try { parsed.post = ctx.post(parsed.fields.post_url) || null; } catch (e) { parsed.post = null; }
     if (parsed.post) ctx.log(`post: ${postBrief_(parsed.post)}`);
   }
-  if (!parsed.bq && typeof ctx.bq === 'function') {
+  if (!isSheetTest && !parsed.bq && typeof ctx.bq === 'function') {
     try { parsed.bq = ctx.bq(parsed); } catch (e) { parsed.bq = null; }
     // the post as the listening feeds captured it (BigQuery.gs feedTextPrompt_), for posts the bot can't open itself
     const feed = typeof feedBrief_ === 'function' ? feedBrief_(parsed.bq) : '';
@@ -671,10 +672,10 @@ function handleAlert_(ctx, m, parsed, report) {
     .filter(h => !pending || h.forward_message !== pending.forward_message);
   // Earlier alerts this one may repeat or follow up on (same post, same author, or a post it replies under or quotes):
   // Gemini sees them too
-  if (S.follow_ups !== false) parsed.earlier = earlierAlerts_(parsed.fields, history, parsed.bq, now, parsed.post);
+  if (!isSheetTest && S.follow_ups !== false) parsed.earlier = earlierAlerts_(parsed.fields, history, parsed.bq, now, parsed.post);
   // The issues already alerted in the last 14 days most like this one (IssueNames.gs): Gemini says whether the alert is
   // one of them, so it keeps that issue's name instead of starting a second name for it
-  if (S.follow_ups !== false) parsed.knownIssues = knownIssuesFor_(ctx, parsed, history, now);
+  if (!isSheetTest && S.follow_ups !== false) parsed.knownIssues = knownIssuesFor_(ctx, parsed, history, now);
   // The SLRR leads' current guidance on what to escalate (the Guidance tab and their recent emails)
   try { parsed.guidance = ctx.guidance || []; } catch (e) { parsed.guidance = []; }
   // KB & Guidance can start alerts (Control tab row 13): Gemini cites the row or document that says to alert, if any
@@ -694,7 +695,7 @@ function handleAlert_(ctx, m, parsed, report) {
   if (parsed.knowledge && parsed.knowledge.docs.length) ctx.log(`knowledge: ${knowledgeBrief_(parsed.knowledge)}`);
   // Learn from IM calls (Control tab row 17): the IMs' past calls on alerts like this one (the Learned precedents tab)
   if (switchOn_(ctx, 'learnIm')) imPrecedentsFor_(ctx, parsed);
-  if (typeof vecTagHints_ === 'function' && typeof vecTagHintLine_ === 'function') {
+  if (!isSheetTest && typeof vecTagHints_ === 'function' && typeof vecTagHintLine_ === 'function') {
     try {
       const hText = [parsed.fields.issue_name || parsed.fields.alert_name || '', parsed.fields.summary || '',
         (parsed.post && parsed.post.text) || parsed.fields.post_content || ''].filter(Boolean).join(' — ').slice(0, 1200);
@@ -702,11 +703,12 @@ function handleAlert_(ctx, m, parsed, report) {
       if (hint) parsed.tagHintLine = vecTagHintLine_(hint);
     } catch (e) {}
   }
-  const memoryStory = typeof amNoveltyFor_ === 'function' ? amNoveltyFor_(ctx, parsed.fields) : null;
+  const memoryStory = !isSheetTest && typeof amNoveltyFor_ === 'function' ? amNoveltyFor_(ctx, parsed.fields) : null;
   // Gemini's review, with the crash guard and the hold for the next run (guardedAssess_)
-  const { llm, llmError, held } = guardedAssess_(ctx, m, parsed, now);
+  const { llm, llmError, held } = isSheetTest ? { llm: null, llmError: '', held: null } : guardedAssess_(ctx, m, parsed, now);
   const review = reviewAlert_(parsed, { llm, llmError, now, settings: S, history, mediaHeld: held, memoryStory });
-  review.memory = typeof amFactsFor_ === 'function' ? amFactsFor_(ctx, review.fields, { live: amLiveOf_(ctx, m) }) : null;
+  if (isSheetTest && typeof applySheetTestReviewOverrides_ === 'function') applySheetTestReviewOverrides_(parsed, review);
+  review.memory = !isSheetTest && typeof amFactsFor_ === 'function' ? amFactsFor_(ctx, review.fields, { live: amLiveOf_(ctx, m) }) : null;
   if (review.knowledgeUsed.length) {
     ctx.log(`knowledge used: ${review.knowledgeUsed.map(u => u.document + (u.used_for ? ` (${u.used_for})` : '')).join('; ')}`);
   }
@@ -1081,6 +1083,10 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
     } else if (sendAlertActions_(ctx, m, requested, fwd, !draftsOn_(ctx))) report.fix_requests++;
     ctx.store.updateAlert(row, { burson_done: true });
     ctx.store.markDone(m.name, 'alert', alertId);
+    if (row && typeof SHEET_TEST_INGESTED_ === 'string' && row.ingested === SHEET_TEST_INGESTED_ &&
+        typeof onSheetTestAlertWorked_ === 'function') {
+      onSheetTestAlertWorked_(ctx, m, row);
+    }
     return;
   }
 
@@ -1105,6 +1111,10 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
   }
   if (!waiting.length) confirmReceipt_(ctx, row);
   ctx.store.markDone(m.name, 'alert', alertId);
+  if (row && typeof SHEET_TEST_INGESTED_ === 'string' && row.ingested === SHEET_TEST_INGESTED_ &&
+      typeof onSheetTestAlertWorked_ === 'function') {
+    onSheetTestAlertWorked_(ctx, m, row);
+  }
 }
 
 /**
@@ -1570,12 +1580,33 @@ function pollAnalystMessages_(ctx, report) {
     if (!ctx.sourceReadOnly || !m || m.threadReply) return false;
     if (ctx.recent.has(m.name) || ctx.store.isDone(m.name)) return false;
     if (typeof pwAlertOf_ === 'function' && pwAlertOf_(ctx, m)) return true;
-    if (typeof bqIngestedSource_ === 'function' && bqIngestedSource_(ctx, m)) {
+    const ing = (typeof bqIngestedSource_ === 'function' && bqIngestedSource_(ctx, m)) ||
+      (typeof sheetTestSource_ === 'function' && sheetTestSource_(ctx, m));
+    if (ing) {
       const p = parseAlert_(m.text);
       return Boolean(detectAlert_(m.text, p, 'Zapier'));
     }
     return false;
   };
+  // Pick up any newly posted Sheet test alert from B10 right away (without moving analyst_cursor past older cards)
+  if (ctx.sourceReadOnly && typeof sheetTestSource_ === 'function') {
+    for (const stMsg of msgs) {
+      if (ctx.now() > ctx.deadline) break;
+      if (!stMsg || stMsg.threadReply || !sheetTestSource_(ctx, stMsg)) continue;
+      if (ctx.recent.has(stMsg.name) || ctx.store.isDone(stMsg.name)) continue;
+      const parsedSt = parseAlert_(stMsg.text);
+      if (!detectAlert_(stMsg.text, parsedSt, 'Zapier')) continue;
+      report.handled++;
+      report.alerts++;
+      try {
+        handleAlert_(ctx, stMsg, parsedSt, report);
+        ctx.recent.add(stMsg.name, stMsg.createTime);
+      } catch (e) {
+        report.errors.push(`${stMsg.name}: ${(e && e.message) || e}`);
+        report.analyst_backlog = true;
+      }
+    }
+  }
   for (let idx = 0; idx < msgs.length; idx++) {
     const m = msgs[idx];
     if (ctx.now() > ctx.deadline) {
@@ -1623,9 +1654,11 @@ function pollAnalystMessages_(ctx, report) {
         continue;
       }
     }
-    // Auto-correct space (B10) standalone Direct-BQ cards (when B9 is blank and row 15 is ON)
-    if (ctx.sourceReadOnly && !m.threadReply && typeof bqIngestedSource_ === 'function') {
-      const bqSrc = bqIngestedSource_(ctx, m);
+    // Auto-correct space (B10) standalone Direct-BQ and Sheet-test cards
+    if (ctx.sourceReadOnly && !m.threadReply &&
+        (typeof bqIngestedSource_ === 'function' || typeof sheetTestSource_ === 'function')) {
+      const bqSrc = (typeof bqIngestedSource_ === 'function' && bqIngestedSource_(ctx, m)) ||
+        (typeof sheetTestSource_ === 'function' && sheetTestSource_(ctx, m));
       if (bqSrc) {
         if (ctx.recent.has(m.name) || ctx.store.isDone(m.name)) {
           ctx.recent.add(m.name, m.createTime);
