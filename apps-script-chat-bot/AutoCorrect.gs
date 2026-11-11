@@ -28,7 +28,9 @@ const AC_HINT_ = 'Leave blank, or paste a Google-only test space link: live Burs
 const AC_TAG_ = 'Auto-correct test';              // on its emails and DMs, to tell them apart from the Mirror space's
 const AC_PARTITION_SUFFIX_ = ' (auto-correct)';   // on its rows in the Alerts log
 const AC_BUDGET_MS_ = 150 * 1000;                 // its share of a run, after the Mirror space's
+const AC_STANDALONE_BUDGET_MS_ = 220 * 1000;      // its share when B10 runs standalone (B3/B4/B9 not running ahead of it)
 const AC_LATEST_MS_ = 240 * 1000;                 // it stops starting new alerts 4 minutes into a run (Apps Script stops at 6)
+const AC_STANDALONE_LATEST_MS_ = 260 * 1000;      // standalone latest stop (leaves 40s before RUN_HARD_STOP_MS_ for watches/Speed)
 const AC_MIN_MS_ = 30 * 1000;                     // less than this left: it waits for the next minute
 const AC_STATS_PROP_ = 'AC_STATS';
 const AC_LIVE_NAME_ = 'Burson space (live, read only)';
@@ -82,7 +84,8 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
       writeAutoCorrectNote_(control, sfbPausedNote_(sfb));
       return null;
     }
-    const latest = (runStart || Date.now()) + AC_LATEST_MS_;
+    const standalone = Boolean(opts && opts.standalone);
+    const latest = (runStart || Date.now()) + (standalone ? AC_STANDALONE_LATEST_MS_ : AC_LATEST_MS_);
     if (latest - Date.now() < AC_MIN_MS_) {
       console.log('auto-correct space: not enough time left in this run; it carries on next minute');
       return null;
@@ -106,10 +109,17 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
       bqLookbackFrom_(wanted && wanted.bqLookback).minutes;
     ctx.allowEarlyWave = Boolean(opts && opts.allowEarlyWave);
     ctx.allowDirectBq = Boolean(opts && opts.allowDirectBq);
-    ctx.deadline = Math.min(Date.now() + AC_BUDGET_MS_, latest);
+    const budgetMs = standalone ? AC_STANDALONE_BUDGET_MS_ : AC_BUDGET_MS_;
+    ctx.deadline = Math.min(Date.now() + budgetMs, latest);
     startFromAutoCorrect_(props, cfg, ctx);
+    // Triage existing S-F Burson and B10 alerts FIRST so Direct BigQuery queries never starve aging cards in B10
+    const report = runOnce_(ctx);
+    const slaBusy = Boolean(report && (report.held > 0 || report.analyst_backlog ||
+      report.handled >= ctx.settings.max_messages_per_run ||
+      (report.errors || []).some(e => /^time budget/.test(String(e)))));
+    ctx.slaBusy = slaBusy;
     let bqPolled = null;
-    if (ctx.allowDirectBq && switchOn_(ctx, 'directBq')) {
+    if (ctx.allowDirectBq && switchOn_(ctx, 'directBq') && !slaBusy) {
       Object.assign(ctx.settings, { bq_direct_poll: true, bq_poll_sprinklr: true, bq_poll_bmie: true, bq_poll_bsip: true });
       if (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', false)) {
         try { bqPolled = pollBigQuerySources_(ctx, space.id); } catch (e) {
@@ -117,15 +127,11 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
         }
       }
     }
-    const report = runOnce_(ctx);
     if (bqPolled && (bqPolled.sprinklr || bqPolled.bmie)) {
       report.bq_sprinklr = bqPolled.sprinklr;
       report.bq_bmie = bqPolled.bmie;
     }
     if (bqPolled && bqPolled.bsip) report.bq_bsip = bqPolled.bsip;
-    const slaBusy = Boolean(report && (report.held > 0 || report.handled >= ctx.settings.max_messages_per_run ||
-      (report.errors || []).some(e => /^time budget/.test(String(e)))));
-    ctx.slaBusy = slaBusy;
     if (ctx.allowEarlyWave && switchOn_(ctx, 'earlyWave') &&
         (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', slaBusy))) {
       try {

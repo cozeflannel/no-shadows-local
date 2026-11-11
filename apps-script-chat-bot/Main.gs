@@ -314,6 +314,7 @@ function poll() {
   let lookback = null;  // this run's BigQuery lookback (Control tab B31): bqLookbackFor_
   let mode = null;  // this run's mode (runMode_): {live, why}, once the spaces are known
   let mainCtx = null;
+  let acStandalone = false;
   let activity = 0;  // alerts handled and emails sent this run (either space): the Results tab rebuilds right after
   let followActivity = 0;  // new replies seen, drafts made, Social Alerts sent (either space): the Follow-up tab rebuilds right after
   let relayRan = false;  // the relay ran this run (when the run fails before it does, it starts afresh: relayFailStop_)
@@ -346,6 +347,7 @@ function poll() {
       props.setProperty('OS_PAUSED', 'true');  // and the Other alerts space (OtherSpace.gs)
       props.setProperty(PW_PAUSED_PROP_, 'true');  // and the Proactive watch (ProactiveWatch.gs): it starts afresh
       props.setProperty('FAIL_STREAK', '0');
+      if (typeof noteSheetTestPaused_ === 'function') noteSheetTestPaused_(ss);
       writeControlStatus_(control, { status: pausedStatusText_(), lastCheck: nowLabel_(), today: todayText_(readStats_(), dayKey_(), wanted.switches.noWait) });
       return;
     }
@@ -390,7 +392,7 @@ function poll() {
     // directly in B25 (row 32): not used (C9 says so)
     const relayMayCopy = !!(wanted.switches.relay && sfbFlows.space && !(GEN.settings && GEN.settings.dry_run));
     let mirror = direct.space ? directB25MirrorOff_(control, wanted) : mirrorZapierPosts_(control, wanted, sfb, { defer: relayMayCopy });
-    const acStandalone = !direct.space && !mirror && !!String(wanted.autocorrect || '').trim() &&
+    acStandalone = !direct.space && !mirror && !!String(wanted.autocorrect || '').trim() &&
       (!String(wanted.burson || '').trim() || !String(wanted.analyst || '').trim());
     if (acStandalone) {
       mode = { live: false, why: 'working in the Auto-correct space (B10)' };
@@ -617,6 +619,13 @@ function poll() {
   } finally {
     try {
       if (ss && control && wanted && wanted.on) {
+        if (typeof runSheetTestAlert_ === 'function') {
+          try {
+            runSheetTestAlert_(ss, control, wanted, sfbFlows || sfb, mode, testers);
+          } catch (e) {
+            console.error('sheet test alert: ' + ((e && e.stack) || e));
+          }
+        }
         const bgBusy = !!(mainCtx && mainCtx.slaBusy);
         // The Other alerts space (Control tab B33, OtherSpace.gs): a Google-only space with other alerts, worked directly
         // and always Testing, with no S-F Burson. Its own status (C33) and time budget; it never touches the run above.
@@ -630,6 +639,7 @@ function poll() {
         const allowAcDirectBq = !String(wanted.mirror || '').trim() &&
           (!mainCtx || Boolean(bqDirectRefusal_(mainCtx, cfg && cfg.burson && cfg.burson.id)));
         const ac = runAutoCorrect_(control, wanted, ss, cfg, runStart, sfbFlows || sfb, {
+          standalone: acStandalone,
           allowEarlyWave: allowAcEarlyWave,
           allowDirectBq: allowAcDirectBq,
           lookbackMinutes: lookback ? lookback.minutes : BQ_LOOKBACK_DEFAULT_MIN_,
@@ -657,7 +667,9 @@ function poll() {
           const otherBusy = Boolean(toOther && os && os.report &&
             ((os.report.errors || []).some(e => /^time budget/.test(String(e))) || os.report.held > 0));
           const acBusy = Boolean(toAc && ac && ac.report &&
-            ((ac.report.errors || []).some(e => /^time budget/.test(String(e))) || ac.report.held > 0));
+            ((ac.report.errors || []).some(e => /^time budget/.test(String(e))) || ac.report.held > 0 ||
+              ac.report.analyst_backlog ||
+              (ac.ctx && ac.ctx.settings && ac.report.handled >= ac.ctx.settings.max_messages_per_run)));
           runProactiveWatch_(ss, runStart, { alerts, control, otherBusy, acBusy, slaBusy: bgBusy });
         } else {
           proactiveWatchOff_();

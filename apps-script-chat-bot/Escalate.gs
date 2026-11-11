@@ -412,9 +412,13 @@ function planRecipients_(a, text, extraGroups, productName) {
       }
     }
   };
-  const res = resolveDistro_(productName || a.product);
-  if (res.note) plan.notes.push(res.note);
+  const targetName = productName || a.product;
+  const res = resolveDistro_(targetName);
   const product = res.distro;
+  const specGroup = !product && targetName && typeof resolveSpecialtyGroup_ === 'function'
+    ? resolveSpecialtyGroup_(targetName)
+    : null;
+  if (res.note && !specGroup) plan.notes.push(res.note);
   const secondaryDistros = [];
   if (!productName && Array.isArray(a.other_products) && a.other_products.length) {
     a.other_products.forEach(opName => {
@@ -429,6 +433,14 @@ function planRecipients_(a, text, extraGroups, productName) {
   }
   if (product) {
     addProductDistro(product);
+    secondaryDistros.forEach(addProductDistro);
+  } else if (specGroup) {
+    add(plan.to, specGroup.recipients);
+    if (!plan.groups.includes(specGroup.name)) {
+      plan.groups.push(specGroup.name);
+      plan.reasons[specGroup.name] = 'selected group POCs';
+      plan.members[specGroup.name] = (specGroup.recipients || []).slice();
+    }
     secondaryDistros.forEach(addProductDistro);
   } else if (secondaryDistros.length) {
     secondaryDistros.forEach(addProductDistro);
@@ -478,13 +490,14 @@ function productEmailTargets_(input, extraGroups, row) {
     if (!s) return;
     const res = resolveDistro_(s);
     const distro = res.distro || null;
-    const key = String((distro && distro.name) || productCanonKey_(s) || s).trim().toLowerCase();
+    const spec = !distro && typeof resolveSpecialtyGroup_ === 'function' ? resolveSpecialtyGroup_(s) : null;
+    const key = String((distro && distro.name) || (spec && spec.name) || productCanonKey_(s) || s).trim().toLowerCase();
     if (!key) return;
     const existing = groups.find(g => g.key === key);
     if (existing) {
       if (!existing.products.some(x => x.toLowerCase() === s.toLowerCase())) existing.products.push(s);
     } else {
-      groups.push({ key, distroName: (distro && distro.name) || s, distro, products: [s] });
+      groups.push({ key, distroName: (distro && distro.name) || (spec && spec.name) || s, distro, products: [s] });
     }
   });
   const effectiveGroups = groups.length > 1

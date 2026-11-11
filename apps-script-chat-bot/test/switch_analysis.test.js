@@ -323,11 +323,12 @@ module.exports = H => {
     eq(sh.frozenRows, 1);    // Only Row 1 is frozen
     eq(data.length, 3);      // Q&A (-2h), Alert 1 (-3h), Alert 2 (-30h)
 
-    // Verify 3-subtab Sidepanel state (Overview, Controls & Filters, Scorecard) via Code.gs
+    // Verify 3-subtab Sidepanel state (Overview, Controls & Filters, Scorecard) + Test Alert menu via Code.gs
     const { panel, uiCalls } = loadSidepanel(ss);
     panel.onOpen();
-    eq(uiCalls.menus.length, 1);
+    eq(uiCalls.menus.length, 2);
     eq(uiCalls.menus[0].title, '📊 Bot Analysis');
+    eq(uiCalls.menus[1].title, '🧪 Test Alert');
     panel.openAnalysisScorecard();
     eq(uiCalls.sidebars.length, 1);
     eq(uiCalls.sidebars[0].initialTab, 'scorecard');

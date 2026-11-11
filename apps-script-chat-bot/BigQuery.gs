@@ -501,7 +501,9 @@ function bqWriteBack_(ctx, row, kind, report) {
   if (!switchOn_(ctx, 'writeBackBq')) return false;
   // an alert in another format (OtherAlerts.gs), a watch alert (WatchAlerts.gs), or an early-detection alert isn't a
   // Burson SLRR alert, and nothing in the Other alerts space (B33, OtherSpace.gs) is Burson's: never in the SLRR tables
-  if (row && [OTHER_INGESTED_, PW_ALERT_INGESTED_, ED_ALERT_INGESTED_].includes(String(row.ingested || ''))) return false;
+  const nonSlrr = [OTHER_INGESTED_, PW_ALERT_INGESTED_, ED_ALERT_INGESTED_];
+  if (typeof SHEET_TEST_INGESTED_ === 'string') nonSlrr.push(SHEET_TEST_INGESTED_);
+  if (row && nonSlrr.includes(String(row.ingested || ''))) return false;
   if (ctx && ctx.otherSpace) return false;
   const id = (row && row.alert_id) || '';
   try {
@@ -2114,10 +2116,14 @@ function bqDirectWaiting_(ctx, msgs) {
   try {
     const raw = JSON.parse(PropertiesService.getScriptProperties().getProperty(BQ_INGESTED_MSGS_PROP_) || '[]') || [];
     const mine = new Set(raw.filter(p => Array.isArray(p)).map(p => p[0]));
-    if (!mine.size) return 0;
     const reviewed = name => !!(ctx.recent && ctx.recent.has(name)) || !!(ctx.store && ctx.store.isDone(name));
-    return (msgs || []).filter(m => m && m.name && !m.threadReply && mine.has(hashText_(String(m.name))) &&
-      !reviewed(m.name)).length;
+    const checkWatch = !!(ctx && ctx.sourceReadOnly && typeof pwAlertOf_ === 'function');
+    if (!mine.size && !checkWatch) return 0;
+    return (msgs || []).filter(m => {
+      if (!m || !m.name || m.threadReply || reviewed(m.name)) return false;
+      if (mine.has(hashText_(String(m.name)))) return true;
+      return Boolean(checkWatch && pwAlertOf_(ctx, m));
+    }).length;
   } catch (e) {
     return 0;
   }

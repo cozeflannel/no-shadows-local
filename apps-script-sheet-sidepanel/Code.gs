@@ -26,15 +26,182 @@ const SIDEPANEL_FOCUSES_ = [
   'Thread Q&A only',
 ];
 
+const SIDEPANEL_TEST_TAB_ = 'Test alert';
+const SIDEPANEL_TEST_HEADER_ = 'SLRR Test Alert Sender';
+const SIDEPANEL_BSG_TAB_ = 'Brand safety groups';
+
 function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu('📊 Bot Analysis')
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('📊 Bot Analysis')
     .addItem('Open Sidepanel', 'openAnalysisSidepanel')
     .addSeparator()
     .addItem('Overview', 'openAnalysisOverview')
     .addItem('Controls & Filters', 'openAnalysisControls')
     .addItem('Scorecard', 'openAnalysisScorecard')
     .addToUi();
+
+  ui.createMenu('🧪 Test Alert')
+    .addItem('🚀 Send Test Alert', 'sendSheetTestAlert')
+    .addItem('📋 Open Test Alert Tab', 'openSheetTestAlertTab')
+    .addSeparator()
+    .addItem('🧹 Clear Extra Products (Slots 2–5)', 'clearExtraTestProducts')
+    .addToUi();
+}
+
+function sidepanelTestRouteFormula_(rowNum) {
+  const cell = `B${rowNum}`;
+  return `=IF(TRIM(${cell})="","",IFERROR(IF(Control!$B$37="ON","Test (Col C): "&IF(INDEX('Brand safety groups'!$C$2:$C$200,MATCH(${cell},'Brand safety groups'!$A$2:$A$200,0))="","(none — will skip)",INDEX('Brand safety groups'!$C$2:$C$200,MATCH(${cell},'Brand safety groups'!$A$2:$A$200,0))),IF(Control!$B$29="ON","Testing B30: "&IF(Control!$B$30="","(B30 blank — waiting)",Control!$B$30),"Live (Col B): "&INDEX('Brand safety groups'!$B$2:$B$200,MATCH(${cell},'Brand safety groups'!$A$2:$A$200,0)))),"(comma list / custom)"))`;
+}
+
+function ensureSidepanelTestAlertTab_(ss) {
+  const existing = ss.getSheetByName(SIDEPANEL_TEST_TAB_);
+  if (existing) {
+    const marker = String(existing.getRange(1, 1).getValue() || '').trim();
+    if (marker !== SIDEPANEL_TEST_HEADER_) {
+      throw new Error('A custom tab named "Test alert" already exists; refusing to overwrite it.');
+    }
+    applySidepanelTestValidations_(ss, existing);
+    return { sh: existing, created: false };
+  }
+  const sheets = ss.getSheets();
+  const bsgIdx = sheets.findIndex(s => s.getName() === SIDEPANEL_BSG_TAB_);
+  const sh = bsgIdx >= 0 ? ss.insertSheet(SIDEPANEL_TEST_TAB_, bsgIdx + 1) : ss.insertSheet(SIDEPANEL_TEST_TAB_);
+  const rows = [
+    [
+      SIDEPANEL_TEST_HEADER_,
+      'Pick 1–5 products below (or comma-separate in B5), then click 🧪 Test Alert → 🚀 Send Test Alert (or set B2 to SEND NOW).',
+      'Email Route Preview (from Brand safety groups)',
+    ],
+    [
+      'Action',
+      'Idle',
+      'Ready — pick product(s) in B5:B9, then click 🧪 Test Alert → 🚀 Send Test Alert (or set B2 to SEND NOW)',
+    ],
+    [
+      'Last Result',
+      'No test alert sent yet.',
+      '=IF(Control!$B$37="ON","Mode: Group test emails (Control!B37 ON → Brand safety groups Col C)",IF(Control!$B$29="ON","Mode: Testing sandbox (Control!B29 ON → Control!B30)","Mode: LIVE (Brand safety groups Col B)"))',
+    ],
+    ['Product Slot', 'Product / Group (dropdown or comma-separated)', 'Configured Destination'],
+    ['Product 1', 'Gemini App', sidepanelTestRouteFormula_(5)],
+    ['Product 2 (optional)', '', sidepanelTestRouteFormula_(6)],
+    ['Product 3 (optional)', '', sidepanelTestRouteFormula_(7)],
+    ['Product 4 (optional)', '', sidepanelTestRouteFormula_(8)],
+    ['Product 5 (optional)', '', sidepanelTestRouteFormula_(9)],
+    ['Alert Field', 'Value (editable — defaults trigger a Social Alert)', 'Notes'],
+    ['Issue Title', 'Test Multi-Product Social Alert', 'Shown in the Social Alert subject line and summary'],
+    ['Exposure Tag', 'Product - Scams involving Google products', 'P0/P1 tag ensures the test alert escalates to email'],
+    ['Sensitive Topic', 'None', 'Optional Sensitive Topic (or None)'],
+    ['Platform', 'X', 'Social platform (avoid YouTube when testing standard PA emails)'],
+    ['Author', '@test_routing_account', 'Sample handle used on the test card'],
+    ['Engagements', '500', '100+ engagements meets the SLRR collection threshold'],
+    ['KOF', 'No', 'Key Opinion Former (Yes / No)'],
+    [
+      'Summary',
+      'Synthetic test alert triggered from the Test alert tab to verify per-product Social Alert email routing.',
+      'Included in the Chat card and formulated Social Alert email(s)',
+    ],
+  ];
+  sh.getRange(1, 1, rows.length, 3).setValues(rows);
+  try {
+    sh.setFrozenRows(1);
+    sh.setColumnWidth(1, 185);
+    sh.setColumnWidth(2, 390);
+    sh.setColumnWidth(3, 440);
+    sh.getRange(1, 1, 1, 3).setFontWeight('bold').setBackground('#e8f0fe');
+    sh.getRange(4, 1, 1, 3).setFontWeight('bold').setBackground('#f1f3f4');
+    sh.getRange(10, 1, 1, 3).setFontWeight('bold').setBackground('#f1f3f4');
+    sh.getRange(2, 1, 2, 1).setFontWeight('bold');
+  } catch (e) {}
+  applySidepanelTestValidations_(ss, sh);
+  return { sh, created: true };
+}
+
+function applySidepanelTestValidations_(ss, sh) {
+  if (!sh || typeof SpreadsheetApp === 'undefined' || !SpreadsheetApp.newDataValidation) return;
+  try {
+    sh.getRange(2, 2).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(['Idle', 'SEND NOW'], true).setAllowInvalid(false).build()
+    );
+    const bsg = ss.getSheetByName(SIDEPANEL_BSG_TAB_);
+    if (bsg) {
+      const b = SpreadsheetApp.newDataValidation();
+      if (typeof b.requireValueInRange === 'function') {
+        const rule = b.requireValueInRange(bsg.getRange('A2:A200'), true).setAllowInvalid(true).build();
+        for (let r = 5; r <= 9; r++) sh.getRange(r, 2).setDataValidation(rule);
+      }
+    }
+  } catch (e) {}
+}
+
+/** Opens (or creates) the `Test alert` tab and focuses `Product 1` (`B5`). */
+function openSheetTestAlertTab(ssOverride) {
+  const ss = ssOverride || SpreadsheetApp.getActiveSpreadsheet();
+  const { sh, created } = ensureSidepanelTestAlertTab_(ss);
+  if (ss.setActiveSheet) ss.setActiveSheet(sh);
+  try { sh.getRange(5, 2).activate(); } catch (e) {}
+  if (typeof ss.toast === 'function') {
+    ss.toast(
+      created
+        ? 'Created Test alert tab — pick 1–5 products in B5:B9, then click 🧪 Test Alert → 🚀 Send Test Alert.'
+        : 'Pick 1–5 products in B5:B9, then click 🧪 Test Alert → 🚀 Send Test Alert.',
+      '🧪 Test Alert',
+      6
+    );
+  }
+  return { ok: true, created };
+}
+
+/** Clears optional product slots `B6:B9` (`Product 2`..`Product 5`) on `Test alert`. */
+function clearExtraTestProducts(ssOverride) {
+  const ss = ssOverride || SpreadsheetApp.getActiveSpreadsheet();
+  const { sh } = ensureSidepanelTestAlertTab_(ss);
+  sh.getRange(6, 2, 4, 1).clearContent();
+  if (ss.setActiveSheet) ss.setActiveSheet(sh);
+  try { sh.getRange(5, 2).activate(); } catch (e) {}
+  if (typeof ss.toast === 'function') {
+    ss.toast('Cleared Product 2–5 slots (B6:B9).', '🧪 Test Alert', 4);
+  }
+  return { ok: true };
+}
+
+/**
+ * Queues the configured test alert on `Test alert` (`B2 = 'SEND NOW'`) so the bot's 1-minute `poll()` posts the Chat
+ * card and sends each selected product's formulated Social Alert email.
+ */
+function sendSheetTestAlert(ssOverride) {
+  const ss = ssOverride || SpreadsheetApp.getActiveSpreadsheet();
+  const { sh, created } = ensureSidepanelTestAlertTab_(ss);
+  if (ss.setActiveSheet) ss.setActiveSheet(sh);
+  if (created) {
+    try { sh.getRange(5, 2).activate(); } catch (e) {}
+    if (typeof ss.toast === 'function') {
+      ss.toast('Test alert tab created! Review your Product(s) in B5:B9 and click 🚀 Send Test Alert again to send.', '🧪 Test Alert', 8);
+    }
+    return { ok: true, queued: false, created: true };
+  }
+  const prodVals = sh.getRange(5, 2, 5, 1).getDisplayValues();
+  const chosen = [];
+  prodVals.forEach(r => {
+    String((r && r[0]) || '').split(/[,;\n]+/).forEach(p => {
+      const s = p.trim();
+      if (s && !chosen.some(x => x.toLowerCase() === s.toLowerCase())) chosen.push(s);
+    });
+  });
+  if (!chosen.length) {
+    sh.getRange(2, 3).setValue('⚠️ Pick at least one product in B5:B9 first');
+    try { sh.getRange(5, 2).activate(); } catch (e) {}
+    if (typeof ss.toast === 'function') {
+      ss.toast('Pick at least one product in B5:B9 before sending.', '🧪 Test Alert', 6);
+    }
+    return { ok: false, queued: false, reason: 'no_products' };
+  }
+  sh.getRange(2, 2).setValue('SEND NOW');
+  sh.getRange(2, 3).setValue(`⏳ Queued (${chosen.join(', ')}) — sending on next 1-minute bot check…`);
+  if (typeof ss.toast === 'function') {
+    ss.toast(`Queued test alert for: ${chosen.join(', ')} — watch row 2 & 3 (~60s).`, '🧪 Test Alert', 8);
+  }
+  return { ok: true, queued: true, products: chosen };
 }
 
 function openAnalysisSidepanel() {

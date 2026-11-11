@@ -93,8 +93,9 @@ function runOnce_(ctx) {
   let newCursor = cursor;
   let blocked = false;  // the cursor never moves past a message that will be retried
   const room = ctx.deadline - start;  // this flow's time at its start (an alert held for the next run: reviewHoldWhyNot_)
+  const bursonDeadline = ctx.sourceReadOnly && room >= 120 * 1000 ? ctx.deadline - 45 * 1000 : ctx.deadline;
   for (const m of msgs) {
-    if (ctx.now() > ctx.deadline) { report.errors.push('time budget reached; the rest is handled next run'); break; }
+    if (ctx.now() > bursonDeadline) { report.errors.push('time budget reached; the rest is handled next run'); break; }
     if (ctx.sourceReadOnly && m.threadReply) {  // the auto-correct test space only reads Zapier's top-level posts
       if (!blocked) newCursor = Math.max(newCursor, m.createTime);
       continue;
@@ -161,8 +162,11 @@ function runOnce_(ctx) {
     }
   }
   ctx.cursor.set(newCursor);
-  if (!ctx.outboundBlocked && ctx.deadline - ctx.now() > 60 * 1000) {
+  const analystMinMs = ctx.sourceReadOnly ? 20 * 1000 : 60 * 1000;
+  if (!ctx.outboundBlocked && ctx.deadline - ctx.now() > analystMinMs) {
     try { pollAnalystMessages_(ctx, report); } catch (e) { report.errors.push('reading analyst messages: ' + ((e && e.message) || e)); }
+  } else if (ctx.sourceReadOnly) {
+    report.analyst_backlog = true;
   }
   const mirror = S.mirror_analyst_reactions && S.react && !S.dry_run && !ctx.outboundBlocked && !ctx.sourceReadOnly;
   if ((mirror || draftsOn_(ctx)) && ctx.deadline - ctx.now() > 60 * 1000) {
@@ -1558,11 +1562,31 @@ function pollAnalystMessages_(ctx, report) {
   const cursor = saved || (start - S.start_lookback_minutes * 60 * 1000);
   const since = new Date(Math.max(cursor - S.overlap_minutes * 60 * 1000, ctx.floor || 0)).toISOString();
   const msgs = ctx.chat.list(ctx.spaces.analyst.id, since, LIST_LIMIT_).sort((a, b) => a.createTime - b.createTime);
+  const room = ctx.deadline - start;
   let newCursor = cursor;
   let blocked = false;
   const advance = m => { if (!blocked) newCursor = Math.max(newCursor, m.createTime); };
-  for (const m of msgs) {
-    if (ctx.now() > ctx.deadline) break;
+  const isPendingB10Alert = m => {
+    if (!ctx.sourceReadOnly || !m || m.threadReply) return false;
+    if (ctx.recent.has(m.name) || ctx.store.isDone(m.name)) return false;
+    if (typeof pwAlertOf_ === 'function' && pwAlertOf_(ctx, m)) return true;
+    if (typeof bqIngestedSource_ === 'function' && bqIngestedSource_(ctx, m)) {
+      const p = parseAlert_(m.text);
+      return Boolean(detectAlert_(m.text, p, 'Zapier'));
+    }
+    return false;
+  };
+  for (let idx = 0; idx < msgs.length; idx++) {
+    const m = msgs[idx];
+    if (ctx.now() > ctx.deadline) {
+      if (msgs.slice(idx).some(isPendingB10Alert)) {
+        report.analyst_backlog = true;
+        if (!(report.errors || []).some(e => /^time budget/.test(String(e))) ) {
+          report.errors.push('time budget reached; the rest is handled next run');
+        }
+      }
+      break;
+    }
     // Auto-correct space (B10): triage the bot's own Watch alerts (B35 = Auto-correct space (B10)) right in B10
     if (ctx.sourceReadOnly && !m.threadReply && typeof pwAlertOf_ === 'function') {
       const watched = pwAlertOf_(ctx, m);
@@ -1572,9 +1596,10 @@ function pollAnalystMessages_(ctx, report) {
           advance(m);
           continue;
         }
-        if (report.handled >= S.max_messages_per_run) { blocked = true; break; }
+        if (report.handled >= S.max_messages_per_run) { report.analyst_backlog = true; blocked = true; break; }
         report.handled++;
         report.alerts++;
+        ctx.reviewHold = { first: report.handled === 1, room };
         try {
           handleOtherAlert_(ctx, m, watched, report);
           ctx.recent.add(m.name, m.createTime);
@@ -1584,12 +1609,16 @@ function pollAnalystMessages_(ctx, report) {
             report.handled--;
             report.alerts--;
             report.held = (report.held || 0) + 1;
+            report.analyst_backlog = true;
             ctx.log(`held ${m.name} for the next run: ${e.message}`);
             blocked = true;
             break;
           }
           report.errors.push(`${m.name}: ${(e && e.message) || e}`);
+          report.analyst_backlog = true;
           blocked = true;
+        } finally {
+          ctx.reviewHold = null;
         }
         continue;
       }
@@ -1604,10 +1633,11 @@ function pollAnalystMessages_(ctx, report) {
           continue;
         }
         const parsedBq = parseAlert_(m.text);
-        if (parsedBq.isAlert) {
-          if (report.handled >= S.max_messages_per_run) { blocked = true; break; }
+        if (detectAlert_(m.text, parsedBq, 'Zapier')) {
+          if (report.handled >= S.max_messages_per_run) { report.analyst_backlog = true; blocked = true; break; }
           report.handled++;
           report.alerts++;
+          ctx.reviewHold = { first: report.handled === 1, room };
           try {
             handleAlert_(ctx, m, parsedBq, report);
             ctx.recent.add(m.name, m.createTime);
@@ -1617,12 +1647,16 @@ function pollAnalystMessages_(ctx, report) {
               report.handled--;
               report.alerts--;
               report.held = (report.held || 0) + 1;
+              report.analyst_backlog = true;
               ctx.log(`held ${m.name} for the next run: ${e.message}`);
               blocked = true;
               break;
             }
             report.errors.push(`${m.name}: ${(e && e.message) || e}`);
+            report.analyst_backlog = true;
             blocked = true;
+          } finally {
+            ctx.reviewHold = null;
           }
           continue;
         }
@@ -1707,7 +1741,7 @@ function pollAnalystMessages_(ctx, report) {
     }
     ctx.store.markDone(m.name, 'question', alert ? alert.alert_id : '');
     ctx.recent.add(m.name, m.createTime);
-    newCursor = Math.max(newCursor, m.createTime);
+    advance(m);
   }
   if (ctx.memo && newCursor !== saved) ctx.memo.set('analyst_cursor', String(newCursor));
 }

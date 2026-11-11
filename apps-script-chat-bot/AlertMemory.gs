@@ -710,6 +710,7 @@ function makeAlertMemory_(ss, opts) {
     const seen = S.seededIds || (S.seededIds = new Set());
     (rows || []).forEach(r => {
       if (!r || !r.alert_id || seen.has(String(r.alert_id))) return;
+      if (typeof SHEET_TEST_INGESTED_ === 'string' && r.ingested === SHEET_TEST_INGESTED_) return;
       seen.add(String(r.alert_id));
       const at = Number(r.created_at) || 0;
       if (!at || t - at > AM_KEEP_MS_) return;
@@ -736,10 +737,10 @@ function makeAlertMemory_(ss, opts) {
           if (!p.n && ff.social_network) p.n = truncate_(String(ff.social_network), 30);
           if (Number.isInteger(ff.total_engagement)) p.g = Math.max(Number(p.g) || 0, ff.total_engagement);
         }
-        const lv = st === 'drafted' || String(r.email_sent_by || '') === 'bot' || !!r.email_draft;
+        const lv = st === 'drafted' || String(r.email_status) === 'drafted' || String(r.email_sent_by || '') === 'bot' || !!r.email_draft;
         const mail = emailed ? amEmailOfRow_(r, lv) : null;
-        const replaceSeed = p.seed && p.e && p.e.id !== mail.id && ((p.e.tf && !mail.tf) ||
-          (String(p.e.tf || '') === String(mail.tf || '') && Number(p.e.at) > mail.at));
+        const replaceSeed = Boolean(mail && p.seed && p.e && p.e.id !== mail.id && ((p.e.tf && !mail.tf) ||
+          (String(p.e.tf || '') === String(mail.tf || '') && Number(p.e.at) > mail.at)));
         if (mail && (!p.e || replaceSeed)) {  // a seeded post: its first real email
           p.e = mail;
           p.le = Math.max(Number(p.le) || 0, p.e.at);
@@ -1467,6 +1468,7 @@ function amHeldTrace_(ctx, row, v) {
  * go on. Never throws (a failed check lets it go, as before).
  */
 function amSendGate_(ctx, row, report) {
+  if (row && typeof SHEET_TEST_INGESTED_ === 'string' && row.ingested === SHEET_TEST_INGESTED_) return true;
   const mem = amOf_(ctx);
   if (!mem.active || !row) return true;
   let v = null;
@@ -1525,11 +1527,13 @@ function amThreadUpdate_(ctx, row, update) {
 
 /** Noted before Gmail is asked for row's Social Alert (or its draft). Never throws. */
 function amClaimSend_(ctx, row) {
+  if (row && typeof SHEET_TEST_INGESTED_ === 'string' && row.ingested === SHEET_TEST_INGESTED_) return;
   try { amOf_(ctx).claimSend(row, ctx); } catch (e) { ctx.log(`alert memory: couldn't note ${row && row.alert_id}'s send: ${(e && e.message) || e}`); }
 }
 
 /** Gmail refused it, or its draft was deleted: the claim is let go. Never throws. */
 function amReleaseSend_(ctx, row) {
+  if (row && typeof SHEET_TEST_INGESTED_ === 'string' && row.ingested === SHEET_TEST_INGESTED_) return;
   try { amOf_(ctx).releaseSend(row); } catch (e) { ctx.log(`alert memory: couldn't let go of ${row && row.alert_id}'s send: ${(e && e.message) || e}`); }
 }
 

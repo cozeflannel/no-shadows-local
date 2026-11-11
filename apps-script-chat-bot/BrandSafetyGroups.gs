@@ -283,6 +283,45 @@ function bsgTestGroupCount_() {
 }
 
 /**
+ * Matches a specialty group (`Executives` -> `Executive Comms`, `Civics`, `GCPA`, etc.) or regional lead group from
+ * `GEN.distribution` when a multi-product or sheet test alert explicitly names a non-product row from `Brand safety groups`.
+ * Returns `{kind, name, recipients, test_recipients}` or `null`. Pure.
+ */
+function resolveSpecialtyGroup_(name) {
+  if (typeof GEN === 'undefined' || !GEN) return null;
+  const ck = bsgNormKey_(name);
+  if (!ck) return null;
+  const dist = GEN.distribution || {};
+  const aliasCode = BSG_GROUP_ALIASES_[ck] || '';
+  for (const g of (dist.groups || [])) {
+    if (!g) continue;
+    if (bsgNormKey_(g.name) === ck || bsgNormKey_(g.action_code) === ck || (aliasCode && g.action_code === aliasCode)) {
+      return {
+        kind: 'group',
+        name: g.name,
+        action_code: g.action_code || '',
+        recipients: Array.isArray(g.recipients) ? g.recipients.slice() : [],
+        test_recipients: Array.isArray(g.test_recipients) ? g.test_recipients.slice() : [],
+      };
+    }
+  }
+  for (const rl of (dist.regional_leads || [])) {
+    if (!rl) continue;
+    const cands = [rl.region].concat(rl.aliases || []).filter(Boolean);
+    if (cands.some(c => bsgNormKey_(c) === ck)) {
+      return {
+        kind: 'regional',
+        name: `${rl.region} regional leads`,
+        action_code: '',
+        recipients: Array.isArray(rl.recipients) ? rl.recipients.slice() : [],
+        test_recipients: Array.isArray(rl.test_recipients) ? rl.test_recipients.slice() : [],
+      };
+    }
+  }
+  return null;
+}
+
+/**
  * Resolves Column C test email(s) from `Brand safety groups` for a single formulated Social Alert target (`t` from
  * `productEmailTargets_`). Returns `{to, cc, groupName}`:
  * - If the target's product/group has no test email in Column C, `to` is `[]` (no email is sent; never falls back to B30
@@ -295,11 +334,15 @@ function bsgTestPlanForTarget_(t, extraGroups) {
   const esc = inp.escalation || {};
   const dist = (typeof GEN !== 'undefined' && GEN && GEN.distribution) || {};
   const distro = typeof resolveDistro_ === 'function' ? ((resolveDistro_(f.product) || {}).distro || null) : null;
+  const spec = !distro && String(f.product || '').trim() ? resolveSpecialtyGroup_(f.product) : null;
   let to = [];
-  let groupName = (distro && (distro.group_name || distro.name)) || String((t && (t.distroName || t.productLabel)) || f.product || '').trim();
+  let groupName = (distro && (distro.group_name || distro.name)) || (spec && spec.name) ||
+    String((t && (t.distroName || t.productLabel)) || f.product || '').trim();
 
   if (distro) {
     to = bsgCleanTestEmails_(distro.test_pa);
+  } else if (spec) {
+    to = bsgCleanTestEmails_(spec.test_recipients);
   } else if (!String(f.product || '').trim()) {
     // Alert with no product field: check any To-eligible specialty group on the alert, then Default To's test email
     const codes = new Set([].concat(esc.groups || [], extraGroups || []).map(x => String(x || '')));

@@ -367,4 +367,155 @@ module.exports = function (H) {
       assert.ok(m.cc.includes('slrr-cc-live@groups.test'));
     });
   });
+
+  test('SheetTestAlert.gs + sidepanel 🧪 Test Alert menu: creates Test alert tab, sends multi-product + specialty-group Social Alerts on demand, logs missing Col C skips, supports immediate repeat sends with changed products, and enforces tab ownership', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const vm = require('vm');
+    const REAL_SFB = H.REAL;
+    const AC_SPACE = 'spaces/AAQAacsheet';
+    const t = e2e(null, { noWait: true, blankStandIn: true });
+    t.chat.addSpace(AC_SPACE, 'SLRR Agentic Assistant', { external: false });
+    t.bot.setup();
+
+    const ss = t.sheet();
+    const bsg = ss.insertSheet('Brand safety groups');
+    const bsgValues = [
+      ['Google Group Name', 'Google Group Email', 'Test Email'],
+      ['Gemini App', 'gemini-app-live@groups.test', 'gemini-app-qa@testing.test'],
+      ['Waymo', 'waymo-live@groups.test', 'waymo-qa@testing.test'],
+      ['Executives', 'exec-live@groups.test', 'exec-qa@testing.test'],
+      ['Cloud', 'cloud-live@groups.test', ''],  // no test email set
+      ['Brand Social Sender', 'sender@groups.test', ''],
+    ];
+    bsg.getRange(1, 1, bsgValues.length, 3).setValues(bsgValues);
+
+    // Standalone B10 mode (B3, B4, B9 blank; B10 set; Group test emails row 37 ON)
+    const ctrl = t.control();
+    ctrl.getRange(3, 2).setValue('');
+    ctrl.getRange(4, 2).setValue('');
+    ctrl.getRange(9, 2).setValue('');
+    ctrl.getRange(10, 2).setValue(AC_SPACE);
+    ctrl.getRange(25, 2).setValue(REAL_SFB);
+    ctrl.getRange(29, 2).setValue('ON');
+    ctrl.getRange(37, 2).setValue('ON');
+
+    // First poll auto-creates the Test alert tab right next to Brand safety groups
+    t.poll();
+    const testSh = ss.getSheetByName('Test alert');
+    assert.ok(testSh, 'Test alert tab should be auto-created when Brand safety groups exists');
+    assert.ok(t.bot.isTestAlertTab_(testSh));
+    eq(testSh.cell(2, 2), 'Idle');
+
+    // Load container-bound Code.gs and click 🧪 Test Alert → 🚀 Send Test Alert for 4 groups:
+    // Gemini App, Waymo, Executives (specialty group!), and Cloud (no test email -> skipped)
+    let active = ss.sheets[0];
+    const toasts = [];
+    const panelCtx = vm.createContext({
+      console,
+      SpreadsheetApp: Object.assign({}, t.g.services.SpreadsheetApp, {
+        getActiveSpreadsheet: () => Object.assign(ss, {
+          getActiveSheet: () => active,
+          setActiveSheet: sh => { active = sh; return sh; },
+          toast: msg => { toasts.push(msg); },
+        }),
+        getUi: () => ({
+          createMenu: () => ({ addItem() { return this; }, addSeparator() { return this; }, addToUi() { return this; } }),
+          showSidebar: () => {},
+        }),
+      }),
+      HtmlService: { createTemplateFromFile: () => ({ evaluate: () => ({ setTitle() { return this; } }) }) },
+    });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script-sheet-sidepanel', 'Code.gs'), 'utf8'), panelCtx);
+
+    testSh.getRange(5, 2).setValue('Gemini App');
+    testSh.getRange(6, 2).setValue('Waymo');
+    testSh.getRange(7, 2).setValue('Executives');
+    testSh.getRange(8, 2).setValue('Cloud');
+    const q1 = panelCtx.sendSheetTestAlert();
+    eq(q1.queued, true);
+    eq(plain(q1.products), ['Gemini App', 'Waymo', 'Executives', 'Cloud']);
+    eq(testSh.cell(2, 2), 'SEND NOW');
+
+    // Next 1-minute poll sends 3 separate formulated emails (Gemini App, Waymo, Executive Comms), skips Cloud, and resets B2 to Idle
+    t.poll();
+    eq(testSh.cell(2, 2), 'Idle');
+    assert.match(testSh.cell(2, 3), /^✅ Sent at /);
+    assert.match(testSh.cell(3, 2), /Gemini App → sent to gemini-app-qa@testing\.test/);
+    assert.match(testSh.cell(3, 2), /Waymo → sent to waymo-qa@testing\.test/);
+    assert.match(testSh.cell(3, 2), /Executives → sent to exec-qa@testing\.test/);
+    assert.match(testSh.cell(3, 2), /Cloud → skipped \(no Test Email in Brand safety groups Col C\)/);
+
+    const sent1 = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
+    eq(sent1.length, 3);
+    eq(sent1[0].to, ['gemini-app-qa@testing.test']);
+    eq(sent1[1].to, ['waymo-qa@testing.test']);
+    eq(sent1[2].to, ['exec-qa@testing.test']);
+    // Zero messages posted in S-F Burson (REAL_SFB); synthetic card + result posted only in AC_SPACE
+    eq(t.chat.botPosts(REAL_SFB).length, 0);
+    assert.ok(t.chat.botPosts(AC_SPACE).length >= 2);
+
+    // Immediate second test with changed products (Clear Extra Products + comma list in B5) sends again without duplicate suppression!
+    panelCtx.clearExtraTestProducts();
+    eq([testSh.cell(6, 2), testSh.cell(7, 2), testSh.cell(8, 2)], ['', '', '']);
+    testSh.getRange(5, 2).setValue('Waymo, Gemini App');
+    panelCtx.sendSheetTestAlert();
+    t.poll();
+    const sent2 = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
+    eq(sent2.length, 5);
+    eq(sent2[3].to, ['waymo-qa@testing.test']);
+    eq(sent2[4].to, ['gemini-app-qa@testing.test']);
+
+    // Tab ownership safeguard: refuses to overwrite or read a custom user tab named "Test alert"
+    const ssCustom = new H.FakeSpreadsheet('custom-sheet', 'User Workbook');
+    const customTab = ssCustom.insertSheet('Test alert');
+    customTab.getRange(1, 1).setValue('My Custom Notes');
+    customTab.getRange(2, 2).setValue('SEND NOW');
+    eq(t.bot.isTestAlertTab_(customTab), false);
+    eq(t.bot.ensureTestAlertTab_(ssCustom), null);
+    eq(customTab.cell(1, 1), 'My Custom Notes');
+  });
+
+  test('B10 throughput & cursor safety: pollAnalystMessages_ flags analyst_backlog when Watch/BQ cards hit deadline and never advances analyst_cursor past a failed card when answering a question', () => {
+    const w = world({ noWait: true });
+    const ctx = Object.assign(w.ctx(), {
+      sourceReadOnly: true,
+      outboundBlocked: false,
+      botUser: 'users/bot99',
+    });
+    const ANA = ctx.spaces.analyst.id;
+
+    // Post an ingested Direct-BQ card that will fail during handleAlert_ (t1), followed by a human question (t2)
+    const bqCardText = GEMINI_DEVS_ALERT.replace('[Product]: Gemini Model, Devs Products', '[Product]: Waymo');
+    w.g.clock.now += 1000;
+    const mCard = w.g.chat.say(ANA, bqCardText, { sender: 'users/bot99', type: 'BOT' });
+    const cardCreateTime = Date.parse(mCard.createTime);
+    w.g.props.set('BQ_INGESTED_MSGS', JSON.stringify([[w.bot.hashText_(mCard.name), 'BSIP']]));
+    w.g.clock.now += 4000;
+    w.g.chat.say(ANA, 'What is the exposure tag rule here?', {
+      sender: 'users/human1',
+      type: 'HUMAN',
+      displayName: 'Analyst Jane',
+    });
+
+    // 1. Deadline already reached while mCard is waiting -> flags analyst_backlog + time budget error
+    const expiredCtx = Object.assign({}, ctx, { deadline: w.g.clock.now - 1 });
+    const expiredReport = { seen: 0, handled: 0, alerts: 0, answers: 0, errors: [] };
+    w.bot.pollAnalystMessages_(expiredCtx, expiredReport);
+    eq(expiredReport.analyst_backlog, true);
+    assert.ok(expiredReport.errors.some(e => /^time budget/.test(e)));
+
+    // 2. Transient error on mCard (t1) while later human question (t2) succeeds -> cursor must NOT jump past mCard!
+    const realNextId = ctx.store.nextAlertId.bind(ctx.store);
+    ctx.store.nextAlertId = () => { throw new Error('transient sheet error'); };
+    const report = { seen: 0, handled: 0, alerts: 0, answers: 0, errors: [] };
+    w.bot.pollAnalystMessages_(ctx, report);
+    ctx.store.nextAlertId = realNextId;
+
+    eq(report.answers, 1);
+    eq(report.analyst_backlog, true);
+    const savedCursor = Number(ctx.memo.get('analyst_cursor') || 0);
+    assert.ok(savedCursor < cardCreateTime, `expected cursor (${savedCursor}) to stay before failed card (${cardCreateTime})`);
+  });
 };
+
