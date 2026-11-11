@@ -1,4 +1,4 @@
-// Proactive watch (Control tab row 34, proactiveWatch, ProactiveWatch.gs): a shadow test of spotting Google brand-safety
+// Proactive watch (Control tab row 34, proactiveWatch, ProactiveWatch.gs): spotting Google brand-safety
 // issues before Burson's alert space does. With the switch ON (it starts OFF, like every switch), every 5 minutes the bot
 // sends two read-only BigQuery scripts, one a location (us-central1: Pendulum's sonar_raw, Tubular's videos and Sprinklr's
 // export of Google's own posts; US: Brandwatch's BMIE mentions, the comments on Google's own posts, the DSD story
@@ -15,7 +15,7 @@ module.exports = H => {
   const ROW = 34;
   const MIN = 60 * 1000;
   const HOUR = 60 * MIN;
-  const ON_TEXT = '✓ ON (shadow test: nothing is posted or emailed): every 5 min, Gemini checks what\'s new in Sonar, ' +
+  const ON_TEXT = '✓ ON (Watch alerts, row 35, is OFF: nothing is posted or emailed): every 5 min, Gemini checks what\'s new in Sonar, ' +
     'Brandwatch, Sprinklr, Tubular and the Other alerts space against the watches ON on the Watches tab; what ' +
     'it would flag goes on the Watch detections tab';
   const OFF_TEXT = 'OFF (the bot reviews only the alerts posted in Chat)';
@@ -211,7 +211,7 @@ module.exports = H => {
     t.poll();
     eq([t.sheet().sheets.filter(x => x.name === 'Watches').length, w.cell(2, 3), w.rows[3].slice(0, 3), w.cell(4, 8)],
       [1, 'My own question?', ['My watch', 'OFF', 'Is it about Pixel batteries?'], 'OFF: not watched']);
-    eq(t.bot.status().proactive_watch, 'ON (shadow test: nothing is posted)');
+    eq(t.bot.status().proactive_watch, 'ON (Watch alerts, row 35, is OFF: nothing is posted)');
   });
 
   test('proactive watch: with a watch ON, a look goes out as two read-only BigQuery scripts, one a location: us-central1 (Sonar\'s new posts, Tubular\'s new videos, Sprinklr\'s export of Google\'s own posts only when it changed) and US (BMIE, the comments on Google\'s own posts, the DSD story selection feed, the Other alerts space\'s alerts), each source in a block of its own; the window the last 15 minutes up to a minute ago, every other source from its first-look start; the watch\'s words only as query parameters; a 5 GB cap and its label; a later run collects both: each post at or above the bar, and each near miss, goes on the Watch detections tab once, with its source and the Rating dropdown; C34, the watch\'s status and the Watch sources tab say how it\'s doing; nothing is posted or emailed', () => {
@@ -308,7 +308,7 @@ module.exports = H => {
       ['✓ live: 27 new at the last look', B.pwTime_(sentAt - 2 * MIN), B.pwTime_(seen + MIN), '27 / 27', 27, 1]);
     eq([s[4][3], s[4][6], s[4][7], s[6][3], s[6][6]], ['✓ live: 300 new at the last look', '300 / 60', 60, '✓ live: 12 new at the last look', '12 / 12']);
     eq([writes(t), t.g.gmail.sentMessages().length], [chatWrites, sent0]);  // nothing posted in Chat, nothing emailed
-    assert.match(t.bot.status().proactive_watch_status, /^✓ ON \(shadow test/);
+    assert.match(t.bot.status().proactive_watch_status, /^✓ ON \(Watch alerts, row 35, is OFF/);
   });
 
   test('proactive watch: looks go out at most every 5 minutes, each location\'s window starting where its last one ended (none skipped, none twice); a post a watch already flagged isn\'t recorded again (nor its copy from the other location), another watch flagging it is; after a long gap only the last 30 minutes are looked at', () => {
@@ -888,6 +888,23 @@ module.exports = H => {
     watches(third.t).getRange(3, 2).setValue('ON');
     third.t.poll();
     eq([list.rows, third.bq.looks.length], [[['Feed', 'Owner']], 2]);
+  });
+
+  test('proactive watch: its Watch detections tab under an earlier title (the one before Nov 11, or the Nov 10-11 one) is still the bot\'s own: the next look reads and writes as usual and brings the title up to date', () => {
+    // the pre-Nov 11 title, its retired word split so that the repo-wide word check doesn't flag this line
+    const before = 'Proactive watch: what the bot would have flagged (a s' + 'hadow test: nothing is posted or emailed)';
+    const nov10 = 'Watch detections: what the watches and the classification flagged (Watch alerts, Control row 35, says ' +
+      'where they are posted)';
+    [before, nov10].forEach(old => {
+      const { t, bq } = world();
+      switchOn(t);
+      t.poll();  // makes the three tabs; no watch is ON yet
+      dets(t).getRange(1, 1).setValue(old);
+      watches(t).getRange(3, 2).setValue('ON');
+      t.poll();
+      eq([dets(t).cell(1, 1), bq.looks.length], [B.ev('PW_DET_TITLE_'), 2]);
+      assert.doesNotMatch(note(t), /not watching/);
+    });
   });
 
   test('proactive watch: a watch row reads as written (a bar outside 1-10 or blank is 7; networks as Sonar names them; topics cleaned and each once; a blank rubric or topics the defaults; no question, not watched; no name, no watch); at most 5 watches ON, each name once; the query carries the watches\' words only as parameters and the topics cleaned of quotes and backslashes', () => {

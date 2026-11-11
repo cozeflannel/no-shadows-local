@@ -290,7 +290,7 @@ module.exports = H => {
     [OTHER, MIRRORED].forEach(v => assert.ok(t.bot.pwAlertsNoteText_(t.bot.pwAlertsDest_(v, mid, viaMirror), null, true, 0).length <= 250));
     // the switch texts: C34 keeps its words while B35 is OFF
     const sw = B.ev('CONTROL_SWITCHES_').find(s => s.row === 34);
-    assert.match(sw.on('', false, {}, {}), /^✓ ON \(shadow test: nothing is posted or emailed\)/);
+    assert.match(sw.on('', false, {}, {}), /^✓ ON \(Watch alerts, row 35, is OFF: nothing is posted or emailed\)/);
     assert.match(sw.on('', false, {}, { watchAlerts: 'mirror' }), /^✓ ON \(its flags go out as watch alerts: row 35, Mirror space \(B9\)\)/);
   });
 
@@ -306,8 +306,8 @@ module.exports = H => {
     look(w, [hit()]);
     eq(keys(t).map(k => [k.w, k.b, k.a]), [[MIDTERMS, 1, undefined]]);
     eq([posted(t, MID), posted(t, MIRROR), t.g.props.get('PW_ALERT_PENDING'), c35(t)], [[], [], undefined, B.pwAlertsOffText_()]);
-    assert.match(t.control().cell(34, 3), /^✓ ON \(shadow test: nothing is posted or emailed\)/);
-    eq([t.bot.status().watch_alerts, t.bot.status().proactive_watch], ['OFF', 'ON (shadow test: nothing is posted)']);
+    assert.match(t.control().cell(34, 3), /^✓ ON \(Watch alerts, row 35, is OFF: nothing is posted or emailed\)/);
+    eq([t.bot.status().watch_alerts, t.bot.status().proactive_watch], ['OFF', 'ON (Watch alerts, row 35, is OFF: nothing is posted)']);
     t.control().getRange(35, 2).setValue(OTHER);
     t.poll();
     t.poll();

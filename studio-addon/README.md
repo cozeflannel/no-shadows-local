@@ -44,7 +44,7 @@ The flow's own **Check if** blocks then post with Studio's built-in Chat and Doc
 2. **Link the GCP project.** In the Apps Script editor, open **Project Settings → Google Cloud Platform (GCP) Project** and set the agent's project number. Use an internal OAuth consent screen.
 3. **Set Script Properties** in **Project Settings → Script Properties**:
    - `AGENT_ENGINE_RESOURCE` = `projects/<project>/locations/<region>/reasoningEngines/<id>`. It's printed by `infra/05_deploy_agent_engine.py`.
-   - `TRIAGE_ENV` = `shadow` while shadowing, then `prod`.
+   - `TRIAGE_ENV` = `dev` until the cutover, then `prod`.
 4. **Grant IAM.** The Triage Agent account needs `roles/aiplatform.user` on the project. `infra/02_service_accounts.sh` grants it once `TRIAGE_AGENT_ACCOUNT` is set in `infra/.env`. The step calls the Agent Runtime with the flow owner's token (`ScriptApp.getOAuthToken()`, `cloud-platform` scope).
 5. **Install.** Choose **Deploy → Test deployments → Install**, then reload Workspace Studio. The steps appear under the add-on's name. Authorize on first use.
 6. **Build the flows** in [`../flows/FLOW_SETUP.md`](../flows/FLOW_SETUP.md). Start with the Phase 0 spike: [`../flows/PHASE0_SPIKE.md`](../flows/PHASE0_SPIKE.md).

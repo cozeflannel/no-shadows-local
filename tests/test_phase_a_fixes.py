@@ -281,9 +281,8 @@ def test_stealth_env_override_and_single_application(ctx, monkeypatch):
     monkeypatch.setenv("TRIAGE_STEALTH_BURSON", "true")
     assert operations.stealth_enabled(ctx) is True
 
-    ctx.config.env = "shadow"
     out = ChatOutputs(burson_text="🤖 Needs Burson · TRG-1", clean_text="🤖 clean")
     final, _ = operations._finalize(ctx, operations.OperationRequest(op="triage_message"), out, {})
     assert final.burson_text == ""
     assert final.clean_text.count("[STEALTH — would post to Burson]") == 1
-    assert final.clean_text.startswith("[SHADOW → clean]")
+    assert final.clean_text == "🤖 clean\n\n[STEALTH — would post to Burson] 🤖 Needs Burson · TRG-1"

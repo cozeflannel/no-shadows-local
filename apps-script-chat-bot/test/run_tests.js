@@ -1112,30 +1112,64 @@ test('setup(): one run creates the control sheet (ready for testing), starts the
   assert.strictEqual(t.get('B5'), '⏸ Paused: Bot is OFF. Set it to ON to restart.');
 });
 
-test('orphan triggers: poll() deletes a trigger left for a function no longer in the project (shadowMatcherPoll), keeps the bot\'s own, never deletes one whose function exists, and looks at most every 6 hours', () => {
+test('orphan triggers: poll() deletes a trigger left for a function no longer in the project (one listed in ORPHAN_HANDLERS_), keeps the bot\'s own, never deletes one whose function exists, and looks at most every 6 hours; with none listed (as now) it deletes nothing', () => {
+  const retire = w => w.bot.ev("ORPHAN_HANDLERS_.push('retiredPoll')");  // a handler whose code was removed
   const t = e2e();
+  retire(t);
   t.bot.setup();
-  t.g.triggers.push({ handler: 'shadowMatcherPoll', minutes: 15 }, { handler: 'onTnsTestFormSubmit', source: 'form1', event: 'formSubmit' });
+  t.g.triggers.push({ handler: 'retiredPoll', minutes: 15 }, { handler: 'onTnsTestFormSubmit', source: 'form1', event: 'formSubmit' });
   t.poll();
   eq(t.g.triggers.map(x => x.handler), ['poll', 'onTnsTestFormSubmit']);
-  t.g.triggers.push({ handler: 'shadowMatcherPoll', minutes: 15 });  // put back: the next look is 6 hours away
+  t.g.triggers.push({ handler: 'retiredPoll', minutes: 15 });  // put back: the next look is 6 hours away
   t.poll();
-  eq(t.g.triggers.map(x => x.handler), ['poll', 'onTnsTestFormSubmit', 'shadowMatcherPoll']);
+  eq(t.g.triggers.map(x => x.handler), ['poll', 'onTnsTestFormSubmit', 'retiredPoll']);
   t.g.cache.delete('ORPHAN_TRIGGER_SWEEP');  // 6 hours later (the cache entry expired)
   t.poll();
   eq(t.g.triggers.map(x => x.handler), ['poll', 'onTnsTestFormSubmit']);
   // a handler whose function is in the project is never deleted, even when listed
   const u = e2e();
+  retire(u);
   u.bot.setup();
-  u.bot.ev('function shadowMatcherPoll() {}');
-  u.g.triggers.push({ handler: 'shadowMatcherPoll', minutes: 15 });
+  u.bot.ev('function retiredPoll() {}');
+  u.g.triggers.push({ handler: 'retiredPoll', minutes: 15 });
   u.poll();
-  eq(u.g.triggers.map(x => x.handler), ['poll', 'shadowMatcherPoll']);
+  eq(u.g.triggers.map(x => x.handler), ['poll', 'retiredPoll']);
   // setup() deletes it too
   const v = e2e();
-  v.g.triggers.push({ handler: 'shadowMatcherPoll', minutes: 15 });
+  retire(v);
+  v.g.triggers.push({ handler: 'retiredPoll', minutes: 15 });
   v.bot.setup();
   eq(v.g.triggers, [{ handler: 'poll', minutes: 1 }]);
+  // with nothing listed, a trigger the bot doesn't own by name is left alone
+  const w = e2e();
+  w.bot.setup();
+  w.g.triggers.push({ handler: 'retiredPoll', minutes: 15 });
+  w.poll();
+  eq(w.g.triggers.map(x => x.handler), ['poll', 'retiredPoll']);
+});
+
+test('the retired dry-run mode never comes back: its name is in no file git tracks (both Apps Script projects, the Python agent, the Console, the add-on, config, docs, SQL, infra and these tests); the word is left only in the topic keyword for posts about being "...banned" and in the CSS styling of buttons and cards', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { execFileSync } = require('child_process');
+  const retired = /s[h]adow/i;  // spelled with [h] so that a search of the repo for the word doesn't find this file
+  const root = path.join(__dirname, '..', '..');
+  const files = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0')
+    .filter(f => f && !/\.(png|jpe?g|gif|ico|svg|webp|pdf|woff2?|ttf|eot|zip|gz|sqlite|db|pyc)$/i.test(f));
+  const allowed = new RegExp([
+    String.raw`s[h]adow \?-\?ban`, String.raw`s[h]adow[ -]?ban\w*`,  // the topic keyword (posts about being "...banned")
+    String.raw`box-?s[h]adow`, String.raw`transition-s[h]adow`, String.raw`\bs[h]adow-(?:sm|md|lg|xl|2xl|inner|none)\b`,  // CSS
+  ].join('|'), 'gi');
+  const hits = [];
+  files.forEach(f => {
+    const full = path.join(root, f);
+    if (!fs.existsSync(full)) return;  // deleted in the working tree, not committed yet
+    fs.readFileSync(full, 'utf8').split('\n').forEach((line, i) => {
+      if (retired.test(line.replace(allowed, ''))) hits.push(`${f}:${i + 1}: ${line.trim().slice(0, 140)}`);
+    });
+  });
+  assert.ok(files.length > 300, `${files.length} files read`);
+  eq(hits, []);
 });
 
 test('setup() with a space it can\'t find still installs the bot and explains the problem on the Control tab', () => {

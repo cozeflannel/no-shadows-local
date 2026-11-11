@@ -59,7 +59,7 @@ def triage_message(ctx: AgentContext, payload: dict[str, Any], rc: RequestContex
         ctx.emit(EventType.MESSAGE_IGNORED, space="burson", message_ref=msg.message_id, payload={"reason": "own_message"})
         return ChatOutputs(summary="ignored: own message")
     space = cfg.space_key_for(msg.space_id, msg.space_name)
-    if space not in (None, "burson", "shadow"):
+    if space not in (None, "burson"):
         ctx.emit(EventType.MESSAGE_IGNORED, message_ref=msg.message_id, payload={"reason": "wrong_space", "space": space})
         return ChatOutputs(summary=f"ignored: message from the {space} space")
     key = idempotency_key(msg)

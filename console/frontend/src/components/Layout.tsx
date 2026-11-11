@@ -121,7 +121,7 @@ export function Layout({ children }: { children: ReactNode }) {
           <OnCallChips />
           <GmailButton />
           {me && (
-            <Badge tone={me.env === "prod" ? "rose" : me.env === "shadow" ? "amber" : "zinc"} title={`config ${me.config_version}`}>{me.env}</Badge>
+            <Badge tone={me.env === "prod" ? "rose" : "zinc"} title={`config ${me.config_version}`}>{me.env}</Badge>
           )}
           {me && (
             <Tooltip content={<>{me.email}<br />Role: {me.role} ({me.role_source}){me.dev_mode ? " · local dev user" : ""}</>}>

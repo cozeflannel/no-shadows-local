@@ -14,7 +14,7 @@ document disagree, fix one of them in the same change.
 ## 1. Architecture
 
 ```
-Chat spaces: [S-F] Burson Automated Alerts V3 · clean "SLRR Triaged Alerts" · shadow
+Chat spaces: [S-F] Burson Automated Alerts V3 · clean "SLRR Triaged Alerts"
              [S-F] YouTube Social · Doodle Team · 24/7 SL team chat · crisis chat · DMs
   ⇅ Workspace Studio flows owned by the Triage Agent account (NO Chat API, NO webhooks)
      └ custom steps (Apps Script add-on, studio-addon/)
@@ -50,7 +50,7 @@ The Outbox flow calls `drain_outbox`, which atomically claims:
 | `TRIAGE_LOCAL_DB` | `.local/triage.db` | SQLite file (store **and** events) |
 | `TRIAGE_LLM` | `vertex` | `vertex` = Gemini on Vertex AI; `fake` = `FakeLLM` |
 | `TRIAGE_LLM_LOCATION` | `global` | Vertex AI location for model calls |
-| `TRIAGE_ENV` | config (`dev`) | `dev` \| `shadow` \| `prod` |
+| `TRIAGE_ENV` | config (`dev`) | `dev` \| `prod` |
 | `TRIAGE_CONFIG_PATH` / `TRIAGE_DISTRIBUTION_PATH` | `config/…yaml` | Config files |
 | `GOOGLE_CLOUD_PROJECT` | (none) | GCP project |
 | `TRIAGE_FIRESTORE_DB` | `(default)` | Firestore database id |
@@ -111,8 +111,7 @@ Entry point: `triage_agent.operations.handle(request, ctx) -> OperationResponse`
 |---|---|
 | `context.deliver="outbox"` (Console, jobs) | Every output is queued and the doorbell rings. `outputs` carries only ids, verdict and summary. `data.reply_text` holds any reply text |
 | `context.targets` set | Outputs for targets the flow has no step for are queued. A reply with no `reply` target is dropped (`data.dropped_reply_text`) |
-| **stealth** (`burson_feedback.silent_in_burson_space`, or `TRIAGE_STEALTH_BURSON`) | `burson_text` is never emitted; it is appended to `clean_text` as `[STEALTH — would post to Burson] …` so IMs still see what Burson would have been told. Applied once, before shadow labelling. Development/pilot only: it contradicts the Burson correction loop and must be off in production |
-| `env == "shadow"` | Texts are prefixed `[SHADOW → <target>]`. DMs go to `config.admin_emails()` with a "would DM" prefix. The flows' post steps point at the shadow space |
+| **stealth** (`burson_feedback.silent_in_burson_space`, or `TRIAGE_STEALTH_BURSON`) | `burson_text` is never emitted; it is appended to `clean_text` as `[STEALTH — would post to Burson] …` so IMs still see what Burson would have been told. Applied once. Development/pilot only: it contradicts the Burson correction loop and must be off in production |
 
 **Chat rules:**
 - **Burson space:** never use `reply_text`, because "Reply to a message" needs owner approval when external users are present. Put the reply in `burson_text` and include the asker's email (it becomes an @mention).
@@ -168,7 +167,7 @@ Entry point: `triage_agent.operations.handle(request, ctx) -> OperationResponse`
 - A claim is released when its call ends, and expires if the attempt crashed.
 - Failed or unmatched reactions are not cached, so reacting again retries them.
 
-**Nested calls:** handlers that run another operation (converse → `review_decision`, `revert_correction`, `generate_handover`, `record_reaction`) use `operations.dispatch(op, payload, ctx, rc) -> (ChatOutputs, data)`. It returns the raw outputs (no outbox, rerouting or shadow labels) and lets exceptions propagate; the outer `handle()` finalizes delivery once.
+**Nested calls:** handlers that run another operation (converse → `review_decision`, `revert_correction`, `generate_handover`, `record_reaction`) use `operations.dispatch(op, payload, ctx, rc) -> (ChatOutputs, data)`. It returns the raw outputs (no outbox, rerouting or stealth) and lets exceptions propagate; the outer `handle()` finalizes delivery once.
 
 ## 4. Alert QA (`triage_message`; also used by Path B and Watchdog)
 
@@ -648,7 +647,7 @@ Response schemas are pydantic models next to the code that uses them.
 - Live Test Channel (runs the real operations against the real store; **never posts to Chat**):
   - `POST /api/test/push` `{text, channel: test_burson|clean_chat, sender_email?, sender_name?}` → `triage_message` / `converse` with the configured space ids (`config.space("burson"|"clean")`).
   - `POST /api/test/react` `{case_id, emoji}` → `record_reaction` **as the signed-in user** (never as the IM on shift: drafts land in the reactor's Gmail).
-  - Gate: analysts in `dev`/`shadow`; **admins only when `env == "prod"`**.
+  - Gate: analysts in `dev`; **admins only when `env == "prod"`**.
 - Chat app (experimental; pending the Phase 0 decision on Studio flows vs. a Chat app):
   - `POST /api/chat-webhook`: Google Chat app HTTP endpoint. MESSAGE → `triage_message` (if `parser.detect` says alert) else `converse`; REACTION → `record_reaction`.
   - Enabled only with `TRIAGE_CHAT_APP_AUDIENCE`; requires the bearer token Google Chat issues (`chat@system.gserviceaccount.com`, verified against that audience); a message with no sender email is rejected (400). Otherwise 404 / 401.

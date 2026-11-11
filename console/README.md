@@ -135,7 +135,7 @@ header then shows *Reconnect Gmail*.
 | `TRIAGE_BACKEND` | `local` (SQLite) or `gcp` (Firestore + BigQuery) |
 | `TRIAGE_LOCAL_DB` | SQLite file for `local` (the seeder's default target too) |
 | `TRIAGE_LLM` | `fake` for offline runs; the Console only calls Gemini through operations (created lazily) |
-| `TRIAGE_ENV` | `dev` / `shadow` / `prod`; metrics default to events of this env (`env=all` disables the filter) |
+| `TRIAGE_ENV` | `dev` / `prod`; metrics default to events of this env (`env=all` disables the filter) |
 | `TRIAGE_DEV_USER` | Local identity when there's no IAP header |
 | `TRIAGE_IAP_AUDIENCE` | Verify the IAP JWT (`/projects/<number>/locations/<region>/services/<service>` for Cloud Run IAP) |
 | `TRIAGE_GMAIL` | `fake` (default, every user counts as connected), `google`, `off` |

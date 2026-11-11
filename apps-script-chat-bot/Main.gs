@@ -32,16 +32,17 @@
  *                   (Control row 34), after the other spaces it looks (every 5 minutes at most) at what is new in each
  *                   of its sources (Sonar, Brandwatch, Sprinklr, Tubular, the DSD story selection feed, the Other alerts
  *                   space's alerts and the Brandwatch query "2026 Election Alerts" from Brandwatch's API), with the
- *                   watches ON on the Watches tab (ProactiveWatch.gs runProactiveWatch_): a
- *                   shadow test that records what it would flag on the Watch detections tab and posts nothing.
+ *                   watches ON on the Watches tab (ProactiveWatch.gs runProactiveWatch_): it records what it flags
+ *                   on the Watch detections tab and posts only where Watch alerts (Control row 35) says.
  */
 
 const TRIGGER_HANDLER_ = 'poll';
 // the archived prototype's triggers (checkSourceSpaceForNewMessages: an orphan that fails every minute)
 const LEGACY_HANDLERS_ = ['pollAlerts', 'sweepReactions', 'checkSourceSpaceForNewMessages'];
 // Triggers left behind by code that is no longer in this project: their function is gone, so each run of them only
-// fails ("Script function not found"). poll() deletes them (sweepOrphanTriggers_), and so does setup().
-const ORPHAN_HANDLERS_ = ['shadowMatcherPoll'];
+// fails ("Script function not found"). poll() deletes them (sweepOrphanTriggers_), and so does setup(). List a handler
+// here when its code is removed; none is listed now (the last one was deleted from the live project on Nov 6, 2026).
+const ORPHAN_HANDLERS_ = [];
 const ORPHAN_SWEEP_SEC_ = 6 * 3600;                         // poll() looks for them at most this often
 const RUN_BUDGET_MS_ = 180 * 1000;                          // Apps Script stops a run at 6 minutes
 const SETUP_LOCK_WAIT_MS_ = 5 * 60 * 1000;                  // setup() waits this long for a run in progress (3-7 min)
@@ -160,7 +161,7 @@ function status() {
     info.other_alerts_space = wanted.otherSpace || 'off';
     const waChoice = pwAlertsChoice_(wanted.watchAlerts);
     info.proactive_watch = !wanted.switches.proactiveWatch ? 'OFF'
-      : waChoice ? `ON (its flags go out as watch alerts: ${pwAlertsWhere_(waChoice)})` : 'ON (shadow test: nothing is posted)';
+      : waChoice ? `ON (its flags go out as watch alerts: ${pwAlertsWhere_(waChoice)})` : 'ON (Watch alerts, row 35, is OFF: nothing is posted)';
     info.watch_alerts = waChoice ? pwAlertsWhere_(waChoice) : 'OFF';
     info.bigquery_lookback = `${bqLookbackFrom_(wanted.bqLookback).minutes} minutes (Control tab B31)`;
     if (control) {
@@ -630,8 +631,8 @@ function poll() {
         // can't be done waits for the next run): emailed to this run's testers (B30, else the stand-in), the thread told
         // it was; OFF, nothing waits. Never throws
         runTempChecks_(runStart, wanted.switches, { testers: testers && testers.testers });
-        // Proactive watch (Control row 34, ProactiveWatch.gs): a shadow test over Pendulum's posts in BigQuery; what it
-        // would flag goes on its own tabs. Nothing is posted or emailed unless Watch alerts (row 35, WatchAlerts.gs) says
+        // Proactive watch (Control row 34, ProactiveWatch.gs): Gemini checks Pendulum's posts in BigQuery; what it
+        // flags goes on its own tabs. Nothing is posted or emailed unless Watch alerts (row 35, WatchAlerts.gs) says
         // where its flags go: B33, B9, or B10, where their flows work them next run like any alert.
         if (wanted.switches.proactiveWatch) {
           const waChoice = pwAlertsChoice_(wanted.watchAlerts);
@@ -1215,9 +1216,11 @@ function removeTriggers_(handlers) {
 /**
  * Deletes the project's triggers for a handler in ORPHAN_HANDLERS_ whose function isn't in this project (never one whose
  * function exists), at most every ORPHAN_SWEEP_SEC_. Only the bot's own account's triggers can be seen and deleted
- * (another account's: that account, on the editor's Triggers page). How many it deleted. Never throws.
+ * (another account's: that account, on the editor's Triggers page). How many it deleted. Never throws. Nothing to do,
+ * and nothing read, while ORPHAN_HANDLERS_ is empty.
  */
 function sweepOrphanTriggers_() {
+  if (!ORPHAN_HANDLERS_.length) return 0;
   try {
     const cache = CacheService.getScriptCache();
     if (cache.get('ORPHAN_TRIGGER_SWEEP')) return 0;
