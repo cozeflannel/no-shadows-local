@@ -52,7 +52,7 @@ module.exports = function (H) {
     '[Code]: Product - Dangerous results (e.g. medical/legal),3200,dev_sec_researcher,Malicious & Unwanted Software,Gemini Model,New / not previously reported over the past 14 days',
   ].join('\n');
 
-  test('multi-product E2E (Testing inbox via Control!B30 + Brand safety groups): "Product: Gemini Model, Devs Products" sends 2 separate formulated Social Alert emails to the B30 inbox, submits T&S once, and blocks duplicates', () => {
+  test('multi-product E2E (Testing inbox via Control!B30 + Brand safety groups): "Product: Gemini Model, Devs Products" sends ONE single Social Alert email to B30 with additional product teams listed in Cc:, submits T&S once, and blocks duplicates', () => {
     const t = e2e(null, { noWait: true });
     t.bot.setup();
     populateBrandSafetyGroups(t.sheet());
@@ -68,45 +68,33 @@ module.exports = function (H) {
 
     const allSent = t.g.gmail.sentMessages();
     const socialSent = allSent.filter(m => /SOCIAL ALERT/.test(m.subject));
-    eq(socialSent.length, 2);
+    eq(socialSent.length, 1);
 
-    // Both arrive in the B30 inbox as real sent emails, on 2 separate Gmail threads
+    // Single Social Alert arrives in B30 inbox showing both products in Subject/Body, with Gemini Model in To: and Devs Products in Cc:
     eq(socialSent[0].to, ['my-test-inbox@testing.test']);
-    eq(socialSent[1].to, ['my-test-inbox@testing.test']);
-    assert.notStrictEqual(socialSent[0].threadId, socialSent[1].threadId);
+    assert.match(socialSent[0].subject, /Gemini Model, Devs Products \| Gemini API Returning Unsafe Code Execution Snippets \| X/);
+    assert.ok(socialSent[0].text.includes('\nProduct: Gemini Model, Devs Products\n'), socialSent[0].text);
+    assert.match(socialSent[0].text, /Would have gone to: To: Gemini Model alert POCs; Cc: Devs Products alert POCs, .*GCPA.*standard CC list/);
 
-    // Email 1: formulated specifically for the Gemini Model team
-    assert.match(socialSent[0].subject, /Gemini Model \| Gemini API Returning Unsafe Code Execution Snippets \| X/);
-    assert.ok(!socialSent[0].subject.includes('Devs Products'), socialSent[0].subject);
-    assert.ok(socialSent[0].text.includes('\nProduct: Gemini Model\n'), socialSent[0].text);
-    assert.match(socialSent[0].text, /Would have gone to: To: Gemini Model alert POCs; Cc: .*GCPA.*standard CC list/);
-
-    // Email 2: formulated specifically for the Devs Products (Developers) team
-    assert.match(socialSent[1].subject, /Devs Products \| Gemini API Returning Unsafe Code Execution Snippets \| X/);
-    assert.ok(!socialSent[1].subject.includes('Gemini Model'), socialSent[1].subject);
-    assert.ok(socialSent[1].text.includes('\nProduct: Devs Products\n'), socialSent[1].text);
-    assert.match(socialSent[1].text, /Would have gone to: To: Devs Products alert POCs; Cc: .*GCPA.*standard CC list/);
-
-    // T&S urgent email (if sent) went once, never duplicated per product team
+    // T&S urgent email (if sent) went once
     const tnsUrgent = allSent.filter(m => /^URGENT T&S:/.test(m.subject));
     assert.ok(tnsUrgent.length <= 1, `expected at most 1 urgent T&S email, got ${tnsUrgent.length}`);
 
-    // Both threads are registered as bot-owned in Speed.gs so parity never mistakes the 2nd team email for a human IM send
+    // Thread is registered as bot-owned in Speed.gs
     const storeRows = t.bot.sheetBackend_(t.sheet()).loadAlerts();
     const ownThreads = t.bot.botEmailThreads_(storeRows);
     assert.ok(ownThreads.has(socialSent[0].threadId));
-    assert.ok(ownThreads.has(socialSent[1].threadId));
 
     // Re-posting the exact same post does NOT send duplicate Social Alerts
     const duplicateAlert = GEMINI_DEVS_ALERT.replace('9:15 AM', '9:25 AM');
     t.chat.say(TEST_FEED, duplicateAlert, { sender: 'users/bot', senderDisplay: 'Zapier' });
     t.poll();
     const socialAfterDup = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
-    eq(socialAfterDup.length, 2);
+    eq(socialAfterDup.length, 1);
   });
 
-  test('multi-product Live Auto-send & Live Gmail Drafts: routes each Social Alert email to its own Google Group from Brand safety groups, and tracks multi-team Gmail drafts through maintainDrafts_ and emoji reactions', () => {
-    // 1. Live Auto-send ON (Safety valve OFF, no stand-in): sends 2 separate live emails to the 2 Google Groups
+  test('multi-product Live Auto-send & Live Gmail Drafts: sends ONE Social Alert email with primary product in To: and additional product Google Groups in Cc:, and tracks single Gmail draft lifecycle', () => {
+    // 1. Live Auto-send ON (Safety valve OFF, no stand-in): sends 1 single live email with Gemini Model in To: and Devs Products in Cc:
     const wAuto = world({
       noWait: true,
       drafts: { live: true, standIn: '', testers: [], mailbox: 'im@ops.test', from: 'Brand Social <sender@groups.test>' },
@@ -125,26 +113,21 @@ module.exports = function (H) {
     baseCtx.switches = Object.assign({}, baseCtx.switches || {}, { autoSend: true, noWait: true });
     const repAuto = wAuto.bot.runOnce_(baseCtx);
     eq(repAuto.errors, []);
-    eq(repAuto.auto_sent, 2);
 
     const liveSent = wAuto.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
-    eq(liveSent.length, 2);
+    eq(liveSent.length, 1);
     eq(liveSent[0].to, ['gemini-model-team@groups.test']);
+    assert.ok(liveSent[0].cc.includes('devs-products-team@groups.test'), `expected devs-products in CC: ${liveSent[0].cc}`);
     assert.ok(liveSent[0].cc.includes('gcpa-comms@groups.test') && liveSent[0].cc.includes('slrr-standard-cc@groups.test'));
-    assert.match(liveSent[0].subject, /Gemini Model \| Gemini API Returning Unsafe Code Execution Snippets/);
-    assert.ok(liveSent[0].text.includes('\nProduct: Gemini Model\n'));
-
-    eq(liveSent[1].to, ['devs-products-team@groups.test']);
-    assert.ok(liveSent[1].cc.includes('gcpa-comms@groups.test') && liveSent[1].cc.includes('slrr-standard-cc@groups.test'));
-    assert.match(liveSent[1].subject, /Devs Products \| Gemini API Returning Unsafe Code Execution Snippets/);
-    assert.ok(liveSent[1].text.includes('\nProduct: Devs Products\n'));
+    assert.match(liveSent[0].subject, /Gemini Model, Devs Products \| Gemini API Returning Unsafe Code Execution Snippets/);
+    assert.ok(liveSent[0].text.includes('\nProduct: Gemini Model, Devs Products\n'));
 
     // Zero internal leaks on any outbound Burson message
     wAuto.chat.spaces.get(wAuto.BUR).messages.filter(m => m.sender.name === 'users/bot').forEach(m => {
       eq(wAuto.bot.outboxGuardHits_(m.text), []);
     });
 
-    // 2. Live Auto-send OFF: creates 2 separate Gmail drafts (1 per team), watches both until sent, and supports ❌ delete
+    // 2. Live Auto-send OFF: creates 1 single Gmail draft with Gemini Model in To: and Devs Products in Cc:
     const wDraft = world({
       noWait: true,
       drafts: { live: true, standIn: '', testers: [], mailbox: 'im@ops.test', from: 'Brand Social <sender@groups.test>' },
@@ -164,29 +147,22 @@ module.exports = function (H) {
     wDraft.bot.runOnce_(cDraft);
 
     const drafts = wDraft.gmail.allDrafts();
-    eq(drafts.length, 2);
-    eq([drafts[0].to, drafts[1].to], [['gemini-model-team@groups.test'], ['devs-products-team@groups.test']]);
+    eq(drafts.length, 1);
+    eq(drafts[0].to, ['gemini-model-team@groups.test']);
+    assert.ok(drafts[0].cc.includes('devs-products-team@groups.test'));
     eq(wDraft.alertRows()[0].email_status, 'drafted');
 
-    // Sending Draft 1 while Draft 2 stays open keeps row in 'drafted'
+    // Sending that single Draft finalizes row as 'sent' and marks emojis
     wDraft.gmail.send(drafts[0].id, 'im@ops.test');
     wDraft.g.clock.now += 60 * 1000;
-    const cCheck1 = wDraft.ctx();
-    cCheck1.switches = { autoSend: false, noWait: true };
-    wDraft.bot.runOnce_(cCheck1);
-    eq(wDraft.alertRows()[0].email_status, 'drafted');
-
-    // Sending Draft 2 finalizes row as 'sent' and marks emojis
-    wDraft.gmail.send(drafts[1].id, 'im@ops.test');
-    wDraft.g.clock.now += 60 * 1000;
-    const cCheck2 = wDraft.ctx();
-    cCheck2.switches = { autoSend: false, noWait: true };
-    wDraft.bot.runOnce_(cCheck2);
+    const cCheck = wDraft.ctx();
+    cCheck.switches = { autoSend: false, noWait: true };
+    wDraft.bot.runOnce_(cCheck);
     eq(wDraft.alertRows()[0].email_status, 'sent');
   });
 
-  test('multi-product non-Zapier Chat cards ("Product: Gemini Model, Devs Products"), same-team alias dedup ("AI Studio, Devs Products"), and per-team threaded ongoing updates', () => {
-    // 1. Same-team aliases ("AI Studio, Devs Products" -> both belong to Devs Products team) -> 1 email, not 2
+  test('multi-product non-Zapier Chat cards ("Product: Gemini Model, Devs Products"), same-team alias dedup ("AI Studio, Devs Products"), and single-thread ongoing updates', () => {
+    // 1. Same-team aliases ("AI Studio, Devs Products" -> both belong to Devs Products team) -> 1 target
     const sameTeamAlert = GEMINI_DEVS_ALERT
       .replace('Gemini Model, Devs Products |', 'AI Studio, Devs Products |')
       .replace('[Product]: Gemini Model, Devs Products', '[Product]: AI Studio, Devs Products')
@@ -199,7 +175,7 @@ module.exports = function (H) {
     eq(sameTargets.length, 1);
     eq(sameTargets[0].single, true);
 
-    // 2. Non-Zapier Chat space card with "Product: Gemini Model, Devs Products" -> 2 emails (Gemini Model & Devs Products)
+    // 2. Non-Zapier Chat space card with "Product: Gemini Model, Devs Products" parses primary + other_products cleanly
     const otherCardText = [
       '\ud83d\udea8 *X Alert: Developer & Model Security* \ud83d\udea8',
       '*Author:* @cloud_dev_lead',
@@ -217,8 +193,7 @@ module.exports = function (H) {
     eq(plain(baseFields.other_products), ['Devs Products']);
     eq(plain(baseFields.product_targets), ['Gemini Model', 'Devs Products']);
 
-    // 3. Per-team threaded ongoing updates: when an ongoing update arrives for an issue previously sent to both teams,
-    //    each team's update replies on THAT team's own earlier Gmail thread
+    // 3. Single-thread ongoing updates: when an ongoing update arrives for a multi-product issue, it replies on that single Gmail thread
     const wThread = world({
       noWait: true,
       drafts: { live: false, standIn: 'my-inbox@testing.test', testers: ['my-inbox@testing.test'], mailbox: 'bot@runner.test', from: 'Brand Social <sender@alerts.test>' },
@@ -228,10 +203,8 @@ module.exports = function (H) {
     c1.switches = { noWait: true };
     wThread.bot.runOnce_(c1);
     const firstSocial = wThread.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
-    eq(firstSocial.length, 2);
-    const geminiThread1 = firstSocial[0].threadId;
-    const devsThread1 = firstSocial[1].threadId;
-    assert.notStrictEqual(geminiThread1, devsThread1);
+    eq(firstSocial.length, 1);
+    const thread1 = firstSocial[0].threadId;
 
     // Second post on the same issue 2 hours later from a KOF author (raises stakes -> ongoing update)
     wThread.g.clock.now += 2 * 3600 * 1000;
@@ -247,14 +220,12 @@ module.exports = function (H) {
     wThread.bot.runOnce_(c2);
 
     const allSocial = wThread.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
-    eq(allSocial.length, 4);
-    eq(allSocial[2].threadId, geminiThread1);
-    eq(allSocial[3].threadId, devsThread1);
-    assert.match(allSocial[2].subject, /^Re: .*Gemini Model \|/);
-    assert.match(allSocial[3].subject, /^Re: .*Devs Products \|/);
+    eq(allSocial.length, 2);
+    eq(allSocial[1].threadId, thread1);
+    assert.match(allSocial[1].subject, /^Re: .*Gemini Model, Devs Products \|/);
   });
 
-  test('Group test emails switch (Control row 37 + Brand safety groups column C): ON routes each product email to its own group test email, sends nothing and logs when a group has no test email, and OFF ignores column C test emails and routes to live column B emails', () => {
+  test('Group test emails switch (Control row 37 + Brand safety groups column C): ON sends ONE Social Alert with primary group test email in To: and additional group test emails in Cc:, skips groups with no test email, and OFF routes to live column B To: + Cc:', () => {
     const REAL_SFB = H.REAL;
     const MIRROR = 'spaces/AAQAmirror9';
     const t = e2e(null, { noWait: true, blankStandIn: true });
@@ -286,29 +257,26 @@ module.exports = function (H) {
     ctrl.getRange(37, 2).setValue('ON');  // Group test emails ON
     t.poll();
 
-    // Verify runMode_ treated row 37 ON as Testing (status has no LIVE badge, C37 confirms 2 groups set)
     assert.ok(!/^🔴 LIVE/.test(t.get('B5')), t.get('B5'));
     assert.match(ctrl.cell(37, 3), /^✓ ON · 🧪 Testing \(Brand safety groups column C\): .* \(2 groups set\)/);
 
     // 1. Post a 3-product alert ("Gemini Model, Devs Products, Search"):
-    //    - Gemini Model -> gemini-tester@testing.test ONLY
-    //    - Devs Products -> devs-tester@testing.test ONLY
-    //    - Search -> NO test email set -> NOT sent, and logged!
+    //    - Sends ONE single Social Alert email:
+    //      To: ['gemini-tester@testing.test']
+    //      Cc: ['devs-tester@testing.test']
+    //      Search (no Col C test email) -> logged as skipped!
     const threeProductAlert = GEMINI_DEVS_ALERT
       .replace('Gemini Model, Devs Products |', 'Gemini Model, Devs Products, Search |')
       .replace('[Product]: Gemini Model, Devs Products', '[Product]: Gemini Model, Devs Products, Search');
     t.chat.say(REAL_SFB, threeProductAlert, { sender: 'users/zapier', type: 'BOT', displayName: 'Zapier' });
-    t.poll();  // mirrors from S-F Burson into Mirror and triages
+    t.poll();
 
     const sentTesting = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
-    eq(sentTesting.length, 2);
+    eq(sentTesting.length, 1);
     eq(sentTesting[0].to, ['gemini-tester@testing.test']);
-    eq(sentTesting[0].cc, []);
-    assert.match(sentTesting[0].subject, /Gemini Model \| Gemini API Returning Unsafe Code Execution Snippets/);
-    eq(sentTesting[1].to, ['devs-tester@testing.test']);
-    eq(sentTesting[1].cc, []);
-    assert.match(sentTesting[1].subject, /Devs Products \| Gemini API Returning Unsafe Code Execution Snippets/);
-    assert.ok(t.g.logs.some(l => /no email sent — no test email set for Search in Brand safety groups/.test(l)),
+    eq(sentTesting[0].cc, ['devs-tester@testing.test']);
+    assert.match(sentTesting[0].subject, /Gemini Model, Devs Products, Search \| Gemini API Returning Unsafe Code Execution Snippets/);
+    assert.ok(t.g.logs.some(l => /no test email set for Search in Brand safety groups/.test(l)),
       'expected missing Search test email to be logged');
 
     // 2. Post a single-product alert for Search (which has NO test email in column C):
@@ -321,17 +289,19 @@ module.exports = function (H) {
       .replace('2120000000000000101', '2120000000000000888');
     t.chat.say(REAL_SFB, singleSearchAlert, { sender: 'users/zapier', type: 'BOT', displayName: 'Zapier' });
     t.poll();
-    t.poll();  // second poll confirms no infinite retry loop
+    t.poll();
     const afterSkippedSingle = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
-    eq(afterSkippedSingle.length, 2);
+    eq(afterSkippedSingle.length, 1);
     const searchRow = t.bot.sheetBackend_(t.sheet()).loadAlerts().find(r => /2120000000000000888/.test(String(r.record_key || '')));
     assert.ok(searchRow);
     eq(searchRow.email_status, 'skipped_no_test_email');
     eq(searchRow.email_error, 'no test email set in Brand safety groups for Search');
 
-    // 3. Turn Group test emails (row 37) OFF while leaving the test emails sitting in Column C of Brand safety groups:
+    // 3. Turn Group test emails (row 37) OFF while leaving test emails in Column C:
     //    - Bot is now LIVE (Safety valve row 29 is OFF, B26 blank, S-F Burson set)
-    //    - A new 3-product alert routes all 3 emails to the LIVE Column B Google Groups and ignores Column C test emails!
+    //    - A new 3-product alert sends ONE single live Social Alert email:
+    //      To: ['gemini-live@groups.test']
+    //      Cc: includes 'devs-live@groups.test', 'search-live@groups.test', and 'slrr-cc-live@groups.test' (ignores Column C!)
     ctrl.getRange(37, 2).setValue('OFF');
     const liveThreeProductAlert = [
       '\ud83d\udea8THIS ALERT MEETS P0 CRITERIA\ud83d\udea8',
@@ -357,18 +327,16 @@ module.exports = function (H) {
     t.poll();
 
     const allSocialNow = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
-    const liveSent = allSocialNow.slice(2);
-    eq(liveSent.length, 3);
+    const liveSent = allSocialNow.slice(1);
+    eq(liveSent.length, 1);
     eq(liveSent[0].to, ['gemini-live@groups.test']);
-    eq(liveSent[1].to, ['devs-live@groups.test']);
-    eq(liveSent[2].to, ['search-live@groups.test']);
-    liveSent.forEach(m => {
-      assert.ok(!m.to.includes('gemini-tester@testing.test') && !m.to.includes('devs-tester@testing.test'));
-      assert.ok(m.cc.includes('slrr-cc-live@groups.test'));
-    });
+    assert.ok(liveSent[0].cc.includes('devs-live@groups.test'), `expected devs-live in CC: ${liveSent[0].cc}`);
+    assert.ok(liveSent[0].cc.includes('search-live@groups.test'), `expected search-live in CC: ${liveSent[0].cc}`);
+    assert.ok(liveSent[0].cc.includes('slrr-cc-live@groups.test'));
+    assert.ok(!liveSent[0].to.includes('gemini-tester@testing.test') && !liveSent[0].cc.includes('devs-tester@testing.test'));
   });
 
-  test('SheetTestAlert.gs + sidepanel 🧪 Test Alert menu: creates Test alert tab, sends multi-product + specialty-group Social Alerts on demand, logs missing Col C skips, supports immediate repeat sends with changed products, and enforces tab ownership', () => {
+  test('SheetTestAlert.gs + sidepanel 🧪 Test Alert menu: posts multi-product alert into test Chat space, picks up from Chat, and sends ONE Social Alert email with primary product in To: and additional teams in Cc:', () => {
     const fs = require('fs');
     const path = require('path');
     const vm = require('vm');
@@ -407,8 +375,6 @@ module.exports = function (H) {
     assert.ok(t.bot.isTestAlertTab_(testSh));
     eq(testSh.cell(2, 2), 'Idle');
 
-    // Load container-bound Code.gs and click 🧪 Test Alert → 🚀 Send Test Alert for 4 groups:
-    // Gemini App, Waymo, Executives (specialty group!), and Cloud (no test email -> skipped)
     let active = ss.sheets[0];
     const toasts = [];
     const panelCtx = vm.createContext({
@@ -449,33 +415,30 @@ module.exports = function (H) {
     const chatAlertMsg = t.chat.message(posted1.messageName);
     assert.ok(chatAlertMsg && /🟧SOCIAL ALERT🟧: Gemini App, Waymo, Executives, Cloud/.test(chatAlertMsg.text));
 
-    // Step 2 verification: next Chat poll picks up that posted alert FROM the test Chat space, reacts on it, and sends the Social Alerts!
+    // Step 2 verification: next Chat poll picks up that posted alert FROM the test Chat space, reacts on it,
+    // and sends ONE single Social Alert email with Gemini App in To: and Waymo + Executives in Cc:!
     t.poll();
     assert.match(testSh.cell(2, 3), /^✅ Picked up in Chat & Sent at /);
-    assert.match(testSh.cell(3, 2), /Gemini App → sent to gemini-app-qa@testing\.test/);
-    assert.match(testSh.cell(3, 2), /Waymo → sent to waymo-qa@testing\.test/);
-    assert.match(testSh.cell(3, 2), /Executives → sent to exec-qa@testing\.test/);
-    assert.match(testSh.cell(3, 2), /Cloud → skipped \(no Test Email in Brand safety groups Col C\)/);
+    assert.match(testSh.cell(3, 2), /To: gemini-app-qa@testing\.test \| Cc: waymo-qa@testing\.test, exec-qa@testing\.test/);
+    assert.match(testSh.cell(3, 2), /skipped \(no Test Email in Brand safety groups Col C\): Cloud/);
 
     const sent1 = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
-    eq(sent1.length, 3);
+    eq(sent1.length, 1);
     eq(sent1[0].to, ['gemini-app-qa@testing.test']);
-    eq(sent1[1].to, ['waymo-qa@testing.test']);
-    eq(sent1[2].to, ['exec-qa@testing.test']);
-    // Bot reacted with 📦 on the Chat alert message itself in AC_SPACE, and zero messages went to S-F Burson (REAL_SFB)
+    eq(sent1[0].cc, ['waymo-qa@testing.test', 'exec-qa@testing.test']);
     assert.ok(t.chat.reactionsOn(posted1.messageName).some(r => r[1] === '📦'));
     eq(t.chat.botPosts(REAL_SFB).length, 0);
 
-    // End-to-end single poll() with changed products: posts into AC_SPACE AND picks up in the same poll() without duplicate suppression!
+    // End-to-end single poll() with changed products: posts into AC_SPACE AND picks up in the same poll() -> 1 more email!
     panelCtx.clearExtraTestProducts();
     eq([testSh.cell(6, 2), testSh.cell(7, 2), testSh.cell(8, 2)], ['', '', '']);
     testSh.getRange(5, 2).setValue('Waymo, Gemini App');
     panelCtx.sendSheetTestAlert();
     t.poll();
     const sent2 = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
-    eq(sent2.length, 5);
-    eq(sent2[3].to, ['waymo-qa@testing.test']);
-    eq(sent2[4].to, ['gemini-app-qa@testing.test']);
+    eq(sent2.length, 2);
+    eq(sent2[1].to, ['waymo-qa@testing.test']);
+    eq(sent2[1].cc, ['gemini-app-qa@testing.test']);
 
     // Tab ownership safeguard: refuses to overwrite or read a custom user tab named "Test alert"
     const ssCustom = new H.FakeSpreadsheet('custom-sheet', 'User Workbook');

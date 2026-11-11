@@ -197,9 +197,9 @@ def plan_recipients(
 ) -> RecipientPlan:
     """Recipients for the Social Alert draft.
 
-    to: product PA POCs (+ engagement add-ons, execs per rule, gUP when triggered)
-    cc: auto-included non-product groups whose triggers match, plus `extra_groups`
-        (added by IM emoji reactions, e.g. "gcpa" for 📰)
+    to: primary product PA POCs (+ engagement add-ons, execs per rule, gUP when triggered)
+    cc: additional product PA POCs on multi-product alerts, auto-included non-product groups
+        whose triggers match, plus `extra_groups` (added by IM emoji reactions, e.g. "gcpa" for 📰)
     """
     dist = config.distribution
     plan = RecipientPlan()
@@ -212,21 +212,22 @@ def plan_recipients(
             if e and e.lower() not in (x.lower() for x in plan.to + plan.cc):
                 target.append(e)
 
-    def add_product_distro(prod: ProductDistro) -> None:
-        add(plan.to, prod.pa)
+    def add_product_distro(prod: ProductDistro, in_cc: bool = False) -> None:
+        dest = plan.cc if in_cc else plan.to
+        add(dest, prod.pa)
         if prod.name not in plan.groups:
             plan.groups.append(prod.name)
-            plan.reasons[prod.name] = "product alert POCs"
+            plan.reasons[prod.name] = "additional product alert POCs (CC)" if in_cc else "product alert POCs"
         for cond in prod.conditional:
             if (a.engagement_total or 0) >= cond.min_engagement:
-                add(plan.to, cond.recipients)
+                add(dest, cond.recipients)
                 label = f"{prod.name} – {cond.label}"
                 if label not in plan.groups:
                     plan.groups.append(label)
                     plan.reasons[label] = f"{a.engagement_total:,} engagements ≥ {cond.min_engagement:,}"
         if prod.execs:
             if _execs_apply(prod, a, config.collection.high_engagement_threshold):
-                add(plan.to, prod.execs)
+                add(dest, prod.execs)
                 exec_label = f"{prod.name} Execs"
                 if exec_label not in plan.groups:
                     plan.groups.append(exec_label)
@@ -245,12 +246,13 @@ def plan_recipients(
                     secondary_distros.append(sec_prod)
 
     if product:
-        add_product_distro(product)
+        add_product_distro(product, in_cc=False)
         for sec_prod in secondary_distros:
-            add_product_distro(sec_prod)
+            add_product_distro(sec_prod, in_cc=True)
     elif secondary_distros:
-        for sec_prod in secondary_distros:
-            add_product_distro(sec_prod)
+        add_product_distro(secondary_distros[0], in_cc=False)
+        for sec_prod in secondary_distros[1:]:
+            add_product_distro(sec_prod, in_cc=True)
     else:
         add(plan.to, config.escalation.default_to)
 

@@ -372,41 +372,38 @@ function execsApply_(product, a) {
 
 /**
  * Recipients for the Social Alert draft: {to, cc, groups, reasons, members, missing, notes}.
- *   to: the product's alert POCs (+ secondary products' PA POCs, engagement add-ons, execs per rule, gUP when triggered)
- *   cc: groups whose triggers match (auto-included) or that an analyst added (extraGroups: legend codes), + default CC
+ *   to: the primary product's alert POCs (+ engagement add-ons, execs per rule, gUP when triggered)
+ *   cc: additional products' alert POCs on multi-product alerts, groups whose triggers match (auto-included) or that an analyst added (extraGroups: legend codes), + default CC
  *   members: each group's own addresses ({group name: [emails]}, before to / cc drop the ones already on), so a reply
  *            can be credited to the team whose address sent it (FollowUp.gs)
  */
 function planRecipients_(a, text, extraGroups, productName) {
-  const plan = { to: [], cc: [], groups: [], reasons: {}, members: {}, missing: [], notes: [] };
+  const plan = { to: [], cc: [], groups: [], ccProductGroups: [], reasons: {}, members: {}, missing: [], notes: [] };
   const all = () => plan.to.concat(plan.cc).map(e => e.toLowerCase());
   const add = (target, emails) => (emails || []).forEach(e => { if (e && !all().includes(e.toLowerCase())) target.push(e); });
-  const addProductDistro = prod => {
-    add(plan.to, prod.pa);
-    if (!plan.groups.includes(prod.name)) {
-      plan.groups.push(prod.name);
-      plan.reasons[prod.name] = 'product alert POCs';
-      plan.members[prod.name] = (prod.pa || []).slice();
+  const markGroup = (label, reason, membersList, inCc) => {
+    if (!plan.groups.includes(label)) {
+      plan.groups.push(label);
+      plan.reasons[label] = reason;
+      plan.members[label] = (membersList || []).slice();
+      if (inCc && !plan.ccProductGroups.includes(label)) plan.ccProductGroups.push(label);
     }
+  };
+  const addProductDistro = (prod, inCc) => {
+    const dest = inCc ? plan.cc : plan.to;
+    add(dest, prod.pa);
+    markGroup(prod.name, inCc ? 'additional product alert POCs (CC)' : 'product alert POCs', prod.pa, inCc);
     (prod.conditional || []).forEach(c => {
       if ((a.engagement_total || 0) < c.min_engagement) return;
-      add(plan.to, c.recipients);
+      add(dest, c.recipients);
       const label = `${prod.name} \u2013 ${c.label}`;
-      if (!plan.groups.includes(label)) {
-        plan.groups.push(label);
-        plan.reasons[label] = `${fmtInt_(a.engagement_total)} engagements \u2265 ${fmtInt_(c.min_engagement)}`;
-        plan.members[label] = (c.recipients || []).slice();
-      }
+      markGroup(label, `${fmtInt_(a.engagement_total)} engagements \u2265 ${fmtInt_(c.min_engagement)}`, c.recipients, inCc);
     });
     if ((prod.execs || []).length) {
       if (execsApply_(prod, a)) {
-        add(plan.to, prod.execs);
+        add(dest, prod.execs);
         const execLabel = `${prod.name} Execs`;
-        if (!plan.groups.includes(execLabel)) {
-          plan.groups.push(execLabel);
-          plan.reasons[execLabel] = `execs rule: ${prod.execs_rule}`;
-          plan.members[execLabel] = prod.execs.slice();
-        }
+        markGroup(execLabel, `execs rule: ${prod.execs_rule}`, prod.execs, inCc);
       } else {
         plan.notes.push(`${prod.name} Execs list not added (rule: ${prod.execs_rule})`);
       }
@@ -419,34 +416,55 @@ function planRecipients_(a, text, extraGroups, productName) {
     ? resolveSpecialtyGroup_(targetName)
     : null;
   if (res.note && !specGroup) plan.notes.push(res.note);
+
+  const secondaryRaw = !productName
+    ? (Array.isArray(a.other_products) && a.other_products.length
+      ? a.other_products
+      : (Array.isArray(a.product_targets) && a.product_targets.length > 1 ? a.product_targets.slice(1) : []))
+    : [];
   const secondaryDistros = [];
-  if (!productName && Array.isArray(a.other_products) && a.other_products.length) {
-    a.other_products.forEach(opName => {
-      const secRes = resolveDistro_(opName);
-      if (secRes.note) plan.notes.push(secRes.note);
-      const secProd = secRes.distro;
-      if (secProd && (!product || secProd.name.toLowerCase() !== product.name.toLowerCase()) &&
-          !secondaryDistros.some(s => s.name.toLowerCase() === secProd.name.toLowerCase())) {
-        secondaryDistros.push(secProd);
-      }
-    });
-  }
-  if (product) {
-    addProductDistro(product);
-    secondaryDistros.forEach(addProductDistro);
-  } else if (specGroup) {
-    add(plan.to, specGroup.recipients);
-    if (!plan.groups.includes(specGroup.name)) {
-      plan.groups.push(specGroup.name);
-      plan.reasons[specGroup.name] = 'selected group POCs';
-      plan.members[specGroup.name] = (specGroup.recipients || []).slice();
+  const secondarySpecs = [];
+  secondaryRaw.forEach(opName => {
+    const secRes = resolveDistro_(opName);
+    const secProd = secRes.distro;
+    const secSpec = !secProd && opName && typeof resolveSpecialtyGroup_ === 'function'
+      ? resolveSpecialtyGroup_(opName)
+      : null;
+    if (secRes.note && !secSpec) plan.notes.push(secRes.note);
+    if (secProd && (!product || secProd.name.toLowerCase() !== product.name.toLowerCase()) &&
+        !secondaryDistros.some(s => s.name.toLowerCase() === secProd.name.toLowerCase())) {
+      secondaryDistros.push(secProd);
+    } else if (secSpec && (!specGroup || secSpec.name.toLowerCase() !== specGroup.name.toLowerCase()) &&
+        !secondarySpecs.some(s => s.name.toLowerCase() === secSpec.name.toLowerCase())) {
+      secondarySpecs.push(secSpec);
     }
-    secondaryDistros.forEach(addProductDistro);
+  });
+
+  const addSecondarySpec = (sg, inCc) => {
+    add(inCc ? plan.cc : plan.to, sg.recipients);
+    markGroup(sg.name, inCc ? 'additional group on alert (CC)' : 'selected group POCs', sg.recipients, inCc);
+  };
+
+  if (product) {
+    addProductDistro(product, false);
+    secondaryDistros.forEach(d => addProductDistro(d, true));
+    secondarySpecs.forEach(sg => addSecondarySpec(sg, true));
+  } else if (specGroup) {
+    addSecondarySpec(specGroup, false);
+    secondaryDistros.forEach(d => addProductDistro(d, true));
+    secondarySpecs.forEach(sg => addSecondarySpec(sg, true));
   } else if (secondaryDistros.length) {
-    secondaryDistros.forEach(addProductDistro);
+    // Primary had no distro: promote first valid secondary product to To: (Gmail requires a To: header), rest go to Cc:
+    addProductDistro(secondaryDistros[0], false);
+    secondaryDistros.slice(1).forEach(d => addProductDistro(d, true));
+    secondarySpecs.forEach(sg => addSecondarySpec(sg, true));
+  } else if (secondarySpecs.length) {
+    addSecondarySpec(secondarySpecs[0], false);
+    secondarySpecs.slice(1).forEach(sg => addSecondarySpec(sg, true));
   } else {
     add(plan.to, GEN.email.default_to);
   }
+
   const extra = (extraGroups || []).filter(Boolean).map(g => String(g).trim().toLowerCase());
   GEN.distribution.groups.forEach(group => {
     const keyMatch = extra.includes(String(group.action_code || '').toLowerCase()) || extra.includes(group.name.toLowerCase());
@@ -458,129 +476,45 @@ function planRecipients_(a, text, extraGroups, productName) {
     }
     if (!emails.length) { plan.missing.push(group.name); return; }
     add(group.action_code === 'gup' ? plan.to : plan.cc, emails);
-    plan.groups.push(group.name);
-    plan.reasons[group.name] = reason;
-    plan.members[group.name] = emails.slice();
+    if (!plan.groups.includes(group.name)) {
+      plan.groups.push(group.name);
+      plan.reasons[group.name] = reason;
+      plan.members[group.name] = emails.slice();
+    }
   });
   add(plan.cc, GEN.email.default_cc);
   return plan;
 }
 
 /**
- * Resolves an alert's email input into 1 or more dedicated per-product-team Social Alert email targets:
- * - Single-product alerts (or multiple aliases of the same product team, e.g. "AI Studio, Devs Products") return a single
- *   `{ single: true, ... }` entry so existing single-email behavior is 100% preserved.
- * - Multi-product alerts spanning 2+ distinct product teams (e.g. "Product: Gemini Model, Devs Products") return one
- *   target per distinct team (`{ single: false, index, total, key, slug, distroName, productLabel, input, plan,
- *   replyThread, replyTo, replySubject }`), each formulated specifically for that product team and routed to that team's
- *   Google Group POCs from `Brand safety groups` (or delivered as separate inbox emails to `Control!B30` while Testing).
+ * Resolves an alert's email input into a single unified Social Alert email target (`single: true`, `total: 1`):
+ * - Primary product's Google Group POCs from `Brand safety groups` are placed in `To:`, and any additional products/groups
+ *   listed on the alert are placed in `Cc:` on that same single Social Alert email (`planRecipients_`).
  */
 function productEmailTargets_(input, extraGroups, row) {
   const inp = input || {};
   const esc = inp.escalation || {};
   const extra = (extraGroups || []).filter(g => g && g !== 'tns');
-  const explicitTargets = (Array.isArray(esc.product_targets) && esc.product_targets.length >= 2 ? esc.product_targets : null) ||
-    (inp.fields && Array.isArray(inp.fields.product_targets) && inp.fields.product_targets.length >= 2 ? inp.fields.product_targets : null);
-  const rawAll = explicitTargets
-    ? explicitTargets
-    : [String((inp.fields && inp.fields.product) || esc.product || '').trim()].filter(Boolean);
-  const groups = [];
-  rawAll.forEach(pName => {
-    const s = String(pName || '').trim();
-    if (!s) return;
-    const res = resolveDistro_(s);
-    const distro = res.distro || null;
-    const spec = !distro && typeof resolveSpecialtyGroup_ === 'function' ? resolveSpecialtyGroup_(s) : null;
-    const key = String((distro && distro.name) || (spec && spec.name) || productCanonKey_(s) || s).trim().toLowerCase();
-    if (!key) return;
-    const existing = groups.find(g => g.key === key);
-    if (existing) {
-      if (!existing.products.some(x => x.toLowerCase() === s.toLowerCase())) existing.products.push(s);
-    } else {
-      groups.push({ key, distroName: (distro && distro.name) || (spec && spec.name) || s, distro, products: [s] });
-    }
-  });
-  const effectiveGroups = groups.length > 1
-    ? groups.filter(g => {
-        if (g.key !== 'brand') return true;
-        const d = g.distro;
-        return !!(d && ((d.pa && d.pa.length) || (d.gup && d.gup.length) || (d.execs && d.execs.length) ||
-          (d.conditional && d.conditional.length)));
-      })
-    : groups;
-  if (effectiveGroups.length <= 1) {
-    const g0 = effectiveGroups[0] || groups[0] || null;
-    const key0 = (g0 && g0.key) || 'default';
-    return [{
-      single: true,
-      index: 0,
-      total: 1,
-      key: key0,
-      slug: key0.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'team1',
-      distroName: (g0 && g0.distroName) || esc.product || 'Brand',
-      productLabel: allProductsText_(inp.fields, esc, esc.product || 'Brand'),
-      input: inp,
-      plan: planRecipients_(esc, esc.text, extra),
-      replyThread: (row && row.email_thread) || '',
-      replyTo: (row && row.email_reply_to) || '',
-      replySubject: (row && row.email_thread && row.email_subject) || '',
-    }];
-  }
-
-  const relTeams = Array.isArray(inp.related_team_emails) ? inp.related_team_emails : [];
-  const relProdRaw = String(inp.related_product || '').trim();
-  const relProdKey = relProdRaw
-    ? String(((resolveDistro_(relProdRaw).distro || {}).name) || productCanonKey_(relProdRaw) || relProdRaw).trim().toLowerCase()
-    : '';
-
-  return effectiveGroups.map((g, index) => {
-    const primary = g.products[0];
-    const sameTeamOthers = g.products.slice(1);
-    const teamFields = Object.assign({}, inp.fields || {}, { product: primary });
-    if (sameTeamOthers.length) teamFields.other_products = sameTeamOthers;
-    else delete teamFields.other_products;
-    if (typeof teamFields.code === 'string' && teamFields.code) {
-      const codeParts = splitTopLevel_(teamFields.code, true).map(x => x.trim());
-      if (codeParts.length >= 6) {
-        codeParts[4] = primary;
-        teamFields.code = codeParts.join(',');
-      }
-    }
-    const teamEsc = Object.assign({}, esc, { product: primary });
-    if (sameTeamOthers.length) teamEsc.other_products = sameTeamOthers;
-    else delete teamEsc.other_products;
-    const teamInput = Object.assign({}, inp, { fields: teamFields, escalation: teamEsc });
-    delete teamInput.team_emails;
-
-    const teamPlan = planRecipients_(teamEsc, teamEsc.text, extra, primary);
-    let replyThread = '';
-    let replyTo = '';
-    let replySubject = '';
-    const rt = relTeams.find(x => x && x.key === g.key && x.thread);
-    if (rt) {
-      replyThread = String(rt.thread || '');
-      replyTo = String(rt.message_id || '');
-      replySubject = String(rt.subject || '');
-    } else if (!relTeams.length && row && row.email_thread && (!relProdKey ? index === 0 : relProdKey === g.key)) {
-      replyThread = String(row.email_thread || '');
-      replyTo = String(row.email_reply_to || '');
-      replySubject = String(row.email_subject || '');
-    }
-    return {
-      single: false,
-      index,
-      total: effectiveGroups.length,
-      key: g.key,
-      slug: g.key.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || ('team' + (index + 1)),
-      distroName: g.distroName || primary,
-      productLabel: g.products.join(', '),
-      input: teamInput,
-      plan: teamPlan,
-      replyThread,
-      replyTo,
-      replySubject,
-    };
-  });
+  const primaryName = String((inp.fields && inp.fields.product) || esc.product || '').trim();
+  const res = resolveDistro_(primaryName);
+  const distro = res.distro || null;
+  const spec = !distro && primaryName && typeof resolveSpecialtyGroup_ === 'function' ? resolveSpecialtyGroup_(primaryName) : null;
+  const key0 = String((distro && distro.name) || (spec && spec.name) || productCanonKey_(primaryName) || primaryName || 'default')
+    .trim().toLowerCase() || 'default';
+  return [{
+    single: true,
+    index: 0,
+    total: 1,
+    key: key0,
+    slug: key0.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'team1',
+    distroName: (distro && distro.name) || (spec && spec.name) || esc.product || 'Brand',
+    productLabel: allProductsText_(inp.fields, esc, esc.product || 'Brand'),
+    input: inp,
+    plan: planRecipients_(esc, esc.text, extra),
+    replyThread: (row && row.email_thread) || '',
+    replyTo: (row && row.email_reply_to) || '',
+    replySubject: (row && row.email_thread && row.email_subject) || '',
+  }];
 }
 
 /**

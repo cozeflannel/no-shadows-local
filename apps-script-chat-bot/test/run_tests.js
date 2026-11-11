@@ -1735,7 +1735,8 @@ test('human Q&A in both spaces: answers "Should i escalate this or is it handled
   assert.strictEqual(replies.length, 1);
   assert.match(replies[0].text, /^<users\/im_lead> Social Alert draft is in Gmail Drafts: review and send it, or delete it to skip\./);
   assert.match(replies[0].text, /- Why: High engagement \(29,425 on X\)/);
-  assert.match(replies[0].text, /- To: AI Overviews, Search alert POCs/);
+  assert.match(replies[0].text, /- To: AI Overviews alert POCs/);
+  assert.match(replies[0].text, /- Cc: .*Search alert POCs/);
 
   // 1. In the Burson space: user asks "Should i escalate this or is it handled/"
   w.vertex.answer = () => 'We already have the escalation email in review for this one since it hit 29,425 engagements on X, so you\'re all set!';

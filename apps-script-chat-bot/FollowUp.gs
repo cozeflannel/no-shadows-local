@@ -176,7 +176,8 @@ function followupTeams_(row) {
     const group = GEN.distribution.groups.find(g => g.name === name);
     const code = group ? String(group.action_code || '') : '';
     const kind = !group || code === 'gup' ? 'product' : (OUTCOME_COMMS_CODES_.includes(code) ? 'comms' : 'other');
-    out.push({ name: !group && plan.reasons[name] === 'product alert POCs' ? `${name} alert POCs` : name, emails, kind, code });
+    const isProdPocs = !group && (plan.reasons[name] === 'product alert POCs' || plan.reasons[name] === 'additional product alert POCs (CC)');
+    out.push({ name: isProdPocs ? `${name} alert POCs` : name, emails, kind, code });
   });
   const std = lower(GEN.email.default_cc);
   if (std.length) out.push({ name: FOLLOWUP_STANDARD_CC_, emails: std, kind: 'comms', code: '', oversight: true });

@@ -98,8 +98,8 @@ function ensureSidepanelTestAlertTab_(ss) {
     ['KOF', 'No', 'Key Opinion Former (Yes / No)'],
     [
       'Summary',
-      'Synthetic test alert triggered from the Test alert tab to verify per-product Social Alert email routing.',
-      'Included in the Chat card and formulated Social Alert email(s)',
+      'Synthetic test alert triggered from the Test alert tab to verify Chat pickup and Social Alert email routing (primary product in To, additional products in CC).',
+      'Included in the Chat alert and formulated Social Alert email',
     ],
   ];
   sh.getRange(1, 1, rows.length, 3).setValues(rows);
@@ -167,7 +167,7 @@ function clearExtraTestProducts(ssOverride) {
 
 /**
  * Queues the configured test alert on `Test alert` (`B2 = 'SEND NOW'`) so the bot's 1-minute `poll()` posts the Chat
- * card and sends each selected product's formulated Social Alert email.
+ * alert into the test space, picks it up from Chat, and sends one Social Alert email (primary product in To, additional products in CC).
  */
 function sendSheetTestAlert(ssOverride) {
   const ss = ssOverride || SpreadsheetApp.getActiveSpreadsheet();

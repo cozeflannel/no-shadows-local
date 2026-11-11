@@ -322,43 +322,71 @@ function resolveSpecialtyGroup_(name) {
 }
 
 /**
- * Resolves Column C test email(s) from `Brand safety groups` for a single formulated Social Alert target (`t` from
- * `productEmailTargets_`). Returns `{to, cc, groupName}`:
- * - If the target's product/group has no test email in Column C, `to` is `[]` (no email is sent; never falls back to B30
- *   or live distros).
- * - If `to` is non-empty, `cc` includes any Column C test emails configured on active CC specialty/regional/Default CC rows.
+ * Resolves Column C test email(s) from `Brand safety groups` for a single Social Alert (`t` from `productEmailTargets_`):
+ * - Evaluates every product/group listed on the alert in order: the first product with a Column C test email goes in `to`,
+ *   and all additional products with Column C test emails go in `cc` on that single Social Alert email.
+ * - Any listed product without a Column C test email is recorded in `skippedGroups` (and if none of the listed products
+ *   has a Column C test email, `to` is `[]` so no email is sent and the skip is logged).
  */
 function bsgTestPlanForTarget_(t, extraGroups) {
   const inp = (t && t.input) || {};
   const f = inp.fields || {};
   const esc = inp.escalation || {};
   const dist = (typeof GEN !== 'undefined' && GEN && GEN.distribution) || {};
-  const distro = typeof resolveDistro_ === 'function' ? ((resolveDistro_(f.product) || {}).distro || null) : null;
-  const spec = !distro && String(f.product || '').trim() ? resolveSpecialtyGroup_(f.product) : null;
-  let to = [];
-  let groupName = (distro && (distro.group_name || distro.name)) || (spec && spec.name) ||
-    String((t && (t.distroName || t.productLabel)) || f.product || '').trim();
+  const rawNames = typeof allProductsList_ === 'function'
+    ? allProductsList_(f, esc)
+    : [String(f.product || esc.product || '').trim()].filter(Boolean);
 
-  if (distro) {
-    to = bsgCleanTestEmails_(distro.test_pa);
-  } else if (spec) {
-    to = bsgCleanTestEmails_(spec.test_recipients);
-  } else if (!String(f.product || '').trim()) {
+  let to = [];
+  let cc = [];
+  const matchedGroups = [];
+  const skippedGroups = [];
+  const seenKeys = new Set();
+
+  if (rawNames.length) {
+    rawNames.forEach(pName => {
+      const s = String(pName || '').trim();
+      if (!s) return;
+      const distro = typeof resolveDistro_ === 'function' ? ((resolveDistro_(s) || {}).distro || null) : null;
+      const spec = !distro ? resolveSpecialtyGroup_(s) : null;
+      const gLabel = (distro && (distro.group_name || distro.name)) || (spec && spec.name) || s;
+      const canonKey = bsgNormKey_((distro && distro.name) || (spec && spec.name) || s);
+      if (canonKey && seenKeys.has(canonKey)) return;
+      if (canonKey) seenKeys.add(canonKey);
+
+      const emails = distro
+        ? bsgCleanTestEmails_(distro.test_pa)
+        : (spec ? bsgCleanTestEmails_(spec.test_recipients) : []);
+      if (emails.length) {
+        matchedGroups.push(gLabel);
+        if (!to.length) to = bsgMergeUnique_(to, emails);
+        else cc = bsgMergeUnique_(cc, emails);
+      } else {
+        skippedGroups.push(gLabel);
+      }
+    });
+  } else {
     // Alert with no product field: check any To-eligible specialty group on the alert, then Default To's test email
     const codes = new Set([].concat(esc.groups || [], extraGroups || []).map(x => String(x || '')));
+    let groupName = '';
     (dist.groups || []).forEach(g => {
       if (codes.has(g.action_code) && g.placement === 'to_if_no_product_else_cc') {
-        to = bsgMergeUnique_(to, bsgCleanTestEmails_(g.test_recipients));
+        const te = bsgCleanTestEmails_(g.test_recipients);
+        if (te.length) {
+          matchedGroups.push(g.name);
+          if (!to.length) to = bsgMergeUnique_(to, te);
+          else cc = bsgMergeUnique_(cc, te);
+        }
         if (!groupName) groupName = g.name;
       }
     });
     if (!to.length && GEN && GEN.email && GEN.email.test_default_to) {
       to = bsgCleanTestEmails_(GEN.email.test_default_to);
-      if (!groupName) groupName = 'Default To';
+      if (to.length) matchedGroups.push('Default To');
     }
+    if (!to.length) skippedGroups.push(groupName || 'unmapped product');
   }
 
-  let cc = [];
   if (to.length) {
     if (GEN && GEN.email && GEN.email.test_default_cc) {
       cc = bsgMergeUnique_(cc, bsgCleanTestEmails_(GEN.email.test_default_cc));
@@ -379,7 +407,10 @@ function bsgTestPlanForTarget_(t, extraGroups) {
     cc = cc.filter(e => !toSet.has(e.toLowerCase()));
   }
 
-  return { to, cc, groupName: groupName || 'unmapped product' };
+  const groupName = matchedGroups.length
+    ? matchedGroups.join(', ')
+    : (skippedGroups.join(', ') || String((t && (t.distroName || t.productLabel)) || f.product || 'unmapped product').trim());
+  return { to, cc, groupName, matchedGroups, skippedGroups };
 }
 
 /**
