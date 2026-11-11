@@ -62,7 +62,7 @@ def runtime_env_vars() -> dict[str, str]:
     project = env("PROJECT_ID", required=True)
     return {
         "TRIAGE_BACKEND": "gcp",
-        "TRIAGE_ENV": env("TRIAGE_ENV", "dev"),
+        "TRIAGE_ENV": env("TRIAGE_ENV", "shadow"),
         "TRIAGE_FIRESTORE_DB": env("FIRESTORE_DB", "(default)"),
         "TRIAGE_BQ_TABLE": f"{project}.{env('DATASET', 'slrr_triage_agent')}.agent_events",
         "TRIAGE_LLM": "vertex",
@@ -139,7 +139,7 @@ def deploy_config(paths: list[str]) -> dict:
         "agent_framework": "custom",
         "env_vars": runtime_env_vars(),
         "service_account": sa,
-        "labels": {"app": "slrr-triage-agent", "env": env("TRIAGE_ENV", "dev")},
+        "labels": {"app": "slrr-triage-agent", "env": env("TRIAGE_ENV", "shadow")},
         # Alerts must be triaged within seconds: keep one warm instance. Small, bursty traffic otherwise.
         "min_instances": int(env("AGENT_MIN_INSTANCES", "1")),
         "max_instances": int(env("AGENT_MAX_INSTANCES", "10")),

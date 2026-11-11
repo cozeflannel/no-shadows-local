@@ -325,12 +325,6 @@ class FakeSheet {
     return p;
   }
   appendRow(values) { this.rows.push(values.map(store)); return this; }
-  /** Deletes `n` rows from row `start` (1-based); the rows below move up, as in Sheets. Recorded in `deleted`. */
-  deleteRows(start, n) {
-    this.rows.splice(start - 1, n || 1);
-    (this.deleted = this.deleted || []).push(`${start},${n || 1}`);
-    return this;
-  }
   /** Test helper: the value at row r, column c (1-based). */
   cell(r, c) { const row = this.rows[r - 1] || []; return row[c - 1] === undefined ? '' : row[c - 1]; }
   getRange(r, c, nr, nc) {

@@ -8,7 +8,7 @@
  *
  * Script Properties:
  *   AGENT_ENGINE_RESOURCE  projects/<project>/locations/<region>/reasoningEngines/<id>   (required)
- *   TRIAGE_ENV             dev | prod   (optional; informational)
+ *   TRIAGE_ENV             dev | shadow | prod   (optional; informational)
  *
  * Step definitions (ids, inputs, ops) are GENERATED into Steps.gs by
  * build_manifest.py from triage_agent/models.py. See docs/CONTRACTS.md §13.

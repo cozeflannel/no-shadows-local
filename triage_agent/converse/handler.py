@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 # Commands that only make sense for Google staff (not the external agency in the Burson space).
 INTERNAL_ONLY = {"revise", "forward", "bounce", "suppress", "revert", "tns_submitted", "tns_withdraw", "bug", "handover",
                  "config_change", "decide", "action"}
-SPACE_KINDS = {"burson", "clean", "youtube", "doodle", "team", "crisis"}
+SPACE_KINDS = {"burson", "clean", "youtube", "doodle", "team", "crisis", "shadow"}
 TZ_ABBR = {
     "et": "America/New_York", "est": "America/New_York", "edt": "America/New_York",
     "pt": "America/Los_Angeles", "pst": "America/Los_Angeles", "pdt": "America/Los_Angeles",
@@ -141,7 +141,7 @@ def deliver(turn: Turn, out: ChatOutputs) -> ChatOutputs:
 
 def dispatch_op(turn: Turn, op: str, payload: dict[str, Any]) -> Result:
     """Run another operation (review_decision, revert_correction, generate_handover, record_reaction) and
-    return its outputs; the outer converse call finalizes delivery (outbox / targets) once."""
+    return its outputs; the outer converse call finalizes delivery (outbox / targets / shadow) once."""
     ctx = turn.ctx
     rc = RequestContext(invoked_by=turn.asker or None, flow="converse", deliver="return")
     try:

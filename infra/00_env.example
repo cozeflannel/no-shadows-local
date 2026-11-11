@@ -19,7 +19,7 @@ export SONAR_PROJECT="bsip-s-bsip-gg-26-2cf3"        # Path B / Sonar lookups (u
 export SONAR_DATASET="google_bg"
 export SONAR_LOCATION="us-central1"                  # bsip-s-bsip-gg-26-2cf3.google_bg is in us-central1
 
-export TRIAGE_ENV="dev"                              # dev | prod
+export TRIAGE_ENV="shadow"                           # dev | shadow | prod
 export CONSOLE_SERVICE="slrr-triage-console"
 export OAUTH_CLIENT_SECRET="slrr-triage-oauth-client"     # Secret Manager secret holding the OAuth web client JSON (Gmail connect)
 

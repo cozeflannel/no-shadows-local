@@ -42,8 +42,8 @@ module.exports = H => {
     issue_new: true, summary: 'An X reply (@CorrDove, 1.7K followers) claims Google helped rig the midterms.', impact: 6, bar: 4,
     topic: 'Elections and civics' }, o || {});
   const src = source => ({ kind: 'src', source, found: 0, checked: 0, newest_ms: null, mod_ms: null, err: null });
-  const C1_ROWS = ['sonar', 'tubular'].map(src);
-  const US_ROWS = ['bwm', 'owned', 'bwq'].map(src);
+  const C1_ROWS = ['sonar', 'tubular', 'outbound'].map(src);
+  const US_ROWS = ['bmie', 'comments', 'story', 'chat', 'bwq'].map(src);
 
   /** A fake BigQuery for the watch's looks (as in switch_proactive_watch.test.js): sent pending, collected from bq.answers. */
   function fakeBq(g) {
@@ -282,7 +282,7 @@ module.exports = H => {
     // C35
     const ok = t.bot.pwAlertsDest_(OTHER, mid, viaMirror);
     eq(t.bot.pwAlertsNoteText_({ choice: '' }, null, true, 0), B.pwAlertsOffText_());
-    eq(t.bot.pwAlertsNoteText_(ok, null, false, 0), '⚠️ Other alerts space (B33) chosen, but the Proactive watch (row 34) is OFF: only classified alerts are posted (none waiting)');
+    eq(t.bot.pwAlertsNoteText_(ok, null, false, 0), '⚠️ Other alerts space (B33) chosen, but the Proactive watch (row 34) is OFF: nothing to post');
     assert.match(t.bot.pwAlertsNoteText_(ok, { posted: 1, waiting: 2, problem: '' }, true, 3),
       /^✓ Midterms 2026 \(B33\): each flag at a watch's bar is posted there as a 🔭 Watch alert for full triage: ❌ if off-topic or already alerted, 👍, or a Social Alert \(always Testing there\) · today: 3 posted, 2 waiting$/);
     eq(t.bot.pwAlertsNoteText_(t.bot.pwAlertsDest_(OTHER, null, viaMirror), null, true, 0),
@@ -290,7 +290,7 @@ module.exports = H => {
     [OTHER, MIRRORED].forEach(v => assert.ok(t.bot.pwAlertsNoteText_(t.bot.pwAlertsDest_(v, mid, viaMirror), null, true, 0).length <= 250));
     // the switch texts: C34 keeps its words while B35 is OFF
     const sw = B.ev('CONTROL_SWITCHES_').find(s => s.row === 34);
-    assert.match(sw.on('', false, {}, {}), /^✓ ON \(Watch alerts, row 35, is OFF: nothing is posted or emailed\)/);
+    assert.match(sw.on('', false, {}, {}), /^✓ ON \(shadow test: nothing is posted or emailed\)/);
     assert.match(sw.on('', false, {}, { watchAlerts: 'mirror' }), /^✓ ON \(its flags go out as watch alerts: row 35, Mirror space \(B9\)\)/);
   });
 
@@ -306,8 +306,8 @@ module.exports = H => {
     look(w, [hit()]);
     eq(keys(t).map(k => [k.w, k.b, k.a]), [[MIDTERMS, 1, undefined]]);
     eq([posted(t, MID), posted(t, MIRROR), t.g.props.get('PW_ALERT_PENDING'), c35(t)], [[], [], undefined, B.pwAlertsOffText_()]);
-    assert.match(t.control().cell(34, 3), /^✓ ON \(Watch alerts, row 35, is OFF: nothing is posted or emailed\)/);
-    eq([t.bot.status().watch_alerts, t.bot.status().proactive_watch], ['OFF', 'ON (Watch alerts row 35 is OFF: its flags are only listed)']);
+    assert.match(t.control().cell(34, 3), /^✓ ON \(shadow test: nothing is posted or emailed\)/);
+    eq([t.bot.status().watch_alerts, t.bot.status().proactive_watch], ['OFF', 'ON (shadow test: nothing is posted)']);
     t.control().getRange(35, 2).setValue(OTHER);
     t.poll();
     t.poll();
@@ -661,7 +661,7 @@ module.exports = H => {
     eq(keys(t).map(k => [k.w, k.a]).sort(), [['Google brand safety (all)', 'p'], [MIDTERMS, 'd']].sort());
     t.control().getRange(34, 2).setValue('OFF');
     t.poll();
-    eq(c35(t), '\u26a0\ufe0f Other alerts space (B33) chosen, but the Proactive watch (row 34) is OFF: only classified alerts are posted (none waiting)');
+    eq(c35(t), '\u26a0\ufe0f Other alerts space (B33) chosen, but the Proactive watch (row 34) is OFF: nothing to post');
   });
 
   // ===========================================================================================================

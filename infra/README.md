@@ -72,8 +72,8 @@ Then:
 2. **Doorbell:** create the "Agent Outbox" sheet (owned by the Triage Agent account), share it with the runtime service
    account as Editor, and set `outbox.doorbell: sheet` + `outbox.sheet_id` in the Console's **Settings**. If the spike
    picks the email doorbell instead, set `outbox.doorbell: email` and connect the agent mailbox (see `08_gmail_oauth.sh`).
-3. **Flows** ([`../flows/FLOW_SETUP.md`](../flows/FLOW_SETUP.md)): build flows 1–5 as the Triage Agent account. Until the
-   cutover, every post step points at a Google-only test space (never the Burson space).
+3. **Flows** ([`../flows/FLOW_SETUP.md`](../flows/FLOW_SETUP.md)): build flows 1–5 as the Triage Agent account. In **shadow**,
+   every post step points at the private shadow space.
 4. **Config:** in the Console's **Settings**, replace the remaining PLACEHOLDERs:
    - space ids;
    - IM shift roster and Burson roster (**Rosters**);
@@ -83,13 +83,13 @@ Then:
    - the Burson alert template labels.
 5. **IMs connect Gmail** once from the Console (drafts are created in their own mailbox, From: the Brand Social alias).
 
-## Cutover to production
+## Shadow → production
 
 | Gate | How to check |
 |---|---|
 | Decisions match IMs | Console **Overview**: first-pass yield, auto-fix rate, review queue size; `evals` golden set rerun with `--live` |
 | Corrections are right | Console **Activity**: `correction.applied` reverts stay near zero for a week |
-| No missed alerts | Console **Parity** (Burson vs in-house) for a full rotation |
+| No missed alerts | Console **Parity** (Burson vs in-house), and the Burson space vs the shadow space for a full rotation |
 | Drafts are usable | IMs send drafts with ≤ 1 revision on average (`revisions_per_email`) |
 
 To cut over:
@@ -97,7 +97,7 @@ To cut over:
 1. Set `TRIAGE_ENV=prod` in `infra/.env`.
 2. Re-run `05` (with `AGENT_RESOURCE` set), `06` and `07`.
 3. Set the add-on's `TRIAGE_ENV` Script Property to `prod`.
-4. Repoint the flows' post steps from the test space to the real spaces.
+4. Repoint the flows' post steps from the shadow space to the real spaces.
 5. Path B: set `inhouse.parity_mode: false` in Settings once parity holds.
 
 ## Operations

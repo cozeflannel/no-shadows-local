@@ -519,7 +519,7 @@ class OutboxItem(BaseModel):
 # ---------------------------------------------------------------------------
 
 SpaceKind = Literal[
-    "burson", "clean", "dm", "youtube", "doodle", "team", "crisis", "handover",
+    "burson", "clean", "dm", "youtube", "doodle", "team", "crisis", "handover", "shadow",
     "stakeholder", "email", "console", "system",
 ]
 

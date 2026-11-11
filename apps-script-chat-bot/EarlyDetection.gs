@@ -1195,16 +1195,9 @@ function edFromRow_(row) {
   const mapped = topic && !/^unclassified$/i.test(topic) ? (mapBqProduct_(topic, '') || topic) : '';
   const product = mapped ? (normalizeProposal_('product', mapped) || mapped) : '';
   const platformsCsv = ewText_(r.platforms_csv || '') || primary.platform || '';
-  // a radar alert (Signals.gs, the two-track system's Track 2): an emerging story Gemini promoted or rated likely to
-  // become an official alert; its accounts are small ones only when its cluster came from early_detection
-  const radar = sig === 'RADAR';
-  const lowTier = !radar || String(r.radar_origin || '') === 'early_detection';
   const signalLabel = sig === 'VELOCITY_SPIKE'
     ? `Low-tier velocity spike${grain ? ` (${grain.replace(/_/g, ' ').toLowerCase()} grain)` : ''}`
-    : radar ? 'Emerging story the radar rates likely to become an alert' : 'Low-tier semantic cluster emergence';
-  const outlook = radar ? ` Radar outlook: ${ewText_(r.radar_likelihood || 'unrated')} likelihood of meeting the ` +
-    `Collection Requirements if left alone${r.radar_action ? ` (${ewText_(r.radar_action)})` : ''}` +
-    `${r.radar_tag ? `; closest tag: ${ewText_(r.radar_tag)}` : ''}.${r.radar_why ? ` ${ewText_(r.radar_why)}` : ''}` : '';
+    : 'Low-tier semantic cluster emergence';
   return {
     headline: ewText_(r.headline || r.signal_key || primary.snippet || 'Emerging low-tier discussion'),
     signalLabel,
@@ -1218,13 +1211,9 @@ function edFromRow_(row) {
     url,
     sampleUrls: posts.map(p => p.url).filter(u => u && u !== url).slice(0, ED_POSTS_MAX_ - 1),
     text: truncate_(primary.snippet || (posts.find(p => p.snippet) || {}).snippet || '', 500),
-    summary: truncate_(radar
-      ? `${signalLabel}: ${fmtInt_(authors)} ${lowTier ? 'distinct low-tier authors' : 'accounts'} (${fmtInt_(mentions)} ` +
-        `mentions across ${platformsCsv || 'social'})${ratio ? `, ${ratio.toFixed(1)}x its earlier pace` : ''}.${outlook}`
-      : `${signalLabel}: ${fmtInt_(authors)} distinct low-tier authors (${fmtInt_(mentions)} mentions across ` +
-        `${platformsCsv || 'social'}).${ratio ? ` Current velocity is ${ratio.toFixed(1)}x smoothed baseline (${fmtInt_(authors)} vs ` +
-        `${(Number(r.baseline_authors) || 0).toFixed(1)} expected authors).` : ''}`, 900),
-    lowTier,
+    summary: truncate_(`${signalLabel}: ${fmtInt_(authors)} distinct low-tier authors (${fmtInt_(mentions)} mentions across ` +
+      `${platformsCsv || 'social'}).${ratio ? ` Current velocity is ${ratio.toFixed(1)}x smoothed baseline (${fmtInt_(authors)} vs ` +
+      `${(Number(r.baseline_authors) || 0).toFixed(1)} expected authors).` : ''}`, 900),
     distinctAuthors: authors || null,
     mentionCount: mentions || null,
     platformsCsv,
@@ -1354,7 +1343,7 @@ function edFallbackTitle_(ed, posts) {
   const label = String(x.headline || '').replace(/^Low-tier (?:claim cluster|velocity [\d.]+x)\s*\([^)]*\):?\s*/i, '').trim();
   const quote = truncate_(ewText_(label || ((posts || [])[0] || {}).snippet || 'a new topic'), 70);
   const n = Number(x.distinctAuthors) || 0;
-  return `${n ? `${fmtInt_(n)} accounts` : x.lowTier === false ? 'Accounts' : 'Small accounts'} posting “${quote}”`;
+  return `${n ? `${fmtInt_(n)} accounts` : 'Small accounts'} posting “${quote}”`;
 }
 
 /** A plain story from the posts themselves (no AI), for a card Gemini gave none. Chat markup. Pure. */
@@ -1366,8 +1355,7 @@ function edFallbackStory_(ed, posts) {
   const first = (posts || []).find(p => p.snippet);
   const linked = (posts || []).filter(p => /^https?:\/\/[^\s<>|]+$/i.test(p.url)).slice(0, 3)
     .map(p => edChatLink_(p.url, `@${p.author || 'post'}`));
-  return `${n ? fmtInt_(n) : 'Several'} ${x.lowTier === false ? '' : 'small '}accounts on ${plats} posted about this` +
-    `${m > n ? ` ${fmtInt_(m)} times` : ''}` +
+  return `${n ? fmtInt_(n) : 'Several'} small accounts on ${plats} posted about this${m > n ? ` ${fmtInt_(m)} times` : ''}` +
     `${x.velocityRatio ? `, ${Number(x.velocityRatio).toFixed(1)}x the usual pace for it` : ''}.` +
     `${first ? ` A typical post: “${truncate_(ewText_(first.snippet), 200)}”` : ''}` +
     `${linked.length ? ` (${linked.join(', ')})` : ''}${first || linked.length ? '.' : ''}`;
@@ -1463,8 +1451,7 @@ function edActivityLine_(ed, posts, now) {
   const plats = String(x.platformsCsv || x.platform || '').split(',').map(s => s.trim()).filter(Boolean);
   const where = plats.length > 1 ? `${plats.slice(0, -1).join(', ')} and ${plats[plats.length - 1]}` : plats[0] || '';
   const when = edWindowWords_(x, posts, now);
-  const small = x.lowTier === false ? '' : 'small ';
-  return `\u2022 *Activity:* ${n ? `${fmtInt_(n)} ${small}account${n === 1 ? '' : 's'}` : x.lowTier === false ? 'Accounts' : 'Small accounts'}` +
+  return `\u2022 *Activity:* ${n ? `${fmtInt_(n)} small account${n === 1 ? '' : 's'}` : 'Small accounts'}` +
     `${where ? ` on ${where}` : ''} posted about this${m > n ? ` ${fmtInt_(m)} times` : ''}${when ? ` ${when}` : ''}` +
     `${x.velocityRatio ? ` (${Number(x.velocityRatio).toFixed(1)}x the usual pace)` : ''}`;
 }

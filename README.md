@@ -6,16 +6,10 @@
 > Control tab of its Google Sheet (Bot ON/OFF, the two spaces, and switches for what it may do on its own, all OFF to
 > start). With **Work directly in B25** (row 32) it can also be tried right in another Google-only space, where alerts in
 > other formats get their own triage (the SLRR rules first, then the stream's own call), or beside the Mirror space in an
-> **Other alerts space** (B33). **Proactive watch** (row 34) catches issues before Burson does: every 5 minutes Gemini,
-> inside BigQuery, checks what's new in each source the bot can read (Sonar, Tubular, Brandwatch's mentions, Sprinklr's
-> owned posts and comments, and the Brandwatch query "2026 Election Alerts" from Brandwatch's API; seven networks,
-> English only, no shares, and no posts by Grok, X's AI account @grok) against the watches on the Watches tab, read-only,
-> and lists what it flags on the Watch detections tab with a scorecard against Burson's alerts. **Watch alerts** (row 35)
-> says where those flags, and the two-track system's classified alerts, are posted as the bot's own 🔭 Watch alerts (the
-> post's link as a hyperlink, its author, when it was posted and a summary, with the post's picture attached): the Other
-> alerts space (B33), the Mirror space (B9) or the Auto-correct space (B10), whose flow works them like any alert; with
-> row 35 `OFF` nothing is posted. The two-track system's radar alerts join the Early detection review (row 19); see
-> [`docs/TWO_TRACK_SIGNALS.md`](docs/TWO_TRACK_SIGNALS.md). Its taxonomy and settings are generated from
+> **Other alerts space** (B33). **Proactive watch** (row 34) is a shadow test of catching issues before Burson: every 5
+> minutes Gemini, inside BigQuery, checks what's new in every source the bot can read (Sonar, Brandwatch, Sprinklr,
+> Tubular, the DSD story selection feed, the Other alerts space's alerts, the Brandwatch query "2026 Election Alerts") against the watches on a Watches tab, read-only (posts by Grok, X's AI account @grok, are left out from every source), and
+> records what it would flag, with a scorecard against Burson's alerts (nothing is posted unless **Watch alerts**, row 35, says where: the Other alerts space or the Mirror space, as the bot's own 🔭 Watch alerts: the post's link as a hyperlink, its author, when it was posted and a summary, with the post's picture attached). Its taxonomy and settings are generated from
 > `config/default_config.yaml`. The rest of this README describes the full Python agent (escalation, T&S, Studio
 > flows, Console), which stays in the repo for V2 and later.
 
@@ -139,7 +133,7 @@ Use real Gemini with `--live` (needs `GOOGLE_CLOUD_PROJECT` and ADC):
 ## Deploy
 
 Start with the Phase 0 spike ([`flows/PHASE0_SPIKE.md`](flows/PHASE0_SPIKE.md)), then follow:
-- [`infra/README.md`](infra/README.md): APIs, service accounts, Firestore, BigQuery, the Agent Runtime, jobs, Console + IAP, Gmail OAuth, and the cutover to production.
+- [`infra/README.md`](infra/README.md): APIs, service accounts, Firestore, BigQuery, the Agent Runtime, jobs, Console + IAP, Gmail OAuth, and shadow → production.
 - [`studio-addon/README.md`](studio-addon/README.md): the custom steps.
 - [`flows/FLOW_SETUP.md`](flows/FLOW_SETUP.md): the Studio flows.
 

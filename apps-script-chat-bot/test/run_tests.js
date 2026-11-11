@@ -1057,7 +1057,7 @@ test('setup(): one run creates the control sheet (ready for testing), starts the
   // shared with the bot's account), and the summary and each row's Bot status say so
   assert.strictEqual(s.knowledge, 'Read 0 of 2 documents (0 characters). 2 couldn\'t be read: see the Bot status column on the Resources tab.');
   eq(Object.keys(leftovers).filter(k => g.props.has(k)), []);
-  eq(Array.from(g.props.keys()).sort(), ['BOT_USER', 'CONTROL_HELP_HASH', 'GUIDANCE_TAB_MADE', 'KNOWLEDGE_STATE', 'LAST_ANALYST_NAME', 'LAST_ANALYST_SPACE', 'RESOURCES_TAB_MADE',
+  eq(Array.from(g.props.keys()).sort(), ['BOT_USER', 'GUIDANCE_TAB_MADE', 'KNOWLEDGE_STATE', 'LAST_ANALYST_NAME', 'LAST_ANALYST_SPACE', 'RESOURCES_TAB_MADE',
     'SOMEONE_ELSES_SETTING', 'SPACE_ID:SLRR Test Feed (Burson Sim)', 'STORE_SHEET_ID']);
   assert.strictEqual(s.control_sheet, 'https://docs.google.com/spreadsheets/d/sheet1');
   eq(t.sheet().sheets.map(sh => sh.name), ['Control', 'Resources', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)']);
@@ -1112,40 +1112,30 @@ test('setup(): one run creates the control sheet (ready for testing), starts the
   assert.strictEqual(t.get('B5'), '⏸ Paused: Bot is OFF. Set it to ON to restart.');
 });
 
-test('orphan triggers: poll() deletes a trigger left for a function no longer in the project (one listed in ORPHAN_HANDLERS_), keeps the bot\'s own, never deletes one whose function exists, and looks at most every 6 hours; with none listed (as now) it deletes nothing', () => {
-  const retire = w => w.bot.ev("ORPHAN_HANDLERS_.push('retiredPoll')");  // a handler whose code was removed
+test('orphan triggers: poll() deletes a trigger left for a function no longer in the project (shadowMatcherPoll), keeps the bot\'s own, never deletes one whose function exists, and looks at most every 6 hours', () => {
   const t = e2e();
-  retire(t);
   t.bot.setup();
-  t.g.triggers.push({ handler: 'retiredPoll', minutes: 15 }, { handler: 'onTnsTestFormSubmit', source: 'form1', event: 'formSubmit' });
+  t.g.triggers.push({ handler: 'shadowMatcherPoll', minutes: 15 }, { handler: 'onTnsTestFormSubmit', source: 'form1', event: 'formSubmit' });
   t.poll();
   eq(t.g.triggers.map(x => x.handler), ['poll', 'onTnsTestFormSubmit']);
-  t.g.triggers.push({ handler: 'retiredPoll', minutes: 15 });  // put back: the next look is 6 hours away
+  t.g.triggers.push({ handler: 'shadowMatcherPoll', minutes: 15 });  // put back: the next look is 6 hours away
   t.poll();
-  eq(t.g.triggers.map(x => x.handler), ['poll', 'onTnsTestFormSubmit', 'retiredPoll']);
+  eq(t.g.triggers.map(x => x.handler), ['poll', 'onTnsTestFormSubmit', 'shadowMatcherPoll']);
   t.g.cache.delete('ORPHAN_TRIGGER_SWEEP');  // 6 hours later (the cache entry expired)
   t.poll();
   eq(t.g.triggers.map(x => x.handler), ['poll', 'onTnsTestFormSubmit']);
   // a handler whose function is in the project is never deleted, even when listed
   const u = e2e();
-  retire(u);
   u.bot.setup();
-  u.bot.ev('function retiredPoll() {}');
-  u.g.triggers.push({ handler: 'retiredPoll', minutes: 15 });
+  u.bot.ev('function shadowMatcherPoll() {}');
+  u.g.triggers.push({ handler: 'shadowMatcherPoll', minutes: 15 });
   u.poll();
-  eq(u.g.triggers.map(x => x.handler), ['poll', 'retiredPoll']);
+  eq(u.g.triggers.map(x => x.handler), ['poll', 'shadowMatcherPoll']);
   // setup() deletes it too
   const v = e2e();
-  retire(v);
-  v.g.triggers.push({ handler: 'retiredPoll', minutes: 15 });
+  v.g.triggers.push({ handler: 'shadowMatcherPoll', minutes: 15 });
   v.bot.setup();
   eq(v.g.triggers, [{ handler: 'poll', minutes: 1 }]);
-  // with nothing listed, a trigger the bot doesn't own by name is left alone
-  const w = e2e();
-  w.bot.setup();
-  w.g.triggers.push({ handler: 'retiredPoll', minutes: 15 });
-  w.poll();
-  eq(w.g.triggers.map(x => x.handler), ['poll', 'retiredPoll']);
 });
 
 test('setup() with a space it can\'t find still installs the bot and explains the problem on the Control tab', () => {
@@ -1213,7 +1203,7 @@ test('the Resources tab: an older install gets it on its next run, link chips wo
   t.poll();
   t.chat.say(TEST_FEED, 'where do the KOF rules come from?', { thread: alert.thread.name, sender: 'users/bot' });
   t.poll();
-  eq(tabs(), ['Control', 'Resources', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)', 'Signals']);
+  eq(tabs(), ['Control', 'Resources', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)']);
   assert.ok(answerPrompts()[0].includes(`- KOF lists: ${RES()[1].url}`), answerPrompts()[0]);
 
   const tab = t.sheet().getSheetByName('Resources');  // a pasted link Sheets shows as the document's title (a chip)
@@ -4344,7 +4334,7 @@ test('knowledge base: renaming the Resources tab (even to "Knowledge", as happen
   t.poll();
   t.bot.setup();
   t.poll();
-  eq(ss.sheets.map(sh => sh.name), ['Control', 'Knowledge', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)', 'Signals']);
+  eq(ss.sheets.map(sh => sh.name), ['Control', 'Knowledge', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)']);
   eq(typed(), before);
   assert.match(String(res.rows[3][4]), new RegExp(`^✓ Read Oct 14, \\d{1,2}:\\d\\d [AP]M EDT · Google Doc · ${SAFE_DOC_TEXT.length} characters$`));
   eq(t.bot.loadKnowledge_(ss).docs.map(d => [d.name, d.burson, d.text]), [['Escalation playbook', false, SAFE_DOC_TEXT]]);
@@ -4369,7 +4359,7 @@ test('knowledge base: the bot never reads, clears, hides or writes a tab it didn
   const forced = t.bot.refreshKnowledge();
   const s = t.bot.setup();
   t.poll();
-  eq(ss.sheets.map(sh => sh.name), ['Control', 'Knowledge cache (bot)', 'Guidance', 'Alert log', 'Message log', 'Signals']);  // nothing made, nothing doubled
+  eq(ss.sheets.map(sh => sh.name), ['Control', 'Knowledge cache (bot)', 'Guidance', 'Alert log', 'Message log']);  // nothing made, nothing doubled
   eq(typed(), before);
   eq([res.isSheetHidden(), res.protections.length], [false, protections]);
   eq(res.rows.slice(1).map(r => r[4]), [1, 2, 3].map(() => `✗ Not read: ${inTheWay}`));
@@ -4380,7 +4370,7 @@ test('knowledge base: the bot never reads, clears, hides or writes a tab it didn
 
   res.setName('Resources');  // renamed back: the next run makes the bot's own tab and reads the documents
   t.poll();
-  eq(ss.sheets.map(sh => sh.name), ['Control', 'Resources', 'Guidance', 'Alert log', 'Message log', 'Signals', 'Knowledge cache (bot)']);
+  eq(ss.sheets.map(sh => sh.name), ['Control', 'Resources', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)']);
   eq(typed(), before);
   assert.match(String(res.rows[3][4]), /^✓ Read Oct 14, \d{1,2}:\d\d [AP]M EDT · Google Doc · \d+ characters$/);
   eq(t.bot.loadKnowledge_(ss).docs.map(d => d.name), ['Escalation playbook']);
@@ -4401,7 +4391,7 @@ test('knowledge base: the live mix-up and its fix: the earlier build wrote its t
   const oldRows = JSON.stringify(old.rows);
   t.poll();
   eq([JSON.stringify(old.rows) === oldRows, old.isSheetHidden(), old.protections.length], [true, false, 0]);
-  eq(ss.sheets.map(sh => sh.name), ['Control', 'Resources', 'Knowledge', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)', 'Signals']);
+  eq(ss.sheets.map(sh => sh.name), ['Control', 'Resources', 'Knowledge', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)']);
 
   // The fix: the person's rows, copied from version history (a tab from before the knowledge base: three columns), in
   // place of the tab the earlier build made. Found by its header row even before it's renamed.
@@ -4416,7 +4406,7 @@ test('knowledge base: the live mix-up and its fix: the earlier build wrote its t
   eq(t.bot.loadKnowledge_(ss).docs.map(d => [d.name, d.burson]), [['Escalation playbook', false]]);
   back.setName('Resources');
   t.poll();
-  eq(ss.sheets.map(sh => sh.name), ['Control', 'Resources', 'Knowledge', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)', 'Signals']);
+  eq(ss.sheets.map(sh => sh.name), ['Control', 'Resources', 'Knowledge', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)']);
   eq(t.bot.loadKnowledge_(ss).docs.map(d => d.name), ['Escalation playbook']);
   assert.strictEqual(JSON.stringify(old.rows), oldRows);
 });

@@ -157,8 +157,8 @@ async function handleGetControlStatus(args) {
     work_directly_in_b25: directB25
       ? { row: 32, value: directB25.value, note: directB25.note, active: /^✓ ON: B25/.test(directB25.note) }
       : { row: 32, value: 'MISSING', note: '', active: false },
-    // Row 34: Proactive watch, every source's new rows in BigQuery, read-only (Watches / Watch detections / Watch sources
-    // tabs), its flags posted where row 35 says; C34 how it's doing, and which sources are live, stale or failing
+    // Row 34: Proactive watch, a shadow test over every source's new rows in BigQuery, read-only (Watches / Watch
+    // detections / Watch sources tabs); C34 how it's doing, and which sources are live, stale or failing
     proactive_watch: proactiveWatch
       ? { row: 34, value: proactiveWatch.value, note: proactiveWatch.note }
       : { row: 34, value: 'MISSING', note: '' },

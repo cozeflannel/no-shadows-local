@@ -128,12 +128,12 @@ def test_outbox_delivery_mode_queues_everything(ctx):
     assert resp.data["reply_text"] == "🤖 done" and len(resp.data["queued_outbox_ids"]) == 2
 
 
-def test_texts_and_dms_go_out_as_written_in_every_env(ctx):
-    for env in ("dev", "prod"):
-        ctx.config.env = env
-        resp = handle({"op": "_test_multi_target"}, ctx)
-        assert (resp.outputs["team_text"], resp.outputs["reply_text"]) == ("🤖 heads-up TRG-9", "🤖 done")
-        assert (resp.outputs["dm_text"], resp.outputs["dm_recipients"]) == ("🤖 dm", "a@ops.test")
+def test_shadow_mode_labels_and_redirects_dms(ctx):
+    ctx.config.env = "shadow"
+    resp = handle({"op": "_test_multi_target"}, ctx)
+    assert resp.outputs["team_text"].startswith("[SHADOW → team]")
+    assert resp.outputs["dm_text"].startswith("[SHADOW → would DM a@ops.test]")
+    assert resp.outputs["dm_recipients"] == ",".join(ctx.config.admin_emails())
 
 
 def test_metrics_v3(ctx):
