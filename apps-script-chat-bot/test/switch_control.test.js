@@ -7,16 +7,16 @@ module.exports = H => {
     'Direct BigQuery alerts', 'Write back to SLRR BigQuery', 'Learn from IM calls', 'Watch sent alerts (24h)',
     'Early wave & velocity check', 'Check outage & comms docs', 'Track post-alert outcomes', 'Relay with S-F Burson',
     'Never wait on Burson', 'Post in S-F Burson', 'Draft follow-ups', 'Draft answers to questions', 'Safety valve',
-    'Work directly in B25 (Google-only)', 'Proactive watch', 'Temp checks'];
+    'Work directly in B25 (Google-only)', 'Proactive watch', 'Temp checks', 'Group test emails'];
   const KEYS = ['autoSend', 'autoTns', 'kbStartAlerts', 'autoFindLinks', 'directBq', 'writeBackBq', 'learnIm', 'watchSent',
     'earlyWave', 'outageComms', 'trackOutcomes', 'relay', 'noWait', 'postBurson', 'draftFollowUps', 'draftAnswers', 'safetyValve',
-    'directB25', 'proactiveWatch', 'tempChecks'];
-  const ROWS = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 27, 28, 29, 32, 34, 36];  // rows 25-26 the space cells, 30-31 B30 / B31, 33 B33, 35 B35
+    'directB25', 'proactiveWatch', 'tempChecks', 'bsgTestEmails'];
+  const ROWS = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 27, 28, 29, 32, 34, 36, 37];  // rows 25-26 the space cells, 30-31 B30 / B31, 33 B33, 35 B35
   const rows = (t, col) => ROWS.map(r => t.control().cell(r, col));
   const allOff = () => Object.fromEntries(KEYS.map(k => [k, false]));
   const VALVE = KEYS.indexOf('safetyValve');
 
-  test('switches: a new Control tab has all 20, each an ON / OFF dropdown set to OFF, with what OFF means in column C; rows 11-24, 27-29, 32, 34 and 36 are the switches, row 25 the S-F Burson space (blank), row 26 the Burson test copy (blank), row 30 Testing: send to (blank), row 31 the BigQuery lookback (60 minutes, its own dropdown), row 33 the Other alerts space (blank, no dropdown), row 35 Watch alerts (OFF, its own dropdown) and "How it works" follows from row 38', () => {
+  test('switches: a new Control tab has all 21, each an ON / OFF dropdown set to OFF, with what OFF means in column C; rows 11-24, 27-29, 32, 34, 36 and 37 are the switches, row 25 the S-F Burson space (blank), row 26 the Burson test copy (blank), row 30 Testing: send to (blank), row 31 the BigQuery lookback (60 minutes, its own dropdown), row 33 the Other alerts space (blank, no dropdown), row 35 Watch alerts (OFF, its own dropdown) and "How it works" follows from row 39', () => {
     const t = e2e();
     t.bot.setup();
     eq(B.switchRows_(), ROWS);
@@ -29,16 +29,16 @@ module.exports = H => {
     t.poll();  // the first run: C29 says the run's mode (Testing here: no S-F Burson)
     assert.match(rows(t, 3)[VALVE], /^OFF \u00b7 \ud83e\uddea Testing \(S-F Burson, B25, isn't set or found\): nothing goes to S-F Burson, and every email goes only to the stand-in \(B30\)\. With B26 blank and S-F Burson set, the bot is fully LIVE$/);
     assert.match(t.control().cell(16, 3), /writes only to this sheet: nothing goes to the shared SLRR BigQuery tables/);
-    eq([25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38].map(r => t.control().cell(r, 1)), ['S-F Burson space', 'Burson test copy', 'Draft follow-ups',
+    eq([25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39].map(r => t.control().cell(r, 1)), ['S-F Burson space', 'Burson test copy', 'Draft follow-ups',
       'Draft answers to questions', 'Safety valve', 'Testing: send to', 'BigQuery lookback', 'Work directly in B25 (Google-only)',
-      'Other alerts space', 'Proactive watch', 'Watch alerts', 'Temp checks', '', 'How it works']);
+      'Other alerts space', 'Proactive watch', 'Watch alerts', 'Temp checks', 'Group test emails', '', 'How it works']);
     eq([t.control().validations['25,2'], t.control().validations['26,2'], t.control().validations['33,2']], [undefined, undefined, undefined]);  // a space goes there
     // B31 is no switch: 60 minutes, with its own 15 / 30 / 45 / 60 minutes dropdown
     eq([t.control().cell(31, 2), t.control().validations['31,2'].values], ['60 minutes', ['15 minutes', '30 minutes', '45 minutes', '60 minutes']]);
     // B35 is no switch either: OFF, with its own OFF / Other alerts space (B33) / Mirror space (B9) dropdown
     eq([t.control().cell(35, 2), t.control().validations['35,2'].values],
       ['OFF', ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)', 'Auto-correct space (B10)']]);
-    const help = Array.from({ length: 39 }, (_, i) => t.control().cell(39 + i, 1)).join('\n');
+    const help = Array.from({ length: 40 }, (_, i) => t.control().cell(40 + i, 1)).join('\n');
     LABELS.forEach(l => assert.ok(help.includes(`• ${l}: `), l));
     eq(t.bot.readControl_(t.control()).switches, allOff());
     eq(B.ev('CONTROL_SWITCHES_').map(s => s.key), KEYS);
@@ -62,9 +62,9 @@ module.exports = H => {
     eq(rows(t, 1), LABELS);
     eq(rows(t, 2), LABELS.map(() => 'OFF'));
     ROWS.forEach(r => eq(sh.validations[`${r},2`].values, ['ON', 'OFF']));
-    eq([25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38].map(r => sh.cell(r, 1)), ['S-F Burson space', 'Burson test copy', 'Draft follow-ups',
+    eq([25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39].map(r => sh.cell(r, 1)), ['S-F Burson space', 'Burson test copy', 'Draft follow-ups',
       'Draft answers to questions', 'Safety valve', 'Testing: send to', 'BigQuery lookback', 'Work directly in B25 (Google-only)',
-      'Other alerts space', 'Proactive watch', 'Watch alerts', 'Temp checks', '', 'How it works']);
+      'Other alerts space', 'Proactive watch', 'Watch alerts', 'Temp checks', 'Group test emails', '', 'How it works']);
     // the BigQuery lookback row comes in too: 60 minutes, with its dropdown (the tab had only B2's)
     eq([sh.cell(31, 2), sh.validations['31,2'].values], ['60 minutes', ['15 minutes', '30 minutes', '45 minutes', '60 minutes']]);
     eq([sh.cell(25, 2), t.bot.readControl_(sh).sfBurson, sh.cell(26, 2), t.bot.readControl_(sh).testCopy], ['', '', '', '']);

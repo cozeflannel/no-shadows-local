@@ -36,6 +36,8 @@ module.exports = H => {
   const WA35 = () => [B.ev('PW_ALERTS_LABEL_'), 'OFF', B.pwAlertsOffText_()];
   // Row 36: the "Temp checks" switch (Control.gs, TempCheck.gs), OFF, as every tab gets it
   const TC36 = () => { const s = B.ev('CONTROL_SWITCHES_').find(x => x.row === 36); return [s.label, 'OFF', B.switchOffText_(s)]; };
+  // Row 37: the "Group test emails" switch (Control.gs, BrandSafetyGroups.gs), OFF, as every tab gets it
+  const GT37 = () => { const s = B.ev('CONTROL_SWITCHES_').find(x => x.row === 37); return [s.label, 'OFF', B.switchOffText_(s)]; };
 
   /** Every write to `sh` from now on: [method, row, col, rows, cols, (the weight or color for a format)]. */
   const spyWrites = sh => {
@@ -140,9 +142,9 @@ module.exports = H => {
   // The row
   // ===========================================================================================================
 
-  test('BigQuery lookback row: a tab from before it gets row 31 with strict 15 / 30 / 45 / 60 minutes dropdown (allowInvalid === false), upgrades an older 3-item / allowInvalid dropdown in place once, and moves "How it works" to row 38 (below the row-32 switch, row 33, the Other alerts space, the row-34 switch, row 35, Watch alerts, and the row-36 switch)', () => {
+  test('BigQuery lookback row: a tab from before it gets row 31 with strict 15 / 30 / 45 / 60 minutes dropdown (allowInvalid === false), upgrades an older 3-item / allowInvalid dropdown in place once, and moves "How it works" to row 39 (below the row-32 switch, row 33, the Other alerts space, the row-34 switch, row 35, Watch alerts, and the row-36/37 switches)', () => {
     const { t, sh } = olderTab();
-    t.bot.ensureSwitchRows_(sh);  // as every run does first (poll(), setup()): rows 32, 34 and 36's switches go where the old help was
+    t.bot.ensureSwitchRows_(sh);  // as every run does first (poll(), setup()): rows 32, 34, 36 and 37's switches go where the old help was
     const before = JSON.stringify(sh.rows.slice(0, 30));
     const lists0 = lists(sh);
     const writes = spyWrites(sh);
@@ -155,13 +157,13 @@ module.exports = H => {
     assert.ok(writes.some(w => w[0] === 'setFontWeight' && w[1] === 31 && w[2] === 1 && w[5] === 'bold'), 'A31 bold');
     assert.ok(writes.some(w => w[0] === 'setBackground' && w[1] === 31 && w[2] === 2 && w[5] === '#fff8e1'), 'B31 colored');
     const help = B.ev('CONTROL_HELP_');
-    eq([row(sh, 32), row(sh, 33), row(sh, 34), row(sh, 35), row(sh, 36), row(sh, 37), sh.cell(38, 1)],
-      [SW32(), OS33(), SW34(), WA35(), TC36(), ['', '', ''], 'How it works']);
-    eq(help.map((_, i) => sh.cell(39 + i, 1)), help);
-    for (let r = 39 + help.length; r <= Math.max(sh.rows.length, 76); r++) eq(row(sh, r), ['', '', ''], `row ${r}`);
+    eq([row(sh, 32), row(sh, 33), row(sh, 34), row(sh, 35), row(sh, 36), row(sh, 37), row(sh, 38), sh.cell(39, 1)],
+      [SW32(), OS33(), SW34(), WA35(), TC36(), GT37(), ['', '', ''], 'How it works']);
+    eq(help.map((_, i) => sh.cell(40 + i, 1)), help);
+    for (let r = 40 + help.length; r <= Math.max(sh.rows.length, 77); r++) eq(row(sh, r), ['', '', ''], `row ${r}`);
     assert.ok(!sh.rows.some(r => /An old help line/.test(String(r[0]))));
     assert.ok(help.some(l => /^• BigQuery lookback \(B31\): how far back Direct BigQuery alerts and Early detection look: 15, 30, 45 or 60 minutes \(blank: 60; never more than an hour\)\./.test(l)));
-    assert.ok(writes.some(w => w[0] === 'setFontWeight' && w[1] === 38 && w[5] === 'bold'), 'the help\'s title bold');
+    assert.ok(writes.some(w => w[0] === 'setFontWeight' && w[1] === 39 && w[5] === 'bold'), 'the help\'s title bold');
     eq([JSON.stringify(sh.rows.slice(0, 30)) === before, writes.filter(w => w[1] < 31)], [true, []]);
     eq(t.bot.readControl_(sh).bqLookback, '60 minutes');
 
@@ -181,11 +183,11 @@ module.exports = H => {
     const other = olderTab();
     other.t.poll();
     eq([row(other.sh, 31), row(other.sh, 32), row(other.sh, 33), row(other.sh, 34), row(other.sh, 35), row(other.sh, 36),
-      row(other.sh, 37), other.sh.cell(38, 1), other.sh.validations['31,2'].values, other.sh.validations['31,2'].allowInvalid,
+      row(other.sh, 37), row(other.sh, 38), other.sh.cell(39, 1), other.sh.validations['31,2'].values, other.sh.validations['31,2'].allowInvalid,
       other.t.bot.readControl_(other.sh).bqLookback],
-    [['BigQuery lookback', '60 minutes', OK_60], SW32(), OS33(), SW34(), WA35(), TC36(), ['', '', ''], 'How it works', CHOICES, false,
+    [['BigQuery lookback', '60 minutes', OK_60], SW32(), OS33(), SW34(), WA35(), TC36(), GT37(), ['', '', ''], 'How it works', CHOICES, false,
       '60 minutes']);
-    eq(help.map((_, i) => other.sh.cell(39 + i, 1)), help);
+    eq(help.map((_, i) => other.sh.cell(40 + i, 1)), help);
   });
 
   test('BigQuery lookback row: running it again changes nothing (not one write), nor do setup() and later runs: row 31, its strict dropdown and C31 stay as they are', () => {
@@ -199,8 +201,8 @@ module.exports = H => {
     t.poll();
     t.poll();
     eq([row(sh, 31), sh.validations['31,2'].values, sh.validations['31,2'].allowInvalid, row(sh, 32), row(sh, 33), row(sh, 34), row(sh, 35),
-      row(sh, 36), row(sh, 37), sh.cell(38, 1)],
-      [['BigQuery lookback', '60 minutes', OK_60], CHOICES, false, SW32(), OS33(), SW34(), WA35(), TC36(), ['', '', ''], 'How it works']);
+      row(sh, 36), row(sh, 37), row(sh, 38), sh.cell(39, 1)],
+      [['BigQuery lookback', '60 minutes', OK_60], CHOICES, false, SW32(), OS33(), SW34(), WA35(), TC36(), GT37(), ['', '', ''], 'How it works']);
     eq(writes.filter(w => w[1] <= 31 && w[1] + w[3] - 1 >= 31), []);
   });
 
@@ -235,8 +237,8 @@ module.exports = H => {
     }
     sh.getRange(31, 1, 1, 3).setValues([['', '', '']]);
     t.poll();
-    eq([row(sh, 31), row(sh, 32), row(sh, 33), row(sh, 34), row(sh, 35), row(sh, 36), row(sh, 37), sh.cell(38, 1)],
-      [['BigQuery lookback', '60 minutes', OK_60], SW32(), OS33(), SW34(), WA35(), TC36(), ['', '', ''], 'How it works']);
+    eq([row(sh, 31), row(sh, 32), row(sh, 33), row(sh, 34), row(sh, 35), row(sh, 36), row(sh, 37), row(sh, 38), sh.cell(39, 1)],
+      [['BigQuery lookback', '60 minutes', OK_60], SW32(), OS33(), SW34(), WA35(), TC36(), GT37(), ['', '', ''], 'How it works']);
   });
 
   test('BigQuery lookback: readControl_ reads B31 only on the BigQuery lookback row itself (trimmed; a time cell as it is): \'\' when A31 is blank or something else, as on a tab from before the row', () => {

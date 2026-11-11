@@ -1,16 +1,16 @@
 /**
  * BrandSafetyGroups.gs - Read-only Google Sheets connector for the `Brand safety groups` worksheet.
  *
- * Loads Social Alert Google Group addresses at runtime from the `Brand safety groups` tab of the
- * `slrr-agentic-assistant` workbook (`STORE_SHEET_ID`), caching parsed rows in `CacheService` for 10 minutes
- * so zero recipient addresses ever need to be hardcoded in repository files or `Generated.gs`.
+ * Loads Social Alert Google Group addresses (Column B) and optional per-group test emails (Column C) at runtime from
+ * the `Brand safety groups` tab of the `slrr-agentic-assistant` workbook (`STORE_SHEET_ID`), caching parsed rows in
+ * `CacheService` for 60 seconds so zero recipient addresses ever need to be hardcoded in repository files or `Generated.gs`.
  *
  * Tab ownership invariant: strictly read-only. Never creates, clears, formats, or writes to `Brand safety groups`.
  */
 
 const BRAND_SAFETY_GROUPS_TAB_ = 'Brand safety groups';
-const BSG_CACHE_PREFIX_ = 'bsg_rows_v1:';
-const BSG_CACHE_SEC_ = 600;
+const BSG_CACHE_PREFIX_ = 'bsg_rows_v2:';
+const BSG_CACHE_SEC_ = 60;
 
 const BSG_SYSTEM_SLOTS_ = {
   defaultcc: 'default_cc',
@@ -66,7 +66,10 @@ function bsgParseEmails_(raw) {
   return out;
 }
 
-/** Parses 2D sheet values (`Google Group Name`, `Google Group Email`) into `[[name, [emails]], ...]`. Pure. */
+/**
+ * Parses 2D sheet values (`Google Group Name`, `Google Group Email`, optional `Test Email` in col C)
+ * into `[[name, [liveEmails], [testEmails]?], ...]`. Pure.
+ */
 function bsgParseRows_(values) {
   if (!Array.isArray(values) || !values.length) return [];
   const out = [];
@@ -74,13 +77,17 @@ function bsgParseRows_(values) {
     const r = values[i] || [];
     const name = String(r[0] === undefined || r[0] === null ? '' : r[0]).trim();
     const rawEmails = String(r[1] === undefined || r[1] === null ? '' : r[1]).trim();
-    if (!name || !rawEmails) continue;
+    const rawTest = String(r[2] === undefined || r[2] === null ? '' : r[2]).trim();
+    if (!name || (!rawEmails && !rawTest)) continue;
     const key = bsgNormKey_(name);
     if (i === 0 && (key === 'googlegroupname' || key === 'groupname' || key === 'group' || key === 'product')) {
       continue;
     }
     const emails = bsgParseEmails_(rawEmails);
-    if (emails.length) out.push([name, emails]);
+    const testEmails = bsgParseEmails_(rawTest);
+    if (emails.length || testEmails.length) {
+      out.push(testEmails.length ? [name, emails, testEmails] : [name, emails]);
+    }
   }
   return out;
 }
@@ -110,8 +117,9 @@ function bsgMergeUnique_(a, b) {
 }
 
 /**
- * Applies `[[groupName, [emails]], ...]` rows onto `GEN.distribution` (and optional operational slots) from a clean
- * snapshot of `GEN`, preserving any runtime test overrides on `GEN.email.stand_in` / `GEN.email.recipients_in`.
+ * Applies `[[groupName, [liveEmails], [testEmails]?], ...]` rows onto `GEN.distribution` (and optional operational slots)
+ * from a clean snapshot of `GEN`. Column B live emails populate `pa` / `recipients` as before; optional Column C test
+ * emails populate isolated `test_pa` / `test_recipients` slots used only when `Group test emails` (Control row 37) is ON.
  */
 function applyBrandSafetyGroups_(rows) {
   if (typeof GEN === 'undefined' || !GEN) return 0;
@@ -124,37 +132,55 @@ function applyBrandSafetyGroups_(rows) {
   GEN.email = Object.assign(JSON.parse(JSON.stringify(BSG_BASE_.email)), {
     stand_in: keepStandIn,
     recipients_in: keepRecipientsIn,
+    test_default_cc: [],
+    test_default_to: [],
+    test_tns_urgent: '',
   });
-  GEN.leadership = JSON.parse(JSON.stringify(BSG_BASE_.leadership));
+  GEN.leadership = Object.assign(JSON.parse(JSON.stringify(BSG_BASE_.leadership)), {
+    test_recipients: [],
+  });
   if (GEN.settings) GEN.settings.speed_im_sender = BSG_BASE_.speedImSender;
 
   const parsed = [];
   const byNorm = {};
+  const testByNorm = {};
   (rows || []).forEach(entry => {
     if (!entry) return;
     const name = String(Array.isArray(entry) ? entry[0] : entry.name || '').trim();
     const emails = bsgParseEmails_(Array.isArray(entry) ? entry[1] : entry.emails);
-    if (!name || !emails.length) return;
-    parsed.push([name, emails]);
+    const testEmails = bsgParseEmails_(Array.isArray(entry) ? entry[2] : entry.test_emails);
+    if (!name || (!emails.length && !testEmails.length)) return;
+    parsed.push([name, emails, testEmails]);
     const k = bsgNormKey_(name);
-    if (k) byNorm[k] = bsgMergeUnique_(byNorm[k], emails);
+    if (k && emails.length) byNorm[k] = bsgMergeUnique_(byNorm[k], emails);
+    if (k && testEmails.length) testByNorm[k] = bsgMergeUnique_(testByNorm[k], testEmails);
   });
 
   const matched = new Set();
 
   // 1. Optional operational rows (Default CC, Default To, From Email / Brand Social Sender, T&S Urgent, Leadership)
   Object.keys(BSG_SYSTEM_SLOTS_).forEach(k => {
-    if (!byNorm[k]) return;
+    const emails = byNorm[k] || [];
+    const testEmails = testByNorm[k] || [];
+    if (!emails.length && !testEmails.length) return;
     matched.add(k);
     const slot = BSG_SYSTEM_SLOTS_[k];
-    const emails = byNorm[k];
-    if (slot === 'default_cc') GEN.email.default_cc = emails.slice();
-    else if (slot === 'default_to') GEN.email.default_to = emails.slice();
-    else if (slot === 'from_email' && emails[0]) {
+    if (slot === 'default_cc') {
+      if (emails.length) GEN.email.default_cc = emails.slice();
+      if (testEmails.length) GEN.email.test_default_cc = testEmails.slice();
+    } else if (slot === 'default_to') {
+      if (emails.length) GEN.email.default_to = emails.slice();
+      if (testEmails.length) GEN.email.test_default_to = testEmails.slice();
+    } else if (slot === 'from_email' && emails[0]) {
       GEN.email.from_email = emails[0];
       if (GEN.settings) GEN.settings.speed_im_sender = emails[0];
-    } else if (slot === 'tns_urgent' && emails[0]) GEN.email.tns_urgent = emails[0];
-    else if (slot === 'leadership') GEN.leadership.recipients = emails.slice();
+    } else if (slot === 'tns_urgent') {
+      if (emails[0]) GEN.email.tns_urgent = emails[0];
+      if (testEmails[0]) GEN.email.test_tns_urgent = testEmails[0];
+    } else if (slot === 'leadership') {
+      if (emails.length) GEN.leadership.recipients = emails.slice();
+      if (testEmails.length) GEN.leadership.test_recipients = testEmails.slice();
+    }
   });
 
   // 2. Product Area distros (match explicit group_name, then name, then aliases)
@@ -163,9 +189,10 @@ function applyBrandSafetyGroups_(rows) {
     const cands = [p.group_name, p.name].concat(p.aliases || []).filter(Boolean);
     for (let i = 0; i < cands.length; i++) {
       const ck = bsgNormKey_(cands[i]);
-      if (ck && byNorm[ck]) {
+      if (ck && (byNorm[ck] || testByNorm[ck])) {
         matched.add(ck);
-        p.pa = byNorm[ck].slice();
+        if (byNorm[ck]) p.pa = byNorm[ck].slice();
+        if (testByNorm[ck]) p.test_pa = testByNorm[ck].slice();
         break;
       }
     }
@@ -177,9 +204,10 @@ function applyBrandSafetyGroups_(rows) {
     const cands = [bsgNormKey_(g.name), bsgNormKey_(g.action_code)].concat(aliasKeys).filter(Boolean);
     for (let i = 0; i < cands.length; i++) {
       const ck = cands[i];
-      if (byNorm[ck]) {
+      if (byNorm[ck] || testByNorm[ck]) {
         matched.add(ck);
-        g.recipients = byNorm[ck].slice();
+        if (byNorm[ck]) g.recipients = byNorm[ck].slice();
+        if (testByNorm[ck]) g.test_recipients = testByNorm[ck].slice();
         break;
       }
     }
@@ -190,20 +218,23 @@ function applyBrandSafetyGroups_(rows) {
     const cands = [rl.region].concat(rl.aliases || []).filter(Boolean);
     for (let i = 0; i < cands.length; i++) {
       const ck = bsgNormKey_(cands[i]);
-      if (ck && byNorm[ck]) {
+      if (ck && (byNorm[ck] || testByNorm[ck])) {
         matched.add(ck);
-        rl.recipients = byNorm[ck].slice();
+        if (byNorm[ck]) rl.recipients = byNorm[ck].slice();
+        if (testByNorm[ck]) rl.test_recipients = testByNorm[ck].slice();
         break;
       }
     }
   });
 
   // 5. Register any newly added product group row not yet in distribution.yaml
-  parsed.forEach(([name, emails]) => {
+  parsed.forEach(([name, emails, testEmails]) => {
     const ck = bsgNormKey_(name);
     if (!ck || matched.has(ck)) return;
     matched.add(ck);
-    GEN.distribution.products.push({ name: name, group_name: name, pa: emails.slice() });
+    const prodEntry = { name: name, group_name: name, pa: (emails || []).slice() };
+    if (testEmails && testEmails.length) prodEntry.test_pa = testEmails.slice();
+    GEN.distribution.products.push(prodEntry);
     if (!(GEN.products || []).some(p => bsgNormKey_(p.name) === ck)) {
       GEN.products.push({ name: name });
     }
@@ -212,9 +243,106 @@ function applyBrandSafetyGroups_(rows) {
   return parsed.length;
 }
 
+/** Filters candidate test emails to valid addresses that are NEVER live real recipients (`realRecipientSet_`). Pure. */
+function bsgCleanTestEmails_(raw) {
+  const realSet = typeof realRecipientSet_ === 'function' ? realRecipientSet_() : new Set();
+  return bsgParseEmails_(raw).filter(e => !realSet.has(e));
+}
+
+/** Every valid non-live test email configured in Column C of `Brand safety groups`, deduplicated. Pure. */
+function bsgAllowedTestEmails_() {
+  if (typeof GEN === 'undefined' || !GEN) return [];
+  const raw = [];
+  const dist = GEN.distribution || {};
+  (dist.products || []).forEach(p => { if (p && p.test_pa) raw.push.apply(raw, p.test_pa); });
+  (dist.groups || []).forEach(g => { if (g && g.test_recipients) raw.push.apply(raw, g.test_recipients); });
+  (dist.regional_leads || []).forEach(rl => { if (rl && rl.test_recipients) raw.push.apply(raw, rl.test_recipients); });
+  const em = GEN.email || {};
+  if (em.test_default_to) raw.push.apply(raw, em.test_default_to);
+  if (em.test_default_cc) raw.push.apply(raw, em.test_default_cc);
+  if (em.test_tns_urgent) raw.push(em.test_tns_urgent);
+  if (GEN.leadership && GEN.leadership.test_recipients) raw.push.apply(raw, GEN.leadership.test_recipients);
+  return bsgCleanTestEmails_(raw);
+}
+
+/** Count of distinct groups on `Brand safety groups` that currently have a usable non-live test email in Column C. Pure. */
+function bsgTestGroupCount_() {
+  if (typeof GEN === 'undefined' || !GEN) return 0;
+  const dist = GEN.distribution || {};
+  const seen = new Set();
+  (dist.products || []).forEach(p => {
+    if (p && !p.deprecated && bsgCleanTestEmails_(p.test_pa).length) seen.add('p:' + bsgNormKey_(p.group_name || p.name));
+  });
+  (dist.groups || []).forEach(g => {
+    if (g && bsgCleanTestEmails_(g.test_recipients).length) seen.add('g:' + bsgNormKey_(g.name));
+  });
+  (dist.regional_leads || []).forEach(rl => {
+    if (rl && bsgCleanTestEmails_(rl.test_recipients).length) seen.add('r:' + bsgNormKey_(rl.region));
+  });
+  return seen.size;
+}
+
 /**
- * Reads `Brand safety groups` from `ss` (cached 10 minutes per spreadsheet ID unless `opts.force` is true).
- * Returns `{present: boolean, rows: [[name, [emails]], ...]}`. Never throws and never writes to the sheet.
+ * Resolves Column C test email(s) from `Brand safety groups` for a single formulated Social Alert target (`t` from
+ * `productEmailTargets_`). Returns `{to, cc, groupName}`:
+ * - If the target's product/group has no test email in Column C, `to` is `[]` (no email is sent; never falls back to B30
+ *   or live distros).
+ * - If `to` is non-empty, `cc` includes any Column C test emails configured on active CC specialty/regional/Default CC rows.
+ */
+function bsgTestPlanForTarget_(t, extraGroups) {
+  const inp = (t && t.input) || {};
+  const f = inp.fields || {};
+  const esc = inp.escalation || {};
+  const dist = (typeof GEN !== 'undefined' && GEN && GEN.distribution) || {};
+  const distro = typeof resolveDistro_ === 'function' ? ((resolveDistro_(f.product) || {}).distro || null) : null;
+  let to = [];
+  let groupName = (distro && (distro.group_name || distro.name)) || String((t && (t.distroName || t.productLabel)) || f.product || '').trim();
+
+  if (distro) {
+    to = bsgCleanTestEmails_(distro.test_pa);
+  } else if (!String(f.product || '').trim()) {
+    // Alert with no product field: check any To-eligible specialty group on the alert, then Default To's test email
+    const codes = new Set([].concat(esc.groups || [], extraGroups || []).map(x => String(x || '')));
+    (dist.groups || []).forEach(g => {
+      if (codes.has(g.action_code) && g.placement === 'to_if_no_product_else_cc') {
+        to = bsgMergeUnique_(to, bsgCleanTestEmails_(g.test_recipients));
+        if (!groupName) groupName = g.name;
+      }
+    });
+    if (!to.length && GEN && GEN.email && GEN.email.test_default_to) {
+      to = bsgCleanTestEmails_(GEN.email.test_default_to);
+      if (!groupName) groupName = 'Default To';
+    }
+  }
+
+  let cc = [];
+  if (to.length) {
+    if (GEN && GEN.email && GEN.email.test_default_cc) {
+      cc = bsgMergeUnique_(cc, bsgCleanTestEmails_(GEN.email.test_default_cc));
+    }
+    const codes = new Set([].concat(esc.groups || [], extraGroups || []).map(x => String(x || '')));
+    (dist.groups || []).forEach(g => {
+      if (codes.has(g.action_code)) {
+        cc = bsgMergeUnique_(cc, bsgCleanTestEmails_(g.test_recipients));
+      }
+    });
+    const planGroups = new Set(((t && t.plan && t.plan.groups) || []).map(g => bsgNormKey_(g)));
+    (dist.regional_leads || []).forEach(rl => {
+      if (planGroups.has(bsgNormKey_(`${rl.region} regional leads`))) {
+        cc = bsgMergeUnique_(cc, bsgCleanTestEmails_(rl.test_recipients));
+      }
+    });
+    const toSet = new Set(to.map(e => e.toLowerCase()));
+    cc = cc.filter(e => !toSet.has(e.toLowerCase()));
+  }
+
+  return { to, cc, groupName: groupName || 'unmapped product' };
+}
+
+/**
+ * Reads `Brand safety groups` from `ss` (cached 60 seconds per spreadsheet ID unless `opts.force` is true).
+ * Reads Columns A (`Google Group Name`), B (`Google Group Email`), and optional C (`Test Email`).
+ * Returns `{present: boolean, rows: [[name, [liveEmails], [testEmails]?], ...]}`. Never throws and never writes to the sheet.
  */
 function readBrandSafetyGroupsTab_(ss, opts) {
   if (!ss || typeof ss.getSheetByName !== 'function') return { present: false, rows: [] };
@@ -244,7 +372,7 @@ function readBrandSafetyGroupsTab_(ss, opts) {
 
   try {
     const lastRow = typeof sh.getLastRow === 'function' ? sh.getLastRow() : 0;
-    const values = lastRow > 0 ? sh.getRange(1, 1, Math.min(lastRow, 500), 2).getValues() : [];
+    const values = lastRow > 0 ? sh.getRange(1, 1, Math.min(lastRow, 500), 3).getValues() : [];
     const rows = bsgParseRows_(values);
     if (cache) {
       try { cache.put(cacheKey, JSON.stringify(rows), BSG_CACHE_SEC_); } catch (e) {}

@@ -253,4 +253,118 @@ module.exports = function (H) {
     assert.match(allSocial[2].subject, /^Re: .*Gemini Model \|/);
     assert.match(allSocial[3].subject, /^Re: .*Devs Products \|/);
   });
+
+  test('Group test emails switch (Control row 37 + Brand safety groups column C): ON routes each product email to its own group test email, sends nothing and logs when a group has no test email, and OFF ignores column C test emails and routes to live column B emails', () => {
+    const REAL_SFB = H.REAL;
+    const MIRROR = 'spaces/AAQAmirror9';
+    const t = e2e(null, { noWait: true, blankStandIn: true });
+    t.chat.addSpace(MIRROR, 'SLRR Mirror Space', { external: false });
+    t.bot.setup();
+
+    // Populate the workbook's Brand safety groups tab with 3 columns: Group Name | Live Email | Test Email
+    const bsg = t.sheet().insertSheet('Brand safety groups');
+    const bsgValues = [
+      ['Google Group Name', 'Google Group Email', 'Test Email'],
+      ['Gemini Model', 'gemini-live@groups.test', 'gemini-tester@testing.test'],
+      ['Devs Products', 'devs-live@groups.test', 'devs-tester@testing.test'],
+      ['Search', 'search-live@groups.test', ''],  // intentionally NO test email set!
+      ['GCPA', 'gcpa-live@groups.test', ''],
+      ['Default CC', 'slrr-cc-live@groups.test', ''],
+      ['Brand Social Sender', 'sender@groups.test', ''],
+      ['T&S Urgent', 'tns-urgent-live@groups.test', ''],
+    ];
+    bsg.getRange(1, 1, bsgValues.length, 3).setValues(bsgValues);
+
+    // Configure Mirror space + S-F Burson + Auto-send ON + Never wait ON, Safety valve OFF, and Group test emails (row 37) ON
+    const ctrl = t.control();
+    ctrl.getRange(9, 2).setValue(MIRROR);
+    ctrl.getRange(25, 2).setValue(REAL_SFB);
+    ctrl.getRange(11, 2).setValue('ON');  // Auto-send Social Alerts
+    ctrl.getRange(23, 2).setValue('ON');  // Never wait on Burson
+    ctrl.getRange(29, 2).setValue('OFF'); // Safety valve OFF — row 37 ON alone must enforce Testing!
+    ctrl.getRange(30, 2).setValue('flat-b30@testing.test'); // Even if B30 has an email, row 37 ON uses Brand safety groups col C
+    ctrl.getRange(37, 2).setValue('ON');  // Group test emails ON
+    t.poll();
+
+    // Verify runMode_ treated row 37 ON as Testing (status has no LIVE badge, C37 confirms 2 groups set)
+    assert.ok(!/^🔴 LIVE/.test(t.get('B5')), t.get('B5'));
+    assert.match(ctrl.cell(37, 3), /^✓ ON · 🧪 Testing \(Brand safety groups column C\): .* \(2 groups set\)/);
+
+    // 1. Post a 3-product alert ("Gemini Model, Devs Products, Search"):
+    //    - Gemini Model -> gemini-tester@testing.test ONLY
+    //    - Devs Products -> devs-tester@testing.test ONLY
+    //    - Search -> NO test email set -> NOT sent, and logged!
+    const threeProductAlert = GEMINI_DEVS_ALERT
+      .replace('Gemini Model, Devs Products |', 'Gemini Model, Devs Products, Search |')
+      .replace('[Product]: Gemini Model, Devs Products', '[Product]: Gemini Model, Devs Products, Search');
+    t.chat.say(REAL_SFB, threeProductAlert, { sender: 'users/zapier', type: 'BOT', displayName: 'Zapier' });
+    t.poll();  // mirrors from S-F Burson into Mirror and triages
+
+    const sentTesting = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
+    eq(sentTesting.length, 2);
+    eq(sentTesting[0].to, ['gemini-tester@testing.test']);
+    eq(sentTesting[0].cc, []);
+    assert.match(sentTesting[0].subject, /Gemini Model \| Gemini API Returning Unsafe Code Execution Snippets/);
+    eq(sentTesting[1].to, ['devs-tester@testing.test']);
+    eq(sentTesting[1].cc, []);
+    assert.match(sentTesting[1].subject, /Devs Products \| Gemini API Returning Unsafe Code Execution Snippets/);
+    assert.ok(t.g.logs.some(l => /no email sent — no test email set for Search in Brand safety groups/.test(l)),
+      'expected missing Search test email to be logged');
+
+    // 2. Post a single-product alert for Search (which has NO test email in column C):
+    //    - Sends 0 additional emails, logs the skip, marks skipped_no_test_email, and does NOT loop on next poll()
+    const singleSearchAlert = GEMINI_DEVS_ALERT
+      .replace('Gemini Model, Devs Products | Gemini API Returning Unsafe Code Execution Snippets', 'Search | Search Ranking Bug Reported')
+      .replace('[Name]: Gemini API Returning Unsafe Code Execution Snippets', '[Name]: Search Ranking Bug Reported')
+      .replace('[Product]: Gemini Model, Devs Products', '[Product]: Search')
+      .replace('dev_sec_researcher', 'search_reporter_99')
+      .replace('2120000000000000101', '2120000000000000888');
+    t.chat.say(REAL_SFB, singleSearchAlert, { sender: 'users/zapier', type: 'BOT', displayName: 'Zapier' });
+    t.poll();
+    t.poll();  // second poll confirms no infinite retry loop
+    const afterSkippedSingle = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
+    eq(afterSkippedSingle.length, 2);
+    const searchRow = t.bot.sheetBackend_(t.sheet()).loadAlerts().find(r => /2120000000000000888/.test(String(r.record_key || '')));
+    assert.ok(searchRow);
+    eq(searchRow.email_status, 'skipped_no_test_email');
+    eq(searchRow.email_error, 'no test email set in Brand safety groups for Search');
+
+    // 3. Turn Group test emails (row 37) OFF while leaving the test emails sitting in Column C of Brand safety groups:
+    //    - Bot is now LIVE (Safety valve row 29 is OFF, B26 blank, S-F Burson set)
+    //    - A new 3-product alert routes all 3 emails to the LIVE Column B Google Groups and ignores Column C test emails!
+    ctrl.getRange(37, 2).setValue('OFF');
+    const liveThreeProductAlert = [
+      '\ud83d\udea8THIS ALERT MEETS P0 CRITERIA\ud83d\udea8',
+      '',
+      '\ud83d\udfe5SOCIAL ALERT\ud83d\udfe5: Gemini Model, Devs Products, Search | Widespread Cloud Auth Token Outage | X | 5400 Engagements',
+      '[Name]: Widespread Cloud Auth Token Outage / New / not previously reported over the past 14 days',
+      '[Engagement]: HIGH (5400 engagements)',
+      '[Product]: Gemini Model, Devs Products, Search',
+      '[Social Network]: X',
+      '[Exposure Tag]: Product - Dangerous results (e.g. medical/legal)',
+      '[Sensitive Topic]: Malicious & Unwanted Software',
+      '[KOF]: No',
+      '',
+      'X user @infra_status_watch (91,000 followers) shared error logs showing authentication token failures across Gemini endpoints, Developer SDKs, and Search grounding APIs.',
+      '',
+      '[Link]: https://x.com/infra_status_watch/status/2120000000000000999',
+      '',
+      '[Time/Date Post Went Live]: October 13, 2026, 10:05 AM',
+      '',
+      '[Code]: Product - Dangerous results (e.g. medical/legal),5400,infra_status_watch,Malicious & Unwanted Software,Gemini Model,New / not previously reported over the past 14 days',
+    ].join('\n');
+    t.chat.say(REAL_SFB, liveThreeProductAlert, { sender: 'users/zapier', type: 'BOT', displayName: 'Zapier' });
+    t.poll();
+
+    const allSocialNow = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
+    const liveSent = allSocialNow.slice(2);
+    eq(liveSent.length, 3);
+    eq(liveSent[0].to, ['gemini-live@groups.test']);
+    eq(liveSent[1].to, ['devs-live@groups.test']);
+    eq(liveSent[2].to, ['search-live@groups.test']);
+    liveSent.forEach(m => {
+      assert.ok(!m.to.includes('gemini-tester@testing.test') && !m.to.includes('devs-tester@testing.test'));
+      assert.ok(m.cc.includes('slrr-cc-live@groups.test'));
+    });
+  });
 };

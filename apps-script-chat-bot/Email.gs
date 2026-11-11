@@ -271,6 +271,7 @@ function socialAlertEmail_(input, plan, opts) {
     ? { to: [GEN.email.from_email], cc: [], bcc: plan.to.concat(plan.cc) } : { to: plan.to.slice(), cc: plan.cc.slice(), bcc: [] };
   const testers = onlyToList_(opts.standIn);
   const only = testers.length ? testers : (opts.test && opts.mailbox ? [opts.mailbox] : []);
+  const onlyCc = only.length && opts.standInCc ? onlyToList_(opts.standInCc).filter(e => !only.includes(e)) : [];
   const footerHtml = opts.footer ? '<div style="max-width: 680px; margin: 12px auto 20px auto; font-family: Arial, sans-serif; ' +
     `font-size: 12px; color: #555555;">${htmlEsc_(opts.footer)}</div>` : '';
   const shot = opts.screenshot && opts.screenshot.base64 && opts.screenshot.cid ? opts.screenshot : null;
@@ -282,7 +283,7 @@ function socialAlertEmail_(input, plan, opts) {
       .replace(/<\/body><\/html>$/, () => `${footerHtml}</body></html>`),
     text: socialAlertText_(v) + commsText + (opts.footer ? `\n\n${opts.footer}` : ''),
     to: only.length ? only : real.to,
-    cc: only.length ? [] : real.cc,
+    cc: only.length ? onlyCc : real.cc,
     bcc: only.length ? [] : real.bcc,
     inline: shot ? [shot] : [],
   };

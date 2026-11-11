@@ -260,18 +260,20 @@ module.exports = H => {
     t.set('B30', 'tester@testing.test');
     eq([t.control().cell(36, 1), t.control().cell(36, 2), t.control().cell(36, 3), t.control().validations['36,2'].values],
       ['Temp checks', 'OFF', 'OFF (temp checks are done by hand)', ['ON', 'OFF']]);
-    eq([t.control().cell(37, 1), t.control().cell(38, 1)], ['', 'How it works']);
-    const help = t.control().rows.slice(38).map(r => String(r[0] || ''));
+    eq([t.control().cell(37, 1), t.control().cell(37, 2), t.control().cell(38, 1), t.control().cell(39, 1)],
+      ['Group test emails', 'OFF', '', 'How it works']);
+    const help = t.control().rows.slice(39).map(r => String(r[0] || ''));
     assert.ok(help.some(l => /^• Temp checks: row 36, OFF until you turn it ON\. In a thread in the Mirror space or the Other alerts space \(B33\)/.test(l)));
-    assert.ok(help.some(l => /^• Rows 11-24, 27-29, 32, 34 and 36 are switches/.test(l)));
-    eq([SWITCHES.length, SWITCHES[SWITCHES.length - 1].key, B.switchRows_().slice(-1)], [20, 'tempChecks', [36]]);
+    assert.ok(help.some(l => /^• Rows 11-24, 27-29, 32, 34, 36 and 37 are switches/.test(l)));
+    eq([SWITCHES.length, SWITCHES[SWITCHES.length - 2].key, SWITCHES[SWITCHES.length - 1].key, B.switchRows_().slice(-2)],
+      [21, 'tempChecks', 'bsgTestEmails', [36, 37]]);
     // The deployed layout: row 36 blank, "How it works" at row 37
     t.control().getRange(36, 1, 1, 3).setValues([['', '', '']]);
-    t.control().getRange(37, 1).setValue('How it works');
+    t.control().getRange(37, 1, 1, 3).setValues([['How it works', '', '']]);
     t.control().getRange(35, 2).setValue('Mirror space (B9)');  // a choice a person made in B35: kept
     t.poll();
-    eq([t.control().cell(35, 2), t.control().cell(36, 1), t.control().cell(36, 2), t.control().cell(37, 1), t.control().cell(38, 1)],
-      ['Mirror space (B9)', 'Temp checks', 'OFF', '', 'How it works']);
+    eq([t.control().cell(35, 2), t.control().cell(36, 1), t.control().cell(36, 2), t.control().cell(37, 1), t.control().cell(37, 2), t.control().cell(38, 1), t.control().cell(39, 1)],
+      ['Mirror space (B9)', 'Temp checks', 'OFF', 'Group test emails', 'OFF', '', 'How it works']);
     t.control().getRange(36, 2).setValue('ON');
     t.poll();
     t.poll();

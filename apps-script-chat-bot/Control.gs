@@ -103,7 +103,7 @@ const CONTROL_HELP_ = [
     'live Burson alert (from S-F Burson, B25) is posted there already corrected, with what changed in its thread, and ' +
     'the bot works it there like an IM (emojis, the Social Alert email to the tester, the T&S test-form link, answers). ' +
     'It never posts or reacts in the Burson space. C10 shows how it is doing. Clear B10 to stop.',
-  '• Rows 11-24, 27-29, 32, 34 and 36 are switches for what the bot may do on its own. Each starts OFF, and OFF keeps the bot ' +
+  '• Rows 11-24, 27-29, 32, 34, 36 and 37 are switches for what the bot may do on its own. Each starts OFF, and OFF keeps the bot ' +
     'working as described above. Set one to ON to turn it on; column C says what it does when OFF, and what it is doing ' +
     'when ON. While Testing (row 29), every email still goes only to the tester and no live form is ever submitted.',
   '• Auto-send Social Alerts: the bot sends the Social Alert email itself, instead of leaving a Gmail draft for a person.',
@@ -228,12 +228,17 @@ const CONTROL_HELP_ = [
     'only read (the bot never makes or edits a query), at most 35 posts a temp check, reposts excluded; nothing of it goes ' +
     'to S-F Burson. The concern level keeps the template\'s placeholder for you to fill in until the 12-month benchmark ' +
     'is built. C36 shows the last one.',
+  '• Group test emails: row 37, OFF until you turn it ON. ON puts the bot in Testing mode and routes each formulated ' +
+    'Social Alert email to the test email entered in column C of the Brand safety groups tab next to that group\'s live ' +
+    'Google Group email (so a multi-product alert sends each product\'s email to that product\'s own test recipient). ' +
+    'If no test email is set in column C for a group, no email is sent for that group and the skip is logged. OFF ' +
+    'ignores column C test emails completely so live Social Alerts go to column B\'s Google Group emails.',
 ];
 // "How it works" starts here (rows 11-24 the switches, 25 S-F Burson space, 26 Burson test copy, 27-29 three more
 // switches, 30 Testing: send to, 31 BigQuery lookback, 32 one more switch (Work directly in B25), 33 Other alerts space,
-// 34 one more switch (Proactive watch), 35 Watch alerts, 36 one more switch (Temp checks), 37 blank)
-const CONTROL_HELP_ROW_ = 38;
-const CONTROL_HELP_ROWS_ = 39;  // rows kept for the help text (blank ones clear older, longer text)
+// 34 one more switch (Proactive watch), 35 Watch alerts, 36-37 two more switches (Temp checks, Group test emails), 38 blank)
+const CONTROL_HELP_ROW_ = 39;
+const CONTROL_HELP_ROWS_ = 40;  // rows kept for the help text (blank ones clear older, longer text)
 
 // Row 30: Testing: send to (B30). Up to 5 email addresses; blank holds test emails until filled in.
 const TESTERS_ROW_ = 30;
@@ -338,9 +343,11 @@ function testersWho_(standIn, extra) {
 const CONTROL_SWITCHES_ = [
   { key: 'autoSend', label: 'Auto-send Social Alerts',
     off: 'OFF (the Social Alert is a Gmail draft for a person to send; while testing it goes only to the testers in B30)',
-    on: (standIn, live) => (standIn ? '✓ ON (testing: sending only to the testers in B30)'
-      : live === false ? '✓ ON (Testing: Social Alerts stay drafts)'
-        : '✓ ON: the bot sends the Social Alert email itself') },
+    on: (standIn, live, sw) => (sw && sw.bsgTestEmails
+      ? '✓ ON (testing: sending each Social Alert to its group\'s test email in Brand safety groups)'
+      : standIn ? '✓ ON (testing: sending only to the testers in B30)'
+        : live === false ? '✓ ON (Testing: Social Alerts stay drafts)'
+          : '✓ ON: the bot sends the Social Alert email itself') },
   { key: 'autoTns', label: 'Auto-submit T&S form',
     off: 'OFF (posts the pre-filled T&S form link in Chat for a person to submit)',
     on: standIn => (standIn ? '✓ ON (testing: submits the test copy of the form; the urgent email goes only to the testers in B30)'
@@ -458,6 +465,17 @@ const CONTROL_SWITCHES_ = [
       'or the Other alerts space (B33); after the next run\'s alerts the bot emails the temp check, in the team\'s template, ' +
       'to the testers (B30, else the stand-in) and says so in the thread ("refresh" for an update). The concern level is ' +
       'left for you to fill in until its 12-month benchmark is built' },
+  // Row 37, below Temp checks (36): Group test emails (BrandSafetyGroups.gs). ON puts the bot in Testing mode and routes each
+  // Social Alert to its group's Column C test email on Brand safety groups (skipping and logging groups with no test email set);
+  // OFF ignores Column C test emails completely so live Social Alerts use Column B's Google Group emails
+  { key: 'bsgTestEmails', label: 'Group test emails', row: 37,
+    off: 'OFF (Social Alerts use live Brand safety groups emails when LIVE; test emails in column C are ignored)',
+    on: () => {
+      const n = typeof bsgTestGroupCount_ === 'function' ? bsgTestGroupCount_() : 0;
+      return '✓ ON · 🧪 Testing (Brand safety groups column C): each Social Alert goes to its group\'s test email' +
+        (n ? ` (${n} group${n === 1 ? '' : 's'} set)` : ' (none set yet: no emails will be sent)') +
+        '; groups with no test email set are skipped and logged';
+    } },
 ];
 
 /**

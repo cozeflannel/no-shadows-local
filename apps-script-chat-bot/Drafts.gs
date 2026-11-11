@@ -533,6 +533,10 @@ function tryDraft_(ctx, row, report) {
     const input = row.email_input || {};
     if (!input.escalation) throw new Error('missing escalation input');
     const targets = productEmailTargets_(input, groupsOf_(row), row);
+    if (!D.live && switchOn_(ctx, 'bsgTestEmails')) {
+      sendViaBsgTestEmails_(ctx, row, input, targets, report, tnsNote);
+      return;
+    }
     if (targets.length > 1) {
       tryMultiDraft_(ctx, row, input, targets, report, tnsNote);
       return;
@@ -580,7 +584,7 @@ function tryDraft_(ctx, row, report) {
     const attempts = Number(row.email_attempts || 0) + 1;
     const message = String((e && e.message) || e);
     const final = attempts >= DRAFT_TRIES_;
-    const what = draftsTesters_(ctx).length ? 'send' : 'draft';
+    const what = (switchOn_(ctx, 'bsgTestEmails') || draftsTesters_(ctx).length) ? 'send' : 'draft';
     ctx.store.updateAlert(row, { email_status: final ? 'failed' : 'pending', email_attempts: attempts, email_error: truncate_(message, 300) });
     ctx.log(`Social Alert ${what} for ${row.alert_id} failed (attempt ${attempts}): ${message}`);
     if (final) {
@@ -616,6 +620,203 @@ function tryMultiDraft_(ctx, row, input, targets, report, tnsNote) {
     return;
   }
   liveOrDraftMulti_(ctx, row, input, targets, report, tnsNote);
+}
+
+/**
+ * Group test emails mode (`Control!B37 = ON`): routes each formulated Social Alert (single-product or multi-product)
+ * strictly to that group's Column C test email(s) on the `Brand safety groups` worksheet. If a group has no test email
+ * set in Column C, no email is sent for that group and the skip is logged.
+ */
+function sendViaBsgTestEmails_(ctx, row, input, targets, report, tnsNote) {
+  const D = ctx.drafts;
+  const id = row.alert_id;
+  const multi = targets.length > 1;
+  const extraGroups = groupsOf_(row);
+  const prevList = Array.isArray(input.team_emails) ? input.team_emails : [];
+  const prevByKey = new Map(prevList.filter(x => x && x.key).map(x => [x.key, x]));
+  const screenshot = emailScreenshot_(input);
+  const results = [];
+  const skippedNoTestEmail = [];
+  const stoppedMidSend = [];
+  let claimed = rowAlreadyOut_(ctx, row);
+
+  for (const t of targets) {
+    const sendKey = multi ? `${id}#${t.slug}` : id;
+    const prev = prevByKey.get(t.key);
+    const before = standInSent_(ctx, sendKey);
+    if ((prev && prev.status === 'sent') || (before && before.sent)) {
+      const thread = (prev && prev.thread) || (before && before.thread) || t.replyThread || '';
+      const sentAt = Number((prev && prev.sent_at) || (before && before.at)) || ctx.now();
+      const subj = (prev && prev.subject) ||
+        taggedSubject_(socialAlertSubject_(t.input, t.replySubject ? { subject: t.replySubject } : null),
+          ctx.flowTag || '', t.replySubject ? { subject: t.replySubject } : null);
+      results.push({
+        key: t.key, slug: t.slug, product: t.productLabel, distro: t.distroName,
+        status: 'sent', draft: '', thread,
+        message_id: (prev && prev.message_id) || '',
+        reply_to: t.replyTo || '', subject: subj, sent_at: sentAt,
+        recipients: (prev && prev.recipients) || [],
+      });
+      continue;
+    }
+    if (before) {
+      stoppedMidSend.push(t.productLabel || t.distroName || id);
+      results.push({
+        key: t.key, slug: t.slug, product: t.productLabel, distro: t.distroName,
+        status: 'failed', draft: '', thread: t.replyThread || '', message_id: '',
+        reply_to: t.replyTo || '', subject: '', sent_at: 0,
+      });
+      continue;
+    }
+
+    const testPlan = bsgTestPlanForTarget_(t, extraGroups);
+    const label = t.productLabel || testPlan.groupName || 'unmapped product';
+    if (!testPlan.to.length) {
+      skippedNoTestEmail.push(testPlan.groupName || label);
+      ctx.log(`Social Alert for ${id} (${label}): no email sent — no test email set for ${testPlan.groupName || label} in Brand safety groups`);
+      results.push({
+        key: t.key, slug: t.slug, product: label, distro: t.distroName || testPlan.groupName,
+        status: 'skipped_no_test_email', draft: '', thread: '', message_id: '',
+        reply_to: t.replyTo || '', subject: '', sent_at: 0,
+      });
+      continue;
+    }
+
+    const email = socialAlertEmail_(t.input, t.plan, {
+      standIn: testPlan.to, standInCc: testPlan.cc, sendId: sendKey,
+      footer: wouldHaveGoneTo_(t.plan, t.input), tag: ctx.flowTag || '',
+      reply: t.replySubject ? { subject: t.replySubject } : null, screenshot,
+    });
+    const mime = buildMime_({
+      from: D.from, to: email.to, cc: email.cc, bcc: [], subject: email.subject, text: email.text, html: email.html,
+      inline: email.inline, inReplyTo: t.replyTo || '', references: t.replyTo || '',
+    });
+    if (!runOwned_()) {
+      if (results.some(r => r.status === 'sent')) {
+        try { ctx.store.updateAlert(row, { email_input: Object.assign({}, input, { team_emails: results }) }); } catch (e) {}
+      }
+      return;
+    }
+    noteStandInSend_(ctx, { id: sendKey, at: ctx.now() });
+    if (!claimed) {
+      if (typeof amClaimSend_ === 'function') amClaimSend_(ctx, row);
+      claimed = true;
+    }
+    let sent;
+    try {
+      sent = ctx.gmail.sendMessage(mime, t.replyThread || null);
+    } catch (e) {
+      forgetStandInSend_(ctx, sendKey);
+      if (results.some(r => r.status === 'sent')) {
+        try { ctx.store.updateAlert(row, { email_input: Object.assign({}, input, { team_emails: results }) }); } catch (err) {}
+      } else if (typeof amReleaseSend_ === 'function') {
+        amReleaseSend_(ctx, row);
+      }
+      throw e;
+    }
+    const at = ctx.now();
+    const thread = (sent && sent.threadId) || t.replyThread || '';
+    const entry = { id: sendKey, at, thread, msg: (sent && sent.id) || '', sent: true };
+    (ctx.standInSends = ctx.standInSends || {})[sendKey] = entry;
+    try {
+      noteStandInSend_(ctx, entry);
+    } catch (e) {
+      ctx.log(`couldn't note that the ${label} Social Alert for ${id} went to ${email.to.join(', ')}: ${(e && e.message) || e}`);
+    }
+    let messageId = '';
+    try {
+      const m = thread && sent && sent.id ? ctx.gmail.getThread(thread).find(x => x.id === sent.id) : null;
+      messageId = (m && m.headers && m.headers['message-id']) || '';
+    } catch (e) {
+      ctx.log(`couldn't read the Message-ID of the ${label} Social Alert for ${id}: ${(e && e.message) || e}`);
+    }
+    ctx.log(`Social Alert for ${id} (${label}): sent to test email ${email.to.join(', ')} from Brand safety groups`);
+    report.drafts_sent++;
+    results.push({
+      key: t.key, slug: t.slug, product: label, distro: t.distroName || testPlan.groupName,
+      status: 'sent', draft: '', thread, message_id: messageId,
+      reply_to: t.replyTo || '', subject: email.subject, sent_at: at,
+      recipients: email.to.concat(email.cc || []),
+    });
+  }
+
+  const sentResults = results.filter(r => r.status === 'sent');
+  const step = (failed, fn) => {
+    try { fn(); } catch (e) { ctx.log(`${failed}: ${(e && e.message) || e}`); }
+  };
+
+  if (!sentResults.length) {
+    if (stoppedMidSend.length) {
+      const why = `an earlier try may have sent the Social Alert (${stoppedMidSend.join(', ')}) to the test email (check Sent in Gmail), so it wasn't sent again`;
+      ctx.store.updateAlert(row, { email_status: 'failed', email_error: why, email_input: Object.assign({}, input, { team_emails: results }) });
+      ctx.log(`the Social Alert for ${id}: ${why}`);
+      (report.notices = report.notices || []).push(`The Social Alert for ${id}: ${why}.`);
+      return;
+    }
+    const why = `no test email set in Brand safety groups for ${skippedNoTestEmail.join(', ') || 'this group'}`;
+    ctx.store.updateAlert(row, {
+      email_status: 'skipped_no_test_email', email_error: why, email_at: ctx.now(),
+      email_input: Object.assign({}, input, { team_emails: results }),
+    });
+    step('noting Group test emails skip on Control tab', () => {
+      noteSwitch_('bsgTestEmails', `last skipped ${id} (${skippedNoTestEmail.join(', ')}: no test email set)`);
+    });
+    const noteLines = [`Social Alert not sent (Group test emails ON): ${why}.`];
+    if (tnsWhy_(input)) {
+      noteLines.push(tnsNote || tnsFormText_(input));
+      step(`couldn't watch ${id} for the T&S confirmation`, () => watchTns_(ctx, id));
+    }
+    step(`couldn't post the skipped-test-email note for ${id}`, () => postDraftNote_(ctx, row, noteLines.join('\n'), 'bsgskip:' + id));
+    return;
+  }
+
+  const first = sentResults[0];
+  const lastAt = sentResults[sentResults.length - 1].sent_at || ctx.now();
+  const errParts = [];
+  if (stoppedMidSend.length) errParts.push(`check Sent in Gmail for ${stoppedMidSend.join(', ')} (an earlier try stopped mid-send)`);
+  if (skippedNoTestEmail.length) errParts.push(`skipped (no test email in Brand safety groups): ${skippedNoTestEmail.join(', ')}`);
+  step(`couldn't mark the Social Alert(s) for ${id} sent`, () => {
+    const was = row.email_status;
+    try {
+      ctx.store.updateAlert(row, {
+        email_status: 'sent', email_draft: '', email_thread: first.thread, email_message_id: first.message_id,
+        email_subject: first.subject || row.email_subject || '', email_at: lastAt, email_sent_at: lastAt,
+        email_sent_by: D.mailbox || '', email_error: errParts.join(' · '),
+        email_input: Object.assign({}, input, multi || skippedNoTestEmail.length ? { team_emails: results } : {}),
+      });
+    } catch (e) {
+      row.email_status = was;
+      throw e;
+    }
+  });
+  step('noting Group test emails send on Control tab', () => {
+    const sentNames = sentResults.map(r => r.product || r.distro).join(', ');
+    const skipTail = skippedNoTestEmail.length ? ` · skipped ${skippedNoTestEmail.join(', ')} (no test email)` : '';
+    noteSwitch_('bsgTestEmails', `last sent ${id} (${sentNames})${skipTail}`);
+  });
+  step(`couldn't mark the emojis for ${id}`,
+    () => { report.mirrored += markEmojis_(ctx, row, escalationEmojisForRow_(row, null, false)).length; });
+  step(`after the Social Alert(s) for ${id} were sent, the after-send steps failed`, () => onEmailSent_(ctx, row, report));
+
+  const noteLines = [];
+  if (multi || skippedNoTestEmail.length) {
+    let head = `${sentResults.length} Social Alert${sentResults.length === 1 ? '' : 's'} sent (Group test emails): ` +
+      `${sentResults.map(r => r.product).join(', ')}.`;
+    if (skippedNoTestEmail.length) {
+      head += ` Skipped (no test email set in Brand safety groups): ${skippedNoTestEmail.join(', ')}.`;
+    }
+    noteLines.push(head);
+  }
+  if (input.escalation && input.escalation.kb_basis) {
+    noteLines.push(`${noteLines.length ? '- ' : ''}Why: ${escalationWhyText_(input.escalation)}`);
+  }
+  if (tnsWhy_(input)) {
+    noteLines.push(tnsNote || tnsFormText_(input));
+    step(`couldn't watch ${id} for the T&S confirmation`, () => watchTns_(ctx, id));
+  }
+  if (noteLines.length) {
+    step(`couldn't post the note for ${id}`, () => postDraftNote_(ctx, row, noteLines.join('\n'), 'bsgsend:' + id));
+  }
 }
 
 /**
@@ -1697,7 +1898,17 @@ function tnsAutoRecord_(ctx, row, form) {
 function sendTnsUrgent_(ctx, input, form, urgent) {
   const D = ctx.drafts || {};
   const urgentTo = tnsUrgentAlias_();
-  const to = form === 'live' ? (urgentTo ? [urgentTo] : []) : watchTesters_(ctx);
+  let to;
+  if (form === 'live') {
+    to = urgentTo ? [urgentTo] : [];
+  } else if (switchOn_(ctx, 'bsgTestEmails')) {
+    to = typeof bsgCleanTestEmails_ === 'function' ? bsgCleanTestEmails_([GEN && GEN.email && GEN.email.test_tns_urgent]) : [];
+    if (!to.length && ctx && typeof ctx.log === 'function') {
+      ctx.log('urgent T&S email not sent: no test email set for T&S Urgent in Brand safety groups');
+    }
+  } else {
+    to = watchTesters_(ctx);
+  }
   if (!to.length) return { u: 'nobody' };
   try {
     const m = tnsUrgentEmail_(input, urgent, form === 'test', ctx.flowTag || '');

@@ -70,7 +70,7 @@ async function handleGetControlStatus(args) {
     cols: s.properties.gridProperties && s.properties.gridProperties.columnCount,
   }));
 
-  const gridUrl = `${SHEETS_BASE}/${encodeURIComponent(sheetId)}?ranges=${encodeURIComponent('Control!A1:C37')}&includeGridData=true`;
+  const gridUrl = `${SHEETS_BASE}/${encodeURIComponent(sheetId)}?ranges=${encodeURIComponent('Control!A1:C39')}&includeGridData=true`;
   const gridDoc = await gcpFetchJson(gridUrl);
   const rowData =
     (gridDoc.sheets &&
@@ -98,7 +98,7 @@ async function handleGetControlStatus(args) {
     };
   };
 
-  const switchRows = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 27, 28, 29, 32, 34, 36];
+  const switchRows = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 27, 28, 29, 32, 34, 36, 37];
   const switches = switchRows.map(r => ({
     row: r,
     label: cellText(r, 1),
@@ -116,6 +116,7 @@ async function handleGetControlStatus(args) {
   const directB25 = switchByLabel('Work directly in B25');
   const proactiveWatch = switchByLabel('Proactive watch');
   const tempChecks = switchByLabel('Temp checks');
+  const groupTestEmails = switchByLabel('Group test emails');
   const b31Validation = cellValidation(31, 2);
   // Row 35: Watch alerts (OFF / Other alerts space (B33) / Mirror space (B9)), only on its own labelled row
   const watchAlertsRow = cellText(35, 1) === 'Watch alerts';
@@ -172,6 +173,10 @@ async function handleGetControlStatus(args) {
     temp_checks: tempChecks
       ? { row: 36, value: tempChecks.value, note: tempChecks.note }
       : { row: 36, value: 'MISSING', note: '' },
+    // Row 37: Group test emails, routes Social Alerts to Column C test emails on Brand safety groups
+    group_test_emails: groupTestEmails
+      ? { row: 37, value: groupTestEmails.value, note: groupTestEmails.note }
+      : { row: 37, value: 'MISSING', note: '' },
     switches,
     safety_audit: {
       write_back_bq_is_off: !writeBack || writeBack.value.toUpperCase() === 'OFF',
@@ -182,6 +187,7 @@ async function handleGetControlStatus(args) {
       proactive_watch: proactiveWatch ? proactiveWatch.value : 'MISSING',
       watch_alerts: watchAlertsRow ? cellText(35, 2) : 'MISSING',
       temp_checks: tempChecks ? tempChecks.value : 'MISSING',
+      group_test_emails: groupTestEmails ? groupTestEmails.value : 'MISSING',
       lookback_dropdown_strict_15m:
         !!b31Validation &&
         b31Validation.strict === true &&

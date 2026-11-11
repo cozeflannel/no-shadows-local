@@ -752,6 +752,7 @@ const LIVE_STATUS_PREFIX_ = '🔴 LIVE · ';
 function runMode_(switches, testCopyCell, sfbSpace, cfg) {
   if (!switches) return { live: false, why: 'the switches couldn\'t be read' };
   if (switches.safetyValve === true) return { live: false, why: 'the Safety valve is ON' };
+  if (switches.bsgTestEmails === true) return { live: false, why: 'Group test emails, row 37, is ON' };
   if (String(testCopyCell === undefined || testCopyCell === null ? '' : testCopyCell).trim()) {
     return { live: false, why: 'the Burson test copy, B26, is set' };
   }
@@ -844,7 +845,8 @@ function directB25TestCopyOff_(control, wanted) {
  * every email only to the testers (B30, else the stand-in), the test copy of the T&S form, nothing for the leads.
  */
 function buildCtx_(cfg, ss, switches) {
-  if (ss && typeof syncBrandSafetyGroups_ === 'function') syncBrandSafetyGroups_(ss);
+  const sw = Object.assign(switchesOff_(), switches || readSwitches_(ss ? controlTab_(ss) : null));
+  if (ss && typeof syncBrandSafetyGroups_ === 'function') syncBrandSafetyGroups_(ss, sw.bsgTestEmails ? { force: true } : null);
   const props = PropertiesService.getScriptProperties();
   const settings = Object.assign({}, GEN.settings);
   const email = Session.getEffectiveUser().getEmail();
@@ -858,7 +860,10 @@ function buildCtx_(cfg, ss, switches) {
       ? onlyToList_(cfg.testers)
       : testersFor_(ss ? readTestersCell_(controlTab_(ss)) : '').testers);
   const standIn = live ? '' : testers.join(', ');
-  const b30Blank = !live && !testers.length;
+  const b30Blank = !live && !testers.length && !sw.bsgTestEmails;
+  const allowedTo = live ? [] : sw.bsgTestEmails
+    ? bsgMergeUnique_(testers, typeof bsgAllowedTestEmails_ === 'function' ? bsgAllowedTestEmails_() : [])
+    : testers;
   const outboundBlocked = !!cfg.outboundBlocked;
   let store = null;
   let resources = null;
@@ -872,7 +877,7 @@ function buildCtx_(cfg, ss, switches) {
     : `${cfg.burson.id} > ${cfg.analyst.id}${readOnly ? AC_PARTITION_SUFFIX_ : ''}`;
   const ctx = {
     settings,
-    switches: Object.assign(switchesOff_(), switches || readSwitches_(controlTab_(ss))),  // rows 11-24, 27, 28: OFF unless ON there
+    switches: sw,  // rows 11-24, 27-29, 32, 34, 36, 37: OFF unless ON there
     outboundBlocked,
     b30Blank,
     // Work directly in B25 (Control row 32, directCfg_), or the Other alerts space (B33, otherSpaceCfg_): one Google-only
@@ -924,8 +929,8 @@ function buildCtx_(cfg, ss, switches) {
     post: url => lookupPost_(url),  // the post itself (Post.gs): its words, thread, quote, video and photos
     chat: null,  // below: guardedChat_, with S-F Burson only through the Burson outbox
     gemini: geminiClient_(),
-    // Testing: Gmail refuses anyone not on the tester list (no tester in the config: anyone at all). LIVE: the real recipients
-    gmail: gmailClient_({ onlyTo: live ? '' : (testers.length ? testers : [NOBODY_EMAIL_]) }),
+    // Testing: Gmail refuses anyone not on the tester list (or Brand safety groups test emails when row 37 is ON). LIVE: real recipients
+    gmail: gmailClient_({ onlyTo: live ? '' : (allowedTo.length ? allowedTo : [NOBODY_EMAIL_]) }),
     bq: parsed => enrichAlertFromBigQuery_(parsed, settings),
     bqEngagement: url => bqPostEngagement_(url, settings),  // Watch sent alerts (Watch.gs): the post's count in Sonar
     findLink: parsed => bqFindMissingLink_(parsed),  // Auto-find missing links (Control row 14): called only while it's ON
