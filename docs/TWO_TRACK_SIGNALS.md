@@ -316,3 +316,26 @@ Already granted: WRITER on `slrr_signals` and READER on `early_detection`, plus 
 | [`analytics/slrr_signals/`](../analytics/slrr_signals/) | The dataset's DDL |
 | [`infra/09_slrr_signals.sh`](../infra/09_slrr_signals.sh), [`infra/grant_dataset_access.py`](../infra/grant_dataset_access.py), `Dockerfile.signals`, `requirements-signals.txt` | Deploy |
 | [`tests/test_slrr_signals.py`](../tests/test_slrr_signals.py), [`apps-script-chat-bot/test/switch_signals.test.js`](../apps-script-chat-bot/test/switch_signals.test.js) | Tests |
+
+## 13. One way to test: the Control tab (no dry-run mode anywhere)
+
+Testing works one way only. Real Burson messages are mirrored into Google-only spaces with real analysts. The Control tab picks those spaces, and the Safety valve (row 29), B26 and B30 keep everything out of S-F Burson. No part of the repo has a log-only or labelled test mode.
+
+**Removed on Nov 11, 2026** (commit `bffbbde`; a search for the old mode's name went from 111 matches in 32 files to 20 matches in 9):
+
+| Where | What changed |
+|---|---|
+| The bot (`Main.gs`, redeployed) | The old prototype's trigger name is out of the orphan-trigger list. That trigger was deleted from the live project on Nov 6 and hasn't run since. |
+| The Python agent (`triage_agent/`) | `env` is `dev` or `prod` only. No text gets a target label and no DM is redirected. Its private test space is gone from `config/default_config.yaml`. The agent isn't deployed (no Agent Engine, no Console service). |
+| Its docs, infra, Console and add-on | All describe one plan: keep `TRIAGE_ENV=dev`, point post steps at a Google-only test space, then cut over ([`infra/README.md`](../infra/README.md), "Cutover to production"). |
+| The root README | The Proactive watch paragraph is up to date: row 35's three spaces, the classified alerts, and the radar alerts in row 19. |
+
+**The 20 matches left are not a setup:**
+- **Topic keyword (2 matches):** the keyword that catches posts about being "…banned", in `config/default_config.yaml` and its generated copy `Generated.gs`.
+- **CSS styling (18 matches):** the soft edge under buttons and cards in the Console (`console/frontend/src/…`) and the focus ring in the sheet's sidebar (`Sidebar.html`).
+
+**A test keeps it out.**
+- `switch_signals.test.js` reads every file git tracks, which is the same set of files a VS Code search covers.
+- If the word appears anywhere outside those two uses, it fails the test run and names the file and line.
+- The test writes the word as `s[h]adow`, so a search doesn't find the test itself.
+- Proven on Nov 11: one added line in a doc failed the run.
