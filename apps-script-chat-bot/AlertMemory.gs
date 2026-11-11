@@ -1179,6 +1179,8 @@ function makeAlertMemory_(ss, opts) {
       return true;
     },
 
+    seedRows,
+
     /** An Alert-log row a flow just added (Store.gs addAlert): seen; its story when its Social Alert is decided. */
     noteRow(row) {
       if (!row || !row.alert_id || !load()) return;

@@ -115,6 +115,7 @@ module.exports = H => {
     t.poll();
     eq(t.g.gmail.sentMessages().length, 2, 'stakes rising to 15,000 engagements sends one update email');
     eq(t.g.gmail.sentMessages()[1].threadId, t.g.gmail.sentMessages()[0].threadId, 'update replies on original Gmail thread');
+    assert.ok(!t.g.logs.some(l => /seedRows is not a function/.test(l)), t.g.logs.join('\n'));
   });
 
   test('AlertMemory B30-blank flush dedup & foreign tab safeguard: flushing two queued rows for the same post sends only once, and a user-created tab named Alert memory (bot) is never overwritten', () => {
