@@ -24,11 +24,17 @@ Before writing ad-hoc shell/Node scripts, prefer the project's dedicated MCP ser
   - `slrr_inspect_relay_and_outbox` — Live `Burson outbox`, `Relay`, and `Relay names` inspection (including unmapped Chat user IDs).
   - `slrr_inspect_parity_and_results` — Live `Results` KPIs, `im_only` / `bot_only` disagreements, and `Learned precedents`.
   - `slrr_inspect_knowledge_and_guidance` — Live `Resources` document health and `Guidance` rules.
+  - `slrr_trace_alert` — End-to-end trace across `Alert log`, `Results`, `Relay`, `Burson outbox`, `Follow-up`, `Watch detections`, and Cloud Logging.
+  - `slrr_diff_live_apps_script` — Diff live deployed `apps-script-chat-bot` and `apps-script-sheet-sidepanel` files against local files via the Apps Script API.
+  - `slrr_inspect_resource_doc` — Deep-inspect `Resources` docs, `Knowledge cache (bot)` chunks (`<=45k` cell cap), and live Google Drive v3 metadata.
+  - `slrr_read_cloud_run_logs` — Query Cloud Run service/job logs alongside `Watches`, `Watch sources`, and `Watch detections` health.
 - **`slrr-dev-pipeline`** (`mcp/slrr_dev_pipeline_server.js`):
   - `slrr_audit_safety_invariants` — Run all 6 pre-deploy safety checks in one call.
   - `slrr_test_leak_guard` — Test candidate text/emojis against `outboxGuardHits_()` and `outboxEmojiProblem_()`.
   - `slrr_preview_alert_triage` — Instant local V8 VM dry-run of `parseAlert_`, `reviewAlert_`, `escalation_`, and `planRecipients_`.
+  - `slrr_simulate_guidance_rule` — Validate and simulate candidate `Guidance` rules (`kbQuoteProblem_`, `kbScopeProblem_`, `kbPromotion_`) in the V8 VM at $0 cost.
+  - `slrr_backtest_alerts` — Backtest local V8 rules and candidate `Guidance` rows against historical `Alert log` alerts at $0 cost.
   - `slrr_run_tests` — Run `node` (`run_tests.js` or single `switch_*.test.js`), `pytest`, `evals`, or `all`.
   - `slrr_sync_generated_gs` — Verify or rebuild `apps-script-chat-bot/Generated.gs` from `config/*.yaml`.
-- **`bigquery` / `datacloud_bigquery_remote`**:
-  - Use `execute_sql_readonly` and `get_table_info` against `brand-social-central-data` and `bsip-s-bsip-gg-26-2cf3.google_bg`.
+- **`bigquery` / `datacloud_bigquery_remote`** & **`playwright`**:
+  - Use `execute_sql_readonly` and `get_table_info` against `brand-social-central-data` and `bsip-s-bsip-gg-26-2cf3.google_bg`; use `playwright` for headless UI testing of `Sidebar.html`, `console/`, and `studio-addon/`.

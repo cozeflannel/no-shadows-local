@@ -15,15 +15,22 @@
  */
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const {
   DEFAULT_GCP_PROJECT,
   DEFAULT_STORE_SHEET_ID,
+  DEFAULT_SCRIPT_ID,
   DEFAULT_LOGGING_PROJECT_KEY,
   gcpFetchJson,
   createMcpStdioServer,
 } = require('./mcp_stdio');
 
+const REPO_ROOT = path.resolve(__dirname, '..');
+const SIDEPANEL_SCRIPT_ID = '1I-2Zrj1V1yr7hYVzhicyO3xNLXqxBeX_cmQUnC9-u4kWmGgjfvgC6pqT';
 const SHEETS_BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
+const DRIVE_FILES_BASE = 'https://www.googleapis.com/drive/v3/files';
+const SCRIPT_PROJECTS_BASE = 'https://script.googleapis.com/v1/projects';
 const LOGGING_ENTRIES_URL = 'https://logging.googleapis.com/v2/entries:list';
 
 async function getWorkbookMetadata(sheetId) {
@@ -491,6 +498,454 @@ async function handleInspectKnowledgeAndGuidance(args) {
   };
 }
 
+function safeJsonParse(str, fallback = null) {
+  if (!str || typeof str !== 'string') return fallback;
+  try {
+    return JSON.parse(str);
+  } catch (_e) {
+    return fallback;
+  }
+}
+
+async function handleTraceAlert(args) {
+  const query = String(args.query || '').trim();
+  if (!query) {
+    throw new Error('query is required (e.g., "QA-1002", author handle, post URL, or issue keyword)');
+  }
+  const sheetId = args.sheet_id || DEFAULT_STORE_SHEET_ID;
+  const maxMatches = Math.min(Math.max(Number(args.limit) || 10, 1), 50);
+  const includeLogs = args.include_logs !== false;
+  const minutesBack = Math.min(Math.max(Number(args.minutes_back) || 1440, 10), 10080);
+  const qLower = query.toLowerCase();
+
+  const meta = await getWorkbookMetadata(sheetId);
+  const existing = new Set(((meta && meta.sheets) || []).map(s => s.properties.title));
+  const wanted = ['Alert log', 'Results', 'Relay', 'Burson outbox', 'Watch detections', 'Follow-up'].filter(t => existing.has(t));
+  const ranges = wanted.map(t => (t === 'Alert log' ? `'${t}'!A1:AP2000` : `'${t}'!A1:N1500`));
+  const batch = wanted.length ? await batchGetValues(sheetId, ranges) : { valueRanges: [] };
+  const byTab = {};
+  (batch.valueRanges || []).forEach((vr, idx) => {
+    byTab[wanted[idx]] = vr.values || [];
+  });
+
+  // 1. Search Alert log
+  const alertLogRows = rowsToObjects(byTab['Alert log'] || []);
+  const matchedAlerts = alertLogRows
+    .filter(r => Object.values(r).some(v => String(v || '').toLowerCase().includes(qLower)))
+    .slice(-maxMatches)
+    .map(r => {
+      const forwardedFields = safeJsonParse(r.forwarded_fields, null);
+      const requestedFixes = safeJsonParse(r.requested, null);
+      const emailInput = safeJsonParse(r.email_input, null);
+      const decisionObj = safeJsonParse(r.decision, r.decision);
+      const knowledgeUsed = safeJsonParse(r.knowledge_used, r.knowledge_used);
+      return Object.assign({}, r, {
+        created_at_iso: Number(r.created_at) ? new Date(Number(r.created_at)).toISOString() : r.created_at,
+        updated_at_iso: Number(r.updated_at) ? new Date(Number(r.updated_at)).toISOString() : r.updated_at,
+        forwarded_fields_parsed: forwardedFields,
+        requested_parsed: requestedFixes,
+        email_input_parsed: emailInput,
+        decision_parsed: decisionObj,
+        knowledge_used_parsed: knowledgeUsed,
+      });
+    });
+
+  // Collect correlation keys from matched alerts
+  const matchTokens = new Set([qLower]);
+  matchedAlerts.forEach(a => {
+    [
+      a.alert_id,
+      a.record_key,
+      a.author,
+      a.source_message,
+      a.source_thread,
+      a.forward_message,
+      a.forward_thread,
+      a.live_message,
+      a.live_thread,
+      a.forwarded_fields_parsed && a.forwarded_fields_parsed.issue_name,
+    ]
+      .filter(Boolean)
+      .forEach(tok => {
+        const s = String(tok).trim().toLowerCase();
+        if (s.length >= 4) matchTokens.add(s);
+      });
+  });
+
+  const rowMatchesAnyToken = rowObj => {
+    const joined = Object.values(rowObj).join(' \n ').toLowerCase();
+    for (const tok of matchTokens) {
+      if (joined.includes(tok)) return true;
+    }
+    return false;
+  };
+
+  // 2. Search Results tab (EVERY ALERT + disagreements)
+  const resultsRaw = byTab['Results'] || [];
+  const resultsMatches = [];
+  let currentHeader = null;
+  for (let i = 0; i < resultsRaw.length; i++) {
+    const r = resultsRaw[i] || [];
+    const first = String(r[0] || '').trim();
+    if (/^(Burson posted \(ET\)|The IMs sent a Social Alert|The bot sent a Social Alert)/i.test(first)) {
+      currentHeader = r.map((h, idx) => String(h || `col_${idx + 1}`).trim());
+      continue;
+    }
+    if (!currentHeader || !r.some(c => String(c || '').trim())) continue;
+    const joined = r.join(' | ').toLowerCase();
+    let hit = false;
+    for (const tok of matchTokens) {
+      if (joined.includes(tok)) {
+        hit = true;
+        break;
+      }
+    }
+    if (hit && resultsMatches.length < maxMatches) {
+      const obj = { _row: i + 1 };
+      currentHeader.forEach((h, j) => {
+        if (h) obj[h] = r[j] !== undefined ? String(r[j]) : '';
+      });
+      resultsMatches.push(obj);
+    }
+  }
+
+  // 3. Search Relay & Burson outbox
+  const relayMatches = rowsToObjects(byTab['Relay'] || []).filter(rowMatchesAnyToken).slice(-maxMatches);
+  const outboxMatches = rowsToObjects(byTab['Burson outbox'] || []).filter(rowMatchesAnyToken).slice(-maxMatches);
+  const followUpMatches = rowsToObjects(byTab['Follow-up'] || []).filter(rowMatchesAnyToken).slice(-maxMatches);
+
+  // 4. Search Watch detections
+  const watchRaw = byTab['Watch detections'] || [];
+  const watchHeaderIdx = watchRaw.findIndex(r => (r || []).some(c => /^Watch$/i.test(String(c || '').trim()) || /^Post$/i.test(String(c || '').trim())));
+  const watchRows = watchHeaderIdx >= 0 ? rowsToObjects(watchRaw.slice(watchHeaderIdx)) : [];
+  const watchMatches = watchRows.filter(rowMatchesAnyToken).slice(-maxMatches);
+
+  // 5. Optional Cloud Logging search
+  let cloudLogs = null;
+  if (includeLogs) {
+    const logSearchTerm = (matchedAlerts[0] && matchedAlerts[0].alert_id) || query;
+    try {
+      cloudLogs = await handleReadLogs({
+        minutes_back: minutesBack,
+        search: logSearchTerm,
+        limit: 30,
+      });
+    } catch (e) {
+      cloudLogs = { error: e.message };
+    }
+  }
+
+  return {
+    query,
+    sheet_id: sheetId,
+    correlation_tokens: Array.from(matchTokens),
+    alert_log_matches: matchedAlerts,
+    results_parity_matches: resultsMatches,
+    relay_matches: relayMatches,
+    burson_outbox_matches: outboxMatches,
+    follow_up_matches: followUpMatches,
+    watch_detection_matches: watchMatches,
+    cloud_logging: cloudLogs,
+  };
+}
+
+function diffFilesSummary(localContent, remoteContent, includePreview) {
+  const norm = s => String(s || '').replace(/\r\n/g, '\n');
+  const a = norm(localContent);
+  const b = norm(remoteContent);
+  if (a === b) return { identical: true };
+  const aLines = a.split('\n');
+  const bLines = b.split('\n');
+  let firstDiffLine = 1;
+  const maxLen = Math.max(aLines.length, bLines.length);
+  for (let i = 0; i < maxLen; i++) {
+    if (aLines[i] !== bLines[i]) {
+      firstDiffLine = i + 1;
+      break;
+    }
+  }
+  const out = {
+    identical: false,
+    local_lines: aLines.length,
+    remote_lines: bLines.length,
+    first_diff_line: firstDiffLine,
+  };
+  if (includePreview) {
+    out.local_snippet = aLines.slice(Math.max(0, firstDiffLine - 2), firstDiffLine + 3).join('\n');
+    out.remote_snippet = bLines.slice(Math.max(0, firstDiffLine - 2), firstDiffLine + 3).join('\n');
+  }
+  return out;
+}
+
+async function diffSingleAppsScriptProject({ name, scriptId, localDir, includePreview }) {
+  const url = `${SCRIPT_PROJECTS_BASE}/${encodeURIComponent(scriptId)}/content`;
+  const remote = await gcpFetchJson(url);
+  const remoteFiles = new Map();
+  ((remote && remote.files) || []).forEach(f => {
+    const ext = f.type === 'SERVER_JS' ? '.gs' : f.type === 'HTML' ? '.html' : f.type === 'JSON' ? '.json' : '';
+    const filename = `${f.name}${ext}`;
+    remoteFiles.set(filename, f.source || '');
+  });
+
+  const entries = fs.existsSync(localDir) ? fs.readdirSync(localDir, { withFileTypes: true }) : [];
+  const localFiles = new Map();
+  entries.forEach(ent => {
+    if (!ent.isFile()) return;
+    if (ent.name === 'appsscript.json' || ent.name.endsWith('.gs') || ent.name.endsWith('.html')) {
+      localFiles.set(ent.name, fs.readFileSync(path.join(localDir, ent.name), 'utf8'));
+    }
+  });
+
+  const identical = [];
+  const modified = [];
+  const localOnly = [];
+  const remoteOnly = [];
+
+  for (const [fname, localSrc] of localFiles.entries()) {
+    if (!remoteFiles.has(fname)) {
+      localOnly.push(fname);
+      continue;
+    }
+    const cmp = diffFilesSummary(localSrc, remoteFiles.get(fname), includePreview);
+    if (cmp.identical) {
+      identical.push(fname);
+    } else {
+      modified.push(Object.assign({ file: fname }, cmp));
+    }
+  }
+  for (const fname of remoteFiles.keys()) {
+    if (!localFiles.has(fname)) {
+      remoteOnly.push(fname);
+    }
+  }
+
+  return {
+    project: name,
+    script_id: scriptId,
+    local_dir: localDir,
+    in_sync: modified.length === 0 && localOnly.length === 0 && remoteOnly.length === 0,
+    identical_count: identical.length,
+    modified_count: modified.length,
+    local_only_count: localOnly.length,
+    remote_only_count: remoteOnly.length,
+    modified_files: modified,
+    local_only_files: localOnly,
+    remote_only_files: remoteOnly,
+  };
+}
+
+async function handleDiffLiveAppsScript(args) {
+  const target = String(args.target || 'all').toLowerCase();
+  const includePreview = args.include_diff_preview !== false;
+  const targets = [];
+  if (target === 'all' || target === 'chat-bot') {
+    targets.push({
+      name: 'apps-script-chat-bot',
+      scriptId: DEFAULT_SCRIPT_ID,
+      localDir: path.join(REPO_ROOT, 'apps-script-chat-bot'),
+      includePreview,
+    });
+  }
+  if (target === 'all' || target === 'sheet-sidepanel') {
+    targets.push({
+      name: 'apps-script-sheet-sidepanel',
+      scriptId: SIDEPANEL_SCRIPT_ID,
+      localDir: path.join(REPO_ROOT, 'apps-script-sheet-sidepanel'),
+      includePreview,
+    });
+  }
+
+  const results = [];
+  for (const t of targets) {
+    results.push(await diffSingleAppsScriptProject(t));
+  }
+  return {
+    all_in_sync: results.every(r => r.in_sync),
+    projects: results,
+  };
+}
+
+function extractDriveFileId(url) {
+  const s = String(url || '');
+  const m =
+    s.match(/\/(?:document|spreadsheets|presentation|file)\/d\/([A-Za-z0-9_-]{15,})/) ||
+    s.match(/[?&]id=([A-Za-z0-9_-]{15,})/);
+  return m ? m[1] : null;
+}
+
+async function handleInspectResourceDoc(args) {
+  const sheetId = args.sheet_id || DEFAULT_STORE_SHEET_ID;
+  const query = String(args.query || '').trim().toLowerCase();
+  const checkDriveMeta = args.check_drive_metadata !== false;
+
+  const meta = await getWorkbookMetadata(sheetId);
+  const existing = new Set(((meta && meta.sheets) || []).map(s => s.properties.title));
+  const wanted = ['Resources', 'Knowledge cache (bot)'].filter(t => existing.has(t));
+  const ranges = wanted.map(t => (t === 'Knowledge cache (bot)' ? `'${t}'!A1:C500` : `'${t}'!A1:F100`));
+  const batch = wanted.length ? await batchGetValues(sheetId, ranges) : { valueRanges: [] };
+  const byTab = {};
+  (batch.valueRanges || []).forEach((vr, idx) => {
+    byTab[wanted[idx]] = vr.values || [];
+  });
+
+  const resources = rowsToObjects(byTab['Resources'] || []);
+  const cacheRows = (byTab['Knowledge cache (bot)'] || []).slice(1);
+  const cacheByUrl = new Map();
+  for (const r of cacheRows) {
+    const link = String(r[0] || '').trim();
+    const part = Number(r[1]);
+    const cellText = String(r[2] || '');
+    if (!link) continue;
+    if (!cacheByUrl.has(link)) {
+      cacheByUrl.set(link, { meta: null, parts: 0, total_cached_chars: 0, max_part_chars: 0, sample_text: '' });
+    }
+    const entry = cacheByUrl.get(link);
+    if (part === 0) {
+      entry.meta = safeJsonParse(cellText, { raw: cellText });
+    } else if (part > 0) {
+      entry.parts += 1;
+      entry.total_cached_chars += cellText.length;
+      if (cellText.length > entry.max_part_chars) entry.max_part_chars = cellText.length;
+      if (!entry.sample_text) entry.sample_text = cellText.slice(0, 400);
+    }
+  }
+
+  const filtered = query
+    ? resources.filter(
+        r =>
+          String(r.Name || '').toLowerCase().includes(query) ||
+          String(r.Link || '').toLowerCase().includes(query) ||
+          String(r['What it covers'] || '').toLowerCase().includes(query)
+      )
+    : resources;
+
+  const inspected = [];
+  for (const r of filtered) {
+    const link = String(r.Link || '').trim();
+    const cacheInfo = cacheByUrl.get(link) || null;
+    const fileId = extractDriveFileId(link);
+    let driveMeta = null;
+    if (checkDriveMeta && fileId) {
+      try {
+        const fields = 'id,name,mimeType,modifiedTime,version,shared,lastModifyingUser(displayName,emailAddress)';
+        driveMeta = await gcpFetchJson(
+          `${DRIVE_FILES_BASE}/${encodeURIComponent(fileId)}?SupportsAllDrives=true&supportsAllDrives=true&fields=${encodeURIComponent(fields)}`
+        );
+      } catch (e) {
+        driveMeta = { error: e.message };
+      }
+    }
+    inspected.push({
+      row: r._row,
+      name: r.Name,
+      link,
+      covers: r['What it covers'],
+      burson_can_see: r['Burson can see it?'],
+      bot_status: r['Bot status'],
+      knowledge_cache: cacheInfo
+        ? {
+            cached_status: cacheInfo.meta && cacheInfo.meta.status,
+            cached_parts: cacheInfo.parts,
+            total_cached_chars: cacheInfo.total_cached_chars,
+            max_part_chars: cacheInfo.max_part_chars,
+            cell_cap_45k_ok: cacheInfo.max_part_chars <= 45000,
+            read_at_iso:
+              cacheInfo.meta && cacheInfo.meta.read_at ? new Date(Number(cacheInfo.meta.read_at)).toISOString() : null,
+            drive_modified_at_cache: cacheInfo.meta && cacheInfo.meta.modified,
+            sample_preview: cacheInfo.sample_text,
+          }
+        : null,
+      drive_live_metadata: driveMeta,
+    });
+  }
+
+  return {
+    sheet_id: sheetId,
+    matched_count: inspected.length,
+    documents: inspected,
+  };
+}
+
+async function handleReadCloudRunLogs(args) {
+  const project = args.gcp_project || DEFAULT_GCP_PROJECT;
+  const minutesBack = Math.min(Math.max(Number(args.minutes_back) || 120, 1), 10080);
+  const limit = Math.min(Math.max(Number(args.limit) || 40, 1), 200);
+  const includeWatchTabs = args.include_proactive_watch_sheet !== false;
+
+  const sinceIso = new Date(Date.now() - minutesBack * 60 * 1000).toISOString();
+  const clauses = [
+    '(resource.type="cloud_run_revision" OR resource.type="cloud_run_job")',
+    `timestamp >= "${sinceIso}"`,
+  ];
+  if (args.service_name) {
+    const safeSvc = String(args.service_name).replace(/"/g, '\\"');
+    clauses.push(`(resource.labels.service_name="${safeSvc}" OR resource.labels.job_name="${safeSvc}")`);
+  }
+  if (args.severity) {
+    clauses.push(`severity >= ${String(args.severity).toUpperCase()}`);
+  }
+  if (args.search) {
+    const safeSearch = String(args.search).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    clauses.push(`(textPayload:"${safeSearch}" OR jsonPayload.message:"${safeSearch}")`);
+  }
+
+  const filter = clauses.join(' AND ');
+  const resp = await gcpFetchJson(LOGGING_ENTRIES_URL, {
+    method: 'POST',
+    quotaProject: project,
+    body: {
+      resourceNames: [`projects/${project}`],
+      filter,
+      orderBy: 'timestamp desc',
+      pageSize: limit,
+    },
+  });
+
+  const entries = ((resp && resp.entries) || []).map(e => ({
+    timestamp: e.timestamp,
+    severity: e.severity || 'DEFAULT',
+    resource_type: e.resource && e.resource.type,
+    service_or_job:
+      (e.resource && e.resource.labels && (e.resource.labels.service_name || e.resource.labels.job_name)) || '',
+    message:
+      (e.jsonPayload && e.jsonPayload.message) ||
+      e.textPayload ||
+      (e.httpRequest ? `${e.httpRequest.requestMethod} ${e.httpRequest.status} ${e.httpRequest.requestUrl}` : '') ||
+      (e.jsonPayload ? JSON.stringify(e.jsonPayload) : ''),
+  }));
+
+  let proactiveWatch = null;
+  if (includeWatchTabs) {
+    const sheetId = args.sheet_id || DEFAULT_STORE_SHEET_ID;
+    const meta = await getWorkbookMetadata(sheetId);
+    const existing = new Set(((meta && meta.sheets) || []).map(s => s.properties.title));
+    const watchTabs = ['Watches', 'Watch sources', 'Watch detections'].filter(t => existing.has(t));
+    if (watchTabs.length) {
+      const batch = await batchGetValues(
+        sheetId,
+        watchTabs.map(t => `'${t}'!A1:J35`)
+      );
+      const map = {};
+      (batch.valueRanges || []).forEach((vr, idx) => {
+        map[watchTabs[idx]] = vr.values || [];
+      });
+      proactiveWatch = {
+        watches: rowsToObjects(map['Watches'] || []),
+        watch_sources: rowsToObjects((map['Watch sources'] || []).slice(2)),
+        watch_detections_scorecard: rowsToObjects((map['Watch detections'] || []).slice(2, 12)),
+      };
+    }
+  }
+
+  return {
+    filter_used: filter,
+    minutes_back: minutesBack,
+    returned_count: entries.length,
+    entries,
+    proactive_watch_sheet_summary: proactiveWatch,
+  };
+}
+
 const TOOLS = [
   {
     name: 'slrr_get_control_status',
@@ -600,11 +1055,122 @@ const TOOLS = [
     },
     handler: handleInspectKnowledgeAndGuidance,
   },
+  {
+    name: 'slrr_trace_alert',
+    description:
+      'End-to-end multi-system trace for any Social Alert by QA-ID (e.g. "QA-1002"), author handle, post URL, or issue keyword. Correlates across `Alert log` (42 columns + parsed JSON fields), `Results` parity rows, `Relay`, `Burson outbox`, `Follow-up`, `Watch detections`, and Cloud Logging in a single read-only call ($0 cost).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Alert ID ("QA-1002"), author handle ("AnnieCushing"), post URL, or issue/product substring.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max matched rows per section (default: 10, max: 50).',
+        },
+        include_logs: {
+          type: 'boolean',
+          description: 'Whether to also fetch matching Cloud Logging entries (default: true).',
+        },
+        minutes_back: {
+          type: 'number',
+          description: 'Cloud Logging lookback window in minutes (default: 1440 = 24h, max: 10080 = 7d).',
+        },
+        sheet_id: {
+          type: 'string',
+          description: 'Optional Google Sheet ID override.',
+        },
+      },
+      required: ['query'],
+    },
+    handler: handleTraceAlert,
+  },
+  {
+    name: 'slrr_diff_live_apps_script',
+    description:
+      'Fetch the live deployed Apps Script source files via the Apps Script REST API for both `apps-script-chat-bot` and `apps-script-sheet-sidepanel` and diff them line-by-line against your local workspace files ($0 cost).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: {
+          type: 'string',
+          enum: ['all', 'chat-bot', 'sheet-sidepanel'],
+          description: 'Which Apps Script project to diff against live deployment (default: "all").',
+        },
+        include_diff_preview: {
+          type: 'boolean',
+          description: 'Include line snippet previews for any modified files (default: true).',
+        },
+      },
+    },
+    handler: handleDiffLiveAppsScript,
+  },
+  {
+    name: 'slrr_inspect_resource_doc',
+    description:
+      'Deep-inspect knowledge base documents on the `Resources` tab alongside their cached chunks in `Knowledge cache (bot)` (verifying <=45,000 char cell caps) and live Google Drive API file metadata (`modifiedTime`, `lastModifyingUser`, `shared`).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Optional document name or URL substring filter (omit to inspect all Resources docs).',
+        },
+        check_drive_metadata: {
+          type: 'boolean',
+          description: 'Fetch live Google Drive v3 file metadata for Drive-hosted docs/sheets (default: true).',
+        },
+        sheet_id: {
+          type: 'string',
+          description: 'Optional Google Sheet ID override.',
+        },
+      },
+    },
+    handler: handleInspectResourceDoc,
+  },
+  {
+    name: 'slrr_read_cloud_run_logs',
+    description:
+      'Query Cloud Run service/job logs (`console`, `jobs`, `slrr_campaigns`) on `brand-social-central-data` alongside live `Watches`, `Watch sources`, and `Watch detections` health from the Control Sheet.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        service_name: {
+          type: 'string',
+          description: 'Optional Cloud Run service or job name filter.',
+        },
+        minutes_back: {
+          type: 'number',
+          description: 'Lookback window in minutes (default: 120, max: 10080).',
+        },
+        severity: {
+          type: 'string',
+          enum: ['DEFAULT', 'INFO', 'WARNING', 'ERROR'],
+          description: 'Optional minimum log severity.',
+        },
+        search: {
+          type: 'string',
+          description: 'Optional substring to search in log payload.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum log entries to return (default: 40, max: 200).',
+        },
+        include_proactive_watch_sheet: {
+          type: 'boolean',
+          description: 'Include live Watches, Watch sources, and Watch detections summary from the Control Sheet (default: true).',
+        },
+      },
+    },
+    handler: handleReadCloudRunLogs,
+  },
 ];
 
 const server = createMcpStdioServer({
   name: 'slrr-live-ops',
-  version: '1.0.0',
+  version: '1.1.0',
   instructions:
     'Read-only live operations and diagnostics server for the Burson QA Bot (SLRR). Use these tools first before running raw gcloud or ad-hoc Sheets scripts.',
   tools: TOOLS,

@@ -14,7 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { createMcpStdioServer } = require('./mcp_stdio');
+const { DEFAULT_STORE_SHEET_ID, gcpFetchJson, createMcpStdioServer } = require('./mcp_stdio');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const BOT_DIR = path.join(REPO_ROOT, 'apps-script-chat-bot');
@@ -345,6 +345,256 @@ async function handleSyncGeneratedGs(args) {
   };
 }
 
+async function handleSimulateGuidanceRule(args) {
+  const guidanceText = String(args.guidance_text || '').trim();
+  if (!guidanceText) {
+    throw new Error('guidance_text is required');
+  }
+  const appliesTo = String(args.applies_to || '').trim();
+  const quote = String(args.quote || guidanceText).trim();
+  const testProduct = String(args.product || '').trim();
+  const alertText = String(args.alert_text || '').trim();
+
+  const { bot } = loadFreshBotVm();
+  const normText = bot.kbNorm_(guidanceText);
+  const normQuote = bot.kbNorm_(quote);
+  const quoteProblem = bot.kbQuoteProblem_(normQuote, normText, true, 'Guidance row G1');
+  const hasHoldRx = bot.ev(`KB_HOLD_RX_.test(${JSON.stringify(normText)})`);
+  const hasStartRx = bot.ev(`KB_START_RX_.test(${JSON.stringify(normText)})`);
+
+  let mode = 'informational_only';
+  if (hasHoldRx) {
+    mode = 'suppress_or_hold (noAlertChecks.guidance)';
+  } else if (hasStartRx && !quoteProblem) {
+    mode = 'can_start_social_alert (Row 13 kbPromotion_)';
+  }
+
+  const scopeCheckForProduct = prod => {
+    if (!prod) return null;
+    const prob = bot.kbScopeProblem_(appliesTo, { product: prod, other_products: [] });
+    return {
+      product: prod,
+      allowed: prob === '',
+      reason: prob || 'Matches Applies to scope',
+    };
+  };
+
+  let alertSimulation = null;
+  if (alertText) {
+    const now = Date.now();
+    const parsed = bot.parseAlert_(alertText);
+    const review = bot.reviewAlert_(parsed, { now, settings: bot.ev('GEN.settings'), history: [] });
+    const baseEsc = bot.escalation_(review.fields, { now });
+    const guidanceList = [{ source: 'tab', text: guidanceText, applies_to: appliesTo }];
+    const citation = bot.kbCitation_(
+      { source: 'guidance', guidance_n: 1, quote },
+      guidanceList,
+      { text: '', docs: [] },
+      review.fields
+    );
+    const reviewWithCitation = Object.assign({}, review, {
+      socialAlert: {
+        warranted: !hasHoldRx,
+        confidence: 0.95,
+        source: 'ai',
+        per: citation,
+      },
+      noAlertChecks: {
+        guidance: hasHoldRx,
+      },
+    });
+    const promoted = bot.kbPromotion_(reviewWithCitation, baseEsc, now);
+    alertSimulation = {
+      product: review.fields.product,
+      exposure_tag: review.fields.exposure_tag,
+      total_engagement: review.fields.total_engagement,
+      baseline_escalation: {
+        escalated: baseEsc.escalated,
+        track: baseEsc.track,
+        suppression: baseEsc.suppression,
+        reason: baseEsc.reason,
+      },
+      citation_check: citation,
+      promoted_under_row13: promoted
+        ? {
+            escalated: promoted.escalated,
+            track: promoted.track,
+            kb_basis: promoted.kb_basis,
+            reasons: promoted.reasons,
+          }
+        : null,
+      suppressed_by_hold_guidance: hasHoldRx,
+    };
+  }
+
+  return {
+    guidance_text: guidanceText,
+    applies_to: appliesTo || '(all products)',
+    quote_tested: quote,
+    rule_classification: mode,
+    can_start_alerts_under_row13: quoteProblem === '',
+    quote_validation_problem: quoteProblem || null,
+    contains_start_keywords: hasStartRx,
+    contains_hold_keywords: hasHoldRx,
+    product_scope_check: scopeCheckForProduct(testProduct),
+    alert_simulation: alertSimulation,
+  };
+}
+
+function safeJsonParse(str, fallback = null) {
+  if (!str || typeof str !== 'string') return fallback;
+  try {
+    return JSON.parse(str);
+  } catch (_e) {
+    return fallback;
+  }
+}
+
+async function handleBacktestAlerts(args) {
+  const limit = Math.min(Math.max(Number(args.limit) || 25, 1), 100);
+  const disagreementsOnly = args.disagreements_only === true;
+  const candidateGuidance = args.candidate_guidance || null;
+  const customAlerts = Array.isArray(args.custom_alerts) ? args.custom_alerts : null;
+  const { bot } = loadFreshBotVm();
+  const now = Date.now();
+
+  let records = [];
+  if (customAlerts && customAlerts.length) {
+    records = customAlerts.slice(0, limit).map((item, idx) => {
+      if (typeof item === 'string') {
+        const parsed = bot.parseAlert_(item);
+        const rev = bot.reviewAlert_(parsed, { now, settings: bot.ev('GEN.settings'), history: [] });
+        return {
+          id: `custom-${idx + 1}`,
+          fields: rev.fields,
+          recorded_bot_call: null,
+          recorded_im_call: null,
+        };
+      }
+      return {
+        id: item.alert_id || `custom-${idx + 1}`,
+        fields: item.fields || item,
+        recorded_bot_call: item.bot_call || null,
+        recorded_im_call: item.im_call || null,
+      };
+    });
+  } else {
+    const sheetId = args.sheet_id || DEFAULT_STORE_SHEET_ID;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}/values:batchGet?valueRenderOption=FORMATTED_VALUE&ranges=${encodeURIComponent("'Alert log'!A1:AP500")}`;
+    const batch = await gcpFetchJson(url);
+    const rawRows = (batch.valueRanges && batch.valueRanges[0] && batch.valueRanges[0].values) || [];
+    if (rawRows.length >= 2) {
+      const header = rawRows[0].map(h => String(h || '').trim());
+      const objs = [];
+      for (let i = 1; i < rawRows.length; i++) {
+        const r = rawRows[i] || [];
+        const o = {};
+        header.forEach((h, j) => {
+          if (h) o[h] = r[j] !== undefined ? String(r[j]) : '';
+        });
+        const ff = safeJsonParse(o.forwarded_fields, null);
+        if (!ff || !ff.product) continue;
+        const emailSt = String(o.email_status || '').trim();
+        const botSent = ['sent', 'drafted', 'pending'].includes(emailSt);
+        const mirrored = String(o.mirrored || '');
+        const imNoAction = mirrored.includes('❌');
+        const imAlerted = ['🚨', '📧', '✅'].some(e => mirrored.includes(e));
+        const imCall = imAlerted ? 'alerted' : imNoAction ? 'no_action' : 'unknown';
+        const botCall = botSent ? 'alerted' : 'no_action';
+        if (disagreementsOnly && (imCall === 'unknown' || imCall === botCall)) continue;
+        objs.push({
+          id: o.alert_id || `row-${i + 1}`,
+          author: o.author || ff.author || '',
+          fields: ff,
+          recorded_bot_call: botCall,
+          recorded_im_call: imCall,
+          recorded_email_status: emailSt,
+          recorded_mirrored: mirrored,
+        });
+      }
+      records = objs.slice(-limit);
+    }
+  }
+
+  let escalatedCount = 0;
+  let suppressedCount = 0;
+  let promotedByGuidanceCount = 0;
+  let diffFromRecordedBot = 0;
+  const details = [];
+
+  for (const rec of records) {
+    const esc = bot.escalation_(rec.fields, { now });
+    let finalEscalated = !!esc.escalated;
+    let promotedByGuidance = false;
+
+    if (candidateGuidance && candidateGuidance.text) {
+      const gText = String(candidateGuidance.text);
+      const gApplies = String(candidateGuidance.applies_to || '');
+      const gQuote = String(candidateGuidance.quote || gText);
+      const normText = bot.kbNorm_(gText);
+      const hasHold = bot.ev(`KB_HOLD_RX_.test(${JSON.stringify(normText)})`);
+      const scopeProb = bot.kbScopeProblem_(gApplies, rec.fields);
+      if (hasHold && !scopeProb) {
+        finalEscalated = false;
+      } else if (!finalEscalated) {
+        const citation = bot.kbCitation_(
+          { source: 'guidance', guidance_n: 1, quote: gQuote },
+          [{ source: 'tab', text: gText, applies_to: gApplies }],
+          { text: '', docs: [] },
+          rec.fields
+        );
+        const prom = bot.kbPromotion_(
+          {
+            fields: rec.fields,
+            socialAlert: { warranted: true, confidence: 0.95, source: 'ai', per: citation },
+            noAlertChecks: {},
+          },
+          esc,
+          now
+        );
+        if (prom && prom.escalated) {
+          finalEscalated = true;
+          promotedByGuidance = true;
+          promotedByGuidanceCount++;
+        }
+      }
+    }
+
+    if (finalEscalated) escalatedCount++;
+    else suppressedCount++;
+
+    const localCall = finalEscalated ? 'alerted' : 'no_action';
+    const changedVsBot = rec.recorded_bot_call && rec.recorded_bot_call !== localCall;
+    if (changedVsBot) diffFromRecordedBot++;
+
+    details.push({
+      id: rec.id,
+      author: rec.author || rec.fields.author || '',
+      product: rec.fields.product || '',
+      issue_name: rec.fields.issue_name || '',
+      exposure_tag: rec.fields.exposure_tag || '',
+      engagement: rec.fields.total_engagement,
+      local_rules_call: localCall,
+      track: esc.track,
+      suppression: esc.suppression,
+      reason: esc.reason,
+      promoted_by_candidate_guidance: promotedByGuidance,
+      recorded_bot_call: rec.recorded_bot_call,
+      recorded_im_call: rec.recorded_im_call,
+      changed_vs_recorded_bot: !!changedVsBot,
+    });
+  }
+
+  return {
+    total_tested: details.length,
+    escalated_by_local_vm: escalatedCount,
+    suppressed_by_local_vm: suppressedCount,
+    promoted_by_candidate_guidance: promotedByGuidanceCount,
+    changed_vs_recorded_bot_count: diffFromRecordedBot,
+    results: details,
+  };
+}
+
 const TOOLS = [
   {
     name: 'slrr_audit_safety_invariants',
@@ -439,13 +689,82 @@ const TOOLS = [
     },
     handler: handleSyncGeneratedGs,
   },
+  {
+    name: 'slrr_simulate_guidance_rule',
+    description:
+      'Validate and simulate a candidate `Guidance` tab rule in the local Apps Script V8 VM ($0 cost). Checks whether the wording passes `kbQuoteProblem_` (Row 13 `KB & Guidance can start alerts` vs hold/suppress `KB_HOLD_RX_`), checks `Applies to` product scoping (`kbScopeProblem_`), and optionally simulates its effect on an alert.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        guidance_text: {
+          type: 'string',
+          description: 'Candidate Guidance column A text (e.g., "Escalate all posts about Chrome zero-day CVE-2026-125350 regardless of engagement").',
+        },
+        applies_to: {
+          type: 'string',
+          description: 'Optional Guidance column B `Applies to` value (e.g., "Chrome" or blank for all).',
+        },
+        quote: {
+          type: 'string',
+          description: 'Optional exact quote substring to test with `kbCitation_` (defaults to full guidance_text).',
+        },
+        product: {
+          type: 'string',
+          description: 'Optional product name to test against `kbScopeProblem_`.',
+        },
+        alert_text: {
+          type: 'string',
+          description: 'Optional raw Zapier alert text to simulate before/after escalation with this Guidance rule.',
+        },
+      },
+      required: ['guidance_text'],
+    },
+    handler: handleSimulateGuidanceRule,
+  },
+  {
+    name: 'slrr_backtest_alerts',
+    description:
+      'Backtest the local V8 Apps Script rules engine (`escalation_`, `kbPromotion_`) across historical alerts from the live `Alert log` tab (or `custom_alerts`) at $0 cost (zero LLM/BigQuery charges). Optionally inject a `candidate_guidance` rule to see how many below-threshold/ongoing alerts it promotes or suppresses.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: {
+          type: 'number',
+          description: 'Max historical alerts to backtest (default: 25, max: 100).',
+        },
+        disagreements_only: {
+          type: 'boolean',
+          description: 'If true, only backtest rows where the recorded Bot call and IM emoji call differed.',
+        },
+        candidate_guidance: {
+          type: 'object',
+          properties: {
+            text: { type: 'string' },
+            applies_to: { type: 'string' },
+            quote: { type: 'string' },
+          },
+          description: 'Optional candidate Guidance rule to simulate across the alert batch.',
+        },
+        custom_alerts: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional array of raw Zapier alert texts to backtest offline instead of fetching from the Sheet.',
+        },
+        sheet_id: {
+          type: 'string',
+          description: 'Optional Google Sheet ID override.',
+        },
+      },
+    },
+    handler: handleBacktestAlerts,
+  },
 ];
 
 const server = createMcpStdioServer({
   name: 'slrr-dev-pipeline',
-  version: '1.0.0',
+  version: '1.1.0',
   instructions:
-    'Local V8 simulation, leak-guard verification, safety-invariant auditing, and test execution MCP server for burson-triage-agent.',
+    'Local V8 simulation, leak-guard verification, safety-invariant auditing, historical backtesting, and test execution MCP server for burson-triage-agent.',
   tools: TOOLS,
 });
 

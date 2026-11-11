@@ -83,7 +83,7 @@ async function main() {
     devClient.notify('notifications/initialized');
 
     const listed = await devClient.request('tools/list');
-    assert.strictEqual(listed.tools.length, 5);
+    assert.strictEqual(listed.tools.length, 7);
 
     const audit = await devClient.callTool('slrr_audit_safety_invariants');
     assert.strictEqual(audit.all_passed, true, `Safety audit failed: ${JSON.stringify(audit, null, 2)}`);
@@ -126,7 +126,20 @@ async function main() {
     assert.strictEqual(preview.detected, true);
     assert(preview.fixes.length > 0, 'Expected deterministic fixes on mismatched Gems/Instagram sample alert');
 
-    console.log('✓ slrr-dev-pipeline passed all stdio protocol & VM tool assertions');
+    const simGuidance = await devClient.callTool('slrr_simulate_guidance_rule', {
+      guidance_text: 'Escalate all posts about Chrome zero-day CVE-2026-125350 regardless of engagement',
+      applies_to: 'Chrome',
+      product: 'Chrome',
+    });
+    assert.strictEqual(simGuidance.can_start_alerts_under_row13, true);
+    assert.strictEqual(simGuidance.product_scope_check.allowed, true);
+
+    const backtestOffline = await devClient.callTool('slrr_backtest_alerts', {
+      custom_alerts: [sampleAlert],
+    });
+    assert.strictEqual(backtestOffline.total_tested, 1);
+
+    console.log('✓ slrr-dev-pipeline passed all stdio protocol & VM tool assertions (7 tools)');
   } finally {
     await devClient.close();
   }
@@ -143,8 +156,8 @@ async function main() {
     opsClient.notify('notifications/initialized');
 
     const listed = await opsClient.request('tools/list');
-    assert.strictEqual(listed.tools.length, 5);
-    console.log('✓ slrr-live-ops passed stdio initialization & tool schema listing');
+    assert.strictEqual(listed.tools.length, 9);
+    console.log('✓ slrr-live-ops passed stdio initialization & tool schema listing (9 tools)');
 
     if (runLive) {
       const control = await opsClient.callTool('slrr_get_control_status');
@@ -165,6 +178,21 @@ async function main() {
       const relay = await opsClient.callTool('slrr_inspect_relay_and_outbox', { limit: 10 });
       console.log(
         `✓ slrr_inspect_relay_and_outbox (LIVE): present_tabs=${JSON.stringify(relay.present_tabs)}, outbox_rows=${relay.burson_outbox.total_rows}, relay_rows=${relay.relay.total_rows}, unmapped_people=${relay.relay_names.unmapped_count}`
+      );
+
+      const diff = await opsClient.callTool('slrr_diff_live_apps_script', { target: 'all' });
+      console.log(
+        `✓ slrr_diff_live_apps_script (LIVE): all_in_sync=${diff.all_in_sync}, projects=${diff.projects.map(p => `${p.project}(sync=${p.in_sync},identical=${p.identical_count},mod=${p.modified_count})`).join(', ')}`
+      );
+
+      const docInspect = await opsClient.callTool('slrr_inspect_resource_doc', { query: 'Collection Requirements' });
+      console.log(
+        `✓ slrr_inspect_resource_doc (LIVE): matched=${docInspect.matched_count}, first=${docInspect.documents[0] && docInspect.documents[0].name}`
+      );
+
+      const trace = await opsClient.callTool('slrr_trace_alert', { query: 'QA-', limit: 2, include_logs: false });
+      console.log(
+        `✓ slrr_trace_alert (LIVE): alert_log_matches=${trace.alert_log_matches.length}, results_matches=${trace.results_parity_matches.length}`
       );
     }
   } finally {
