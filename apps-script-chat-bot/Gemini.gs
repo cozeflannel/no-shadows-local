@@ -149,7 +149,6 @@ function geminiClient_() {
             const tr = extractMediaTranscript_(parsed, {
               media,
               allowDownload: mediaTime(),
-              transcribe: opts && opts.transcribe,
             });
             if (tr && tr.text) {
               parsed.transcript = tr;
@@ -300,7 +299,7 @@ function thinkingLevelFor_(model) {
 
 /**
  * opts.parts: media parts sent before the text (Media.gs); opts.mediaResolution: e.g. 'MEDIA_RESOLUTION_LOW';
- * opts.grounding: 'enterprise' | 'google' (the web-search tool); opts.useSearchGrounding: boolean (= 'google');
+ * opts.grounding: 'enterprise' | 'google' (the web-search tool);
  * opts.maxOutputTokens: the output cap (thinking included); opts.thinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH' (Gemini 3+).
  */
 function geminiPayload_(system, prompt, schema, opts) {
@@ -315,7 +314,7 @@ function geminiPayload_(system, prompt, schema, opts) {
     contents: [{ role: 'user', parts: (o.parts || []).concat([{ text: prompt }]) }],
     generationConfig,
   };
-  const tool = GROUNDING_TOOLS_[o.grounding] || (o.useSearchGrounding ? GROUNDING_TOOLS_.google : null);
+  const tool = GROUNDING_TOOLS_[o.grounding] || null;
   if (tool) payload.tools = [tool];
   return payload;
 }
@@ -454,10 +453,9 @@ function geminiGenerate_(system, prompt, schema, opts) {
     if (code !== 429 && code < 500) {
       // A 4xx with the web-search tool on: once more without it, when the error is about the tool (or nothing else in
       // the request could be: no media). A media error goes straight back to assess(), which retries text-only.
-      if (code >= 300 && (o.grounding || o.useSearchGrounding) && (!hasMedia || /search|ground|tool|enterprise|retriev/i.test(text))) {
-        refused = { mode: o.grounding || 'google', why: `${code} ${text.slice(0, 200)}` };
+      if (code >= 300 && o.grounding && (!hasMedia || /search|ground|tool|enterprise|retriev/i.test(text))) {
+        refused = { mode: o.grounding, why: `${code} ${text.slice(0, 200)}` };
         o.grounding = '';
-        o.useSearchGrounding = false;
         params = paramsFor();
         attempt--;
         continue;

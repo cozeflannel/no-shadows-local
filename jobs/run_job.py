@@ -21,27 +21,29 @@ OPS = {
     "followups": ("run_followups", {}),
     "inhouse": ("ingest_inhouse", {}),
     "handover": ("generate_handover", {}),
-    "digest": ("run_followups", {"steps": ["digest"]}),
 }
+JOBS = sorted([*OPS, "digest"])  # digest is not an operation: it calls burson_digest(force=True), see main()
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("job", choices=sorted(OPS))
+    parser.add_argument("job", choices=JOBS)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    op, payload = OPS[args.job]
     ctx = build_context()
     if args.job == "digest":
         from triage_agent.followups import burson_digest
 
-        burson_digest(ctx, force=True)
-        print(json.dumps({"ok": True, "job": "digest"}))
+        queued = burson_digest(ctx, force=True)  # 0 when burson_feedback.post_digest_to_burson_space is off
+        print(json.dumps({"ok": True, "job": "digest", "queued": queued}))
         return 0
+    op, payload = OPS[args.job]
     resp = handle({"op": op, "payload": payload, "context": {"deliver": "outbox", "flow": "job", "invoked_by": f"job:{args.job}"}}, ctx)
-    print(json.dumps({"ok": resp.ok, "op": op, "summary": resp.outputs.get("summary"), "error": resp.error,
+    # run_followups keeps going when a step raises and lists those steps: the job must not look green.
+    ok = resp.ok and not (resp.data or {}).get("failed_steps")
+    print(json.dumps({"ok": ok, "op": op, "summary": resp.outputs.get("summary"), "error": resp.error,
                       "data": resp.data}, default=str))
-    return 0 if resp.ok else 1
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

@@ -296,7 +296,7 @@ function groupMatchReason_(group, a, text) {
   if (t.owned_post) conds.push([!!a.owned_post, 'owned social post']);
   if (!conds.length) return null;
   if (t.match === 'all') return conds.every(c => c[0]) ? conds.map(c => c[1]).join('; ') : null;
-  const hit = conds.find(c => [0] && c[0]);
+  const hit = conds.find(c => c[0]);
   return hit ? hit[1] : null;
 }
 
@@ -561,10 +561,17 @@ const FOLLOW_UP_RX_ = new RegExp([
   '\\b(?:their|his|her) (?:own )?(?:earlier|previous|original|prior) (?:post|tweet|video|thread)\\b', '\\bself[- ]repl',
 ].join('|'), 'i');
 
-/** The bot's own outcome for an earlier alert: 'alerted' (a Social Alert went out or is going out), 'not alerted' (❌), or ''. */
-function earlierOutcome_(h) {
+/**
+ * The bot's own outcome for an earlier alert: 'alerted' (a Social Alert went out or is going out), 'not alerted' (❌), or ''.
+ * A `pending` email counts as going out only for a day after the alert was recorded (h.created_at): Drafts.gs
+ * maintainDrafts_ stops trying it then (and marks it failed), so no email is coming for it. `now` (ms): the run's time
+ * (the clock's when it isn't given).
+ */
+function earlierOutcome_(h, now) {
   const st = String(h.email_status || '');
-  if (['sent', 'drafted', 'pending'].includes(st)) return 'alerted';
+  const at = Number(h.created_at) || 0;
+  const stale = st === 'pending' && at > 0 && (Number(now) > 0 ? Number(now) : Date.now()) - at > DAY_MS_;
+  if (['sent', 'drafted'].includes(st) || (st === 'pending' && !stale)) return 'alerted';
   const codes = String(h.mirrored || '').split(' ').filter(Boolean).map(e => (legendByEmoji_(e) || {}).code).filter(Boolean);
   if (codes.some(c => ACTION_CODES_.has(c) && !['no_action', 'tns', 'escalated_jon'].includes(c))) return 'alerted';  // a team's emoji
   if (codes.includes('no_action') || ['discarded', 'deleted'].includes(st)) return 'not alerted';
@@ -621,7 +628,7 @@ function earlierAlerts_(fields, history, bq, now, post, opts) {
       product: v.product || '', exposure_tag: h.exposure_tag || v.exposure_tag || '', risk_tags: asList_(v.risk_tags),
       priority: v.priority || '', issue_name: v.issue_name || '', summary: v.summary || '',
       engagement: Number.isInteger(v.total_engagement) ? v.total_engagement : null, engagement_level: v.engagement_level || '',
-      outcome: earlierOutcome_(h), emojis: String(h.mirrored || '').trim(),
+      outcome: earlierOutcome_(h, now), emojis: String(h.mirrored || '').trim(),
       ingested: String(h.ingested || ''), decision: String(h.decision || ''), tns_submitted: Number(h.tns_submitted) > 0,
       row: h,
     }, link));

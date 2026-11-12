@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable
 
@@ -28,7 +28,6 @@ class AgentContext:
     gmail: Any = None  # GmailGateway (triage_agent.escalation.gmail); None => drafting disabled
     doorbell: Any = None  # outbox.Doorbell; None => queued items wait for the next drain
     sonar: Any = None  # SonarLookup gateway (BigQuery); None => no ground-truth lookups
-    extras: dict[str, Any] = field(default_factory=dict)
     _config_version: str | None = None
 
     # -- config ----------------------------------------------------------------

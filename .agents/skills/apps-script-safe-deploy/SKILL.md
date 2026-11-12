@@ -8,7 +8,7 @@ description: >-
 
 # Burson QA Bot — Safe Build, Test & `clasp` Deployment Pipeline
 
-Follow this exact 5-step checklist whenever making code or configuration changes in `/Users/lhammonds/.gemini/jetski/scratch/burson-triage-agent`.
+Follow this exact 5-step checklist whenever making code or configuration changes in `/Users/lhammonds/Desktop/burson-triage-agent`.
 
 ## Step 1: Regenerate `Generated.gs` (If YAML Changed)
 If `config/default_config.yaml`, `config/distribution.yaml`, or `scripts/build_apps_script.py` was modified, rebuild `apps-script-chat-bot/Generated.gs` (never edit `Generated.gs` by hand):
@@ -38,7 +38,7 @@ Do **not** push to Apps Script if any test fails.
    ```bash
    npx @google/clasp push -f
    ```
-   *(Run with `Cwd: /Users/lhammonds/.gemini/jetski/scratch/burson-triage-agent/apps-script-chat-bot`)*
+   *(Run with `Cwd: /Users/lhammonds/Desktop/burson-triage-agent/apps-script-chat-bot`)*
 2. Wait ~65 seconds for the next 1-minute `poll()` trigger and check Cloud Logging for `project_key="MT90an4vYnIDfrbDRi1jgSZANzck4hlvJ"` to confirm zero runtime errors.
 
 ## Step 5: Commit Locally (No GitHub)

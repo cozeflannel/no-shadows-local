@@ -692,15 +692,15 @@ module.exports = H => {
     assert.match(switchNote(t, 22), /analysts' \(never the bot's\) wait on the Burson outbox tab for Send\./);
     const inCopyNow = posts(t, COPY).length;
     t.chat.say(REAL, 'After the test copy', ALICE);
-    t.chat.say(MIRROR, 'Back on the outbox', DANA);
+    t.chat.say(MIRROR, 'Back after the test', DANA);
     t.poll();
     eq(posts(t, COPY).length, inCopyNow);
     assert.ok(textsIn(t, MIRROR).includes('Alice Smith (Burson): After the test copy'));
-    eq(outbox(t).map(r => [r.text, r.status]), [['Dana Lee: Queued before the test copy', 'Pending'], ['Dana Lee: Back on the outbox', 'Pending']]);
+    eq(outbox(t).map(r => [r.text, r.status]), [['Dana Lee: Queued before the test copy', 'Pending'], ['Dana Lee: Back after the test', 'Pending']]);
     eq(toSfb(), []);
     // Set to Send by a person: each goes once, from the Burson outbox (the only way anything is written in S-F Burson)
     sendAll(t);
-    eq(t.chat.botPosts(REAL).map(m => m.text), ['Dana Lee: Queued before the test copy', 'Dana Lee: Back on the outbox']);
+    eq(t.chat.botPosts(REAL).map(m => m.text), ['Dana Lee: Queued before the test copy', 'Dana Lee: Back after the test']);
     eq(outbox(t).map(r => r.status), ['Sent', 'Sent']);
   });
 

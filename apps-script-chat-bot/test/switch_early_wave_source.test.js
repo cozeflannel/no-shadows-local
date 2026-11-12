@@ -133,4 +133,61 @@ module.exports = H => {
     const again = b.bqEarlyDetectionRows_(30);
     eq(again.map(r => r.alert_id), [sig.alert_id]);
   });
+
+  test('EarlyWaveSource: a day of same-author signatures is kept in several cache items (one item no longer held them: "sig too big for the cache ... not kept" at every check), each under the item limit, and read back whole; past the ceiling the oldest hours go; the single item from before is still read once', () => {
+    const limit = B.ev('EWS_CACHE_ITEM_CHARS_');
+    const hour0 = Math.floor(NOW / 3600000);
+    const sigs = {};
+    let n = 0;
+    for (let h = 0; h < 24; h++) {
+      sigs[String(hour0 - h)] = [];
+      for (let i = 0; i < 600; i++) sigs[String(hour0 - h)].push('s' + (n++).toString(36).padStart(6, '0'));
+    }
+    assert.ok(JSON.stringify(sigs).length > limit, 'the day should not fit one item');
+    const chunks = B.ewsChunks_(B.ewsSigRecords_(sigs));
+    assert.ok(chunks.length >= 2, String(chunks.length));
+    chunks.forEach(ch => assert.ok(JSON.stringify(ch).length <= limit, `item too large: ${JSON.stringify(ch).length}`));
+    const store = {};
+    const cache = { get: k => (k in store ? store[k] : null),
+      getAll: keys => Object.fromEntries(keys.filter(k => k in store).map(k => [k, store[k]])) };
+    chunks.forEach((ch, i) => { store[`ews1:sg:${i}`] = JSON.stringify(ch); });
+    const back = B.ewsLoadSigs_(cache, chunks.length);
+    eq(Object.keys(back).sort(), Object.keys(sigs).sort());
+    eq(Object.keys(sigs).map(h => back[h].slice().sort().join()), Object.keys(sigs).map(h => sigs[h].slice().sort().join()));
+    // a lost item costs only its own signatures
+    delete store['ews1:sg:0'];
+    const partial = B.ewsLoadSigs_(cache, chunks.length);
+    const count = m => Object.keys(m).reduce((s, h) => s + m[h].length, 0);
+    assert.ok(count(partial) > 0 && count(partial) < count(sigs));
+    // the ceiling: the newest hours are kept
+    const max = B.ev('EWS_SIGS_MAX_');
+    const big = { [String(hour0)]: new Array(max - 10).fill('x'), [String(hour0 - 1)]: new Array(50).fill('y'), [String(hour0 - 2)]: ['z'] };
+    const recs = B.ewsSigRecords_(big);
+    eq([recs.reduce((s, r) => s + r[1].length, 0), recs.some(r => r[0] === String(hour0 - 2))], [max, false]);
+    // before they were packed (no count yet): the single item
+    store['ews1:sig'] = JSON.stringify({ [String(hour0)]: ['a', 'b'] });
+    eq(B.ewsLoadSigs_(cache, 0), { [String(hour0)]: ['a', 'b'] });
+    eq([B.ewsLoadSigs_(null, 3), B.ewsLoadSigs_(cache, 0) !== null], [{}, true]);
+  });
+
+  test('EarlyWaveSource producer: an account\'s near-copy on a later check is still dropped (its signature from the earlier check is read back from the packed items), and nothing is written under the old single "sig" item', () => {
+    let batch = 1;
+    const { g, b } = makeEnv(loc => {
+      if (loc !== 'us-central1') return [];
+      if (batch === 1) return [postRow(1, { lane: 'sonar', author: 'u1', url: 'https://x.com/u1/status/2150000000000000001' })];
+      // the same account posts its text again (the same signature), as a new post
+      return [postRow(11, { lane: 'sonar', author: 'u1', url: 'https://x.com/u1/status/2150000000000000011', mid: 'M-11',
+        chash: 'hash_11', sig: 'sig_author_1', posted_ms: NOW + 12 * MIN, seen_ms: NOW + 13 * MIN })];
+    });
+    b.bqEarlyDetectionRows_(30);
+    let st = JSON.parse(g.props.get('EWS_STATE'));
+    eq([st.last.kept, st.sg >= 1], [1, true]);
+    const names = Array.from(g.cache.keys());
+    assert.ok(names.includes('ews1:sg:0') && !names.includes('ews1:sig'), names.join(', '));
+    batch = 2;
+    g.clock.now += 15 * MIN;
+    b.bqEarlyDetectionRows_(30);
+    st = JSON.parse(g.props.get('EWS_STATE'));
+    eq([st.last.read, st.last.kept], [1, 0]);
+  });
 };

@@ -1,6 +1,6 @@
 # SLRR Triage Agent: Workspace Studio custom steps
 
-An Apps Script add-on that gives Workspace Studio six custom steps. Each step:
+An Apps Script add-on that gives Workspace Studio seven custom steps. Each step:
 1. Calls the agent on the Agent Runtime (Gemini Enterprise Agent Platform, formerly Vertex AI Agent Engine).
 2. Returns the same 23 output variables (`has_reply`/`reply_text` … `summary`).
 

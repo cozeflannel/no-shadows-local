@@ -4,6 +4,9 @@
 // id (client-zwat-), never in Zapier's format, and the space's flow works it like an alert in another format with the
 // watch's call: ❌ when it repeats an alert already sent (no second email), else its Social Alert (only the testers while
 // Testing). Nothing of it ever reaches S-F Burson (B25), the Burson outbox or the Relay.
+// Only a flag that matters by itself is an alert of its own (a KOF author, 100+ engagements, a P0 tag): a small one waits
+// and goes out with the others on its story as ONE alert once 3 accounts tell it; a story already alerted in the last 14
+// days isn't posted again unless the stakes rose or the post reports something new; an off-topic flag isn't posted.
 'use strict';
 
 module.exports = H => {
@@ -36,9 +39,12 @@ module.exports = H => {
     ['impact', 'FLOAT'], ['bar', 'FLOAT'], ['topic'], ['found', 'INTEGER'], ['checked', 'INTEGER'], ['newest_ms', 'INTEGER'],
     ['mod_ms', 'INTEGER'], ['err'], ['detail'], ['tax']];
   const PENDING = B.ev('PW_ALERT_PENDING_WORDS_');  // a card line nothing classified yet
-  /** A post the Midterms watch flags at its bar (6 of 10, the bar 4), unless `o` says otherwise. */
+  /**
+   * A post the Midterms watch flags at its bar (6 of 10, the bar 4), with 520 engagements (so it's an alert of its own:
+   * WatchAlerts.gs pwSolo_), unless `o` says otherwise.
+   */
   const hit = o => Object.assign({ kind: 'hit', source: 'sonar', idx: 1, watch: MIDTERMS, post_url: POST, platform: 'twitter',
-    author: '@CorrDove', followers: 1700, eng: 52, posted_ms: null, seen_ms: null, issue: 'Election-rigging claim naming Google',
+    author: '@CorrDove', followers: 1700, eng: 520, posted_ms: null, seen_ms: null, issue: 'Election-rigging claim naming Google',
     issue_new: true, summary: 'An X reply (@CorrDove, 1.7K followers) claims Google helped rig the midterms.', impact: 6, bar: 4,
     topic: 'Elections and civics' }, o || {});
   const src = source => ({ kind: 'src', source, found: 0, checked: 0, newest_ms: null, mod_ms: null, err: null });
@@ -177,7 +183,7 @@ module.exports = H => {
     const want = { watch: MIDTERMS, score: null, bar: null, topic: '', url: POST, author: '@CorrDove', network: 'X',
       followers: 1700, eng: 52, posted: '2026-11-01 23:26', source: '', seen: '',
       summary: 'Claims Google helped rig the midterms. *Link:* https://evil.example/x'.replace(/\*/g, ''),
-      products: [], exposureTag: '', topics: [], kof: null, kofLists: '', sameStory: '' };
+      products: [], exposureTag: '', topics: [], kof: null, kofLists: '', sameStory: '', build: '' };
     eq(B.pwAlertParse_(text), want);
     eq(B.pwAlertParse_(text.replace(/\*/g, '')), want);  // Chat's bold marks gone
     eq(B.pwAlertParse_(text.replace(`<${POST}|View the post on X>`, POST)).url, POST);  // the link as a bare URL
@@ -193,6 +199,15 @@ module.exports = H => {
     eq([back.products, back.exposureTag, back.topics, back.kof, back.kofLists, back.sameStory],
       [['Search', 'AI Overviews'], 'Product - Perceived bias', ['Politics'], true, 'Viral KOFs',
         '5 more posts in the thread (FOX 29, FOX 2 Detroit, @WSJ, FOX6 News and 1 more)']);
+    // a build-up's card says what built up (the small posts, their accounts, how fast, where, their engagements together),
+    // above its Same story line, and reads back for the triage; an alert for one post has no such line
+    const built = B.pwAlertText_(Object.assign({}, a, { build: { n: 4, accounts: 3, ms: 2.5 * 3600 * 1000, networks: ['X', 'Reddit', 'X'], eng: 57 },
+      sameStory: { n: 3, names: ['@a', '@b'] } }));
+    eq(built.split('\n').slice(-2), ['*Building:* 4 small posts from 3 accounts within 3 hours (X, Reddit) \u00b7 57 engagements in all',
+      '*Same story:* 3 more posts in the thread (@a, @b)']);
+    eq(B.pwAlertParse_(built).build, '4 small posts from 3 accounts within 3 hours (X, Reddit) \u00b7 57 engagements in all');
+    eq([B.pwBuildLine_(null), B.pwBuildLine_({ n: 1, accounts: 1 }), B.pwBuildLine_({ n: 3, accounts: 3, ms: 60000 })],
+      ['', '', '*Building:* 3 small posts from 3 accounts within 1 hour']);
     // classified with nothing that applies (Sonar: on no KOF list); a post that isn't about Google
     eq(B.pwAlertTaxLines_({ classified: true, products: ['Waymo'], topics: [], kof: false }),
       ['*Product:* Waymo', '*Exposure Tag:* None', '*Sensitive Topic:* None', '*KOF:* No']);
@@ -283,11 +298,18 @@ module.exports = H => {
     const ok = t.bot.pwAlertsDest_(OTHER, mid, viaMirror);
     eq(t.bot.pwAlertsNoteText_({ choice: '' }, null, true, 0), B.pwAlertsOffText_());
     eq(t.bot.pwAlertsNoteText_(ok, null, false, 0), '⚠️ Other alerts space (B33) chosen, but the Proactive watch (row 34) is OFF: nothing to post');
-    assert.match(t.bot.pwAlertsNoteText_(ok, { posted: 1, waiting: 2, problem: '' }, true, 3),
-      /^✓ Midterms 2026 \(B33\): each flag at a watch's bar is posted there as a 🔭 Watch alert for full triage: ❌ if off-topic or already alerted, 👍, or a Social Alert \(always Testing there\) · today: 3 posted, 2 waiting$/);
+    eq(t.bot.pwAlertsNoteText_(ok, { posted: 1, waiting: 2, problem: '' }, true, 3),
+      '✓ Midterms 2026 (B33): a flag that matters by itself (a KOF author, 100+ engagements or a P0 tag) is posted there as a ' +
+      '🔭 Watch alert for full triage (always Testing there); small ones wait and go out as one alert once 3 accounts tell ' +
+      'the same story; a story already alerted isn\'t posted again · today: 3 posted, 2 waiting');
+    // today's other counts: the build-ups among the alerts, the posts in their story's thread, and what wasn't posted
+    const full = t.bot.pwAlertsNoteText_(ok, { posted: 1, waiting: 2, problem: '' }, true, 31, 44,
+      { builds: 6, held: 120, repeats: 55, offTopic: 27 });
+    assert.match(full, / · today: 31 posted \(6 a build-up of small posts\), \+44 in their story's thread, 120 small held to be grouped, 55 repeats of an alerted story held back, 27 off-topic not posted, 2 waiting$/);
+    assert.ok(full.length <= 480, String(full.length));
     eq(t.bot.pwAlertsNoteText_(t.bot.pwAlertsDest_(OTHER, null, viaMirror), null, true, 0),
       '⚠️ waiting: the Other alerts space (B33) is blank or can\'t be used this run (see C33) (a flag waits up to 3 hours) · today: 0 posted');
-    [OTHER, MIRRORED].forEach(v => assert.ok(t.bot.pwAlertsNoteText_(t.bot.pwAlertsDest_(v, mid, viaMirror), null, true, 0).length <= 250));
+    [OTHER, MIRRORED].forEach(v => assert.ok(t.bot.pwAlertsNoteText_(t.bot.pwAlertsDest_(v, mid, viaMirror), null, true, 0).length <= 480));
     // the switch texts: C34 keeps its words while B35 is OFF
     const sw = B.ev('CONTROL_SWITCHES_').find(s => s.row === 34);
     assert.match(sw.on('', false, {}, {}), /^✓ ON \(Watch alerts, row 35, is OFF: nothing is posted or emailed\)/);
@@ -312,7 +334,7 @@ module.exports = H => {
     t.poll();
     t.poll();
     eq(posted(t, MID), []);  // the flag from before B35 was set never goes out
-    assert.match(c35(t), /^✓ Midterms 2026 \(B33\): each flag at a watch's bar is posted there/);
+    assert.match(c35(t), /^✓ Midterms 2026 \(B33\): a flag that matters by itself \(a KOF author, 100\+ engagements or a P0 tag\) is posted there/);
     assert.match(t.control().cell(34, 3), /^✓ ON \(its flags go out as watch alerts: row 35, Other alerts space \(B33\)\)/);
     eq(t.bot.status().watch_alerts, OTHER);
   });
@@ -326,7 +348,7 @@ module.exports = H => {
     eq(out.length, 1);
     const msg = out[0];
     eq(msg.text.split('\n'), [`\ud83d\udd2d *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post on X>`,
-      '*Author:* @CorrDove · X · 1,700 followers · 52 engagements',
+      '*Author:* @CorrDove · X · 1,700 followers · 520 engagements',
       `*Product:* ${PENDING}`, `*Exposure Tag:* ${PENDING}`, `*Sensitive Topic:* ${PENDING}`, '*KOF:* Unknown',
       '*Summary:* An X reply (@CorrDove, 1.7K followers) claims Google helped rig the midterms.']);
     assert.ok(!/Score:|Found by:|(?<!Sensitive )Topic:/.test(msg.text), 'no score, topic or source on it');
@@ -354,7 +376,7 @@ module.exports = H => {
     sent.forEach(m => eq(m.to, ['tester@testing.test'], m.subject));
     const social = sent.filter(m => /SOCIAL ALERT/.test(m.subject));
     eq(social.map(m => [m.to, m.cc, m.subject]), [[['tester@testing.test'], [],
-      '[Other alerts space] \u2b1bSOCIAL ALERT\u2b1b: Brand | Election-rigging claim naming Google | X | 52 Engagements']]);
+      '[Other alerts space] \ud83d\udfe7SOCIAL ALERT\ud83d\udfe7: Brand | Election-rigging claim naming Google | X | 520 Engagements']]);  // 520: MODERATE
     // the standard Social Alert, as any alert's: the post's summary, its link, the details, who it would have gone to
     assert.match(social[0].text, new RegExp(`^SOCIAL ALERT\\r?\\n\\r?\\nAn X reply \\(@CorrDove, 1\\.7K followers\\)[^\\n]*\\r?\\n\\r?\\nLink: ${POST.replace(/[.?]/g, '\\$&')}\\r?\\n`));
     assert.match(social[0].text, /\nWould have gone to: To: Brand alert POCs; Cc: GCPA, standard CC list/);
@@ -608,7 +630,7 @@ module.exports = H => {
     let out = posted(t, MIRROR);
     eq(out.map(m => (m.text.match(/status\/(\d+)\|/) || [])[1]), ['198000000000000012', '198000000000000013']);  // 7, then 6
     eq(posted(t, MID), []);
-    assert.match(c35(t), /^✓ SLRR Zapier Training Mirror \(B9\): .*\(only the testers while Testing\) · today: 2 posted, 1 waiting$/);
+    assert.match(c35(t), /^✓ SLRR Zapier Training Mirror \(B9\): .*\(only the testers while Testing\); .* · today: 2 posted, 1 waiting$/);
     t.poll();  // the third goes out; the first two are worked by the Mirror's flow
     out = posted(t, MIRROR);
     eq(out.length, 3);
@@ -706,7 +728,8 @@ module.exports = H => {
           story: 'An Instagram post with no text', same_story_as: '' },
       ] };
     };
-    look(w, [hit({ tax: TAX }), hit({ post_url: BLANK, platform: 'instagram', author: 'mediaselangor_en', followers: 2009, eng: 5,
+    // (the blank post has 500 engagements: it would be an alert of its own, so only its having nothing to show keeps it out)
+    look(w, [hit({ tax: TAX }), hit({ post_url: BLANK, platform: 'instagram', author: 'mediaselangor_en', followers: 2009, eng: 500,
       impact: 5, summary: '', issue: '', tax: JSON.stringify({ p: [], t: '', s: [], k: [] }) })]);
     const out = posted(t, MID);
     eq(out.length, 1);
@@ -780,7 +803,9 @@ module.exports = H => {
       waymo(FOX13, 'fox13seattle', 'instagram', 175000, 20, 5,
         'Instagram account fox13seattle (175,000 followers) posted a news graphic: feds investigate the Waymo recall.')]);
     // two alerts in the space: the election claim, and ONE for the Waymo story: WSJ's (X gives no engagement count, so
-    // the story goes by followers: 22.3M, over fox13seattle's 20 engagements and 175,000 followers)
+    // the story goes by followers: 22.3M, over fox13seattle's 20 engagements and 175,000 followers). None of the four
+    // matters by itself (no KOF author, under 100 engagements, a P1 tag): four accounts on one story are a build-up, and
+    // its card says so
     let out = posted(t, MID);
     eq(out.length, 2);
     const alertOf = url => out.find(m => m.text.includes(url));
@@ -788,7 +813,9 @@ module.exports = H => {
     assert.ok(story && alertOf(POST), out.map(m => m.text).join('\n---\n'));
     eq([FOX13, FOX29, FOX2].map(u => !!alertOf(u)), [false, false, false]);
     assert.ok(story.text.includes('\n*Product:* Waymo\n*Exposure Tag:* Product - Product failures - physical safety issues (P1)\n'), story.text);
-    assert.ok(story.text.endsWith('\n*Same story:* 3 more posts in the thread (FOX 29, FOX 2 Detroit, fox13seattle)'), story.text);
+    assert.ok(story.text.endsWith('\n*Building:* 4 small posts from 4 accounts within 1 hour (X, Facebook, Instagram) \u00b7 25 engagements in all' +
+      '\n*Same story:* 3 more posts in the thread (FOX 29, FOX 2 Detroit, fox13seattle)'), story.text);
+    assert.ok(!alertOf(POST).text.includes('*Building:*'), 'an alert for one post has no Building line');
     // the others: one reply in its thread, in the same order (the most followers first), each linked and summed up
     const storyReplies = () => inThread(t, MID, story).filter(m => /^\ud83d\udd17 /.test(m.text));
     eq(storyReplies().length, 1);
@@ -801,8 +828,8 @@ module.exports = H => {
     const rk = u => B.recordKey_({ post_url: u });
     let k = byKey();
     eq([WSJ, FOX13, FOX29, FOX2, POST].map(u => k[rk(u)].a), ['p', 'g', 'g', 'g', 'p']);
-    eq([k[rk(FOX13)].pm, k[rk(FOX13)].t, k[rk(WSJ)].st], [story.name, story.thread.name, STORY]);
-    assert.match(c35(t), / \u00b7 today: 2 posted, \+3 in their story's thread$/);
+    eq([k[rk(FOX13)].pm, k[rk(FOX13)].t, k[rk(WSJ)].st, k[rk(WSJ)].bu, k[rk(POST)].bu], [story.name, story.thread.name, STORY, 4, undefined]);
+    assert.match(c35(t), / \u00b7 today: 2 posted \(1 a build-up of small posts\), \+3 in their story's thread$/);
     // Gemini weighs each post as a whole: whether it's meaningful enough to post about (a missing engagement count is
     // unknown, never held against it); its answer is kept per flag (null when it didn't say)
     assert.ok(asked[0].systemInstruction.parts[0].text.includes('A post without `engagements` has no count from its source (unknown, not zero)'));
@@ -835,7 +862,7 @@ module.exports = H => {
     assert.ok(later[1].startsWith(`\u2022 <${ENGADGET}|Engadget> \u00b7 Facebook \u00b7 1,600,000 followers \u00b7 4 engagements \u2014 `), later[1]);
     k = byKey();
     eq([k[rk(ENGADGET)].a, k[rk(ENGADGET)].pm, k[rk(BIG)].a], ['g', story.name, 'p']);
-    assert.match(c35(t), / \u00b7 today: 3 posted, \+4 in their story's thread$/);
+    assert.match(c35(t), / \u00b7 today: 3 posted \(1 a build-up of small posts\), \+4 in their story's thread$/);
     eq([writes(t), outbox(t)], [[], []]);
   });
 
@@ -855,5 +882,235 @@ module.exports = H => {
     eq(out[0].text.split('\n').slice(3, 7), ['*Product:* Brand', '*Exposure Tag:* Brand - Conspiratorial theories about Google (P2)',
       '*Sensitive Topic:* None', '*KOF:* No']);
     eq(keys(t)[0].a, 'p');
+  });
+
+  // ===========================================================================================================
+  // What gets an alert of its own, what waits to be grouped, and what isn't posted again
+  // ===========================================================================================================
+
+  /**
+   * A pre-read (FakeVertex.watchPreRead) that answers each post from `say(post, recent, posts)` ({story, same_story_as,
+   * about_google, ...}; null: nothing of its own), the rest as a plain post about Search with its issue as its story.
+   */
+  const preRead = (asked, say) => payload => {
+    asked.push(payload);
+    const { posts, recent } = preReadOf(payload);
+    return { watch_posts: posts.map(p => Object.assign({ ref: p.ref, summary: p.text || '', about_google: true, product: 'Search',
+      other_products: [], exposure_tag: '', sensitive_topics: [], story: p.issue || 'A story', same_story_as: '', meaningful: true },
+    say(p, recent, posts) || {})) };
+  };
+  // Gemini's triage finding nothing to do (so a posted watch alert never becomes an alerted story in these tests)
+  const NO_ACTION = {
+    stream_call: { action: 'no_action', severity: 'low', confidence: 0.9, reason: 'Routine chatter', watch_for: '' },
+    slrr: { is_slrr: false, confidence: 0.9, exposure_tag: 'None', product: 'Other', sensitive_topics: [], warranted: false,
+      warranted_confidence: 0.9, why: 'Routine chatter' },
+  };
+  const rk = u => B.recordKey_({ post_url: u });
+  const byKey = t => Object.fromEntries(keys(t).map(k => [k.k, k]));
+
+  test('watch alerts: what is an alert of its own (a KOF author, 100+ engagements, a P0 tag from the pre-read or the listening tool; a post the pre-read judged not meaningful only for a KOF author or 2,000+ engagements), what is off-topic (not about Google per the pre-read with no Google product from the listening tool; never a KOF author\'s post or one with 2,000+ engagements), whose account a post is, that flags naming the same earlier story are one story, and which earlier stories the pre-read is shown when there are more than it takes (the closest in meaning to the run\'s flags; the newest without vectors)', () => {
+    const flag = (eng, o) => ({ q: { k: { k: 'key1' } }, a: Object.assign({ eng, author: '@a', network: 'X' }, o || {}) });
+    const tax = o => Object.assign({ p: [], t: '', s: [], k: false, l: '' }, o || {});
+    const solo = (f, p) => B.pwSolo_(f, p || null);
+    eq([solo(flag(99)), solo(flag(100)), solo(flag(0, { tax: tax({ k: true }) })), solo(flag(2500))],
+      ['', '100 engagements', 'a KOF author', '2,500 engagements']);
+    // a P0 tag: the pre-read's, else the listening tool's (the pre-read's P1 call stands over the tool's P0)
+    eq([solo(flag(5), { tag: 'Product - Perceived bias (P0)' }), solo(flag(5), { tag: 'Brand - Conspiratorial theories about Google (P2)' }),
+      solo(flag(5, { tax: tax({ t: 'Product - Perceived bias' }) })),
+      solo(flag(5, { tax: tax({ t: 'Product - Perceived bias' }) }), { tag: 'Brand - Conspiratorial theories about Google (P2)' })],
+    ['a P0 tag (Product - Perceived bias)', '', 'a P0 tag (Product - Perceived bias)', '']);
+    // judged not meaningful by itself (a passing mention, a bare link): only a KOF author or the high-engagement bar
+    eq([solo(flag(150), { meaningful: false }), solo(flag(5), { meaningful: false, tag: 'Product - Perceived bias (P0)' }),
+      solo(flag(2000), { meaningful: false }), solo(flag(3, { tax: tax({ k: true }) }), { meaningful: false })],
+    ['', '', '2,000 engagements', 'a KOF author']);
+    eq([B.ev('PW_SOLO_MIN_ENG_'), B.ev('PW_BREW_MIN_ACCOUNTS_'), B.ev('PW_BREW_WINDOW_MS_') / HOUR, B.ev('PW_REPEAT_MS_') / (24 * HOUR)],
+      [100, 3, 12, 14]);
+    // off-topic
+    const off = (f, p) => B.pwOffTopic_(f, p);
+    eq([off(flag(5), { about: false }), off(flag(5), { about: true }), off(flag(5), null),
+      off(flag(5, { tax: tax({ p: ['Search'] }) }), { about: false }), off(flag(5, { tax: tax({ k: true }) }), { about: false }),
+      off(flag(2000), { about: false }), off(flag(1999), { about: false })],
+    [true, false, false, false, false, false, true]);
+    // an account: its network and handle, however the cell wrote it; its post when no author is known
+    eq([B.pwAccount_({ author: '@CorrDove', network: 'X' }, 'k1'), B.pwAccount_({ author: '\'@corrdove ', network: 'x' }, 'k2'),
+      B.pwAccount_({ author: '', network: 'X' }, 'k3')], ['x:corrdove', 'x:corrdove', 'post:k3']);
+    // flags naming the same earlier story are one story, whether or not they name each other
+    eq(B.pwStoryGroups_([flag(1), flag(2), flag(3)], [{ same: { r: 0 } }, { same: null }, { same: { r: 0 } }], [{ brew: true }]),
+      [{ members: [0, 2], r: 0 }, { members: [1], r: null }]);
+    // the earlier stories the pre-read is shown: 10 alerts and 10 build-ups at most, the closest in meaning to the flags
+    const unit = i => { const v = [0, 0, 0, 0]; v[i] = 1; return v; };
+    const alerts = Array.from({ length: 12 }, (x, i) => ({ m: `m${i}`, thread: `t${i}`, story: `Alert ${i}` }));
+    const brews = Array.from({ length: 13 }, (x, i) => ({ brew: true, bg: `b${i}`, story: `Build-up ${i}` }));
+    const pool = alerts.concat(brews);
+    const names = list => [list.filter(r => !r.brew).map(r => r.m).join(' '), list.filter(r => r.brew).map(r => r.bg).join(' ')];
+    // the run's flag is about what the oldest alert (m11) and the oldest build-up (b12) are about
+    const poolVecs = pool.map((r, i) => (i === 11 || i === 24 ? unit(0) : unit(1)));
+    eq(names(B.pwStoriesShown_(pool, [unit(0), null], poolVecs)),
+      ['m0 m1 m2 m3 m4 m5 m6 m7 m8 m11', 'b0 b1 b2 b3 b4 b5 b6 b7 b8 b12']);
+    eq(names(B.pwStoriesShown_(pool, [], [])), ['m0 m1 m2 m3 m4 m5 m6 m7 m8 m9', 'b0 b1 b2 b3 b4 b5 b6 b7 b8 b9']);  // no vectors: the newest
+    eq(names(B.pwStoriesShown_(pool.slice(0, 4).concat(brews.slice(0, 3)), [unit(0)], [])), ['m0 m1 m2 m3', 'b0 b1 b2']);  // few: all of them
+  });
+
+  test('Watch alerts: a small post (no KOF author, under 100 engagements, no P0 tag) is not an alert by itself: it waits on the Watch detections tab (a: \'b\', nothing posted) and goes out with the others on its story as ONE alert once 3 accounts tell it (two posts from one account count once), its card saying what built up and the small posts listed in its thread; the triage is told to judge the build-up; a later small post on it joins that thread; C35 counts them', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    t.g.vertex.triage = triage(NO_ACTION);
+    const STORY = 'Gemini gives children wrong homework answers';
+    const asked = [];
+    t.g.vertex.watchPreRead = preRead(asked, (p, recent, posts) => {
+      if (p.issue !== 'Homework answers') return null;
+      const prior = recent.find(r => r.story === STORY);
+      const first = posts.find(x => x.issue === 'Homework answers');
+      return { story: STORY, same_story_as: prior ? prior.ref : first.ref !== p.ref ? first.ref : '' };
+    });
+    const url = (n, who) => `https://x.com/${who}/status/198000000000000070${n}`;
+    const small = (n, who, eng, o) => hit(Object.assign({ post_url: url(n, who), author: `@${who}`, followers: 300, eng, impact: 5,
+      issue: 'Homework answers', summary: `Post ${n}: Gemini gave my kid wrong homework answers.` }, o || {}));
+    const REDDIT = 'https://www.reddit.com/r/Parenting/comments/1oabc77/gemini_homework/';
+    // 1: one small post: nothing is posted, it waits (its build-up is its own post's; its account and story on its key)
+    look(w, [small(1, 'parent1', 3)]);
+    let k = byKey(t);
+    eq([posted(t, MID).length, k[rk(url(1, 'parent1'))].a, k[rk(url(1, 'parent1'))].bg, k[rk(url(1, 'parent1'))].ac, k[rk(url(1, 'parent1'))].st],
+      [0, 'b', rk(url(1, 'parent1')), 'x:parent1', STORY]);
+    assert.match(c35(t), /^✓ Midterms 2026 \(B33\): .* · today: 0 posted, 1 small held to be grouped$/);
+    eq(t.g.props.get('PW_ALERT_PENDING'), undefined);  // it isn't waiting to be posted: the tab isn't read for it every minute
+    assert.ok(t.g.logs.some(l => /Watch alerts: not posted on their own: 1 small \(waiting for 3 accounts on one story\), 0 on a story already alerted, 0 not about Google/.test(l)));
+    // 2: a second account, and a second post from the first: still two accounts. The pre-read was shown the build-up
+    // waiting (\"status\": \"waiting\") and both posts named it
+    look(w, [small(2, 'parent2', 10), small(3, 'parent1', 4)]);
+    const shown = preReadOf(asked[asked.length - 1]).recent;
+    eq(shown.map(r => [r.ref, r.story, r.status]), [['R1', STORY, 'waiting']]);
+    k = byKey(t);
+    eq([posted(t, MID).length, [1, 2, 3].map(n => k[rk(url(n, n === 2 ? 'parent2' : 'parent1'))].a),
+      [2, 3].map(n => k[rk(url(n, n === 2 ? 'parent2' : 'parent1'))].bg === rk(url(1, 'parent1')))],
+    [0, ['b', 'b', 'b'], [true, true]]);
+    // 3: a third account (on Reddit): ONE alert, for the build-up, its newest post leading
+    look(w, [small(4, 'u/gamerdad', 7, { post_url: REDDIT, platform: 'reddit', author: 'u/gamerdad' })]);
+    const out = posted(t, MID);
+    eq(out.length, 1);
+    const msg = out[0];
+    eq(msg.text.split('\n'), [`\ud83d\udd2d *Watch alert · ${MIDTERMS}*`, `*Link:* <${REDDIT}|View the post on Reddit>`,
+      '*Author:* u/gamerdad · Reddit · 300 followers · 7 engagements',
+      '*Product:* Search', '*Exposure Tag:* None', '*Sensitive Topic:* None', '*KOF:* Unknown',
+      '*Summary:* Post 4: Gemini gave my kid wrong homework answers.',
+      '*Building:* 4 small posts from 3 accounts within 1 hour (Reddit, X) \u00b7 24 engagements in all',
+      '*Same story:* 3 more posts in the thread (@parent1, @parent2)']);
+    // the small posts that waited: one reply in its thread, each linked
+    const storyReplies = () => inThread(t, MID, msg).filter(m => /^\ud83d\udd17 /.test(m.text));
+    eq(storyReplies().length, 1);
+    const reply = storyReplies()[0].text.split('\n');
+    eq([reply[0], reply.length], ['\ud83d\udd17 *Same story: 3 more posts*', 4]);
+    [[1, 'parent1'], [2, 'parent2'], [3, 'parent1']].forEach(([n, who]) =>
+      assert.ok(reply.some(l => l.startsWith(`\u2022 <${url(n, who)}|@${who}> \u00b7 X \u00b7 300 followers`)), `${n}: ${reply.join('\n')}`));
+    k = byKey(t);
+    eq([k[rk(REDDIT)].a, k[rk(REDDIT)].bu, k[rk(REDDIT)].st, [1, 2, 3].map(n => k[rk(url(n, n === 2 ? 'parent2' : 'parent1'))].a),
+      k[rk(url(2, 'parent2'))].pm], ['p', 3, STORY, ['g', 'g', 'g'], msg.name]);
+    assert.match(c35(t), / · today: 1 posted \(1 a build-up of small posts\), \+3 in their story's thread, 3 small held to be grouped$/);
+    // the triage is told what built up, and to judge the story's momentum, not this one post's engagement
+    chatShows(msg);
+    t.poll();
+    const call = t.g.vertex.calls.find(c => ((c.payload.generationConfig.responseSchema || {}).properties || {}).stream_call);
+    const alert = JSON.parse(call.payload.contents[0].parts.map(p => p.text || '').join('').match(/<alert>\n([\s\S]*)\n<\/alert>/)[1]);
+    eq(alert.build_up, '4 small posts from 3 accounts within 1 hour (Reddit, X) \u00b7 24 engagements in all');
+    assert.ok(call.payload.systemInstruction.parts.map(p => p.text || '').join('\n')
+      .includes('build_up: this alert was posted because several small accounts told the same story within hours'));
+    // 4: another small post on it: into that alert's thread, no second alert
+    look(w, [small(5, 'parent5', 2)]);
+    eq([posted(t, MID).length, storyReplies().length, byKey(t)[rk(url(5, 'parent5'))].a, byKey(t)[rk(url(5, 'parent5'))].pm],
+      [1, 2, 'g', msg.name]);
+    assert.match(storyReplies()[1].text, /^\ud83d\udd17 \*Same story: 1 more post\* \(seen since this alert was posted\)\n/);
+    eq([writes(t), outbox(t)], [[], []]);
+    eq(t.get('B5'), '\u2705 Working');
+  });
+
+  test('Watch alerts: a small post that waited and then grew (a source hands it over again with 100+ engagements) is queued again and goes out as an alert of its own, even hours after it was first seen; one handed over again still small stays waiting; a post already posted is never queued again', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    t.g.vertex.triage = triage(NO_ACTION);
+    look(w, [hit({ eng: 12 })]);
+    eq([posted(t, MID).length, keys(t)[0].a], [0, 'b']);
+    look(w, [hit({ eng: 40 })]);  // seen again, still small
+    eq([posted(t, MID).length, keys(t)[0].a, keys(t)[0].rq], [0, 'b', undefined]);
+    t.g.clock.now += 5 * HOUR;  // past the 3 hours a new flag waits to go out: its time counts from when it was queued again
+    look(w, [hit({ eng: 180, impact: 7 })]);
+    const out = posted(t, MID);
+    eq(out.length, 1);
+    assert.ok(out[0].text.includes('\n*Author:* @CorrDove · X · 1,700 followers · 180 engagements\n'), out[0].text);
+    assert.ok(!out[0].text.includes('*Building:*'));
+    const k = keys(t)[0];
+    eq([keys(t).length, k.a, k.sc, k.bg, k.ac, k.rq > k.s, k.m], [1, 'p', 7, undefined, undefined, true, out[0].name]);
+    assert.ok(t.g.logs.some(l => /Proactive watch: 1 small flag that waited to be grouped grew past 100 engagements: queued as alerts of their own/.test(l)));
+    look(w, [hit({ eng: 400 })]);  // bigger still: it was posted, nothing more
+    eq([posted(t, MID).length, keys(t).length, keys(t)[0].a], [1, 1, 'p']);
+  });
+
+  test('Watch alerts: a flag the pre-read says isn\'t about Google is not posted (a: \'o\'), unless the listening tool named a Google product for it or it has 2,000+ engagements (posted, for the triage to decide); a small post with a P0 tag is an alert of its own; C35 counts what wasn\'t posted', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    t.g.vertex.triage = triage(NO_ACTION);
+    const asked = [];
+    t.g.vertex.watchPreRead = preRead(asked, p => (/Nepal/.test(p.issue || '') ? { about_google: false, product: null }
+      : /bias/i.test(p.issue || '') ? { exposure_tag: 'Product - Perceived bias' } : null));
+    const u = n => `https://x.com/Poster${n}/status/198000000000000090${n}`;
+    look(w, [
+      hit({ post_url: u(1), author: '@Poster1', impact: 8, issue: 'Nepal portal outage', summary: 'A Nepal government AI training portal is down.' }),
+      hit({ post_url: u(2), author: '@Poster2', impact: 7, issue: 'Nepal portal search', summary: 'People in Nepal say Search hides the portal.',
+        tax: JSON.stringify({ p: ['Search & Shopping'], t: '', s: [], k: [] }) }),
+      hit({ post_url: u(3), author: '@Poster3', impact: 6, eng: 2500, issue: 'Nepal portal viral', summary: 'A viral post about the Nepal portal.' }),
+      hit({ post_url: u(4), author: '@Poster4', impact: 5, eng: 4, issue: 'Search bias claim', summary: 'A small account says Search results are rigged for one party.' }),
+    ]);
+    const out = posted(t, MID);
+    const of = n => out.find(m => m.text.includes(u(n)));
+    eq([out.length, [1, 2, 3, 4].map(n => !!of(n)), [1, 2, 3, 4].map(n => byKey(t)[rk(u(n))].a)],
+      [3, [false, true, true, true], ['o', 'p', 'p', 'p']]);
+    assert.ok(of(3).text.includes('\n*Product:* None (not about Google)\n'), of(3).text);
+    assert.ok(of(2).text.includes('\n*Product:* Search, Shopping\n'), of(2).text);
+    assert.ok(of(4).text.includes('\n*Author:* @Poster4 · X · 1,700 followers · 4 engagements\n*Product:* Search\n*Exposure Tag:* Product - Perceived bias (P0)\n'), of(4).text);
+    assert.match(c35(t), / · today: 3 posted, 1 off-topic not posted$/);
+    assert.ok(t.g.logs.some(l => l.includes(`Watch alerts: not posting ${u(1)}: the pre-read says it isn't about Google`)));
+    eq([writes(t), outbox(t)], [[], []]);
+  });
+
+  test('Watch alerts: a story already alerted in the last 14 days (any flow) is not posted again (a: \'r\', naming the alert it repeats), whether the pre-read names it (it is shown the alerted stories closest in meaning to the flags) or the memory\'s own same-story test finds it; a post that raises the stakes (2,000+ engagements where the alert had fewer) or reports something new is posted', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    const ISSUE = 'Election-rigging claim naming Google';
+    const SUMMARY = 'An X reply (@CorrDove, 1.7K followers) accusing donors of rigging the midterms and claiming Google is "being busted in it."';
+    t.g.vertex.triage = triage(P0);  // the stream's alert of POST: its Social Alert goes out
+    sayMidterms(t, POST);
+    t.poll();
+    assert.ok(t.g.gmail.sentMessages().some(m => /SOCIAL ALERT/.test(m.subject)), 'the story was alerted');
+    const first = t.bot.sheetBackend_(t.sheet()).loadAlerts()[0].alert_id;
+    t.g.clock.now += 48 * HOUR;  // two days on: past the 24 hours in which a flag joins that alert's thread
+    t.g.vertex.triage = triage(NO_ACTION);
+    const asked = [];
+    let mode = 'repeat';
+    t.g.vertex.watchPreRead = preRead(asked, (p, recent) => {
+      const known = recent.find(r => r.story === ISSUE && !r.author);  // the alerted story (an alert posted here has its author)
+      return Object.assign({ story: ISSUE, product: 'Brand', exposure_tag: 'Brand - Perceived bias - brand' },
+        mode === 'unnamed' || !known ? {} : { same_story_as: known.ref, adds_new: mode === 'news' });
+    });
+    const u = n => `https://x.com/Voter${n}/status/198000000000000080${n}`;
+    const again = (n, o) => hit(Object.assign({ post_url: u(n), author: `@Voter${n}`, issue: ISSUE, summary: SUMMARY }, o || {}));
+    // 1: another account on the alerted story (520 engagements: an alert of its own otherwise): not posted
+    look(w, [again(1)]);
+    const shown = preReadOf(asked[asked.length - 1]).recent;
+    eq(shown.map(r => [r.ref, r.story, r.status]), [['R1', ISSUE, undefined]]);
+    eq([posted(t, MID).length, byKey(t)[rk(u(1))].a, byKey(t)[rk(u(1))].rf], [0, 'r', first]);
+    assert.match(c35(t), / · today: 0 posted, 1 repeats of an alerted story held back$/);
+    assert.ok(t.g.logs.some(l => l.includes(`Watch alerts: 1 flag not posted: ${first} already covered the story ("${ISSUE}")`)));
+    // 2: 2,500 engagements (the alert's post had under 2,000): the stakes rose, posted
+    look(w, [again(2, { eng: 2500 })]);
+    eq([posted(t, MID).length, byKey(t)[rk(u(2))].a], [1, 'p']);
+    // 3: the pre-read says it reports something new: posted
+    mode = 'news';
+    look(w, [again(3)]);
+    eq([posted(t, MID).length, byKey(t)[rk(u(3))].a], [2, 'p']);
+    // 4: the pre-read names no earlier story: the memory's own same-story test still finds the alert
+    mode = 'unnamed';
+    look(w, [again(4)]);
+    eq([posted(t, MID).length, byKey(t)[rk(u(4))].a, byKey(t)[rk(u(4))].rf], [2, 'r', first]);
+    assert.match(c35(t), / · today: 2 posted, 2 repeats of an alerted story held back$/);
+    eq([writes(t), outbox(t)], [[], []]);
   });
 };

@@ -29,7 +29,8 @@ module.exports = H => {
   const COPY = 'spaces/AAQAcopyEd1';
   const COPY_NAME = 'Burson Relay Test Copy';
   const ROOM = 'https://chat.google.com/room/AAQAaa_0I9g'; // live S-F Burson
-  const ON_TEXT = '✓ ON: every 15 min, checks BigQuery low-tier embedding clusters and velocity spikes for full triage';
+  const ON_TEXT = '✓ ON: every 15 min, groups new low-reach posts from the BigQuery source tables into stories itself and ' +
+    'sends story clusters and velocity spikes for full triage';
   const OFF_TEXT = 'OFF (one post at a time)';
 
   const COLS = [

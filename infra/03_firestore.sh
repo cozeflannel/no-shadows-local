@@ -14,9 +14,16 @@ index() {  # index <collection> <field:order> [<field:order> ...]
   for spec in "$@"; do
     args+=(--field-config="field-path=${spec%%:*},order=${spec##*:}")
   done
-  gcloud firestore indexes composite create --project="${PROJECT_ID}" --database="${FIRESTORE_DB}" \
-    --collection-group="${collection}" --query-scope=COLLECTION "${args[@]}" --async 2>/dev/null \
-    && echo "  index ${collection}: $*" || echo "  index ${collection}: $* (exists)"
+  local err
+  if err="$(gcloud firestore indexes composite create --project="${PROJECT_ID}" --database="${FIRESTORE_DB}" \
+      --collection-group="${collection}" --query-scope=COLLECTION "${args[@]}" --async 2>&1)"; then
+    echo "  index ${collection}: $*"
+  elif [[ "${err}" == *ALREADY_EXISTS* ]]; then
+    echo "  index ${collection}: $* (exists)"
+  else
+    echo "  index ${collection}: $* FAILED: ${err}" >&2
+    return 1
+  fi
 }
 
 index cases record_key:ascending updated_at:descending
@@ -28,7 +35,5 @@ index cases source:ascending source_ref:ascending
 index escalations case_id:ascending updated_at:descending
 index escalations analyst_email:ascending updated_at:descending
 index outbox delivered_at:ascending created_at:ascending
-index proposals status:ascending
-index facts status:ascending
 
 echo "Firestore ready (indexes build asynchronously; see the console)."

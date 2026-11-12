@@ -3,8 +3,8 @@
  * slrr_dev_pipeline_server.js — Development, Safety Audit, Leak-Guard & Local V8 Triage MCP Server for Burson QA Bot.
  *
  * Exposes structured MCP tools for safe local iteration on `burson-triage-agent`:
- *   - `slrr_audit_safety_invariants`: Verifies all 6 mandatory stealth, sandbox, cell-cap, switch-OFF, clasp, and git-local guardrails
- *   - `slrr_test_leak_guard`: Runs the real production `outboxGuardHits_()` & `outboxEmojiProblem_()` on candidate outbound text/emoji
+ *   - `slrr_audit_safety_invariants`: Runs the 8 pre-deploy checks (Generated.gs sync, B30 sandbox and no hardcoded emails, switches OFF, B31 dropdown, B35 Watch alerts OFF, cell caps, .claspignore, no git remote)
+ *   - `slrr_test_leak_guard`: Runs the bot's `outboxGuardHits_()` & `outboxEmojiProblem_()` from the local .gs files on candidate outbound text/emoji (without the real space names production also blocks)
  *   - `slrr_preview_alert_triage`: Executes local V8 VM dry-run of `parseAlert_`, `reviewAlert_`, `escalation_`, and `planRecipients_`
  *   - `slrr_run_tests`: Executes `node` (full suite or targeted `switch_*.test.js`), `pytest`, `evals`, or `all`
  *   - `slrr_sync_generated_gs`: Checks or rebuilds `apps-script-chat-bot/Generated.gs` from `config/*.yaml`
@@ -14,7 +14,14 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { DEFAULT_STORE_SHEET_ID, gcpFetchJson, createMcpStdioServer } = require('./mcp_stdio');
+const {
+  DEFAULT_STORE_SHEET_ID,
+  gcpFetchJson,
+  getWorkbookMetadata,
+  readTabTails,
+  tailReadSummary,
+  createMcpStdioServer,
+} = require('./mcp_stdio');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const BOT_DIR = path.join(REPO_ROOT, 'apps-script-chat-bot');
@@ -49,11 +56,18 @@ function runSubprocess(cmd, args, opts = {}) {
   };
 }
 
-async function handleAuditSafetyInvariants() {
+// handleAuditSafetyInvariants and handleRunTests take (args, deps): the MCP server passes args only; the tests pass
+// deps.runSubprocess so they can stand in for git, node and python without running them.
+function runnerOf(deps) {
+  return (deps && deps.runSubprocess) || runSubprocess;
+}
+
+async function handleAuditSafetyInvariants(_args, deps) {
+  const run = runnerOf(deps);
   const checks = [];
 
   // 1. Generated.gs sync check
-  const buildCheck = runSubprocess(PYTHON_BIN, ['-m', 'scripts.build_apps_script', '--check']);
+  const buildCheck = run(PYTHON_BIN, ['-m', 'scripts.build_apps_script', '--check']);
   checks.push({
     id: 'generated_gs_in_sync',
     passed: buildCheck.exit_code === 0,
@@ -145,12 +159,18 @@ async function handleAuditSafetyInvariants() {
   });
 
   // 6. Local-only git check (zero remotes)
-  const gitRemote = runSubprocess('git', ['remote', '-v']);
+  const gitRemote = run('git', ['remote', '-v']);
   const remotes = gitRemote.stdout.trim();
+  const gitRan = gitRemote.exit_code === 0;
+  const gitWhy = gitRemote.error || String(gitRemote.stderr || '').trim() || `exit code ${gitRemote.exit_code}`;
   checks.push({
     id: 'local_only_no_github_remote',
-    passed: gitRemote.exit_code === 0 && remotes === '',
-    detail: remotes === '' ? 'Zero git remotes configured (local-only policy intact)' : `Unexpected git remotes: ${remotes}`,
+    passed: gitRan && remotes === '',
+    detail: !gitRan
+      ? `Could not run \`git remote -v\` (${gitWhy}), so the remotes were not checked`
+      : remotes === ''
+        ? 'Zero git remotes configured (local-only policy intact)'
+        : `Unexpected git remotes: ${remotes}`,
   });
 
   return {
@@ -265,8 +285,14 @@ async function handlePreviewAlertTriage(args) {
   };
 }
 
-async function handleRunTests(args) {
+const TEST_SUITES = ['node', 'pytest', 'evals', 'all'];
+
+async function handleRunTests(args, deps) {
+  const run = runnerOf(deps);
   const suite = String(args.suite || 'all').toLowerCase();
+  if (!TEST_SUITES.includes(suite)) {
+    throw new Error(`Unknown suite "${suite}": use one of ${TEST_SUITES.join(', ')}`);
+  }
   const results = {};
 
   if (suite === 'node' || suite === 'all') {
@@ -276,7 +302,7 @@ async function handleRunTests(args) {
       if (!fs.existsSync(target)) {
         throw new Error(`Test file not found: ${target}`);
       }
-      const res = runSubprocess('node', [target], { timeoutMs: 120000 });
+      const res = run('node', [target], { timeoutMs: 120000 });
       results.node = {
         passed: res.exit_code === 0,
         exit_code: res.exit_code,
@@ -284,7 +310,7 @@ async function handleRunTests(args) {
         output_tail: (res.stdout + res.stderr).slice(-3500),
       };
     } else {
-      const res = runSubprocess('node', [path.join(BOT_DIR, 'test', 'run_tests.js')], { timeoutMs: 120000 });
+      const res = run('node', [path.join(BOT_DIR, 'test', 'run_tests.js')], { timeoutMs: 120000 });
       results.node = {
         passed: res.exit_code === 0,
         exit_code: res.exit_code,
@@ -299,7 +325,7 @@ async function handleRunTests(args) {
     if (args.pytest_target) {
       pytestArgs.push(String(args.pytest_target));
     }
-    const res = runSubprocess(PYTHON_BIN, pytestArgs, {
+    const res = run(PYTHON_BIN, pytestArgs, {
       env: { TRIAGE_LLM: 'fake' },
       timeoutMs: 180000,
     });
@@ -311,8 +337,8 @@ async function handleRunTests(args) {
     };
   }
 
-  if (suite === 'evals') {
-    const res = runSubprocess(PYTHON_BIN, ['-m', 'evals.run_evals'], {
+  if (suite === 'evals' || suite === 'all') {
+    const res = run(PYTHON_BIN, ['-m', 'evals.run_evals'], {
       env: { TRIAGE_LLM: 'fake' },
       timeoutMs: 120000,
     });
@@ -324,7 +350,8 @@ async function handleRunTests(args) {
     };
   }
 
-  const allPassed = Object.values(results).every(r => r.passed);
+  // Nothing ran is never a pass
+  const allPassed = Object.keys(results).length > 0 && Object.values(results).every(r => r.passed);
   return {
     suite,
     all_passed: allPassed,
@@ -450,7 +477,10 @@ function safeJsonParse(str, fallback = null) {
   }
 }
 
-async function handleBacktestAlerts(args) {
+// How many of the Alert log's newest rows slrr_backtest_alerts reads (it read rows 2-500, the oldest, before)
+const BACKTEST_READ_ROWS = 500;
+
+async function handleBacktestAlerts(args, deps) {
   const limit = Math.min(Math.max(Number(args.limit) || 25, 1), 100);
   const disagreementsOnly = args.disagreements_only === true;
   const candidateGuidance = args.candidate_guidance || null;
@@ -459,6 +489,7 @@ async function handleBacktestAlerts(args) {
   const now = Date.now();
 
   let records = [];
+  let alertLogRead = null;  // what was read of the Alert log (null with custom_alerts: the sheet isn't read)
   if (customAlerts && customAlerts.length) {
     records = customAlerts.slice(0, limit).map((item, idx) => {
       if (typeof item === 'string') {
@@ -479,41 +510,50 @@ async function handleBacktestAlerts(args) {
       };
     });
   } else {
+    // The bot adds alerts at the bottom of the Alert log (header in row 1): its newest rows (readTabTails). The MCP
+    // server passes no deps; the tests pass deps.fetchJson with a canned sheet
+    const fetchJson = (deps && deps.fetchJson) || gcpFetchJson;
     const sheetId = args.sheet_id || DEFAULT_STORE_SHEET_ID;
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}/values:batchGet?valueRenderOption=FORMATTED_VALUE&ranges=${encodeURIComponent("'Alert log'!A1:AP500")}`;
-    const batch = await gcpFetchJson(url);
-    const rawRows = (batch.valueRanges && batch.valueRanges[0] && batch.valueRanges[0].values) || [];
-    if (rawRows.length >= 2) {
-      const header = rawRows[0].map(h => String(h || '').trim());
-      const objs = [];
-      for (let i = 1; i < rawRows.length; i++) {
-        const r = rawRows[i] || [];
-        const o = {};
-        header.forEach((h, j) => {
-          if (h) o[h] = r[j] !== undefined ? String(r[j]) : '';
-        });
-        const ff = safeJsonParse(o.forwarded_fields, null);
-        if (!ff || !ff.product) continue;
-        const emailSt = String(o.email_status || '').trim();
-        const botSent = ['sent', 'drafted', 'pending'].includes(emailSt);
-        const mirrored = String(o.mirrored || '');
-        const imNoAction = mirrored.includes('❌');
-        const imAlerted = ['🚨', '📧', '✅'].some(e => mirrored.includes(e));
-        const imCall = imAlerted ? 'alerted' : imNoAction ? 'no_action' : 'unknown';
-        const botCall = botSent ? 'alerted' : 'no_action';
-        if (disagreementsOnly && (imCall === 'unknown' || imCall === botCall)) continue;
-        objs.push({
-          id: o.alert_id || `row-${i + 1}`,
-          author: o.author || ff.author || '',
-          fields: ff,
-          recorded_bot_call: botCall,
-          recorded_im_call: imCall,
-          recorded_email_status: emailSt,
-          recorded_mirrored: mirrored,
-        });
-      }
-      records = objs.slice(-limit);
+    const meta = await getWorkbookMetadata(sheetId, fetchJson);
+    if (!((meta && meta.sheets) || []).some(s => s && s.properties && s.properties.title === 'Alert log')) {
+      throw new Error('The workbook has no "Alert log" tab to backtest (pass custom_alerts to backtest offline).');
     }
+    const tail = (await readTabTails(
+      sheetId,
+      meta,
+      [{ tab: 'Alert log', lastCol: 'AP', topRows: 1, maxRows: BACKTEST_READ_ROWS }],
+      fetchJson
+    ))['Alert log'];
+    alertLogRead = tailReadSummary('Alert log', tail);
+    const header = (tail.top[0] || []).map(h => String(h || '').trim());
+    const objs = [];
+    tail.rows.forEach((row, i) => {
+      const r = row || [];
+      const o = {};
+      header.forEach((h, j) => {
+        if (h) o[h] = r[j] !== undefined ? String(r[j]) : '';
+      });
+      const ff = safeJsonParse(o.forwarded_fields, null);
+      if (!ff || !ff.product) return;
+      const emailSt = String(o.email_status || '').trim();
+      const botSent = ['sent', 'drafted', 'pending'].includes(emailSt);
+      const mirrored = String(o.mirrored || '');
+      const imNoAction = mirrored.includes('❌');
+      const imAlerted = ['🚨', '📧', '✅'].some(e => mirrored.includes(e));
+      const imCall = imAlerted ? 'alerted' : imNoAction ? 'no_action' : 'unknown';
+      const botCall = botSent ? 'alerted' : 'no_action';
+      if (disagreementsOnly && (imCall === 'unknown' || imCall === botCall)) return;
+      objs.push({
+        id: o.alert_id || `row-${tail.firstRow + i}`,
+        author: o.author || ff.author || '',
+        fields: ff,
+        recorded_bot_call: botCall,
+        recorded_im_call: imCall,
+        recorded_email_status: emailSt,
+        recorded_mirrored: mirrored,
+      });
+    });
+    records = objs.slice(-limit);
   }
 
   let escalatedCount = 0;
@@ -587,6 +627,9 @@ async function handleBacktestAlerts(args) {
 
   return {
     total_tested: details.length,
+    // which Alert log rows the alerts came from (the newest ones), and whether older rows were left out; null with
+    // custom_alerts
+    alert_log_read: alertLogRead,
     escalated_by_local_vm: escalatedCount,
     suppressed_by_local_vm: suppressedCount,
     promoted_by_candidate_guidance: promotedByGuidanceCount,
@@ -599,7 +642,7 @@ const TOOLS = [
   {
     name: 'slrr_audit_safety_invariants',
     description:
-      'Run all 6 non-negotiable pre-deploy safety checks: Generated.gs YAML sync, GEN.email.stand_in sandbox, every Control switch defaulting to OFF, B31 strict 15-min lookback validation, 49,000-char cell caps, .claspignore protection, and zero GitHub remotes.',
+      'Run the 8 pre-deploy safety checks: Generated.gs YAML sync, the B30 testing sandbox with no hardcoded emails, every Control switch defaulting to OFF, B31 strict 15-min lookback validation, B35 Watch alerts defaulting to OFF, 49,000-char cell caps, .claspignore protection, and zero git remotes.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -609,7 +652,7 @@ const TOOLS = [
   {
     name: 'slrr_test_leak_guard',
     description:
-      'Test candidate outbound Burson message text and/or reaction emoji against the production leak guards (`outboxGuardHits_`, `guardHits_`, `relayGuardHits_`, `outboxEmojiProblem_`) in the Apps Script V8 VM.',
+      'Test candidate outbound Burson message text and/or reaction emoji against the bot\'s leak guards (`outboxGuardHits_`, `guardHits_`, `relayGuardHits_`, `outboxEmojiProblem_`), loaded from the local .gs files into the Apps Script V8 VM. Production also blocks the real names and ids of the internal spaces, which this tool does not know: pass them in `internal_space_terms`, or a pass covers the fixed patterns only.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -653,7 +696,7 @@ const TOOLS = [
   {
     name: 'slrr_run_tests',
     description:
-      'Run the Apps Script Node test suite (`node`), a single `switch_*.test.js` file, the Python test suite (`pytest`), offline golden evals (`evals`), or `all`.',
+      'Run the Apps Script Node test suite (`node`), a single `switch_*.test.js` file, the Python test suite (`pytest`), offline golden evals (`evals`), or `all` (node, pytest and evals; the default). An unknown suite is an error.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -724,7 +767,7 @@ const TOOLS = [
   {
     name: 'slrr_backtest_alerts',
     description:
-      'Backtest the local V8 Apps Script rules engine (`escalation_`, `kbPromotion_`) across historical alerts from the live `Alert log` tab (or `custom_alerts`) at $0 cost (zero LLM/BigQuery charges). Optionally inject a `candidate_guidance` rule to see how many below-threshold/ongoing alerts it promotes or suppresses.',
+      'Backtest the local V8 Apps Script rules engine (`escalation_`, `kbPromotion_`) across historical alerts from the live `Alert log` tab (the most recent of its newest 500 rows; `alert_log_read` says which rows were read) or `custom_alerts`, at $0 cost (zero LLM/BigQuery charges). Optionally inject a `candidate_guidance` rule to see how many below-threshold/ongoing alerts it promotes or suppresses.',
     inputSchema: {
       type: 'object',
       properties: {

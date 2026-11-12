@@ -24,6 +24,7 @@ from .models import (
     ProposalStatus,
     Roster,
     TnsStatus,
+    utc_isoformat,
     utcnow,
 )
 
@@ -522,8 +523,8 @@ class FirestoreStore:
             q = q.where("exposure_tag", "==", exposure_tag)
         if source:
             q = q.where("source", "==", source)
-        if since:
-            q = q.where("updated_at", ">=", since.isoformat())
+        if since:  # updated_at is stored as UTC text, so the bound must be UTC text too
+            q = q.where("updated_at", ">=", utc_isoformat(since))
         q = q.order_by("updated_at", direction=self._fs.Query.DESCENDING).limit(limit)
         return [Case.model_validate(d.to_dict()) for d in q.stream()]
 
@@ -644,8 +645,3 @@ def get_store() -> Store:
             database=os.environ.get("TRIAGE_FIRESTORE_DB", "(default)"),
         )
     return SqliteStore(os.environ.get("TRIAGE_LOCAL_DB", ".local/triage.db"))
-
-
-def jsonable(value: Any) -> Any:
-    """Helper for callers that need plain JSON (e.g. idempotency responses)."""
-    return json.loads(json.dumps(value, default=str))

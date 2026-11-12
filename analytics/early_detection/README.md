@@ -1,5 +1,7 @@
 # Open-World Low-Tier Early Detection Pipeline (`brand-social-central-data.early_detection`)
 
+> **Archived / orphaned in the bot (Nov 2026):** `apps-script-chat-bot` no longer reads `vw_chatbot_pending_early_alerts` or this BigQuery pipeline. Row 19 ("Early wave & velocity check") is now produced directly inside Apps Script by `EarlyWaveSource.gs`. The SQL files here are kept only for reference (and any live scheduled query `sp_run_early_detection_pipeline` in BigQuery must be disabled in the BigQuery UI if no longer wanted).
+
 Replaces the legacy high-engagement Sonar early-wave / CacheService rising-post heuristic with two **topic-agnostic, open-world** BigQuery capabilities that cast a wide net across landed mention-level data and surface unknown build-ups before anyone knows what the issue is.
 
 ## Capabilities

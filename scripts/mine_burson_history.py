@@ -1,14 +1,20 @@
 """Mine live Burson Google Chat history (burson_live_history.csv) + BigQuery ground-truth emoji outcomes into Golden Precedents and Vertex SFT training data.
 
 Usage:
-    .venv/bin/python -m scripts.mine_burson_history
+    .venv/bin/python -m scripts.mine_burson_history --bq-emoji-json PATH
+
+PATH is a saved BigQuery query result (JSON with `schema.fields` and `rows`) that has the columns
+`url` and `google_emoji_1` .. `google_emoji_5`. The script rewrites config/precedents.json, which the
+bot is built from, so it stops before writing anything when that file is missing or cannot be read.
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import re
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -17,9 +23,6 @@ from triage_agent.config import load_config
 
 ROOT = Path(__file__).resolve().parents[1]
 CSV_PATH = ROOT / "burson_live_history.csv"
-BQ_CACHE_PATH = Path(
-    "/Users/lhammonds/.gemini/jetski/brain/2207f5af-9be6-4b5c-812a-db928343d29b/.system_generated/steps/4305/output.txt"
-)
 PRECEDENTS_OUT = ROOT / "config" / "precedents.json"
 SFT_OUT = ROOT / "data" / "vertex_sft_burson.jsonl"
 
@@ -63,12 +66,24 @@ def clean_note(text: str) -> str:
     return s
 
 
-def load_bq_emojis() -> dict[str, list[str]]:
-    if not BQ_CACHE_PATH.exists():
-        return {}
+class BqEmojiFileError(Exception):
+    """The BigQuery emoji export is missing or is not the expected query result."""
+
+
+def load_bq_emojis(path: Path) -> dict[str, list[str]]:
+    """Normalized post URL -> final emojis, from a saved BigQuery query result.
+
+    Raises BqEmojiFileError rather than returning nothing: the emojis change the precedent scores.
+    """
+    if not path.is_file():
+        raise BqEmojiFileError(f"BigQuery emoji export not found: {path}")
     try:
-        data = json.loads(BQ_CACHE_PATH.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
         cols = [f["name"] for f in data["schema"]["fields"]]
+        if "url" not in cols or not any(c.startswith("google_emoji_") for c in cols):
+            raise BqEmojiFileError(
+                f"BigQuery emoji export {path} has no url / google_emoji_N columns (found: {cols})"
+            )
         by_url: dict[str, list[str]] = {}
         for r in data.get("rows", []):
             vals = {cols[i]: r["f"][i]["v"] for i in range(len(cols))}
@@ -83,18 +98,37 @@ def load_bq_emojis() -> dict[str, list[str]]:
             if emojis:
                 by_url[u] = emojis
         return by_url
-    except Exception:
-        return {}
+    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError) as exc:
+        raise BqEmojiFileError(
+            f"BigQuery emoji export {path} is not a readable query result ({type(exc).__name__}: {exc})"
+        ) from exc
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Mine burson_live_history.csv and BigQuery emoji outcomes into config/precedents.json "
+        "and data/vertex_sft_burson.jsonl."
+    )
+    parser.add_argument(
+        "--bq-emoji-json",
+        required=True,
+        type=Path,
+        metavar="PATH",
+        help="saved BigQuery query result (JSON: schema.fields + rows) with url and google_emoji_1..5",
+    )
+    args = parser.parse_args(argv)
+    try:
+        bq_emojis = load_bq_emojis(args.bq_emoji_json)
+    except BqEmojiFileError as exc:
+        print(f"error: {exc}. Nothing was written.", file=sys.stderr)
+        return 2
+
     if not CSV_PATH.exists():
         print(f"CSV not found at {CSV_PATH}; skipping mining.")
         return 0
 
     cfg = load_config()
     col, dist = cfg.collection, cfg.distribution
-    bq_emojis = load_bq_emojis()
 
     tag_map: dict[str, str] = {}
     for t in col.exposure_tags:

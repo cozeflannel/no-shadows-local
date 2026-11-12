@@ -55,6 +55,10 @@
  *                                summary, author, post_url): {story, issue_name, alert_id, sim, how ('vector' | 'words'),
  *                                emailed_at, alerted_at}, or null. opts.hours (14 days), opts.emailed (only stories
  *                                emailed in that window), opts.deadline
+ *   .nearStories(vecs, opts)     for each vector (a post's text, embedded), the stories alerted since opts.hours ago
+ *                                (14 days) closest to it in meaning, opts.k of them (3) from opts.minSim (0.7) up:
+ *                                [{sid, name, alert_id, at, sim, kof, eng}]. Candidates for a judgement (the Watch
+ *                                alerts' pre-read reads them), never a same-story verdict: that is storyMatch
  *   .sendCheck(row, ctx)         the send gate's answer for an Alert-log row: {ok: true}, {ok: true, update: {tiers,
  *                                ref, rel}} (its one update, on that email's thread), or {ok: false, why, kind, ref}
  *   .claimSend(row, ctx)         a Social Alert for `row` is about to go (or its draft be made): noted first
@@ -112,6 +116,7 @@ const AM_OFF_ = Object.freeze({
   seenPost: () => null, claim: () => true, storyMatch: () => null, facts: () => null,
   sendCheck: () => ({ ok: true }), claimSend: () => false, recordSend: () => false, releaseSend: () => false,
   noteRow: () => {}, seedRows: () => {}, noteHeld: () => {}, storyRec: () => null, recentStories: () => [],
+  nearStories: vecs => (vecs || []).map(() => []),
   flush: () => null, counts: () => ({ held: 0, folded: 0, updates: 0 }),
 });
 
@@ -1259,6 +1264,35 @@ function makeAlertMemory_(ss, opts) {
           eng: Number(s.st && s.st.g) || 0, author: (lead && lead.a) || '', network: (lead && lead.n) || '' });
       });
       return out.sort((a, b) => b.at - a.at).slice(0, Number(max) || 5);
+    },
+
+    /**
+     * For each vector in `vecs` (a post's text, embedded; a missing one gets []), the stories alerted since q.hours ago
+     * that are closest to it in meaning (q.k of them, from q.minSim up; only stories that have a vector): [{sid, name,
+     * alert_id, at, sim, kof, eng (its alerts' highest stakes, false / 0 when unknown)}]. Candidates only: whether a
+     * post tells one of them is storyMatch's test, or a reader's.
+     */
+    nearStories(vecs, opts) {
+      const q = opts || {};
+      const list = vecs || [];
+      if (!load()) return list.map(() => []);
+      const since = now() - (Number(q.hours) > 0 ? Number(q.hours) : AM_NOVELTY_MS_ / AM_HOUR_MS_) * AM_HOUR_MS_;
+      const tf = String(q.tf || '');
+      const k = Number(q.k) > 0 ? Number(q.k) : 3;
+      const minSim = Number(q.minSim) > 0 ? Number(q.minSim) : 0.7;
+      const cands = [];
+      stories.forEach(s => {
+        if (String(s.tf || '') !== tf || !s.vec) return;
+        const at = Math.max(Number(s.al) || 0, s.e ? Math.max(Number(s.le) || 0, Number(s.e.at) || 0) : 0);
+        if (at >= since) cands.push({ s, at });
+      });
+      return list.map(v => {
+        if (!v || !cands.length) return [];
+        return cands.map(c => ({ c, sim: vecCos_(v, c.s.vec) })).filter(x => x.sim >= minSim)
+          .sort((a, b) => b.sim - a.sim).slice(0, k)
+          .map(x => ({ sid: x.c.s.id, name: x.c.s.name || (x.c.s.e && x.c.s.e.nm) || '', alert_id: (x.c.s.e && x.c.s.e.id) || x.c.s.lid || '',
+            at: x.c.at, sim: Math.round(x.sim * 1000) / 1000, kof: !!(x.c.s.st && x.c.s.st.k), eng: Number(x.c.s.st && x.c.s.st.g) || 0 }));
+      });
     },
 
     counts() { return Object.assign({}, counts); },

@@ -157,6 +157,8 @@ const EWS_PROP_MAX_CHARS_ = 8800;          // a script property holds 9 KB
 const EWS_CACHE_PREFIX_ = 'ews1:';
 const EWS_CACHE_SEC_ = 6 * 3600;           // the script cache's maximum
 const EWS_CACHE_ITEM_CHARS_ = 95000;       // a cache item holds 100 KB
+const EWS_SIG_RECORD_ = 2000;              // same-author signatures a record (a day of them is packed into several cache items)
+const EWS_SIGS_MAX_ = 60000;               // ...kept at most (the newest hours first): about 6 cache items
 
 // Text gates as RE2 (BigQuery) patterns: analytics/early_detection/02 and 01 (risk_term_taxonomy)
 const EWS_STRIP_RX_ = '(?i)(available\\s+on\\s+google\\s+play|get\\s+it\\s+on\\s+google\\s+play|\\bgoogle\\s+it\\b|' +
@@ -734,6 +736,52 @@ function ewsDedupSigs_(posts, sigs, now) {
     kept.push(p);
   });
   return kept;
+}
+
+/**
+ * The same-author signatures of the last 24 hours ({hourIndex: [sig, …]}: ewsDedupSigs_) from the cache: 'sg:N' (N <
+ * `count`, st.sg), each a list of [hour, [sig, …]] records; with no count yet, the single 'sig' item they were kept in
+ * before (it outgrew a cache item: a day of them is about 96,000 characters). Never throws.
+ */
+function ewsLoadSigs_(cache, count) {
+  const out = {};
+  if (!cache) return out;
+  if (!(count > 0)) {
+    const old = ewsCacheGet_(cache, 'sig');
+    return old && typeof old === 'object' && !Array.isArray(old) ? old : out;
+  }
+  const keys = [];
+  for (let i = 0; i < count; i++) keys.push(`${EWS_CACHE_PREFIX_}sg:${i}`);
+  let got = {};
+  try { got = cache.getAll(keys) || {}; } catch (e) { got = {}; }
+  keys.forEach(k => {
+    try {
+      (JSON.parse(got[k] || '[]') || []).forEach(rec => {
+        if (!Array.isArray(rec) || !Array.isArray(rec[1])) return;
+        const h = String(rec[0]);
+        out[h] = (out[h] || []).concat(rec[1]);
+      });
+    } catch (e) { /* lost */ }
+  });
+  return out;
+}
+
+/**
+ * The signatures as records small enough to pack (ewsChunks_): [hour, [sig, …]], EWS_SIG_RECORD_ signatures a record,
+ * the newest hours first, EWS_SIGS_MAX_ in all (past it the oldest hours go). Pure.
+ */
+function ewsSigRecords_(sigs) {
+  const out = [];
+  let total = 0;
+  Object.keys(sigs || {}).sort((a, b) => Number(b) - Number(a)).forEach(h => {
+    const list = Array.isArray(sigs[h]) ? sigs[h] : [];
+    for (let i = 0; i < list.length && total < EWS_SIGS_MAX_; i += EWS_SIG_RECORD_) {
+      const part = list.slice(i, i + Math.min(EWS_SIG_RECORD_, EWS_SIGS_MAX_ - total));
+      out.push([h, part]);
+      total += part.length;
+    }
+  });
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1444,7 +1492,7 @@ function ewsProduce_(props, st, now, firstMins) {
     let posts = allRows.map(ewsPostOf_).filter(Boolean);
     last.read = posts.length;
     posts = ewsExclude_(posts, ex);
-    const sigs = ewsCacheGet_(cache, 'sig') || {};
+    const sigs = ewsLoadSigs_(cache, Number(st.sg) || 0);
     posts = ewsDedupSigs_(posts, sigs, now);
     last.kept = posts.length;
 
@@ -1594,7 +1642,10 @@ function ewsProduce_(props, st, now, firstMins) {
     let buf = buffer.slice(-EWS_BUFFER_MAX_);
     while (buf.length > 1 && JSON.stringify(buf).length > EWS_CACHE_ITEM_CHARS_) buf = buf.slice(1);
     const items = { buf, story: stories.slice(-60).map(p => ({ id: p.id, cid: p.cid, at: p.at, au: p.au, pl: p.pl, v: p.v })),
-      acc: ewsAccStored_(acc), sig: sigs, x: { urls: ex.urls, kof: ex.kof, own: ex.own, at: ex.at, ownAt: ex.ownAt } };
+      acc: ewsAccStored_(acc), x: { urls: ex.urls, kof: ex.kof, own: ex.own, at: ex.at, ownAt: ex.ownAt } };
+    // the same-author signatures: a day of them, packed into several items (one item no longer holds them)
+    const sigChunks = ewsChunks_(ewsSigRecords_(sigs));
+    sigChunks.forEach((ch, i) => { items[`sg:${i}`] = ch; });
     const storeChunks = ewsChunks_(tidy.map(ewsStoredStory_));
     storeChunks.forEach((ch, i) => { items[`cl:${i}`] = ch; });
     // the pool: chunks that lost posts are written again; the new posts are one new chunk (or a few)
@@ -1623,6 +1674,10 @@ function ewsProduce_(props, st, now, firstMins) {
     // clusters chunks no longer used
     for (let i = storeChunks.length; i < (Number(st.cl) || 0); i++) { try { if (cache) cache.remove(`${EWS_CACHE_PREFIX_}cl:${i}`); } catch (e) { /* expires */ } }
     st.cl = storeChunks.length;
+    // signature items no longer used, and the single item from before they were packed
+    for (let i = sigChunks.length; i < (Number(st.sg) || 0); i++) { try { if (cache) cache.remove(`${EWS_CACHE_PREFIX_}sg:${i}`); } catch (e) { /* expires */ } }
+    if (!(Number(st.sg) > 0)) { try { if (cache) cache.remove(`${EWS_CACHE_PREFIX_}sig`); } catch (e) { /* expires */ } }
+    st.sg = sigChunks.length;
     st.pool = index;
 
     // Cursors move on only for what was read

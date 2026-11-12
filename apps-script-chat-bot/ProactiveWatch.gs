@@ -1388,11 +1388,14 @@ function pwSourceTax_(raw) {
  * never before `floor` (ms: the look's window start), so a source that hands its rows over late never claims a lead it
  * couldn't have had. `queue` (Watch alerts chosen, Control row 35): a flag at the bar waits on the tab to be posted as a
  * watch alert (its key: a 'q', with the watch's bar and the score: WatchAlerts.gs pwPostAlerts_). A row from a source
- * the watch no longer reads (a look sent before it stopped) is never recorded. {rows, flagged, near, queued, byWatch:
- * {watch: [flagged, near]}, bySource: {source: [flagged, near]}}. Pure.
+ * the watch no longer reads (a look sent before it stopped) is never recorded. `held` (optional; Map of "watch|key" ->
+ * {eng}): the small flags waiting to be grouped (their key: a 'b'); one a source hands over again, still at the bar and
+ * now with PW_SOLO_MIN_ENG_ engagements or more (Sonar's "broke out" rows), goes in `requeue` ({id: "watch|key", eng,
+ * followers, score}: pwRequeue_), once. {rows, flagged, near, queued, requeue, byWatch: {watch: [flagged, near]},
+ * bySource: {source: [flagged, near]}}. Pure.
  */
-function pwDetections_(results, have, floor, queue) {
-  const out = { rows: [], flagged: 0, near: 0, queued: 0, byWatch: {}, bySource: {} };
+function pwDetections_(results, have, floor, queue, held) {
+  const out = { rows: [], flagged: 0, near: 0, queued: 0, requeue: [], byWatch: {}, bySource: {} };
   (results || []).forEach(r => {
     if (!r || !r.post_url || !r.watch || r.impact === null || r.impact === undefined) return;
     if (!pwSource_(String(r.source || 'sonar'))) return;
@@ -1400,7 +1403,16 @@ function pwDetections_(results, have, floor, queue) {
     if (isNonEnglishPost_(String(r.summary || ''), '')) return;
     const key = recordKey_({ post_url: String(r.post_url) }) || String(r.post_url);
     const watch = String(r.watch);
-    if (have.has(`${watch}|${key}`)) return;
+    if (have.has(`${watch}|${key}`)) {
+      // already on the tab. A small flag that waited to be grouped and has since grown is queued again
+      const h = queue && held ? held.get(`${watch}|${key}`) : null;
+      const grown = Number(r.eng) || 0;
+      if (h && !h.requeued && Number(r.impact) >= Number(r.bar) && grown >= PW_SOLO_MIN_ENG_ && grown > (Number(h.eng) || 0)) {
+        h.requeued = true;
+        out.requeue.push({ id: `${watch}|${key}`, eng: grown, followers: Number(r.followers) || 0, score: Number(r.impact) });
+      }
+      return;
+    }
     have.add(`${watch}|${key}`);
     const impact = Number(r.impact);
     const atBar = impact >= Number(r.bar);
@@ -1445,11 +1457,19 @@ function pwDetections_(results, have, floor, queue) {
  */
 function pwRecord_(sh, results, floor, queue) {
   const have = new Set();
-  pwDetRows_(sh, PW_DET_READ_ROWS_).values.forEach(v => {
+  const held = new Map();  // the small flags waiting to be grouped (WatchAlerts.gs: a 'b'), by "watch|key"
+  const block = pwDetRows_(sh, PW_DET_READ_ROWS_);
+  block.values.forEach((v, i) => {
     const k = pwKeyOf_(v[PW_COL_.key - 1]);
-    if (k) have.add(`${k.w}|${k.k}`);
+    if (!k) return;
+    have.add(`${k.w}|${k.k}`);
+    if (k.a === 'b') held.set(`${k.w}|${k.k}`, { i, k, eng: Number(v[PW_COL_.eng - 1]) || 0 });
   });
-  const d = pwDetections_(results, have, floor, queue);
+  const d = pwDetections_(results, have, floor, queue, held);
+  // before any row is added or trimmed (the block's row numbers still hold): the held flags that grew, queued again
+  if (d.requeue.length && pwRequeue_(sh, block, held, d.requeue, Date.now())) {
+    PropertiesService.getScriptProperties().setProperty(PW_ALERT_PENDING_PROP_, String(Date.now()));
+  }
   if (d.rows.length) {
     const at = Math.max(sh.getLastRow(), PW_DET_HEAD_ROW_) + 1;
     sh.getRange(at, 1, d.rows.length, PW_DET_HEADER_.length).setValues(d.rows);
@@ -1462,6 +1482,31 @@ function pwRecord_(sh, results, floor, queue) {
     if (d.queued) PropertiesService.getScriptProperties().setProperty(PW_ALERT_PENDING_PROP_, String(Date.now()));
   }
   return { added: d.rows.length, flagged: d.flagged, near: d.near, byWatch: d.byWatch, bySource: d.bySource };
+}
+
+/**
+ * Queues again the small flags that waited to be grouped (their key: a 'b') whose post has since grown into one that
+ * matters by itself (`list`: pwDetections_'s requeue; `held`: "watch|key" -> {i: index in `block`, k}): the row's
+ * engagements, followers and score brought up to date, its key back to a 'q' with rq (when: its 3 hours to go out count
+ * from then), out of its build-up. The next pwPostAlerts_ takes it like a new flag. Rows queued again.
+ */
+function pwRequeue_(sh, block, held, list, now) {
+  let n = 0;
+  (list || []).forEach(x => {
+    const h = held.get(x.id);
+    if (!h) return;
+    const row = block.first + h.i;
+    sh.getRange(row, PW_COL_.eng).setValue(x.eng);
+    if (x.followers > 0) sh.getRange(row, PW_COL_.followers).setValue(x.followers);
+    if (isFinite(x.score)) sh.getRange(row, PW_COL_.score).setValue(x.score);
+    const k = Object.assign({}, h.k, { a: 'q', rq: now }, isFinite(x.score) ? { sc: x.score } : {});
+    delete k.bg;
+    delete k.ac;
+    sh.getRange(row, PW_COL_.key).setValue(JSON.stringify(k));
+    n++;
+  });
+  if (n) console.log(`Proactive watch: ${n} small flag${n === 1 ? '' : 's'} that waited to be grouped grew past ${PW_SOLO_MIN_ENG_} engagements: queued as alerts of their own`);
+  return n;
 }
 
 /** Keeps the newest PW_DET_MAX_ROWS_ data rows (their ratings with them) once PW_DET_TRIM_SLACK_ more have built up. */
@@ -1944,7 +1989,7 @@ function runProactiveWatch_(ss, runStart, opts) {
     if (opts && opts.control) {
       try {
         writeWatchAlertsNote_(opts.control, pwAlertsNoteText_(dest || { choice: '' }, out.alerts, true, pwAlertDay_(0),
-          pwAlertDayGrouped_()));
+          pwAlertDayGrouped_(), pwAlertDayMore_()));
       } catch (e) {
         console.error('could not write C35 (Watch alerts): ' + ((e && e.message) || e));
       }

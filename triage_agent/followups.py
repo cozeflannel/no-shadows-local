@@ -228,6 +228,8 @@ def burson_digest(ctx: AgentContext, force: bool = False) -> int:
     key = f"digest:{local.date().isoformat()}"
     if not force and (local.hour < fb.digest_hour_local or ctx.store.get_kv(key)):
         return 0
+    if not fb.post_digest_to_burson_space:
+        return 0  # posting is off: nothing would be queued, so no day key and no burson.digest_posted
     events = ctx.events.query(since=now - timedelta(days=1), types=[EventType.CORRECTION_APPLIED, EventType.TRIAGE_FAILED,
                                                                    EventType.TRIAGE_SUPPRESSED, EventType.VERDICT_OVERRIDDEN])
     corrections = [e for e in events if e.event_type == EventType.CORRECTION_APPLIED]
@@ -249,10 +251,11 @@ def burson_digest(ctx: AgentContext, force: bool = False) -> int:
     suppressed = Counter(e.payload.get("reason") for e in events if e.event_type == EventType.TRIAGE_SUPPRESSED)
     lines.append(f"Sent back for unfixable data: {bounced} · Suppressed: {sum(suppressed.values())}"
                  + (f" ({', '.join(f'{k} {v}' for k, v in suppressed.most_common(3))})" if suppressed else ""))
-    out = ChatOutputs(burson_text=render.finalize("\n".join(lines)) if fb.post_digest_to_burson_space else "")
+    out = ChatOutputs(burson_text=render.finalize("\n".join(lines)))
     sent = _send(ctx, out, "burson_digest")
-    ctx.store.put_kv(key, {"at": now.isoformat(), "corrections": len(corrections)})
-    ctx.emit(EventType.BURSON_DIGEST_POSTED, space="burson", payload={"corrections": len(corrections), "fields": {k: len(v) for k, v in by_field.items()}})
+    if sent:  # the day key and the event both mean "today's digest was queued"
+        ctx.store.put_kv(key, {"at": now.isoformat(), "corrections": len(corrections)})
+        ctx.emit(EventType.BURSON_DIGEST_POSTED, space="burson", payload={"corrections": len(corrections), "fields": {k: len(v) for k, v in by_field.items()}})
     return sent
 
 
@@ -386,6 +389,7 @@ def parity_reconcile(ctx: AgentContext) -> int:
 def run_followups(ctx: AgentContext, payload: dict[str, Any], rc: RequestContext):
     steps = payload.get("steps") or ["sla", "reviews", "burson", "sent", "sla_misses", "digest", "handover", "parity", "rering"]
     report: dict[str, Any] = {}
+    failed: list[str] = []
 
     def step(name: str, fn, *args) -> None:
         if name not in steps:
@@ -395,7 +399,17 @@ def run_followups(ctx: AgentContext, payload: dict[str, Any], rc: RequestContext
         except Exception as exc:  # noqa: BLE001 - keep going; the error is logged as an event
             log.exception("followups step %s failed", name)
             report[name] = f"error: {exc}"
+            failed.append(name)
             ctx.emit(EventType.ERROR, payload={"op": f"run_followups.{name}", "error": str(exc)})
+
+    def post_due_handovers(ctx: AgentContext) -> int:
+        posted = 0
+        for name, start, end in handover_due(ctx):
+            out = build_handover(ctx, name, start, end)
+            posted += _send(ctx, out, "handover")
+            ctx.store.put_kv(f"handover:{end.date().isoformat()}:{name}", {"at": ctx.now().isoformat()})
+            ctx.emit(EventType.HANDOVER_POSTED, payload={"shift": name, "start": start.isoformat(), "end": end.isoformat()})
+        return posted
 
     step("sla", sla_nudges)
     step("reviews", review_reminders)
@@ -403,14 +417,10 @@ def run_followups(ctx: AgentContext, payload: dict[str, Any], rc: RequestContext
     step("sent", sent_detection)
     step("sla_misses", sla_misses)
     step("digest", burson_digest)
-    if "handover" in steps:
-        posted = 0
-        for name, start, end in handover_due(ctx):
-            out = build_handover(ctx, name, start, end)
-            posted += _send(ctx, out, "handover")
-            ctx.store.put_kv(f"handover:{end.date().isoformat()}:{name}", {"at": ctx.now().isoformat()})
-            ctx.emit(EventType.HANDOVER_POSTED, payload={"shift": name, "start": start.isoformat(), "end": end.isoformat()})
-        report["handover"] = posted
+    step("handover", post_due_handovers)
     step("parity", parity_reconcile)
     step("rering", rering_stale)
-    return ChatOutputs(summary="followups: " + ", ".join(f"{k}={v}" for k, v in report.items())), report
+    summary = "followups: " + ", ".join(f"{k}={v}" for k, v in report.items())
+    if failed:  # the operation still answers ok (every step ran); jobs/run_job.py exits non-zero on this
+        report["failed_steps"] = failed
+    return ChatOutputs(summary=summary), report

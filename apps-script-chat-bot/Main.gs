@@ -25,10 +25,13 @@
  *   poll()          The every-minute run, started by setup(). With Direct BigQuery alerts ON (Control row 15) it first
  *                   posts new Sprinklr, BMIE and BSIP posts from BigQuery in the test feed or Mirror space (BigQuery.gs
  *                   pollBigQuerySources_), so the run reviews them like Burson's; a failure there never stops the run.
- *                   With Early detection ON (Control row 19), after the alerts it polls BigQuery every 15 minutes for
- *                   low-tier semantic clusters and multi-grain velocity spikes and posts cards for full triage (BigQuery.gs
- *                   earlyWaveCheck_); a failure there never stops the run. Both
- *                   look back only the BigQuery lookback (Control tab B31: 15 to 60 minutes). With Proactive watch ON
+ *                   With Early detection ON (Control row 19), after the alerts and at most every 15 minutes, it takes the
+ *                   new signals of the bot's own early-wave producer (BigQuery.gs earlyWaveCheck_; EarlyWaveSource.gs
+ *                   reads the new low-tier posts in the approved BigQuery source tables and builds the story clusters
+ *                   and velocity spikes itself), queues them, and reviews and posts each as a card for full triage
+ *                   (EarlyDetection.gs edDrainQueue_); a failure there never stops the run. Direct BigQuery alerts
+ *                   look back only the BigQuery lookback (Control tab B31: 15 to 60 minutes); the early-wave check takes
+ *                   the signals made since its last check (at least that lookback, at most 3 hours). With Proactive watch ON
  *                   (Control row 34), after the other spaces it looks (every 5 minutes at most) at what is new in each
  *                   of its sources (Sonar, Brandwatch, Sprinklr, Tubular, the DSD story selection feed, the Other alerts
  *                   space's alerts and the Brandwatch query "2026 Election Alerts" from Brandwatch's API), with the
@@ -405,10 +408,12 @@ function poll() {
       mode = { live: false, why: 'working in the Auto-correct space (B10)' };
       const needs = sfb.space ? [] : sfbNeeds_(wanted, null);
       const memNote = amControlNote_();  // AlertMemory.gs: its memory couldn't be read lately ('' when it could)
+      const resultsNote = resultsBlockedNote_();  // Speed.gs: a "Results" tab the bot didn't make is in the way ('' when not)
       writeControlStatus_(control, {
         bursonNote: '\u2014 not used (working in Auto-correct space, B10)',
         analystNote: '',
-        status: needs.length ? `\u26a0\ufe0f ${sfbProblemText_(sfb, needs)}` : (memNote ? `\u26a0\ufe0f ${memNote}` : okStatusText_()),
+        status: needs.length ? `\u26a0\ufe0f ${sfbProblemText_(sfb, needs)}`
+          : (memNote ? `\u26a0\ufe0f ${memNote}` : resultsNote ? `\u26a0\ufe0f ${resultsNote}` : okStatusText_()),
         lastCheck: nowLabel_(),
         today: todayText_(readStats_(), dayKey_(), wanted.switches.noWait) + amTodayText_(),
       });
@@ -601,8 +606,11 @@ function poll() {
         ? { bursonNote: '✓ ' + cfg.burson.name }
         : { bursonNote: outside ? outsideBursonNote_(cfg.burson) : '✓ ' + cfg.burson.name, analystNote: '✓ ' + cfg.analyst.name };
     const memNote = amControlNote_();  // AlertMemory.gs: its memory couldn't be read lately ('' when it could)
+    // Speed.gs: a tab named Results that the bot didn't make is in the way, so the Results tab isn't updated ('' when it is)
+    const resultsNote = resultsBlockedNote_();
     const status = sfbStatus || (issues.length ? `⚠️ Something needs another try: ${truncate_(issues[0], 240)} The bot keeps retrying.`
-      : (notice ? `⚠️ ${notice}` : memNote ? `⚠️ ${memNote}` : direct.space ? directB25StatusText_(cfg.burson) : okStatusText_()));
+      : (notice ? `⚠️ ${notice}` : memNote ? `⚠️ ${memNote}` : resultsNote ? `⚠️ ${resultsNote}`
+        : direct.space ? directB25StatusText_(cfg.burson) : okStatusText_()));
     writeControlStatus_(control, Object.assign(statusNotes, {
       status: mode && mode.live ? `${LIVE_STATUS_PREFIX_}${status}` : status,
       lastCheck: nowLabel_(), today: todayText_(today, day, wanted.switches.noWait) + amTodayText_(),
@@ -706,7 +714,7 @@ function poll() {
       console.error('after the run: ' + ((e && e.stack) || e));
     }
     try {
-      // C11:C24, C27:C29, C32, C34 and C36, paused or not; whether this run is LIVE (runMode_), when the run got that far
+      // C11:C24, C27:C29, C32, C34 and C36:C37, paused or not; whether this run is LIVE (runMode_), when the run got that far
       const live = mode ? mode.live : undefined;
       const extra = rtc ? { testCopy: rtc.space ? rtc.space.name : '', testCopyBroken: !rtc.space && !rtc.blank } : {};
       if (mode && mode.why) extra.modeWhy = mode.why;

@@ -1514,7 +1514,8 @@ function formatSprinklrOwnedAlertText_(row) {
     `[Social Network]: ${network}`,
     `[Exposure Tag]: ${tag}`,
     `[Sensitive Topic]: -`,
-    `[KOF]: ${row.kof && String(row.kof).toLowerCase() !== 'no' ? 'Yes (' + one(row.kof) + ')' : 'No'}`,
+    `[KOF]: ${row.kof && String(row.kof).toLowerCase() !== 'no'
+      ? 'Yes (' + String(row.kof).replace(/[|\r\n]+/g, ' ').replace(/\s+/g, ' ').trim() + ')' : 'No'}`,
     '',
     summary,
     '',

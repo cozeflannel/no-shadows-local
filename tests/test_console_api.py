@@ -1,6 +1,6 @@
 """Agent Console API (console/backend, docs/CONTRACTS.md §17).
 
-FastAPI TestClient against a tmp SQLite DB seeded once per module by console.backend.seed_demo
+FastAPI TestClient against a tmp SQLite DB seeded once per module by tests/_console_fixtures/seed_demo.py
 (each test works on its own copy). Identity comes from the IAP email header.
 Run: TRIAGE_LLM=fake .venv/bin/python -m pytest -q tests/test_console_api.py
 """

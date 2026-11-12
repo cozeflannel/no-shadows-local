@@ -12,7 +12,7 @@ description: >-
 Use this runbook to inspect the live Burson QA Bot without polluting results with other Apps Script projects in the same GCP project.
 
 ## 1. Key Identifiers (Do Not Guess)
-- **Repository Path:** `/Users/lhammonds/.gemini/jetski/scratch/burson-triage-agent`
+- **Repository Path:** `/Users/lhammonds/Desktop/burson-triage-agent`
 - **Apps Script Project (`scriptId`):** `19HakS6-o8U1qT99Xpnw2TQbJnZMx5FZz_JzVDd93Yd9gopQ9qXaWnGk3`
 - **Cloud Logging `project_key`:** `MT90an4vYnIDfrbDRi1jgSZANzck4hlvJ`
 - **GCP Project:** `brand-social-central-data` (`1028310913761`)
@@ -54,7 +54,7 @@ gcloud logging read 'labels."script.googleapis.com/project_key"="MT90an4vYnIDfrb
    - `reviewed spaces/…/messages/… N min after it was held for this run` = the held alert got its video review.
    - `less than 90 s left in this run (N s): Gemini doesn't get the post's video (…), only a still of the post` followed by `… wasn't held for the next run: <why>` (the first message this run handled · this pass had N s when it started · it was held once already · it reached the Burson space N minutes ago) = reviewed with a still; analysts see `🤖 QA: The bot was short of time, so Gemini didn't review …`.
    - `🤖 QA: Gemini couldn't review …, so it had only …` on an alert = Gemini refused or failed on the post's media (the `Gemini couldn't review` WARNING says why).
-6. **Who got the test emails (Control tab B30, "Testing: send to", since Oct 26):** while Testing, every email goes only to the testers in B30 (up to 5 @google.com addresses; blank: `escalation.stand_in`). Check **C30** first: it says who gets them, and any address it refused (not @google.com, one of the bot's real recipients, or past the first 5).
+6. **Who got the test emails (Control tab B30, "Testing: send to", since Oct 26):** while Testing, every email goes only to the testers in B30 (up to 5 email addresses, any domain; blank: nothing is sent while Testing). Check **C30** first: it says who gets them, and any address it refused (malformed, one of the bot's real recipients, or past the first 5).
    - `Testing: emails go only to a, b and c. This one was addressed to x, so it was not sent.` = the Gmail lock refused an email to someone not on the list (nothing went out). The list in that message is the run's testers.
    - `escalation protocol for QA-…: emailed to a and b: Chat can't DM them (…)` = testers without a Chat DM with the bot's account got the 🧑‍💻 message by email (the bot can't DM the account it runs as, and only uses DMs that already exist). A tester who wants it in Chat starts a DM with the bot's account once.
    - Testers see the test emails in their own inboxes; Gmail drafts the bot makes (rows 27-28) are only in the bot account's Drafts.
@@ -73,7 +73,7 @@ When the user asks why the bot made a specific call on an alert:
 2. Using the `process_id` from step 1, fetch all log lines for that 1-minute execution to see:
    - `post:` (what `Post.gs` fetched from X/YouTube/Bluesky, including video duration or thread context)
    - `feed text:` (what `BigQuery.gs` pulled from Pendulum `sonar_raw` and Brandwatch `slrr`)
-   - `knowledge:` (which passages from the 9 `Resources` documents were passed to Gemini)
+   - `knowledge:` (which passages from the `Resources` documents were passed to Gemini)
    - `Gemini web search:` (what search queries and sources Vertex AI Web Grounding used)
    - `knowledge used:` (which documents Gemini relied on)
    - `follow-up check:` (whether the post was linked to an earlier alert)

@@ -203,13 +203,17 @@ def test_control_b30_testers_accepts_any_valid_domain_blocks_real_distros_and_ca
     apply_brand_safety_groups(cfg, rows, raw_testers="   ")
     assert cfg.escalation.stand_in == ""
 
-    # Valid external/corporate domains are accepted while real Brand safety groups addresses are refused
-    d_gmail = f"qa1@{'gmail' + '.com'}"
-    d_corp = f"qa2@{'google' + '.com'}"
-    d_agency = f"qa3@{'burson' + '.com'}"
-    d_org = f"qa4@{'example' + '.org'}"
-    d_io = f"qa5@{'sandbox' + '.io'}"
-    d_net = f"qa6@{'extra' + '.net'}"
+    # Testers at any other valid domain are accepted while real Brand safety groups addresses are refused.
+    # The addresses are written out in full, at reserved domains, so the repository scan below sees them.
+    testers = [
+        "qa1@webmail.test",
+        "qa2@corp.test",
+        "qa3@agency.test",
+        "qa4@partner.invalid",
+        "qa5@sandbox.invalid",
+        "qa6@extra.test",  # 6th valid tester -> dropped by TESTERS_MAX == 5 cap
+    ]
+    assert all(_is_allowed_email(t) for t in testers)
     mixed_testers = ", ".join(
         [
             "GEMINI-PA@alerts.test",  # blocked: product PA
@@ -220,18 +224,13 @@ def test_control_b30_testers_accepts_any_valid_domain_blocks_real_distros_and_ca
             "france@alerts.test",  # blocked: regional lead
             "sender@alerts.test",  # blocked: from_email
             "tns-urgent@alerts.test",  # blocked: tns urgent_alias
-            d_gmail,
-            d_corp,
-            d_agency,
-            d_org,
-            d_io,
-            d_net,  # 6th valid tester -> dropped by TESTERS_MAX == 5 cap
+            *testers,
         ]
     )
     apply_brand_safety_groups(cfg, rows, raw_testers=mixed_testers)
     chosen = [x.strip() for x in cfg.escalation.stand_in.split(",") if x.strip()]
     assert len(chosen) == TESTERS_MAX == 5
-    assert chosen == [d_gmail, d_corp, d_agency, d_org, d_io]
+    assert chosen == testers[:5]
 
     # Resetting B30 back to blank clears stand_in
     apply_brand_safety_groups(cfg, rows, raw_testers="")
@@ -239,7 +238,7 @@ def test_control_b30_testers_accepts_any_valid_domain_blocks_real_distros_and_ca
 
     # In prod env, raw_testers is ignored
     cfg.env = "prod"
-    apply_brand_safety_groups(cfg, rows, raw_testers=d_corp)
+    apply_brand_safety_groups(cfg, rows, raw_testers=testers[1])
     assert cfg.escalation.stand_in == ""
 
 

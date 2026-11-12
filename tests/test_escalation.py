@@ -6,7 +6,15 @@ import pytest
 
 from a2_fixtures import IM, IM2, connect, events, make_case
 from triage_agent.escalation import drafting, service
-from triage_agent.escalation.gmail import FakeGmail, build_mime, decode_message, merge_mime, message_fields, encode_message
+from triage_agent.escalation.gmail import (
+    FakeGmail,
+    GmailDraftNotFound,
+    build_mime,
+    decode_message,
+    encode_message,
+    merge_mime,
+    message_fields,
+)
 from triage_agent.events import EventType
 from triage_agent.models import EmailStatus
 from triage_agent.operations import UserFacingError
@@ -276,7 +284,7 @@ def test_mime_round_trip_and_partial_merge():
 def test_fake_gmail_threads_belong_to_one_mailbox(clock):
     gmail = FakeGmail(connected={IM, IM2}, clock=clock)
     first = gmail.create_draft(IM, from_header="f", to=["a"], cc=[], bcc=[], subject="s", body="b")
-    with pytest.raises(Exception):
+    with pytest.raises(GmailDraftNotFound, match="not found in .* mailbox"):
         gmail.create_draft(IM2, from_header="f", to=["a"], cc=[], bcc=[], subject="Re: s", body="b",
                            thread_id=first["thread_id"])
     clock.advance(minutes=1)

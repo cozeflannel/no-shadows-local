@@ -17,14 +17,9 @@ HANDLER_MODULES = [
     "triage_agent.inhouse",  # ingest_inhouse
 ]
 
-LOADED: list[str] = []
-MISSING: list[str] = []
-
 for _name in HANDLER_MODULES:
     try:
         importlib.import_module(_name)
-        LOADED.append(_name)
     except ModuleNotFoundError as _exc:
         if _exc.name not in (_name, _name.rsplit(".", 1)[0]):
             raise
-        MISSING.append(_name)

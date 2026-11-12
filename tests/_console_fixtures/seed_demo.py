@@ -5,7 +5,7 @@ deterministic for a given (seed, now, days). Every event type in docs/CONTRACTS.
 emitted with consistent payloads, so every KPI in metrics.KPI_DEFINITIONS and every derived
 metric is non-trivial.
 
-    TRIAGE_LOCAL_DB=.local/demo.db .venv/bin/python -m console.backend.seed_demo --reset
+    TRIAGE_LOCAL_DB=.local/demo.db .venv/bin/python -m tests._console_fixtures.seed_demo --reset
 
 Tests call `seed_database(path, now=...)` or `seed_demo(store, events, now=...)`.
 """

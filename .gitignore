@@ -27,19 +27,12 @@ knowledge_docs/
 *service_account*.json
 
 # Secrets
-.env
-.env.*
 *.env
 credentials.json
 *-credentials.json
 service-account*.json
-*.pem
-*.key
-secrets/
 
 # Apps Script
-.clasp.json
-.claspignore
 
 # OS / IDE
 .DS_Store

@@ -25,6 +25,13 @@
  * other posts listed in that alert's thread, and a later flag on a story posted in the last 24 hours joins that alert's
  * thread unless the stakes rose (pwStakesRose_). A flag with nothing to show (no summary, text or picture) is never
  * posted as a bare link.
+ * Only a flag that matters by itself gets an alert of its own (pwSolo_: a KOF author, PW_SOLO_MIN_ENG_ engagements or a
+ * P0 tag). A small one waits on the tab (a: 'b') and goes out with the others on its story as ONE alert, whose card says
+ * what built up (pwBuildLine_), once PW_BREW_MIN_ACCOUNTS_ accounts tell that story within PW_BREW_WINDOW_MS_; one that
+ * never gets company stays on the tab, and one that later grows past PW_SOLO_MIN_ENG_ is queued again (ProactiveWatch.gs
+ * pwRequeue_). A flag on a story already alerted in the last PW_REPEAT_MS_ (any flow: AlertMemory.gs) isn't posted again
+ * (a: 'r') unless the stakes rose or it reports something new, and one the pre-read says isn't about Google isn't
+ * posted (a: 'o').
  * The score, the watch's bar and topic, and
  * the source that found it stay off the message: the bot keeps them for the flow (pwRememberPosted_). The
  * space's flow knows it for the bot's (pwAlertOf_) and works it with the watch's call (Bot.gs handleMessage_ ->
@@ -70,9 +77,24 @@ const PW_PREREAD_MAX_ = 12;                       // flags the AI pre-read reads
 const PW_PREREAD_LEFT_MS_ = 35 * 1000;            // ...only with this much of the run left beyond PW_MIN_LEFT_MS_
 const PW_PREREAD_MAX_WAIT_MS_ = 30 * 60 * 1000;   // a flag waits for a pre-read until this long after it was seen, then goes without
 const PW_STORY_WINDOW_MS_ = 24 * 60 * 60 * 1000;  // a flag on the story of an alert posted this recently joins its thread
-const PW_STORY_RECENT_MAX_ = 10;                  // the alerts posted lately that the pre-read compares new flags with
+const PW_STORY_RECENT_MAX_ = 10;                  // the alerts posted lately that the pre-read compares new flags with...
+const PW_STORY_POOL_MAX_ = 60;                    // ...of this many at most: the closest in meaning to the run's flags (pwStoriesShown_)
 const PW_STORY_REPLIES_MAX_ = 6;                  // same-story replies posted in alerts' threads a run, at most
 const PW_STORY_LIST_MAX_ = 15;                    // posts listed in one same-story reply
+// An alert of its own only for a flag that matters by itself (pwSolo_): SLRR's own collection thresholds (a KOF author,
+// 100+ engagements, a P0 tag). The small ones wait and go out together, as ONE alert, once enough accounts tell the same
+// story (pwBrewing_): the build-up is the news, not each small post.
+const PW_SOLO_MIN_ENG_ = 100;                     // engagements from which a flag is an alert of its own (OtherAlerts.gs OTHER_COLLECT_MIN_)
+const PW_BREW_WINDOW_MS_ = 12 * 60 * 60 * 1000;   // small flags on one story within this long are one build-up
+const PW_BREW_MIN_ACCOUNTS_ = 3;                  // accounts telling the story before its build-up goes out as one alert
+const PW_BREW_RECENT_MAX_ = 10;                   // build-ups still waiting that the pre-read compares new flags with...
+const PW_BREW_POOL_MAX_ = 60;                     // ...of this many at most (the newest): the closest in meaning to the run's flags
+// A story already alerted (any flow: AlertMemory.gs) is an ongoing issue for collection.novelty_days: another post on it
+// is not posted again unless the stakes rose (pwStakesRose_) or it reports something new (the pre-read's adds_new).
+const PW_REPEAT_MS_ = 14 * 24 * 60 * 60 * 1000;
+const PW_KNOWN_MAX_ = 8;                          // alerted stories the pre-read compares new flags with...
+const PW_KNOWN_PER_FLAG_ = 2;                     // ...the closest in meaning to each flag...
+const PW_KNOWN_MIN_SIM_ = 0.70;                   // ...from this similarity (unrelated texts: 0.66 or less 99% of the time, EarlyWaveSource.gs)
 
 // --------------------------------------------------------------------------------------------------------------
 // Control tab row 35
@@ -200,23 +222,31 @@ function pwAlertsWhere_(choice) {
 
 /**
  * C35 for this run: `dest` (pwAlertsDest_), `res` (pwPostAlerts_, or null when nothing was tried), `watchOn` (row 34),
- * `today` (watch alerts posted today), `grouped` (same-story posts added to an alert's thread today). Under 250
- * characters. Pure.
+ * `today` (watch alerts posted today), `grouped` (same-story posts added to an alert's thread today), `more` (today's
+ * {builds: alerts that are a build-up of small posts, held: small flags held to be grouped, repeats: flags on a story
+ * already alerted, offTopic: flags not about Google}: pwAlertDayMore_). Under 480 characters. Pure.
  */
-function pwAlertsNoteText_(dest, res, watchOn, today, grouped) {
+function pwAlertsNoteText_(dest, res, watchOn, today, grouped, more) {
   const choice = dest && dest.choice;
   if (!choice) return pwAlertsOffText_();
   const where = pwAlertsWhere_(choice);
   if (!watchOn) return `\u26a0\ufe0f ${where} chosen, but the Proactive watch (row 34) is OFF: nothing to post`;
-  const counts = ` \u00b7 today: ${fmtInt_(today || 0)} posted${grouped ? `, +${fmtInt_(grouped)} in their story's thread` : ''}` +
+  const m = more || {};
+  const n = k => Number(m[k]) || 0;
+  const counts = ` \u00b7 today: ${fmtInt_(today || 0)} posted${n('builds') ? ` (${fmtInt_(n('builds'))} a build-up of small posts)` : ''}` +
+    `${grouped ? `, +${fmtInt_(grouped)} in their story's thread` : ''}` +
+    `${n('held') ? `, ${fmtInt_(n('held'))} small held to be grouped` : ''}` +
+    `${n('repeats') ? `, ${fmtInt_(n('repeats'))} repeats of an alerted story held back` : ''}` +
+    `${n('offTopic') ? `, ${fmtInt_(n('offTopic'))} off-topic not posted` : ''}` +
     `${res && res.waiting ? `, ${fmtInt_(res.waiting)} waiting` : ''}`;
   const problem = (dest && dest.problem) || (res && res.problem) || (!dest.space ? 'no space to post in this run' : '');
-  if (problem) return truncate_(`\u26a0\ufe0f waiting: ${problem} (a flag waits up to 3 hours)${counts}`, 250);
+  if (problem) return truncate_(`\u26a0\ufe0f waiting: ${problem} (a flag waits up to 3 hours)${counts}`, 480);
   const cellTag = choice === 'mirror' ? 'B9' : choice === 'autocorrect' ? 'B10' : 'B33';
   const modeNote = choice === 'mirror' ? ' (only the testers while Testing)' : ' (always Testing there)';
-  return truncate_(`\u2713 ${dest.space.name} (${cellTag}): each flag at a watch's bar is posted there as a ` +
-    `${PW_ALERT_HEAD_} Watch alert for full triage: \u274c if off-topic or already alerted, \ud83d\udc4d, or a Social Alert` +
-    `${modeNote}${counts}`, 250);
+  return truncate_(`\u2713 ${dest.space.name} (${cellTag}): a flag that matters by itself (a KOF author, ` +
+    `${fmtInt_(PW_SOLO_MIN_ENG_)}+ engagements or a P0 tag) is posted there as a ${PW_ALERT_HEAD_} Watch alert for full triage` +
+    `${modeNote}; small ones wait and go out as one alert once ${PW_BREW_MIN_ACCOUNTS_} accounts tell the same story; ` +
+    `a story already alerted isn't posted again${counts}`, 480);
 }
 
 // --------------------------------------------------------------------------------------------------------------
@@ -263,8 +293,26 @@ function pwAlertText_(a) {
     one(a.posted, 40) ? `*Posted:* ${one(a.posted, 40)} ET` : '',
   ].concat(pwAlertTaxLines_(a), [
     summary ? `*Summary:* ${summary}` : '',
+    pwBuildLine_(a.build),
     pwSameStoryLine_(a.sameStory),
   ]).filter(Boolean).join('\n');
+}
+
+/**
+ * A build-up alert's line (`b`: {n: posts, accounts, ms: from the first one seen to now, networks, eng: their
+ * engagements together}): "*Building:* 4 small posts from 4 accounts within 3 hours (X, Reddit) · 57 engagements in
+ * all"; '' for none (an alert for a post that matters by itself has no such line). Pure.
+ */
+function pwBuildLine_(b) {
+  const n = Number(b && b.n) || 0;
+  if (n < 2) return '';
+  const accounts = Number(b.accounts) || 0;
+  const hours = Math.max(1, Math.ceil((Number(b.ms) || 0) / (60 * 60 * 1000)));
+  const nets = Array.from(new Set((b.networks || [])
+    .map(v => String(v || '').replace(/[<>|*\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean))).slice(0, 4);
+  const eng = Number(b.eng) || 0;
+  return `*Building:* ${fmtInt_(n)} small posts from ${fmtInt_(accounts)} accounts within ${fmtInt_(hours)} hour${hours === 1 ? '' : 's'}` +
+    `${nets.length ? ` (${nets.join(', ')})` : ''}${eng > 0 ? ` \u00b7 ${fmtInt_(eng)} engagements in all` : ''}`;
 }
 
 /**
@@ -346,6 +394,7 @@ function pwAlertParse_(text) {
     posted: get('Posted').replace(/ ET$/, ''), source: found.join(' · ').trim(), seen, summary: get('Summary'),
     products: list(get('Product')), exposureTag: unset(tag) ? '' : tag, topics: list(get('Sensitive Topic')),
     kof, kofLists: kof === true ? ((kofRaw.match(/\((.+)\)\s*$/) || [])[1] || '').trim() : '', sameStory: get('Same story'),
+    build: get('Building'),
   };
 }
 
@@ -383,6 +432,7 @@ function pwAlertOf_(ctx, m) {
       a.exposureTag ? { label: 'card_exposure_tag', value: a.exposureTag } : null,
       a.topics.length ? { label: 'card_sensitive_topics', value: a.topics.join(', ') } : null,
       a.sameStory ? { label: 'same_story_coverage', value: truncate_(a.sameStory, 300) } : null,
+      a.build ? { label: 'build_up', value: truncate_(a.build, 200) } : null,
     ].filter(Boolean);
     return {
       header: `Watch alert · ${a.watch}`, source: PW_ALERT_SOURCE_, topic: a.watch, sentiment: '',
@@ -542,22 +592,43 @@ function pwAlertPosted_(name) {
   }
 }
 
-/** Today's watch alerts so far, with `add` more (and `addGrouped` more same-story posts in their threads). Never throws. */
-function pwAlertDay_(add, addGrouped) {
+/**
+ * Today's watch alerts so far, with `add` more (and `addGrouped` more same-story posts in their threads; `more`:
+ * {builds, held, repeats, offTopic} more of each: pwAlertDayMore_). Never throws.
+ */
+function pwAlertDay_(add, addGrouped, more) {
   try {
     const props = PropertiesService.getScriptProperties();
     let s = null;
     try { s = JSON.parse(props.getProperty(PW_ALERT_DAY_PROP_) || 'null'); } catch (e) { s = null; }
     const day = dayKey_();
     if (!s || s.day !== day) s = { day, n: 0 };
-    if (add || addGrouped) {
+    const m = more || {};
+    const extra = [['b', m.builds], ['h', m.held], ['r', m.repeats], ['o', m.offTopic]].filter(x => Number(x[1]) > 0);
+    if (add || addGrouped || extra.length) {
       s.n = (Number(s.n) || 0) + (Number(add) || 0);
       if (addGrouped) s.g = (Number(s.g) || 0) + Number(addGrouped);
+      extra.forEach(([k, v]) => { s[k] = (Number(s[k]) || 0) + Number(v); });
       props.setProperty(PW_ALERT_DAY_PROP_, JSON.stringify(s));
     }
     return Number(s.n) || 0;
   } catch (e) {
     return 0;
+  }
+}
+
+/**
+ * Today's other counts (pwAlertDay_): {builds: alerts that are a build-up of small posts, held: small flags that waited
+ * for company, repeats: flags on a story already alerted, offTopic: flags not about Google}. Never throws.
+ */
+function pwAlertDayMore_() {
+  try {
+    const s = JSON.parse(PropertiesService.getScriptProperties().getProperty(PW_ALERT_DAY_PROP_) || 'null');
+    const on = s && s.day === dayKey_();
+    const n = k => (on ? Number(s[k]) || 0 : 0);
+    return { builds: n('b'), held: n('h'), repeats: n('r'), offTopic: n('o') };
+  } catch (e) {
+    return { builds: 0, held: 0, repeats: 0, offTopic: 0 };
   }
 }
 
@@ -688,7 +759,8 @@ function pwPreReadSchema_() {
           type: 'OBJECT',
           properties: {
             ref: text, summary: text, about_google: { type: 'BOOLEAN' }, product: maybe, other_products: list,
-            exposure_tag: maybe, sensitive_topics: list, story: text, same_story_as: maybe, meaningful: { type: 'BOOLEAN' },
+            exposure_tag: maybe, sensitive_topics: list, story: text, same_story_as: maybe, adds_new: { type: 'BOOLEAN', nullable: true },
+            meaningful: { type: 'BOOLEAN' },
           },
           required: ['ref', 'summary', 'about_google', 'story', 'meaningful'],
         },
@@ -726,10 +798,13 @@ function pwPreReadPrompts_(posts, recent) {
     'English election content).\n' +
     '- story: a 5-12 word neutral headline naming the specific underlying story, event or claim (e.g. "NHTSA ' +
     'investigates Waymo robotaxis passing stopped school buses").\n' +
-    '- same_story_as: the ref of an EARLIER post in <watch_posts> (a smaller C number) or of an alert in <recent_alerts> ' +
-    '(an R ref) covering the SAME specific story: the same event, report, announcement, lawsuit, outage or viral claim ' +
-    '(e.g. several outlets reporting the same federal investigation). Never merely the same product, company or topic. ' +
-    '"" when there is none.\n' +
+    '- same_story_as: the ref of an EARLIER post in <watch_posts> (a smaller C number) or of an entry in <recent_alerts> ' +
+    '(an R ref: a story already alerted or, with status "waiting", a few small posts not alerted yet) covering the SAME ' +
+    'specific story: the same event, report, announcement, lawsuit, outage or viral claim (e.g. several outlets reporting ' +
+    'the same federal investigation). Never merely the same product, company or topic. "" when there is none.\n' +
+    '- adds_new: only when same_story_as names an R ref: true when this post reports a materially new development in that ' +
+    'story (a new event, ruling, official response, new evidence, a new victim or figure); false when it repeats, reshares ' +
+    'or comments on what was already reported. Leave it out otherwise.\n' +
     '- meaningful: weigh the post as a whole (what it says or shows, who posted it and their reach): true when its content ' +
     'or message is meaningful enough to post about for Google brand safety, even if something is missing (no engagement ' +
     'count, no summary, a short caption); false for a bare link with no claim, a passing mention, a reshare that adds ' +
@@ -737,8 +812,17 @@ function pwPreReadPrompts_(posts, recent) {
     'zero): never judge it less meaningful for that.\n\n' +
     `EXPOSURE TAGS:\n${tags}\n\nSENSITIVE TOPICS:\n${topics}\n\nPRODUCTS (distribution names): ${products}\n\n` +
     'JSON FORMATTING: every string value is concise single-line plain text.';
+  // the recent stories as whole entries (a list cut mid-entry is no JSON), the first ones first
+  const kept = [];
+  let size = 2;
+  for (const r of (recent || [])) {
+    const len = JSON.stringify(r).length + 1;
+    if (size + len > 9000) break;
+    kept.push(r);
+    size += len;
+  }
   const prompt = `<watch_posts>\n${JSON.stringify(posts).slice(0, 24000)}\n</watch_posts>` +
-    (recent && recent.length ? `\n<recent_alerts>\n${JSON.stringify(recent).slice(0, 6000)}\n</recent_alerts>` : '');
+    (kept.length ? `\n<recent_alerts>\n${JSON.stringify(kept)}\n</recent_alerts>` : '');
   return { system, prompt, schema: pwPreReadSchema_() };
 }
 
@@ -772,6 +856,7 @@ function pwPreReadOf_(llm, n, m) {
       topics: normalizeProposal_('risk_tags', Array.isArray(r.sensitive_topics) ? r.sensitive_topics : []) || [],
       story: one(r.story, 120).replace(/[*_~`<>|]/g, ''),
       same,
+      news: !!same && r.adds_new === true,
       meaningful: r.meaningful === true ? true : r.meaningful === false ? false : null,
     };
   });
@@ -779,9 +864,39 @@ function pwPreReadOf_(llm, n, m) {
 }
 
 /**
+ * The stories already alerted (any flow, any space: AlertMemory.gs nearStories, PW_REPEAT_MS_ back) closest in meaning to
+ * this run's flags (`vecs`: a vector a flag) that `recent` doesn't list already: [{known: true, id (the alert), sid (the
+ * memory's story), story, author, network, at, kof, eng}], the closest first, PW_KNOWN_MAX_ at most. Never throws.
+ */
+function pwKnownStories_(vecs, recent) {
+  try {
+    const mem = typeof alertMemory_ === 'function' ? alertMemory_() : null;
+    if (!mem || typeof mem.nearStories !== 'function' || !(vecs || []).some(Boolean)) return [];
+    const listed = new Set((recent || []).map(r => String((r && r.id) || '')).filter(Boolean));
+    const best = new Map();
+    (mem.nearStories(vecs, { hours: PW_REPEAT_MS_ / (3600 * 1000), k: PW_KNOWN_PER_FLAG_, minSim: PW_KNOWN_MIN_SIM_ }) || [])
+      .forEach(list => (list || []).forEach(s => {
+        if (!s || !s.sid || !s.name || (s.alert_id && listed.has(String(s.alert_id)))) return;
+        const cur = best.get(s.sid);
+        if (!cur || s.sim > cur.sim) best.set(s.sid, s);
+      }));
+    return Array.from(best.values()).sort((a, b) => b.sim - a.sim).slice(0, PW_KNOWN_MAX_).map(s => ({
+      known: true, id: String(s.alert_id || ''), sid: String(s.sid), story: truncate_(String(s.name).replace(/\s+/g, ' '), 160),
+      author: '', network: '', at: Number(s.at) || 0, kof: !!s.kof, eng: Number(s.eng) || 0 }));
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
  * ONE Gemini call (text only, no web search, no BigQuery fallback) on the waiting flags (`items`: [{q, a}], the highest
- * scores first) and the alerts posted lately (`recent`: pwRecentStories_): pwPreReadOf_'s answer, or null; throws when
- * Gemini fails. `deadline`: ms. Untrusted post text goes in the prompt only.
+ * scores first) and the stories they may repeat (`recent`: the alerts posted lately, pwRecentStories_, and the build-ups
+ * still waiting, pwBrewing_: when there are more than the pre-read is shown, the closest in meaning to these flags,
+ * pwStoriesShown_; the stories already alerted that are closest in meaning to these flags are added here:
+ * pwKnownStories_): {pre: pwPreReadOf_'s answer or null, recent: the list its R refs point into}; throws when Gemini
+ * fails. The flags are embedded once (Vectors.gs; the stories with them, in the same call, only when they have to be
+ * chosen from), for their tag hints and for the alerted stories. `deadline`: ms. Untrusted post text goes in the prompt
+ * only.
  */
 function pwPreRead_(items, recent, deadline) {
   const num = v => (Number(v) > 0 ? Math.round(Number(v)) : null);
@@ -793,39 +908,57 @@ function pwPreRead_(items, recent, deadline) {
     Object.keys(o).forEach(k => { if (o[k] === '' || o[k] === null) delete o[k]; });
     return o;
   });
-  if (typeof vecTagHints_ === 'function' && typeof vecTagHintLine_ === 'function') {
+  const pool = recent || [];
+  const choose = pool.filter(r => !(r && r.brew)).length > PW_STORY_RECENT_MAX_ ||
+    pool.filter(r => r && r.brew).length > PW_BREW_RECENT_MAX_;
+  let vecs = [];
+  let poolVecs = [];
+  if (typeof embedTexts_ === 'function') {
     try {
-      const hints = vecTagHints_(posts.map(p => [p.issue || '', p.text || ''].filter(Boolean).join(' — ')), { deadline }) || [];
+      const texts = posts.map(p => [p.issue || '', p.text || ''].filter(Boolean).join(' — '));
+      const got = embedTexts_(texts.concat(choose ? pool.map(r => String((r && r.story) || '')) : []), { deadline }) || [];
+      vecs = got.slice(0, texts.length);
+      poolVecs = got.slice(texts.length);
+    } catch (e) { vecs = []; poolVecs = []; }
+  }
+  if (typeof vecTagHintsOfVecs_ === 'function' && typeof vecTagHintLine_ === 'function') {
+    try {
+      const hints = vecTagHintsOfVecs_(vecs, { deadline }) || [];
       posts.forEach((p, i) => { const ln = vecTagHintLine_(hints[i]); if (ln) p.semantic_hint = ln; });
     } catch (e) {}
   }
-  const prior = (recent || []).map((r, i) => ({ ref: `R${i + 1}`, story: r.story, author: r.author, network: r.network }));
+  const shown = choose ? pwStoriesShown_(pool, vecs, poolVecs) : pool;
+  const all = shown.concat(pwKnownStories_(vecs, shown));
+  const prior = all.map((r, i) => Object.assign({ ref: `R${i + 1}`, story: r.story, author: r.author, network: r.network },
+    r.brew ? { status: 'waiting' } : {}));
   const p = pwPreReadPrompts_(posts, prior);
   const out = geminiGenerate_(p.system, p.prompt, p.schema, {
     deadline, tries: 2, allowBqFallback: false, maxOutputTokens: GEMINI_MAX_TOKENS_.other,
     thinkingLevel: typeof thinkingLevelFor_ === 'function' && thinkingLevelFor_(GEN.models.triage) ? 'LOW' : '',
   });
-  return pwPreReadOf_(out, items.length, prior.length);
+  return { pre: pwPreReadOf_(out, items.length, prior.length), recent: all };
 }
 
 /**
- * The pre-read for this run's flags: {pre (pwPreRead_, or null), wait (why the flags wait for the next run, or '')}.
+ * The pre-read for this run's flags: {pre (pwPreRead_'s answer, or null), recent (the stories its R refs point into:
+ * `recent`, with the alerted stories pwPreRead_ added), wait (why the flags wait for the next run, or '')}.
  * Without time or the background budget for it, or with Gemini failing, the flags wait up to PW_PREREAD_MAX_WAIT_MS_
  * since the oldest was seen, then go out without it; an answer with nothing usable never holds them. Never throws.
  */
 function pwPreReadFor_(items, recent, timeLeft, now) {
-  if (!items.length) return { pre: null, wait: '' };
+  if (!items.length) return { pre: null, recent, wait: '' };
   const oldest = Math.min.apply(null, items.map(it => Number(it.q.k.s) || now));
   const canWait = now - oldest < PW_PREREAD_MAX_WAIT_MS_;
   const budget = typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('gemini', false);
   if (timeLeft() < PW_MIN_LEFT_MS_ + PW_PREREAD_LEFT_MS_ || !budget) {
-    return { pre: null, wait: canWait ? 'not enough of this run left to read the flagged posts first (next run)' : '' };
+    return { pre: null, recent, wait: canWait ? 'not enough of this run left to read the flagged posts first (next run)' : '' };
   }
   try {
-    return { pre: pwPreRead_(items, recent, Date.now() + Math.max(0, timeLeft() - PW_MIN_LEFT_MS_)), wait: '' };
+    const read = pwPreRead_(items, recent, Date.now() + Math.max(0, timeLeft() - PW_MIN_LEFT_MS_));
+    return { pre: read.pre, recent: read.recent, wait: '' };
   } catch (e) {
     console.warn(`Watch alerts: the AI pre-read failed: ${truncate_(String((e && e.message) || e), 200)}`);
-    return { pre: null, wait: canWait ? 'the AI read of the flagged posts failed this run (tried again next run)' : '' };
+    return { pre: null, recent, wait: canWait ? 'the AI read of the flagged posts failed this run (tried again next run)' : '' };
   }
 }
 
@@ -835,12 +968,13 @@ function pwPreReadFor_(items, recent, timeLeft, now) {
 
 /**
  * The watch alerts posted in this run's space within PW_STORY_WINDOW_MS_ that a new flag's story may join, newest first
- * (PW_STORY_RECENT_MAX_): [{m (message), thread, at, story, author, network, eng, kof}], from the posted flags' keys
- * on the Watch detections tab (an alert posted before keys kept its thread isn't there). Pure.
+ * (`max` of them; PW_STORY_RECENT_MAX_ when not given): [{m (message), thread, at, story, author, network, eng, kof}],
+ * from the posted flags' keys on the Watch detections tab (an alert posted before keys kept its thread isn't there). Pure.
  */
-function pwRecentStories_(block, dest, now) {
+function pwRecentStories_(block, dest, now, max) {
   const spaceId = dest && dest.space && dest.space.id;
   if (!spaceId) return [];
+  const cap = Number(max) > 0 ? Number(max) : PW_STORY_RECENT_MAX_;
   const out = [];
   ((block && block.values) || []).forEach(v => {
     const k = pwKeyOf_(v[PW_COL_.key - 1]);
@@ -854,17 +988,134 @@ function pwRecentStories_(block, dest, now) {
   });
   if (typeof alertMemory_ === 'function') {
     const seenMsgs = new Set(out.map(x => x.m));
-    (alertMemory_().recentStories(spaceId, PW_STORY_WINDOW_MS_ / (3600 * 1000), PW_STORY_RECENT_MAX_) || []).forEach(r => {
+    (alertMemory_().recentStories(spaceId, PW_STORY_WINDOW_MS_ / (3600 * 1000), cap) || []).forEach(r => {
       if (r && r.m && !seenMsgs.has(r.m)) { seenMsgs.add(r.m); out.push(r); }
     });
   }
-  return out.sort((a, b) => b.at - a.at).slice(0, PW_STORY_RECENT_MAX_);
+  return out.sort((a, b) => b.at - a.at).slice(0, cap);
+}
+
+/**
+ * The stories the pre-read compares this run's flags with, of `pool` (the alerts posted lately, pwRecentStories_, then
+ * the build-ups still waiting, pwBrewing_; each kind the newest first): PW_STORY_RECENT_MAX_ alerts and
+ * PW_BREW_RECENT_MAX_ build-ups, the closest in meaning to any of the run's flags (`flagVecs`: a vector a flag;
+ * `poolVecs`: a vector a pool entry, its story's words), so on a busy day a story from hours ago is still found and a
+ * build-up isn't started twice; without vectors, the newest. Each kind stays newest first, the alerts before the
+ * build-ups. Pure.
+ */
+function pwStoriesShown_(pool, flagVecs, poolVecs) {
+  const flags = (flagVecs || []).filter(Boolean);
+  const near = i => {
+    const v = (poolVecs || [])[i];
+    return v && flags.length ? Math.max.apply(null, flags.map(f => vecCos_(f, v))) : -1;
+  };
+  const rows = (pool || []).map((r, i) => ({ r, i, sim: near(i) }));
+  const pick = (list, max) => (list.length <= max ? list
+    : list.slice().sort((a, b) => b.sim - a.sim || a.i - b.i).slice(0, max).sort((a, b) => a.i - b.i));
+  return pick(rows.filter(x => !(x.r && x.r.brew)), PW_STORY_RECENT_MAX_)
+    .concat(pick(rows.filter(x => x.r && x.r.brew), PW_BREW_RECENT_MAX_)).map(x => x.r);
+}
+
+/** The account a flag's post is from, to count distinct accounts ("x:corrdove"); its post's key when no author is known. Pure. */
+function pwAccount_(a, key) {
+  const who = String((a && a.author) || '').replace(/^'/, '').trim().toLowerCase().replace(/^@+/, '');
+  return who ? `${String((a && a.network) || '').trim().toLowerCase()}:${who}` : `post:${key || ''}`;
+}
+
+/**
+ * Why a flag (`item`: {q, a}; `p`: the pre-read's entry for it, or null) is an alert of its own; '' for a small one, which
+ * waits to be grouped. SLRR's own collection thresholds: a KOF author (the listening data), PW_SOLO_MIN_ENG_
+ * engagements, or a P0 exposure tag (the pre-read's, else the listening tool's). A post the pre-read judged not
+ * meaningful by itself (a passing mention, a bare link) is one only for a KOF author or past the high-engagement bar. Pure.
+ */
+function pwSolo_(item, p) {
+  const a = (item && item.a) || {};
+  const tax = a.tax || null;
+  const eng = Number(a.eng) || 0;
+  const hi = Number(GEN.escalation_rules && GEN.escalation_rules.high_engagement_threshold) || 2000;
+  if (tax && tax.k === true) return 'a KOF author';
+  if (eng >= hi) return `${fmtInt_(eng)} engagements`;
+  if (p && p.meaningful === false) return '';
+  if (eng >= PW_SOLO_MIN_ENG_) return `${fmtInt_(eng)} engagements`;
+  const name = String((p && p.tag) || '').replace(/\s*\(P[012]\)\s*$/, '') || String((tax && tax.t) || '');
+  const tag = name ? lookupTag_(name) : null;
+  return tag && tag.priority === 'P0' ? `a P0 tag (${tag.name})` : '';
+}
+
+/**
+ * True when the pre-read says the post isn't about Google and the listening tool named no Google product for it: such a
+ * flag is not posted (the full triage marked these off-topic after the fact), unless a KOF wrote it or it is past the
+ * high-engagement bar: those still go out and the triage decides, as before. Pure.
+ */
+function pwOffTopic_(item, p) {
+  const a = (item && item.a) || {};
+  const tax = a.tax || null;
+  if (!p || p.about !== false || (tax && (tax.p || []).length)) return false;
+  const hi = Number(GEN.escalation_rules && GEN.escalation_rules.high_engagement_threshold) || 2000;
+  return !(tax && tax.k === true) && (Number(a.eng) || 0) < hi;
+}
+
+/**
+ * The small flags still waiting to be grouped (their key says a: 'b', held within PW_BREW_WINDOW_MS_), by build-up (their
+ * key's bg: the first flag's post), the newest build-ups first, `max` at most (PW_BREW_RECENT_MAX_ when not given):
+ * [{brew: true, bg, story, author, network, at, rows: [{i (index in the block), k, v}]}]. `block`: pwDetRows_. Pure.
+ */
+function pwBrewing_(block, now, max) {
+  const by = new Map();
+  ((block && block.values) || []).forEach((v, i) => {
+    const k = pwKeyOf_(v[PW_COL_.key - 1]);
+    const at = Number(k && k.at) || 0;
+    if (!k || k.a !== 'b' || !k.bg || !(at > 0) || now - at > PW_BREW_WINDOW_MS_) return;
+    if (!by.has(k.bg)) by.set(k.bg, { brew: true, bg: String(k.bg), story: '', author: '', network: '', at: 0, rows: [] });
+    const g = by.get(k.bg);
+    g.rows.push({ i, k, v });
+    g.at = Math.max(g.at, at);
+    if (!g.story && k.st) g.story = truncate_(String(k.st), 160);
+  });
+  const cell = (v, col) => String(v[PW_COL_[col] - 1] === undefined || v[PW_COL_[col] - 1] === null ? '' : v[PW_COL_[col] - 1])
+    .replace(/^'/, '').trim();
+  const out = Array.from(by.values());
+  out.forEach(g => {
+    const first = g.rows[0].v;
+    g.author = cell(first, 'author');
+    g.network = cell(first, 'network');
+    if (!g.story) g.story = truncate_((cell(first, 'issue') || cell(first, 'summary')).replace(/\s+/g, ' '), 160);
+  });
+  return out.sort((a, b) => b.at - a.at).slice(0, Number(max) > 0 ? Number(max) : PW_BREW_RECENT_MAX_);
+}
+
+/**
+ * The story already alerted (any flow, PW_REPEAT_MS_ back) that a flag about to be posted repeats, by the memory's own
+ * same-story test (AlertMemory.gs storyMatch: the one that folds a Social Alert into its story), for a story the
+ * pre-read wasn't shown: {id (the alert), story, kof, eng} (its stakes, for pwStakesRose_), or null. `p`: the pre-read's
+ * entry (its story as the issue's name; without one, the listening tool's issue). Never throws.
+ */
+function pwRepeatOf_(item, p, deadline) {
+  try {
+    const mem = typeof alertMemory_ === 'function' ? alertMemory_() : null;
+    if (!mem || !mem.active || typeof mem.storyMatch !== 'function') return null;
+    const a = (item && item.a) || {};
+    const tax = a.tax || null;
+    const m = mem.storyMatch({
+      issue_name: (p && p.story) || String(a.issue || ''),
+      product: (p && p.products && p.products[0]) || (tax && tax.p && tax.p[0]) || '',
+      exposure_tag: String((p && p.tag) || '').replace(/\s*\(P[012]\)\s*$/, '') || String((tax && tax.t) || ''),
+      summary: (p && p.summary) || String(a.summary || ''), author: a.author, post_url: a.url,
+    }, { hours: PW_REPEAT_MS_ / (3600 * 1000), deadline });
+    if (!m) return null;
+    const st = (m.rec && m.rec.st) || null;
+    return { id: String(m.alert_id || ''), story: String(m.issue_name || ''), kof: !!(st && st.k), eng: Number(st && st.g) || 0 };
+  } catch (e) {
+    return null;
+  }
 }
 
 /**
  * The flags (`items`) by story, from the pre-read's same_story_as links (`pre`; none without it: each flag its own):
- * [{members: [item indexes], r: the recent alert (pwRecentStories_ index) the story joins, or null}], the group with the
- * highest-scored flag first. Pure.
+ * [{members: [item indexes], r: the earlier story (its index in `recent`: an alert posted lately, a build-up still
+ * waiting, a story already alerted) the story joins, or null}], the group with the highest-scored flag first. Flags
+ * that name the same earlier story are one story, whether or not they name each other (so two accounts joining one
+ * build-up in the same run both count towards it). Pure.
  */
 function pwStoryGroups_(items, pre, recent) {
   const parent = items.map((x, i) => i);
@@ -879,6 +1130,14 @@ function pwStoryGroups_(items, pre, recent) {
     } else if (p.same.r !== undefined && p.same.r < (recent || []).length) {
       joins[i] = p.same.r;
     }
+  });
+  const firstOn = {};  // an earlier story -> the first flag that names it
+  joins.forEach((r, i) => {
+    if (r === null) return;
+    if (firstOn[r] === undefined) { firstOn[r] = i; return; }
+    const x = find(i);
+    const y = find(firstOn[r]);
+    if (x !== y) parent[Math.max(x, y)] = Math.min(x, y);
   });
   const by = {};
   items.forEach((x, i) => { const root = find(i); (by[root] = by[root] || []).push(i); });
@@ -1016,44 +1275,64 @@ function pwPostStoryReply_(space, thread, text, key) {
 
 /**
  * One alert a story (pwPostAlerts_). `items` ([{q, a}]: the flags, the highest scores first), `pre` (pwPreRead_, or
- * null), `recent` (pwRecentStories_), `c` {dest, now, max, timeLeft, done, doneThreadIds, mark, same}. A story joining
- * an alert posted lately goes in that alert's thread (but a flag that raises the stakes: pwStakesRose_); else its lead
- * post (pwStoryOrder_) that's new, in English and has something to show is posted as the alert (at most `max` a run),
- * and the story's other posts go in its thread as one reply. {posted, grouped, dup, empty, problem}. Throws only what
- * the caller catches.
+ * null), `recent` (the stories the pre-read's R refs point into: the alerts posted lately, pwRecentStories_; the
+ * build-ups still waiting, pwBrewing_; the stories already alerted, pwKnownStories_), `c` {dest, now, max, timeLeft,
+ * done, doneThreadIds, mark, same}. For each story, in this order:
+ *   - one with an alert posted lately in this space goes in that alert's thread (but a flag that raises the stakes:
+ *     pwStakesRose_);
+ *   - one already alerted (any flow, PW_REPEAT_MS_ back) is not posted again (a: 'r', rf: the alert it repeats), unless
+ *     the stakes rose or the pre-read says the post reports something new;
+ *   - a flag that isn't about Google is not posted (a: 'o': pwOffTopic_);
+ *   - a story none of whose flags matters by itself (pwSolo_) waits (a: 'b') until PW_BREW_MIN_ACCOUNTS_ accounts tell
+ *     it within PW_BREW_WINDOW_MS_; then it goes out as ONE alert whose card says what built up (pwBuildLine_);
+ *   - else its lead post (pwStoryOrder_, one that matters by itself first) that's new, in English and has something to
+ *     show is posted as the alert (at most `max` a run), unless the memory says its story was already alerted
+ *     (pwRepeatOf_), and the story's other posts go in its thread as one reply.
+ * {posted, grouped, dup, empty, held, repeats, offTopic, builds, problem}. Throws only what the caller catches.
  */
 function pwPostStories_(items, pre, recent, c) {
-  const res = { posted: 0, grouped: 0, dup: 0, empty: 0, problem: '' };
+  const res = { posted: 0, grouped: 0, dup: 0, empty: 0, held: 0, repeats: 0, offTopic: 0, builds: 0, problem: '' };
   const space = c.dest.space;
   const at = { at: c.now, d: c.dest.choice, sp: space.id };
   const pr = i => (pre && pre[i]) || null;
-  const groups = pwStoryGroups_(items, pre, recent);
+  const stories = recent || [];
+  const groups = pwStoryGroups_(items, pre, stories);
   groups.forEach(g => { g.members = pwStoryOrder_(g.members, items, pre); });
   let replies = 0;
-  const join = (list, thread, alertName, later) => {
-    const reply = pwPostStoryReply_(space, thread, pwStoryReplyText_(list.map(i => pwStoryView_(items[i], pr(i))), later),
-      `pwg:${alertName}|${list.map(i => items[i].q.k.k).sort().join(',')}`);
-    list.forEach(i => {
-      c.mark(items[i].q, Object.assign({ a: 'g', t: thread, pm: alertName, m: (reply && reply.name) || '' }, at));
-      c.done.add(items[i].q.k.k);
+  // a flag of this run, or a small one held on an earlier run, as the thread reply and the marks take it
+  const entry = i => ({ q: items[i].q, a: items[i].a, p: pr(i) });
+  const heldEntry = h => ({ q: h, a: pwAlertOfRow_(h.v, h.k), p: null });
+  const join = (entries, thread, alertName, later) => {
+    const reply = pwPostStoryReply_(space, thread, pwStoryReplyText_(entries.map(e => pwStoryView_(e, e.p)), later),
+      `pwg:${alertName}|${entries.map(e => e.q.k.k).sort().join(',')}`);
+    entries.forEach(e => {
+      c.mark(e.q, Object.assign({ a: 'g', t: thread, pm: alertName, m: (reply && reply.name) || '' }, at));
+      c.done.add(e.q.k.k);
     });
-    res.grouped += list.length;
+    res.grouped += entries.length;
     replies++;
   };
   const failed = e => {
     res.problem = `couldn't post in ${space.name}: ${truncate_(String((e && e.message) || e), 120)}`;
     console.warn(`Watch alerts: ${res.problem}`);
   };
+  const repeat = (entries, ref, story) => {
+    entries.forEach(e => c.mark(e.q, Object.assign({ a: 'r' }, at, ref ? { rf: truncate_(String(ref), 60) } : {})));
+    res.repeats += entries.length;
+    console.log(`Watch alerts: ${entries.length} flag${entries.length === 1 ? '' : 's'} not posted: ${ref || 'an earlier alert'} ` +
+      `already covered the story${story ? ` ("${truncate_(String(story), 80)}")` : ''}, and nothing new or bigger came with ` +
+      `${entries.length === 1 ? 'it' : 'them'}`);
+  };
   for (const g of groups) {
     if (c.timeLeft() < PW_MIN_LEFT_MS_) break;
     let members = g.members.slice();
-    if (g.r !== null) {  // the story of an alert posted lately: into its thread, unless the stakes rose
-      const r = recent[g.r];
-      const joining = members.filter(i => !pwStakesRose_(items[i], r));
+    const R = g.r !== null ? stories[g.r] || null : null;
+    if (R && R.thread) {  // the story of an alert posted lately: into its thread, unless the stakes rose
+      const joining = members.filter(i => !pwStakesRose_(items[i], R));
       if (joining.length) {
         if (replies >= PW_STORY_REPLIES_MAX_) continue;  // they wait for the next run
         try {
-          join(joining, r.thread, r.m, true);
+          join(joining.map(entry), R.thread, R.m, true);
         } catch (e) {
           failed(e);
           break;
@@ -1061,9 +1340,43 @@ function pwPostStories_(items, pre, recent, c) {
       }
       members = members.filter(i => joining.indexOf(i) < 0);
       if (!members.length) continue;
+    } else if (R && R.known) {  // a story already alerted: not again, unless the stakes rose or the post reports something new
+      const again = members.filter(i => !pwStakesRose_(items[i], R) && !(pr(i) && pr(i).news));
+      if (again.length) repeat(again.map(entry), R.id, R.story);
+      members = members.filter(i => again.indexOf(i) < 0);
+      if (!members.length) continue;
+    }
+    // not about Google (the pre-read), and no Google product from the listening tool: not posted
+    const off = members.filter(i => pwOffTopic_(items[i], pr(i)));
+    off.forEach(i => {
+      c.mark(items[i].q, Object.assign({ a: 'o' }, at));
+      console.log(`Watch alerts: not posting ${items[i].a.url}: the pre-read says it isn't about Google`);
+    });
+    res.offTopic += off.length;
+    members = members.filter(i => off.indexOf(i) < 0);
+    if (!members.length) continue;
+    // an alert of its own (a flag that matters by itself, or news on a story already alerted), or small posts that wait
+    const waiting = R && R.brew ? R.rows || [] : [];
+    const alone = i => !!pwSolo_(items[i], pr(i)) || !!(R && R.known && pr(i) && pr(i).news);
+    let build = null;
+    if (!members.some(alone)) {
+      const accounts = new Set(members.map(i => pwAccount_(items[i].a, items[i].q.k.k))
+        .concat(waiting.map(h => String(h.k.ac || pwAccount_(pwAlertOfRow_(h.v, h.k), h.k.k)))));
+      if (accounts.size < PW_BREW_MIN_ACCOUNTS_) {  // not a build-up yet: they wait for company
+        const lead = members[0];
+        const bg = R && R.brew ? R.bg : String(items[lead].q.k.k);
+        const story = truncate_(String((pr(lead) && pr(lead).story) || (R && R.brew && R.story) || items[lead].a.issue || '')
+          .replace(/\s+/g, ' ').trim(), 100);
+        members.forEach(i => c.mark(items[i].q, Object.assign({ a: 'b', bg,
+          ac: truncate_(pwAccount_(items[i].a, items[i].q.k.k), 80) }, at, story ? { st: story } : {})));
+        res.held += members.length;
+        continue;
+      }
+      build = { accounts: accounts.size };
     }
     if (res.posted >= c.max) continue;  // waits for the next run (a later story joining a posted alert's thread still goes)
-    // the alert: the story's best post that's new, in English and has something to show
+    // the alert: the story's best post that's new, in English and has something to show (one that matters by itself first)
+    members = members.filter(alone).concat(members.filter(i => !alone(i)));
     let pick = null;
     for (const i of members.slice()) {
       const { q, a } = items[i];
@@ -1104,11 +1417,26 @@ function pwPostStories_(items, pre, recent, c) {
       res.dup++;
       continue;
     }
-    const others = members.filter(i => i !== pick.i);
-    const listed = replies < PW_STORY_REPLIES_MAX_ ? others : [];  // the ones its thread gets this run
+    const others = members.filter(i => i !== pick.i).map(entry).concat(waiting.map(heldEntry));
+    // a story the pre-read wasn't shown but the memory knows (its own same-story test): a repeat, unless the stakes rose
+    if (!R || R.brew) {
+      const rep = pwRepeatOf_(it, pr(pick.i), Date.now() + Math.max(0, c.timeLeft() - PW_MIN_LEFT_MS_));
+      if (rep && !pwStakesRose_(it, rep)) {
+        repeat([entry(pick.i)].concat(others), rep.id, rep.story);
+        continue;
+      }
+    }
+    // the ones its thread gets this run (a build-up's small posts always: they're what the alert is about)
+    const listed = build || replies < PW_STORY_REPLIES_MAX_ ? others : [];
     let msg = null;
     try {
-      const card = pwCardOf_(it, pr(pick.i), pick.post, listed.map(i => items[i]));
+      const card = pwCardOf_(it, pr(pick.i), pick.post, listed);
+      if (build) {
+        const all = [entry(pick.i)].concat(others);
+        card.build = { n: all.length, accounts: build.accounts,
+          ms: c.now - Math.min.apply(null, all.map(e => Number(e.q.k.s) || c.now)),
+          networks: all.map(e => e.a.network), eng: all.reduce((s, e) => s + (Number(e.a.eng) || 0), 0) };
+      }
       msg = pwPostAlert_(space, pwAlertText_(Object.assign(card, { video: !!(pick.pic && pick.pic.video) })),
         `pwa:${it.q.k.w}|${it.q.k.k}`, pick.pic && pick.pic.img);
     } catch (e) {
@@ -1120,19 +1448,27 @@ function pwPostStories_(items, pre, recent, c) {
     }
     const story = truncate_(String((pr(pick.i) && pr(pick.i).story) || it.a.issue || it.a.summary || '').replace(/\s+/g, ' ').trim(), 100);
     c.mark(it.q, Object.assign({ a: 'p', m: (msg && msg.name) || '' }, at, msg && msg.thread ? { t: msg.thread } : {},
-      story ? { st: story } : {}, pick.ids.length ? { th: pick.ids.slice(0, 6) } : {}));
+      story ? { st: story } : {}, pick.ids.length ? { th: pick.ids.slice(0, 6) } : {}, build ? { bu: build.accounts } : {}));
     pwRememberPosted_(msg && msg.name, { sc: it.a.score, br: it.a.bar, tp: it.a.topic, src: it.a.source });
     c.done.add(it.q.k.k);
     pick.ids.forEach(id => c.doneThreadIds.add(id));
     res.posted++;
-    // the story's other posts: one reply in the alert's thread (Chat refusing it leaves them waiting: the next run's
-    // pre-read puts them in this alert's thread, its story being on its key)
+    if (build) res.builds++;
+    // the story's other posts: one reply in the alert's thread (Chat refusing it leaves this run's flags waiting: the
+    // next run's pre-read puts them in this alert's thread, its story being on its key)
+    let joined = false;
     if (listed.length && msg && msg.thread) {
       try {
         join(listed, msg.thread, msg.name, false);
+        joined = true;
       } catch (e) {
         console.warn(`Watch alerts: couldn't add the story's other posts to its alert's thread: ${truncate_(String((e && e.message) || e), 160)}`);
       }
+    }
+    // a build-up's held posts went out with this alert whether or not its thread took their list: never counted towards
+    // another build-up (this run's own flags still wait, and join the alert's thread on the next run)
+    if (build && !joined) {
+      waiting.forEach(h => c.mark(h, Object.assign({ a: 'g', t: (msg && msg.thread) || '', pm: (msg && msg.name) || '' }, at)));
     }
   }
   return res;
@@ -1148,15 +1484,20 @@ function pwPostStories_(items, pre, recent, c) {
  * meaningful, a KOF author first, then the most reach: engagements when every post has a count, else followers) is the
  * alert (its key then says a: 'p', the message, its thread, the space, when and its story), the others go in its
  * thread as one reply (a: 'g'), and a later
- * flag on a posted story joins that alert's thread. A flag waiting longer than PW_ALERT_MAX_AGE_MS_ since it was seen
+ * flag on a posted story joins that alert's thread. Only a flag that matters by itself gets an alert of its own (pwSolo_:
+ * a KOF author, PW_SOLO_MIN_ENG_ engagements, a P0 tag): a small one waits (a: 'b') and goes out with the others on its
+ * story, as ONE alert, once PW_BREW_MIN_ACCOUNTS_ accounts tell it within PW_BREW_WINDOW_MS_ (one that never gets company
+ * stays on the tab, unposted). A flag on a story already alerted in the last PW_REPEAT_MS_ (any flow) isn't posted again
+ * (a: 'r') unless the stakes rose or it reports something new, and one the pre-read says isn't about Google isn't posted
+ * (a: 'o'). A flag waiting longer than PW_ALERT_MAX_AGE_MS_ since it was seen (or queued again: pwRequeue_)
  * is dropped (a: 'x'); one for a post or conversation thread already alerted (by another watch, Burson, or any flow in
  * the Alert log) isn't posted again (a: 'd'); one with nothing to show (no summary, text or picture) is never posted as
  * a bare link (a: 'n'). Nothing goes out while B35 is OFF or the destination can't take them (they wait), nor while the
  * destination space's flow ran out of time. `left`: ms of the run left; `opts`: {ss, otherBusy, acBusy}. {posted,
- * grouped, waiting, dropped, problem, error}. Never throws.
+ * grouped, held, repeats, offTopic, builds, waiting, dropped, problem, error}. Never throws.
  */
 function pwPostAlerts_(sh, dest, now, left, opts) {
-  const out = { posted: 0, grouped: 0, waiting: 0, dropped: 0, problem: '', error: false };
+  const out = { posted: 0, grouped: 0, held: 0, repeats: 0, offTopic: 0, builds: 0, waiting: 0, dropped: 0, problem: '', error: false };
   try {
     const block = pwDetRows_(sh, PW_DET_READ_ROWS_);
     const queued = [];
@@ -1180,12 +1521,11 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
         same(q);
         return false;
       }
-      if (now - (Number(q.k.s) || 0) <= PW_ALERT_MAX_AGE_MS_) return true;
+      if (now - Math.max(Number(q.k.s) || 0, Number(q.k.rq) || 0) <= PW_ALERT_MAX_AGE_MS_) return true;
       mark(q, { a: 'x' });
       out.dropped++;
       return false;
     });
-    let skipped = 0;  // fresh flags not posted: their post or thread already alerted, non-English, or nothing to show
     let problem = !dest || !dest.choice ? 'Watch alerts (row 35) is OFF' : dest.problem || '';
     if (!problem && dest.choice === 'mirror' && pwMirrorBusy_()) {
       problem = 'the Mirror space\'s flow ran out of time on its last run (Burson\'s alerts come first)';
@@ -1196,35 +1536,50 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     }
     if (!problem) {
       const max = (dest.choice === 'mirror' || dest.choice === 'autocorrect') ? PW_ALERTS_MAX_MIRROR_ : PW_ALERTS_MAX_OTHER_;
-      fresh.sort((a, b) => (Number(b.k.sc) || 0) - (Number(a.k.sc) || 0) || (Number(a.k.s) || 0) - (Number(b.k.s) || 0));
+      // the flags that matter by themselves first (a KOF author, PW_SOLO_MIN_ENG_ engagements), so the small ones never
+      // crowd them out of a run's pre-read; then the highest scores, the oldest first
+      const big = q => ((q.k.x && q.k.x.k === true) || (Number(q.v[PW_COL_.eng - 1]) || 0) >= PW_SOLO_MIN_ENG_ ? 1 : 0);
+      fresh.sort((a, b) => big(b) - big(a) || (Number(b.k.sc) || 0) - (Number(a.k.sc) || 0) || (Number(a.k.s) || 0) - (Number(b.k.s) || 0));
       const timeLeft = () => (typeof left === 'function' ? left() : Infinity);
       // a post two watches flagged is one flag: the highest-scored one's (the other's says a: 'd')
       const keys = new Set();
       const items = [];
       for (const q of fresh) {
         if (items.length >= PW_PREREAD_MAX_) break;
-        if (keys.has(q.k.k)) { same(q); skipped++; continue; }
+        if (keys.has(q.k.k)) { same(q); continue; }
         keys.add(q.k.k);
         items.push({ q, a: pwAlertOfRow_(q.v, q.k) });
       }
-      const recent = pwRecentStories_(block, dest, now);
+      const recent = pwRecentStories_(block, dest, now, PW_STORY_POOL_MAX_).concat(pwBrewing_(block, now, PW_BREW_POOL_MAX_));
       const read = pwPreReadFor_(items, recent, timeLeft, now);
       if (read.wait) {
         problem = read.wait;
       } else {
-        const res = pwPostStories_(items, read.pre, recent, { dest, now, max, timeLeft, done, doneThreadIds, mark, same });
+        const res = pwPostStories_(items, read.pre, read.recent || recent,
+          { dest, now, max, timeLeft, done, doneThreadIds, mark, same });
         out.posted = res.posted;
         out.grouped = res.grouped;
+        out.held = res.held;
+        out.repeats = res.repeats;
+        out.offTopic = res.offTopic;
+        out.builds = res.builds;
         out.dropped += res.empty;
-        skipped += res.dup + res.empty;
         if (res.problem) problem = res.problem;
       }
     }
-    out.waiting = Math.max(0, fresh.length - out.posted - out.grouped - skipped);
+    // still waiting: the fresh flags this run decided nothing about (their key wasn't written)
+    const decided = new Set(writes.map(w => w[0]));
+    out.waiting = fresh.filter(q => !decided.has(q.i)).length;
     out.problem = problem;
     writes.forEach(([i, k]) => sh.getRange(block.first + i, PW_COL_.key).setValue(JSON.stringify(k)));
+    if (out.held || out.repeats || out.offTopic) {
+      console.log(`Watch alerts: not posted on their own: ${out.held} small (waiting for ${PW_BREW_MIN_ACCOUNTS_} accounts on one ` +
+        `story), ${out.repeats} on a story already alerted, ${out.offTopic} not about Google`);
+    }
+    if (out.posted || out.grouped || out.held || out.repeats || out.offTopic) {
+      pwAlertDay_(out.posted, out.grouped, { builds: out.builds, held: out.held, repeats: out.repeats, offTopic: out.offTopic });
+    }
     if (out.posted || out.grouped) {
-      pwAlertDay_(out.posted, out.grouped);
       console.log(`Watch alerts: ${out.posted} posted${out.grouped ? `, ${out.grouped} added to their story's thread` : ''} ` +
         `in ${dest.space.name}${out.waiting ? `, ${out.waiting} waiting` : ''}`);
     }
@@ -1243,7 +1598,7 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
 function pwAlertsIdle_(control, raw, watchOn) {
   try {
     writeWatchAlertsNote_(control, pwAlertsNoteText_({ choice: pwAlertsChoice_(raw), space: null, problem: '' }, null, watchOn,
-      pwAlertDay_(0), pwAlertDayGrouped_()));
+      pwAlertDay_(0), pwAlertDayGrouped_(), pwAlertDayMore_()));
   } catch (e) {
     console.error('could not write C35 (Watch alerts): ' + ((e && e.message) || e));
   }

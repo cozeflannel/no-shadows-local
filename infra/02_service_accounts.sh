@@ -46,7 +46,7 @@ bind "serviceAccount:${SCHEDULER_SA}" roles/run.invoker
 
 # The Studio custom steps call the Agent Runtime's :query with the Triage Agent account's OAuth token
 # (ScriptApp.getOAuthToken), which needs aiplatform.reasoningEngines.query (in roles/aiplatform.user).
-if [[ "${TRIAGE_AGENT_ACCOUNT}" == *@example.com ]]; then
+if [[ "${TRIAGE_AGENT_ACCOUNT}" == *@domain.invalid ]]; then
   echo "Skipping the Triage Agent account binding: set TRIAGE_AGENT_ACCOUNT in infra/.env and re-run."
 else
   echo "Triage Agent account (Studio flows -> Agent Runtime):"

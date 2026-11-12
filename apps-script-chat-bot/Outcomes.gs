@@ -30,8 +30,8 @@
  * deadline and 24 hours after the send, when those come first). The alerts sent in the last week that aren't on it are
  * added from the Alert log when the switch is turned on (the first run after 30 minutes without one, so an alert sent
  * while it was OFF is tracked too), and once a day after that (one the list missed). The `outcome` column is written
- * before the note goes out, so no outcome is ever noted twice. C21 adds up the main space's list and the auto-correct
- * space's (script property OUTCOME_FLOWS).
+ * before the note goes out, so no outcome is ever noted twice. C21 adds up the main space's list, the auto-correct
+ * space's and the Other alerts space's (script property OUTCOME_FLOWS).
  */
 
 const OUTCOME_WATCH_DAYS_ = 7;                            // how long after its send a Social Alert's thread is read
@@ -44,7 +44,7 @@ const OUTCOME_MEMO_MAX_ = 8000;                           // characters: a scrip
 const OUTCOME_SEED_EVERY_MS_ = 24 * 3600 * 1000;          // the list is topped up from the Alert log once this often…
 const OUTCOME_GAP_MS_ = 30 * 60 * 1000;                   // …and on the first run after this long without one (turned back on)
 const OUTCOME_LAST_EVERY_MS_ = 5 * 60 * 1000;             // how often a run notes that it ran (ctx.memo 'outcome_last')
-const OUTCOME_FLOWS_PROP_ = 'OUTCOME_FLOWS';              // C21: each space's figures, {main|ac: {watching, day, n, at}}
+const OUTCOME_FLOWS_PROP_ = 'OUTCOME_FLOWS';              // C21: each space's figures, {main|ac|os: {watching, day, n, at}}
 const OUTCOME_FLOW_FRESH_MS_ = 3 * 3600 * 1000;           // a space that hasn't checked for this long is left out of "tracking"
 const OUTCOME_LABELS_ = ['Resolved', 'T&S confirmed', 'Comms replied', 'Product replied'];  // strongest first
 const OUTCOME_COMMS_CODES_ = ['gcpa', 'people_comms', 'exec_comms', 'stop_leaks', 'crisis'];  // the comms teams' groups
@@ -417,9 +417,10 @@ function countOutcomes_(ctx, n) {
 }
 
 /**
- * Column C of the switch: how many sent alerts are tracked, the last check, and today's outcomes, for the main space and
- * the auto-correct space together (each has its own list; script property OUTCOME_FLOWS keeps both). A space that hasn't
- * checked for 3 hours is left out of "tracking"; its outcomes today stay. Never throws.
+ * Column C of the switch: how many sent alerts are tracked, the last check, and today's outcomes, for the main space,
+ * the auto-correct space and the Other alerts space together (each has its own list; script property OUTCOME_FLOWS keeps
+ * each one's figures under its own key). A space that hasn't checked for 3 hours is left out of "tracking"; its outcomes
+ * today stay. Never throws.
  */
 function noteOutcomes_(ctx, watching) {
   try {
@@ -437,7 +438,7 @@ function noteOutcomes_(ctx, watching) {
     let flows = {};
     try { flows = JSON.parse(props.getProperty(OUTCOME_FLOWS_PROP_) || '{}') || {}; } catch (e) { flows = {}; }
     if (typeof flows !== 'object' || Array.isArray(flows)) flows = {};
-    flows[ctx.sourceReadOnly ? 'ac' : 'main'] = { watching, day, n, at };
+    flows[ctx.sourceReadOnly ? 'ac' : ctx.otherSpace ? 'os' : 'main'] = { watching, day, n, at };
     props.setProperty(OUTCOME_FLOWS_PROP_, JSON.stringify(flows));
     const all = Object.keys(flows).map(k => flows[k] || {});
     const tracked = all.filter(f => at - Number(f.at || 0) < OUTCOME_FLOW_FRESH_MS_)

@@ -10,7 +10,12 @@ OAUTH_CLIENT_JSON_ARG=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --oauth-client-json)
-      OAUTH_CLIENT_JSON_ARG="${2:-}"
+      if [[ $# -lt 2 ]]; then
+        echo "Missing path for --oauth-client-json" >&2
+        echo "Usage: ./setup.sh [--oauth-client-json /path/to/client_secret.json]" >&2
+        exit 1
+      fi
+      OAUTH_CLIENT_JSON_ARG="$2"
       shift 2
       ;;
     *)

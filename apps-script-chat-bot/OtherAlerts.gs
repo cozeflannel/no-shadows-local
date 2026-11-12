@@ -526,7 +526,7 @@ function otherDecide_(ctx, parsed, tri, llm, history, now) {
   const base = d.slrr && d.slrr.sure ? d.slrr.esc : escalation_(fields, { now });
   const aiReasons = Object.assign({}, review.groupReasons || {});
   if (tri && tri.action === 'no_action' && !(view && view.is) &&
-      !(tri.risks || []).some(r => ['child_safety', 'scam', 'security_privacy'].includes(r))) {
+      !(tri.risks || []).some(r => ['safety', 'tns'].includes(r))) {
     delete aiReasons.tns;
   }
   const input = Object.assign(emailInput_(fields, base, switchOn_(ctx, 'noWait')), { ai_reasons: aiReasons });
@@ -1120,6 +1120,13 @@ function otherTriagePrompts_(parsed, media) {
         ? 'The alert card already shows a quick pre-read (card_products, card_exposure_tag, card_sensitive_topics: a ' +
           'lightweight AI pass or the listening tool\'s own tags): confirm or correct them in `slrr`. same_story_coverage ' +
           'names other posts on the same story listed in this alert\'s thread: weigh their combined reach, never a second alert.\n'
+        : '') +
+      ((o.unknown || []).some(u => u && String(u.label || '') === 'build_up')
+        ? 'build_up: this alert was posted because several small accounts told the same story within hours, none of them ' +
+          'notable alone. Judge the story and its collective momentum (how many accounts, how fast, on which networks), ' +
+          'not this one post\'s engagement: a genuine Google issue that is building is worth a `flag`, or `escalate` when ' +
+          'the story itself warrants a Social Alert; coordinated spam, reposts of one routine news item or unrelated gripes ' +
+          'are `no_action`.\n'
         : '')
     : '';
   const system =

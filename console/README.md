@@ -14,7 +14,7 @@ for the Triage Agent account (email doorbell).
 
 ```bash
 # 1. Seed ~2 weeks of synthetic data into .local/demo.db (deterministic; --reset recreates the file)
-.venv/bin/python -m console.backend.seed_demo --reset
+.venv/bin/python -m tests._console_fixtures.seed_demo --reset
 #    options: --db PATH (default $TRIAGE_LOCAL_DB or .local/demo.db), --now 2026-10-13T10:05:00+00:00,
 #             --days 14, --seed 20261013. Refuses to run with TRIAGE_BACKEND=gcp.
 
@@ -184,7 +184,7 @@ identity-scope aliases, and reconnect after a read-scope change.
 | `backend/routes_*.py` | Metrics, cases (activity, review, parity, escalations, outbox), rosters, settings, learning |
 | `backend/gmail_oauth.py` | Gmail OAuth for IMs and the agent account |
 | `backend/serializers.py` | Case / escalation / event JSON, event descriptions |
-| `backend/seed_demo.py`, `backend/demo_*.py` | Demo data generator |
+| `../tests/_console_fixtures/seed_demo.py`, `demo_*.py` | Demo data generator (kept with the tests) |
 | `frontend/src/pages/` | One component per page |
 | `frontend/src/components/` | Layout, case drawer, charts, schedule, roster and settings editors, UI kit |
 | `frontend/src/api/` | Typed API client, hooks and response types |

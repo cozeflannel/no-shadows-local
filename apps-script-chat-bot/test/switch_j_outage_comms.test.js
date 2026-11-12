@@ -311,7 +311,7 @@ An X user (@inboxwatcher; 51200 followers) posted that the Gemini app has been d
     let reviews = 0;
     w.vertex.assess = () => { reviews++; return gemini(COMMS()); };
     w.vertex.grounding = SOURCES;
-    w.gmail.fail = (method, path) => (path === 'messages/send' ? { code: 500, body: { error: { message: 'backend error' } } } : null);
+    w.gmail.fail = (method, path) => (path === 'messages/send' ? { code: 429, body: { error: { message: 'rate limit exceeded' } } } : null);
     w.paste(OUTAGE);
     w.run();
     eq([w.gmail.sentMessages().length, w.alertRows()[0].email_status], [0, 'pending']);

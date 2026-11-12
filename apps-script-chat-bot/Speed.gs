@@ -45,7 +45,10 @@
  * poll() calls maybeRefreshSpeed_() at the end of every run: the tab is rebuilt right after a run that handled an alert
  * or sent an email (at most once a minute), otherwise every 10 minutes, and only with a minute left in the run. BigQuery
  * reads are reused for 5 minutes; Gemini writes a new summary only when the numbers changed, at most every 25 minutes.
- * refreshResults() rebuilds it now (refreshSpeed() is its old name).
+ * refreshResults() rebuilds it now (refreshSpeed() is its old name). The tab is the bot's own: its title in A1 (or its
+ * alerts table) says so (isResultsTab_). A tab named Results that the bot didn't make is never cleared or written (the
+ * Control tab's Status says so until it's renamed, and the bot then makes its own), and a tab named Speed that the bot
+ * didn't make is never renamed.
  *
  * Learn from IM calls (Control tab row 17, OFF by default): after each rebuild, the alerts where the bot and the IMs made
  * a different Social Alert call (the IMs decided: WHERE THE BOT AND THE IMs DIFFERED) go on the bot's own "Learned
@@ -84,6 +87,10 @@ const RESULTS_NO_LINK_ = 'Can\'t tell (no link)';
 const RESULTS_BOT_SENT_ = 'Bot sent it';  // the IMs' call when the bot sent the Social Alert itself (Auto-send, live)
 const RESULTS_WIDE_ = 8;  // the long texts (what's counted, the summary, notes) are merged across A:H
 const RESULTS_TITLE_ = 'Results: what the bot did with Burson\'s alerts, next to what the IMs did';
+// The titles the bot has written in the tab's A1 over time: today's, and the Speed tab's (the tab's old name). How the
+// bot knows a tab named Results (or Speed) is its own (isResultsTab_): a tab people made is never cleared or written
+const RESULTS_OWN_TITLES_ = [RESULTS_TITLE_, 'Bot vs IMs: how fast the Social Alert email goes out'];
+const RESULTS_BLOCKED_PROP_ = 'RESULTS_BLOCKED';  // 'true' while a "Results" tab the bot didn't make is in the way (Status, B5, says so)
 const RESULTS_HEADER_ = ['Burson posted (ET)', 'Post', 'Product', 'Issue', 'What Burson got wrong', 'Bot\'s call', 'IMs\' call',
   'Same call?', 'Bot: minutes to email', 'IMs: minutes to email', 'Who sent first', 'Why (bot)', 'Test spaces',
   'IMs\' time is from', 'IMs\' subject', 'IM', 'Bot alert ids', 'post key', 'IM email at (ms)', 'IM checks', 'IM checked at (ms)'];
@@ -115,6 +122,10 @@ function refreshResults() {
     }
   }
   const out = refreshSpeed_(ss, ctx, { flows: resultsFlows_(ctx, ac, cfg), fresh: true });
+  if (out.blocked) {  // a "Results" tab the bot didn't make: left as it is (refreshSpeed_ says so in the log and on the Control tab)
+    console.warn(`Results tab not rebuilt: ${resultsBlockedText_()}`);
+    return null;
+  }
   console.log(`${out.synopsis.text}\n\n${JSON.stringify(out.facts, null, 2)}`);
   return out.facts;
 }
@@ -192,12 +203,20 @@ function maybeRefreshSpeed_(ss, ctx, opts) {
  * Rebuilds the Results tab: {posts, summary, older, facts, synopsis}. Throws when BigQuery can't be read and there's no
  * earlier read to fall back on (the tab keeps its last numbers rather than calling every IM alert missing). opts:
  * flows (resultsFlows_), activity, deadline, fresh (BigQuery read now); tests: alerts (the Alert log's rows),
- * drafts(since) and logged(since) (instead of BigQuery).
+ * drafts(since) and logged(since) (instead of BigQuery). {blocked: true} (no summary, facts or synopsis) when a tab
+ * named Results that the bot didn't make is in the way: that tab is left as it is (never cleared or written),
+ * nothing is looked up, and the Control tab's Status (B5) says so until it's renamed (resultsBlockedNote_).
  */
 function refreshSpeed_(ss, ctx, opts) {
   const o = opts || {};
   const S = ctx.settings || {};
   const now = ctx.now();
+  const blocked = resultsTabForeign_(ss);
+  noteResultsBlocked_(blocked);
+  if (blocked) {
+    console.warn(`Results tab not updated: a "${RESULTS_TAB_}" tab the bot didn't make is there (left as it is)`);
+    return { posts: [], summary: null, older: 0, facts: null, synopsis: null, blocked: true };
+  }
   const days = Math.max(1, Number(S.speed_days) || 7);
   const since = now - days * SPEED_DAY_;
   const flows = resultsFlowsResolved_(ctx, o);
@@ -211,6 +230,8 @@ function refreshSpeed_(ss, ctx, opts) {
   const posts = speedPosts_(rows, im.drafts, im.logged, flows, taken).filter(p => p.burson_at >= since);
   const withOutcome = switchOn_(ctx, 'trackOutcomes');  // the Outcome column (Track post-alert outcomes)
   const sh = ensureResultsTab_(ss, withOutcome);
+  // null: a tab the bot didn't make took the name since the check above. Left as it is; the next rebuild notes it
+  if (!sh) throw new Error(`a "${RESULTS_TAB_}" tab the bot didn't make is in the way: left as it is`);
   const own = botEmailThreads_(all);  // the bot's own emails (either space)
   const timeLeft = ms => !o.deadline || o.deadline - ctx.now() > ms;
   // A post without a link can't be matched with the IMs' email or draft
@@ -1157,9 +1178,11 @@ function resultsRowHeight_(text) {
  * Writes the whole tab (values first, then the formats): the summary sections, then the alerts table, whose header row
  * moves with the summary's length (readSpeedState_ finds it). r: {posts, summary, synopsis, now, stale, outcome (the
  * Outcome column: Track post-alert outcomes ON), noWait (Never wait on Burson ON: the labels say the bot fixed the
- * mistakes and told Burson; OFF, that it asked Burson to fix them, as before)}.
+ * mistakes and told Burson; OFF, that it asked Burson to fix them, as before)}. Refuses (throws, nothing cleared or
+ * written) unless the tab is the one the bot made (isResultsTab_).
  */
 function writeResultsTab_(sh, r) {
+  if (!isResultsTab_(sh)) throw new Error(`"${sh && sh.getName()}" isn't the bot's ${RESULTS_TAB_} tab: left as it is`);
   const s = r.summary;
   const days = s.days;
   const mainLabel = s.mainLabel || 'Mirror space';
@@ -1264,7 +1287,13 @@ function writeResultsTab_(sh, r) {
   r.posts.forEach(p => add(resultsRow_(p, mainLabel, !!r.outcome, r.noWait)));
 
   const prev = sh.getLastRow();
-  sh.clearContents();
+  const prevCols = sh.getLastColumn();
+  // The bot's mark (its title in A1: isResultsTab_) goes in first and is never cleared, so a rebuild that stops before
+  // the values are written (a Sheets error, the run's time) leaves a tab the next rebuild still knows as its own. Then
+  // every other cell the last rebuild left is cleared
+  sh.getRange(1, 1).setValue(RESULTS_TITLE_);
+  if (prevCols > 1) sh.getRange(1, 2, 1, prevCols - 1).clearContent();
+  if (prev > 1) sh.getRange(2, 1, prev - 1, Math.max(prevCols, 1)).clearContent();
   const fmt = f => { try { f(); } catch (e) { /* formatting only */ } };
   fmt(() => sh.clearFormats());  // the bold headers and merged notes move with the summary's length
   fmt(() => sh.getRange(1, 1, Math.max(prev, out.length, 6), width).breakApart());
@@ -1289,16 +1318,85 @@ function writeResultsTab_(sh, r) {
 }
 
 /**
- * The Results tab (after Guidance), created if missing; an existing Speed tab (its old name) is renamed in place, so it
- * keeps its position. Column widths are set when it's new, renamed, or its layout changed (withOutcome: the Outcome
- * column, Track post-alert outcomes).
+ * Is this the Results tab the bot made (or its Speed tab, the tab's old name)? Its A1 is a title the bot wrote there
+ * (RESULTS_OWN_TITLES_: today's, or the Speed tab's); or, should someone have changed A1, it still has the bot's alerts
+ * table: a row starting "Burson posted (ET)" that has the hidden "post key" column (the Results layout and the Speed
+ * tab's both have one: readSpeedState_). A tab people made has neither, and an empty tab isn't the bot's: such a tab is
+ * never cleared, renamed or written.
+ */
+function isResultsTab_(sh) {
+  try {
+    if (!sh) return false;
+    const last = sh.getLastRow();
+    if (last < 1) return false;
+    if (RESULTS_OWN_TITLES_.includes(String(sh.getRange(1, 1).getDisplayValue()).trim())) return true;
+    const width = Math.max(1, sh.getLastColumn());
+    const first = sh.getRange(1, 1, last, 1).getValues();
+    for (let i = 0; i < first.length; i++) {
+      if (String(first[i][0]).trim() !== RESULTS_HEADER_[0]) continue;
+      if (sh.getRange(i + 1, 1, 1, width).getValues()[0].some(v => String(v).trim() === 'post key')) return true;
+    }
+    return false;
+  } catch (e) {
+    return false;
+  }
+}
+
+/** A tab named Results that the bot didn't make is in the way (refreshSpeed_ then leaves it as it is). */
+function resultsTabForeign_(ss) {
+  const sh = ss.getSheetByName(RESULTS_TAB_);
+  return !!sh && !isResultsTab_(sh);
+}
+
+/** Why the Results tab isn't updated while a tab people made has its name (the Control tab's Status, and the log). */
+function resultsBlockedText_() {
+  return `a tab named "${RESULTS_TAB_}" that the bot didn't make is in the way (or its title in A1 and its alerts table ` +
+    'were both changed). Rename that tab, and the bot makes its own.';
+}
+
+/**
+ * Remembers whether a "Results" tab the bot didn't make is in the way (`blocked`: RESULTS_BLOCKED_PROP_), for the
+ * Control tab's Status (resultsBlockedNote_); forgotten at the first rebuild once it's gone. Never throws.
+ */
+function noteResultsBlocked_(blocked) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const was = props.getProperty(RESULTS_BLOCKED_PROP_) === 'true';
+    if (blocked && !was) props.setProperty(RESULTS_BLOCKED_PROP_, 'true');
+    if (!blocked && was) props.deleteProperty(RESULTS_BLOCKED_PROP_);
+  } catch (e) {
+    console.error('could not note the Results tab for the Control tab: ' + ((e && e.message) || e));
+  }
+}
+
+/**
+ * Control tab: why the Results tab isn't being updated ('' when it is, or when the tab is off in the settings), for the
+ * status line (Main.gs poll(): B5). Never throws.
+ */
+function resultsBlockedNote_() {
+  try {
+    if ((GEN.settings || {}).speed_tab === false) return '';
+    if (PropertiesService.getScriptProperties().getProperty(RESULTS_BLOCKED_PROP_) !== 'true') return '';
+    return `The Results tab isn't being updated: ${resultsBlockedText_()}`;
+  } catch (e) {
+    return '';
+  }
+}
+
+/**
+ * The Results tab (after Guidance), created if missing, with its title in A1 at once (the bot's mark: isResultsTab_);
+ * the bot's own Speed tab (its old name) is renamed in place, so it keeps its position. Column widths are set when it's
+ * new, renamed, or its layout changed (withOutcome: the Outcome column, Track post-alert outcomes). null when a tab
+ * named Results exists that the bot didn't make: that tab is never cleared or written. A tab named Speed that the bot
+ * didn't make is left as it is too (never renamed): the bot makes its own Results tab beside it.
  */
 function ensureResultsTab_(ss, withOutcome) {
   let sh = ss.getSheetByName(RESULTS_TAB_);
+  if (sh && !isResultsTab_(sh)) return null;
   let renamed = false;
   if (!sh) {
     const old = ss.getSheetByName(SPEED_TAB_);
-    if (old) {
+    if (old && isResultsTab_(old)) {
       old.setName(RESULTS_TAB_);
       sh = old;
       renamed = true;
@@ -1307,6 +1405,7 @@ function ensureResultsTab_(ss, withOutcome) {
   const created = !sh;
   if (created) {
     sh = ss.insertSheet(RESULTS_TAB_, Math.min(3, ss.getSheets().length));
+    sh.getRange(1, 1).setValue(RESULTS_TITLE_);
     sh.protect().setDescription('Written by the Burson QA bot').setWarningOnly(true);
   }
   const props = PropertiesService.getScriptProperties();

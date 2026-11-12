@@ -1,3 +1,4 @@
-test/**
-*.md
-.DS_Store
+**/**
+!Code.gs
+!Sidebar.html
+!appsscript.json

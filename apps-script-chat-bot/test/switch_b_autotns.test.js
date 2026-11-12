@@ -241,7 +241,7 @@ module.exports = H => {
     const w = standInWorld();
     let sends = 0;
     w.gmail.fail = (method, path) => (method === 'post' && path === 'messages/send' && [2, 3].includes(++sends)  // the Social Alert
-      ? { code: 500, body: { error: { code: 500, message: 'Backend Error' } } } : null);
+      ? { code: 429, body: { error: { code: 429, message: 'Rate Limit Exceeded' } } } : null);
     zapier(w, F.PARIS);
     const r = runWith(w, { switches: ON });
     eq([r.tns_auto, w.alertRows()[0].email_status, w.alertRows()[0].email_attempts, notes(w), sends], [1, 'pending', 2, [], 3]);
@@ -677,7 +677,7 @@ module.exports = H => {
     const failSends = (w, which) => {
       let sends = 0;
       w.gmail.fail = (method, path) => (method === 'post' && path === 'messages/send' && which(++sends)  // the Social Alert
-        ? { code: 500, body: { error: { code: 500, message: 'Backend Error' } } } : null);
+        ? { code: 429, body: { error: { code: 429, message: 'Rate Limit Exceeded' } } } : null);
     };
     const w = standInWorld();
     failSends(w, n => [2, 3].includes(n));

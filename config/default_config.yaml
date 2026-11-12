@@ -91,7 +91,7 @@ burson_qa:
   kof_no_alert_judgment: false   # true = Gemini's own "mistake" / "not actionable" reading alone may ❌ a KOF alert too (off: it disagreed with the IMs on 8 of 15 in May-June)
   guidance_from_email: true      # Gemini also reads the SLRR leads' recent emails about alerts (plus the sheet's Guidance tab)
   guidance_email_days: 7
-  speed_tab: true                # the Speed tab: how fast the bot sent each Social Alert vs the IMs, matched on the post's link (every 15 min)
+  speed_tab: true                # the Results tab: how fast the bot sent each Social Alert vs the IMs, matched on the post's link (every 10 min)
   speed_days: 7                  # the summary covers the alerts of the last N days
   speed_im_table: brand-social-central-data.slrr_feedback.alert_sends   # the IMs' Social Alert drafts (SLRR Assistant)
   speed_log_table: brand-social-central-data.slrr_alerts.slrr_alerts    # the IMs' actioned alerts (backs up their call)

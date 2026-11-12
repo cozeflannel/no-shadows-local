@@ -17,6 +17,17 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def utc_isoformat(value: datetime) -> str:
+    """ISO text of `value` in UTC, for bounds that are compared as text with stored UTC timestamps.
+
+    An aware datetime in another zone (e.g. local midnight) is converted first; a naive one is
+    taken to be UTC already.
+    """
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat()
+
+
 # ---------------------------------------------------------------------------
 # Chat input (normalized from Workspace Studio starter variables)
 # ---------------------------------------------------------------------------

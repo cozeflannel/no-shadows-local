@@ -836,10 +836,9 @@ function parseWebVttOrSrt_(raw) {
 /**
  * Extract a text transcript for any video or audio clip on an alert (`parsed`), using:
  *   1. Pre-extracted transcript fields on `parsed.transcript`, `parsed.fields.transcript`, `parsed.post`, or `parsed.bq`
- *   2. Custom `opts.transcribe(parsed, opts)` hook when provided
- *   3. Subtitle / caption tracks (`vtt` / `srt` URL or inline text on `parsed.post.video` or `parsed.bq`)
- *   4. YouTube TimedText caption API (`fetchYouTubeTranscript_`) for YouTube links
- *   5. Google Cloud Speech-to-Text REST API (`transcribeWithSpeechApi_`) for video and audio clips (including clips > 50 MB,
+ *   2. Subtitle / caption tracks (`vtt` / `srt` URL or inline text on `parsed.post.video` or `parsed.bq`)
+ *   3. YouTube TimedText caption API (`fetchYouTubeTranscript_`) for YouTube links
+ *   4. Google Cloud Speech-to-Text REST API (`transcribeWithSpeechApi_`) for video and audio clips (including clips > 50 MB,
  *      long videos > 1 min, audio files, or when run time is < 90 s and direct video download is skipped)
  *
  * Returns `{text, label, kind: 'video' | 'audio', source, duration_s}` or `null` when no clip or transcript is available.
@@ -900,26 +899,7 @@ function extractMediaTranscript_(parsed, opts) {
 
   if (!clipLabel) return null;
 
-  // 2. Custom transcribe hook (e.g. injected by caller or tests)
-  if (opts && typeof opts.transcribe === 'function') {
-    try {
-      const custom = opts.transcribe(parsed, opts);
-      if (custom && (typeof custom === 'string' || custom.text)) {
-        const text = String(typeof custom === 'string' ? custom : custom.text).trim();
-        if (text) {
-          return {
-            text: text.slice(0, TRANSCRIPT_MAX_CHARS_),
-            label: (custom && custom.label) || clipLabel,
-            kind: (custom && custom.kind) || kind,
-            source: (custom && custom.source) || 'custom_transcribe',
-            duration_s: Number(custom && custom.duration_s) || durationHint,
-          };
-        }
-      }
-    } catch (e) {}
-  }
-
-  // 3. Subtitle / caption track URL (.vtt / .srt) on post.video or bq
+  // 2. Subtitle / caption track URL (.vtt / .srt) on post.video or bq
   const subUrl = String(
     (video && (video.subtitles_url || video.captions_url || video.subtitle_url || video.vtt_url)) ||
     bq.subtitles_url || bq.captions_url || ''
@@ -946,7 +926,7 @@ function extractMediaTranscript_(parsed, opts) {
     } catch (e) {}
   }
 
-  // 4. YouTube TimedText caption API
+  // 3. YouTube TimedText caption API
   const ytTarget = youtubeUrl_(f.post_url) || (attached && youtubeUrl_(attached.uri));
   if (ytTarget) {
     const ytTr = fetchYouTubeTranscript_(ytTarget);
@@ -961,7 +941,7 @@ function extractMediaTranscript_(parsed, opts) {
     }
   }
 
-  // 5. Google Cloud Speech-to-Text API for GCS URIs, audio files, or video URLs (never downloads post.video.url into memory)
+  // 4. Google Cloud Speech-to-Text API for GCS URIs, audio files, or video URLs (never downloads post.video.url into memory)
   const gcsUri = [
     attached && /^gs:\/\//i.test(String(attached.uri || '')) ? attached.uri : '',
     f.gcs_media_uri,

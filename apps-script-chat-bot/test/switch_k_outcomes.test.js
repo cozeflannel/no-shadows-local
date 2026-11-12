@@ -514,7 +514,10 @@ module.exports = H => {
     const off = results(withOutcomes(), B.switchesOff_(), on.ss);
     const h2 = off.tab.rows.findIndex(x => x[0] === 'Burson posted (ET)' && x.includes('post key'));
     eq([off.tab.rows[h2].includes('Outcome'), hidden(off.tab), off.ss.layout], [false, [18, 19, 20, 21], '1']);
-    eq(off.tab.rows.slice(0, off.tab.rows.length), plain.tab.rows);
+    // (the rebuild clears the last one's cells rather than the whole sheet, and the fake sheet keeps a cleared cell as ''
+    // at the end of a row, where Sheets has nothing: empty trailing cells are set aside)
+    const cells = rows => rows.map(r => { const x = r.slice(); while (x.length && x[x.length - 1] === '') x.pop(); return x; });
+    eq(cells(off.tab.rows), cells(plain.tab.rows));
     // The post's outcome, from each space's rows (pure)
     const posts = B.speedPosts_(withOutcomes(), [], [], R_FLOWS);
     const a = posts.find(p => p.key === 'x:20001');

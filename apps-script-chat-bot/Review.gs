@@ -3,15 +3,16 @@
  *
  * Pure: Gemini's judgment is passed in (opts.llm), so tests can script it. Deterministic rules mirror
  * triage_agent/qa/rules.py + requirements.py (the field-level subset V1 needs), enhanced with DSD & Brandy
- * multimodal video/audio verification, vector database semantic similarity, and Critic/Arbiter proportionality:
+ * multimodal video/audio verification, similarity by meaning (Vertex AI embeddings compared in Apps Script: Vectors.gs,
+ * AlertMemory.gs; no vector database), and Critic/Arbiter proportionality:
  *   - exposure tag renamed/merged -> new name; priority banner must match the tag's priority
  *   - Sensitive Topic aliases -> current names
  *   - removed product (e.g. Gems) -> its replacement; product aliases are accepted as written
  *   - Social Network must match the link's domain
  *   - engagement level from the count (KOF authors -> VIRAL KOF); KOF = Yes when the author is on a KOF list
  *     (including live BMIE and BSIP KOF/KOL lookup)
- *   - "New" issue that was already reported in the last 14 days (via Jaccard token overlap OR BigQuery Vector Database
- *     `DSD.content_vectors` cosine similarity) -> "Ongoing Issue"
+ *   - "New" issue that was already reported in the last 14 days (by Jaccard token overlap, or the same story by meaning in
+ *     the shared alert memory: AlertMemory.gs, passed in as opts.memoryStory) -> "Ongoing Issue"
  *   - required fields present; post date not in the future / not older than the max age
  *   - Multimodal video/audio review (`media_review`): missing timestamp on >2-min video requested (with "Never wait on
  *     Burson" ON, Control row 23: the [MM:SS] where Google comes up is the bot's own correction, Burson is told); if
@@ -19,8 +20,8 @@
  *     shows and says
  *   - Non-English post translation (`translation`): English translation surfaced for analysts
  *   - Critic/Arbiter proportionality (`signal_class`: `routine_snark`, `vocal_fringe`, `legitimate_nerve`,
- *     `structural_threat`) + Vector Evergreen Noise gate (`DSD.evergreen_vectors`) + Sprinklr 30 comments / 30%
- *     negativity threshold enforcement
+ *     `structural_threat`) + the evergreen-noise gate (Vectors.gs vecEvergreen_: the topics the bot embeds itself, no
+ *     BigQuery table; it arrives as bq.is_evergreen_noise) + Sprinklr 30 comments / 30% negativity threshold enforcement
  *   - KB & Guidance can start alerts (Control tab row 13, only while it's ON: parsed.kbStartAlerts): Gemini names the
  *     Guidance tab row ([G#]) or knowledge-base document that says posts like this get a Social Alert, and quotes it
  *     (social_alert.per); the citation counts only when the quote is in that row or document, its sentence says to alert
@@ -98,7 +99,7 @@ function normalizeProposal_(field, value) {
  *                   recentKnownIssues_): Gemini says whether the alert is one of them, so it keeps that issue's name
  *                   (rule 14b, IssueNames.gs)
  *   parsed.post     the post itself (Post.gs lookupPost_) and parsed.guidance the leads' current guidance (Control.gs
- *                   readGuidance_): both go to Gemini (Review.gs assessPrompts_)
+ *                   readGuidanceRows_ and leadGuidanceEmails_): both go to Gemini (Review.gs assessPrompts_)
  *   parsed.knowledge  the knowledge base's documents for this alert (Knowledge.gs knowledgeFor_): Gemini works the alert
  *                   by them and says which it relied on (knowledge_used)
  *   parsed.kbStartAlerts  KB & Guidance can start alerts is ON (Bot.gs): socialAlert.per is the Guidance row or document
@@ -292,7 +293,8 @@ function reviewAlert_(parsed, opts) {
     fix('engagement_level', level, why);
   }
 
-  // 10. Issue status: "New" but the same issue was already reported in the last 14 days (token Jaccard OR Vector DB semantic match)
+  // 10. Issue status: "New" but the same issue was already reported in the last 14 days (token Jaccard, or the same story
+  //     by meaning in the shared alert memory: opts.memoryStory, from AlertMemory.gs amNoveltyFor_)
   const recordKey = recordKey_(f);
   const tokens = issueTokens_(f.issue_name || f.alert_name);
   const novelSince = now - GEN.novelty_days * DAY_MS_;
@@ -301,7 +303,7 @@ function reviewAlert_(parsed, opts) {
     h.created_at >= novelSince && h.created_at <= now && String(h.exposure_tag || '').toLowerCase() === finalTag.name.toLowerCase() &&
     (!recordKey || h.record_key !== recordKey) && jaccard_(tokens, h.issue_tokens || []) >= GEN.novelty_min_jaccard) || null : null;
   if (S.check_issue_status && isNewStatus_(f.issue_status) && finalTag) {
-    const vecOngoing = Boolean((bq && bq.semantic_ongoing_match) || opts.memoryStory);
+    const vecOngoing = Boolean(opts.memoryStory);
     if (sameIssueRow || vecOngoing) {
       fix('issue_status', ONGOING_STATUS_SUFFIX_, `this issue was already reported in the last ${GEN.novelty_days} days`, 'rule', 0.95);
       if (parsed.extra && parsed.extra.burson_name_format) fix('alert_name', `${f.issue_name} / ${ONGOING_STATUS_SUFFIX_}`, 'issue status');
@@ -482,7 +484,8 @@ function reviewAlert_(parsed, opts) {
     }
   }
 
-  // Vector Database Evergreen Noise Gate (`DSD.evergreen_vectors`): routine evergreen noise topics do not warrant escalation
+  // Evergreen noise gate (Vectors.gs vecEvergreen_ / vecIsEvergreenNoise_, on the enrichment through BigQuery.gs
+  // bqEvergreenFields_; no BigQuery table): routine evergreen noise topics do not warrant escalation
   if (bq && bq.is_evergreen_noise && (!socialAlert || socialAlert.warranted !== false)) {
     socialAlert = {
       warranted: false,
@@ -571,7 +574,7 @@ function reviewAlert_(parsed, opts) {
     knownIssueRow: knownIssue && knownIssue.entry && knownIssue.entry.row ? knownIssue.entry.row : null,
     existingIssue,
     noAlertChecks,
-    guidanceCount: (parsed.guidance || []).length,  // current lead guidance Gemini saw (Control.gs readGuidance_)
+    guidanceCount: (parsed.guidance || []).length,  // current lead guidance Gemini saw (Control.gs readGuidanceRows_, leadGuidanceEmails_)
     // the knowledge base (Knowledge.gs): how many documents Gemini was given, and the ones it said it relied on
     knowledgeDocs: ((parsed.knowledge && parsed.knowledge.docs) || []).length,
     knowledgeUsed: knowledgeUsed_(opts.llm, parsed.knowledge),

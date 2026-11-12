@@ -866,7 +866,7 @@ function findMissingLink_(ctx, parsed, report) {
     // same author's newer post that the feeds don't have yet. Burson is asked, as with the switch OFF
     const k = found.post_url ? recordKey_({ post_url: found.post_url.new }) : null;
     const alerted = k ? ctx.store.recentForwarded(ctx.now() - GEN.novelty_days * DAY_MS_)
-      .find(h => h.record_key === k && earlierOutcome_(h) === 'alerted') : null;
+      .find(h => h.record_key === k && earlierOutcome_(h, ctx.now()) === 'alerted') : null;
     if (alerted) {
       ctx.log(`auto-find missing links: ${found.post_url.new} was already alerted (${alerted.alert_id}), so it isn't taken for ` +
         'this alert');
@@ -1149,7 +1149,11 @@ function forwardAlert_(ctx, m, parsed, review, extraNote) {
   return postTo_(ctx, ctx.spaces.analyst.id, joinText_(body, footer), null, 'fwd:' + m.name);
 }
 
-/** An alert recorded on an earlier attempt that didn't finish: complete the Burson side; never forward it twice. */
+/**
+ * An alert recorded on an earlier attempt that didn't finish: complete the Burson side; never forward it twice. Its
+ * decision (❌, the T&S form, the YouTube ping) isn't made here: it needs the review, which a retry doesn't have. An
+ * alert that attempt left without one (undecidedRow_) is said so, in the run log and the run's errors, not passed over.
+ */
 function finishAlert_(ctx, m, row, report) {
   if (row.resend_of) {
     const original = ctx.store.alertById(row.resend_of);
@@ -1169,7 +1173,32 @@ function finishAlert_(ctx, m, row, report) {
     ctx.store.updateAlert(row, { burson_done: true });
   }
   if (row.email_status === 'pending') watchDraft_(ctx, row.alert_id);  // maintainDrafts_ makes the draft
+  if (undecidedRow_(ctx, row)) {
+    const why = `${row.alert_id} has no decision: a run recorded it and stopped before deciding it (❌, the T&S form or ` +
+      'the YouTube ping), and a retry can\'t decide it. A person needs to look at it.';
+    console.warn(why);
+    (report.errors = report.errors || []).push(why);
+  }
   ctx.store.markDone(m.name, row.resend_of ? 'resend' : 'alert', row.alert_id);
+}
+
+/**
+ * finishAlert_: whether `row`, recorded by an attempt that didn't finish, should have had its decision by now and has
+ * none (Drafts.gs noEmailNeeded_ never got to write it). All of:
+ *   - a new alert's row, not a resend's (a resend can keep its original's decision or email: handleResend_,
+ *     handleResendNoWait_), and not one Burson's resend has replaced (superseded: the resend is decided instead);
+ *   - nothing on it says it was processed (Drafts.gs processedRow_): no decision, no Social Alert (a pending one is made
+ *     by maintainDrafts_), and no 👍 or action emoji (those come after the decision);
+ *   - decisions are made at all: drafts and reactions are on (noEmailNeeded_ does nothing otherwise, e.g. in a dry run);
+ *   - it wasn't waiting on Burson: Never wait on Burson ON, or nothing was asked of Burson (in the auto-correct space:
+ *     nothing only Burson can add). An alert waiting for Burson's resend rightly has no decision yet.
+ */
+function undecidedRow_(ctx, row) {
+  if (!row || row.resend_of || row.status === 'superseded' || processedRow_(ctx, row)) return false;
+  if (!draftsOn_(ctx) || !(ctx.settings && ctx.settings.react)) return false;
+  if (switchOn_(ctx, 'noWait')) return true;
+  const requested = Array.isArray(row.requested) ? row.requested : [];
+  return (ctx.sourceReadOnly ? requested.filter(x => x && x.problem) : requested).length === 0;
 }
 
 /**

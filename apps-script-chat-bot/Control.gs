@@ -37,7 +37,12 @@
  *                      read from Brandwatch's API) against the watches ON on the Watches tab; what it
  *                      flags goes on the Watch detections tab (the Watch sources tab: which sources are live), posted
  *                      or emailed only where Watch alerts (row 35) says; C34 how it's doing
- *   A36...             How it works
+ *   B35                Watch alerts (WatchAlerts.gs): where the Proactive watch's flags go, a dropdown, OFF until a
+ *                      person chooses; C35 how it's doing
+ *   B36                Temp checks: one more switch (TempCheck.gs); C36 the last one
+ *   B37                Group test emails: one more switch (BrandSafetyGroups.gs): ON, Testing, and each Social Alert
+ *                      goes to its groups' test emails (column C of the Brand safety groups tab); C37 what it is doing
+ *   A39...             How it works (CONTROL_HELP_ROW_, below the blank row 38)
  *
  * Plus the Resources tab: the bot's knowledge base (Knowledge.gs). Name · Link · What it covers · Burson can see it? ·
  * Bot status. Gemini reads every document listed there to triage and action each alert and to answer questions; only
@@ -122,8 +127,12 @@ const CONTROL_HELP_ = [
     'tab (set Active to No to ignore one), and Gemini sees the similar ones when it reviews an alert.',
   '• Watch sent alerts (24h): for a day after a Social Alert is sent, the bot re-checks the post every 30 minutes and ' +
     'replies on the email thread once if its engagement surges past 50K, it is deleted, or the press picks it up.',
-  '• Early wave & velocity check: row 19, OFF unless you turn it ON. Every 15 minutes the bot reads pending low-tier ' +
-    'semantic clusters and multi-grain velocity spikes from BigQuery (early_detection) and posts an Early Detection Alert ' +
+  '• Early wave & velocity check: row 19, OFF unless you turn it ON. Every 15 minutes the bot looks for a story that ' +
+    'small accounts are starting to tell before any single post is big. It reads the new low-reach posts in its ' +
+    'approved BigQuery source tables (Sonar\'s posts and Sprinklr\'s comments as they arrive; Brandwatch and Tubular later, ' +
+    'only to add to a story), groups the posts that say the same thing into stories itself, and flags a story once ' +
+    'several different accounts tell it, or when the accounts on a topic jump well above the usual. Each one goes out as ' +
+    'an Early Detection Alert ' +
     'card in the Mirror space or test feed (never S-F Burson), so the bot reviews it, marks its emojis, and drafts a ' +
     'Social Alert, Temp Check query, or T&S intake behind human review when warranted.',
   '• BigQuery lookback (B31): how far back Direct BigQuery alerts and Early detection look: 15, 30, 45 or 60 minutes ' +
@@ -212,12 +221,17 @@ const CONTROL_HELP_ = [
     'BigQuery. The tabs appear the first time it\'s ON, with two watches, both OFF: set a watch\'s On to ON, or add your ' +
     'own. C34 shows how it\'s doing.',
   '• Watch alerts: row 35, OFF until you choose where the Proactive watch\'s flags go. "Other alerts space (B33)" posts ' +
-    'each one in the space in B33 (paste another space in B33 and the next ones go there); "Mirror space (B9)" posts ' +
+    'them in the space in B33 (paste another space in B33 and the next ones go there); "Mirror space (B9)" posts ' +
     'them in the Mirror space, beside Burson\'s alerts (the Mirror and the Relay work as before, and nothing the bot ' +
-    'posts goes to S-F Burson). Each one is a 🔭 Watch alert, never in Zapier\'s format, and the bot works it like any ' +
-    'alert: ❌ when Gemini finds the same story was already alerted (no second email), else a Social Alert to the right ' +
-    'teams (only the testers while Testing) and T&S when the post\'s rules say so. A flag waits up to 3 hours to go out; ' +
-    'at most 5 a run go in B33, 2 in the Mirror space. C35 shows how it\'s doing.',
+    'posts goes to S-F Burson); "Auto-correct space (B10)" posts them in the Auto-correct space. Only a flag that ' +
+    'matters by itself is posted as an alert of its own: a KOF author, 100+ ' +
+    'engagements or a P0 tag. Small posts wait, and go out together as ONE alert once 3 accounts tell the same story ' +
+    'within 12 hours (its card says what built up); one that never gets company stays on the Watch detections tab. A ' +
+    'story already alerted in the last 14 days isn\'t posted again unless the stakes rose (a KOF author, 2,000+ ' +
+    'engagements) or the post reports something new, and a flag that isn\'t about Google isn\'t posted. Each one is a 🔭 ' +
+    'Watch alert, never in Zapier\'s format, and the bot works it like any alert: ❌, 👍 or a Social Alert to the right ' +
+    'teams (only the testers while Testing), and T&S when the post\'s rules say so. A flag waits up to 3 hours to go out; ' +
+    'at most 5 a run go in B33, 2 in the Mirror or Auto-correct space. C35 shows how it\'s doing.',
   '• Temp checks: row 36, OFF until you turn it ON. In a thread in the Mirror space or the Other alerts space (B33), ' +
     'write "temp check" and the Brandwatch query\'s name (as the team names them, e.g. [G EVENT] NOV26 Issue name, in ' +
     '[SLRR] Private), or its link. After the next run\'s alerts the bot emails the temp check from its account to the ' +
@@ -230,8 +244,9 @@ const CONTROL_HELP_ = [
     'is built. C36 shows the last one.',
   '• Group test emails: row 37, OFF until you turn it ON. ON puts the bot in Testing mode and routes each formulated ' +
     'Social Alert email to the test email entered in column C of the Brand safety groups tab next to that group\'s live ' +
-    'Google Group email (so a multi-product alert sends each product\'s email to that product\'s own test recipient). ' +
-    'If no test email is set in column C for a group, no email is sent for that group and the skip is logged. OFF ' +
+    'Google Group email. Each alert is still one email: with one product, its test email is in To; with several ' +
+    'products, all their test emails are in Cc. A product with no test email in column C is left off and the skip is ' +
+    'logged; when none of the alert\'s products has one, no email is sent. OFF ' +
     'ignores column C test emails completely so live Social Alerts go to column B\'s Google Group emails.',
 ];
 // "How it works" starts here (rows 11-24 the switches, 25 S-F Burson space, 26 Burson test copy, 27-29 three more
@@ -304,7 +319,7 @@ function ensureControlTab_(ss, owner) {
   return sh;
 }
 
-/** "How it works" from row 38, under a blank row (rewritten by setup(), so it stays current; nobody edits it). */
+/** "How it works" from row 39 (CONTROL_HELP_ROW_), under a blank row (rewritten by setup(), so it stays current; nobody edits it). */
 function writeControlHelp_(sh) {
   const lines = [['How it works']].concat(CONTROL_HELP_.map(line => [line]));
   while (lines.length < CONTROL_HELP_ROWS_) lines.push(['']);
@@ -315,7 +330,7 @@ function writeControlHelp_(sh) {
 
 // ---------------------------------------------------------------------------------------------------------------
 // Switches (rows 11-24, then 27-29 below the two space cells, 32 below the BigQuery lookback, 34 below the Other
-// alerts space, and 36 below Watch alerts): what the bot may do on its own. Each is ON / OFF and starts OFF; OFF is the bot as it was. Only a person
+// alerts space, and 36-37 below Watch alerts): what the bot may do on its own. Each is ON / OFF and starts OFF; OFF is the bot as it was. Only a person
 // turns one ON: the bot writes OFF on a row it adds or repairs, and never changes a switch's value. (A script property
 // SWITCH_DEFAULTS, left by a build that turned switches ON by itself, is never read, written or deleted.)
 // ---------------------------------------------------------------------------------------------------------------
@@ -378,7 +393,8 @@ const CONTROL_SWITCHES_ = [
         'post, press pickup)') },
   { key: 'earlyWave', label: 'Early wave & velocity check',
     off: 'OFF (one post at a time)',
-    on: () => '✓ ON: every 15 min, checks BigQuery low-tier embedding clusters and velocity spikes for full triage' },
+    on: () => '✓ ON: every 15 min, groups new low-reach posts from the BigQuery source tables into stories itself and ' +
+      'sends story clusters and velocity spikes for full triage' },
   { key: 'outageComms', label: 'Check outage & comms docs',
     off: 'OFF (standard review)',
     on: () => '✓ ON: checks outage claims and adds approved holding statements from the Resources documents' },
@@ -498,10 +514,10 @@ function directB25OnText_(d, who) {
   return '✓ ON (the bot works right in B25 when only Google people can join it)';
 }
 
-/** Each switch's row, in CONTROL_SWITCHES_'s order: from row 11 on, or its own `row` (27-29, 32, 34, 36). Pure. */
+/** Each switch's row, in CONTROL_SWITCHES_'s order: from row 11 on, or its own `row` (27-29, 32, 34, 36, 37). Pure. */
 function switchRows_() { return CONTROL_SWITCHES_.map((s, i) => s.row || SWITCH_FIRST_ROW_ + i); }
 
-/** The switch rows as runs of rows next to each other ([{start, idx: [switch index]}]: 11-24, 27-29, 32, 34, 36). Pure. */
+/** The switch rows as runs of rows next to each other ([{start, idx: [switch index]}]: 11-24, 27-29, 32, 34, 36-37). Pure. */
 function switchRowRuns_() {
   const runs = [];
   switchRows_().forEach((r, i) => {
@@ -546,7 +562,7 @@ function switchOffText_(s, switches, live, extra) {
 }
 
 /**
- * Rows 11-24, 27-29, 32, 34 and 36: one switch each, with its ON / OFF dropdown. A row that isn't its switch yet (a tab from
+ * Rows 11-24, 27-29, 32, 34, 36 and 37: one switch each, with its ON / OFF dropdown. A row that isn't its switch yet (a tab from
  * before it: the help text or a blank row was there, or a label someone cleared) gets it, OFF; a switch already there
  * keeps its value. "How it works" moves below them. Never sets a switch ON, and never touches rows 25-26 (the space cells).
  */
@@ -572,7 +588,8 @@ function ensureSwitchRows_(sh) {
 /**
  * Row 25: S-F Burson space. A tab from before it (help text was here, or the blank row above "How it works") gets it on
  * its next run, without setup(), blank: only a person pastes S-F Burson there. Rows 1-24 never move; "How it works"
- * moves below row 26 (the Burson test copy, TestCopy.gs ensureTestCopyRow_) and the switches in rows 27-28, to row 30.
+ * is written again below every row (the Burson test copy in row 26, TestCopy.gs ensureTestCopyRow_, and the rows after
+ * it), at CONTROL_HELP_ROW_ (row 39).
  * A value already in B25 is kept (a label someone cleared is put back).
  */
 function ensureSfBursonRow_(sh) {
@@ -638,7 +655,7 @@ function testersFrom_(raw) {
   const text = String(raw === undefined || raw === null ? '' : raw).trim();
   if (!text) {
     return {
-      testers: fallback, used: [], invalid: [], notGoogle: [], real: [], over: [], blank: true,
+      testers: fallback, used: [], invalid: [], real: [], over: [], blank: true,
       note: standIn
         ? `Blank: while Testing, every email goes only to ${standIn} (up to ${TESTERS_MAX_} email addresses, separated by commas)`
         : `Blank: while Testing, enter up to ${TESTERS_MAX_} email addresses (comma-separated) to receive test emails and alerts (nothing is sent while B30 is blank)`,
@@ -666,12 +683,12 @@ function testersFrom_(raw) {
   const tail = aside.length ? ' \u00b7 ' + aside.join(' \u00b7 ') : '';
   if (used.length) {
     return {
-      testers: used, used, invalid, notGoogle: invalid, real, over, blank: false,
+      testers: used, used, invalid, real, over, blank: false,
       note: `\u2713 While Testing, every email goes only to ${used.join(', ')}${tail}`,
     };
   }
   return {
-    testers: fallback, used: [], invalid, notGoogle: invalid, real, over, blank: false,
+    testers: fallback, used: [], invalid, real, over, blank: false,
     note: standIn
       ? `\u26a0\ufe0f No usable email address: while Testing, every email goes only to ${standIn}` +
         (tail || ` \u00b7 write up to ${TESTERS_MAX_} email addresses, separated by commas`)
@@ -681,7 +698,7 @@ function testersFrom_(raw) {
 
 /**
  * Row 30: Testing: send to. A tab from before it gets it on its next run, without setup(); a value already in B30 is
- * kept (a cleared label is put back), and "How it works" moves to row 33.
+ * kept (a cleared label is put back), and "How it works" is written again below every row (CONTROL_HELP_ROW_, row 39).
  */
 function ensureTestersRow_(sh) {
   if (!sh) return;
@@ -774,8 +791,9 @@ function switchStatusTexts_(switches, standIn, notes, now, live, extra) {
 }
 
 /**
- * Writes column C of the switches (C11:C24 and C27:C29, each run of rows on its own: C25 and C26 are the space cells'
- * notes); writes nothing where it already says all of it. live: this run is LIVE (Main.gs runMode_), or undefined when
+ * Writes column C of the switches (C11:C24, C27:C29, C32, C34 and C36:C37, each run of rows on its own: C25 and C26 are
+ * the space cells' notes, and C30, C31, C33 and C35 belong to their own cells); writes nothing where it already says all
+ * of it. live: this run is LIVE (Main.gs runMode_), or undefined when
  * this run doesn't know (paused, or it failed early). extra: see switchStatusTexts_.
  */
 function writeSwitchStatuses_(sh, switches, live, extra) {
@@ -1020,7 +1038,7 @@ function readControl_(sh) {
   out.mirror = String(m === undefined || m === null ? '' : m).trim();
   const ac = sh.getRange(AC_ROW_, 2).getValue();  // blank on a tab from before row 10 existed (help used column A only)
   out.autocorrect = String(ac === undefined || ac === null ? '' : ac).trim();
-  out.switches = readSwitches_(sh);  // rows 11-24, 27 and 28, all OFF on a tab from before them
+  out.switches = readSwitches_(sh);  // rows 11-24, 27-29, 32, 34, 36 and 37, all OFF on a tab from before them
   // B25, only on the S-F Burson space row itself: blank on a tab from before it (no S-F Burson known: fail closed)
   const sfb = sh.getRange(SFB_ROW_, 1, 1, 2).getValues()[0];
   const sfbValue = String(sfb[1] === undefined || sfb[1] === null ? '' : sfb[1]).trim();
@@ -1050,7 +1068,11 @@ function readControl_(sh) {
   return out;
 }
 
-/** Writes the bot's side of the Control tab: {bursonNote, analystNote, status, lastCheck, today}; omitted = unchanged. */
+/**
+ * Writes the bot's side of the Control tab: {bursonNote, analystNote, status, lastCheck, today}. C3:C4 (the two notes)
+ * are left as they are only when neither note is given (given one, the other is cleared); B5:B7 (status, last check,
+ * today) are always written, so one left out is cleared.
+ */
 function writeControlStatus_(sh, s) {
   if ('bursonNote' in s || 'analystNote' in s) sh.getRange(3, 3, 2, 1).setValues([[s.bursonNote || ''], [s.analystNote || '']]);
   sh.getRange(5, 2, 3, 1).setValues([[s.status || ''], [s.lastCheck || ''], [s.today || '']]);

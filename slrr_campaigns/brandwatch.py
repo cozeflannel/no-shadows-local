@@ -24,6 +24,13 @@ from .store import CampaignStore
 
 logger = logging.getLogger(__name__)
 
+# Bounds on one Brandwatch request, so a rate limit that does not clear ends in BrandwatchApiError
+# instead of holding the Cloud Run request open. A 429 normally clears within one 60 s window (the
+# wait used when the response carries no Retry-After), so two backoffs fit; setup.sh gives /tick a
+# 180 s scheduler deadline and the service a 300 s request timeout.
+MAX_RATE_LIMITED_ATTEMPTS = 3
+MAX_RATE_LIMIT_WAIT_S = 150.0
+
 
 class BrandwatchApiError(RuntimeError):
     """Raised when a Brandwatch API request fails after retries."""
@@ -32,6 +39,23 @@ class BrandwatchApiError(RuntimeError):
         super().__init__(message)
         self.status_code = status_code
         self.endpoint = endpoint
+
+
+def _rate_limit_error(method: str, path: str, reason: str) -> BrandwatchApiError:
+    """Log and build the error for a request that would wait past the rate-limit bounds."""
+    log_event(
+        logger,
+        logging.ERROR,
+        "brandwatch_rate_limit_gave_up",
+        method=method,
+        path=path,
+        reason=reason,
+    )
+    return BrandwatchApiError(
+        f"Brandwatch {method} {path} is rate-limited: {reason}",
+        status_code=429,
+        endpoint=path,
+    )
 
 
 def parse_rate_limit_headers(headers: Mapping[str, str]) -> tuple[int | None, int | None]:
@@ -90,11 +114,16 @@ class BrandwatchClient:
         self.last_rate_limit: int | None = None
         self.last_rate_used: int | None = None
 
-    def _acquire_queue_and_slot(self) -> None:
-        """Linearize Brandwatch requests across workers and wait for the 50% rate-limit window."""
+    def _acquire_queue_and_slot(self, *, method: str, path: str, deadline: float) -> None:
+        """Linearize Brandwatch requests across workers and wait for the 50% rate-limit window.
+
+        Raises BrandwatchApiError (status 429) rather than wait past ``deadline`` (time.monotonic()).
+        """
         owner = f"bw-{uuid.uuid4().hex[:12]}"
         while True:
             if not self._store.acquire_lease("bw_queue", "global", owner, ttl_s=45.0):
+                if time.monotonic() >= deadline:
+                    raise _rate_limit_error(method, path, "the request queue stayed busy")
                 time.sleep(0.5)
                 continue
             try:
@@ -103,6 +132,12 @@ class BrandwatchClient:
                 self._store.release_lease("bw_queue", "global", owner)
             if wait_s <= 0.0:
                 return
+            if wait_s > deadline - time.monotonic():
+                raise _rate_limit_error(
+                    method,
+                    path,
+                    f"the next request slot is {round(wait_s)} s away, longer than this request may wait",
+                )
             sleep_for = min(wait_s, 30.0)
             log_event(logger, logging.INFO, "brandwatch_rate_limit_wait", wait_seconds=round(sleep_for, 2))
             time.sleep(sleep_for)
@@ -118,9 +153,11 @@ class BrandwatchClient:
         query_str = _encode_query_params(params) if params else ""
         url = f"{BRANDWATCH_BASE_URL}{path}" + (f"?{query_str}" if query_str else "")
         retried_401 = False
+        rate_limited = 0
+        deadline = time.monotonic() + MAX_RATE_LIMIT_WAIT_S
 
         while True:
-            self._acquire_queue_and_slot()
+            self._acquire_queue_and_slot(method=method, path=path, deadline=deadline)
             token = self._tokens.get_token()
             headers = {
                 "Authorization": f"bearer {token}",
@@ -162,6 +199,15 @@ class BrandwatchClient:
                     client_used=rl_used,
                     retry_after_seconds=retry_s,
                 )
+                rate_limited += 1
+                if rate_limited >= MAX_RATE_LIMITED_ATTEMPTS:
+                    raise _rate_limit_error(method, path, f"HTTP 429 on {rate_limited} attempts")
+                if retry_s > deadline - time.monotonic():
+                    raise _rate_limit_error(
+                        method,
+                        path,
+                        f"HTTP 429 asks for a {round(retry_s)} s wait, longer than this request may wait",
+                    )
                 log_event(
                     logger,
                     logging.WARNING,

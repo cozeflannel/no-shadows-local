@@ -9,7 +9,7 @@
 > **Other alerts space** (B33). **Proactive watch** (row 34) tries to catch issues before Burson does: every 5
 > minutes Gemini, inside BigQuery, checks what's new in every source the bot can read (Sonar, Brandwatch, Sprinklr,
 > Tubular, the DSD story selection feed, the Other alerts space's alerts, the Brandwatch query "2026 Election Alerts") against the watches on a Watches tab, read-only (posts by Grok, X's AI account @grok, are left out from every source), and
-> records what it would flag, with a scorecard against Burson's alerts (nothing is posted unless **Watch alerts**, row 35, says where: the Other alerts space or the Mirror space, as the bot's own 🔭 Watch alerts: the post's link as a hyperlink, its author, when it was posted and a summary, with the post's picture attached). Its taxonomy and settings are generated from
+> records what it would flag, with a scorecard against Burson's alerts (nothing is posted unless **Watch alerts**, row 35, says where: the Other alerts space, the Mirror space or the Auto-correct space, as the bot's own 🔭 Watch alerts: the post's link as a hyperlink, its author, when it was posted and a summary, with the post's picture attached). Its taxonomy and settings are generated from
 > `config/default_config.yaml`. The rest of this README describes the full Python agent (escalation, T&S, Studio
 > flows, Console), which stays in the repo for V2 and later.
 
@@ -74,7 +74,7 @@ flowchart LR
 ## Quickstart (local, offline)
 
 ```bash
-python3.14 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once
 TRIAGE_LLM=fake .venv/bin/python -m pytest -q                          # all tests
 TRIAGE_LLM=fake .venv/bin/python -m evals.run_evals                    # golden set (24 cases)
 .venv/bin/python -m scripts.simulate --db .local/demo.db               # a full IM shift through every flow

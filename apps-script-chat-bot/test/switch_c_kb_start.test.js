@@ -233,7 +233,7 @@ module.exports = H => {
     const w = sim({ drafts: STAND_IN, guidance: GUIDE, switches: ON });
     let reviews = 0;
     w.vertex.assess = () => { reviews++; return cite(G1); };
-    w.gmail.fail = (method, path) => (path === 'messages/send' ? { code: 500, body: { error: { message: 'backend error' } } } : null);
+    w.gmail.fail = (method, path) => (path === 'messages/send' ? { code: 429, body: { error: { message: 'rate limit exceeded' } } } : null);
     const msg = w.paste(LOW);
     w.run();
     eq([w.gmail.sentMessages().length, w.alertRows()[0].email_status], [0, 'pending']);

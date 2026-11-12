@@ -4,7 +4,7 @@
  *
  * Exposes structured, read-only MCP tools over:
  *   1. Live Control Google Sheet (`1dVGeQjLOfEYoCm_iIOmXd5hLM3rOTY_71IF-J8Hl2AI`):
- *      - `slrr_get_control_status`: Bot state, space bindings, all 17 switches, B30 testers, B31 lookback validation, safety checks
+ *      - `slrr_get_control_status`: Bot state, space bindings, all 21 switches, B30 testers, B31 lookback validation, safety checks
  *      - `slrr_inspect_relay_and_outbox`: `Burson outbox`, `Relay`, and `Relay names` (flags unmapped Chat users & pending/blocked items)
  *      - `slrr_inspect_parity_and_results`: `Results` and `Learned precedents` tabs (`im_only` / `bot_only` disagreements & KPIs)
  *      - `slrr_inspect_knowledge_and_guidance`: `Resources` and `Guidance` tabs (doc read health, visibility flags, active guidance)
@@ -23,6 +23,10 @@ const {
   DEFAULT_SCRIPT_ID,
   DEFAULT_LOGGING_PROJECT_KEY,
   gcpFetchJson,
+  getWorkbookMetadata,
+  batchGetValues,
+  readTabTails,
+  tailReadSummary,
   createMcpStdioServer,
 } = require('./mcp_stdio');
 
@@ -33,31 +37,55 @@ const DRIVE_FILES_BASE = 'https://www.googleapis.com/drive/v3/files';
 const SCRIPT_PROJECTS_BASE = 'https://script.googleapis.com/v1/projects';
 const LOGGING_ENTRIES_URL = 'https://logging.googleapis.com/v2/entries:list';
 
-async function getWorkbookMetadata(sheetId) {
-  const url = `${SHEETS_BASE}/${encodeURIComponent(sheetId)}?fields=properties.title,sheets(properties(sheetId,title,index,hidden,gridProperties(rowCount,columnCount)))`;
-  return gcpFetchJson(url);
+// These handlers take (args, deps): read logs, relay and outbox, parity and results, trace alert, resource doc and
+// Cloud Run logs. The MCP server passes args only; the tests pass deps.fetchJson with canned responses, so no test
+// reads the live sheet or the live logs. (Control status, knowledge and guidance, and the Apps Script diff always use
+// gcpFetchJson.)
+function fetchJsonOf(deps) {
+  return (deps && deps.fetchJson) || gcpFetchJson;
 }
 
-async function batchGetValues(sheetId, ranges) {
-  const params = ranges.map(r => `ranges=${encodeURIComponent(r)}`).join('&');
-  const url = `${SHEETS_BASE}/${encodeURIComponent(sheetId)}/values:batchGet?valueRenderOption=FORMATTED_VALUE&${params}`;
-  return gcpFetchJson(url);
+/** `value` for use inside a double-quoted string of a Cloud Logging filter: backslashes first, then the quotes. */
+function filterQuoted(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
-function rowsToObjects(rows) {
-  if (!Array.isArray(rows) || rows.length < 2) return [];
-  const header = rows[0].map((h, idx) => String(h || `col_${idx + 1}`).trim());
+/**
+ * Row objects keyed by `header`, one per row of `rows` that isn't blank; `_row` is the row's number on the sheet
+ * (`firstRow` for rows[0]).
+ */
+function rowObjects(header, rows, firstRow) {
+  const cols = (header || []).map((h, idx) => String(h || `col_${idx + 1}`).trim());
   const out = [];
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i] || [];
-    if (r.every(cell => !String(cell || '').trim())) continue;
-    const obj = { _row: i + 1 };
-    header.forEach((col, j) => {
+  (rows || []).forEach((row, i) => {
+    const r = row || [];
+    if (r.every(cell => !String(cell || '').trim())) return;
+    const obj = { _row: firstRow + i };
+    cols.forEach((col, j) => {
       obj[col] = r[j] !== undefined ? String(r[j]) : '';
     });
     out.push(obj);
-  }
+  });
   return out;
+}
+
+/** Row objects for a range read from A1 with its header in row 1. */
+function rowsToObjects(rows) {
+  if (!Array.isArray(rows) || rows.length < 2) return [];
+  return rowObjects(rows[0], rows.slice(1), 2);
+}
+
+/** True when a cell of row object `obj` (never its `_row` number) contains one of `tokens` (lower-case strings). */
+function rowHasToken(obj, tokens) {
+  const joined = Object.keys(obj)
+    .filter(k => k !== '_row')
+    .map(k => obj[k])
+    .join(' \n ')
+    .toLowerCase();
+  for (const tok of tokens) {
+    if (joined.includes(tok)) return true;
+  }
+  return false;
 }
 
 async function handleGetControlStatus(args) {
@@ -118,7 +146,8 @@ async function handleGetControlStatus(args) {
   const tempChecks = switchByLabel('Temp checks');
   const groupTestEmails = switchByLabel('Group test emails');
   const b31Validation = cellValidation(31, 2);
-  // Row 35: Watch alerts (OFF / Other alerts space (B33) / Mirror space (B9)), only on its own labelled row
+  // Row 35: Watch alerts (OFF / Other alerts space (B33) / Mirror space (B9) / Auto-correct space (B10)), only on its
+  // own labelled row
   const watchAlertsRow = cellText(35, 1) === 'Watch alerts';
   const b35Validation = watchAlertsRow ? cellValidation(35, 2) : null;
 
@@ -164,7 +193,8 @@ async function handleGetControlStatus(args) {
       ? { row: 34, value: proactiveWatch.value, note: proactiveWatch.note }
       : { row: 34, value: 'MISSING', note: '' },
     // Row 35: Watch alerts, where the Proactive watch's flags are posted as the bot's own alerts (OFF until a person
-    // chooses: the Other alerts space B33, or the Mirror space B9); C35 how it's going. MISSING before this build ran
+    // chooses: the Other alerts space B33, the Mirror space B9 or the Auto-correct space B10); C35 how it's going.
+    // MISSING before this build ran
     watch_alerts: watchAlertsRow
       ? { row: 35, value: cellText(35, 2), note: cellText(35, 3), validation: b35Validation }
       : { row: 35, value: 'MISSING', note: '', validation: null },
@@ -197,7 +227,7 @@ async function handleGetControlStatus(args) {
   };
 }
 
-async function handleReadLogs(args) {
+async function handleReadLogs(args, deps) {
   const project = args.gcp_project || DEFAULT_GCP_PROJECT;
   const projectKey = args.project_key || DEFAULT_LOGGING_PROJECT_KEY;
   const minutesBack = Math.min(Math.max(Number(args.minutes_back) || 120, 1), 10080);
@@ -206,7 +236,7 @@ async function handleReadLogs(args) {
 
   const sinceIso = new Date(Date.now() - minutesBack * 60 * 1000).toISOString();
   const clauses = [
-    `labels."script.googleapis.com/project_key"="${projectKey}"`,
+    `labels."script.googleapis.com/project_key"="${filterQuoted(projectKey)}"`,
     `timestamp >= "${sinceIso}"`,
   ];
 
@@ -217,11 +247,11 @@ async function handleReadLogs(args) {
     clauses.push(`severity >= ${String(args.severity).toUpperCase()}`);
   }
   if (args.process_id) {
-    const safePid = String(args.process_id).replace(/"/g, '\\"');
+    const safePid = filterQuoted(args.process_id);
     clauses.push(`labels."script.googleapis.com/process_id"="${safePid}"`);
   }
   if (args.function_name) {
-    const safeFn = String(args.function_name).replace(/"/g, '\\"');
+    const safeFn = filterQuoted(args.function_name);
     clauses.push(`resource.labels.function_name="${safeFn}"`);
   }
   if (args.search) {
@@ -230,7 +260,7 @@ async function handleReadLogs(args) {
   }
 
   const filter = clauses.join(' AND ');
-  const resp = await gcpFetchJson(LOGGING_ENTRIES_URL, {
+  const resp = await fetchJsonOf(deps)(LOGGING_ENTRIES_URL, {
     method: 'POST',
     quotaProject: project,
     body: {
@@ -267,14 +297,19 @@ async function handleReadLogs(args) {
   };
 }
 
-async function handleInspectRelayAndOutbox(args) {
+// How many of each tab's newest rows slrr_inspect_relay_and_outbox reads (as many as the fixed A1:N2000 it replaced)
+const RELAY_TOOL_ROWS = 2000;
+
+async function handleInspectRelayAndOutbox(args, deps) {
+  const fetchJson = fetchJsonOf(deps);
   const sheetId = args.sheet_id || DEFAULT_STORE_SHEET_ID;
   const maxRows = Math.min(Math.max(Number(args.limit) || 40, 5), 200);
-  const meta = await getWorkbookMetadata(sheetId);
+  const meta = await getWorkbookMetadata(sheetId, fetchJson);
   const existing = new Set(((meta && meta.sheets) || []).map(s => s.properties.title));
 
-  const wantedTabs = ['Burson outbox', 'Relay', 'Relay names', 'Test copy'].filter(t => existing.has(t));
-  if (!wantedTabs.length) {
+  // `Test copy` is only reported as present: nothing below uses its rows, so they aren't fetched
+  const presentTabs = ['Burson outbox', 'Relay', 'Relay names', 'Test copy'].filter(t => existing.has(t));
+  if (!presentTabs.length) {
     return {
       sheet_id: sheetId,
       present_tabs: [],
@@ -282,51 +317,62 @@ async function handleInspectRelayAndOutbox(args) {
     };
   }
 
-  const batch = await batchGetValues(
+  // Header in row 1, new rows added at the bottom: the newest RELAY_TOOL_ROWS rows of each (readTabTails)
+  const readTabs = ['Burson outbox', 'Relay', 'Relay names'].filter(t => existing.has(t));
+  const tails = await readTabTails(
     sheetId,
-    wantedTabs.map(t => `'${t}'!A1:N2000`)
+    meta,
+    readTabs.map(tab => ({ tab, lastCol: 'N', topRows: 1, maxRows: RELAY_TOOL_ROWS })),
+    fetchJson
   );
-  const byTab = {};
-  (batch.valueRanges || []).forEach((vr, idx) => {
-    byTab[wantedTabs[idx]] = vr.values || [];
-  });
+  const objectsOf = tab => (tails[tab] ? rowObjects(tails[tab].top[0], tails[tab].rows, tails[tab].firstRow) : []);
+  // Rows below the header down to the last row with data, read or not
+  const totalRowsOf = tab => (tails[tab] ? Math.max(0, tails[tab].lastRow - 1) : 0);
+  const readOf = tab => (tails[tab] ? tailReadSummary(tab, tails[tab]) : null);
+  const truncationNotes = readTabs.map(tab => readOf(tab).note).filter(Boolean);
 
-  const outboxRows = rowsToObjects(byTab['Burson outbox'] || []);
+  const outboxRows = objectsOf('Burson outbox');
   const outboxStatusCounts = {};
   outboxRows.forEach(r => {
     const st = r.Status || 'Unknown';
     outboxStatusCounts[st] = (outboxStatusCounts[st] || 0) + 1;
   });
 
-  const relayRows = rowsToObjects(byTab['Relay'] || []);
+  const relayRows = objectsOf('Relay');
   const relayDirectionCounts = {};
   relayRows.forEach(r => {
     const key = `${r.direction || '?'} :: ${r.status || '?'}`;
     relayDirectionCounts[key] = (relayDirectionCounts[key] || 0) + 1;
   });
 
-  const nameRows = rowsToObjects(byTab['Relay names'] || []);
+  const nameRows = objectsOf('Relay names');
   const unmappedUsers = nameRows.filter(r => !String(r.name || '').trim() || !String(r.org || '').trim());
 
   return {
     sheet_id: sheetId,
-    present_tabs: wantedTabs,
+    present_tabs: presentTabs,
+    // true when a tab had more rows than were read: the counts and lists below then cover its newest rows only
+    truncated: truncationNotes.length > 0,
+    truncation_notes: truncationNotes,
     burson_outbox: {
       exists: existing.has('Burson outbox'),
-      total_rows: outboxRows.length,
+      total_rows: totalRowsOf('Burson outbox'),
+      read: readOf('Burson outbox'),
       status_counts: outboxStatusCounts,
       pending_or_send_rows: outboxRows.filter(r => /^(pending|send|blocked|failed)$/i.test(String(r.Status || '').trim())).slice(-maxRows),
       recent_rows: outboxRows.slice(-Math.min(15, maxRows)),
     },
     relay: {
       exists: existing.has('Relay'),
-      total_rows: relayRows.length,
+      total_rows: totalRowsOf('Relay'),
+      read: readOf('Relay'),
       direction_status_counts: relayDirectionCounts,
       recent_rows: relayRows.slice(-maxRows),
     },
     relay_names: {
       exists: existing.has('Relay names'),
       total_people: nameRows.length,
+      read: readOf('Relay names'),
       unmapped_count: unmappedUsers.length,
       unmapped_people: unmappedUsers.slice(0, 30),
       mapped_people: nameRows.filter(r => String(r.name || '').trim() && String(r.org || '').trim()),
@@ -334,10 +380,11 @@ async function handleInspectRelayAndOutbox(args) {
   };
 }
 
-async function handleInspectParityAndResults(args) {
+async function handleInspectParityAndResults(args, deps) {
+  const fetchJson = fetchJsonOf(deps);
   const sheetId = args.sheet_id || DEFAULT_STORE_SHEET_ID;
   const maxRows = Math.min(Math.max(Number(args.limit) || 50, 10), 200);
-  const meta = await getWorkbookMetadata(sheetId);
+  const meta = await getWorkbookMetadata(sheetId, fetchJson);
   const existing = new Set(((meta && meta.sheets) || []).map(s => s.properties.title));
 
   const ranges = [];
@@ -358,7 +405,7 @@ async function handleInspectParityAndResults(args) {
     return { sheet_id: sheetId, note: 'Neither Results, Learned precedents, nor Analysis tab exists yet.' };
   }
 
-  const batch = await batchGetValues(sheetId, ranges);
+  const batch = await batchGetValues(sheetId, ranges, fetchJson);
   const dataMap = {};
   (batch.valueRanges || []).forEach((vr, idx) => {
     dataMap[keys[idx]] = vr.values || [];
@@ -367,8 +414,13 @@ async function handleInspectParityAndResults(args) {
   const resultsRaw = dataMap['Results'] || [];
   const headlineBlock = [];
   const disagreements = [];
+  // Under "WHERE THE BOT AND THE IMs DIFFERED" Speed.gs writes two sub-tables, each with its own header row ("The IMs
+  // sent a Social Alert, the bot didn't: N" / "The bot sent a Social Alert, the IMs didn't: N", then Post, Product,
+  // Issue, The bot's reason), its latest 5 rows, and a lone "None" row when it has none
+  const disagreementTotals = { im_only: null, bot_only: null };
   let inDisagreements = false;
   let disagreementHeader = null;
+  let disagreementKind = null;
 
   for (let i = 0; i < resultsRaw.length; i++) {
     const row = resultsRaw[i] || [];
@@ -379,6 +431,7 @@ async function handleInspectParityAndResults(args) {
     if (/WHERE THE BOT AND THE IMs DIFFERED/i.test(first)) {
       inDisagreements = true;
       disagreementHeader = null;
+      disagreementKind = null;
       continue;
     }
     if (inDisagreements) {
@@ -387,12 +440,26 @@ async function handleInspectParityAndResults(args) {
         continue;
       }
       if (!row.some(c => String(c || '').trim())) continue;
-      if (!disagreementHeader) {
+      const subTable = first.match(/^The (IMs|bot) sent a Social Alert\b[^:]*(?::\s*(\d+))?/i);
+      if (subTable) {
+        disagreementKind = subTable[1].toLowerCase() === 'ims' ? 'im_only' : 'bot_only';
         disagreementHeader = row.map((h, idx) => String(h || `col_${idx + 1}`).trim());
-      } else if (disagreements.length < maxRows) {
+        if (subTable[2] !== undefined) disagreementTotals[disagreementKind] = Number(subTable[2]);
+        continue;
+      }
+      if (!disagreementHeader) {  // a layout without the two sub-tables: its first row is the header, as before
+        disagreementHeader = row.map((h, idx) => String(h || `col_${idx + 1}`).trim());
+        continue;
+      }
+      if (/^none$/i.test(first) && row.slice(1).every(c => !String(c || '').trim())) continue;
+      if (disagreements.length < maxRows) {
         const item = { _row: i + 1 };
+        if (disagreementKind) {
+          item.kind = disagreementKind;
+          item['Burson posted (ET)'] = first;  // column A: its header cell is the sub-table's title and count
+        }
         disagreementHeader.forEach((h, j) => {
-          if (h) item[h] = row[j] !== undefined ? String(row[j]) : '';
+          if (h && !(disagreementKind && j === 0)) item[h] = row[j] !== undefined ? String(row[j]) : '';
         });
         disagreements.push(item);
       }
@@ -451,6 +518,8 @@ async function handleInspectParityAndResults(args) {
     sheet_id: sheetId,
     results_headline: headlineBlock,
     disagreement_count_shown: disagreements.length,
+    // from the two sub-tables' headers (the tab lists the latest 5 of each); null when a header wasn't found
+    disagreement_totals: disagreementTotals,
     disagreements,
     learned_precedents: {
       exists: existing.has('Learned precedents'),
@@ -513,7 +582,22 @@ function safeJsonParse(str, fallback = null) {
   }
 }
 
-async function handleTraceAlert(args) {
+// What slrr_trace_alert reads. The bot adds rows at the bottom of these four, so their newest rows are read
+// (readTabTails). Alert log, Relay and Burson outbox have their header in row 1. Watch detections starts with its
+// scorecard and has its header in row 13 (ProactiveWatch.gs PW_DET_HEAD_ROW_; looked for in its first 20 rows) and 19
+// columns, A:S (PW_DET_HEADER_).
+const TRACE_TAIL_TABS = [
+  { tab: 'Alert log', lastCol: 'AP', topRows: 1, maxRows: 2000 },
+  { tab: 'Relay', lastCol: 'N', topRows: 1, maxRows: 1500 },
+  { tab: 'Burson outbox', lastCol: 'N', topRows: 1, maxRows: 1500 },
+  { tab: 'Watch detections', lastCol: 'S', topRows: 20, maxRows: 1500 },
+];
+// The bot rebuilds these two whole each time it refreshes them, and they hold the last days only: read from the top
+const TRACE_TOP_TABS = ['Results', 'Follow-up'];
+const TRACE_TOP_ROWS = 1500;
+
+async function handleTraceAlert(args, deps) {
+  const fetchJson = fetchJsonOf(deps);
   const query = String(args.query || '').trim();
   if (!query) {
     throw new Error('query is required (e.g., "QA-1002", author handle, post URL, or issue keyword)');
@@ -524,20 +608,35 @@ async function handleTraceAlert(args) {
   const minutesBack = Math.min(Math.max(Number(args.minutes_back) || 1440, 10), 10080);
   const qLower = query.toLowerCase();
 
-  const meta = await getWorkbookMetadata(sheetId);
+  const meta = await getWorkbookMetadata(sheetId, fetchJson);
   const existing = new Set(((meta && meta.sheets) || []).map(s => s.properties.title));
-  const wanted = ['Alert log', 'Results', 'Relay', 'Burson outbox', 'Watch detections', 'Follow-up'].filter(t => existing.has(t));
-  const ranges = wanted.map(t => (t === 'Alert log' ? `'${t}'!A1:AP2000` : `'${t}'!A1:N1500`));
-  const batch = wanted.length ? await batchGetValues(sheetId, ranges) : { valueRanges: [] };
+  const tails = await readTabTails(sheetId, meta, TRACE_TAIL_TABS.filter(s => existing.has(s.tab)), fetchJson);
+  const topTabs = TRACE_TOP_TABS.filter(t => existing.has(t));
+  const batch = topTabs.length
+    ? await batchGetValues(sheetId, topTabs.map(t => `'${t}'!A1:N${TRACE_TOP_ROWS}`), fetchJson)
+    : { valueRanges: [] };
   const byTab = {};
   (batch.valueRanges || []).forEach((vr, idx) => {
-    byTab[wanted[idx]] = vr.values || [];
+    byTab[topTabs[idx]] = vr.values || [];
+  });
+  // Row objects of a tab read from the bottom whose header is its first row
+  const tailObjects = tab => (tails[tab] ? rowObjects(tails[tab].top[0], tails[tab].rows, tails[tab].firstRow) : []);
+
+  // What was read of each tab, and in words where rows were left out
+  const tabsRead = {};
+  Object.keys(tails).forEach(tab => {
+    tabsRead[tab] = tailReadSummary(tab, tails[tab]);
+  });
+  topTabs.forEach(tab => {
+    const n = (byTab[tab] || []).length;
+    tabsRead[tab] = { rows_read: n, truncated: n >= TRACE_TOP_ROWS };
+    if (n >= TRACE_TOP_ROWS) tabsRead[tab].note = `"${tab}": only its first ${TRACE_TOP_ROWS} rows were read.`;
   });
 
   // 1. Search Alert log
-  const alertLogRows = rowsToObjects(byTab['Alert log'] || []);
+  const alertLogRows = tailObjects('Alert log');
   const matchedAlerts = alertLogRows
-    .filter(r => Object.values(r).some(v => String(v || '').toLowerCase().includes(qLower)))
+    .filter(r => rowHasToken(r, [qLower]))
     .slice(-maxMatches)
     .map(r => {
       const forwardedFields = safeJsonParse(r.forwarded_fields, null);
@@ -578,13 +677,7 @@ async function handleTraceAlert(args) {
       });
   });
 
-  const rowMatchesAnyToken = rowObj => {
-    const joined = Object.values(rowObj).join(' \n ').toLowerCase();
-    for (const tok of matchTokens) {
-      if (joined.includes(tok)) return true;
-    }
-    return false;
-  };
+  const rowMatchesAnyToken = rowObj => rowHasToken(rowObj, matchTokens);
 
   // 2. Search Results tab (EVERY ALERT + disagreements)
   const resultsRaw = byTab['Results'] || [];
@@ -616,15 +709,38 @@ async function handleTraceAlert(args) {
   }
 
   // 3. Search Relay & Burson outbox
-  const relayMatches = rowsToObjects(byTab['Relay'] || []).filter(rowMatchesAnyToken).slice(-maxMatches);
-  const outboxMatches = rowsToObjects(byTab['Burson outbox'] || []).filter(rowMatchesAnyToken).slice(-maxMatches);
-  const followUpMatches = rowsToObjects(byTab['Follow-up'] || []).filter(rowMatchesAnyToken).slice(-maxMatches);
+  const relayMatches = tailObjects('Relay').filter(rowMatchesAnyToken).slice(-maxMatches);
+  const outboxMatches = tailObjects('Burson outbox').filter(rowMatchesAnyToken).slice(-maxMatches);
 
-  // 4. Search Watch detections
-  const watchRaw = byTab['Watch detections'] || [];
-  const watchHeaderIdx = watchRaw.findIndex(r => (r || []).some(c => /^Watch$/i.test(String(c || '').trim()) || /^Post$/i.test(String(c || '').trim())));
-  const watchRows = watchHeaderIdx >= 0 ? rowsToObjects(watchRaw.slice(watchHeaderIdx)) : [];
+  // Follow-up: row 1 is the tab's title, then its deadlines and summaries; the alerts' header row is the one that
+  // starts "Sent (ET)" (FollowUp.gs FOLLOWUP_HEADER_), with one alert a row below it
+  const followUpRaw = byTab['Follow-up'] || [];
+  const followUpHeaderIdx = followUpRaw.findIndex(r => String((r && r[0]) || '').trim() === 'Sent (ET)');
+  const followUpRows = followUpHeaderIdx >= 0
+    ? rowObjects(followUpRaw[followUpHeaderIdx], followUpRaw.slice(followUpHeaderIdx + 1), followUpHeaderIdx + 2)
+    : [];
+  const followUpMatches = followUpRows.filter(rowMatchesAnyToken).slice(-maxMatches);
+  if (tabsRead['Follow-up']) {
+    tabsRead['Follow-up'].header_row = followUpHeaderIdx >= 0 ? followUpHeaderIdx + 1 : null;
+    if (followUpHeaderIdx < 0 && followUpRaw.length) {
+      tabsRead['Follow-up'].note = '"Follow-up": no row starting "Sent (ET)" was found, so its alerts were not searched.';
+    }
+  }
+
+  // 4. Search Watch detections: its header is the first of its top rows with a "Watch" or a "Post" cell; the rows
+  // under it there and the newest rows read are its detections
+  const watchTab = tails['Watch detections'];
+  const watchTop = (watchTab && watchTab.top) || [];
+  const watchHeaderIdx = watchTop.findIndex(r => (r || []).some(c => /^Watch$/i.test(String(c || '').trim()) || /^Post$/i.test(String(c || '').trim())));
+  const watchRows = watchHeaderIdx >= 0
+    ? rowObjects(watchTop[watchHeaderIdx], watchTop.slice(watchHeaderIdx + 1), watchHeaderIdx + 2)
+      .concat(rowObjects(watchTop[watchHeaderIdx], watchTab.rows, watchTab.firstRow))
+    : [];
   const watchMatches = watchRows.filter(rowMatchesAnyToken).slice(-maxMatches);
+  if (watchTab && watchHeaderIdx < 0 && (watchTop.length || watchTab.rows.length)) {
+    tabsRead['Watch detections'].note = '"Watch detections": no header row (a "Watch" or "Post" cell) was found in its ' +
+      `first ${watchTop.length} rows, so its detections were not searched.`;
+  }
 
   // 5. Optional Cloud Logging search
   let cloudLogs = null;
@@ -635,16 +751,22 @@ async function handleTraceAlert(args) {
         minutes_back: minutesBack,
         search: logSearchTerm,
         limit: 30,
-      });
+      }, deps);
     } catch (e) {
       cloudLogs = { error: e.message };
     }
   }
 
+  const readNotes = Object.keys(tabsRead).map(tab => tabsRead[tab].note).filter(Boolean);
   return {
     query,
     sheet_id: sheetId,
     correlation_tokens: Array.from(matchTokens),
+    // truncated: a tab had more rows than were read, so "no match" below isn't "not on the tab". read_notes says which
+    // tabs and which rows, and names a tab whose header row wasn't found (it wasn't searched at all)
+    truncated: Object.keys(tabsRead).some(tab => tabsRead[tab].truncated),
+    read_notes: readNotes,
+    tabs_read: tabsRead,
     alert_log_matches: matchedAlerts,
     results_parity_matches: resultsMatches,
     relay_matches: relayMatches,
@@ -779,16 +901,17 @@ function extractDriveFileId(url) {
   return m ? m[1] : null;
 }
 
-async function handleInspectResourceDoc(args) {
+async function handleInspectResourceDoc(args, deps) {
+  const fetchJson = fetchJsonOf(deps);
   const sheetId = args.sheet_id || DEFAULT_STORE_SHEET_ID;
   const query = String(args.query || '').trim().toLowerCase();
   const checkDriveMeta = args.check_drive_metadata !== false;
 
-  const meta = await getWorkbookMetadata(sheetId);
+  const meta = await getWorkbookMetadata(sheetId, fetchJson);
   const existing = new Set(((meta && meta.sheets) || []).map(s => s.properties.title));
   const wanted = ['Resources', 'Knowledge cache (bot)'].filter(t => existing.has(t));
   const ranges = wanted.map(t => (t === 'Knowledge cache (bot)' ? `'${t}'!A1:C500` : `'${t}'!A1:F100`));
-  const batch = wanted.length ? await batchGetValues(sheetId, ranges) : { valueRanges: [] };
+  const batch = wanted.length ? await batchGetValues(sheetId, ranges, fetchJson) : { valueRanges: [] };
   const byTab = {};
   (batch.valueRanges || []).forEach((vr, idx) => {
     byTab[wanted[idx]] = vr.values || [];
@@ -834,8 +957,8 @@ async function handleInspectResourceDoc(args) {
     if (checkDriveMeta && fileId) {
       try {
         const fields = 'id,name,mimeType,modifiedTime,version,shared,lastModifyingUser(displayName,emailAddress)';
-        driveMeta = await gcpFetchJson(
-          `${DRIVE_FILES_BASE}/${encodeURIComponent(fileId)}?SupportsAllDrives=true&supportsAllDrives=true&fields=${encodeURIComponent(fields)}`
+        driveMeta = await fetchJson(
+          `${DRIVE_FILES_BASE}/${encodeURIComponent(fileId)}?supportsAllDrives=true&fields=${encodeURIComponent(fields)}`
         );
       } catch (e) {
         driveMeta = { error: e.message };
@@ -872,7 +995,8 @@ async function handleInspectResourceDoc(args) {
   };
 }
 
-async function handleReadCloudRunLogs(args) {
+async function handleReadCloudRunLogs(args, deps) {
+  const fetchJson = fetchJsonOf(deps);
   const project = args.gcp_project || DEFAULT_GCP_PROJECT;
   const minutesBack = Math.min(Math.max(Number(args.minutes_back) || 120, 1), 10080);
   const limit = Math.min(Math.max(Number(args.limit) || 40, 1), 200);
@@ -884,7 +1008,7 @@ async function handleReadCloudRunLogs(args) {
     `timestamp >= "${sinceIso}"`,
   ];
   if (args.service_name) {
-    const safeSvc = String(args.service_name).replace(/"/g, '\\"');
+    const safeSvc = filterQuoted(args.service_name);
     clauses.push(`(resource.labels.service_name="${safeSvc}" OR resource.labels.job_name="${safeSvc}")`);
   }
   if (args.severity) {
@@ -896,7 +1020,7 @@ async function handleReadCloudRunLogs(args) {
   }
 
   const filter = clauses.join(' AND ');
-  const resp = await gcpFetchJson(LOGGING_ENTRIES_URL, {
+  const resp = await fetchJson(LOGGING_ENTRIES_URL, {
     method: 'POST',
     quotaProject: project,
     body: {
@@ -923,13 +1047,14 @@ async function handleReadCloudRunLogs(args) {
   let proactiveWatch = null;
   if (includeWatchTabs) {
     const sheetId = args.sheet_id || DEFAULT_STORE_SHEET_ID;
-    const meta = await getWorkbookMetadata(sheetId);
+    const meta = await getWorkbookMetadata(sheetId, fetchJson);
     const existing = new Set(((meta && meta.sheets) || []).map(s => s.properties.title));
     const watchTabs = ['Watches', 'Watch sources', 'Watch detections'].filter(t => existing.has(t));
     if (watchTabs.length) {
       const batch = await batchGetValues(
         sheetId,
-        watchTabs.map(t => `'${t}'!A1:J35`)
+        watchTabs.map(t => `'${t}'!A1:J35`),
+        fetchJson
       );
       const map = {};
       (batch.valueRanges || []).forEach((vr, idx) => {
@@ -956,7 +1081,7 @@ const TOOLS = [
   {
     name: 'slrr_get_control_status',
     description:
-      'Read live Control tab state from the Burson QA Bot Google Sheet: Bot ON/OFF, Last check, Today stats, space links/statuses (Burson, Analyst, Mirror, Auto-correct, S-F Burson B25, Burson test copy B26), all 20 switches (row 32: Work directly in B25; row 34: Proactive watch; row 36: Temp checks), row 35 Watch alerts (where the watch\'s flags are posted: OFF, B33 or B9), B30 testers, B31 BigQuery lookback validation, and live safety checks.',
+      'Read live Control tab state from the Burson QA Bot Google Sheet: Bot ON/OFF, Last check, Today stats, space links/statuses (Burson, Analyst, Mirror, Auto-correct, S-F Burson B25, Burson test copy B26), all 21 switches (row 32: Work directly in B25; row 34: Proactive watch; row 36: Temp checks; row 37: Group test emails), row 35 Watch alerts (where the watch\'s flags are posted: OFF, B33, B9 or B10), B30 testers, B31 BigQuery lookback validation, and live safety checks.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1004,6 +1129,14 @@ const TOOLS = [
           type: 'boolean',
           description: 'Set true only if you want to see legacy checkSourceSpaceForNewMessages trigger errors.',
         },
+        gcp_project: {
+          type: 'string',
+          description: 'Optional GCP project override (defaults to brand-social-central-data).',
+        },
+        project_key: {
+          type: 'string',
+          description: 'Optional Apps Script project_key override (defaults to the Burson QA Bot\'s). Other Apps Script projects log to the same GCP project, so leave it alone unless you mean to read theirs.',
+        },
       },
     },
     handler: handleReadLogs,
@@ -1011,7 +1144,7 @@ const TOOLS = [
   {
     name: 'slrr_inspect_relay_and_outbox',
     description:
-      'Inspect live 2-way S-F Burson <-> Mirror space bridge tabs: `Burson outbox` (Pending/Send/Blocked/Sent rows), `Relay` message/reaction history, and `Relay names` (highlighting any unmapped Chat user IDs missing name or Google/Burson org).',
+      'Inspect live 2-way S-F Burson <-> Mirror space bridge tabs: `Burson outbox` (Pending/Send/Blocked/Sent rows), `Relay` message/reaction history, and `Relay names` (highlighting any unmapped Chat user IDs missing name or Google/Burson org). Reads the newest 2,000 rows of each tab; `truncated` and each tab\'s `read` say when older rows were left out (the counts then cover the newest rows only).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1064,7 +1197,7 @@ const TOOLS = [
   {
     name: 'slrr_trace_alert',
     description:
-      'End-to-end multi-system trace for any Social Alert by QA-ID (e.g. "QA-1002"), author handle, post URL, or issue keyword. Correlates across `Alert log` (42 columns + parsed JSON fields), `Results` parity rows, `Relay`, `Burson outbox`, `Follow-up`, `Watch detections`, and Cloud Logging in a single read-only call ($0 cost).',
+      'End-to-end multi-system trace for any Social Alert by QA-ID (e.g. "QA-1002"), author handle, post URL, or issue keyword. Correlates across `Alert log` (42 columns + parsed JSON fields), `Results` parity rows, `Relay`, `Burson outbox`, `Follow-up`, `Watch detections`, and Cloud Logging in a single read-only call ($0 cost). Searches the newest rows of the append-only tabs (Alert log: 2,000; Relay, Burson outbox, Watch detections: 1,500 each); `truncated`, `read_notes` and `tabs_read` say when older rows were not searched, so an empty match list is not proof the alert isn\'t on the tab.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1167,6 +1300,14 @@ const TOOLS = [
         include_proactive_watch_sheet: {
           type: 'boolean',
           description: 'Include live Watches, Watch sources, and Watch detections summary from the Control Sheet (default: true).',
+        },
+        sheet_id: {
+          type: 'string',
+          description: 'Optional Google Sheet ID override for that summary.',
+        },
+        gcp_project: {
+          type: 'string',
+          description: 'Optional GCP project override (defaults to brand-social-central-data).',
         },
       },
     },

@@ -20,14 +20,15 @@ const SHEET_TEST_MSGS_PROP_ = 'SHEET_TEST_MSGS';
 const SHEET_TEST_MSGS_MAX_ = 50;
 let SHEET_TEST_SEQ_ = 0;
 
+// Every name here is one in the taxonomy (config/default_config.yaml exposure_tags / sensitive_topics), spelled as it is there
 const SHEET_TEST_TAGS_ = [
   'Product - Scams involving Google products',
   'Product - Product failures - physical safety issues',
-  'Product - Security & privacy vulnerabilities',
+  'Product - Privacy & security concerns',
   'Product - Dangerous results (e.g. medical/legal)',
-  'Product - Outage/widespread bug',
+  'Product - Product failures - general software/service issues',
   'Product - Perceived bias',
-  'Corporate - Executive misconduct/controversy',
+  'Employees - Executive criticism',
   'Content - Negative reaction to owned social post',
 ];
 
@@ -37,7 +38,7 @@ const SHEET_TEST_TOPICS_ = [
   'Criminal/Dangerous Activity',
   'Malicious & Unwanted Software',
   'Child Safety',
-  'Regulated Goods & Services',
+  'Violence / Weapons',
 ];
 
 const SHEET_TEST_PLATFORMS_ = [
@@ -435,7 +436,8 @@ function postSheetTestAlert_(ss, wanted, sfb) {
     const platform = cellVal(13, 'X');
     const authorRaw = cellVal(14, '@test_routing_account');
     const handleSlug = authorRaw.replace(/[^a-zA-Z0-9_]+/g, '') || 'test_routing_account';
-    const engagementsNum = Math.max(0, parseInt(String(cellVal(15, '2500')).replace(/[^0-9]/g, ''), 10) || 2500);
+    const engagementsRead = parseInt(String(cellVal(15, '2500')).replace(/[^0-9]/g, ''), 10);
+    const engagementsNum = Number.isFinite(engagementsRead) ? engagementsRead : 2500;  // an entered 0 stays 0
     const engLevel = engagementsNum >= 2000 ? 'HIGH' : 'LOW';
     const isKof = /^yes$|^true$/i.test(cellVal(16, 'No'));
     const summaryText = cellVal(
@@ -510,10 +512,15 @@ function onSheetTestAlertWorked_(ctx, m, row) {
           : `⚠️ Picked up in Chat — ${st || 'checked'} (${row.alert_id})`;
 
     try {
-      const targetSpace = (ctx && ctx.spaces && (ctx.sourceReadOnly ? ctx.spaces.analyst.id : ctx.spaces.burson.id)) || '';
+      const target = ctx && ctx.spaces ? (ctx.sourceReadOnly ? ctx.spaces.analyst : ctx.spaces.burson) : null;
+      const targetSpace = (target && target.id) || '';
       if (targetSpace) {
+        // An analysts' note in the internal test space the alert was posted in (resolveSheetTestSpace_), like the triage
+        // note (OtherAlerts.gs postOtherNote_): past the Burson guard, which holds back its alert id and addresses. Only
+        // in a space known to be Google-only that isn't S-F Burson; anywhere else the guard applies as before
+        const internalOnly = target.externalUserAllowed === false && !isSfBurson_(ctx.sfBurson, targetSpace);
         postTo_(ctx, targetSpace, `🧪 *Test Alert Delivery (${row.alert_id}):*\n${summary}`,
-          (row && row.forward_thread) || (m && m.thread) || null, `sheettestres:${row.alert_id}`);
+          (row && row.forward_thread) || (m && m.thread) || null, `sheettestres:${row.alert_id}`, null, internalOnly);
       }
     } catch (e) {}
 

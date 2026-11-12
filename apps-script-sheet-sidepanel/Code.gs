@@ -11,10 +11,8 @@
 
 const SIDEPANEL_ANALYSIS_TAB_ = 'Analysis';
 const SIDEPANEL_VERDICT_COL_ = 10;   // Column J: Analyst Verdict
-const SIDEPANEL_NOTES_COL_ = 11;     // Column K: Analyst Notes
 const SIDEPANEL_KEY_COL_ = 12;       // Column L (hidden): row key
 const SIDEPANEL_CONTROLS_COL_ = 13;  // Column M (hidden): M2 JSON ({runNow, windowLabel, focus, search})
-const SIDEPANEL_SUMMARY_COL_ = 14;   // Column N (hidden): N2 JSON ({overview, controls, scorecard})
 
 const SIDEPANEL_WINDOWS_ = ['24 hours', '3 days', '7 days', '14 days'];
 const SIDEPANEL_FOCUSES_ = [
@@ -50,7 +48,7 @@ function onOpen() {
 
 function sidepanelTestRouteFormula_(rowNum) {
   const cell = `B${rowNum}`;
-  return `=IF(TRIM(${cell})="","",IFERROR(IF(Control!$B$37="ON","Test (Col C): "&IF(INDEX('Brand safety groups'!$C$2:$C$200,MATCH(${cell},'Brand safety groups'!$A$2:$A$200,0))="","(none — will skip)",INDEX('Brand safety groups'!$C$2:$C$200,MATCH(${cell},'Brand safety groups'!$A$2:$A$200,0))),IF(Control!$B$29="ON","Testing B30: "&IF(Control!$B$30="","(B30 blank — waiting)",Control!$B$30),"Live (Col B): "&INDEX('Brand safety groups'!$B$2:$B$200,MATCH(${cell},'Brand safety groups'!$A$2:$A$200,0)))),"(comma list / custom)"))`;
+  return `=IF(TRIM(${cell})="","",IFERROR(IF(Control!$B$37="ON","Test (Col C): "&IF(INDEX('Brand safety groups'!$C$2:$C$200,MATCH(${cell},'Brand safety groups'!$A$2:$A$200,0))="","(none — will skip)",INDEX('Brand safety groups'!$C$2:$C$200,MATCH(${cell},'Brand safety groups'!$A$2:$A$200,0))),IF(ISNUMBER(SEARCH("LIVE",Control!$C$29)),"Live (Col B): "&INDEX('Brand safety groups'!$B$2:$B$200,MATCH(${cell},'Brand safety groups'!$A$2:$A$200,0)),"Testing B30: "&IF(Control!$B$30="","(B30 blank — waiting)",Control!$B$30))),"(comma list / custom)"))`;
 }
 
 function ensureSidepanelTestAlertTab_(ss) {
@@ -88,7 +86,7 @@ function ensureSidepanelTestAlertTab_(ss) {
     [
       'Last Result',
       'No test alert sent yet.',
-      '=IF(Control!$B$37="ON","Mode: Group test emails (Control!B37 ON → Brand safety groups Col C)",IF(Control!$B$29="ON","Mode: Testing sandbox (Control!B29 ON → Control!B30)","Mode: LIVE (Brand safety groups Col B)"))',
+      '=IF(Control!$B$37="ON","Mode: Group test emails (Control!B37 ON → Brand safety groups Col C)",IF(ISNUMBER(SEARCH("LIVE",Control!$C$29)),"Mode: LIVE (Brand safety groups Col B)","Mode: Testing sandbox (Control!C29 → Control!B30)"))',
     ],
     ['Product Slot', 'Product / Group (dropdown or comma-separated)', 'Configured Destination'],
     ['Product 1', 'Gemini App', sidepanelTestRouteFormula_(5)],

@@ -25,4 +25,4 @@ Use this skill whenever managing or diagnosing how live `[S-F] Burson Automated 
 ## 2. Guardrails & Leak Prevention (`Outbox.gs` & `Relay.gs`)
 - Messages starting with `internal:` or `[internal]` stay strictly inside the `Mirror space` (`B9`), along with all replies in that internal thread.
 - Candidate outbound messages are checked by `outboxGuardHits_()` (blocking mentions of `mirror`, `relay`, `slrr`, `the bot`, `auto-correct`, `outbox tab`, `zapier`, `stand-in`, or internal space names/IDs).
-- Use `slrr_test_leak_guard` from `slrr-dev-pipeline` to dry-run any text or emoji against the exact production guard rules.
+- Use `slrr_test_leak_guard` from `slrr-dev-pipeline` to dry-run any text or emoji against the same guard functions (`outboxGuardHits_()`, `outboxEmojiProblem_()`), loaded from the local `.gs` files. The tool doesn't know the real names and ids of the internal spaces, which production also blocks (`outboxGuard_()` reads them from the Control tab and the script properties): pass them in `internal_space_terms`. Without them, a pass covers the fixed patterns only.

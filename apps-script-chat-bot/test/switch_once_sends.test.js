@@ -118,7 +118,7 @@ module.exports = H => {
   test('once (stand-in): Gmail refusing the send notes nothing, so the next try sends it (as before), once', () => {
     const w = standInWorld();
     w.paste(F.P0_OK);
-    gmailFailsOnce(w, 'post', /^messages\/send$/, 500);
+    gmailFailsOnce(w, 'post', /^messages\/send$/, 429);
     w.run();
     w.run();
     eq([sendCalls(w), sent(w), row0(w).email_status, row0(w).email_attempts], [2, 1, 'sent', 1]);

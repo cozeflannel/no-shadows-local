@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Protocol
 
-from .models import AgentEvent, utcnow
+from .models import AgentEvent, utc_isoformat, utcnow
 
 
 class EventType:
@@ -168,12 +168,13 @@ class SqliteEventLogger:
 
     def query(self, since=None, until=None, types=None, case_id=None, escalation_id=None, env=None, limit=None):
         sql, args = "SELECT * FROM agent_events WHERE 1=1", []
+        # event_ts is UTC text (written from ctx.now()) and is compared as text: the bounds must be UTC too.
         if since is not None:
             sql += " AND event_ts >= ?"
-            args.append(since.isoformat())
+            args.append(utc_isoformat(since))
         if until is not None:
             sql += " AND event_ts < ?"
-            args.append(until.isoformat())
+            args.append(utc_isoformat(until))
         if types:
             types = list(types)
             sql += f" AND event_type IN ({', '.join('?' for _ in types)})"
@@ -258,24 +259,6 @@ class BigQueryEventLogger:
             d["error_codes"] = list(d.get("error_codes") or [])
             out.append(AgentEvent.model_validate(d))
         return out
-
-
-class MultiEventLogger:
-    """Fan-out (e.g. BigQuery + local mirror). Errors in secondaries are swallowed."""
-
-    def __init__(self, primary: EventLogger, *secondaries: EventLogger):
-        self.primary, self.secondaries = primary, secondaries
-
-    def log(self, event: AgentEvent) -> None:
-        self.primary.log(event)
-        for s in self.secondaries:
-            try:
-                s.log(event)
-            except Exception:  # noqa: BLE001 - secondary sinks are best-effort
-                pass
-
-    def query(self, **kwargs):
-        return self.primary.query(**kwargs)
 
 
 def get_event_logger() -> EventLogger:

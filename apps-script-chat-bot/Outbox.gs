@@ -295,11 +295,16 @@ function outboxNotTheBot_(control) {
 // The wider guard: what goes to S-F Burson from the outbox, whoever wrote it
 // ---------------------------------------------------------------------------------------------------------------
 
-/** Beyond the bot's own guard (GUARD_PATTERNS_, unchanged): the internal setup, the tools and the people behind it. */
+/**
+ * Beyond the bot's own guard (GUARD_PATTERNS_, unchanged): the internal setup, the tools and the people behind it. The
+ * bot by the names people give it here ("the bot", "our bot", "my bot", "QA bot", "triage bot"), never the bare word:
+ * analysts' messages go through this too, and a robot, a chatbot, bots or "a bot account" in a post are theirs to say.
+ */
 const OUTBOX_GUARD_PATTERNS_ = [
-  /\bauto-?correct\w*/i, /\bwrite-?backs?\b/i, /\bwritten\s+back\b/i, /\bslrr\b/i, /\bmirror(?:s|ed|ing)?\b/i,
-  /\brelay(?:s|ed|ing)?\b/i, /\bthe\s+bot\b/i, /\bautomat(?:ion|ions|ed|ically)\b/i, /\bauto-?(?:sent|submitted)\b/i,
-  /\bzapier\b/i, /\bstand-?ins?\b/i, /\b(?:control|relay|results|outbox)\s+tab\b/i, /\banalyst\s+space\b/i,
+  /\bauto[\s-]*correct\w*/i, /\bwrite-?backs?\b/i, /\bwritten\s+back\b/i, /\bslrr\b/i, /\bmirror(?:s|ed|ing)?\b/i,
+  /\brelay(?:s|ed|ing)?\b/i, /\b(?:the|our|my)\s+bot\b/i, /\b(?:qa|q&a|triage)[\s-]*bot\b/i,
+  /\bautomat(?:ion|ions|ed|ically)\b/i, /\bauto[\s-]*(?:sent|submitted)\b/i,
+  /\bzapier\b/i, /\bstand-?ins?\b/i, /\boutbox(?:es)?\b/i, /\b(?:control|relay|results)\s+tab\b/i, /\banalyst\s+space\b/i,
 ];
 
 /**
@@ -356,8 +361,10 @@ function outboxEmojiProblem_(emoji) {
  *   LIVE: on the Burson outbox for S-F Burson (bursonOutbox_), waiting for a person to set Send, like the analysts'.
  * Nothing goes for anything else: row 24 OFF, Testing with no test copy (the Safety valve ON with B26 blank), the
  * auto-correct space, a dry run, a Mirror message with nothing in S-F Burson behind it (or no copy of it in the test copy
- * yet), a reply that would show internal details (outboxGuardHits_), or an emoji never shown to Burson. Never the bot's
- * notes for analysts, outcome or watch notes, or early-wave warnings: only what bursonOut_ does. `a`: {type: 'react',
+ * yet), a reply that would show internal details (outboxGuardHits_), or an emoji never shown to Burson. One exception:
+ * the bot's answer to Burson's question that would show internal details goes as the fixed answer instead
+ * (ownAnswerFallback_), so Burson gets an answer rather than none; the Mirror space keeps the answer as it was. Never the
+ * bot's notes for analysts, outcome or watch notes, or early-wave warnings: only what bursonOut_ does. `a`: {type: 'react',
  * name, emoji} or {type: 'post', text, thread, key}. Never throws (a failure is logged). 'copy', 'queued' or ''.
  */
 function forwardOwnBurson_(ctx, a) {
@@ -370,11 +377,18 @@ function forwardOwnBurson_(ctx, a) {
     if (!live && !copyId) return '';  // Testing with no test copy: nothing goes to any Burson space
     const react = a.type === 'react';
     if (react ? outboxEmojiProblem_(a.emoji) : !String(a.text || '').trim()) return '';
+    let text = react ? '' : a.text;  // what goes: the reply as it is, or the fixed answer in its place (below)
     if (!react) {
-      const hits = outboxGuardHits_(a.text, ctx.ownGuard || guardFor_(ctx));
+      const guard = ctx.ownGuard || guardFor_(ctx);
+      const hits = outboxGuardHits_(text, guard);
       if (hits.length) {
-        ctx.log(`Post in S-F Burson: the bot's reply stays in the Mirror space: it mentions "${truncate_(hits[0], 60)}"`);
-        return '';
+        const fixed = ownAnswerFallback_(ctx, a, guard);
+        if (!fixed) {
+          ctx.log(`Post in S-F Burson: the bot's reply stays in the Mirror space: it mentions "${truncate_(hits[0], 60)}"`);
+          return '';
+        }
+        ctx.log(`Post in S-F Burson: the bot's answer mentions "${truncate_(hits[0], 60)}", so the fixed answer goes in its place`);
+        text = fixed;
       }
     }
     const target = react ? ownSfbBehind_(ctx, a.name, false) : (a.thread ? ownSfbBehind_(ctx, a.thread, true) : '');
@@ -382,7 +396,7 @@ function forwardOwnBurson_(ctx, a) {
     if (live) {
       if (!ctx.outbox) return '';
       const res = ctx.outbox.add(react ? { kind: 'reaction', message: target, emoji: a.emoji, from: 'bot' }
-        : { kind: target ? 'reply' : 'post', text: a.text, thread: target, key: a.key ? 'own:' + a.key : '', from: 'bot' });
+        : { kind: target ? 'reply' : 'post', text, thread: target, key: a.key ? 'own:' + a.key : '', from: 'bot' });
       return res && res.queued ? 'queued' : '';
     }
     const st = ctx.copyState;
@@ -394,7 +408,7 @@ function forwardOwnBurson_(ctx, a) {
     } else {
       const thread = target ? (st.liveThreadToCopy.get(target) || (st.olderThread ? st.olderThread(target) : '')) : '';
       if (target && !thread) return '';
-      testCopyPost_(copyId, a.text, thread || null, 'own:' + (a.key || hashText_(String(a.text))), '');
+      testCopyPost_(copyId, text, thread || null, 'own:' + (a.key || hashText_(String(a.text))), '');
     }
     ctx.log(`Post in S-F Burson: ${what} went straight to the Burson test copy (Testing)`);
     return 'copy';
@@ -402,6 +416,23 @@ function forwardOwnBurson_(ctx, a) {
     console.error(`Post in S-F Burson: couldn't pass on ${what} from the Mirror space: ${(e && e.message) || e}`);
     return '';
   }
+}
+
+/**
+ * For the bot's answer to Burson's question (bursonOut_'s "ans:" post, Bot.gs handleHuman_) that the wider guard
+ * (outboxGuardHits_, with `guard`) holds back on its way to S-F Burson: the fixed answer in its place (Voice.gs
+ * fallbackAnswer_: what the alert needed and its status, as when Gemini's answer fails the bot's own guard), so Burson
+ * gets an answer rather than none. It lists only the resources whose name and link the wider guard lets through. ''
+ * when `a` isn't an answer, or when the fixed answer would be held back too: nothing goes then, as before.
+ */
+function ownAnswerFallback_(ctx, a, guard) {
+  if (!/^ans:/.test(String((a && a.key) || ''))) return '';
+  const own = guardFor_(ctx);
+  const row = a.thread ? ctx.store.alertByThread(a.thread) : null;
+  const alert = voiceRow_(mergedAlertRow_(ctx, row), switchOn_(ctx, 'noWait'));
+  const resources = usableResources_(ctx.resources, own).filter(r => !outboxGuardHits_(resourcesLine_([r]), guard).length);
+  const text = fallbackAnswer_(alert, own, resources);
+  return outboxGuardHits_(text, guard).length ? '' : text;
 }
 
 /**

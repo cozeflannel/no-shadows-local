@@ -247,7 +247,7 @@ function escalationFor_(ctx, review, history) {
       action: 'EMAIL_ALERT',
       track: esc.track || 'HIGH_ENGAGEMENT',
       reasons: (esc.reasons || []).concat(['SHEET_TEST_ALERT']),
-      suppression: [],
+      suppression: null,
     });
   }
   const upd = typeof memoryUpdate_ === 'function' ? memoryUpdate_(review, esc) : null;
@@ -529,8 +529,8 @@ function emailScreenshot_(input) {
  * The Social Alert for a pending row. Testing (a stand-in): sent now, to the stand-in only, and the alert gets its emojis.
  * Live with Auto-send Social Alerts ON: sent now to its distros (autoSend_). Otherwise (or when that can't send it): the
  * Gmail draft and its note under the forwarded alert. A failure is retried on the next runs. Never throws.
- * Multi-product alerts spanning 2+ distinct product teams (e.g. "Product: Gemini Model, Devs Products") formulate and
- * deliver one dedicated Social Alert email per product team (`tryMultiDraft_`).
+ * An alert naming 2+ products (e.g. "Product: Gemini Model, Devs Products") still gets one Social Alert email, with every
+ * product team's alert POCs in Cc (Escalate.gs productEmailTargets_: always one target).
  */
 function tryDraft_(ctx, row, report) {
   const D = ctx.drafts;
@@ -545,10 +545,6 @@ function tryDraft_(ctx, row, report) {
     const targets = productEmailTargets_(input, groupsOf_(row), row);
     if (!D.live && switchOn_(ctx, 'bsgTestEmails')) {
       sendViaBsgTestEmails_(ctx, row, input, targets, report, tnsNote);
-      return;
-    }
-    if (targets.length > 1) {
-      tryMultiDraft_(ctx, row, input, targets, report, tnsNote);
       return;
     }
     const plan = targets[0].plan;
@@ -611,25 +607,6 @@ function tryDraft_(ctx, row, report) {
       }
     }
   }
-}
-
-/**
- * Multi-product Social Alert dispatcher (`targets.length >= 2`): formulates and sends/drafts one dedicated Social Alert
- * email per product team (e.g. one for Gemini Model team and one for Devs Products team), while running T&S, Alert
- * memory, emojis, and post-send switches cleanly once across the alert.
- */
-function tryMultiDraft_(ctx, row, input, targets, report, tnsNote) {
-  if (draftsTesters_(ctx).length) {
-    sendMultiToStandIn_(ctx, row, input, targets, report, tnsNote);
-    return;
-  }
-  if (ctx.b30Blank) {
-    const why = 'Testing: enter an email address in Control!B30 (Testing: send to) to receive test emails';
-    ctx.store.updateAlert(row, { email_status: 'pending', email_error: why });
-    ctx.log(`Social Alerts (${targets.length} teams) for ${row.alert_id} waiting on Control!B30`);
-    return;
-  }
-  liveOrDraftMulti_(ctx, row, input, targets, report, tnsNote);
 }
 
 /**
@@ -703,8 +680,12 @@ function sendViaBsgTestEmails_(ctx, row, input, targets, report, tnsNote) {
   try {
     sent = ctx.gmail.sendMessage(mime, t.replyThread || null);
   } catch (e) {
-    forgetStandInSend_(ctx, id);
-    if (!rowAlreadyOut_(ctx, row) && typeof amReleaseSend_ === 'function') amReleaseSend_(ctx, row);
+    // As in sendToStandIn_: only a send Gmail refused outright is forgotten (the next try sends it); after a timeout or a
+    // 5xx it may have gone out, so the note stands and it's never sent again (the row ends failed, saying to check Sent)
+    if (sendRefused_(e)) {
+      forgetStandInSend_(ctx, id);
+      if (!rowAlreadyOut_(ctx, row) && typeof amReleaseSend_ === 'function') amReleaseSend_(ctx, row);
+    }
     throw e;
   }
   const at = ctx.now();
@@ -782,398 +763,6 @@ function sendViaBsgTestEmails_(ctx, row, input, targets, report, tnsNote) {
 }
 
 /**
- * Testing mode (`Control!B29 = ON` / `Control!B30` set) for a multi-product alert: sends one real Social Alert email per
- * product team directly to the inbox(es) in `Control!B30`, each formulated with that team's Subject, Product row, and
- * `Would have gone to: To: <Team> alert POCs...` footer. Crash-safe per-team keys `${id}#${slug}` prevent duplicate sends.
- */
-function sendMultiToStandIn_(ctx, row, input, targets, report, tnsNote) {
-  const D = ctx.drafts;
-  const id = row.alert_id;
-  const testers = draftsTesters_(ctx);
-  const prevList = Array.isArray(input.team_emails) ? input.team_emails : [];
-  const prevByKey = new Map(prevList.filter(x => x && x.key).map(x => [x.key, x]));
-  const screenshot = emailScreenshot_(input);
-  const results = [];
-  const stoppedMidSend = [];
-  let claimed = rowAlreadyOut_(ctx, row);
-
-  for (const t of targets) {
-    const sendKey = `${id}#${t.slug}`;
-    const prev = prevByKey.get(t.key);
-    const before = standInSent_(ctx, sendKey);
-    if ((prev && prev.status === 'sent') || (before && before.sent)) {
-      const thread = (prev && prev.thread) || (before && before.thread) || t.replyThread || '';
-      const sentAt = Number((prev && prev.sent_at) || (before && before.at)) || ctx.now();
-      const subj = (prev && prev.subject) ||
-        taggedSubject_(socialAlertSubject_(t.input, t.replySubject ? { subject: t.replySubject } : null),
-          ctx.flowTag || '', t.replySubject ? { subject: t.replySubject } : null);
-      results.push({
-        key: t.key, slug: t.slug, product: t.productLabel, distro: t.distroName,
-        status: 'sent', draft: '', thread,
-        message_id: (prev && prev.message_id) || '',
-        reply_to: t.replyTo || '', subject: subj, sent_at: sentAt,
-      });
-      continue;
-    }
-    if (before) {
-      stoppedMidSend.push(t.productLabel);
-      results.push({
-        key: t.key, slug: t.slug, product: t.productLabel, distro: t.distroName,
-        status: 'failed', draft: '', thread: t.replyThread || '', message_id: '',
-        reply_to: t.replyTo || '', subject: '', sent_at: 0,
-      });
-      continue;
-    }
-    const email = socialAlertEmail_(t.input, t.plan, {
-      standIn: testers, sendId: sendKey, footer: wouldHaveGoneTo_(t.plan, t.input), tag: ctx.flowTag || '',
-      reply: t.replySubject ? { subject: t.replySubject } : null, screenshot,
-    });
-    const mime = buildMime_({
-      from: D.from, to: email.to, cc: [], bcc: [], subject: email.subject, text: email.text, html: email.html,
-      inline: email.inline, inReplyTo: t.replyTo || '', references: t.replyTo || '',
-    });
-    if (!runOwned_()) {
-      if (results.some(r => r.status === 'sent')) {
-        try { ctx.store.updateAlert(row, { email_input: Object.assign({}, input, { team_emails: results }) }); } catch (e) {}
-      }
-      return;
-    }
-    noteStandInSend_(ctx, { id: sendKey, at: ctx.now() });
-    if (!claimed) {
-      if (typeof amClaimSend_ === 'function') amClaimSend_(ctx, row);
-      claimed = true;
-    }
-    let sent;
-    try {
-      sent = ctx.gmail.sendMessage(mime, t.replyThread || null);
-    } catch (e) {
-      forgetStandInSend_(ctx, sendKey);
-      if (results.some(r => r.status === 'sent')) {
-        try { ctx.store.updateAlert(row, { email_input: Object.assign({}, input, { team_emails: results }) }); } catch (err) {}
-      } else if (typeof amReleaseSend_ === 'function') {
-        amReleaseSend_(ctx, row);
-      }
-      throw e;
-    }
-    const at = ctx.now();
-    const thread = (sent && sent.threadId) || t.replyThread || '';
-    const entry = { id: sendKey, at, thread, msg: (sent && sent.id) || '', sent: true };
-    (ctx.standInSends = ctx.standInSends || {})[sendKey] = entry;
-    try {
-      noteStandInSend_(ctx, entry);
-    } catch (e) {
-      ctx.log(`couldn't note that the ${t.productLabel} Social Alert for ${id} went to the testers: ${(e && e.message) || e}`);
-    }
-    let messageId = '';
-    try {
-      const m = thread && sent && sent.id ? ctx.gmail.getThread(thread).find(x => x.id === sent.id) : null;
-      messageId = (m && m.headers && m.headers['message-id']) || '';
-    } catch (e) {
-      ctx.log(`couldn't read the Message-ID of the ${t.productLabel} Social Alert for ${id}: ${(e && e.message) || e}`);
-    }
-    report.drafts_sent++;
-    results.push({
-      key: t.key, slug: t.slug, product: t.productLabel, distro: t.distroName,
-      status: 'sent', draft: '', thread, message_id: messageId,
-      reply_to: t.replyTo || '', subject: email.subject, sent_at: at,
-    });
-  }
-
-  const sentResults = results.filter(r => r.status === 'sent');
-  if (!sentResults.length && stoppedMidSend.length) {
-    const why = `an earlier try may have sent the Social Alert (${stoppedMidSend.join(', ')}) to the testers (check Sent in Gmail), so it wasn't sent again`;
-    ctx.store.updateAlert(row, { email_status: 'failed', email_error: why, email_input: Object.assign({}, input, { team_emails: results }) });
-    ctx.log(`the Social Alerts for ${id}: ${why}`);
-    (report.notices = report.notices || []).push(`The Social Alerts for ${id}: ${why}.`);
-    return;
-  }
-
-  const first = sentResults[0];
-  const lastAt = sentResults[sentResults.length - 1].sent_at || ctx.now();
-  const errText = stoppedMidSend.length
-    ? `check Sent in Gmail for ${stoppedMidSend.join(', ')} (an earlier try stopped mid-send)` : '';
-  const step = (failed, fn) => {
-    try { fn(); } catch (e) { ctx.log(`${failed}: ${(e && e.message) || e}`); }
-  };
-  step(`couldn't mark the Social Alerts for ${id} sent`, () => {
-    const was = row.email_status;
-    try {
-      ctx.store.updateAlert(row, {
-        email_status: 'sent', email_draft: '', email_thread: first.thread, email_message_id: first.message_id,
-        email_subject: first.subject || row.email_subject || '', email_at: lastAt, email_sent_at: lastAt,
-        email_sent_by: D.mailbox || '', email_error: errText,
-        email_input: Object.assign({}, input, { team_emails: results }),
-      });
-    } catch (e) {
-      row.email_status = was;
-      throw e;
-    }
-  });
-  step(`couldn't mark the emojis for the Social Alerts for ${id}`,
-    () => { report.mirrored += markEmojis_(ctx, row, escalationEmojisForRow_(row, null, false)).length; });
-  step(`after the Social Alerts for ${id} were sent, the after-send steps failed`, () => onEmailSent_(ctx, row, report));
-  const noteLines = [
-    `${sentResults.length} Social Alerts sent (1 per product team, to the testers while testing): ` +
-      `${sentResults.map(r => r.product).join(', ')}.`,
-  ];
-  if (input.escalation && input.escalation.kb_basis) {
-    noteLines.push(`- Why: ${escalationWhyText_(input.escalation)}`);
-  }
-  if (tnsWhy_(input)) {
-    noteLines.push(tnsNote || tnsFormText_(input));
-    step(`couldn't watch ${id} for the T&S confirmation`, () => watchTns_(ctx, id));
-  }
-  step(`couldn't post the multi-team note for ${id}`, () => postDraftNote_(ctx, row, noteLines.join('\n'), 'multisend:' + id));
-}
-
-/**
- * Live / non-stand-in execution for a multi-product alert (`targets.length >= 2`):
- * - With Auto-send Social Alerts ON (`autoSendOn_(ctx)`): sends 1 dedicated Social Alert email per product team directly
- *   to that team's Google Group POCs from `Brand safety groups` (any team missing contacts or blocked by a safety check
- *   falls back cleanly to a Gmail draft).
- * - With Auto-send Social Alerts OFF: creates 1 dedicated Gmail draft per product team and posts a consolidated note.
- */
-function liveOrDraftMulti_(ctx, row, input, targets, report, tnsNote) {
-  const D = ctx.drafts;
-  const id = row.alert_id;
-  const prevList = Array.isArray(input.team_emails) ? input.team_emails : [];
-  const prevByKey = new Map(prevList.filter(x => x && x.key).map(x => [x.key, x]));
-  const screenshot = emailScreenshot_(input);
-  const autoOn = autoSendOn_(ctx);
-  const results = [];
-  const madeDraftIds = [];
-  const wsNotes = [];
-  const noteMeta = [];
-  let claimed = rowAlreadyOut_(ctx, row);
-  let hitDeadline = false;
-
-  const waitingOn = (Array.isArray(row.requested) ? row.requested : []).filter(x => x && x.problem);
-  const linkFound = linkFoundRow_(row);
-
-  for (const t of targets) {
-    const sendKey = `${id}#${t.slug}`;
-    const prev = prevByKey.get(t.key);
-    const email = socialAlertEmail_(t.input, t.plan, {
-      test: !D.live, mailbox: D.mailbox, sendId: sendKey, tag: ctx.flowTag || '',
-      reply: t.replySubject ? { subject: t.replySubject } : null, screenshot,
-    });
-    const mime = buildMime_({
-      from: D.from, to: email.to, cc: email.cc, bcc: email.bcc, subject: email.subject, text: email.text,
-      html: email.html, inline: email.inline, inReplyTo: t.replyTo || '', references: t.replyTo || '',
-    });
-    if (!runOwned_()) {
-      if (results.length) {
-        try { ctx.store.updateAlert(row, { email_input: Object.assign({}, input, { team_emails: results }) }); } catch (e) {}
-      }
-      return;
-    }
-
-    if (prev && prev.status === 'sent') {
-      results.push(prev);
-      noteMeta.push({ t, email, status: 'sent', warn: '' });
-      continue;
-    }
-    if (prev && prev.draft) {
-      const cur = ctx.gmail.getDraftRaw(prev.draft);
-      if (cur) {
-        const th = cur.threadId || prev.thread || t.replyThread || '';
-        ctx.gmail.updateDraft(prev.draft, mime, th || null);
-        results.push(Object.assign({}, prev, { thread: th, subject: email.subject }));
-      } else {
-        results.push(prev);  // gone from Gmail: maintainMultiDrafts_ checks whether sent or discarded
-      }
-      noteMeta.push({ t, email, status: 'drafted', warn: prev.warn || '' });
-      continue;
-    }
-
-    if (!claimed) {
-      if (typeof amClaimSend_ === 'function') amClaimSend_(ctx, row);
-      claimed = true;
-    }
-
-    let autoWarn = '';
-    let autoTried = 0;
-    if (autoOn) {
-      const before = autoSendLog_(ctx).find(e => e.id === sendKey);
-      if (before && before.sent) {
-        const at = Number(before.at) || ctx.now();
-        const thread = before.thread || t.replyThread || '';
-        results.push({
-          key: t.key, slug: t.slug, product: t.productLabel, distro: t.distroName,
-          status: 'sent', draft: '', thread, message_id: '', reply_to: t.replyTo || '',
-          subject: email.subject, sent_at: at, sent_by: 'bot',
-          recipients: email.to.concat(email.cc, email.bcc || []),
-        });
-        noteMeta.push({ t, email, status: 'sent', warn: '' });
-        try { const w = submitWorkspaceForm_(t.input, D.live); if (w) wsNotes.push(w); } catch (e) {}
-        continue;
-      }
-      if (before) {
-        autoWarn = `already tried auto-sending ${t.productLabel}: ${AUTO_SEND_CHECK_SENT_}`;
-        autoTried = Number(before.at) || ctx.now();
-      } else if (!email.to.length || !t.plan.to.length) {
-        autoWarn = `${t.productLabel} has no alert contacts on file (add recipients in Gmail, then send)`;
-      } else if (waitingOn.length) {
-        const what = truncate_(waitingOn.map(x => `${burLabel_(x.field)} (${x.problem})`).join(', '), 240);
-        autoWarn = switchOn_(ctx, 'noWait')
-          ? `alert has a problem the bot can't fix itself (${what}): fix in Gmail, then send`
-          : `asked Burson to fix ${what}: fix in Gmail, then send`;
-      } else if (linkFound) {
-        const sure = Math.round((Number(row.forwarded_fields.link_found.confidence) || 0) * 100);
-        autoWarn = `link was found in the listening feeds (${sure}% sure): check it's the right post, then send`;
-      } else if (ctx.now() > ctx.deadline) {
-        hitDeadline = true;
-        break;
-      } else {
-        let noteOk = false;
-        const tried = ctx.now();
-        try {
-          noteAutoSend_(ctx, { id: sendKey, at: tried });
-          noteOk = true;
-        } catch (e) {
-          autoWarn = `couldn't note the send first (${truncate_(String((e && e.message) || e), 140)}): review and send`;
-        }
-        if (noteOk) {
-          let sent = null;
-          try {
-            sent = ctx.gmail.sendMessage(mime, t.replyThread || null);
-          } catch (e) {
-            const why = String((e && e.message) || e);
-            ctx.log(`auto-send of the ${t.productLabel} Social Alert for ${id} failed, making a draft instead: ${why}`);
-            autoWarn = `Gmail said "${truncate_(why, 160)}" (it may have gone out anyway: ${AUTO_SEND_CHECK_SENT_})`;
-            autoTried = tried;
-          }
-          if (sent) {
-            const at = ctx.now();
-            const thread = sent.threadId || t.replyThread || '';
-            try {
-              noteAutoSend_(ctx, { id: sendKey, at, thread, msg: sent.id || '', sent: true });
-            } catch (e) {
-              ctx.log(`couldn't note that the ${t.productLabel} Social Alert for ${id} was sent: ${(e && e.message) || e}`);
-            }
-            let messageId = '';
-            try {
-              const msgs = thread ? ctx.gmail.getThread(thread) : [];
-              const m = sent.id ? msgs.find(x => x.id === sent.id) : null;
-              messageId = (m && m.headers && m.headers['message-id']) || '';
-            } catch (e) {}
-            report.auto_sent = (report.auto_sent || 0) + 1;
-            report.drafts_sent++;
-            results.push({
-              key: t.key, slug: t.slug, product: t.productLabel, distro: t.distroName,
-              status: 'sent', draft: '', thread, message_id: messageId, reply_to: t.replyTo || '',
-              subject: email.subject, sent_at: at, sent_by: 'bot',
-              recipients: email.to.concat(email.cc, email.bcc || []),
-            });
-            noteMeta.push({ t, email, status: 'sent', warn: '' });
-            try { const w = submitWorkspaceForm_(t.input, D.live); if (w) wsNotes.push(w); } catch (e) {}
-            continue;
-          }
-        }
-      }
-    }
-
-    const draft = ctx.gmail.createDraft(mime, t.replyThread || null);
-    madeDraftIds.push(draft.id);
-    report.drafts++;
-    const entry = {
-      key: t.key, slug: t.slug, product: t.productLabel, distro: t.distroName,
-      status: 'drafted', draft: draft.id, thread: draft.threadId || t.replyThread || '',
-      reply_to: t.replyTo || '', subject: email.subject, at: ctx.now(),
-    };
-    if (autoTried) entry.auto_send_try = autoTried;
-    if (autoWarn) entry.warn = autoWarn;
-    results.push(entry);
-    noteMeta.push({ t, email, status: 'drafted', warn: autoWarn });
-    try { const w = submitWorkspaceForm_(t.input, D.live); if (w) wsNotes.push(w); } catch (e) {}
-  }
-
-  if (hitDeadline) {
-    ctx.store.updateAlert(row, { email_status: 'pending', email_input: Object.assign({}, input, { team_emails: results }) });
-    ctx.log(`remaining team Social Alerts for ${id} continue on the next run: this run is out of time`);
-    return;
-  }
-
-  const openDrafts = results.filter(r => r.status === 'drafted');
-  const sentTeams = results.filter(r => r.status === 'sent');
-  const now = ctx.now();
-
-  if (!openDrafts.length && sentTeams.length) {
-    const first = sentTeams[0];
-    ctx.store.updateAlert(row, {
-      email_status: 'sent', email_draft: '', email_thread: first.thread, email_message_id: first.message_id || '',
-      email_subject: first.subject || row.email_subject || '', email_at: now, email_sent_at: now,
-      email_sent_by: 'bot', email_error: '',
-      email_input: Object.assign({}, input, { team_emails: results }),
-    });
-    const allRecips = [];
-    sentTeams.forEach(s => (s.recipients || []).forEach(a => { if (a) allRecips.push(a); }));
-    try {
-      const got = { headers: { from: D.from, to: allRecips.join(', '), cc: '' } };
-      report.mirrored += markEmojis_(ctx, row, escalationEmojisForRow_(row, got, true)).length;
-    } catch (e) {
-      ctx.log(`after auto-sending the Social Alerts for ${id}, emojis failed: ${(e && e.message) || e}`);
-    }
-    try {
-      postDraftNote_(ctx, row, multiDraftNoteText_(D, noteMeta, input, wsNotes, ctx, tnsNote, true), 'sent:' + id);
-    } catch (e) {}
-    try { if (tnsWhy_(input)) watchTns_(ctx, id); } catch (e) {}
-    onEmailSent_(ctx, row, report);
-    try {
-      const today = etDay_(now);
-      const n = autoSendLog_(ctx).filter(e => e.sent && etDay_(Number(e.at)) === today).length;
-      noteSwitch_('autoSend', `${Math.max(n, sentTeams.length)} sent today · last ${id} (${sentTeams.length} teams) at ${autoSendWhen_(now)}`);
-    } catch (e) {}
-    return;
-  }
-
-  try {
-    const primaryOpen = openDrafts[0] || results[0];
-    ctx.store.updateAlert(row, {
-      email_status: 'drafted', email_draft: openDrafts.map(d => d.draft).join(' '),
-      email_thread: primaryOpen.thread || row.email_thread || '',
-      email_subject: primaryOpen.subject || row.email_subject || '',
-      email_at: now, email_error: '',
-      email_input: Object.assign({}, input, { team_emails: results }),
-    });
-  } catch (e) {
-    madeDraftIds.forEach(did => {
-      try { ctx.gmail.deleteDraft(did); } catch (err) {}
-    });
-    throw e;
-  }
-  try {
-    postDraftNote_(ctx, row, multiDraftNoteText_(D, noteMeta, input, wsNotes, ctx, tnsNote, false), 'draft:' + id);
-  } catch (e) {}
-  try { if (tnsWhy_(input)) watchTns_(ctx, id); } catch (e) {}
-}
-
-/** Consolidated analyst Chat thread note for multi-product Social Alert drafts or auto-sends. Pure. */
-function multiDraftNoteText_(D, noteMeta, input, wsNotes, ctx, tnsNote, allSent) {
-  const esc = (input && input.escalation) || {};
-  const lines = [
-    allSent
-      ? `${noteMeta.length} Social Alerts sent (1 per product team — Auto-send Social Alerts is ON):`
-      : `${imMention_(ctx)} ${noteMeta.length} Social Alert drafts are in Gmail Drafts (1 per product team): review and send each, or delete to skip.`,
-    `- Why: ${escalationWhyText_(esc)}`,
-  ];
-  noteMeta.forEach(({ t, email, status, warn }) => {
-    const productGroups = t.plan.groups.filter(g => t.plan.reasons[g] === 'product alert POCs');
-    const teamLabel = productGroups.length ? productGroups.join(', ') : t.productLabel;
-    const ccGroups = t.plan.groups.filter(g => t.plan.reasons[g] !== 'product alert POCs');
-    const toCount = D.live ? email.to.length : t.plan.to.length;
-    const ccCount = D.live ? email.cc.length : t.plan.cc.length;
-    const stateTag = !allSent && status === 'sent' ? ' [auto-sent]' : '';
-    const toDesc = toCount ? `${teamLabel} alert POCs (${toCount})` : `empty (${teamLabel} has no alert contacts on file)`;
-    const ccDesc = `${ccGroups.length ? ccGroups.join(', ') + ' + ' : ''}standard CC (${ccCount})` + (D.live ? '' : ' (test draft, only to you)');
-    lines.push(`- *${t.productLabel}*${stateTag}: To ${toDesc} · Cc ${ccDesc}${warn ? ` — ⚠️ ${warn}` : ''}`);
-  });
-  if (tnsWhy_(input)) lines.push(tnsNote || tnsFormText_(input));
-  Array.from(new Set((wsNotes || []).filter(Boolean))).forEach(w => lines.push(`- ${w}`));
-  return lines.join('\n');
-}
-
-/**
  * Right after Gmail made the Social Alert draft (or tryDraft_ brought an earlier one up to date): the row says drafted,
  * with the draft's id, before anything else happens, so no retry makes a second one. When the row can't take it: a
  * draft made just now (`made`) is deleted, so none is left that the row doesn't know about, and this throws (the row
@@ -1228,8 +817,9 @@ function reusedDraft_(ctx, row, mime) {
  * alerts started gets a note under the alert saying why ("Why: Escalated per …"), as a draft note would.
  * Never twice: the send is noted (ctx.memo 'stand_in_sent') before Gmail is asked and again once it's out, and nothing
  * after the send can fail the try (afterStandInSend_). A retry of one that went out marks the row sent without sending
- * it; one whose earlier send Gmail refused is sent (nothing went out); one whose earlier try stopped mid-send isn't
- * sent again (the row ends failed, saying to check Sent). Not sent once another run took over (Main.gs runOwned_).
+ * it; one whose earlier send Gmail refused outright (sendRefused_) is sent (nothing went out); one whose earlier try
+ * stopped mid-send, or ended in a timeout or a 5xx from Gmail (it may have gone out), isn't sent again (the row ends
+ * failed, saying to check Sent). Not sent once another run took over (Main.gs runOwned_).
  */
 function sendToStandIn_(ctx, row, input, plan, report, tnsNote) {
   const D = ctx.drafts;
@@ -1260,9 +850,13 @@ function sendToStandIn_(ctx, row, input, plan, report, tnsNote) {
   let sent;
   try {
     sent = ctx.gmail.sendMessage(mime, row.email_thread || null);
-  } catch (e) {  // Gmail refused it, so nothing went out: the next try sends it
-    forgetStandInSend_(ctx, id);
-    if (typeof amReleaseSend_ === 'function') amReleaseSend_(ctx, row);
+  } catch (e) {
+    // Gmail refused it outright (sendRefused_), so nothing went out: the next try sends it. A timeout or a 5xx may have
+    // gone out anyway: the note stands, so it's never sent again (the next try ends the row failed, saying to check Sent)
+    if (sendRefused_(e)) {
+      forgetStandInSend_(ctx, id);
+      if (typeof amReleaseSend_ === 'function') amReleaseSend_(ctx, row);
+    }
     throw e;
   }
   const at = ctx.now();
@@ -1357,6 +951,18 @@ function forgetStandInSend_(ctx, id) {
     ctx.log(`couldn't drop the note of the refused send of the Social Alert for ${id} (so it isn't sent again): ` +
       `${(e && e.message) || e}`);
   }
+}
+
+/**
+ * Whether a failed send was refused outright, so nothing went out: Gmail answered with an error below 500 (Mail.gs
+ * gmailError_: e.code), or the testers-only guard stopped it before Gmail was asked (Mail.gs onlyToGuard_). Not a timeout
+ * or network error (code 599) nor a 5xx: Gmail may have taken the email, so it may have gone out (as autoSend_ takes any
+ * failed send). Anything else (no code, not the guard's error) can't be told, so it isn't a refusal either. Pure.
+ */
+function sendRefused_(e) {
+  const code = Number(e && e.code);
+  if (code > 0) return code < 500;
+  return /^Testing: emails go only to .* so it was not sent\.$/.test(String((e && e.message) || ''));
 }
 
 /**
@@ -2135,14 +1741,16 @@ function recordTns_(ctx, row) {
 
 /**
  * Every run: an alert waiting on T&S gets ✍️ in both spaces as soon as the WD Intake Request email for its link arrives
- * (and, with "Track post-alert outcomes" ON, "T&S confirmed" as its outcome).
+ * (and, with "Track post-alert outcomes" ON, "T&S confirmed" as its outcome). At most TNS_CHECKS_PER_RUN_ alerts a run:
+ * the ones checked and still waiting go to the end of the list, behind those this run didn't get to, so each gets its turn.
  */
 function checkTnsEmails_(ctx, report) {
   const ids = tnsWatched_(ctx);
   if (!ids.length || !ctx.gmail || typeof ctx.gmail.findMessages !== 'function') return;
-  const keep = [];
+  const later = [];  // not checked this run (past TNS_CHECKS_PER_RUN_): first in line next run
+  const keep = [];   // checked and still waiting: behind those
   ids.forEach((id, i) => {
-    if (i >= TNS_CHECKS_PER_RUN_) { keep.push(id); return; }
+    if (i >= TNS_CHECKS_PER_RUN_) { later.push(id); return; }
     const row = ctx.store.alertById(id);
     if (!row || groupsOf_(row).includes('tns') || ctx.now() - Number(row.created_at || 0) > TNS_WATCH_DAYS_ * DAY_MS_) return;
     const link = tnsLinkOf_(row);
@@ -2160,7 +1768,8 @@ function checkTnsEmails_(ctx, report) {
     }
     keep.push(id);
   });
-  if (JSON.stringify(keep) !== JSON.stringify(ids)) ctx.memo.set('tns_watch', JSON.stringify(keep));
+  const next = later.concat(keep);
+  if (JSON.stringify(next) !== JSON.stringify(ids)) ctx.memo.set('tns_watch', JSON.stringify(next));
 }
 
 function imMention_(ctx) {
@@ -2418,20 +2027,83 @@ function markAutoSentFound_(ctx, row, sent, report, removed) {
 }
 
 /**
+ * A Social Alert still pending a day after its alert was recorded: maintainDrafts_ doesn't try it any more, so its row
+ * says what became of it instead of staying pending (which read as alerted for 14 days, Escalate.gs earlierOutcome_: a
+ * new alert on the same post was ❌'d as a repeat of an email that never went out):
+ *   - no try made an email or a draft: failed, saying no email was made within 24 hours (with the last try's problem);
+ *     the run's report gets an error, its send is let go in the alert memory, and it goes to the SLRR tables, as an email
+ *     that failed for good does (nothing while Write back to SLRR BigQuery is OFF);
+ *   - the bot's own send was noted as gone (ctx.memo 'stand_in_sent' / 'auto_sent') and only the row never said so: sent,
+ *     on that send's thread (it did go out: it must never read as not alerted);
+ *   - an earlier try made a draft the row names: drafted, and the draft is checked as any other;
+ *   - a send was noted but not as gone (it may have gone out): failed, saying to check Sent, with an error in the report.
+ * Returns true to keep the alert on the watch list: its draft, or a row that couldn't be marked (tried again on the next
+ * run). Never throws.
+ */
+function expirePendingEmail_(ctx, row, report) {
+  const id = row.alert_id;
+  try {
+    const standIn = standInSent_(ctx, id);
+    const auto = autoSendLog_(ctx).find(e => e.id === id) || null;
+    const went = (standIn && standIn.sent && standIn) || (auto && auto.sent && auto) || null;
+    if (went) {
+      const at = Number(went.at) || ctx.now();
+      ctx.store.updateAlert(row, { email_status: 'sent', email_draft: '', email_thread: went.thread || row.email_thread || '',
+        email_at: at, email_sent_at: at, email_sent_by: went === auto ? 'bot' : ((ctx.drafts && ctx.drafts.mailbox) || ''),
+        email_error: '' });
+      ctx.log(`the Social Alert for ${id} went out on an earlier try and its row never said so: marked sent (a day on)`);
+      return false;
+    }
+    if (rowDraftIds_(row).length) {
+      ctx.store.updateAlert(row, { email_status: 'drafted', email_error: '',
+        email_at: Number(row.email_at) || Number(row.created_at) || ctx.now() });
+      ctx.log(`the Social Alert for ${id} has a draft an earlier try made and its row never said so: marked drafted (a day on)`);
+      return true;
+    }
+    const maybe = !!standIn || !!auto || rowAlreadyOut_(ctx, row);
+    const last = String(row.email_error || '').trim();
+    const why = maybe
+      ? 'no Social Alert email is known to have gone out within 24 hours, but an earlier try may have sent it (check Sent in ' +
+        'Gmail), so it isn\'t tried again'
+      : `no Social Alert email was made within 24 hours${last ? ` (last problem: ${last})` : ''}`;
+    ctx.store.updateAlert(row, { email_status: 'failed', email_error: truncate_(why, 300) });
+    ctx.log(`the Social Alert for ${id}: ${why}`);
+    (report.errors = report.errors || []).push(maybe ? `the Social Alert for ${id}: ${why}`
+      : `no Social Alert email was made for ${id} within 24 hours, so it's marked failed and isn't tried again` +
+        (last ? `: ${truncate_(last, 200)}` : ''));
+    if (!maybe) {
+      if (typeof amReleaseSend_ === 'function') amReleaseSend_(ctx, row);
+      bqWriteBack_(ctx, row, 'failed', report);  // Write back to SLRR BigQuery (nothing while it's OFF)
+    }
+    return false;
+  } catch (e) {
+    ctx.log(`couldn't close the Social Alert for ${id}, still pending after a day (tried again next run): ${(e && e.message) || e}`);
+    return true;
+  }
+}
+
+/**
  * Every run: pending emails are (re)tried; drafts are checked: sent -> the emojis in both spaces; deleted -> ❌. A draft
  * left after an auto-send that may have gone out: the bot's own send is looked for in Sent (autoSentFound_), so it's
- * marked sent (and the draft removed) rather than ❌.
+ * marked sent (and the draft removed) rather than ❌. A pending email is tried for a day; after that its row says what
+ * became of it (expirePendingEmail_). At most DRAFT_CHECKS_PER_RUN_ alerts a run: the ones checked and still open go to
+ * the end of the list, behind those this run didn't get to, so each gets its turn.
  */
 function maintainDrafts_(ctx, report) {
   const ids = watched_(ctx);
   if (!ids.length) return;
-  const keep = [];
+  const later = [];  // not checked this run (past DRAFT_CHECKS_PER_RUN_, or the run is out of time): first in line next run
+  const keep = [];   // checked and still open: behind those
   ids.forEach((id, i) => {
-    if (i >= DRAFT_CHECKS_PER_RUN_ || ctx.now() > ctx.deadline - 30 * 1000) { keep.push(id); return; }
+    if (i >= DRAFT_CHECKS_PER_RUN_ || ctx.now() > ctx.deadline - 30 * 1000) { later.push(id); return; }
     const row = ctx.store.alertById(id);
     if (!row) return;  // the Control tab now points at other spaces: stop watching
     if (row.email_status === 'pending') {
-      if (!draftsOn_(ctx) || ctx.now() - Number(row.created_at || 0) > DAY_MS_) return;  // turned off, or too old now
+      if (!draftsOn_(ctx)) return;  // turned off
+      if (ctx.now() - Number(row.created_at || 0) > DAY_MS_) {  // too old now: not tried again, and its row says so
+        if (expirePendingEmail_(ctx, row, report)) keep.push(id);
+        return;
+      }
       tryDraft_(ctx, row, report);
       if (row.email_status === 'pending' || row.email_status === 'drafted') keep.push(id);
       return;
@@ -2473,7 +2145,7 @@ function maintainDrafts_(ctx, report) {
       ctx.log(`couldn't check the Social Alert draft for ${id}: ${(e && e.message) || e}`);
     }
   });
-  setWatched_(ctx, keep);
+  setWatched_(ctx, later.concat(keep));
 }
 
 /**
@@ -2778,6 +2450,23 @@ function confirmReceipt_(ctx, row, also) {
 
 function leadPings_(ctx) { try { return JSON.parse(ctx.memo.get('lead_pings') || '[]') || []; } catch (e) { return []; } }
 
+const LEAD_PINGS_KEEP_ = 40;          // issues kept in ctx.memo 'lead_pings' (one property: ~9 KB at most; each has its issue words)
+const LEAD_PINGS_MAX_CHARS_ = 8000;   // and never more than this
+
+/**
+ * ctx.memo 'lead_pings' with `entry` added to `pings` (oldest first): the newest LEAD_PINGS_KEEP_, then the oldest dropped
+ * until it fits LEAD_PINGS_MAX_CHARS_ (the new one is always kept), as 'auto_sent' and 'stand_in_sent' are capped. Pure.
+ */
+function leadPingsText_(pings, entry) {
+  let keep = (pings || []).concat([entry]).slice(-LEAD_PINGS_KEEP_);
+  let text = JSON.stringify(keep);
+  while (text.length > LEAD_PINGS_MAX_CHARS_ && keep.length > 1) {
+    keep = keep.slice(1);
+    text = JSON.stringify(keep);
+  }
+  return text;
+}
+
 function leadershipText_(f, esc) {
   const L = GEN.leadership || {};
   const why = [];
@@ -2872,7 +2561,7 @@ function leadershipPing_(ctx, row, review, history, report) {
       (report.notices = report.notices || []).push(why);
       return;
     }
-    ctx.memo.set('lead_pings', JSON.stringify(pings.concat([{ id: row.alert_id, tokens, tag, product: esc.product, at: ctx.now() }])));
+    ctx.memo.set('lead_pings', leadPingsText_(pings, { id: row.alert_id, tokens, tag, product: esc.product, at: ctx.now() }));
     markAlert_(ctx, row, 'escalated_jon');
     report.leadership = (report.leadership || 0) + 1;
   } catch (e) {

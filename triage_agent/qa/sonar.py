@@ -7,7 +7,6 @@ Sonar summary, post content, exposure tag, risk tags, and KOF lists.
 
 import logging
 import re
-from datetime import timedelta
 from typing import Any
 
 from ..config import AgentConfig
@@ -143,7 +142,7 @@ class SonarLookup:
                 if rows:
                     return _normalize_row(rows[0])
             except Exception:  # noqa: BLE001
-                log.debug("Primary sonar table query skipped/failed", exc_info=True)
+                log.warning("Primary sonar lookup failed on %s", self.cfg.table, exc_info=True)
 
         # 2. Secondary: bsip-s-bsip-gg-26-2cf3.google_bg.collection_alerts (or configured alert_log_table)
         if self.cfg.alert_log_table:
@@ -161,7 +160,8 @@ class SonarLookup:
                 if rows:
                     return _normalize_row(rows[0])
             except Exception:  # noqa: BLE001
-                log.debug("Secondary alert_log_table query skipped/failed", exc_info=True)
+                log.warning("Secondary alert-log lookup failed on %s", self.cfg.alert_log_table,
+                            exc_info=True)
 
         # 3. Tertiary: brand-social-central-data.slrr_alerts.slrr_alerts (US multi-region)
         slrr_table = getattr(self.cfg, "slrr_table", "")
@@ -177,7 +177,7 @@ class SonarLookup:
                 if rows:
                     return _normalize_row(rows[0])
             except Exception:  # noqa: BLE001
-                log.debug("Tertiary slrr_alerts query skipped/failed", exc_info=True)
+                log.warning("Tertiary slrr_alerts lookup failed on %s", slrr_table, exc_info=True)
 
         return None
 
@@ -213,4 +213,4 @@ def get_sonar_lookup(config: AgentConfig) -> SonarLookup | None:
         return None
 
 
-__all__ = ["SonarLookup", "get_sonar_lookup", "timedelta"]
+__all__ = ["SonarLookup", "get_sonar_lookup"]

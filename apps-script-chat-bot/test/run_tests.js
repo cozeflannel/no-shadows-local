@@ -2492,9 +2492,9 @@ test('👍 = "confirming receipt, no action yet taken": a correct alert gets it 
   w.run();
   eq(w.chat.botReactions(quick.name), ['📰', '📦', '🌎']);
 
-  // The send fails (Gmail is down): receipt is confirmed at once (👍); the retry sends it and adds the action emojis
+  // The send fails (Gmail refuses it: a 429, so nothing went out): receipt is confirmed at once (👍); the retry sends it and adds the action emojis
   const v = world({ drafts: testing });
-  v.gmail.fail = (method, path) => (path === 'messages/send' ? { code: 500, body: { error: { message: 'backend error' } } } : null);
+  v.gmail.fail = (method, path) => (path === 'messages/send' ? { code: 429, body: { error: { message: 'rate limit exceeded' } } } : null);
   const waiting = v.paste(F.P0_OK);
   v.run();
   eq([v.chat.botReactions(waiting.name), v.alertRows()[0].email_status, v.gmail.sentMessages().length], [['👍'], 'pending', 0]);
@@ -3702,8 +3702,8 @@ test('Speed tab, now Results, end to end: an old Speed tab is renamed in place a
     'The bot reviewed the alerts Burson posted. It compared its Social Alert calls with the IMs\' calls.', true]);
   // The alerts table, one row per post, under the summary
   const h = tab.rows.findIndex(x => x[0] === 'Burson posted (ET)' && x.includes('post key'));
-  const head = tab.rows[h];
-  const col = (name, i) => tab.rows[h + (i || 1)][head.indexOf(name)];
+  // the header row is read afresh each time: a rebuild clears the last one's cells in place (the fake sheet's row arrays too)
+  const col = (name, i) => tab.rows[h + (i || 1)][tab.rows[h].indexOf(name)];
   eq([col('Burson posted (ET)'), col('What Burson got wrong'), col('Bot\'s call'), col('IMs\' call'), col('Same call?'), col('Bot: minutes to email'),
     col('IMs: minutes to email'), col('Who sent first'), col('IMs\' time is from'), col('IMs\' subject'), col('IM'), col('Bot alert ids'), col('post key'),
     col('IM email at (ms)'), col('Bot: minutes to email', 2), col('IMs\' call', 2), tab.rows.length - h - 1],
@@ -3896,9 +3896,9 @@ test('Results: rebuilt right after a run that handled an alert or sent an email 
   const off = w.ctx();
   off.settings = Object.assign({}, off.settings, { speed_tab: false });
   eq(w.bot.maybeRefreshSpeed_(ss, off, { activity: true, deadline: w.g.clock.now + 4 * 60000 }), false);
-  // The Speed tab is renamed (kept where it is), unless a Results tab is there already
+  // The bot's Speed tab (its title in A1) is renamed (kept where it is), unless a Results tab is there already
   const ss2 = w.g.services.SpreadsheetApp.create('bot2');
-  ss2.insertSheet('Speed');
+  ss2.insertSheet('Speed').getRange(1, 1).setValue('Bot vs IMs: how fast the Social Alert email goes out');
   ss2.insertSheet('Other');
   eq([w.bot.ensureResultsTab_(ss2).getName(), ss2.getSheets().map(s => s.getName())], ['Results', ['Sheet1', 'Results', 'Other']]);
   ss2.insertSheet('Speed');

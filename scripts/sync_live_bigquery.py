@@ -3,7 +3,10 @@ brand-social-central-data.slrr_alerts (US) and run them through the SLRR Triage 
 with live Vertex AI Gemini (models from config: gemini-3.8-flash on the global endpoint) in stealth Burson mode.
 
 Usage:
-    PYTHONPATH=. .venv/bin/python scripts/sync_live_bigquery.py --db .local/live.db --reset
+    PYTHONPATH=. .venv/bin/python scripts/sync_live_bigquery.py --db .local/live.db [--reset]
+
+--db defaults to $TRIAGE_LOCAL_DB, then .local/live.db. The SQLite file there is kept and added to;
+it is deleted first only when --reset is given.
 """
 
 from __future__ import annotations
@@ -113,7 +116,7 @@ def fetch_latest_slrr_source_mirror(client_us: bigquery.Client, limit: int = 5) 
     return [dict(r.items()) for r in job.result()]
 
 
-def sync_live(db_path: str = ".local/live.db", reset: bool = True) -> dict[str, Any]:
+def sync_live(db_path: str = ".local/live.db", reset: bool = False) -> dict[str, Any]:
     p = Path(db_path)
     if reset and p.exists():
         p.unlink()
@@ -321,9 +324,18 @@ def sync_live(db_path: str = ".local/live.db", reset: bool = True) -> dict[str, 
     return summary
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=os.environ.get("TRIAGE_LOCAL_DB", ".local/live.db"))
-    ap.add_argument("--no-reset", action="store_true")
-    args = ap.parse_args()
-    sync_live(db_path=args.db, reset=not args.no_reset)
+    ap.add_argument(
+        "--reset",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="delete the SQLite file at --db before the run (default: keep it and add to it)",
+    )
+    args = ap.parse_args(argv)
+    sync_live(db_path=args.db, reset=args.reset)
+
+
+if __name__ == "__main__":
+    main()
