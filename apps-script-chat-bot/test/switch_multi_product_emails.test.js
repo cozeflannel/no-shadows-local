@@ -505,5 +505,82 @@ module.exports = function (H) {
     const savedCursor = Number(ctx.memo.get('analyst_cursor') || 0);
     assert.ok(savedCursor < cardCreateTime, `expected cursor (${savedCursor}) to stay before failed card (${cardCreateTime})`);
   });
+
+  test('Zapier auto-correct -> updated product names -> CC all associated teams: drops wrong Zapier product, adds missing products (including "Ads / Merchant Center" & "Assistant / Home"), rewrites Chat card, and CCs every corrected team', () => {
+    const REAL_SFB = H.REAL;
+    const MIRROR = 'spaces/AAQAmirrorZap';
+    const t = e2e(null, { noWait: true, blankStandIn: true });
+    t.chat.addSpace(MIRROR, 'SLRR Mirror Space', { external: false });
+    t.bot.setup();
+
+    const bsg = t.sheet().insertSheet('Brand safety groups');
+    const bsgRows = [
+      ['Google Group Name', 'Google Group Email', 'Test Email'],
+      ['Chrome', 'chrome-live@groups.test', 'chrome-qa@testing.test'],
+      ['Android', 'android-live@groups.test', 'android-qa@testing.test'],
+      ['Pixel', 'pixel-live@groups.test', 'pixel-qa@testing.test'],
+      ['Gemini App', 'gemini-app-live@groups.test', 'gemini-app-qa@testing.test'],
+      ['Ads / Merchant Center', 'ads-live@groups.test', 'ads-qa@testing.test'],
+      ['Assistant / Home', 'assistant-live@groups.test', 'assistant-qa@testing.test'],
+      ['Default CC', 'slrr-cc-live@groups.test', ''],
+      ['Brand Social Sender', 'sender@groups.test', ''],
+    ];
+    bsg.getRange(1, 1, bsgRows.length, 3).setValues(bsgRows);
+
+    const ctrl = t.control();
+    ctrl.getRange(9, 2).setValue(MIRROR);
+    ctrl.getRange(25, 2).setValue(REAL_SFB);
+    ctrl.getRange(11, 2).setValue('ON');   // Auto-send Social Alerts
+    ctrl.getRange(23, 2).setValue('ON');   // Never wait on Burson (auto-correct & send immediately)
+    ctrl.getRange(29, 2).setValue('OFF');  // Live mode once row 37 is OFF
+    ctrl.getRange(37, 2).setValue('OFF');
+    t.poll();
+
+    // Zapier posts an alert tagged "[Product]: Chrome, Pixel", but Gemini sees Chrome is wrong -> Android + Gemini App + Ads / Merchant Center + Assistant / Home
+    const wrongZapierCard = [
+      '\ud83d\udea8THIS ALERT MEETS P0 CRITERIA\ud83d\udea8',
+      '',
+      '\ud83d\udfe5SOCIAL ALERT\ud83d\udfe5: Chrome, Pixel | Cross-Product Shopping & Assistant Bug on Pixel Android | X | 4100 Engagements',
+      '[Name]: Cross-Product Shopping & Assistant Bug on Pixel Android / New / not previously reported over the past 14 days',
+      '[Engagement]: HIGH (4100 engagements)',
+      '[Product]: Chrome, Pixel',
+      '[Social Network]: X',
+      '[Exposure Tag]: Product - Dangerous results (e.g. medical/legal)',
+      '[Sensitive Topic]: Malicious & Unwanted Software',
+      '[KOF]: No',
+      '',
+      'X user @mobile_tester (64,000 followers) shared a video showing Pixel Android Gemini App Assistant / Home triggering Merchant Center checkout prompts unexpectedly.',
+      '',
+      '[Link]: https://x.com/mobile_tester/status/2120000000000009191',
+      '',
+      '[Time/Date Post Went Live]: October 13, 2026, 11:15 AM',
+      '',
+      '[Code]: Product - Dangerous results (e.g. medical/legal),4100,mobile_tester,Malicious & Unwanted Software,Chrome,New / not previously reported over the past 14 days',
+    ].join('\n');
+
+    t.g.vertex.assess = () => ({
+      checks: t.bot.ev('GEN').llm_checks.map(c => c.correctable_field === 'product'
+        ? { id: c.id, ok: false, confidence: 0.97, proposed_value: 'Android', finding: 'Post is about Android on Pixel, not Chrome.' }
+        : { id: c.id, ok: true, confidence: 0.98, finding: '' }),
+      other_products: ['Gemini App', 'Ads / Merchant Center', 'Assistant / Home'],
+      social_alert: { warranted: true, confidence: 0.97, reason: 'High-engagement cross-product issue', signal_class: 'structural_threat' },
+    });
+
+    t.chat.say(REAL_SFB, wrongZapierCard, { sender: 'users/zapier', type: 'BOT', displayName: 'Zapier' });
+    t.poll();
+
+    const sent = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
+    eq(sent.length, 1);
+    // All 5 corrected teams are CC'd, To: is empty, and the wrong Zapier product (Chrome) is NOT included!
+    eq(sent[0].to, []);
+    assert.ok(sent[0].cc.includes('android-live@groups.test'), `missing android: ${sent[0].cc}`);
+    assert.ok(sent[0].cc.includes('pixel-live@groups.test'), `missing pixel: ${sent[0].cc}`);
+    assert.ok(sent[0].cc.includes('gemini-app-live@groups.test'), `missing gemini-app: ${sent[0].cc}`);
+    assert.ok(sent[0].cc.includes('ads-live@groups.test'), `missing ads: ${sent[0].cc}`);
+    assert.ok(sent[0].cc.includes('assistant-live@groups.test'), `missing assistant: ${sent[0].cc}`);
+    assert.ok(!sent[0].cc.includes('chrome-live@groups.test'), `wrong Zapier product Chrome should NOT be CC'd: ${sent[0].cc}`);
+    assert.ok(!/Chrome/.test(sent[0].subject), `Chrome should be auto-corrected out of subject: ${sent[0].subject}`);
+    assert.match(sent[0].text, /Product: Android \(Android OS & Google TV\), Pixel, Gemini App, Ads\/Merchant Center, Assistant\/Home/);
+  });
 };
 

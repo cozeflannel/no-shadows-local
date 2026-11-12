@@ -196,6 +196,7 @@ function reviewAlert_(parsed, opts) {
   if (opts.llm) {
     const fixSeverities = S.llm_fix_severities || ['blocking'];
     let llmExtraProducts = [];
+    let llmClearedWrongOthers = false;
     (opts.llm.checks || []).forEach(c => {
       const spec = GEN.llm_checks.find(x => x.id === c.id);
       if (!spec || c.ok) return;
@@ -209,6 +210,7 @@ function reviewAlert_(parsed, opts) {
           proposed = sp.product;
           if (conf >= S.llm_min_confidence && fixSeverities.includes(spec.severity)) {
             llmExtraProducts = llmExtraProducts.concat(sp.other_products);
+            llmClearedWrongOthers = true;
           }
         }
       }
@@ -227,6 +229,11 @@ function reviewAlert_(parsed, opts) {
         } else {
           unsure.push({ field: target, proposed, confidence: conf, finding });
         }
+      } else if (target === 'product' && proposed !== null && sameValue_(proposed, f.product) &&
+                 Array.isArray(f.other_products) && f.other_products.length &&
+                 conf >= S.llm_min_confidence && fixSeverities.includes(spec.severity)) {
+        // Primary product was right, but Gemini flagged the [Product] line because a secondary product was wrong
+        llmClearedWrongOthers = true;
       } else if (finding && conf >= 0.5) {
         unsure.push({ field: target || (spec.fields || [])[0], proposed: null, confidence: conf, finding });
       }
@@ -240,32 +247,26 @@ function reviewAlert_(parsed, opts) {
     const llmOthers = [].concat(llmExtraProducts, Array.isArray(rawLlmOthers) ? rawLlmOthers : [])
       .filter(x => x && productCanonKey_(x) !== 'brand');
     if (Array.isArray(f.other_products) || llmOthers.length) {
-      const mergedOthers = dedupeProducts_(f.product, [].concat(f.other_products || [], llmOthers), true).slice(0, 3);
+      const priorOthers = llmClearedWrongOthers ? [] : (f.other_products || []);
+      const mergedOthers = dedupeProducts_(f.product, [].concat(priorOthers, llmOthers), true).slice(0, 8);
       if (!sameValue_(mergedOthers, f.other_products || [])) {
         if (mergedOthers.length) {
           fix('other_products', mergedOthers, `the post also involves ${mergedOthers.join(', ')}`, 'llm', 0.92);
         } else if (Array.isArray(f.other_products) && f.other_products.length) {
-          fix('other_products', [], 'already covered by the primary product');
+          fix('other_products', [], 'updated to the product(s) involved in the post');
         }
       }
-    }
-    if (llmExtraProducts.length) {
-      const nextTargets = [f.product].concat(dedupeProducts_(f.product,
-        [].concat(f.product_targets || [], llmExtraProducts), true));
-      if (nextTargets.length >= 2) f.product_targets = nextTargets;
     }
   } else if (opts.llmError) {
     notes.push('AI checks were unavailable, so this alert was reviewed with the rules only');
   }
-  if (Array.isArray(f.product_targets) && f.product_targets.length) {
-    const mappedTargets = f.product_targets.map(tp => {
-      const pTp = lookupProduct_(tp);
-      if (pTp && pTp.deprecated && (pTp.redirect_to || []).length === 1) return pTp.redirect_to[0];
-      return tp;
-    });
-    const normTargets = [f.product].concat(dedupeProducts_(f.product, mappedTargets, true));
-    if (normTargets.length >= 2) f.product_targets = normTargets;
-    else delete f.product_targets;
+  // Keep product_targets strictly in sync with the final corrected [f.product, ...f.other_products] list so any
+  // auto-corrected wrong product from Zapier is dropped and every newly added product is routed in CC
+  const syncedTargets = [f.product].concat(dedupeProducts_(f.product, f.other_products || [], true)).filter(Boolean);
+  if (syncedTargets.length >= 2) {
+    f.product_targets = syncedTargets;
+  } else {
+    delete f.product_targets;
   }
 
   // 7. Values that are still invalid after all corrections: only Burson can fix them

@@ -183,6 +183,12 @@ function applyBrandSafetyGroups_(rows) {
     }
   });
 
+  const nameByNorm = {};
+  parsed.forEach(([name]) => {
+    const k = bsgNormKey_(name);
+    if (k && !nameByNorm[k]) nameByNorm[k] = name;
+  });
+
   // 2. Product Area distros (match explicit group_name, then name, then aliases)
   (GEN.distribution.products || []).forEach(p => {
     if (p.deprecated) return;
@@ -193,6 +199,23 @@ function applyBrandSafetyGroups_(rows) {
         matched.add(ck);
         if (byNorm[ck]) p.pa = byNorm[ck].slice();
         if (testByNorm[ck]) p.test_pa = testByNorm[ck].slice();
+        const rawSheetName = nameByNorm[ck];
+        if (rawSheetName) {
+          p.aliases = p.aliases || [];
+          if (p.name.toLowerCase() !== rawSheetName.toLowerCase() &&
+              !p.aliases.some(a => a.toLowerCase() === rawSheetName.toLowerCase())) {
+            p.aliases.push(rawSheetName);
+          }
+          const gp = (GEN.products || []).find(gpItem => bsgNormKey_(gpItem.name) === bsgNormKey_(p.name) ||
+            (gpItem.aliases || []).some(a => bsgNormKey_(a) === ck));
+          if (gp) {
+            gp.aliases = gp.aliases || [];
+            if (gp.name.toLowerCase() !== rawSheetName.toLowerCase() &&
+                !gp.aliases.some(a => a.toLowerCase() === rawSheetName.toLowerCase())) {
+              gp.aliases.push(rawSheetName);
+            }
+          }
+        }
         break;
       }
     }

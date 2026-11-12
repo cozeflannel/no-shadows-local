@@ -44,8 +44,13 @@ function fieldSpec_(name) {
 function lookupByName_(items, name) {
   if (!name) return null;
   const key = String(name).trim().toLowerCase();
+  const slashNorm = s => String(s || '').trim().toLowerCase().replace(/\s*\/\s*/g, '/');
+  const kSlash = slashNorm(name);
   return items.find(i => i.name.toLowerCase() === key) ||
-    items.find(i => (i.aliases || []).some(a => a.toLowerCase() === key)) || null;
+    items.find(i => i.group_name && i.group_name.toLowerCase() === key) ||
+    items.find(i => (i.aliases || []).some(a => a.toLowerCase() === key)) ||
+    items.find(i => slashNorm(i.name) === kSlash || (i.group_name && slashNorm(i.group_name) === kSlash) ||
+      (i.aliases || []).some(a => slashNorm(a) === kSlash)) || null;
 }
 
 function lookupTag_(name) { return lookupByName_(GEN.exposure_tags, name); }
