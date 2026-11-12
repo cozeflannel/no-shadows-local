@@ -445,22 +445,21 @@ function planRecipients_(a, text, extraGroups, productName) {
     markGroup(sg.name, inCc ? 'additional group on alert (CC)' : 'selected group POCs', sg.recipients, inCc);
   };
 
-  if (product) {
-    addProductDistro(product, false);
+  // Multi-product alerts (2+ distinct products/groups on the alert): NO arbitrary "main" product — ALL listed product/group
+  // teams go in CC (`inCc = true`), leaving `plan.to` empty. Single-product alerts keep their sole product in `plan.to`.
+  const multiProduct = !productName && secondaryRaw.length > 0;
+  if (multiProduct) {
+    if (product) addProductDistro(product, true);
+    else if (specGroup) addSecondarySpec(specGroup, true);
     secondaryDistros.forEach(d => addProductDistro(d, true));
     secondarySpecs.forEach(sg => addSecondarySpec(sg, true));
+    if (!plan.cc.length && !plan.ccProductGroups.length) {
+      add(plan.cc, GEN.email.default_to);
+    }
+  } else if (product) {
+    addProductDistro(product, false);
   } else if (specGroup) {
     addSecondarySpec(specGroup, false);
-    secondaryDistros.forEach(d => addProductDistro(d, true));
-    secondarySpecs.forEach(sg => addSecondarySpec(sg, true));
-  } else if (secondaryDistros.length) {
-    // Primary had no distro: promote first valid secondary product to To: (Gmail requires a To: header), rest go to Cc:
-    addProductDistro(secondaryDistros[0], false);
-    secondaryDistros.slice(1).forEach(d => addProductDistro(d, true));
-    secondarySpecs.forEach(sg => addSecondarySpec(sg, true));
-  } else if (secondarySpecs.length) {
-    addSecondarySpec(secondarySpecs[0], false);
-    secondarySpecs.slice(1).forEach(sg => addSecondarySpec(sg, true));
   } else {
     add(plan.to, GEN.email.default_to);
   }
@@ -475,7 +474,7 @@ function planRecipients_(a, text, extraGroups, productName) {
       secondaryDistros.forEach(secProd => addUnique_(emails, groupRecipients_(group, secProd, a, text)));
     }
     if (!emails.length) { plan.missing.push(group.name); return; }
-    add(group.action_code === 'gup' ? plan.to : plan.cc, emails);
+    add((group.action_code === 'gup' && !multiProduct) ? plan.to : plan.cc, emails);
     if (!plan.groups.includes(group.name)) {
       plan.groups.push(group.name);
       plan.reasons[group.name] = reason;
@@ -488,8 +487,8 @@ function planRecipients_(a, text, extraGroups, productName) {
 
 /**
  * Resolves an alert's email input into a single unified Social Alert email target (`single: true`, `total: 1`):
- * - Primary product's Google Group POCs from `Brand safety groups` are placed in `To:`, and any additional products/groups
- *   listed on the alert are placed in `Cc:` on that same single Social Alert email (`planRecipients_`).
+ * - Single-product alert: product team's Google Group POCs from `Brand safety groups` go in `To:`.
+ * - Multi-product alert (2+ products): ALL listed product/group teams' Google Group POCs go in `Cc:` (`To:` left empty).
  */
 function productEmailTargets_(input, extraGroups, row) {
   const inp = input || {};

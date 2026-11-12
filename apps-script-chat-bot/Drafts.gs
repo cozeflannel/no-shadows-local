@@ -665,7 +665,7 @@ function sendViaBsgTestEmails_(ctx, row, input, targets, report, tnsNote) {
     ctx.log(`Social Alert for ${id} (${gName}): no test email set for ${gName} in Brand safety groups`);
   });
 
-  if (!testPlan.to.length) {
+  if (!testPlan.to.length && !(testPlan.cc && testPlan.cc.length)) {
     const missNames = skippedNoTestEmail.join(', ') || testPlan.groupName || t.productLabel || 'this group';
     const why = `no test email set in Brand safety groups for ${missNames}`;
     ctx.log(`Social Alert for ${id}: no email sent — ${why}`);
@@ -711,10 +711,13 @@ function sendViaBsgTestEmails_(ctx, row, input, targets, report, tnsNote) {
   const thread = (sent && sent.threadId) || t.replyThread || '';
   const entry = { id, at, thread, msg: (sent && sent.id) || '', sent: true };
   (ctx.standInSends = ctx.standInSends || {})[id] = entry;
+  const rcptLabel = email.to && email.to.length
+    ? `To: ${email.to.join(', ')}${email.cc && email.cc.length ? `, Cc: ${email.cc.join(', ')}` : ''}`
+    : `Cc: ${(email.cc || []).join(', ')}`;
   try {
     noteStandInSend_(ctx, entry);
   } catch (e) {
-    ctx.log(`couldn't note that the Social Alert for ${id} went to ${email.to.join(', ')}: ${(e && e.message) || e}`);
+    ctx.log(`couldn't note that the Social Alert for ${id} went to ${rcptLabel}: ${(e && e.message) || e}`);
   }
   let messageId = '';
   try {
@@ -723,8 +726,7 @@ function sendViaBsgTestEmails_(ctx, row, input, targets, report, tnsNote) {
   } catch (e) {
     ctx.log(`couldn't read the Message-ID of the Social Alert for ${id}: ${(e && e.message) || e}`);
   }
-  const ccLog = email.cc && email.cc.length ? `, Cc: ${email.cc.join(', ')}` : '';
-  ctx.log(`Social Alert for ${id} (${matchedGroups.join(', ') || t.productLabel}): sent to test email To: ${email.to.join(', ')}${ccLog} from Brand safety groups`);
+  ctx.log(`Social Alert for ${id} (${matchedGroups.join(', ') || t.productLabel}): sent to test email ${rcptLabel} from Brand safety groups`);
   report.drafts_sent++;
 
   const errParts = [];
@@ -1374,14 +1376,15 @@ function wouldHaveGoneTo_(plan, input) {
         : name;
       (ccProds.has(name) ? cc : to).push(label);
     } else {
-      ((g.action_code === 'gup' || plan.reasons[name] === 'selected group POCs') ? to : cc).push(name);
+      const toEligible = (g.action_code === 'gup' && !ccProds.size) || plan.reasons[name] === 'selected group POCs';
+      ((!ccProds.has(name) && toEligible) ? to : cc).push(name);
     }
   });
   missingTeams_(plan, input).forEach(name => {
     const g = groupNamed(name);
-    (g && g.action_code === 'gup' ? to : cc).push(name);
+    (g && g.action_code === 'gup' && !ccProds.size ? to : cc).push(name);
   });
-  if (!to.length && (GEN.email.default_to || []).length) to.push('default To list');
+  if (!to.length && !ccProds.size && (GEN.email.default_to || []).length) to.push('default To list');
   if ((GEN.email.default_cc || []).length) cc.push('standard CC list');
   const parts = [];
   if (to.length) parts.push(`To: ${to.join(', ')}`);
@@ -1467,7 +1470,8 @@ function autoSend_(ctx, row, input, plan, email, mime, report, tnsNote) {
     return { warn: '⚠️ The bot already tried to send this Social Alert itself (Auto-send Social Alerts) and can\'t tell ' +
       `whether it went out: ${AUTO_SEND_CHECK_SENT_}`, tried: Number(before.at) || ctx.now() };
   }
-  if (!email.to.length || !plan.to.length) {
+  const hasMultiCc = (plan.ccProductGroups || []).length > 0 && (email.cc || []).length > 0;
+  if ((!email.to.length || !plan.to.length) && !hasMultiCc) {
     noteSwitch_('autoSend', `${id} has no alert contacts on file, so it's a draft (${autoSendWhen_(ctx.now())})`);
     return { warn: '⚠️ Not sent automatically: the To line would be empty (no alert contacts on file for this product). ' +
       'Add the recipients in Gmail, then send it.' };
@@ -2234,14 +2238,20 @@ function draftNoteText_(D, email, plan, reply, input, wsNote, ctx, o) {
     .map(g => plan.reasons[g] === 'additional product alert POCs (CC)' ? `${g} alert POCs` : g);
   const toCount = D.live ? email.to.length : plan.to.length;
   const ccCount = D.live ? email.cc.length : plan.cc.length;
+  const multiCcOnly = !toCount && Array.isArray(plan.ccProductGroups) && plan.ccProductGroups.length > 0;
   const kind = reply ? 'Social Alert update draft (replying to the earlier email)' : 'Social Alert draft';
+  const toLine = toCount
+    ? `- To: ${productName} alert POCs (${toCount})`
+    : (multiCcOnly
+      ? `- To: none (multi-product alert — all product teams in CC)`
+      : `- To: empty (${productName} has no alert contacts on file)`);
   const lines = [
     o && o.sent
       ? `Social Alert sent${reply ? ' (as an update on the earlier email)' : ''}: the bot sent it itself ` +
         '(Auto-send Social Alerts is ON).'
       : `${imMention_(ctx)} ${kind} is in Gmail Drafts: review and send it, or delete it to skip.`,
     `- Why: ${escalationWhyText_(esc)}`,
-    `- To: ${toCount ? `${productName} alert POCs (${toCount})` : `empty (${productName} has no alert contacts on file)`}`,
+    toLine,
     `- Cc: ${ccGroups.length ? ccGroups.join(', ') + ' + ' : ''}standard CC (${ccCount})` + (D.live ? '' : ' (test draft, only to you)'),
   ];
   if (o && o.warn) lines.splice(1, 0, `- ${String(o.warn).replace(/^\u26a0\ufe0f\s*/, '')}`);

@@ -52,7 +52,7 @@ module.exports = function (H) {
     '[Code]: Product - Dangerous results (e.g. medical/legal),3200,dev_sec_researcher,Malicious & Unwanted Software,Gemini Model,New / not previously reported over the past 14 days',
   ].join('\n');
 
-  test('multi-product E2E (Testing inbox via Control!B30 + Brand safety groups): "Product: Gemini Model, Devs Products" sends ONE single Social Alert email to B30 with additional product teams listed in Cc:, submits T&S once, and blocks duplicates', () => {
+  test('multi-product E2E (Testing inbox via Control!B30 + Brand safety groups): "Product: Gemini Model, Devs Products" sends ONE single Social Alert email to B30 with ALL product teams listed in Cc:, submits T&S once, and blocks duplicates', () => {
     const t = e2e(null, { noWait: true });
     t.bot.setup();
     populateBrandSafetyGroups(t.sheet());
@@ -70,11 +70,11 @@ module.exports = function (H) {
     const socialSent = allSent.filter(m => /SOCIAL ALERT/.test(m.subject));
     eq(socialSent.length, 1);
 
-    // Single Social Alert arrives in B30 inbox showing both products in Subject/Body, with Gemini Model in To: and Devs Products in Cc:
+    // Single Social Alert arrives in B30 inbox showing both products in Subject/Body, with ALL product teams in Cc:
     eq(socialSent[0].to, ['my-test-inbox@testing.test']);
     assert.match(socialSent[0].subject, /Gemini Model, Devs Products \| Gemini API Returning Unsafe Code Execution Snippets \| X/);
     assert.ok(socialSent[0].text.includes('\nProduct: Gemini Model, Devs Products\n'), socialSent[0].text);
-    assert.match(socialSent[0].text, /Would have gone to: To: Gemini Model alert POCs; Cc: Devs Products alert POCs, .*GCPA.*standard CC list/);
+    assert.match(socialSent[0].text, /Would have gone to: Cc: Gemini Model alert POCs, Devs Products alert POCs, .*GCPA.*standard CC list/);
 
     // T&S urgent email (if sent) went once
     const tnsUrgent = allSent.filter(m => /^URGENT T&S:/.test(m.subject));
@@ -93,8 +93,8 @@ module.exports = function (H) {
     eq(socialAfterDup.length, 1);
   });
 
-  test('multi-product Live Auto-send & Live Gmail Drafts: sends ONE Social Alert email with primary product in To: and additional product Google Groups in Cc:, and tracks single Gmail draft lifecycle', () => {
-    // 1. Live Auto-send ON (Safety valve OFF, no stand-in): sends 1 single live email with Gemini Model in To: and Devs Products in Cc:
+  test('multi-product Live Auto-send & Live Gmail Drafts: sends ONE Social Alert email with ALL product Google Groups in Cc: (To: empty), and tracks single Gmail draft lifecycle', () => {
+    // 1. Live Auto-send ON (Safety valve OFF, no stand-in): sends 1 single live email with ALL product teams in Cc: (To: empty)
     const wAuto = world({
       noWait: true,
       drafts: { live: true, standIn: '', testers: [], mailbox: 'im@ops.test', from: 'Brand Social <sender@groups.test>' },
@@ -116,7 +116,8 @@ module.exports = function (H) {
 
     const liveSent = wAuto.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
     eq(liveSent.length, 1);
-    eq(liveSent[0].to, ['gemini-model-team@groups.test']);
+    eq(liveSent[0].to, []);
+    assert.ok(liveSent[0].cc.includes('gemini-model-team@groups.test'), `expected gemini-model in CC: ${liveSent[0].cc}`);
     assert.ok(liveSent[0].cc.includes('devs-products-team@groups.test'), `expected devs-products in CC: ${liveSent[0].cc}`);
     assert.ok(liveSent[0].cc.includes('gcpa-comms@groups.test') && liveSent[0].cc.includes('slrr-standard-cc@groups.test'));
     assert.match(liveSent[0].subject, /Gemini Model, Devs Products \| Gemini API Returning Unsafe Code Execution Snippets/);
@@ -127,7 +128,7 @@ module.exports = function (H) {
       eq(wAuto.bot.outboxGuardHits_(m.text), []);
     });
 
-    // 2. Live Auto-send OFF: creates 1 single Gmail draft with Gemini Model in To: and Devs Products in Cc:
+    // 2. Live Auto-send OFF: creates 1 single Gmail draft with ALL product teams in Cc: (To: empty)
     const wDraft = world({
       noWait: true,
       drafts: { live: true, standIn: '', testers: [], mailbox: 'im@ops.test', from: 'Brand Social <sender@groups.test>' },
@@ -148,7 +149,8 @@ module.exports = function (H) {
 
     const drafts = wDraft.gmail.allDrafts();
     eq(drafts.length, 1);
-    eq(drafts[0].to, ['gemini-model-team@groups.test']);
+    eq(drafts[0].to, []);
+    assert.ok(drafts[0].cc.includes('gemini-model-team@groups.test'));
     assert.ok(drafts[0].cc.includes('devs-products-team@groups.test'));
     eq(wDraft.alertRows()[0].email_status, 'drafted');
 
@@ -261,9 +263,9 @@ module.exports = function (H) {
     assert.match(ctrl.cell(37, 3), /^✓ ON · 🧪 Testing \(Brand safety groups column C\): .* \(2 groups set\)/);
 
     // 1. Post a 3-product alert ("Gemini Model, Devs Products, Search"):
-    //    - Sends ONE single Social Alert email:
-    //      To: ['gemini-tester@testing.test']
-    //      Cc: ['devs-tester@testing.test']
+    //    - Sends ONE single Social Alert email with ALL matched product test emails in Cc: (To: empty):
+    //      To: []
+    //      Cc: ['gemini-tester@testing.test', 'devs-tester@testing.test']
     //      Search (no Col C test email) -> logged as skipped!
     const threeProductAlert = GEMINI_DEVS_ALERT
       .replace('Gemini Model, Devs Products |', 'Gemini Model, Devs Products, Search |')
@@ -273,8 +275,8 @@ module.exports = function (H) {
 
     const sentTesting = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
     eq(sentTesting.length, 1);
-    eq(sentTesting[0].to, ['gemini-tester@testing.test']);
-    eq(sentTesting[0].cc, ['devs-tester@testing.test']);
+    eq(sentTesting[0].to, []);
+    eq(sentTesting[0].cc, ['gemini-tester@testing.test', 'devs-tester@testing.test']);
     assert.match(sentTesting[0].subject, /Gemini Model, Devs Products, Search \| Gemini API Returning Unsafe Code Execution Snippets/);
     assert.ok(t.g.logs.some(l => /no test email set for Search in Brand safety groups/.test(l)),
       'expected missing Search test email to be logged');
@@ -299,9 +301,7 @@ module.exports = function (H) {
 
     // 3. Turn Group test emails (row 37) OFF while leaving test emails in Column C:
     //    - Bot is now LIVE (Safety valve row 29 is OFF, B26 blank, S-F Burson set)
-    //    - A new 3-product alert sends ONE single live Social Alert email:
-    //      To: ['gemini-live@groups.test']
-    //      Cc: includes 'devs-live@groups.test', 'search-live@groups.test', and 'slrr-cc-live@groups.test' (ignores Column C!)
+    //    - A new 3-product alert sends ONE single live Social Alert email with ALL product teams in Cc: (To: empty):
     ctrl.getRange(37, 2).setValue('OFF');
     const liveThreeProductAlert = [
       '\ud83d\udea8THIS ALERT MEETS P0 CRITERIA\ud83d\udea8',
@@ -329,14 +329,15 @@ module.exports = function (H) {
     const allSocialNow = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
     const liveSent = allSocialNow.slice(1);
     eq(liveSent.length, 1);
-    eq(liveSent[0].to, ['gemini-live@groups.test']);
+    eq(liveSent[0].to, []);
+    assert.ok(liveSent[0].cc.includes('gemini-live@groups.test'), `expected gemini-live in CC: ${liveSent[0].cc}`);
     assert.ok(liveSent[0].cc.includes('devs-live@groups.test'), `expected devs-live in CC: ${liveSent[0].cc}`);
     assert.ok(liveSent[0].cc.includes('search-live@groups.test'), `expected search-live in CC: ${liveSent[0].cc}`);
     assert.ok(liveSent[0].cc.includes('slrr-cc-live@groups.test'));
-    assert.ok(!liveSent[0].to.includes('gemini-tester@testing.test') && !liveSent[0].cc.includes('devs-tester@testing.test'));
+    assert.ok(!liveSent[0].cc.includes('gemini-tester@testing.test') && !liveSent[0].cc.includes('devs-tester@testing.test'));
   });
 
-  test('SheetTestAlert.gs + sidepanel 🧪 Test Alert menu: posts multi-product alert into test Chat space, picks up from Chat, and sends ONE Social Alert email with primary product in To: and additional teams in Cc:', () => {
+  test('SheetTestAlert.gs + sidepanel 🧪 Test Alert menu: posts multi-product alert into test Chat space, picks up from Chat, and sends ONE Social Alert email with ALL product teams in Cc: (and single-product in To:)', () => {
     const fs = require('fs');
     const path = require('path');
     const vm = require('vm');
@@ -416,32 +417,31 @@ module.exports = function (H) {
     assert.ok(chatAlertMsg && /🟧SOCIAL ALERT🟧: Gemini App, Waymo, Executives, Cloud/.test(chatAlertMsg.text));
 
     // Step 2 verification: next Chat poll picks up that posted alert FROM the test Chat space, reacts on it,
-    // and sends ONE single Social Alert email with Gemini App in To: and Waymo + Executives in Cc:!
+    // and sends ONE single Social Alert email with ALL matched products in Cc: (To: empty)!
     t.poll();
     assert.match(testSh.cell(2, 3), /^✅ Picked up in Chat & Sent at /);
-    assert.match(testSh.cell(3, 2), /To: gemini-app-qa@testing\.test \| Cc: waymo-qa@testing\.test, exec-qa@testing\.test/);
+    assert.match(testSh.cell(3, 2), /Cc: gemini-app-qa@testing\.test, waymo-qa@testing\.test, exec-qa@testing\.test/);
     assert.match(testSh.cell(3, 2), /skipped \(no Test Email in Brand safety groups Col C\): Cloud/);
 
     const sent1 = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
     eq(sent1.length, 1);
-    eq(sent1[0].to, ['gemini-app-qa@testing.test']);
-    eq(sent1[0].cc, ['waymo-qa@testing.test', 'exec-qa@testing.test']);
+    eq(sent1[0].to, []);
+    eq(sent1[0].cc, ['gemini-app-qa@testing.test', 'waymo-qa@testing.test', 'exec-qa@testing.test']);
     assert.ok(t.chat.reactionsOn(posted1.messageName).some(r => r[1] === '📦'));
     eq(t.chat.botPosts(REAL_SFB).length, 0);
 
-    // End-to-end single poll() with changed products: posts into AC_SPACE AND picks up in the same poll() -> 1 more email!
+    // Single-product alert ("Waymo" alone) still uses To:
     panelCtx.clearExtraTestProducts();
     eq([testSh.cell(6, 2), testSh.cell(7, 2), testSh.cell(8, 2)], ['', '', '']);
-    testSh.getRange(5, 2).setValue('Waymo, Gemini App');
+    testSh.getRange(5, 2).setValue('Waymo');
     panelCtx.sendSheetTestAlert();
     t.poll();
     const sent2 = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
     eq(sent2.length, 2);
     eq(sent2[1].to, ['waymo-qa@testing.test']);
-    eq(sent2[1].cc, ['gemini-app-qa@testing.test']);
+    eq(sent2[1].cc, []);
 
-    // Regression: Product 1 = Executives (specialty group) + low Engagements (500) on Test alert tab STILL escalates
-    // and sends ONE Social Alert email with Executive Comms in To: and additional products in Cc:
+    // Multi-product regression: Product 1 = Executives + Gemini App + Waymo + low Engagements (500) -> ALL 3 go in Cc: (To: empty)
     testSh.getRange(5, 2).setValue('Executives');
     testSh.getRange(6, 2).setValue('Gemini App');
     testSh.getRange(7, 2).setValue('Waymo');
@@ -450,9 +450,9 @@ module.exports = function (H) {
     t.poll();
     const sent3 = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
     eq(sent3.length, 3);
-    eq(sent3[2].to, ['exec-qa@testing.test']);
-    eq(sent3[2].cc, ['gemini-app-qa@testing.test', 'waymo-qa@testing.test']);
-    assert.match(sent3[2].text, /Would have gone to: To: Executives(?: alert POCs)?; Cc: Gemini App alert POCs, Waymo alert POCs/);
+    eq(sent3[2].to, []);
+    eq(sent3[2].cc, ['exec-qa@testing.test', 'gemini-app-qa@testing.test', 'waymo-qa@testing.test']);
+    assert.match(sent3[2].text, /Would have gone to: Cc: Executives(?: alert POCs)?, Gemini App alert POCs, Waymo alert POCs/);
 
     // Tab ownership safeguard: refuses to overwrite or read a custom user tab named "Test alert"
     const ssCustom = new H.FakeSpreadsheet('custom-sheet', 'User Workbook');

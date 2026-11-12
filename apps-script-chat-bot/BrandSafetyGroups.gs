@@ -323,10 +323,11 @@ function resolveSpecialtyGroup_(name) {
 
 /**
  * Resolves Column C test email(s) from `Brand safety groups` for a single Social Alert (`t` from `productEmailTargets_`):
- * - Evaluates every product/group listed on the alert in order: the first product with a Column C test email goes in `to`,
- *   and all additional products with Column C test emails go in `cc` on that single Social Alert email.
+ * - Single-product alert (1 product listed): that product's Column C test email(s) go in `to`.
+ * - Multi-product alert (2+ products listed): ALL listed products' Column C test email(s) go in `cc` (`to` stays `[]`),
+ *   so no product is arbitrarily treated as the "main" `To:` recipient.
  * - Any listed product without a Column C test email is recorded in `skippedGroups` (and if none of the listed products
- *   has a Column C test email, `to` is `[]` so no email is sent and the skip is logged).
+ *   has a Column C test email, both `to` and `cc` stay `[]` so no email is sent and the skip is logged).
  */
 function bsgTestPlanForTarget_(t, extraGroups) {
   const inp = (t && t.input) || {};
@@ -342,52 +343,65 @@ function bsgTestPlanForTarget_(t, extraGroups) {
   const matchedGroups = [];
   const skippedGroups = [];
   const seenKeys = new Set();
+  const resolvedItems = [];
 
-  if (rawNames.length) {
-    rawNames.forEach(pName => {
-      const s = String(pName || '').trim();
-      if (!s) return;
-      const distro = typeof resolveDistro_ === 'function' ? ((resolveDistro_(s) || {}).distro || null) : null;
-      const spec = !distro ? resolveSpecialtyGroup_(s) : null;
-      const gLabel = (distro && (distro.group_name || distro.name)) || (spec && spec.name) || s;
-      const canonKey = bsgNormKey_((distro && distro.name) || (spec && spec.name) || s);
-      if (canonKey && seenKeys.has(canonKey)) return;
-      if (canonKey) seenKeys.add(canonKey);
+  rawNames.forEach(pName => {
+    const s = String(pName || '').trim();
+    if (!s) return;
+    const distro = typeof resolveDistro_ === 'function' ? ((resolveDistro_(s) || {}).distro || null) : null;
+    const spec = !distro ? resolveSpecialtyGroup_(s) : null;
+    const gLabel = (distro && (distro.group_name || distro.name)) || (spec && spec.name) || s;
+    const canonKey = bsgNormKey_((distro && distro.name) || (spec && spec.name) || s);
+    if (canonKey && seenKeys.has(canonKey)) return;
+    if (canonKey) seenKeys.add(canonKey);
+    const emails = distro
+      ? bsgCleanTestEmails_(distro.test_pa)
+      : (spec ? bsgCleanTestEmails_(spec.test_recipients) : []);
+    resolvedItems.push({ gLabel, emails });
+  });
 
-      const emails = distro
-        ? bsgCleanTestEmails_(distro.test_pa)
-        : (spec ? bsgCleanTestEmails_(spec.test_recipients) : []);
-      if (emails.length) {
-        matchedGroups.push(gLabel);
-        if (!to.length) to = bsgMergeUnique_(to, emails);
-        else cc = bsgMergeUnique_(cc, emails);
+  const isMultiProduct = resolvedItems.length >= 2;
+  if (resolvedItems.length) {
+    resolvedItems.forEach(item => {
+      if (item.emails.length) {
+        matchedGroups.push(item.gLabel);
+        if (isMultiProduct) {
+          cc = bsgMergeUnique_(cc, item.emails);
+        } else {
+          to = bsgMergeUnique_(to, item.emails);
+        }
       } else {
-        skippedGroups.push(gLabel);
+        skippedGroups.push(item.gLabel);
       }
     });
   } else {
     // Alert with no product field: check any To-eligible specialty group on the alert, then Default To's test email
     const codes = new Set([].concat(esc.groups || [], extraGroups || []).map(x => String(x || '')));
     let groupName = '';
+    const specHits = [];
     (dist.groups || []).forEach(g => {
       if (codes.has(g.action_code) && g.placement === 'to_if_no_product_else_cc') {
         const te = bsgCleanTestEmails_(g.test_recipients);
-        if (te.length) {
-          matchedGroups.push(g.name);
-          if (!to.length) to = bsgMergeUnique_(to, te);
-          else cc = bsgMergeUnique_(cc, te);
-        }
+        specHits.push({ name: g.name, emails: te });
         if (!groupName) groupName = g.name;
       }
     });
-    if (!to.length && GEN && GEN.email && GEN.email.test_default_to) {
+    const multiSpec = specHits.length >= 2;
+    specHits.forEach(sh => {
+      if (sh.emails.length) {
+        matchedGroups.push(sh.name);
+        if (multiSpec) cc = bsgMergeUnique_(cc, sh.emails);
+        else to = bsgMergeUnique_(to, sh.emails);
+      }
+    });
+    if (!to.length && !cc.length && GEN && GEN.email && GEN.email.test_default_to) {
       to = bsgCleanTestEmails_(GEN.email.test_default_to);
       if (to.length) matchedGroups.push('Default To');
     }
-    if (!to.length) skippedGroups.push(groupName || 'unmapped product');
+    if (!to.length && !cc.length) skippedGroups.push(groupName || 'unmapped product');
   }
 
-  if (to.length) {
+  if (to.length || cc.length) {
     if (GEN && GEN.email && GEN.email.test_default_cc) {
       cc = bsgMergeUnique_(cc, bsgCleanTestEmails_(GEN.email.test_default_cc));
     }
@@ -403,8 +417,10 @@ function bsgTestPlanForTarget_(t, extraGroups) {
         cc = bsgMergeUnique_(cc, bsgCleanTestEmails_(rl.test_recipients));
       }
     });
-    const toSet = new Set(to.map(e => e.toLowerCase()));
-    cc = cc.filter(e => !toSet.has(e.toLowerCase()));
+    if (to.length) {
+      const toSet = new Set(to.map(e => e.toLowerCase()));
+      cc = cc.filter(e => !toSet.has(e.toLowerCase()));
+    }
   }
 
   const groupName = matchedGroups.length

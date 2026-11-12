@@ -270,21 +270,24 @@ function socialAlertEmail_(input, plan, opts) {
   const real = GEN.email.recipients_in === 'bcc'
     ? { to: [GEN.email.from_email], cc: [], bcc: plan.to.concat(plan.cc) } : { to: plan.to.slice(), cc: plan.cc.slice(), bcc: [] };
   const testers = onlyToList_(opts.standIn);
-  const only = testers.length ? testers : (opts.test && opts.mailbox ? [opts.mailbox] : []);
-  const onlyCc = only.length && opts.standInCc ? onlyToList_(opts.standInCc).filter(e => !only.includes(e)) : [];
+  const testersCc = opts.standInCc ? onlyToList_(opts.standInCc) : [];
+  const hasStandIn = testers.length > 0 || testersCc.length > 0;
+  const only = hasStandIn ? testers : (opts.test && opts.mailbox ? [opts.mailbox] : []);
+  const onlyCc = hasStandIn ? testersCc.filter(e => !only.includes(e)) : [];
+  const useTestAddr = hasStandIn || only.length > 0;
   const footerHtml = opts.footer ? '<div style="max-width: 680px; margin: 12px auto 20px auto; font-family: Arial, sans-serif; ' +
     `font-size: 12px; color: #555555;">${htmlEsc_(opts.footer)}</div>` : '';
   const shot = opts.screenshot && opts.screenshot.base64 && opts.screenshot.cid ? opts.screenshot : null;
   const comms = commsEmailRows_(input.comms_context);  // Check outage & comms docs (only when it was ON for this alert)
   const commsText = comms.length ? '\n\n--- Comms / Status Context ---\n' + comms.map(([l, v2]) => `${l}: ${v2}`).join('\n') : '';
   return {
-    subject: (opts.test && !testers.length ? '[TEST] ' : '') + taggedSubject_(socialAlertSubject_(input, opts.reply), opts.tag, opts.reply),
+    subject: (opts.test && !hasStandIn ? '[TEST] ' : '') + taggedSubject_(socialAlertSubject_(input, opts.reply), opts.tag, opts.reply),
     html: socialAlertHtml_(v, Object.assign({}, opts, { screenshot: shot, comms }))
       .replace(/<\/body><\/html>$/, () => `${footerHtml}</body></html>`),
     text: socialAlertText_(v) + commsText + (opts.footer ? `\n\n${opts.footer}` : ''),
-    to: only.length ? only : real.to,
-    cc: only.length ? onlyCc : real.cc,
-    bcc: only.length ? [] : real.bcc,
+    to: useTestAddr ? only : real.to,
+    cc: useTestAddr ? onlyCc : real.cc,
+    bcc: useTestAddr ? [] : real.bcc,
     inline: shot ? [shot] : [],
   };
 }

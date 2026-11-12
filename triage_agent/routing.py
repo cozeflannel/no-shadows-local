@@ -245,14 +245,16 @@ def plan_recipients(
                 if all(s.name.lower() != sec_prod.name.lower() for s in secondary_distros):
                     secondary_distros.append(sec_prod)
 
-    if product:
-        add_product_distro(product, in_cc=False)
+    multi_product = bool(not product_name and a.secondary_products)
+    if multi_product:
+        if product:
+            add_product_distro(product, in_cc=True)
         for sec_prod in secondary_distros:
             add_product_distro(sec_prod, in_cc=True)
-    elif secondary_distros:
-        add_product_distro(secondary_distros[0], in_cc=False)
-        for sec_prod in secondary_distros[1:]:
-            add_product_distro(sec_prod, in_cc=True)
+        if not plan.cc and not plan.groups:
+            add(plan.cc, config.escalation.default_to)
+    elif product:
+        add_product_distro(product, in_cc=False)
     else:
         add(plan.to, config.escalation.default_to)
 
@@ -272,7 +274,7 @@ def plan_recipients(
         if not emails:
             plan.missing.append(group.name)
             continue
-        add(plan.to if group.action_code == GUP_CODE else plan.cc, emails)
+        add(plan.to if (group.action_code == GUP_CODE and not multi_product) else plan.cc, emails)
         plan.groups.append(group.name)
         plan.reasons[group.name] = reason
     add(plan.cc, config.escalation.default_cc)

@@ -1386,8 +1386,10 @@ test('escalation_ and planRecipients_: P0/P1/P2 rules, Regional Leads (EMEA pare
   assert.strictEqual(escAio.escalated, true);
   assert.strictEqual(escAio.priority, 'P1');
   const planAio = B.planRecipients_(escAio, escAio.text, []);
-  assert.ok(planAio.to.includes('ai-overviews@alerts.test'));
-  assert.ok(planAio.to.includes('ai-overviews-high@alerts.test'));  // 2K+ conditional add-on
+  eq(planAio.to, []);
+  assert.ok(planAio.cc.includes('ai-overviews@alerts.test'));
+  assert.ok(planAio.cc.includes('ai-overviews-high@alerts.test'));  // 2K+ conditional add-on
+  assert.ok(planAio.cc.includes('search@alerts.test'));
   assert.ok(planAio.cc.includes('default-cc@alerts.test'));          // default_cc
 
   // 2. P0 Paris Riots -> escalated, France + EMEA parent leads in CC, viral KOF triggers T&S
@@ -1735,8 +1737,8 @@ test('human Q&A in both spaces: answers "Should i escalate this or is it handled
   assert.strictEqual(replies.length, 1);
   assert.match(replies[0].text, /^<users\/im_lead> Social Alert draft is in Gmail Drafts: review and send it, or delete it to skip\./);
   assert.match(replies[0].text, /- Why: High engagement \(29,425 on X\)/);
-  assert.match(replies[0].text, /- To: AI Overviews alert POCs/);
-  assert.match(replies[0].text, /- Cc: .*Search alert POCs/);
+  assert.match(replies[0].text, /- To: none \(multi-product alert — all product teams in CC\)/);
+  assert.match(replies[0].text, /- Cc: .*AI Overviews alert POCs.*Search alert POCs/);
 
   // 1. In the Burson space: user asks "Should i escalate this or is it handled/"
   w.vertex.answer = () => 'We already have the escalation email in review for this one since it hit 29,425 engagements on X, so you\'re all set!';

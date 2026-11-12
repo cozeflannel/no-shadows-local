@@ -181,7 +181,7 @@ function ensureTestAlertTab_(ss) {
     ['KOF', 'No', 'Key Opinion Former (Yes / No)'],
     [
       'Summary',
-      'Synthetic test alert posted into the test Chat space to verify Chat pickup and Social Alert email routing (primary product in To, additional products in CC).',
+      'Synthetic test alert posted into the test Chat space to verify Chat pickup and Social Alert email routing (single product in To, multi-product all in CC).',
       'Included in the Chat alert and formulated Social Alert email',
     ],
   ];
@@ -337,20 +337,25 @@ function summarizeSheetTestResult_(alertId, spaceName, products, row) {
   const status = String((row && row.email_status) || '');
   let detail = '';
   if (bsgInfo && status === 'sent') {
-    const toPart = `To: ${(bsgInfo.to || []).join(', ') || 'none'}`;
-    const ccPart = (bsgInfo.cc && bsgInfo.cc.length) ? ` | Cc: ${bsgInfo.cc.join(', ')}` : '';
+    const hasTo = Array.isArray(bsgInfo.to) && bsgInfo.to.length > 0;
+    const hasCc = Array.isArray(bsgInfo.cc) && bsgInfo.cc.length > 0;
+    const addrPart = hasTo
+      ? `To: ${bsgInfo.to.join(', ')}${hasCc ? ` | Cc: ${bsgInfo.cc.join(', ')}` : ''}`
+      : `Cc: ${hasCc ? bsgInfo.cc.join(', ') : 'none'}`;
     let livePart = '';
     try {
       const targets = typeof productEmailTargets_ === 'function' ? productEmailTargets_(inp, groupsOf_(row), row) : [];
       const plan = targets[0] && targets[0].plan;
       if (plan && ((plan.to && plan.to.length) || (plan.cc && plan.cc.length))) {
-        livePart = ` (Live route → To: ${(plan.to || []).join(', ') || 'none'}${plan.cc && plan.cc.length ? ` | Cc: ${plan.cc.join(', ')}` : ''})`;
+        const liveTo = (plan.to && plan.to.length) ? `To: ${plan.to.join(', ')}` : '';
+        const liveCc = (plan.cc && plan.cc.length) ? `Cc: ${plan.cc.join(', ')}` : '';
+        livePart = ` (Live route → ${[liveTo, liveCc].filter(Boolean).join(' | ')})`;
       }
     } catch (e) {}
     const skipPart = (bsgInfo.skipped_groups && bsgInfo.skipped_groups.length)
       ? ` · skipped (no Test Email in Brand safety groups Col C): ${bsgInfo.skipped_groups.join(', ')}`
       : '';
-    detail = `1 Social Alert sent (${products.join(', ')}) → ${toPart}${ccPart}${livePart}${skipPart}`;
+    detail = `1 Social Alert sent (${products.join(', ')}) → ${addrPart}${livePart}${skipPart}`;
   } else if (status === 'sent') {
     detail = `1 Social Alert sent (${products.join(', ')}) → ${row.email_to || 'recipient'}`;
   } else if (status === 'drafted') {
@@ -435,7 +440,7 @@ function postSheetTestAlert_(ss, wanted, sfb) {
     const isKof = /^yes$|^true$/i.test(cellVal(16, 'No'));
     const summaryText = cellVal(
       17,
-      'Synthetic test alert posted into the test Chat space to verify Chat pickup and Social Alert email routing (primary product in To, additional products in CC).'
+      'Synthetic test alert posted into the test Chat space to verify Chat pickup and Social Alert email routing (single product in To, multi-product all in CC).'
     );
     const postUrl = `https://x.com/${handleSlug}/status/99${nowMs}${seq}`;
     const postedEt = typeof nowLabel_ === 'function' ? nowLabel_() : new Date(nowMs).toISOString();
@@ -480,7 +485,7 @@ function postSheetTestAlert_(ss, wanted, sfb) {
 /**
  * Step 2 callback (Chat Space -> Social Alert Sent): Called by `Bot.gs` `handleNewAlert_` after the Chat poller picks up
  * the posted test alert from the test Chat space and runs `tryDraft_`. Writes the single Social Alert email delivery summary
- * (primary product in To, additional products in CC) back onto `Test alert!C2` & `B3` and into the Chat alert's thread. Never throws.
+ * (single product in To, multi-product all in CC) back onto `Test alert!C2` & `B3` and into the Chat alert's thread. Never throws.
  */
 function onSheetTestAlertWorked_(ctx, m, row) {
   try {
