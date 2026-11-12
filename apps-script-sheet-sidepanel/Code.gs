@@ -60,6 +60,14 @@ function ensureSidepanelTestAlertTab_(ss) {
     if (marker !== SIDEPANEL_TEST_HEADER_) {
       throw new Error('A custom tab named "Test alert" already exists; refusing to overwrite it.');
     }
+    try {
+      if (String(existing.getRange(16, 2).getValue() || '').trim() === '500' &&
+          /100\+ engagements/.test(String(existing.getRange(16, 3).getValue() || ''))) {
+        existing.getRange(16, 2, 1, 2).setValues([
+          ['2500', '2,000+ (HIGH) meets the SLRR Social Alert email threshold across P0/P1/P2'],
+        ]);
+      }
+    } catch (e) {}
     applySidepanelTestValidations_(ss, existing);
     return { sh: existing, created: false };
   }

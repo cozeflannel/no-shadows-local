@@ -240,7 +240,16 @@ function escalationFor_(ctx, review, history) {
   const ongoing = !!related || !!(fu && fu.original && fu.original.outcome === 'alerted') ||
     !!(review && review.knownIssue && review.knownIssue.matches) || !!memRel.ongoing;
   const baseEsc = escalation_(review.fields, { status: ongoing ? 'ONGOING' : undefined, now: ctx.now() });
-  const esc = kbStarted_(ctx, review, baseEsc) || baseEsc;
+  let esc = kbStarted_(ctx, review, baseEsc) || baseEsc;
+  if (!esc.escalated && review && typeof SHEET_TEST_INGESTED_ === 'string' && review.ingested === SHEET_TEST_INGESTED_) {
+    esc = Object.assign({}, esc, {
+      escalated: true,
+      action: 'EMAIL_ALERT',
+      track: esc.track || 'HIGH_ENGAGEMENT',
+      reasons: (esc.reasons || []).concat(['SHEET_TEST_ALERT']),
+      suppression: [],
+    });
+  }
   const upd = typeof memoryUpdate_ === 'function' ? memoryUpdate_(review, esc) : null;
   if (upd && upd.rel && upd.rel.o === 'e' && upd.rel.th && !(related && related.email_status === 'sent' && related.email_thread)) {
     related = amRelatedRow_(upd.rel, upd.rel.nm, '');
@@ -292,6 +301,7 @@ function noteKbStart_(ctx, review, basis) {
  * say (in the IMs' log, under 3% of those were marked ❌).
  */
 function aiVeto_(review, esc) {
+  if (review && typeof SHEET_TEST_INGESTED_ === 'string' && review.ingested === SHEET_TEST_INGESTED_) return '';
   const repeat = followUpSkip_(review, esc) || (typeof memorySkip_ === 'function' ? memorySkip_(review, esc) : '');
   if (repeat) return repeat;
   const sa = review && review.socialAlert;
@@ -1364,7 +1374,7 @@ function wouldHaveGoneTo_(plan, input) {
         : name;
       (ccProds.has(name) ? cc : to).push(label);
     } else {
-      (g.action_code === 'gup' ? to : cc).push(name);
+      ((g.action_code === 'gup' || plan.reasons[name] === 'selected group POCs') ? to : cc).push(name);
     }
   });
   missingTeams_(plan, input).forEach(name => {

@@ -440,6 +440,20 @@ module.exports = function (H) {
     eq(sent2[1].to, ['waymo-qa@testing.test']);
     eq(sent2[1].cc, ['gemini-app-qa@testing.test']);
 
+    // Regression: Product 1 = Executives (specialty group) + low Engagements (500) on Test alert tab STILL escalates
+    // and sends ONE Social Alert email with Executive Comms in To: and additional products in Cc:
+    testSh.getRange(5, 2).setValue('Executives');
+    testSh.getRange(6, 2).setValue('Gemini App');
+    testSh.getRange(7, 2).setValue('Waymo');
+    testSh.getRange(16, 2).setValue('500');
+    panelCtx.sendSheetTestAlert();
+    t.poll();
+    const sent3 = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
+    eq(sent3.length, 3);
+    eq(sent3[2].to, ['exec-qa@testing.test']);
+    eq(sent3[2].cc, ['gemini-app-qa@testing.test', 'waymo-qa@testing.test']);
+    assert.match(sent3[2].text, /Would have gone to: To: Executives(?: alert POCs)?; Cc: Gemini App alert POCs, Waymo alert POCs/);
+
     // Tab ownership safeguard: refuses to overwrite or read a custom user tab named "Test alert"
     const ssCustom = new H.FakeSpreadsheet('custom-sheet', 'User Workbook');
     const customTab = ssCustom.insertSheet('Test alert');

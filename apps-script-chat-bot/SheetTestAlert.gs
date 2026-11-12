@@ -339,10 +339,18 @@ function summarizeSheetTestResult_(alertId, spaceName, products, row) {
   if (bsgInfo && status === 'sent') {
     const toPart = `To: ${(bsgInfo.to || []).join(', ') || 'none'}`;
     const ccPart = (bsgInfo.cc && bsgInfo.cc.length) ? ` | Cc: ${bsgInfo.cc.join(', ')}` : '';
+    let livePart = '';
+    try {
+      const targets = typeof productEmailTargets_ === 'function' ? productEmailTargets_(inp, groupsOf_(row), row) : [];
+      const plan = targets[0] && targets[0].plan;
+      if (plan && ((plan.to && plan.to.length) || (plan.cc && plan.cc.length))) {
+        livePart = ` (Live route → To: ${(plan.to || []).join(', ') || 'none'}${plan.cc && plan.cc.length ? ` | Cc: ${plan.cc.join(', ')}` : ''})`;
+      }
+    } catch (e) {}
     const skipPart = (bsgInfo.skipped_groups && bsgInfo.skipped_groups.length)
       ? ` · skipped (no Test Email in Brand safety groups Col C): ${bsgInfo.skipped_groups.join(', ')}`
       : '';
-    detail = `1 Social Alert sent (${products.join(', ')}) → ${toPart}${ccPart}${skipPart}`;
+    detail = `1 Social Alert sent (${products.join(', ')}) → ${toPart}${ccPart}${livePart}${skipPart}`;
   } else if (status === 'sent') {
     detail = `1 Social Alert sent (${products.join(', ')}) → ${row.email_to || 'recipient'}`;
   } else if (status === 'drafted') {
@@ -361,7 +369,7 @@ function summarizeSheetTestResult_(alertId, spaceName, products, row) {
 /**
  * Step 1 (Sheet -> Test Chat Space): Ensures `Test alert` exists when `Brand safety groups` is present, and when `B2`
  * is `SEND NOW` (set via `🧪 Test Alert → 🚀 Send Test Alert` or dropdown), posts a formatted `🟧SOCIAL ALERT🟧` message
- * into the internal test Chat space so the bot's Chat poller picks it up from Chat and sends the Social Alert(s).
+ * into the internal test Chat space so the bot's Chat poller picks it up from Chat and sends the Social Alert.
  */
 function postSheetTestAlert_(ss, wanted, sfb) {
   if (!ss) return null;
@@ -372,6 +380,15 @@ function postSheetTestAlert_(ss, wanted, sfb) {
   if (!isTestAlertTab_(sh)) return null;
 
   const vals = sh.getRange(1, 1, Math.max(18, Math.min(sh.getLastRow(), 25)), 3).getDisplayValues();
+  if (String(((vals[15] || [])[1]) || '').trim() === '500' &&
+      /100\+ engagements/.test(String(((vals[15] || [])[2]) || ''))) {
+    try {
+      sh.getRange(16, 2, 1, 2).setValues([
+        ['2500', '2,000+ (HIGH) meets the SLRR Social Alert email threshold across P0/P1/P2'],
+      ]);
+      vals[15] = ['Engagements', '2500', '2,000+ (HIGH) meets the SLRR Social Alert email threshold across P0/P1/P2'];
+    } catch (e) {}
+  }
   const action = String(((vals[1] || [])[1]) || '').trim().toUpperCase();
   if (action !== 'SEND NOW' && action !== 'SEND' && action !== 'QUEUED') return null;
 

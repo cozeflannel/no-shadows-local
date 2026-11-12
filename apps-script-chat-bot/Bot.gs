@@ -707,7 +707,10 @@ function handleAlert_(ctx, m, parsed, report) {
   // Gemini's review, with the crash guard and the hold for the next run (guardedAssess_)
   const { llm, llmError, held } = isSheetTest ? { llm: null, llmError: '', held: null } : guardedAssess_(ctx, m, parsed, now);
   const review = reviewAlert_(parsed, { llm, llmError, now, settings: S, history, mediaHeld: held, memoryStory });
-  if (isSheetTest && typeof applySheetTestReviewOverrides_ === 'function') applySheetTestReviewOverrides_(parsed, review);
+  if (isSheetTest) {
+    review.ingested = SHEET_TEST_INGESTED_;
+    if (typeof applySheetTestReviewOverrides_ === 'function') applySheetTestReviewOverrides_(parsed, review);
+  }
   review.memory = !isSheetTest && typeof amFactsFor_ === 'function' ? amFactsFor_(ctx, review.fields, { live: amLiveOf_(ctx, m) }) : null;
   if (review.knowledgeUsed.length) {
     ctx.log(`knowledge used: ${review.knowledgeUsed.map(u => u.document + (u.used_for ? ` (${u.used_for})` : '')).join('; ')}`);
