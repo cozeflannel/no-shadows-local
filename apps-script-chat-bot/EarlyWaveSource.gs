@@ -205,14 +205,14 @@ const EWS_COLS_ = ['kind', 'lane', 'mid', 'url', 'platform', 'author', 'audience
  * one is due (EWS_EVERY_MS_). Throws, with a message earlyWaveCheck_ turns into its C19 note ("BigQuery didn't answer" /
  * "didn't finish in time"), when no real-time source could be read and nothing new came out of the check.
  */
-function ewsRows_(minutes) {
+function ewsRows_(minutes, opts) {
   const n = Math.round(Number(minutes));
   const mins = isFinite(n) && n > 0 ? Math.min(EWS_BUFFER_MS_ / 60000, Math.max(15, n)) : 60;
   const now = Date.now();
   const props = PropertiesService.getScriptProperties();
   const st = ewsState_(props);
   let outcome = null;
-  if (!st.at || now < st.at || now - st.at >= EWS_EVERY_MS_) outcome = ewsProduce_(props, st, now, mins);
+  if (!st.at || now < st.at || now - st.at >= EWS_EVERY_MS_) outcome = ewsProduce_(props, st, now, mins, opts);
   if (outcome && outcome.error && !outcome.emitted) throw new Error(outcome.error);
   return ewsBufferRows_(ewsReadBuffer_(ewsCache_()), now, mins);
 }
@@ -1364,11 +1364,15 @@ function ewsTagHint_(hint) {
   return { line: typeof vecTagHintLine_ === 'function' ? vecTagHintLine_(hint) : '', raise };
 }
 
-/** A cluster signal as an EarlyWaveRow (03's queue insert). Pure. */
-function ewsClusterRow_(x, now, tag) {
+/**
+ * A cluster signal as an EarlyWaveRow (03's queue insert). With `facts` (the fast triage asked: ewsRows_'s opts), also
+ * its risk-term groups (`risk_groups`: a comma list, '' for none) and whether a taxonomy hint raised it (`tag_raised`:
+ * the nearest Exposure Tag is P0 / P1 at EWS_TAG_RAISE_SIM_ or more). Pure.
+ */
+function ewsClusterRow_(x, now, tag, facts) {
   const t = tag || { line: '', raise: '' };
   const priority = ewsPri_(t.raise) < ewsPri_(x.priority) ? t.raise : x.priority;
-  return {
+  const row = {
     alert_id: `ED-CLU-${x.id}-${ewsStamp_(now)}`,
     created_utc: ewsCreatedUtc_(now),
     signal_type: 'CLUSTER_EMERGENCE',
@@ -1394,10 +1398,19 @@ function ewsClusterRow_(x, now, tag) {
     update_of_authors: x.update ? x.update.au : 0,
     taxonomy_hint: t.line,
   };
+  if (facts) {
+    row.risk_groups = (x.risk || []).join(',');
+    row.tag_raised = !!t.raise;
+  }
+  return row;
 }
 
-/** A velocity spike as an EarlyWaveRow (04's queue insert); null without a post to cite. Pure. */
-function ewsVelocityRow_(v, reps, now, tag) {
+/**
+ * A velocity spike as an EarlyWaveRow (04's queue insert); null without a post to cite. With `facts`, also its
+ * risk-term groups (a risk-term spike's own group and its posts') and whether a taxonomy hint raised it, as
+ * ewsClusterRow_. Pure.
+ */
+function ewsVelocityRow_(v, reps, now, tag, facts) {
   if (!reps || !reps.length) return null;
   const t = tag || { line: '', raise: '' };
   const priority = ewsPri_(t.raise) < ewsPri_(v.priority) ? t.raise : v.priority;
@@ -1405,7 +1418,7 @@ function ewsVelocityRow_(v, reps, now, tag) {
   const topics = {};
   reps.forEach(m => { const k = m.tp && !EWS_NO_TOPIC_RX_.test(m.tp) ? m.tp : 'Brand'; topics[k] = (topics[k] || 0) + 1; });
   const topic = v.grain === 'PRIORITY_TOPIC' ? v.key : Object.keys(topics).sort((a, b) => topics[b] - topics[a])[0] || 'Brand';
-  return {
+  const row = {
     alert_id: `ED-VEL-${v.grain}-${ewsSha_(v.key).slice(0, 32)}-${ewsStamp_(now)}`,
     created_utc: ewsCreatedUtc_(now),
     signal_type: 'VELOCITY_SPIKE',
@@ -1431,6 +1444,13 @@ function ewsVelocityRow_(v, reps, now, tag) {
     update_of_authors: 0,
     taxonomy_hint: t.line,
   };
+  if (facts) {
+    const groups = v.grain === 'RISK_TERM_GROUP' ? [v.key] : [];
+    reps.forEach(m => (m.r ? String(m.r).split(',') : []).forEach(g => { if (g && groups.indexOf(g) < 0) groups.push(g); }));
+    row.risk_groups = groups.join(',');
+    row.tag_raised = !!t.raise;
+  }
+  return row;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1474,7 +1494,7 @@ function ewsEmbed_(posts, known, st, now, deadline) {
  * signals, buffer them. {emitted, error}: error when no real-time lane answered (or both are still running) and nothing
  * came out. Never throws.
  */
-function ewsProduce_(props, st, now, firstMins) {
+function ewsProduce_(props, st, now, firstMins, opts) {
   const t0 = Date.now();
   const deadline = now + EWS_BUDGET_MS_;
   st.at = now;
@@ -1587,6 +1607,7 @@ function ewsProduce_(props, st, now, firstMins) {
     ewsCloseHours_(acc, roll, tidy, now);
     const promoted = ewsPromote_(tidy, priors, now);
     const spikes = ewsVelocity_(acc, roll, tidy, priors, now);
+    const facts = !!(opts && opts.facts);
 
     // Representative posts for topic / risk spikes: the window's posts the pool or a story keeps
     const rich = [];
@@ -1620,12 +1641,12 @@ function ewsProduce_(props, st, now, firstMins) {
     builds.forEach((b, i) => {
       const tag = ewsTagHint_(hints[i]);
       if (b.kind === 'c') {
-        const row = ewsClusterRow_(b.x, now, tag);
+        const row = ewsClusterRow_(b.x, now, tag, facts);
         rows.push(row);
         b.x.c.al = { at: now, au: b.x.authors, id: row.alert_id };
         stories.push({ id: row.alert_id, cid: b.x.id, at: now, au: b.x.authors, pl: b.x.platforms, v: ewsEnc_(b.x.vec) });
       } else {
-        const row = ewsVelocityRow_(b.v, b.reps, now, tag);
+        const row = ewsVelocityRow_(b.v, b.reps, now, tag, facts);
         if (!row) return;
         rows.push(row);
         roll.cool[`${b.v.grain}|${b.v.key}`] = [now, b.v.current];

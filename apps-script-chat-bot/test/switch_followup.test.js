@@ -414,21 +414,26 @@ module.exports = H => {
       assert.ok(!/^🔴 LIVE/.test(t.get('B5')), t.get('B5'));
       eq([sh.cell(30, 1), sh.cell(30, 2), sh.cell(31, 1), sh.cell(31, 2), sh.cell(32, 1), sh.cell(32, 2), sh.cell(32, 3), sh.cell(33, 1),
         sh.cell(33, 2), sh.cell(34, 1), sh.cell(34, 2), sh.cell(34, 3), sh.cell(35, 1), sh.cell(35, 2), sh.cell(35, 3), sh.cell(36, 1),
-        sh.cell(36, 2), sh.cell(36, 3), sh.cell(37, 1), sh.cell(37, 2), sh.cell(37, 3), sh.cell(38, 1), sh.cell(39, 1)],
+        sh.cell(36, 2), sh.cell(36, 3), sh.cell(37, 1), sh.cell(37, 2), sh.cell(37, 3), sh.cell(38, 1), sh.cell(38, 2), sh.cell(38, 3),
+        sh.cell(39, 1), sh.cell(39, 2), sh.cell(39, 3), sh.cell(40, 1), sh.cell(40, 2), sh.cell(40, 3), sh.cell(41, 1), sh.cell(42, 1)],
         ['Testing: send to', '', 'BigQuery lookback', '60 minutes', 'Work directly in B25 (Google-only)', 'OFF',
           B.switchOffText_(B.ev('CONTROL_SWITCHES_').find(s => s.row === 32)), 'Other alerts space', '', 'Proactive watch', 'OFF',
           B.switchOffText_(B.ev('CONTROL_SWITCHES_').find(s => s.row === 34)), 'Watch alerts', 'OFF', B.pwAlertsOffText_(), 'Temp checks',
           'OFF', B.switchOffText_(B.ev('CONTROL_SWITCHES_').find(s => s.row === 36)), 'Group test emails', 'OFF',
-          B.switchOffText_(B.ev('CONTROL_SWITCHES_').find(s => s.row === 37)), '', 'How it works']);
-      eq([sh.validations['32,2'].values, sh.validations['33,2'], sh.validations['34,2'].values, sh.validations['36,2'].values, sh.validations['37,2'].values],
-        [['ON', 'OFF'], undefined, ['ON', 'OFF'], ['ON', 'OFF'], ['ON', 'OFF']]);  // rows 32, 34, 36 and 37 are switches: OFF until a person turns them ON; B33 a space
+          B.switchOffText_(B.ev('CONTROL_SWITCHES_').find(s => s.row === 37)), 'Fast triage (Gemini Decisions)', 'OFF',
+          B.switchOffText_(B.ev('CONTROL_SWITCHES_').find(s => s.row === 38)), 'Fast triage: rank and early watch', 'OFF',
+          B.switchOffText_(B.ev('CONTROL_SWITCHES_').find(s => s.row === 39)), 'Fast triage: hold back noise', 'OFF',
+          B.switchOffText_(B.ev('CONTROL_SWITCHES_').find(s => s.row === 40)), '', 'How it works']);
+      eq([sh.validations['32,2'].values, sh.validations['33,2'], sh.validations['34,2'].values, sh.validations['36,2'].values, sh.validations['37,2'].values,
+        sh.validations['38,2'].values, sh.validations['39,2'].values, sh.validations['40,2'].values],
+      [['ON', 'OFF'], undefined, ['ON', 'OFF'], ['ON', 'OFF'], ['ON', 'OFF'], ['ON', 'OFF'], ['ON', 'OFF'], ['ON', 'OFF']]);  // rows 32, 34 and 36-40 are switches: OFF until a person turns them ON; B33 a space
       // B35 (Watch alerts): OFF, with its own dropdown; only a person chooses where the watch's alerts go
       eq(sh.validations['35,2'].values, ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)', 'Auto-correct space (B10)']);
       // B31 (a help line's row on the deployed tab) gets its 15 / 30 / 45 / 60 minutes dropdown, and C31 says what the bot uses
       eq([sh.validations['31,2'].values, sh.cell(31, 3)], [['15 minutes', '30 minutes', '45 minutes', '60 minutes'], B.bqLookbackFrom_('60 minutes').note]);
       const help = B.ev('CONTROL_HELP_');
-      eq(help.map((_, i) => sh.cell(40 + i, 1)), help);
-      for (let r = 40 + help.length; r <= sh.rows.length; r++) {
+      eq(help.map((_, i) => sh.cell(43 + i, 1)), help);
+      for (let r = 43 + help.length; r <= sh.rows.length; r++) {
         eq([sh.cell(r, 1), sh.cell(r, 2), sh.cell(r, 3)], ['', '', ''], `leftover row ${r}`);
       }
     });

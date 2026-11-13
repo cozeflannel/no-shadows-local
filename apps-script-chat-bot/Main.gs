@@ -333,13 +333,13 @@ function poll() {
     alertMemoryStart_(ss, { deadline: runStart + RUN_HARD_STOP_MS_ });
     if (typeof syncBrandSafetyGroups_ === 'function') syncBrandSafetyGroups_(ss);
     control = controlTab_(ss) || ensureControlTab_(ss, Session.getEffectiveUser().getEmail());
-    ensureSwitchRows_(control);  // rows 11-24, 27-29, 32, 34 and 36 on a tab from before them (OFF)
+    ensureSwitchRows_(control);  // rows 11-24, 27-29, 32, 34 and 36-40 on a tab from before them (OFF)
     ensureSfBursonRow_(control);  // row 25 (S-F Burson space, blank) on a tab from before it
     ensureTestCopyRow_(control);  // row 26 (Burson test copy, blank) on a tab from before it
     ensureTestersRow_(control);   // row 30 (Testing: send to, blank) on a tab from before it
     ensureBqLookbackRow_(control);  // row 31 (BigQuery lookback, 60 minutes) on a tab from before it
     ensureOtherSpaceRow_(control);  // row 33 (Other alerts space, blank) on a tab from before it
-    ensureWatchAlertsRow_(control);  // row 35 (Watch alerts, OFF) on a tab from before it; the help is at row 38
+    ensureWatchAlertsRow_(control);  // row 35 (Watch alerts, OFF) on a tab from before it; the help is at row 42
     wanted = readControl_(control);
     testers = testersFor_(wanted.testers, control);  // C30 is kept current even while the bot is paused
     lookback = bqLookbackFor_(wanted.bqLookback, control);  // and C31
@@ -897,7 +897,7 @@ function buildCtx_(cfg, ss, switches) {
     : `${cfg.burson.id} > ${cfg.analyst.id}${readOnly ? AC_PARTITION_SUFFIX_ : ''}`;
   const ctx = {
     settings,
-    switches: sw,  // rows 11-24, 27-29, 32, 34, 36, 37: OFF unless ON there
+    switches: sw,  // rows 11-24, 27-29, 32, 34 and 36-40: OFF unless ON there
     outboundBlocked,
     b30Blank,
     // Work directly in B25 (Control row 32, directCfg_), or the Other alerts space (B33, otherSpaceCfg_): one Google-only

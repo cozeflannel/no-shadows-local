@@ -219,9 +219,11 @@ module.exports = function ({ assert, F, B, NOW, test, eq, world, e2e, decodeMime
     sh.getRange(31, 1, 1, 3).setValues([['How it works', '', '']]);
     t.poll();
     eq([sh.cell(30, 1), sh.cell(30, 2), sh.cell(31, 1), sh.cell(31, 2), sh.cell(32, 1), sh.cell(32, 2), sh.cell(33, 1), sh.cell(33, 2),
-      sh.cell(34, 1), sh.cell(34, 2), sh.cell(35, 1), sh.cell(35, 2), sh.cell(36, 1), sh.cell(36, 2), sh.cell(37, 1), sh.cell(37, 2), sh.cell(38, 1), sh.cell(39, 1)],
+      sh.cell(34, 1), sh.cell(34, 2), sh.cell(35, 1), sh.cell(35, 2), sh.cell(36, 1), sh.cell(36, 2), sh.cell(37, 1), sh.cell(37, 2), sh.cell(38, 1), sh.cell(38, 2),
+      sh.cell(39, 1), sh.cell(39, 2), sh.cell(40, 1), sh.cell(40, 2), sh.cell(41, 1), sh.cell(42, 1)],
       ['Testing: send to', '', 'BigQuery lookback', '60 minutes', 'Work directly in B25 (Google-only)', 'OFF', 'Other alerts space', '',
-        'Proactive watch', 'OFF', 'Watch alerts', 'OFF', 'Temp checks', 'OFF', 'Group test emails', 'OFF', '', 'How it works']);
+        'Proactive watch', 'OFF', 'Watch alerts', 'OFF', 'Temp checks', 'OFF', 'Group test emails', 'OFF', 'Fast triage (Gemini Decisions)', 'OFF',
+        'Fast triage: rank and early watch', 'OFF', 'Fast triage: hold back noise', 'OFF', '', 'How it works']);
 
     sh.getRange(30, 1).setValue('');
     sh.getRange(30, 2).setValue('keepme@external.test');

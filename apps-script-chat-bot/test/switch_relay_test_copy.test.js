@@ -114,12 +114,13 @@ module.exports = H => {
     const row36 = [sw36.label, 'OFF', B.switchOffText_(sw36)];  // Temp checks, OFF
     const sw37 = B.ev('CONTROL_SWITCHES_').find(s => s.row === 37);
     const row37 = [sw37.label, 'OFF', B.switchOffText_(sw37)];  // Group test emails, OFF
+    const ft = r => { const s = B.ev('CONTROL_SWITCHES_').find(x => x.row === r); return [s.label, 'OFF', B.switchOffText_(s)]; };  // rows 38-40: Fast triage, OFF
     eq([cells(26), sh.cell(27, 1), sh.cell(28, 1), sh.cell(29, 1), cells(30).slice(0, 2), cells(31), cells(32), cells(33), cells(34),
-      cells(35), cells(36), cells(37), cells(38), sh.cell(39, 1), t.bot.testCopyId_()],
+      cells(35), cells(36), cells(37), cells(38), cells(39), cells(40), cells(41), sh.cell(42, 1), t.bot.testCopyId_()],
     [['Burson test copy', '', BLANK], 'Draft follow-ups', 'Draft answers to questions', 'Safety valve', ['Testing: send to', ''],
-      lookback, row32, row33, row34, row35, row36, row37, ['', '', ''], 'How it works', '']);
+      lookback, row32, row33, row34, row35, row36, row37, ft(38), ft(39), ft(40), ['', '', ''], 'How it works', '']);
     const help = B.ev('CONTROL_HELP_');
-    eq(help.map((_, i) => sh.cell(40 + i, 1)), help);
+    eq(help.map((_, i) => sh.cell(43 + i, 1)), help);
     assert.ok(help.some(l => /^• Burson test copy \(B26\): a Google-only space that plays S-F Burson while Testing/.test(l)));
     eq(t.bot.status().burson_test_copy, 'not set: the Control tab\'s B26 is blank (the Relay works with S-F Burson itself)');
     t.set('B25', REAL);
@@ -176,9 +177,10 @@ module.exports = H => {
     t.poll();
     eq(cells(26), ['Burson test copy', COPY_NAME, OK_NOTE]);
     t.bot.setup();
-    eq([cells(26), cells(30).slice(0, 2), cells(31), cells(32), cells(33), cells(34), cells(35), cells(36), cells(37), cells(38), sh.cell(39, 1)],
-      [['Burson test copy', COPY_NAME, OK_NOTE], ['Testing: send to', ''], lookback, row32, row33, row34, row35, row36, row37, ['', '', ''],
-        'How it works']);
+    eq([cells(26), cells(30).slice(0, 2), cells(31), cells(32), cells(33), cells(34), cells(35), cells(36), cells(37), cells(38), cells(39), cells(40),
+      cells(41), sh.cell(42, 1)],
+    [['Burson test copy', COPY_NAME, OK_NOTE], ['Testing: send to', ''], lookback, row32, row33, row34, row35, row36, row37, ft(38), ft(39), ft(40),
+      ['', '', ''], 'How it works']);
 
     // A dry run: nothing is copied or sent there, and C26 says so
     const GEN = t.bot.ev('GEN');
@@ -215,7 +217,8 @@ module.exports = H => {
    * send to (blank; C30 who gets the emails), row 31 the BigQuery lookback (60 minutes, with its dropdown; C31 what the
    * bot uses), row 32 the Work directly in B25 switch (OFF, with its dropdown), row 33 the Other alerts space (blank),
    * row 34 the Proactive watch switch (OFF, with its dropdown), row 35 Watch alerts (OFF, with its dropdown), row 36
-   * the Temp checks switch (OFF, with its dropdown), row 37 Group test emails (OFF, with its dropdown), row 38 blank, "How it works" from row 39;
+   * the Temp checks switch (OFF, with its dropdown), row 37 Group test emails (OFF, with its dropdown), rows 38-40 the three Fast triage
+   * switches (OFF, with their dropdowns), row 41 blank, "How it works" from row 42;
    * the other dropdowns as they were;
    * the switches, B25 and B26 read as the tab has them. Column C of a switch is the bot's own text, written every run:
    * what it's doing (ON) or what OFF means (this build's words: C11 names the testers in B30).
@@ -238,19 +241,21 @@ module.exports = H => {
     eq(cells(26), ['Burson test copy', b26 ? b26.value : '', b26 ? b26.note : BLANK], `${when}: row 26`);
     const why = b26 ? 'the Burson test copy, B26, is set' : variant.b25
       ? 'the alerts don\'t come from S-F Burson: B3 isn\'t S-F Burson and no Mirror space' : 'S-F Burson, B25, isn\'t set or found';
-    eq([cells(27), cells(28), cells(29), cells(30).slice(0, 2), cells(31), cells(32), cells(33), cells(34), cells(35), cells(36), cells(37), cells(38), sh.cell(39, 1)], [[sw(27).label, 'OFF', B.switchOffText_(sw(27))],
+    eq([cells(27), cells(28), cells(29), cells(30).slice(0, 2), cells(31), cells(32), cells(33), cells(34), cells(35), cells(36), cells(37), cells(38), cells(39), cells(40), cells(41), sh.cell(42, 1)], [[sw(27).label, 'OFF', B.switchOffText_(sw(27))],
       [sw(28).label, 'OFF', B.switchOffText_(sw(28))], [sw(29).label, 'OFF', B.switchOffText_(sw(29), null, false, { modeWhy: why })],
       ['Testing: send to', ''], ['BigQuery lookback', '60 minutes', B.bqLookbackFrom_('60 minutes').note],
       [sw(32).label, 'OFF', B.switchOffText_(sw(32))], [B.ev('OS_LABEL_'), '', B.ev('OS_HINT_')], [sw(34).label, 'OFF', B.switchOffText_(sw(34))],
       [B.ev('PW_ALERTS_LABEL_'), 'OFF', B.pwAlertsOffText_()], [sw(36).label, 'OFF', B.switchOffText_(sw(36))],
-      [sw(37).label, 'OFF', B.switchOffText_(sw(37))], ['', '', ''], 'How it works'], when);
+      [sw(37).label, 'OFF', B.switchOffText_(sw(37))], [sw(38).label, 'OFF', B.switchOffText_(sw(38))], [sw(39).label, 'OFF', B.switchOffText_(sw(39))],
+      [sw(40).label, 'OFF', B.switchOffText_(sw(40))], ['', '', ''], 'How it works'], when);
     assert.match(sh.cell(30, 3), /^Blank: while Testing, /, when);
     const help = B.ev('CONTROL_HELP_');
-    eq(help.map((_, i) => sh.cell(40 + i, 1)), help, when);
-    for (let r = 40 + help.length; r <= Math.max(sh.rows.length, 77); r++) eq(cells(r), ['', '', ''], `${when}: row ${r}`);
+    eq(help.map((_, i) => sh.cell(43 + i, 1)), help, when);
+    for (let r = 43 + help.length; r <= Math.max(sh.rows.length, 77); r++) eq(cells(r), ['', '', ''], `${when}: row ${r}`);
     eq(lists(sh), Object.assign({}, variant.validations, { '27,2': ['ON', 'OFF'], '28,2': ['ON', 'OFF'], '29,2': ['ON', 'OFF'],
       '31,2': ['15 minutes', '30 minutes', '45 minutes', '60 minutes'], '32,2': ['ON', 'OFF'], '34,2': ['ON', 'OFF'],
-      '35,2': ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)', 'Auto-correct space (B10)'], '36,2': ['ON', 'OFF'], '37,2': ['ON', 'OFF'] }), when);
+      '35,2': ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)', 'Auto-correct space (B10)'], '36,2': ['ON', 'OFF'], '37,2': ['ON', 'OFF'],
+      '38,2': ['ON', 'OFF'], '39,2': ['ON', 'OFF'], '40,2': ['ON', 'OFF'] }), when);
     const read = t.bot.readControl_(sh);
     eq([read.switches, read.sfBurson, read.testCopy, read.testers, read.bqLookback],
       [keysOn(variant.on), variant.b25, b26 ? b26.value : '', '', '60 minutes'], when);

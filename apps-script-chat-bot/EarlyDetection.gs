@@ -1704,6 +1704,7 @@ function edDrainQueue_(ctx, report) {
   const props = PropertiesService.getScriptProperties();
   const out = { posted: 0, dropped: 0, held: 0, dismissed: 0, waiting: 0 };
   if (!props.getProperty(ED_QUEUE_PROP_)) return out;
+  if (!ftRankOn_(ctx)) ftQueueUnrank_(props);
   const left = () => (ctx.deadline ? ctx.deadline - ctx.now() : Infinity);
   const prune = () => {
     const p = edQueuePrune_(props, ctx.now());

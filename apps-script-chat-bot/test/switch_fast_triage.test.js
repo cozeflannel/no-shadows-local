@@ -416,4 +416,445 @@ module.exports = function (H) {
       assert.ok(line.startsWith(bot.ev('ED_SEVERITIES_')[idx] + ': ') && line.length > 20);
     });
   });
+
+  // ===========================================================================================================
+  // Section 5B — Fast triage at queue time (Control rows 38-40, FastTriage.gs, BigQuery.gs, EarlyWaveSource.gs)
+  // ===========================================================================================================
+
+  const { e2e, TEST_FEED } = H;
+  const MIN = 60 * 1000;
+  const SIGNAL_IDS_WITH_ANSWERS = [
+    'ED-CLU-CLU-dc5a8afd13da-202611061731', // P0 group, P1 hint, s=3.73, l=4
+    'ED-CLU-CLU-56136e76a9a7-202611072301', // P0 group, P1 hint, s=3.74, l=4
+    'ED-CLU-CLU-e9dddc0be913-202611071746', // Android CERT-In, P1 hint, s=2.53, l=3
+    'ED-CLU-CLU-3aa05dedf0a7-202611072231', // Chrome adblock, P1 hint, s=0.96, l=1, sc=0.60, n=0.95
+    'ED-CLU-CLU-3287667bddd9-202611101231', // Dragon Quest, P1 hint, s=0.19, l=0, sc=0.88, g=0.32
+    'ED-CLU-CLU-abe6decf9a2a-202611121446', // XR glasses launch, P1 hint, s=0.22, l=0, sc=0.86, n=0.89
+    'ED-VEL-PRIORITY_TOPIC-2cb939f86090a0ffb4ed1cce8c43c295-202611091217', // Velocity P2, s=0.52, l=0, sc=0.62
+    'ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402', // Velocity P2, s=0.25, l=0, sc=0.84, g=0.07
+  ];
+
+  function signalWithFacts(bot, rawRow, extra) {
+    const r = JSON.parse(JSON.stringify(rawRow));
+    const posts = JSON.parse(r.representative_posts_json || '[]');
+    const text = [r.headline].concat(posts.map(p => p.snippet || '')).join('\n');
+    const groups = bot.ev('EWS_RISK_GROUPS_').map(x => ({
+      key: x.key,
+      rx: new RegExp(String(x.rx).replace(/^\(\?i\)/, ''), 'i'),
+    }));
+    const hits = groups.filter(g => g.rx.test(text)).map(g => g.key);
+    return Object.assign(r, { risk_groups: hits.join(','), tag_raised: false }, extra || {});
+  }
+
+  const MIRROR = 'spaces/AAQAmirrorFt1';
+  const MIRROR_NAME = 'SLRR Zapier Training Mirror';
+  const ROOM = 'https://chat.google.com/room/AAQAaa_0I9g';
+
+  function makeFastTriageE2e(rowsFn, decResponder) {
+    const t = e2e();
+    t.chat.addSpace(MIRROR, MIRROR_NAME);
+    t.bot.setup();
+    t.set('B25', ROOM);
+    t.set('B30', 'tester@testing.test');
+    t.chat.addDm('tester@testing.test', 'spaces/DMSTANDIN');
+    t.bot.startMirror(MIRROR_NAME);
+    t.control().getRange(29, 2).setValue('ON'); // Safety valve ON -> Testing mode
+    let decCalls = 0;
+    let secretCalls = 0;
+    const seenOpts = [];
+    t.bot.bqEarlyDetectionRows_ = (minutes, opts) => {
+      seenOpts.push(opts || null);
+      const list = typeof rowsFn === 'function' ? rowsFn(minutes, opts, t.bot) : rowsFn;
+      return (list || []).map(r => (opts && opts.facts ? signalWithFacts(t.bot, r) : JSON.parse(JSON.stringify(r))));
+    };
+    const origFetch = t.g.services.UrlFetchApp.fetch;
+    t.g.services.UrlFetchApp.fetch = (url, params) => {
+      const u = String(url);
+      if (u.includes('secretmanager.googleapis.com/')) {
+        secretCalls++;
+        const s = decResponder && decResponder.secret
+          ? decResponder.secret()
+          : { code: 200, body: { payload: { data: Buffer.from(TEST_KEY, 'utf8').toString('base64') } } };
+        return {
+          getResponseCode: () => s.code,
+          getContentText: () => (typeof s.body === 'string' ? s.body : JSON.stringify(s.body)),
+          getHeaders: () => ({}),
+        };
+      }
+      if (u.includes('/decisions')) {
+        decCalls++;
+        const payload = JSON.parse((params && params.payload) || '{}');
+        const ans = decResponder ? decResponder(payload, t.g.clock, decCalls) : null;
+        return {
+          getResponseCode: () => ans.code,
+          getContentText: () => (typeof ans.body === 'string' ? ans.body : JSON.stringify(ans.body)),
+          getHeaders: () => ({}),
+        };
+      }
+      if (u.startsWith('https://bigquery.googleapis.com/')) {
+        return {
+          getResponseCode: () => 200,
+          getContentText: () => JSON.stringify({ jobComplete: true, schema: { fields: [{ name: 'url', type: 'STRING' }] }, rows: [] }),
+          getHeaders: () => ({}),
+        };
+      }
+      return origFetch(url, params);
+    };
+    t.g.vertex.earlyDetection = payload => {
+      const txt = payload.contents[0].parts.map(p => p.text || '').join('\n');
+      const hit = FX.signals.find(s => txt.includes(s.alert_id));
+      const id = (hit && hit.alert_id) || 'ED-SIGNAL';
+      return {
+        summary: `Verified review for ${id}.`,
+        issue_name: `Issue ${id}`,
+        emerging_narrative: `Multiple accounts report ${id}.`,
+        early_detection_call: {
+          disposition: 'monitor',
+          severity: 'medium',
+          confidence: 0.88,
+          reason: 'Early multi-account cluster worth tracking',
+          build_up_signals: 'Multiple low-tier accounts across social platforms',
+          watch_for: 'Broader growth or official response',
+        },
+        temp_check_draft: { recommended: false, query_suggestion: '', scope_note: '' },
+        slrr: {
+          is_slrr: false,
+          confidence: 0.85,
+          exposure_tag: 'Product - Other/general criticism',
+          product: 'Chrome',
+          other_products: [],
+          sensitive_topics: [],
+          location: 'US',
+        },
+        known_issue: { matches: false, confidence: 0.9 },
+        tns: { needed: false, reason: '' },
+        recommended_groups: [],
+        story_title: `Story card for ${id}`,
+        story: `Accounts discussed ${id} on [the first post](P1).`,
+        web_context: 'No external coverage found.',
+        next_steps: ['Keep monitoring for volume growth.'],
+      };
+    };
+    return { t, seenOpts, decCalls: () => decCalls, secretCalls: () => secretCalls };
+  }
+
+  function matchRecordedResponse(bot, payload) {
+    for (const id of SIGNAL_IDS_WITH_ANSWERS) {
+      const row = FX.signals.find(s => s.alert_id === id);
+      if (bot.decSignalInput_(row) === payload.input) {
+        return { code: 200, body: FX.signal_responses[id] };
+      }
+    }
+    return { code: 200, body: FX.probe.six_questions_doc_input.response.body };
+  }
+
+  const edCardsOf = t => t.chat.botPosts(MIRROR).filter(m => !m.threadReply && /^client-zeda-/.test(m.clientAssignedMessageId || ''));
+
+  test('fast triage (5B / 9.2): Control rows 38-40 default OFF, waiting notes hold, and with rows 38-40 OFF queueing, ordering, review, and story cards are unchanged', () => {
+    const batch = SIGNAL_IDS_WITH_ANSWERS.slice(0, 6).map(id => FX.signals.find(s => s.alert_id === id));
+
+    const runScenario = disableFastTriageHooks => {
+      const env = makeFastTriageE2e(() => batch, () => {
+        throw new Error('Decisions API must never be called when rows 38-40 are OFF');
+      });
+      const { t } = env;
+      const sh = t.control();
+      eq([sh.cell(38, 1), sh.cell(38, 2), sh.validations['38,2'].values], ['Fast triage (Gemini Decisions)', 'OFF', ['ON', 'OFF']]);
+      eq([sh.cell(39, 1), sh.cell(39, 2), sh.validations['39,2'].values], ['Fast triage: rank and early watch', 'OFF', ['ON', 'OFF']]);
+      eq([sh.cell(40, 1), sh.cell(40, 2), sh.validations['40,2'].values], ['Fast triage: hold back noise', 'OFF', ['ON', 'OFF']]);
+      eq([sh.cell(41, 1), sh.cell(42, 1)], ['', 'How it works']);
+
+      if (disableFastTriageHooks) {
+        t.bot.ftStart_ = () => null;
+        t.bot.ftOn_ = () => false;
+        t.bot.ftRankOn_ = () => false;
+        t.bot.ftHoldOn_ = () => false;
+      }
+
+      sh.getRange(19, 2).setValue('ON');
+      const propsSvc = t.g.services.PropertiesService.getScriptProperties();
+      t.poll(); // Check 1 queues 5 of 6 in original order and reviews the top 2 (by pri, then au, then queued order)
+      const qAfter1 = t.bot.edQueueList_(propsSvc);
+      const qRowsAfter1 = qAfter1.map(entry => t.bot.edQueueRow_(propsSvc, entry.k));
+      t.g.clock.now += 2 * MIN;
+      t.poll(); // Run 2 reviews next 2
+      t.g.clock.now += 2 * MIN;
+      t.poll(); // Run 3 reviews the 5th
+
+      const props = Array.from(t.g.props.entries())
+        .filter(([k]) => /^(?:EARLY_DETECTION_|ED_ALERT_|DECISIONS_)/.test(k))
+        .sort(([a], [b]) => (a < b ? -1 : 1));
+      return {
+        env,
+        qAfter1,
+        qRowsAfter1,
+        cards: edCardsOf(t).map(m => m.text),
+        alertRows: t.sheet().getSheetByName('Alert log').rows,
+        hasFtTab: !!t.sheet().getSheetByName('Fast triage'),
+        c19: sh.cell(19, 3),
+        props,
+      };
+    };
+
+    const withCodePresent = runScenario(false);
+    const baselineEquiv = runScenario(true);
+
+    eq([withCodePresent.env.decCalls(), withCodePresent.env.secretCalls(), withCodePresent.hasFtTab], [0, 0, false]);
+    eq(withCodePresent.env.seenOpts, [null]); // bqEarlyDetectionRows_ called without opts when row 38 is OFF
+    withCodePresent.qAfter1.forEach((entry, idx) => {
+      eq(Object.keys(entry).sort(), ['at', 'au', 'id', 'k', 'pri', 'sig', 'tries']);
+      eq(withCodePresent.qRowsAfter1[idx].dec, undefined);
+    });
+    eq(withCodePresent.qAfter1, baselineEquiv.qAfter1);
+    eq(withCodePresent.qRowsAfter1, baselineEquiv.qRowsAfter1);
+    eq(withCodePresent.cards.length, 5);
+    eq(withCodePresent.cards, baselineEquiv.cards);
+    eq(withCodePresent.alertRows, baselineEquiv.alertRows);
+    eq(withCodePresent.c19, baselineEquiv.c19);
+    eq(withCodePresent.props, baselineEquiv.props);
+
+    // Waiting notes when parent switches are OFF
+    const { t } = withCodePresent.env;
+    const sh = t.control();
+    sh.getRange(19, 2).setValue('OFF');
+    sh.getRange(38, 2).setValue('ON');
+    t.g.clock.now += MIN;
+    t.poll();
+    assert.match(sh.cell(38, 3), /^✓ ON, but waiting: it needs Early wave & velocity check \(row 19\) ON/);
+    sh.getRange(38, 2).setValue('OFF');
+    sh.getRange(39, 2).setValue('ON');
+    sh.getRange(40, 2).setValue('ON');
+    t.g.clock.now += MIN;
+    t.poll();
+    assert.match(sh.cell(39, 3), /^✓ ON, but waiting: it needs Fast triage \(row 38\) ON/);
+    assert.match(sh.cell(40, 3), /^✓ ON, but waiting: it needs Fast triage \(row 38\) ON/);
+  });
+
+  test('fast triage (5B): producer facts (opts.facts), ordering rules (ftRank_, edQueueRank_, ftQueueUnrank_), and hold-back safety gates (ftP0Group_, ftProtected_, ftHoldWhy_)', () => {
+    const g = makeGoogle(NOW);
+    const EWS_COLS = [
+      ['kind'], ['lane'], ['mid'], ['url'], ['platform'], ['author'],
+      ['audience', 'INTEGER'], ['eng', 'INTEGER'], ['posted_ms', 'INTEGER'], ['seen_ms', 'INTEGER'],
+      ['txt'], ['topic'], ['chash'], ['sig'], ['risk'], ['brand', 'BOOLEAN'],
+    ];
+    const origFetch = g.services.UrlFetchApp.fetch;
+    g.services.UrlFetchApp.fetch = (url, params) => {
+      if (!String(url).startsWith('https://bigquery.googleapis.com/')) return origFetch(url, params);
+      const body = JSON.parse(params.payload || '{}');
+      const loc = body.location || 'US';
+      const rows = loc === 'us-central1'
+        ? [1, 2, 3, 4, 5].map(i => ({
+          kind: 'post',
+          lane: 'sonar',
+          mid: `M-${i}`,
+          url: i % 2 === 0 ? `https://x.com/u${i}/status/215000000000000000${i}` : `https://www.reddit.com/r/Chrome/comments/1z${i}ab/crash/`,
+          platform: i % 2 === 0 ? 'twitter' : 'reddit',
+          author: `user_${i}`,
+          audience: 250,
+          eng: 10,
+          posted_ms: g.clock.now - (10 - i) * MIN,
+          seen_ms: g.clock.now - (9 - i) * MIN,
+          txt: 'Chrome leaked passwords exposed in plaintext after installing the overnight browser update patch',
+          topic: 'Chrome',
+          chash: `ch_${i}`,
+          sig: `sig_${i}`,
+          risk: 'privacy_data_leak',
+          brand: true,
+        }))
+        : [];
+      return {
+        getResponseCode: () => 200,
+        getHeaders: () => ({}),
+        getContentText: () => JSON.stringify({
+          jobComplete: true,
+          jobReference: { projectId: 'brand-social-central-data', jobId: `j_${loc}`, location: loc },
+          schema: { fields: EWS_COLS.map(c => ({ name: c[0], type: c[1] || 'STRING' })) },
+          rows: rows.map(r => ({ f: EWS_COLS.map(c => ({ v: r[c[0]] === undefined || r[c[0]] === null ? null : String(r[c[0]]) })) })),
+        }),
+      };
+    };
+    const bot = loadBot(g.services, g.clock);
+
+    // Without opts.facts: row shape is unchanged (no risk_groups / tag_raised). With opts.facts: both are attached
+    const plainRows = bot.bqEarlyDetectionRows_(30);
+    eq([plainRows.length, plainRows[0].risk_groups, plainRows[0].tag_raised], [1, undefined, undefined]);
+    eq(bot.ftProtected_(plainRows[0]), true); // rows lacking facts are never held back
+
+    g.clock.now += 15 * MIN;
+    g.props.clear();
+    g.cache.clear();
+    const factRows = bot.bqEarlyDetectionRows_(30, { facts: true });
+    eq([factRows.length, factRows[0].risk_groups, typeof factRows[0].tag_raised], [1, 'privacy_data_leak', 'boolean']);
+    eq([bot.ftP0Group_(factRows[0]), bot.ftProtected_(factRows[0])], [true, true]);
+
+    // Pure protection & hold-back rules (Rule 3 & Section 5B)
+    const baseRow = { priority_hint: 'P1', risk_groups: '', tag_raised: false };
+    const lowNotGoogle = { g: 0.05, r: 0.02, i: 0.1, n: 0.4, s: 0.12, l: 0, sc: 0.91 };
+    const lowNoise = { g: 0.96, r: 0.04, i: 0.2, n: 0.92, s: 0.65, l: 1, sc: 0.85 };
+    eq(bot.ftHoldReady_(), false);
+    eq(bot.ftHoldWhy_(baseRow, lowNotGoogle), ''); // default bars are null -> never holds back
+
+    const bars = { about: 0.15, noise: 0.85, conf: 0.8 };
+    eq(bot.ftHoldWhy_(baseRow, null, bars), ''); // no answer -> fail open
+    eq(bot.ftHoldWhy_({ priority_hint: 'P0', risk_groups: '', tag_raised: false }, lowNotGoogle, bars), ''); // P0 priority protected
+    eq(bot.ftHoldWhy_({ priority_hint: 'P2', risk_groups: 'safety_csam_selfharm', tag_raised: false }, lowNotGoogle, bars), ''); // P0 group protected
+    eq(bot.ftHoldWhy_({ priority_hint: 'P2', risk_groups: '', tag_raised: true }, lowNoise, bars), ''); // taxonomy raise protected
+    eq(bot.ftHoldWhy_(baseRow, Object.assign({}, lowNotGoogle, { l: 2 }), bars), ''); // medium+ severity never held back
+    eq(bot.ftHoldWhy_(baseRow, Object.assign({}, lowNotGoogle, { sc: 0.8 }), bars), ''); // must be strictly above conf bar
+    eq(bot.ftHoldWhy_(baseRow, lowNotGoogle, bars), 'not about Google (about Google 0.05, severity none 0.91)');
+    eq(bot.ftHoldWhy_(baseRow, lowNoise, bars), 'routine noise (routine noise 0.92, severity low 0.85)');
+
+    // Pure ordering (ftRank_ and edQueueRank_ + ftQueueUnrank_): P0 group > tier > unanswered (fail-open) > severity > brand_risk > prior order
+    const items = [
+      { idx: 0, row: { id: 'p1_low', priority_hint: 'P1', risk_groups: '' }, dec: { s: 0.4, r: 0.2 } },
+      { idx: 1, row: { id: 'p1_high_r1', priority_hint: 'P1', risk_groups: '' }, dec: { s: 2.8, r: 0.6 } },
+      { idx: 2, row: { id: 'p1_high_r2', priority_hint: 'P1', risk_groups: '' }, dec: { s: 2.8, r: 0.9 } },
+      { idx: 3, row: { id: 'p1_no_ans', priority_hint: 'P1', risk_groups: '' }, dec: null },
+      { idx: 4, row: { id: 'p1_p0group', priority_hint: 'P1', risk_groups: 'privacy_data_leak' }, dec: { s: 1.1, r: 0.3 } },
+      { idx: 5, row: { id: 'p2_high', priority_hint: 'P2', risk_groups: '' }, dec: { s: 3.5, r: 0.95 } },
+    ];
+    eq(items.slice().sort(bot.ftRank_).map(x => x.row.id), [
+      'p1_p0group', 'p1_no_ans', 'p1_high_r2', 'p1_high_r1', 'p1_low', 'p2_high',
+    ]);
+
+    const props = g.services.PropertiesService.getScriptProperties();
+    const rLowManyAu = Object.assign({}, FX.signals[4], { alert_id: 'ED-LOW-AU20', unique_low_tier_authors: 20, risk_groups: '', tag_raised: false });
+    const rHighFewAu = Object.assign({}, FX.signals[2], { alert_id: 'ED-HIGH-AU4', unique_low_tier_authors: 4, risk_groups: '', tag_raised: false });
+    bot.edQueuePut_(props, rLowManyAu, g.clock.now, bot.ftRankKeys_(rLowManyAu, { s: 0.2, r: 0.05 }));
+    bot.edQueuePut_(props, rHighFewAu, g.clock.now + 1000, bot.ftRankKeys_(rHighFewAu, { s: 2.53, r: 0.94 }));
+    eq(bot.edQueueList_(props).map(e => e.id), ['ED-HIGH-AU4', 'ED-LOW-AU20']); // severity wins while ranked
+    bot.ftQueueUnrank_(props);
+    eq(bot.edQueueList_(props).map(e => e.id), ['ED-LOW-AU20', 'ED-HIGH-AU4']); // row 39 OFF -> back to author-count order
+  });
+
+  test('fast triage (5B): earlyWaveCheck_ recording-only (row 38), queue ranking + answer cache (row 39), and calibrated hold-back with C19 count & log line (row 40)', () => {
+    // 1. Recording-only (Row 38 ON alone): asks only on the 5 queued signals, attaches `dec` without dropping posts, changes neither queue order nor cards
+    const sixP1 = [
+      'ED-CLU-CLU-3287667bddd9-202611101231', // s=0.19 (pos 1)
+      'ED-CLU-CLU-abe6decf9a2a-202611121446', // s=0.22 (pos 2)
+      'ED-CLU-CLU-3aa05dedf0a7-202611072231', // s=0.96 (pos 3)
+      'ED-VEL-PRIORITY_TOPIC-2cb939f86090a0ffb4ed1cce8c43c295-202611091217', // P2, s=0.52 (pos 4)
+      'ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402', // P2, s=0.25 (pos 5)
+      'ED-CLU-CLU-e9dddc0be913-202611071746', // Android CERT-In, P1, s=2.53 (pos 6 — beyond EW_MAX_PER_CHECK_=5 without row 39!)
+    ].map(id => FX.signals.find(s => s.alert_id === id));
+
+    const recordOnly = makeFastTriageE2e(() => sixP1, (payload) => matchRecordedResponse(recordOnly.t.bot, payload));
+    recordOnly.t.control().getRange(19, 2).setValue('ON');
+    recordOnly.t.control().getRange(38, 2).setValue('ON');
+    recordOnly.t.poll();
+    eq(recordOnly.decCalls(), 5); // only the 5 queued candidates were asked; 6th was untouched in recording-only mode
+    assert.match(recordOnly.t.control().cell(38, 3), /5 asked today/);
+    const recordQueue = recordOnly.t.bot.edQueueList_(recordOnly.t.g.services.PropertiesService.getScriptProperties());
+    eq(recordQueue.length, 3); // 5 queued - 2 reviewed this run = 3 waiting
+    assert.ok(!recordQueue.some(e => e.id === 'ED-CLU-CLU-e9dddc0be913-202611071746'));
+    recordQueue.forEach(e => {
+      eq([e.sv, e.br], [undefined, undefined]); // no ranking keys with row 39 OFF
+      const row = recordOnly.t.bot.edQueueRow_(recordOnly.t.g.services.PropertiesService.getScriptProperties(), e.k);
+      assert.strictEqual(typeof row.dec.s, 'number');
+    });
+
+    // 2. Order (Rows 38 + 39 ON): asks all 6 candidates, promotes Android CERT-In (s=2.53) to #1, and caches the 6th candidate's answer for the next check
+    const ranked = makeFastTriageE2e(() => sixP1, (payload) => matchRecordedResponse(ranked.t.bot, payload));
+    ranked.t.control().getRange(19, 2).setValue('ON');
+    ranked.t.control().getRange(38, 2).setValue('ON');
+    ranked.t.control().getRange(39, 2).setValue('ON');
+    ranked.t.poll();
+    eq(ranked.decCalls(), 6); // all 6 candidates asked before picking top 5
+    const firstTwoCards = edCardsOf(ranked.t);
+    eq(firstTwoCards.length, 2);
+    assert.ok(firstTwoCards[0].text.includes('ED-CLU-CLU-e9dddc0be913-202611071746'), 'highest-severity signal reviewed & carded first');
+
+    // Next check 15 min later: the 6th unqueued signal ('ED-VEL-CLUSTER-...') is picked up from FT_ANSWER_CACHE_PREFIX_ with 0 new Decisions API calls!
+    ranked.t.g.clock.now += 15 * MIN;
+    ranked.t.poll();
+    eq(ranked.decCalls(), 6);
+
+    // 3. Hold-back (Rows 38 + 40 ON): default null bars hold back 0; calibrated bars hold back noise/off-topic while protecting P0 risk groups & taxonomy raises
+    const holdSignals = [
+      FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-dc5a8afd13da-202611061731'), // P0 group -> protected
+      FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-abe6decf9a2a-202611121446'), // n=0.89, l=0, sc=0.86 -> held back (routine noise)
+      FX.signals.find(s => s.alert_id === 'ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402'), // g=0.07, l=0, sc=0.84 -> held back (not about Google)
+      FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-3aa05dedf0a7-202611072231'), // n=0.95, l=1, sc=0.60 <= 0.80 -> NOT held back
+    ];
+    const holdDefault = makeFastTriageE2e(() => holdSignals, (payload) => matchRecordedResponse(holdDefault.t.bot, payload));
+    holdDefault.t.control().getRange(19, 2).setValue('ON');
+    holdDefault.t.control().getRange(38, 2).setValue('ON');
+    holdDefault.t.control().getRange(40, 2).setValue('ON');
+    holdDefault.t.poll();
+    assert.match(holdDefault.t.control().cell(40, 3), /^✓ ON, but nothing is held back yet: its bars are not set/);
+    assert.ok(!holdDefault.t.control().cell(19, 3).includes('filtered by fast triage'));
+
+    const holdCal = makeFastTriageE2e(() => holdSignals, (payload) => {
+      // Force low/noise answers even for the P0-group signal to prove Rule 3 protection holds under worst-case model output
+      const p0Row = FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-dc5a8afd13da-202611061731');
+      if (holdCal.t.bot.decSignalInput_(p0Row) === payload.input) {
+        return { code: 200, body: FX.signal_responses['ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402'] };
+      }
+      return matchRecordedResponse(holdCal.t.bot, payload);
+    });
+    holdCal.t.bot.ftHoldBars_ = () => ({ about: 0.15, noise: 0.85, conf: 0.8 });
+    holdCal.t.control().getRange(19, 2).setValue('ON');
+    holdCal.t.control().getRange(38, 2).setValue('ON');
+    holdCal.t.control().getRange(40, 2).setValue('ON');
+    holdCal.t.poll();
+
+    assert.match(holdCal.t.control().cell(19, 3), / · 2 filtered by fast triage$/);
+    eq(edCardsOf(holdCal.t).length, 2); // P0-group signal + low-confidence Chrome adblock signal both reviewed and carded!
+    assert.ok(edCardsOf(holdCal.t).some(m => m.text.includes('ED-CLU-CLU-dc5a8afd13da-202611061731')), 'P0-group signal never held back');
+    assert.ok(edCardsOf(holdCal.t).some(m => m.text.includes('ED-CLU-CLU-3aa05dedf0a7-202611072231')), 'below-confidence signal never held back');
+    const logs = holdCal.t.g.logs.join('\n');
+    assert.match(logs, /early detection: fast triage held back ED-CLU-CLU-abe6decf9a2a-202611121446: routine noise/);
+    assert.match(logs, /early detection: fast triage held back ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402: not about Google/);
+    const ftSh = holdCal.t.sheet().getSheetByName('Fast triage');
+    assert.ok(ftSh && ftSh.rows.some(r => r[1] === 'ED-CLU-CLU-abe6decf9a2a-202611121446' && String(r[16]).startsWith('held back: routine noise')));
+  });
+
+  test('fast triage (5B / 9.3): each Rule 4 failure mode in earlyWaveCheck_ falls back to today\'s queueing, ordering, review, and cards', () => {
+    const twoReal = [
+      FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-abe6decf9a2a-202611121446'),
+      FX.signals.find(s => s.alert_id === 'ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402'),
+    ];
+
+    // Baseline OFF cards on the same two signals
+    const offEnv = makeFastTriageE2e(() => twoReal, () => ({ code: 500, body: '{}' }));
+    offEnv.t.control().getRange(19, 2).setValue('ON');
+    offEnv.t.poll();
+    const baselineCards = edCardsOf(offEnv.t).map(m => m.text);
+    eq(baselineCards.length, 2);
+
+    const failureModes = [
+      { name: 'missing_key', secret: () => ({ code: 404, body: { error: { message: 'Not found' } } }), responder: () => ({ code: 200, body: '{}' }), paused: true },
+      { name: 'http_429', responder: () => ({ code: 429, body: FX.error_429_live.body }), paused: true },
+      { name: 'http_503', responder: () => ({ code: 503, body: { error: { code: 'service_unavailable' } } }), paused: true },
+      { name: 'unparseable_body', responder: () => ({ code: 200, body: '<<<not json>>>' }), paused: true },
+      { name: 'slow_timeout', responder: (_p, clock) => { clock.now += 11000; return { code: 200, body: FX.probe.six_questions_doc_input.response.body }; }, paused: true },
+      { name: 'network_throw', responder: () => { throw new Error('Socket reset by peer'); }, paused: true },
+      { name: 'safety_refusal', responder: () => ({ code: 400, body: { error: { code: 'safety', message: 'Blocked' } } }), paused: false },
+    ];
+
+    for (const fm of failureModes) {
+      const responder = (payload, clock, n) => fm.responder(payload, clock, n);
+      if (fm.secret) responder.secret = fm.secret;
+      const env = makeFastTriageE2e(() => twoReal, responder);
+      // Enable ALL THREE switches (38, 39, 40) AND active hold-back bars that WOULD hold both signals back if Decisions succeeded!
+      env.t.bot.ftHoldBars_ = () => ({ about: 0.15, noise: 0.85, conf: 0.8 });
+      env.t.control().getRange(19, 2).setValue('ON');
+      env.t.control().getRange(38, 2).setValue('ON');
+      env.t.control().getRange(39, 2).setValue('ON');
+      env.t.control().getRange(40, 2).setValue('ON');
+      env.t.poll();
+
+      eq(JSON.parse(env.t.g.props.get('LAST_RUN')).errors, [], fm.name);
+      eq(edCardsOf(env.t).map(m => m.text), baselineCards, `${fm.name}: cards identical to OFF baseline`);
+      assert.ok(!env.t.control().cell(19, 3).includes('filtered by fast triage'), fm.name);
+      const c38 = env.t.control().cell(38, 3);
+      if (fm.paused) {
+        assert.match(c38, /paused until .*: signals go on without it/, `${fm.name}: C38 shows cooldown`);
+      } else {
+        assert.match(c38, /2 refused by the safety filter/, `${fm.name}: C38 counts refusals without pausing`);
+        assert.ok(!c38.includes('paused until'), `${fm.name}: safety refusal does not pause`);
+      }
+    }
+  });
 };
+
