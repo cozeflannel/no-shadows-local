@@ -856,5 +856,318 @@ module.exports = function (H) {
       }
     }
   });
+
+  // ===========================================================================================================
+  // Section 5C — Early watch tier (EarlyWaveSource.gs, EarlyDetection.gs, BigQuery.gs, FastTriage.gs)
+  // ===========================================================================================================
+
+  test('early watch (5C): candidate gates (ewsWatchPick_, ewsWatchNovel_, ewsWatchRaise_) and early-watch card leak-guard & edParseCard_ checks', () => {
+    const g = makeGoogle(NOW);
+    const bot = loadBot(g.services, g.clock);
+
+    // 1. Default bars are unset (null) -> ewsWatchReady_ is false and ewsWatchRaise_ never emits
+    eq([bot.ev('EWS_WATCH_MIN_AUTHORS_'), bot.ev('EWS_WATCH_MIN_LEVEL_'), bot.ev('EW_WATCH_QUEUE_PER_DAY_')], [3, 2, 8]);
+    eq([bot.ewsWatchReady_(), bot.ewsWatchRaise_({ g: 0.99, r: 0.99, i: 0.99, l: 4 })], [false, false]);
+
+    // With calibrated bars: requires about_google, brand_risk, independent_reports at/above bars AND severity level >= 2
+    const wBars = { about: 0.8, risk: 0.7, independent: 0.5 };
+    eq(bot.ewsWatchRaise_({ g: 0.98, r: 0.94, i: 0.62, l: 3 }, wBars), true);
+    eq(bot.ewsWatchRaise_({ g: 0.8, r: 0.7, i: 0.5, l: 2 }, wBars), true);
+    eq(bot.ewsWatchRaise_({ g: 0.79, r: 0.94, i: 0.62, l: 3 }, wBars), false);
+    eq(bot.ewsWatchRaise_({ g: 0.98, r: 0.69, i: 0.62, l: 3 }, wBars), false);
+    eq(bot.ewsWatchRaise_({ g: 0.98, r: 0.94, i: 0.49, l: 3 }, wBars), false);
+    eq(bot.ewsWatchRaise_({ g: 0.98, r: 0.94, i: 0.62, l: 1 }, wBars), false);
+
+    // 2. ewsWatchPick_ and ewsWatchNovel_: 3-4 accounts on 1 platform (below 5), >= 2 URLs, no copy ring, no cooldown, not already marked/raised
+    const vecA = new Array(768).fill(0); vecA[0] = 1;
+    const vecB = new Array(768).fill(0); vecB[1] = 1;
+    const encA = bot.ewsEnc_(vecA);
+    const encB = bot.ewsEnc_(vecB);
+    const makeCluster = (id, nAuthors, o) => {
+      const opts = o || {};
+      const members = Array.from({ length: nAuthors }, (_, idx) => ({
+        t: NOW - (nAuthors - idx) * MIN,
+        a: `x|author_${id}_${idx}`,
+        p: opts.twoPlat && idx === 1 ? 'Reddit' : 'X',
+        u: opts.noUrls && idx > 0 ? '' : `https://x.com/a_${id}_${idx}/status/216000000000000000${idx}`,
+        h: opts.copyRing ? 'same_hash' : `hash_${id}_${idx}`,
+        r: opts.risk || '',
+        b: !opts.noBrand,
+        s: `Report ${idx + 1} on ${id}`,
+        tp: 'Gmail',
+      }));
+      return {
+        id,
+        t0: opts.t0 || (NOW - 20 * MIN),
+        t1: NOW - MIN,
+        n: nAuthors,
+        s: opts.vec || encA,
+        lab: `Early cluster ${id}`,
+        al: opts.al || null,
+        m: members,
+      };
+    };
+
+    const c2 = makeCluster('two_au', 2, { risk: 'security_scam_malware' }); // below floor of 3 -> skipped
+    const c3Risk = makeCluster('three_risk', 3, { risk: 'security_scam_malware' }); // 3 accounts + risk -> picked first
+    const c4Plain = makeCluster('four_plain', 4, { vec: encB }); // 4 accounts on 1 platform (<5) -> picked second
+    const c4TwoPlat = makeCluster('four_two_plat', 4, { twoPlat: true, risk: 'security_scam_malware' }); // 4 on 2 platforms == promotion bar -> skipped (ewsPromote_'s)
+    const c5 = makeCluster('five_au', 5, { risk: 'security_scam_malware' }); // at promotion bar -> skipped
+    const cCopy = makeCluster('copy_ring', 3, { copyRing: true, noBrand: true }); // copy ring without Google brand -> skipped
+    const cCool = makeCluster('in_cooldown', 3, { risk: 'security_scam_malware', al: { at: NOW - 10 * MIN, au: 3, id: 'ED-OLD' } });
+    const cMarkedSame = makeCluster('marked_3', 3, { risk: 'security_scam_malware' });
+    const cMarkedRaised = makeCluster('already_raised', 4, { risk: 'security_scam_malware' });
+
+    const marks = {
+      marked_3: [NOW - 5 * MIN, 3, 0], // already asked at 3 accounts -> wait until it grows
+      already_raised: [NOW - 5 * MIN, 3, 1], // already raised -> never ask again even at 4
+    };
+    const picked = bot.ewsWatchPick_([c2, c4Plain, c3Risk, c4TwoPlat, c5, cCopy, cCool, cMarkedSame, cMarkedRaised], [], marks, NOW);
+    eq(picked.map(x => x.id), ['three_risk', 'four_plain']);
+
+    // Novelty check against older stored clusters
+    const olderSameVec = makeCluster('older_same', 3, { t0: NOW - 60 * MIN, vec: encA });
+    eq(bot.ewsWatchNovel_(picked[0], [olderSameVec, c3Risk, c4Plain]), false); // older cluster has identical centroid
+    eq(bot.ewsWatchNovel_(picked[1], [olderSameVec, c3Risk, c4Plain]), true); // orthogonal centroid -> novel
+
+    // 3. Early-watch card states plainly it is an early signal + account count, parses with edParseCard_, and passes leak guards (Rule 13)
+    const watchRow = bot.ewsWatchRow_(picked[0], NOW, { line: 'Product - Scams involving Google products', raise: 'P1' });
+    eq(watchRow.signal_type, 'EARLY_WATCH');
+    assert.match(watchRow.alert_id, /^ED-WAT-three_risk-/);
+    const ed = bot.edFromRow_(watchRow);
+    const cardText = bot.edStoryCardText_(ed, {
+      disposition: 'escalate',
+      basis: 'early_detection',
+      why: 'Credible early malware reports mentioning Gmail across 3 independent accounts',
+      rev: {
+        severity: 'high',
+        confidence: 0.91,
+        story: {
+          title: 'Early malware reports targeting Gmail sessions',
+          body: 'Three accounts described token-stealing malware on [the first post](P1).',
+          steps: ['Open a temp check to track growth.'],
+        },
+        slrr: { is_slrr: true, confidence: 0.9, product: 'Gmail', exposure_tag: 'Product - Scams involving Google products', sensitive_topics: [] },
+      },
+    }, NOW);
+    assert.ok(cardText.includes('*Early signal:* this rests on 3 accounts so far (a story is usually flagged at 5).'), cardText);
+    const parsedCard = bot.edParseCard_(cardText, []);
+    assert.ok(parsedCard && parsedCard.headline === 'Early malware reports targeting Gmail sessions');
+    eq(bot.detectAlert_(cardText, bot.parseAlert_(cardText), ''), false);
+    const guardCfg = { terms: ['SLRR Triaged Alerts', 'Mirror Training Space'] };
+    eq(Array.from(bot.outboxGuardHits_(cardText, guardCfg)), []);
+    eq(Array.from(bot.guardHits_(cardText, guardCfg)), []);
+    eq(Array.from(bot.relayGuardHits_(cardText)), []);
+  });
+
+  test('early watch (5C): 3-account producer watch -> card -> 5-account promotion updates in the first card\'s thread (never a second card), failed-review retry/drop, and 8-of-40 daily cap share', () => {
+    const EWS_COLS = [
+      ['kind'], ['lane'], ['mid'], ['url'], ['platform'], ['author'],
+      ['audience', 'INTEGER'], ['eng', 'INTEGER'], ['posted_ms', 'INTEGER'], ['seen_ms', 'INTEGER'],
+      ['txt'], ['topic'], ['chash'], ['sig'], ['risk'], ['brand', 'BOOLEAN'],
+    ];
+    const makePost = (i, nowMs) => ({
+      kind: 'post',
+      lane: 'sonar',
+      mid: `M-REMUS-${i}`,
+      url: `https://x.com/sec_reporter_${i}/status/217000000000000000${i}`,
+      platform: 'twitter',
+      author: `sec_reporter_${i}`,
+      audience: 420,
+      eng: 16,
+      posted_ms: nowMs - (8 - i) * MIN,
+      seen_ms: nowMs - (7 - i) * MIN,
+      txt: 'New malware family stealing active Gmail session cookies from Windows browsers without triggering 2FA prompts',
+      topic: 'Workspace',
+      chash: `ch_remus_${i}`,
+      sig: `sig_remus_${i}`,
+      risk: 'security_scam_malware',
+      brand: true,
+    });
+
+    function makeProducerWatchEnv(barsReady) {
+      const t = e2e();
+      t.chat.addSpace(MIRROR, MIRROR_NAME);
+      t.bot.setup();
+      t.set('B25', ROOM);
+      t.set('B30', 'tester@testing.test');
+      t.chat.addDm('tester@testing.test', 'spaces/DMSTANDIN');
+      t.bot.startMirror(MIRROR_NAME);
+      t.control().getRange(29, 2).setValue('ON');
+      if (barsReady) {
+        t.bot.ewsWatchBars_ = () => ({ about: 0.8, risk: 0.7, independent: 0.5 });
+      }
+      let currentPosts = [];
+      let decCalls = 0;
+      const origFetch = t.g.services.UrlFetchApp.fetch;
+      t.g.services.UrlFetchApp.fetch = (url, params) => {
+        const u = String(url);
+        if (u.includes('secretmanager.googleapis.com/')) {
+          return {
+            getResponseCode: () => 200,
+            getContentText: () => JSON.stringify({ payload: { data: Buffer.from(TEST_KEY, 'utf8').toString('base64') } }),
+            getHeaders: () => ({}),
+          };
+        }
+        if (u.includes('/decisions')) {
+          decCalls++;
+          // Real recorded high-severity response (g=0.98, r=0.97, i=0.62, l=4)
+          return {
+            getResponseCode: () => 200,
+            getContentText: () => JSON.stringify(FX.signal_responses['ED-CLU-CLU-dc5a8afd13da-202611061731']),
+            getHeaders: () => ({}),
+          };
+        }
+        if (u.startsWith('https://bigquery.googleapis.com/')) {
+          const body = JSON.parse((params && params.payload) || '{}');
+          const loc = body.location || 'US';
+          const isEws = /-- ews:/.test(body.query || '');
+          const rows = isEws && loc === 'us-central1' ? currentPosts : [];
+          const cols = isEws ? EWS_COLS : [['url']];
+          return {
+            getResponseCode: () => 200,
+            getHeaders: () => ({}),
+            getContentText: () => JSON.stringify({
+              jobComplete: true,
+              jobReference: { projectId: 'brand-social-central-data', jobId: `j_${loc}_${t.g.clock.now}`, location: loc },
+              schema: { fields: cols.map(c => ({ name: c[0], type: c[1] || 'STRING' })) },
+              rows: rows.map(r => ({ f: cols.map(c => ({ v: r[c[0]] === undefined || r[c[0]] === null ? null : String(r[c[0]]) })) })),
+            }),
+          };
+        }
+        return origFetch(url, params);
+      };
+      t.g.vertex.earlyDetection = payload => {
+        const txt = payload.contents[0].parts.map(p => p.text || '').join('\n');
+        const isUpdate = txt.includes('EARLIER CARD ON THIS STORY');
+        return {
+          summary: 'Independent security accounts describe session-cookie malware targeting Gmail.',
+          issue_name: 'Gmail session-cookie malware reports',
+          emerging_narrative: 'Low-tier security accounts converge on Gmail cookie-theft reports.',
+          early_detection_call: {
+            disposition: 'monitor',
+            severity: 'high',
+            confidence: 0.9,
+            reason: isUpdate ? 'Story crossed the 5-account bar on the same narrative' : 'Credible 3-account early signal',
+            build_up_signals: 'Independent accounts with distinct reports',
+            watch_for: 'Wider researcher confirmation',
+          },
+          temp_check_draft: { recommended: true, query_suggestion: 'Gmail AND malware AND cookie', scope_note: 'Last 6h' },
+          slrr: {
+            is_slrr: true,
+            confidence: 0.88,
+            exposure_tag: 'Product - Scams involving Google products',
+            product: 'Gmail',
+            other_products: [],
+            sensitive_topics: [],
+            location: 'US',
+          },
+          known_issue: { matches: false, confidence: 0.92 },
+          tns: { needed: false, reason: '' },
+          recommended_groups: [],
+          story_title: 'Gmail session-cookie malware reports',
+          story: 'Security accounts reported cookie-stealing malware on [the lead post](P1).',
+          web_context: 'No public advisory yet.',
+          next_steps: ['Track volume across security accounts.'],
+        };
+      };
+      return { t, setPosts: list => { currentPosts = list; }, decCalls: () => decCalls };
+    }
+
+    // 1. Default unset bars: Row 39 asks and records on Fast triage tab, raises 0 cards
+    const uncal = makeProducerWatchEnv(false);
+    uncal.t.control().getRange(19, 2).setValue('ON');
+    uncal.t.control().getRange(38, 2).setValue('ON');
+    uncal.t.control().getRange(39, 2).setValue('ON');
+    uncal.setPosts([1, 2, 3].map(i => makePost(i, uncal.t.g.clock.now)));
+    uncal.t.poll();
+    eq([uncal.decCalls(), edCardsOf(uncal.t).length], [1, 0]);
+    assert.match(uncal.t.control().cell(38, 3), /1 early story asked about/);
+    const uncalTab = uncal.t.sheet().getSheetByName('Fast triage');
+    assert.ok(uncalTab && uncalTab.rows.some(r => String(r[16]).includes('early watch: asked at 3 accounts (its bars are not set: nothing is raised)')));
+
+    // 2. Calibrated watch bars: 3 accounts -> EARLY_WATCH card -> 5 accounts -> thread update in first card's thread (NEVER a second card!)
+    const cal = makeProducerWatchEnv(true);
+    cal.t.control().getRange(19, 2).setValue('ON');
+    cal.t.control().getRange(38, 2).setValue('ON');
+    cal.t.control().getRange(39, 2).setValue('ON');
+    cal.setPosts([1, 2, 3].map(i => makePost(i, cal.t.g.clock.now)));
+    cal.t.poll();
+
+    eq(cal.decCalls(), 1); // asked once in producer; earlyWaveCheck_ reused row.dec without a second Decisions call!
+    const topCards1 = edCardsOf(cal.t);
+    eq(topCards1.length, 1);
+    const firstCard = topCards1[0];
+    assert.ok(firstCard.text.includes('*Early signal:* this rests on 3 accounts so far (a story is usually flagged at 5).'), firstCard.text);
+    assert.match(cal.t.control().cell(19, 3), /0 cluster, 0 velocity alerts today · 1 early watch/);
+
+    // 15 minutes later: 2 more distinct accounts report the same story (total 5 -> crosses normal promotion bar!)
+    cal.t.g.clock.now += 15 * MIN;
+    cal.setPosts([4, 5].map(i => makePost(i, cal.t.g.clock.now)));
+    cal.t.poll();
+
+    eq(cal.decCalls(), 2); // 1 call for the newly promoted 5-account CLUSTER_EMERGENCE signal
+    const topCards2 = edCardsOf(cal.t);
+    eq(topCards2.length, 1, 'must NEVER post a second top-level story card when crossing the normal promotion bar');
+    const threadReplies = cal.t.chat.botPosts(MIRROR).filter(m =>
+      m.threadReply && m.thread.name === firstCard.thread.name && /^client-zeda-/.test(m.clientAssignedMessageId || '')
+    );
+    eq(threadReplies.length, 1, 'normal promotion arrives as an Early Detection Update in the first card\'s thread');
+    assert.ok(threadReplies[0].text.startsWith('📈 *Early Detection Update*'), threadReplies[0].text);
+    assert.match(threadReplies[0].text, /\*What's new:\* 5 accounts now, up from 3: the story is now past the usual bar/);
+
+    // 3. Watch-tier failed review (Decision 11 / Rule 2): posts NO card, retries once more up to ED_QUEUE_MAX_TRIES_ (2), then drops
+    const watchSample = Object.assign({}, FX.signals[2], {
+      alert_id: 'ED-WAT-clu_fail_test-202611131600',
+      signal_type: 'EARLY_WATCH',
+      unique_low_tier_authors: 3,
+    });
+    const failEnv = makeFastTriageE2e(() => [watchSample], (payload) => matchRecordedResponse(failEnv.t.bot, payload));
+    failEnv.t.g.vertex.earlyDetection = () => { throw new Error('Vertex 503 overloaded'); };
+    failEnv.t.control().getRange(19, 2).setValue('ON');
+    failEnv.t.control().getRange(38, 2).setValue('ON');
+    failEnv.t.control().getRange(39, 2).setValue('ON');
+    failEnv.t.poll(); // Try 1 fails -> stays queued, 0 cards posted
+    const propsFail = failEnv.t.g.services.PropertiesService.getScriptProperties();
+    eq([edCardsOf(failEnv.t).length, failEnv.t.bot.edQueueList_(propsFail).length, failEnv.t.bot.edQueueList_(propsFail)[0].tries], [0, 1, 1]);
+    assert.match(failEnv.t.g.logs.join('\n'), /ED-WAT-clu_fail_test-202611131600 stays queued for one more try \(its review failed\)/);
+
+    failEnv.t.g.clock.now += 2 * MIN;
+    failEnv.t.poll(); // Try 2 fails -> hits ED_QUEUE_MAX_TRIES_ (2) -> dropped with 0 cards posted
+    eq([edCardsOf(failEnv.t).length, failEnv.t.bot.edQueueList_(propsFail).length], [0, 0]);
+    assert.match(failEnv.t.g.logs.join('\n'), /dropped ED-WAT-clu_fail_test-202611131600 \(its review failed 2 times: no card without a review\)/);
+
+    // Turning Row 39 OFF while an EARLY_WATCH signal waits in the queue drops it unreviewed
+    const dropOffEnv = makeFastTriageE2e(() => [watchSample], (payload) => matchRecordedResponse(dropOffEnv.t.bot, payload));
+    const propsDrop = dropOffEnv.t.g.services.PropertiesService.getScriptProperties();
+    dropOffEnv.t.control().getRange(19, 2).setValue('ON');
+    dropOffEnv.t.control().getRange(38, 2).setValue('ON');
+    dropOffEnv.t.bot.edQueuePut_(propsDrop, watchSample, dropOffEnv.t.g.clock.now, { sv: 3.1, br: 0.9 });
+    dropOffEnv.t.poll(); // Row 39 is OFF -> dropped unreviewed
+    eq([edCardsOf(dropOffEnv.t).length, dropOffEnv.t.bot.edQueueList_(propsDrop).length], [0, 0]);
+    assert.match(dropOffEnv.t.g.logs.join('\n'), /dropped ED-WAT-clu_fail_test-202611131600 \(the early watch is OFF\)/);
+
+    // 4. Daily cap share (EW_WATCH_QUEUE_PER_DAY_ = 8 of EW_MAX_PER_DAY_ = 40): 8th watch queues, 9th watch is held off while regular clusters still queue
+    const w1 = Object.assign({}, FX.signals[0], { alert_id: 'ED-WAT-cap1', cluster_id: 'clu_wcap1', signal_key: 'clu_wcap1', signal_type: 'EARLY_WATCH', unique_low_tier_authors: 3 });
+    const w2 = Object.assign({}, FX.signals[1], { alert_id: 'ED-WAT-cap2', cluster_id: 'clu_wcap2', signal_key: 'clu_wcap2', signal_type: 'EARLY_WATCH', unique_low_tier_authors: 3 });
+    const c1 = FX.signals[2]; // regular CLUSTER_EMERGENCE
+    const capEnv = makeFastTriageE2e(() => [w1, w2, c1], (payload) => matchRecordedResponse(capEnv.t.bot, payload));
+    const propsCap = capEnv.t.g.services.PropertiesService.getScriptProperties();
+    propsCap.setProperty('EARLY_DETECTION_TODAY', JSON.stringify({
+      day: capEnv.t.bot.dayKey_(),
+      clusters: 0,
+      velocity: 0,
+      queued: 7,
+      watchq: 7, // 1 watch slot left of 8; 33 overall slots left of 40
+    }));
+    capEnv.t.control().getRange(19, 2).setValue('ON');
+    capEnv.t.control().getRange(38, 2).setValue('ON');
+    capEnv.t.control().getRange(39, 2).setValue('ON');
+    capEnv.t.poll();
+
+    const dayAfter = JSON.parse(propsCap.getProperty('EARLY_DETECTION_TODAY'));
+    eq([dayAfter.watchq, dayAfter.queued], [8, 9]); // 1 watch queued (reaching 8/8) + 1 regular cluster queued (reaching 9/40); 2nd watch skipped!
+  });
 };
+
 

@@ -33,6 +33,13 @@
  *   platform: then its card goes in the earlier card's thread as `📈 *Early Detection Update: …*` with what's new. A
  *   review that finds an issue already alerted with nothing new posts no card, nor does any other dismissal (filtered
  *   out): Control C19 counts the repeats held back and the dismissals filtered out.
+ *   The fast triage (Control rows 38-40, FastTriage.gs; OFF, nothing here differs): Gemini Decisions answers six
+ *   questions about each signal before it is queued; the answers are recorded beside this review's call on the Fast
+ *   triage tab (row 38), order the queue (row 39) and can hold back a signal that is plainly noise (row 40). Row 39 also
+ *   lets the producer raise a story still below the usual bar as an EARLY_WATCH signal: it is queued, deduplicated and
+ *   reviewed here like any other, its card says it is an early signal and how many accounts it rests on
+ *   (edEarlyLine_), a failed review gives it no card (one more try, then it is dropped), and when its story reaches
+ *   the usual bar that signal goes in the early card's thread as an update (edWatchNews_), never as a second card.
  *   Relay.gs (`RELAY_ID_RX_`) treats `client-zeda-` as the bot's own work, so nothing ever relays to S-F Burson (B25) or
  *   the Burson test copy (B26). Records `ingested: ED_ALERT_INGESTED_` ('Early detection') so Burson parity KPIs
  *   (`Results` tab) and shared SLRR BigQuery write-backs (`bqWriteBack_`) remain isolated.
@@ -1156,6 +1163,21 @@ function edUpdateNews_(story, prior) {
 }
 
 /**
+ * What's new when a story first flagged early reaches the usual bar: every card on it so far is an early-watch card
+ * (EarlyWaveSource.gs EWS_WATCH_SIGNAL_) and the pending signal is one of the usual kinds. That is always news ("5
+ * accounts now, up from 3: the story is now past the usual bar"), so the signal goes in the early card's thread as an
+ * update and never as a second card; '' in every other case. Pure.
+ */
+function edWatchNews_(story, prior) {
+  const cards = (prior && prior.cards) || [];
+  if (!cards.length || !cards.every(c => c && c.sig === EWS_WATCH_SIGNAL_) || !story || story.sig === EWS_WATCH_SIGNAL_) return '';
+  const au = Number(story.au) || 0;
+  const was = Number(prior.au) || 0;
+  return au > was && was > 0 ? `${fmtInt_(au)} accounts now, up from ${fmtInt_(was)}: the story is now past the usual bar`
+    : 'the story is now past the usual bar';
+}
+
+/**
  * The earlier card an update goes under, as a queued row keeps it (`update_of`): {row (its Alert-log id), ed (its
  * BigQuery alert id), msg, thread, fwd (its copy's thread in the analyst space), title, au, plats, at, news}, cleaned;
  * null when there's no news in it. Pure.
@@ -1185,8 +1207,8 @@ function edCardTime_(ms, now) {
  * with (`seenAu`: earlyWaveSeen_ authors(); Infinity for an older entry; null when unseen, and always at review time,
  * when its own keys are the ones seen):
  *   {hold: why, prior} — a repeat with nothing materially new (edUpdateNews_): no review, no card;
- *   {update, prior} — the story grew since its last card: reviewed, and its card goes in that card's thread with what's
- *     new (`update`: edUpdateOf_);
+ *   {update, prior} — the story grew since its last card (or, first flagged early, it has now reached the usual bar:
+ *     edWatchNews_): reviewed, and its card goes in that card's thread with what's new (`update`: edUpdateOf_);
  *   {} — a new story.
  */
 function edStoryVerdict_(row, ledger, seenAu, now) {
@@ -1195,7 +1217,7 @@ function edStoryVerdict_(row, ledger, seenAu, now) {
   if (prior) {
     const L = prior.latest;
     if (story.id && L.ed === story.id) return { hold: `its card is already in the space (${L.row || 'posted earlier'})`, prior };
-    const news = edUpdateNews_(story, prior);
+    const news = edUpdateNews_(story, prior) || edWatchNews_(story, prior);
     if (!news) {
       const when = edCardTime_(L.at, now);
       return { hold: `${fmtInt_(story.au)} account${story.au === 1 ? '' : 's'} vs ${fmtInt_(prior.au)} on its card` +
@@ -1238,7 +1260,8 @@ function edFromRow_(row) {
   const platformsCsv = ewText_(r.platforms_csv || '') || primary.platform || '';
   const signalLabel = sig === 'VELOCITY_SPIKE'
     ? `Low-tier velocity spike${grain ? ` (${grain.replace(/_/g, ' ').toLowerCase()} grain)` : ''}`
-    : 'Low-tier semantic cluster emergence';
+    : sig === EWS_WATCH_SIGNAL_ ? 'Early watch (a few low-tier accounts on one story, below the usual bar)'
+      : 'Low-tier semantic cluster emergence';
   return {
     headline: ewText_(r.headline || r.signal_key || primary.snippet || 'Emerging low-tier discussion'),
     signalLabel,
@@ -1498,6 +1521,17 @@ function edActivityLine_(ed, posts, now) {
 }
 
 /**
+ * The line an early-watch card carries under its headline: that it is an early signal, and how many accounts it rests
+ * on against the usual bar. Pure.
+ */
+function edEarlyLine_(ed) {
+  const n = Number(ed && ed.distinctAuthors) || 0;
+  return `*Early signal:* this rests on ${n ? `${fmtInt_(n)} account${n === 1 ? '' : 's'}` : 'a few accounts'} so far ` +
+    `(a story is usually flagged at ${EWS_MIN_AUTHORS_}). It was flagged early because the first reports already read ` +
+    'as a real problem for Google.';
+}
+
+/**
  * The ONE card a queued signal gets in the space, after its review (edReviewAndPost_), laid out for a quick read:
  *   (siren) *Early Detection Alert* (siren)
  *   *<Gemini's headline>*
@@ -1508,8 +1542,10 @@ function edActivityLine_(ed, posts, now) {
  *   • *Posts:* every post as a link
  * A plain story, headline and steps from the signal itself when Gemini gave none. edParseCard_ reads the header (and
  * the older one-line `*Early Detection Alert: …*`). An update of an earlier card on the same story (`ed.update`,
- * same-story dedup) opens `(chart) *Early Detection Update*`, its headline, then a `*What's new:*` line. Chat markup
- * (<url|text>), under ED_CARD_MAX_CHARS_ (fewer post links, then no web sources, when it would be longer). Pure.
+ * same-story dedup) opens `(chart) *Early Detection Update*`, its headline, then a `*What's new:*` line. An early-watch
+ * signal's card (a story flagged below the usual bar) says so on a line of its own under the headline (edEarlyLine_).
+ * Chat markup (<url|text>), under ED_CARD_MAX_CHARS_ (fewer post links, then no web sources, when it would be longer).
+ * Pure.
  */
 function edStoryCardText_(ed, d, now) {
   const x = ed || {};
@@ -1519,8 +1555,9 @@ function edStoryCardText_(ed, d, now) {
   const upd = x.update && x.update.news ? x.update : null;
   const since = upd ? edCardTime_(upd.at, now) : '';
   const newsLine = upd ? `*What's new:* ${ewText_(upd.news)}${since ? ` (since the ${since} card)` : ''}.` : '';
+  const early = x.signalType === EWS_WATCH_SIGNAL_ ? [edEarlyLine_(x)] : [];
   const head = (upd ? ['\ud83d\udcc8 *Early Detection Update*', `*${title}*`, newsLine]
-    : ['\ud83d\udea8 *Early Detection Alert* \ud83d\udea8', `*${title}*`]).concat(edTaxonomyLines_(x, d || {})).join('\n');
+    : ['\ud83d\udea8 *Early Detection Alert* \ud83d\udea8', `*${title}*`]).concat(early, edTaxonomyLines_(x, d || {})).join('\n');
   const call = edCallLine_(d || {});
   const activity = edActivityLine_(x, posts, now);
   const sources = ((d && d.web && d.web.sources) || [])
@@ -1614,8 +1651,12 @@ function edDismissed_(d) {
  * text) -> edAct_ (the review note in its thread, the marks, the drafts). The card's key makes a retried post return the
  * same message. An update of an earlier card on the same story (`row.update_of`) goes in that card's thread, without a
  * picture. A review that finds an issue already alerted with nothing materially new (basis 'repeat') posts no card, nor
- * does any other dismissal (edDismissed_: filtered out, its reason logged). {card (null when Chat held it back), held
- * (why no card was posted after the review, or ''), dismissed (why it was filtered out as a dismissal, or '')}.
+ * does any other dismissal (edDismissed_: filtered out, its reason logged). An early-watch signal (a story flagged
+ * below the usual bar) whose review failed gets no card either: a card must rest on a review, so it is tried once more
+ * (`retry`) and then dropped; the usual kinds keep their "needs a human look" card. {card (null when Chat held it
+ * back), held (why no card was posted after the review, or ''), dismissed (why it was filtered out as a dismissal, or
+ * ''), retry (why it stays queued for another try, or absent), call ({disposition, basis, confidence, severity}: the
+ * review's call, for the Fast triage tab), logged (the card's Alert-log id)}.
  */
 function edReviewAndPost_(ctx, row, report) {
   const now = ctx.now();
@@ -1638,6 +1679,13 @@ function edReviewAndPost_(ctx, row, report) {
   }
   const d = edConclude_(ctx, prep, assessed, now);
   const named = (d.rev && d.rev.story && d.rev.story.title) || ed.headline;
+  // An early-watch signal whose review failed: no card (the usual kinds keep their "needs a human look" card); it is
+  // tried once more, then dropped (edDrainQueue_, ED_QUEUE_MAX_TRIES_)
+  if (d.basis === 'failed' && ed.signalType === EWS_WATCH_SIGNAL_) {
+    ctx.log(`early detection: no card for the early signal "${truncate_(ewText_(named), 90)}": its review failed` +
+      `${d.llmError ? ` (${truncate_(d.llmError, 140)})` : ''}`);
+    return { card: null, held: '', dismissed: '', retry: 'its review failed' };
+  }
   // Same-story dedup or non-English exclusion, after the review: posts no card
   if (d.basis === 'repeat' || d.basis === 'non_english') {
     const why = d.why || 'already alerted';
@@ -1697,14 +1745,19 @@ function edReviewAndPost_(ctx, row, report) {
  * the same-story dedup looks again at the cards posted since it was queued (edStoryVerdict_, the authoritative check):
  * a repeat with nothing new is dropped without a review; one that grew goes in its story's latest card's thread. A
  * review that posts no card (an issue already alerted, nothing new; or a dismissal, filtered out: edDismissed_) counts
- * toward the run's reviews. {posted, dropped, held, dismissed, waiting}, or null when it didn't run.
+ * toward the run's reviews. With the fast triage (Control rows 38-40, FastTriage.gs): each reviewed signal goes on the
+ * Fast triage tab, its Gemini Decisions answers beside the review's call, with one log line (row 38); the queue is in
+ * the answers' order only while row 39 is ON (OFF, the ranking's keys are taken off and an early-watch signal still
+ * waiting is dropped unreviewed); an early-watch signal whose review failed stays queued for one more try and the run
+ * reviews no more. {posted, dropped, held, dismissed, waiting}, or null when it didn't run.
  */
 function edDrainQueue_(ctx, report) {
   if (!switchOn_(ctx, 'earlyWave') || earlyWaveRefusal_(ctx)) return null;
   const props = PropertiesService.getScriptProperties();
   const out = { posted: 0, dropped: 0, held: 0, dismissed: 0, waiting: 0 };
   if (!props.getProperty(ED_QUEUE_PROP_)) return out;
-  if (!ftRankOn_(ctx)) ftQueueUnrank_(props);
+  const ranking = ftRankOn_(ctx);
+  if (!ranking) ftQueueUnrank_(props);
   const left = () => (ctx.deadline ? ctx.deadline - ctx.now() : Infinity);
   const prune = () => {
     const p = edQueuePrune_(props, ctx.now());
@@ -1719,6 +1772,14 @@ function edDrainQueue_(ctx, report) {
     if (typeof runOwned_ === 'function' && !runOwned_()) break;
     if (typeof apiGuardAllowBackground_ === 'function' && !apiGuardAllowBackground_('any', !!ctx.slaBusy)) break;
     const entry = list[0];
+    // An early-watch signal waits for its review only while the ranking that raised it is ON (row 39)
+    if (entry.sig === 'w' && !ranking) {
+      edQueueDrop_(props, entry.k);
+      out.dropped++;
+      ctx.log(`early detection: dropped ${entry.id || 'a queued early signal'} (the early watch is OFF)`);
+      list = prune();
+      continue;
+    }
     const row = edQueueRow_(props, entry.k);
     // Same-story dedup at review time: a card posted since this signal was queued (another signal's on the same story, or
     // its own on an earlier try) may already tell its story
@@ -1731,7 +1792,7 @@ function edDrainQueue_(ctx, report) {
       continue;
     }
     if (verdict.update) row.update_of = verdict.update;
-    edQueueTried_(props, entry.k);
+    const tries = edQueueTried_(props, entry.k);
     let res = null;
     if (row) {
       reviews++;
@@ -1742,10 +1803,23 @@ function edDrainQueue_(ctx, report) {
         break;
       }
     }
+    if (res && res.retry) {  // an early-watch signal whose review failed: no card; one more try, then it is dropped
+      if (tries >= ED_QUEUE_MAX_TRIES_) {
+        edQueueDrop_(props, entry.k);
+        out.dropped++;
+        ctx.log(`early detection: dropped ${entry.id || 'an early signal'} (${res.retry} ${tries} times: no card without a review)`);
+      } else {
+        ctx.log(`early detection: ${entry.id || 'an early signal'} stays queued for one more try (${res.retry})`);
+      }
+      list = prune();
+      break;
+    }
     edQueueDrop_(props, entry.k);
     if (res && res.card) {
       out.posted++;
-      noteEarlyWave_(props, entry.sig === 'v' ? 0 : 1, entry.sig === 'v' ? 1 : 0, '', { checked: false });
+      const early = entry.sig === 'w';
+      noteEarlyWave_(props, entry.sig === 'v' || early ? 0 : 1, entry.sig === 'v' ? 1 : 0, '',
+        early ? { checked: false, watch: 1 } : { checked: false });
     } else if (res && res.held) {
       out.held++;
     } else if (res && res.dismissed) {

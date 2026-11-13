@@ -39,6 +39,20 @@
  *   7. New signals go into a 3-hour buffer with a stable alert_id; ewsRows_ returns the buffer's signals created in the
  *      last `minutes` (at most EW_QUERY_MAX_ROWS_, P0 > P1 > P2, then velocity, accounts, oldest first), so a signal the
  *      check didn't take (5 a check, 40 a day) is there again next check, and the 24-hour seen map skips the rest.
+ *   8. The early watch, only when the caller asks for it (earlyWaveCheck_ with the fast triage and its ranking ON,
+ *      Control rows 38 and 39; without it nothing in this step runs). Stories still below the promotion bar are
+ *      picked (ewsWatchPick_): EWS_WATCH_MIN_AUTHORS_ accounts or more in the 180 minutes, 2+ links, not a copy-paste
+ *      ring, not signalled within the cooldown, not a story already told, and one of: a risk-term group, an official
+ *      Exposure Tag within EWS_TAG_RAISE_SIM_, or no older stored story within EWS_STORY_SIM_. Once the check's state is
+ *      saved, the caller's fast triage is asked about each (EWS_WATCH_MAX_PER_CHECK_ a check, EWS_WATCH_MAX_PER_DAY_ a
+ *      day, each story once at a given size), and a story is raised (ewsWatchRaise_) only when about_google, brand_risk
+ *      and independent_reports are at their bars and its most probable severity level is EWS_WATCH_MIN_LEVEL_ or higher:
+ *      it goes into the buffer as an EARLY_WATCH signal with its answers, to be queued, deduplicated and fully reviewed
+ *      like any other. Raising it marks nothing as alerted here, so the story still makes its usual signal at the
+ *      promotion bar (which the same-story dedup puts in the early card's thread). With the fast triage ON (row 38) the
+ *      caller also gets each signal's risk-term groups and whether a taxonomy hint raised it (`risk_groups`,
+ *      `tag_raised`), which the fast triage needs to know what it may never hold back; without the fast triage every
+ *      row is as it always was.
  *
  * Similarity bars (cosine, SEMANTIC_SIMILARITY vectors after the int8 round trip), calibrated on real low-tier texts:
  * 1,198 posts (700 Sonar + 498 Sprinklr comments, Nov 11 07:00-13:00 UTC) and 3,900 (2,500 + 1,400, Nov 10
@@ -58,6 +72,19 @@
  *     nearest tag; at 0.70+ the nearest tag fit 5 of 6 stories (Chrome zero-day: Product - Privacy & security concerns
  *     0.719, account lockouts 0.732, scams 0.786), while wrong P0 nearest tags stayed at 0.67 or less (GIF campaign
  *     0.670, Initia 0.634, ads surcharges 0.649), so a hint never makes a P0 by itself.
+ *
+ * Early-watch bars:
+ *   - EWS_WATCH_MIN_AUTHORS_ 3: in the old pipeline's clusters (Nov 6-11, 2026, six days) 25 to 64 stories a day reached
+ *     3 accounts within 180 minutes and 90 to 161 reached 2; 44% of those at 3 went on to 5, against 15% of those at 2;
+ *     going from 3 to 5 took 76 to 105 minutes (median) on 4 of the 6 days. So 3 is where a story is still early (over
+ *     an hour before the usual bar) and already more likely than not to matter; 2 would triple the stories to ask about
+ *     for a third of the yield.
+ *   - EWS_WATCH_MIN_LEVEL_ 2 (medium and up): the upper three of ED_SEVERITIES_' five levels. A definition, to be
+ *     checked against the recorded answers with the three bars below.
+ *   - EWS_WATCH_ABOUT_MIN_, EWS_WATCH_RISK_MIN_, EWS_WATCH_INDEPENDENT_MIN_: NOT SET (null), so no story is raised
+ *     whatever the switches say (ewsWatchReady_): with row 39 ON the stories are asked about and the answers recorded
+ *     (the Fast triage tab), and the bars are set from those answers set against what the same stories' full reviews
+ *     said once they reached the usual bar.
  *
  * State: script properties EWS_STATE (cursors, a job left running, today's counts, the last check's numbers) and
  * EWS_ROLLUP (velocity: same-hour means and the last 6 hours per topic / risk group, cooldowns), each under 9 KB; the
@@ -150,6 +177,18 @@ const EWS_BUFFER_MS_ = 180 * 60 * 1000;
 const EWS_BUFFER_MAX_ = 30;
 const EWS_TAG_RAISE_SIM_ = 0.70;
 
+// The early watch (stories below the promotion bar, raised only on the fast triage's answers; bars: see the header)
+const EWS_WATCH_SIGNAL_ = 'EARLY_WATCH';
+const EWS_WATCH_MIN_AUTHORS_ = 3;
+const EWS_WATCH_MIN_LEVEL_ = 2;            // the most probable severity level is medium (2) or higher
+const EWS_WATCH_ABOUT_MIN_ = null;         // about_google at or above this (null: not set yet, nothing is raised)
+const EWS_WATCH_RISK_MIN_ = null;          // brand_risk at or above this
+const EWS_WATCH_INDEPENDENT_MIN_ = null;   // independent_reports at or above this
+const EWS_WATCH_MAX_PER_CHECK_ = 5;        // stories asked about a check (25-64 a day reach 3 accounts)
+const EWS_WATCH_MAX_PER_DAY_ = 60;         // ...and a day
+const EWS_WATCH_PICK_MAX_ = 20;            // stories looked at a check (risk terms first, then the most accounts)
+const EWS_WATCH_MARKS_MAX_ = 300;          // stories remembered as asked about (the newest)
+
 // Storage
 const EWS_STATE_PROP_ = 'EWS_STATE';
 const EWS_ROLLUP_PROP_ = 'EWS_ROLLUP';
@@ -204,6 +243,10 @@ const EWS_COLS_ = ['kind', 'lane', 'mid', 'url', 'platform', 'author', 'audience
  * blank: 60), at most EW_QUERY_MAX_ROWS_, P0 > P1 > P2, then velocity, accounts, oldest first. Runs a check first when
  * one is due (EWS_EVERY_MS_). Throws, with a message earlyWaveCheck_ turns into its C19 note ("BigQuery didn't answer" /
  * "didn't finish in time"), when no real-time source could be read and nothing new came out of the check.
+ * `opts` (only the fast triage passes it; without it the check and its rows are as they always were): {facts: true,
+ * so each new row says its `risk_groups` and whether a taxonomy hint raised it (`tag_raised`); watch (only with the
+ * fast triage's ranking ON): {ask(row) -> {ok, dec} | {ok: false, skipped}, done(row, result, raised)}, the early
+ * watch}.
  */
 function ewsRows_(minutes, opts) {
   const n = Math.round(Number(minutes));
@@ -214,6 +257,9 @@ function ewsRows_(minutes, opts) {
   let outcome = null;
   if (!st.at || now < st.at || now - st.at >= EWS_EVERY_MS_) outcome = ewsProduce_(props, st, now, mins, opts);
   if (outcome && outcome.error && !outcome.emitted) throw new Error(outcome.error);
+  if (outcome && outcome.watch && outcome.watch.length && opts && opts.watch) {
+    ewsWatchAsk_(ewsCache_(), props, st, now, outcome.watch, opts.watch);
+  }
   return ewsBufferRows_(ewsReadBuffer_(ewsCache_()), now, mins);
 }
 
@@ -1454,6 +1500,140 @@ function ewsVelocityRow_(v, reps, now, tag, facts) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// The early watch: stories still below the promotion bar, raised only on the fast triage's answers
+// ---------------------------------------------------------------------------------------------------------------
+
+/** The early watch's bars ({about, risk, independent}; each null until it is set). Pure. */
+function ewsWatchBars_() {
+  return { about: EWS_WATCH_ABOUT_MIN_, risk: EWS_WATCH_RISK_MIN_, independent: EWS_WATCH_INDEPENDENT_MIN_ };
+}
+
+/** True when every early-watch bar in `bars` (default: the constants) is set: until then no story is raised. Pure. */
+function ewsWatchReady_(bars) {
+  const b = bars || ewsWatchBars_();
+  return [b.about, b.risk, b.independent].every(v => typeof v === 'number' && isFinite(v));
+}
+
+/**
+ * True when the fast triage's answers (`dec`: Decisions.gs decCompact_) raise an early-watch story: about_google,
+ * brand_risk and independent_reports each at its bar or above, and the most probable severity level at
+ * EWS_WATCH_MIN_LEVEL_ or higher. Never with a bar not set. Pure.
+ */
+function ewsWatchRaise_(dec, bars) {
+  const b = bars || ewsWatchBars_();
+  if (!dec || !ewsWatchReady_(b)) return false;
+  return Number(dec.g) >= b.about && Number(dec.r) >= b.risk && Number(dec.i) >= b.independent &&
+    Number(dec.l) >= EWS_WATCH_MIN_LEVEL_;
+}
+
+/** The stories asked about lately (cache 'wt'): {cluster id: [when, accounts then, 1 when it was raised]}. Never throws. */
+function ewsWatchMarks_(cache, now) {
+  const raw = ewsCacheGet_(cache, 'wt');
+  const out = {};
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    Object.keys(raw).forEach(k => {
+      const v = raw[k];
+      if (Array.isArray(v) && now - (Number(v[0]) || 0) < EWS_ACTIVE_MS_) out[k] = [Number(v[0]) || 0, Number(v[1]) || 0, v[2] ? 1 : 0];
+    });
+  }
+  return out;
+}
+
+/**
+ * The stories worth asking the fast triage about this check, still below the promotion bar: EWS_WATCH_MIN_AUTHORS_
+ * accounts or more in the last 180 minutes (at the bar a story is ewsPromote_'s), 2+ links, not a copy-paste ring that
+ * never names Google, not signalled within its cooldown, not raised before nor asked about at this size (`marks`), and
+ * not a story already told (`priors`: its updates are ewsPromote_'s). Risk-term stories first, then the most accounts,
+ * the latest; EWS_WATCH_PICK_MAX_ at most. Each as ewsPromote_'s candidates (the window's numbers, `c`, `id`, `vec`,
+ * `priority`). Pure.
+ */
+function ewsWatchPick_(clusters, priors, marks, now) {
+  const out = [];
+  clusters.forEach(c => {
+    const w = ewsStoryWindow_(c, now);
+    if (!w) return;
+    const bar = Math.max(2, EWS_MIN_AUTHORS_ - (w.platforms.length >= 2 ? EWS_PLATFORM_DISCOUNT_ : 0));
+    if (w.authors < EWS_WATCH_MIN_AUTHORS_ || w.authors >= bar) return;
+    if (w.platforms.length < 1 || w.urls < EWS_MIN_URLS_) return;
+    if (w.texts * 3 <= w.authors && !w.brand) return;  // a copy-paste ring that never names Google
+    if (c.al && now - (Number(c.al.at) || 0) < EWS_CLUSTER_COOLDOWN_MS_) return;
+    const mark = (marks || {})[c.id];
+    if (mark && (mark[2] || w.authors <= (Number(mark[1]) || 0))) return;
+    const x = Object.assign({ c, id: c.id, vec: ewsCentroid_(c), priority: w.risk.length || w.platforms.length >= 2 ? 'P1' : 'P2' }, w);
+    if (ewsStoryCheck_(x, priors, now).hits.length) return;
+    out.push(x);
+  });
+  return out.sort((a, b) => (b.risk.length ? 1 : 0) - (a.risk.length ? 1 : 0) || b.authors - a.authors || b.end - a.end ||
+    (a.id < b.id ? -1 : 1)).slice(0, EWS_WATCH_PICK_MAX_);
+}
+
+/** True when no older stored story tells what candidate `x` tells (none within EWS_STORY_SIM_ of its centroid). Pure. */
+function ewsWatchNovel_(x, clusters) {
+  if (!x || !x.vec) return false;
+  const born = Number(x.c.t0) || 0;
+  return !clusters.some(y => {
+    if (y === x.c || !((Number(y.t0) || 0) < born)) return false;
+    const v = ewsCentroid_(y);
+    return !!v && ewsDot_(v, x.vec) >= EWS_STORY_SIM_;
+  });
+}
+
+/**
+ * An early-watch story as an EarlyWaveRow: a cluster's row (with its risk groups and taxonomy hint) under its own
+ * signal type, alert id and headline. Pure.
+ */
+function ewsWatchRow_(x, now, tag) {
+  const row = ewsClusterRow_(x, now, tag, true);
+  row.alert_id = `ED-WAT-${x.id}-${ewsStamp_(now)}`;
+  row.signal_type = EWS_WATCH_SIGNAL_;
+  row.headline = `Early story (${x.authors} accounts): ${truncate_(String(x.c.lab || ''), 140)}`;
+  return row;
+}
+
+/**
+ * Asks the caller's fast triage about this check's early-watch stories (`cands`: [{cid, authors, row}], in order) once
+ * the check's state is saved: EWS_WATCH_MAX_PER_CHECK_ a check and EWS_WATCH_MAX_PER_DAY_ a day; it stops at the first
+ * story the fast triage isn't asking about now (a cap, a pause: asked at a later check). A story asked about is
+ * marked (never asked again at that size) and told to the caller (`watch.done`); one the answers raise
+ * (ewsWatchRaise_) goes into the buffer with them, as a signal of its own. Never throws.
+ */
+function ewsWatchAsk_(cache, props, st, now, cands, watch) {
+  try {
+    const marks = ewsWatchMarks_(cache, now);
+    const day = st.day || {};
+    let today = Number(day.watch) || 0;
+    let asked = 0;
+    const raised = [];
+    for (const x of cands) {
+      if (asked >= EWS_WATCH_MAX_PER_CHECK_ || today >= EWS_WATCH_MAX_PER_DAY_) break;
+      const res = watch.ask(x.row);
+      if (!res || res.skipped) break;
+      asked++;
+      today++;
+      const up = !!(res.ok && ewsWatchRaise_(res.dec));
+      marks[x.cid] = [now, x.authors, up ? 1 : 0];
+      if (up) raised.push(Object.assign({ _at: now }, x.row, { dec: res.dec }));
+      if (typeof watch.done === 'function') watch.done(x.row, res, up);
+    }
+    if (!asked) return;
+    const keep = {};
+    Object.keys(marks).sort((a, b) => marks[b][0] - marks[a][0]).slice(0, EWS_WATCH_MARKS_MAX_).forEach(k => { keep[k] = marks[k]; });
+    const items = { wt: keep };
+    if (raised.length) {
+      let buf = ewsReadBuffer_(cache).filter(r => raised.every(x => x.alert_id !== r.alert_id)).concat(raised).slice(-EWS_BUFFER_MAX_);
+      while (buf.length > 1 && JSON.stringify(buf).length > EWS_CACHE_ITEM_CHARS_) buf = buf.slice(1);
+      items.buf = buf;
+    }
+    ewsCachePut_(cache, items);
+    st.day = Object.assign({}, day, { watch: today });
+    if (st.last) st.last.watch = { picked: cands.length, asked, raised: raised.length };
+    ewsSaveState_(props, st);
+  } catch (e) {
+    console.warn(`Early wave: the early watch stopped: ${(e && e.message) || e}`);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // The check
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -1492,7 +1672,9 @@ function ewsEmbed_(posts, known, st, now, deadline) {
 /**
  * One check: read both lanes, keep the posts that pass, embed and cluster them, count accounts for velocity, find the
  * signals, buffer them. {emitted, error}: error when no real-time lane answered (or both are still running) and nothing
- * came out. Never throws.
+ * came out. With `opts` (ewsRows_'s: the fast triage's), the new rows say their risk groups and taxonomy raise, and
+ * `watch` lists the early-watch stories to ask about ([{cid, authors, row}]; ewsWatchAsk_ asks once this check is
+ * saved). Never throws.
  */
 function ewsProduce_(props, st, now, firstMins, opts) {
   const t0 = Date.now();
@@ -1608,6 +1790,9 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     const promoted = ewsPromote_(tidy, priors, now);
     const spikes = ewsVelocity_(acc, roll, tidy, priors, now);
     const facts = !!(opts && opts.facts);
+    // The early watch (only when the caller's fast triage asks for it): stories still below the bar
+    const watching = opts && opts.watch
+      ? ewsWatchPick_(tidy.filter(c => !promoted.some(x => x.c === c)), priors, ewsWatchMarks_(cache, now), now) : [];
 
     // Representative posts for topic / risk spikes: the window's posts the pool or a story keeps
     const rich = [];
@@ -1634,6 +1819,7 @@ function ewsProduce_(props, st, now, firstMins, opts) {
       }
       hintVecs.push(vec);
     });
+    watching.forEach(x => hintVecs.push(x.vec));  // after the signals' own, so theirs keep their places
     let hints = [];
     try { hints = hintVecs.some(Boolean) ? vecTagHintsOfVecs_(hintVecs, { deadline }) : []; } catch (e) { hints = []; }
     const rows = [];
@@ -1656,6 +1842,15 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     Object.keys(roll.cool).forEach(k => { if (now - (Number(roll.cool[k][0]) || 0) > 14 * 24 * 3600 * 1000) delete roll.cool[k]; });
     last.signals = { cluster: rows.filter(r => r.signal_type === 'CLUSTER_EMERGENCE').length,
       velocity: rows.filter(r => r.signal_type === 'VELOCITY_SPIKE').length };
+    // The early-watch stories to ask about: a risk-term group, an Exposure Tag close by, or nothing like it stored
+    const watch = [];
+    watching.forEach((x, i) => {
+      const hint = hints[builds.length + i];
+      const near = hint && (hint.exposure || [])[0];
+      const tagged = !!(near && Number(near.sim) >= EWS_TAG_RAISE_SIM_);
+      if (!x.risk.length && !tagged && !ewsWatchNovel_(x, tidy)) return;
+      watch.push({ cid: x.id, authors: x.authors, row: ewsWatchRow_(x, now, ewsTagHint_(hint)) });
+    });
 
     // Keep it all: the buffer first (what earlyWaveCheck_ reads), then the stories, the pool and the counts
     const buffer = ewsReadBuffer_(cache).filter(r => now - (Number(r._at) || 0) < EWS_BUFFER_MS_ && rows.every(x => x.alert_id !== r.alert_id))
@@ -1729,7 +1924,7 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     const error = anyDone ? ''
       : pending.length && !problems.length ? 'BigQuery: the early-wave query did not finish in time'
         : `BigQuery didn't answer the early-wave check (${problems.join('; ') || 'no answer'})`;
-    return { emitted: rows.length, error };
+    return watch.length ? { emitted: rows.length, error, watch } : { emitted: rows.length, error };
   } catch (e) {
     console.error(`Early wave check failed: ${(e && e.stack) || e}`);
     last.problem = String((e && e.message) || e).slice(0, 240);
