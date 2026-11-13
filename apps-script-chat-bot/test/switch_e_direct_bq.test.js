@@ -225,7 +225,7 @@ module.exports = H => {
     const last = lastRun(t);
     eq([last.bq_sprinklr, last.bq_bmie, last.bq_bsip, last.alerts, last.errors], [undefined, undefined, 1, 1, []]);
     assert.strictEqual(t.get('B5'), '✅ Working');
-    assert.match(t.control().cell(ROW, 3), new RegExp('^✓ ON: also reviews Sprinklr, BMIE and BSIP posts straight from BigQuery ' +
+    assert.match(t.control().cell(ROW, 3), new RegExp('^✓ ON: also reviews Sprinklr, DSD / Brandwatch and Sonar posts straight from BigQuery ' +
       '\\(each post once\\) · last check Oct 14, \\d{1,2}:\\d\\d (AM|PM) EDT · 3 posts today$'));
     // What it remembers: short hashes of the posts, and the messages with their source
     const keys = JSON.parse(t.g.props.get('BQ_INGESTED_KEYS'));

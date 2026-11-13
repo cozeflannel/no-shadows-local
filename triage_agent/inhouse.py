@@ -24,20 +24,20 @@ FIELD_CANDIDATES: dict[str, tuple[str, ...]] = {
     "issue_status": ("issue_status", "issue_name_novelty", "novelty"),
     "priority": ("priority", "collection_tier"),
     "exposure_tag": ("exposure_tag",),
-    "product": ("product",),
+    "product": ("product", "query_name"),
     "other_products": ("other_products",),
     "social_network": ("social_network", "platform"),
     "post_url": ("post_url", "post_link", "url"),
     "post_content": ("post_content", "aggregated_content", "original_post", "snippet", "content"),
     "summary": ("sonar_summary", "summary", "overview_of_post", "overview"),
     "author": ("author", "creator_handle", "author_handle"),
-    "followers": ("followers", "creator_followers"),
+    "followers": ("followers", "creator_followers", "follower_count"),
     "location": ("channel_location", "location"),
     "kof": ("is_kof", "is_kol"),
     "kof_lists": ("kof_lists", "kof_vertical", "viral_kof"),
     "risk_tags": ("risk_tags", "sensitive_topic", "risk_tag"),
     "engagement_level": ("engagement_level",),
-    "total_engagement": ("total_engagement", "engagements_actual", "engagement_count"),
+    "total_engagement": ("total_engagement", "total_engagements", "engagements_actual", "engagement_count"),
     "likes": ("likes",),
     "comments": ("comments",),
     "shares": ("shares", "shares_rts"),
@@ -50,6 +50,7 @@ EXTRA_COLUMNS = (
     "relevance_score", "language", "alert_track", "alert_action", "reason_codes", "sensitive_topics",
     "first_detected_at", "related_alert_id", "alert_id", "id", "record_id", "post_id", "sonar_post_id",
     "sonar_instance_id", "suggested_routing", "identifier_analyst", "source_tab", "sheet_row_number",
+    "query_id", "query_name", "alert_type",
 )
 
 PLATFORM_MAP = {
@@ -156,6 +157,8 @@ def row_to_parsed(ctx: AgentContext, row: dict[str, Any]) -> ParsedAlert:
             p = ctx.config.distribution.product(value)
             if p and not p.deprecated:
                 value = p.name
+            elif row.get("product") in (None, "") and row.get("query_name"):
+                value = ctx.config.distribution.fallback_product
         elif name == "exposure_tag" and isinstance(value, str):
             t = ctx.config.collection.tag(value)
             if t:
@@ -167,8 +170,9 @@ def row_to_parsed(ctx: AgentContext, row: dict[str, Any]) -> ParsedAlert:
         t = ctx.config.collection.tag(tag_val)
         fields["exposure_tag"] = t.name if t else tag_val
 
+    alert_type = str(row.get("alert_type") or "").strip().upper()
     if "kof" not in fields:
-        fields["kof"] = bool(fields.get("kof_lists"))
+        fields["kof"] = bool(fields.get("kof_lists")) or alert_type == "KOF"
 
     if "total_engagement" not in fields:
         likes = fields.get("likes")
@@ -177,10 +181,15 @@ def row_to_parsed(ctx: AgentContext, row: dict[str, Any]) -> ParsedAlert:
         if any(isinstance(x, int) for x in (likes, comments, shares)):
             fields["total_engagement"] = int(likes or 0) + int(comments or 0) + int(shares or 0)
 
-    if "engagement_level" not in fields and isinstance(fields.get("total_engagement"), int):
-        lvl = ctx.config.collection.level_for(fields["total_engagement"], is_kof=False)
-        if lvl:
-            fields["engagement_level"] = lvl
+    if "engagement_level" not in fields:
+        if fields.get("kof"):
+            fields["engagement_level"] = "VIRAL KOF"
+        elif isinstance(fields.get("total_engagement"), int):
+            lvl = ctx.config.collection.level_for(fields["total_engagement"], is_kof=False)
+            if lvl:
+                fields["engagement_level"] = lvl
+        elif alert_type in ("HIGH", "MODERATE", "LOW", "VERY LOW"):
+            fields["engagement_level"] = alert_type
 
     if "alert_name" not in fields and fields.get("issue_name"):
         status = fields.get("issue_status")
@@ -206,11 +215,16 @@ def _row_alert_id(row: dict[str, Any]) -> str:
         val = row.get(col)
         if val not in (None, ""):
             return str(val)
+    raw_url = str(row.get("url") or row.get("post_url") or row.get("post_link") or "").strip()
+    if raw_url:
+        from .qa.record_key import normalize_url
+
+        return normalize_url(raw_url) or raw_url
     return ""
 
 
 def _row_timestamp(row: dict[str, Any]) -> Any:
-    for col in ("alerted_at", "created_at", "ingestion_timestamp", "last_received_at", "date_added"):
+    for col in ("alerted_at", "created_at", "ingestion_timestamp", "ingestion_time", "last_received_at", "received_at", "date_added"):
         val = row.get(col)
         if val not in (None, ""):
             return val
@@ -227,18 +241,39 @@ def fetch_rows(ctx: AgentContext) -> list[dict[str, Any]]:
         location = getattr(cfg, "sonar_location", "us-central1")
     client = bigquery.Client(project=project, location=location)
 
-    if cfg.outbox_view.endswith(".slrr_source_mirror") or cfg.outbox_view.endswith(".slrr_source"):
-        order_col = "created_at DESC"
-    elif cfg.outbox_view.endswith(".slrr_alerts"):
-        order_col = "ingestion_timestamp DESC"
-    elif "sonar_post_aggregates" in cfg.outbox_view:
-        order_col = "last_received_at DESC"
-    elif cfg.outbox_view.endswith(".collection_alerts"):
-        order_col = "created_at DESC"
+    if cfg.outbox_view.endswith(".sonar_raw"):
+        latest = lambda expr: f"ARRAY_AGG({expr} IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)]"
+        sql = (
+            "SELECT "
+            "  ANY_VALUE(post_id) AS post_id, post_url, "
+            f"  {latest('post_timestamp')} AS post_timestamp, "
+            f"  {latest('platform')} AS platform, "
+            f"  {latest('language')} AS language, "
+            f"  {latest('JSON_VALUE(payload, \"$.detail.channel.username\")')} AS author, "
+            "  MAX(follower_count) AS follower_count, "
+            f"  {latest('JSON_VALUE(payload, \"$.detail.classification.summary\")')} AS summary, "
+            f"  {latest('JSON_VALUE(payload, \"$.detail.classification.issue_name\")')} AS issue_name, "
+            "  MAX(engagement_likes) AS likes, MAX(engagement_comments) AS comments, MAX(engagement_shares) AS shares, "
+            "  ARRAY_AGG(DISTINCT smart_tag IGNORE NULLS LIMIT 8) AS smart_tags, "
+            f"  {latest('NULLIF(TRIM(influencer_list), \"\")')} AS kof_vertical, "
+            f"  {latest('JSON_VALUE(payload, \"$.detail.post.snippet.text\")')} AS post_content, "
+            "  MAX(received_at) AS last_received_at "
+            f"FROM `{cfg.outbox_view}` "
+            "WHERE received_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR) AND post_url IS NOT NULL "
+            "GROUP BY post_url "
+            "ORDER BY last_received_at DESC LIMIT @n"
+        )
     else:
-        order_col = "alerted_at"
+        if cfg.outbox_view.endswith(".slrr_source_mirror") or cfg.outbox_view.endswith(".slrr_source"):
+            order_col = "created_at DESC"
+        elif cfg.outbox_view.endswith(".slrr_alerts"):
+            order_col = "ingestion_timestamp DESC"
+        elif cfg.outbox_view.endswith(".DSD-story-selection"):
+            order_col = "ingestion_time DESC"
+        else:
+            order_col = "alerted_at"
+        sql = f"SELECT * FROM `{cfg.outbox_view}` ORDER BY {order_col} LIMIT @n"
 
-    sql = f"SELECT * FROM `{cfg.outbox_view}` ORDER BY {order_col} LIMIT @n"
     job = client.query(
         sql,
         job_config=bigquery.QueryJobConfig(

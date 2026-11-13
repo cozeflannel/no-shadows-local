@@ -11,8 +11,8 @@
  *      - `reporting_data.sprinklr_outbound_reporting` (Sprinklr's own reporting of those posts: engagements, impressions;
  *        joined on Outbound_Post_ID = post_id, or the link)
  *      - `DSD.DSD-story-selection` (Brandwatch's HIGH and KOF alerts about Google, the DSD desk's story pool)
- *      - `raw_data.brandwatch_raw_mentions_base` is approved but not read here: it lands 17-23+ hours after a post (none
- *        of 557 SLRR alerts from Nov 8-11 was in it when the alert came in) and a lookup costs 0.4-0.8 GB
+ *      - `raw_data.brandwatch_raw_mentions_base` (Brandwatch's daily raw mentions, partition-pruned on `report_date`:
+ *        Mode A 3-day enrichment fallback and Mode B 2-day negative/KOF earned candidates)
  *   us-central1:
  *      - `bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw` (Pendulum's Sonar events: counts, tags, influencer lists, and in its
  *        `payload` JSON the author, summary, issue name and snippets; JSON is read over 48 hours at most, so a query stays
@@ -43,18 +43,18 @@
  * network or author). bqFindMissingLink_, called from Bot.gs handleAlert_ as ctx.findLink only while the switch is ON.
  *
  * Direct BigQuery alerts (Control row 15, directBq, OFF unless switched ON): poll() turns on the Mode B poll for its run,
- * with all three sources: Sprinklr (owned posts) and the DSD story selection (a US query each, so a query BigQuery
- * refuses for one never silences the other) and Sonar (Pendulum's posts: a separate `us-central1` query), each followed
+ * with all three sources: Sprinklr (owned posts) and DSD story selection / Brandwatch mentions (a US query each, so a query
+ * BigQuery refuses for one never silences the other) and Sonar / Tubular (a separate `us-central1` query), each followed
  * by a small US check of the SLRR alert log for the posts left (any link to them). Each source looks back only the
  * BigQuery lookback (Control tab B31, 15 to 60 minutes: bqLookbackMinutes_ in BqLookback.gs): Sprinklr only posts that
- * went live in that time; DSD posts the feed took in in that time that went live in the last BQ_DSD_MAX_AGE_H_ hours
+ * went live in that time; DSD / Brandwatch posts the feed took in in that time that went live within 48-72 hours
  * (Brandwatch alerts on a post hours or days after it went live); Sonar posts Pendulum saw in that time that went live in
  * the last BQ_BSIP_MAX_AGE_H_ hours (they reach its engagement floor hours after going live). The candidates left then go
  * through Step 1 of the 3-step evaluation (evaluateBqDualTrack_:
  * substantive Google relevance, no passive "google it" slang, and never a post or topic already alerted on unless it brings
  * a new development; Gemini judges it when it can, the rules always apply). An engagement count is never made up: the source's
- * own, else the post's real count (Sonar, or the post itself: bqRealEngagement_); a DSD post with none is posted only as
- * a KOF's (VIRAL KOF, no count), else not at all. At most once every BQ_DIRECT_EVERY_MS_ and BQ_POLL_MAX_PER_RUN_ posts a
+ * own, else the post's real count (Sonar, or the post itself: bqRealEngagement_); a DSD / Brandwatch post with none is posted
+ * only as a KOF's (VIRAL KOF, no count), else not at all. At most once every BQ_DIRECT_EVERY_MS_ and BQ_POLL_MAX_PER_RUN_ posts a
  * check, and none while the Burson space's alerts wait (the last run ran out of time, or posts it took aren't reviewed
  * yet); each post at most once (the bot's own Alert log, the posts it already took, the SLRR alert log). The posts go
  * into the Burson-role space only when it's a test feed or the Mirror space: never the live Burson space, a space people
@@ -62,14 +62,14 @@
  * so the Results tab leaves them out.
  *
  * Early detection (clusters & velocity) (Control row 19, earlyWave, OFF unless switched ON): after the main run's alerts,
- * at most every EW_EVERY_MS_, one read-only `US` query over `early_detection.vw_chatbot_pending_early_alerts` (pending
- * low-tier embedding clusters and multi-grain velocity spikes from the BigQuery lookback, B31). New signals are read
- * straight into a queue in script properties (earlyWaveCheck_: at most EW_MAX_PER_CHECK_ a check and EW_MAX_PER_DAY_ a
- * day); nothing is posted anywhere at that point. EarlyDetection.gs edDrainQueue_ then reviews each one (one Gemini
- * review with web search, the knowledge base and the guidance) and only then posts ONE story card (`client-zeda-...`)
- * in the Mirror space or a Google-only test feed (never live S-F Burson, the Burson test copy or external spaces), with
- * the review in its thread, status/emoji marks, and Social Alert / T&S drafts behind human review when warranted. Both
- * are called from Main.gs poll() only while the switch is ON.
+ * at most every EW_EVERY_MS_, `ewsRows_` (`EarlyWaveSource.gs`) produces and reads pending low-tier embedding clusters and
+ * multi-grain velocity spikes over the 6 approved BigQuery tables (`US` and `us-central1`, read-only) + Vertex AI
+ * `text-embedding-005`. New signals are read straight into a queue in script properties (earlyWaveCheck_: at most
+ * EW_MAX_PER_CHECK_ a check and EW_MAX_PER_DAY_ a day); nothing is posted anywhere at that point. EarlyDetection.gs
+ * edDrainQueue_ then reviews each one (one Gemini review with web search, the knowledge base and the guidance) and only
+ * then posts ONE story card (`client-zeda-...`) in the Mirror space or a Google-only test feed (never live S-F Burson,
+ * the Burson test copy or external spaces), with the review in its thread, status/emoji marks, and Social Alert / T&S
+ * drafts behind human review when warranted. Both are called from Main.gs poll() only while the switch is ON.
  */
 
 const BQ_API_BASE_ = 'https://bigquery.googleapis.com/bigquery/v2/projects/';
@@ -198,8 +198,8 @@ function isGoogleRelevantText_(text) {
 /**
  * True only when a direct-poll BigQuery row is actually about Google, its brands/products, KOFs discussing Google,
  * employees/executives, business dealings, or politics involving Google. Its `source_kind` is the poll's internal code:
- * `SPRINKLR` (Sprinklr's owned posts), `BMIE` (the earned feed: the DSD story selection, Brandwatch's HIGH and KOF
- * alerts) or `BSIP` (Sonar's posts, in the BSIP project). Pure.
+ * `SPRINKLR` (Sprinklr's owned posts), `BMIE` (legacy internal code for the earned feed: DSD story selection +
+ * Brandwatch's negative/KOF mentions) or `BSIP` (Sonar's posts and Tubular's videos). Pure.
  */
 function isGoogleRelevantBqRow_(row) {
   if (!row || typeof row !== 'object') return false;
@@ -1416,10 +1416,10 @@ function formatBqPromptContext_(bq) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Mode B: Direct Sprinklr + BMIE/Brandwatch + BSIP Alert Ingestion (Minus Redundancies; Direct BigQuery alerts, row 15)
+// Mode B: Direct Sprinklr + DSD/Brandwatch + BSIP Alert Ingestion (Minus Redundancies; Direct BigQuery alerts, row 15)
 // ---------------------------------------------------------------------------------------------------------------
 
-/** Maps a Sprinklr or BMIE product / alert_source string to a canonical SLRR Product name. Pure. */
+/** Maps a Sprinklr, DSD or Brandwatch product / alert_source string to a canonical SLRR Product name. Pure. */
 function mapBqProduct_(rawProduct, rawSource, rawBrand) {
   const candidates = [rawProduct, rawSource, rawBrand];
   for (const c of candidates) {
@@ -1528,8 +1528,9 @@ function formatSprinklrOwnedAlertText_(row) {
 }
 
 /**
- * Builds a standard SLRR Zapier-format alert card from a BMIE (`social_alerts_dataset.all_sundar_mentions`) earned row.
- * The engagement count is never made up: Brandwatch's own engagementScore (empty in the feed), else the post's real count
+ * Builds a standard SLRR Zapier-format alert card from a DSD story selection (`DSD.DSD-story-selection`) or Brandwatch
+ * raw mentions (`raw_data.brandwatch_raw_mentions_base`) earned row (internal badge/source code `'BMIE'` kept for Alert log
+ * compatibility). The engagement count is never made up: the source's interaction count, else the post's real count
  * (`engagement_total`: the post's own or Sonar's, bqRealEngagement_), else none: a KOF's post is VIRAL KOF with no count,
  * as a KOF alert can be (Review.gs rule 9; Escalate.gs: a KOF is urgent whatever the count), and anyone else's gets no
  * card at all (null: the poll leaves it out). Brandwatch's own engagement rating (HIGH, MODERATE) is said in words, never
@@ -1602,8 +1603,8 @@ const BQ_DIRECT_PIC_LEFT_MS_ = 60 * 1000;    // a card gets the post's picture (
 // rating alone doesn't count (it let in posts with no engagement at all). The most engaged come first.
 const BQ_BSIP_MIN_ENGAGEMENTS_ = 500;
 const BQ_BSIP_MAX_AGE_H_ = 48;
-// A post's real engagement count (bqRealEngagement_: Sonar, then the post itself) is looked up for at most this many BMIE
-// candidates a check (BMIE's feed has no counts): each lookup is a request or two
+// A post's real engagement count (bqRealEngagement_: Sonar, then the post itself) is looked up for at most this many
+// DSD / Brandwatch candidates a check when the row has no count: each lookup is a request or two
 const BQ_DIRECT_LOOKUPS_MAX_ = 4;
 // A PLACEHOLDER too: with this many posts the poll took still waiting to be reviewed, it doesn't check (nor when the
 // last run ran out of time): the Burson space's alerts come first
@@ -1615,7 +1616,7 @@ const BQ_INGESTED_MSGS_PROP_ = 'BQ_INGESTED_MSGS';  // the Chat messages it post
 const BQ_INGESTED_MSGS_MAX_ = 200;           // ~26 characters each
 const BQ_DIRECT_AT_PROP_ = 'BQ_DIRECT_AT';   // when the last check started (ms)
 const BQ_DIRECT_DAY_PROP_ = 'BQ_DIRECT_TODAY';  // today's posts, for the Control tab: {day, n}
-const BQ_SOURCE_LABELS_ = { SPRINKLR: 'Sprinklr', BMIE: 'BMIE', BSIP: 'BSIP' };  // the Alert log's `ingested` column
+const BQ_SOURCE_LABELS_ = { SPRINKLR: 'Sprinklr', BMIE: 'BMIE', BSIP: 'BSIP' };  // Alert log `ingested` (BMIE = legacy DSD/Brandwatch code)
 
 /** Pendulum's alert names for a post (`TO_JSON_STRING` of a list, of one name, or of {name}s) -> ['…']. Pure. */
 function bsipAlertNames_(json) {
@@ -1772,14 +1773,14 @@ function bqBsipGoogleSql_() {
 }
 
 /**
- * The Sprinklr and BMIE candidates (US): either source or both in one query (the poll runs each on its own, so a query
- * BigQuery refuses for one never silences the other), never a post the SLRR alert log has from the last 7 days. Both look
- * back only the BigQuery lookback (`@minutes`, bqLookbackMinutes_): Sprinklr's owned posts that went live in that time;
- * BMIE's mentions Brandwatch took in in that time about posts that went live in it (Brandwatch takes most in hours or a
- * day late: those are older than the lookback, never alerted on as new). Sprinklr: the posts are picked first
- * (sprinklr_base), then their top negative comments are aggregated for those posts alone and joined on (BigQuery refuses
- * a per-post subquery that reads another table: "Correlated subqueries that reference other tables are not supported").
- * Pure.
+ * The Sprinklr and DSD / Brandwatch earned candidates (US): either source or both in one query (the poll runs each on its
+ * own, so a query BigQuery refuses for one never silences the other), never a post the SLRR alert log has from the last 7
+ * days. Both look back only the BigQuery lookback (`@minutes`, bqLookbackMinutes_): Sprinklr's owned posts that went live
+ * in that time; DSD story selection (`DSD.DSD-story-selection`) and Brandwatch raw mentions (`raw_data.brandwatch_raw_mentions_base`)
+ * ingested in that time for posts published within 48-72 hours (internal `source_kind = "BMIE"` retained for Alert log
+ * compatibility). Sprinklr: the posts are picked first (sprinklr_base), then their top negative comments are aggregated
+ * for those posts alone and joined on (BigQuery refuses a per-post subquery that reads another table: "Correlated
+ * subqueries that reference other tables are not supported"). Pure.
  */
 function bqDirectUsSql_(sprinklr, bmie) {
   const since = 'TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE)';  // the BigQuery lookback (Control tab B31)
@@ -2150,32 +2151,33 @@ function bqDirectBusy_(ctx, msgs) {
  * when the run has time for one: bqPostCard_):
  *   Sprinklr  high-negativity owned posts (`>=30 comments` and `>=30% negativity`, DSD comment screening applied): a
  *             US query
- *   BMIE      earned negative alerts (`MODERATE`/`HIGH` or `KOF != 'No'`): a US query of its own, so a query BigQuery
- *             refuses (or doesn't finish) for one source never silences the other
- *             (each then a US check of the SLRR alert log for the ones left: the query only leaves out the same link)
- *   BSIP      Pendulum's posts (a placeholder rule: BQ_BSIP_MIN_ENGAGEMENTS_): a us-central1 query, then a US check of
- *             the SLRR alert log for the ones left
- * Every source looks back only the BigQuery lookback (Control tab B31: settings.bq_lookback_minutes, held to 30-60
+ *   DSD/BWM   earned negative/KOF alerts (`DSD.DSD-story-selection` HIGH/KOF + `raw_data.brandwatch_raw_mentions_base`,
+ *             internal source code `'BMIE'`): a US query of its own, so a query BigQuery refuses (or doesn't finish) for
+ *             one source never silences the other (each then a US check of the SLRR alert log for the ones left)
+ *   BSIP      Pendulum's posts (`sonar_raw`) and Tubular videos (`tubular_videos`): a us-central1 query, then a US check
+ *             of the SLRR alert log for the ones left
+ * Every source looks back only the BigQuery lookback (Control tab B31: settings.bq_lookback_minutes, held to 15-60
  * minutes by bqLookbackMinutes_). The candidates left from all three then go through Step 1 of the 3-step evaluation
  * together (evaluateBqDualTrack_ with soloOnly: a substantive Google connection, no passive "google it" slang, the
  * Resources tab's guidelines and the leads' guidance, nothing already alerted on unless it's a new development; Gemini
  * once, when the run has time for it, and the rules always); one it leaves out isn't weighed again for an hour
- * (BQ_STEP1_NO_CACHE_SEC_). An engagement count is never made up: a BMIE card (its feed has no counts) gets the post's
+ * (BQ_STEP1_NO_CACHE_SEC_). An engagement count is never made up: a DSD/Brandwatch card with no count gets the post's
  * real one (bqRealEngagement_: Sonar, else the post itself; BQ_DIRECT_LOOKUPS_MAX_ lookups a check; Sprinklr's go by its
  * comments and negativity, BSIP's by Sonar's own count), and a card with nothing true to say (its formatter returns null:
- * a BMIE post with no count that isn't a KOF's) isn't posted (it's tried again at the next check while it's still in the
- * lookback).
+ * a DSD/Brandwatch post with no count that isn't a KOF's) isn't posted (it's tried again at the next check while it's
+ * still in the lookback).
  * settings: bq_direct_poll (without it, nothing at all happens), bq_poll_sprinklr / bq_poll_bmie / bq_poll_bsip (each
- * source; absent: Sprinklr and BMIE on, BSIP off). Main.gs turns them all on while Direct BigQuery alerts (Control row 15)
- * is ON. A post is skipped when this flow's Alert log has it, the poll took it before (BQ_INGESTED_KEYS), or the SLRR
- * alert log has it (7 days, under any link to it), or it's already waiting in the space to be reviewed (bqWaitingKeys_:
- * Burson's alert from this minute). Refused: the live Burson space, a space people outside Google can join, a dry run, the
- * auto-correct flow (bqDirectRefusal_). At most once every BQ_DIRECT_EVERY_MS_ (recorded before querying, so a failing
- * check isn't repeated every minute) and BQ_POLL_MAX_PER_RUN_ posts a check; no check at all while the Burson space's
- * alerts wait (bqDirectBusy_: the last run ran out of time, or posts it took aren't reviewed yet). The messages it posts
- * are remembered (BQ_INGESTED_MSGS) so their Alert-log rows say where they came from. A source or a post that fails is
- * skipped and logged with the source's name (tried again at the next check), and column C says which source's query
- * BigQuery refused or didn't finish. {sprinklr, bmie, bsip, skipped_duplicates, skipped_step1, skipped_no_count}.
+ * source; absent: Sprinklr and DSD/Brandwatch on, BSIP off). Main.gs turns them all on while Direct BigQuery alerts
+ * (Control row 15) is ON. A post is skipped when this flow's Alert log has it, the poll took it before (BQ_INGESTED_KEYS),
+ * or the SLRR alert log has it (7 days, under any link to it), or it's already waiting in the space to be reviewed
+ * (bqWaitingKeys_: Burson's alert from this minute). Refused: the live Burson space, a space people outside Google can
+ * join, a dry run, the auto-correct flow when not standalone (bqDirectRefusal_). At most once every BQ_DIRECT_EVERY_MS_
+ * (recorded before querying, so a failing check isn't repeated every minute) and BQ_POLL_MAX_PER_RUN_ posts a check; no
+ * check at all while the Burson space's alerts wait (bqDirectBusy_: the last run ran out of time, or posts it took aren't
+ * reviewed yet). The messages it posts are remembered (BQ_INGESTED_MSGS) so their Alert-log rows say where they came
+ * from. A source or a post that fails is skipped and logged with the source's name (tried again at the next check), and
+ * column C says which source's query BigQuery refused or didn't finish.
+ * {sprinklr, bmie, bsip, skipped_duplicates, skipped_step1, skipped_no_count}.
  */
 function pollBigQuerySources_(ctx, targetSpaceId) {
   const S = (ctx && ctx.settings) || GEN.settings || {};
@@ -2881,8 +2883,8 @@ function edRepPosts_(raw) {
 }
 
 /**
- * Formats a BigQuery `vw_chatbot_pending_early_alerts` row into a structured Early Detection Alert card that
- * `edParseCard_` (`EarlyDetection.gs`) parses cleanly for open-world Gemini triage, emoji marking, and Social Alert /
+ * Formats an `EarlyWaveSource.gs` (`ewsRows_`) early-detection signal row into a structured Early Detection Alert card
+ * that `edParseCard_` (`EarlyDetection.gs`) parses cleanly for open-world Gemini triage, emoji marking, and Social Alert /
  * Temp Check / T&S drafting—while never matching `detectAlert_` (Zapier SLRR parser) and staying 100% free of internal
  * terms (`outboxGuardHits_`). Returns '' if unusable. Pure.
  */
@@ -3367,7 +3369,7 @@ function earlyWaveCheck_(ctx) {
     const errMsg = String((e && e.message) || e);
     console.warn('Early detection check skipped: ' + errMsg);
     const why = /Not found:\s*(?:Table|Dataset)/i.test(errMsg)
-      ? 'early_detection view not provisioned yet'
+      ? 'a BigQuery source table was not found'
       : /timed out|timeout|did not (?:complete|finish)/i.test(errMsg)
         ? 'BigQuery didn\'t finish in time'
         : 'BigQuery didn\'t answer';

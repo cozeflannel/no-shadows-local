@@ -28,8 +28,9 @@
  *           bq_written: when the alert was written back to the SLRR BigQuery tables (ms; "Write back to SLRR BigQuery")
  *           outcome: what happened after the Social Alert ("Track post-alert outcomes", Outcomes.gs): T&S confirmed |
  *                    Comms replied | Product replied | Resolved, several joined by " · " (strongest first, never removed)
- *           ingested: where the alert came from when the bot posted it itself from BigQuery ("Direct BigQuery alerts"):
- *                     Sprinklr | BMIE | BSIP; '' for Burson's. The Results tab leaves those rows out (Burson didn't post them)
+ *           ingested: where the alert came from when the bot posted it itself ("Direct BigQuery alerts", Early detection,
+ *                     or Watch alerts): Sprinklr | BMIE (legacy code for DSD / Brandwatch) | BSIP | Early detection | Watch;
+ *                     '' for Burson's. The Results tab leaves those rows out (Burson didn't post them)
  *           live_message, live_thread: in the Mirror space, the live S-F Burson message (and its thread) this alert is a
  *                     copy of (Mirror.gs rememberMirrorPair_, the Relay tab), kept for good so the bot's own Burson replies
  *                     and emojis, days later, still go on the right S-F Burson message (Outbox.gs ownSfbBehind_)

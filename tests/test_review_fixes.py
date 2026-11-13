@@ -201,8 +201,8 @@ class _Client:
 def _lookup(client, client_us) -> SonarLookup:
     lookup = SonarLookup.__new__(SonarLookup)  # no BigQuery client is created
     lookup.cfg = SimpleNamespace(
-        table="proj.ds.sonar_post_aggregates_7d",
-        alert_log_table="proj.ds.collection_alerts",
+        table="proj.ds.sonar_raw",
+        alert_log_table="proj.ds.slrr_source_mirror",
         slrr_table="proj.ds.slrr_alerts",
         lookback_days=14,
     )
@@ -227,8 +227,8 @@ def test_sonar_lookup_failures_are_logged_as_warnings(caplog):
     assert client.queries == 2 and client_us.queries == 1, "all three lookups are still tried"
     warnings = _sonar_warnings(caplog)
     assert [r.getMessage() for r in warnings] == [
-        "Primary sonar lookup failed on proj.ds.sonar_post_aggregates_7d",
-        "Secondary alert-log lookup failed on proj.ds.collection_alerts",
+        "Primary sonar lookup failed on proj.ds.sonar_raw",
+        "Secondary alert-log lookup failed on proj.ds.slrr_source_mirror",
         "Tertiary slrr_alerts lookup failed on proj.ds.slrr_alerts",
     ]
     assert all(r.exc_info for r in warnings)
@@ -241,3 +241,78 @@ def test_sonar_lookup_still_falls_through_to_the_next_table(caplog):
         row = _lookup(client, client_us).by_post_url(POST_URL)
     assert row is not None and row["likes"] == 12
     assert len(_sonar_warnings(caplog)) == 2
+
+
+def test_sonar_raw_query_and_deduped_slrr_table():
+    seen_sql: list[str] = []
+
+    class _SqlClient:
+        def query(self, sql, **_kwargs):
+            seen_sql.append(sql)
+            return SimpleNamespace(result=lambda: [])
+
+    lookup = _lookup(_SqlClient(), _SqlClient())
+    lookup.cfg.alert_log_table = lookup.cfg.slrr_table  # duplicate secondary is skipped
+    assert lookup.by_post_url(POST_URL) is None
+    assert len(seen_sql) == 2
+    assert "FROM `proj.ds.sonar_raw`" in seen_sql[0]
+    assert "INTERVAL 48 HOUR" in seen_sql[0]
+    assert "FROM `proj.ds.slrr_alerts`" in seen_sql[1]
+
+
+def test_inhouse_dsd_story_selection_row_mapping(ctx):
+    from triage_agent.inhouse import _row_alert_id, _row_timestamp, row_to_parsed
+
+    dsd_row = {
+        "ingestion_time": datetime(2026, 11, 12, 15, 0, tzinfo=UTC),
+        "platform": "X",
+        "alert_type": "KOF",
+        "author": "@techjournalist",
+        "follower_count": 85000,
+        "url": POST_URL,
+        "snippet": "Gemini App deleted my Workspace draft without warning.",
+        "post_time": datetime(2026, 11, 12, 14, 30, tzinfo=UTC),
+        "query_id": 2004167929,
+        "query_name": "All SLRR KOFs/INF",
+        "total_engagements": 340,
+    }
+    assert _row_alert_id(dsd_row) == "x.com/status/1845123456789012345"
+    assert _row_timestamp(dsd_row) == dsd_row["ingestion_time"]
+    parsed = row_to_parsed(ctx, dsd_row)
+    assert parsed.fields["kof"] is True
+    assert parsed.fields["engagement_level"] == "VIRAL KOF"
+    assert parsed.fields["followers"] == 85000
+    assert parsed.fields["total_engagement"] == 340
+    assert parsed.fields["product"] == "Brand"
+
+
+def test_campaigns_bigquery_mentions_uses_approved_tables():
+    from slrr_campaigns.bigquery_mentions import BigQueryMentionsClient
+    from slrr_campaigns.config import load_config as load_campaigns_config
+
+    cfg = load_campaigns_config()
+    assert cfg.bigquery_dsd_table == "brand-social-central-data.DSD.DSD-story-selection"
+    assert cfg.bigquery_brandwatch_table == "brand-social-central-data.raw_data.brandwatch_raw_mentions_base"
+
+    queries: list[str] = []
+    client = BigQueryMentionsClient.__new__(BigQueryMentionsClient)
+    client._cfg = cfg
+    client._client = SimpleNamespace(
+        query=lambda sql, **_kw: (queries.append(sql), SimpleNamespace(result=lambda: []))[1]
+    )
+    assert client.preflight_check() == {"dsd_7d": 0, "brandwatch_7d": 0}
+    assert client.query_deep_dive_mentions(
+        alert_name="Gemini",
+        start_iso="2026-11-10T00:00:00Z",
+        end_iso="2026-11-12T00:00:00Z",
+        query_ids=[2004167929],
+    ) == []
+    assert client.hydrate_urls([POST_URL]) == {}
+    assert len(queries) == 3
+    for sql in queries:
+        assert "all_sundar_mentions" not in sql
+        assert "social_alerts_dataset" not in sql
+        assert "DSD.DSD-story-selection" in sql
+        assert "raw_data.brandwatch_raw_mentions_base" in sql
+        assert "report_date" in sql
+

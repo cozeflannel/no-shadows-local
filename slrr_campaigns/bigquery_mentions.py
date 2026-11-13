@@ -23,35 +23,40 @@ class BigQueryMentionsError(RuntimeError):
         self.table = table
 
 
+MAX_QUERY_BYTES_BILLED = 10 * 1024 * 1024 * 1024
+
+
 class BigQueryMentionsClient:
-    """Reads all_sundar_mentions and brandwatch_mentions in brand-social-central-data."""
+    """Reads DSD-story-selection and brandwatch_raw_mentions_base in brand-social-central-data."""
 
     def __init__(self, cfg: CampaignsConfig) -> None:
         self._cfg = cfg
-        self._client = bigquery.Client(project=cfg.gcp_project_id)
+        self._client = bigquery.Client(project=cfg.gcp_project_id, location="US")
 
     def preflight_check(self) -> dict[str, int]:
         """Run a lightweight metadata/freshness query on both configured mention tables."""
         sql = f"""
         SELECT
-          (SELECT COUNT(1) FROM `{self._cfg.bigquery_sundar_table}`
-           WHERE ingestionTimestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)) AS sundar_7d,
-          (SELECT COUNT(1) FROM `{self._cfg.bigquery_brandwatch_table}`) AS brandwatch_total
+          (SELECT COUNT(1) FROM `{self._cfg.bigquery_dsd_table}`
+           WHERE ingestion_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)) AS dsd_7d,
+          (SELECT COUNT(1) FROM `{self._cfg.bigquery_brandwatch_table}`
+           WHERE report_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)) AS brandwatch_7d
         """
+        job_config = bigquery.QueryJobConfig(maximum_bytes_billed=MAX_QUERY_BYTES_BILLED)
         try:
-            rows = list(self._client.query(sql).result())
+            rows = list(self._client.query(sql, job_config=job_config).result())
         except GoogleAPICallError as exc:
             log_event(logger, logging.ERROR, "bigquery_preflight_failed", error_type=type(exc).__name__)
             raise BigQueryMentionsError(
                 f"BigQuery mention table check failed: {exc}",
-                table=self._cfg.bigquery_sundar_table,
+                table=self._cfg.bigquery_dsd_table,
             ) from exc
         if not rows:
-            return {"sundar_7d": 0, "brandwatch_total": 0}
+            return {"dsd_7d": 0, "brandwatch_7d": 0}
         row = rows[0]
         return {
-            "sundar_7d": int(row["sundar_7d"] or 0),
-            "brandwatch_total": int(row["brandwatch_total"] or 0),
+            "dsd_7d": int(row["dsd_7d"] or 0),
+            "brandwatch_7d": int(row["brandwatch_7d"] or 0),
         }
 
     def query_deep_dive_mentions(
@@ -60,36 +65,88 @@ class BigQueryMentionsClient:
         alert_name: str,
         start_iso: str,
         end_iso: str,
+        query_ids: list[int] | None = None,
         limit: int = 250,
     ) -> list[dict[str, Any]]:
-        """Query all_sundar_mentions when an alert's mentions land directly in BigQuery."""
-        if not alert_name.strip():
+        """Query DSD-story-selection and brandwatch_raw_mentions_base when mentions land in BigQuery."""
+        clean_name = alert_name.strip()
+        qids = [int(q) for q in (query_ids or []) if q > 0]
+        qid_strs = [str(q) for q in qids]
+        if not clean_name and not qids:
             return []
         sql = f"""
-        SELECT
-          url,
-          snippet,
-          authorHandle,
-          followers,
-          postTime,
-          engagement,
-          engagementScore,
-          Sentiment,
-          SocialNetwork,
-          product,
-          KOF
-        FROM `{self._cfg.bigquery_sundar_table}`
-        WHERE ingestionTimestamp >= TIMESTAMP_SUB(TIMESTAMP(@start_iso), INTERVAL 1 DAY)
-          AND postTime BETWEEN TIMESTAMP(@start_iso) AND TIMESTAMP(@end_iso)
-          AND LOWER(alert_source) = LOWER(@alert_name)
-        ORDER BY SAFE_CAST(engagementScore AS FLOAT64) DESC NULLS LAST, postTime DESC
+        WITH dsd AS (
+          SELECT
+            1 AS is_dsd,
+            url,
+            snippet,
+            author AS author_val,
+            CAST(follower_count AS STRING) AS followers_val,
+            post_time AS post_ts,
+            alert_type AS engagement_tier,
+            COALESCE(CAST(total_engagements AS FLOAT64), CAST(engagement_score AS FLOAT64), 0.0) AS eng_score,
+            'Negative' AS sentiment_val,
+            platform AS network_val,
+            query_name AS product_val,
+            IF(UPPER(IFNULL(alert_type, '')) = 'KOF', 'KOF', 'No') AS kof_val
+          FROM `{self._cfg.bigquery_dsd_table}`
+          WHERE ingestion_time >= TIMESTAMP_SUB(TIMESTAMP(@start_iso), INTERVAL 1 DAY)
+            AND post_time BETWEEN TIMESTAMP(@start_iso) AND TIMESTAMP(@end_iso)
+            AND (
+              (@alert_name != '' AND LOWER(IFNULL(query_name, '')) = LOWER(@alert_name))
+              OR query_id IN UNNEST(@query_ids)
+            )
+        ),
+        bwm AS (
+          SELECT
+            0 AS is_dsd,
+            post_url AS url,
+            COALESCE(NULLIF(TRIM(mention_text), ''), snippet) AS snippet,
+            author AS author_val,
+            CAST(reachEstimate AS STRING) AS followers_val,
+            published_timestamp AS post_ts,
+            IF(COALESCE(engagement_score, 0) >= 50, 'HIGH', 'MODERATE') AS engagement_tier,
+            COALESCE(
+              CAST(
+                IFNULL(like_count, 0) + IFNULL(comment_count, 0) + IFNULL(reply_count, 0)
+                + IFNULL(retweet_count, 0) + IFNULL(share_count, 0) AS FLOAT64
+              ),
+              engagement_score,
+              0.0
+            ) AS eng_score,
+            sentiment AS sentiment_val,
+            platform AS network_val,
+            product_config_name AS product_val,
+            COALESCE(
+              (SELECT t.name FROM UNNEST(tags) t
+               WHERE STARTS_WITH(UPPER(TRIM(IFNULL(t.name, ''))), 'KOF') LIMIT 1),
+              'No'
+            ) AS kof_val
+          FROM `{self._cfg.bigquery_brandwatch_table}`
+          WHERE report_date BETWEEN DATE_SUB(DATE(TIMESTAMP(@start_iso)), INTERVAL 1 DAY)
+            AND DATE_ADD(DATE(TIMESTAMP(@end_iso)), INTERVAL 7 DAY)
+            AND published_timestamp BETWEEN TIMESTAMP(@start_iso) AND TIMESTAMP(@end_iso)
+            AND post_url IS NOT NULL
+            AND (
+              (@alert_name != '' AND LOWER(IFNULL(product_config_name, '')) = LOWER(@alert_name))
+              OR query_id IN UNNEST(@query_id_strs)
+            )
+        )
+        SELECT *
+        FROM (SELECT * FROM dsd UNION ALL SELECT * FROM bwm)
+        WHERE url IS NOT NULL AND TRIM(url) != ''
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY url ORDER BY is_dsd DESC, eng_score DESC, post_ts DESC) = 1
+        ORDER BY eng_score DESC NULLS LAST, post_ts DESC
         LIMIT @row_limit
         """
         job_config = bigquery.QueryJobConfig(
+            maximum_bytes_billed=MAX_QUERY_BYTES_BILLED,
             query_parameters=[
                 bigquery.ScalarQueryParameter("start_iso", "STRING", start_iso),
                 bigquery.ScalarQueryParameter("end_iso", "STRING", end_iso),
-                bigquery.ScalarQueryParameter("alert_name", "STRING", alert_name.strip()),
+                bigquery.ScalarQueryParameter("alert_name", "STRING", clean_name),
+                bigquery.ArrayQueryParameter("query_ids", "INT64", qids),
+                bigquery.ArrayQueryParameter("query_id_strs", "STRING", qid_strs),
                 bigquery.ScalarQueryParameter("row_limit", "INT64", limit),
             ],
         )
@@ -105,7 +162,7 @@ class BigQueryMentionsClient:
             )
             raise BigQueryMentionsError(
                 f"BigQuery deep-dive query failed: {exc}",
-                table=self._cfg.bigquery_sundar_table,
+                table=self._cfg.bigquery_dsd_table,
             ) from exc
 
         out: list[dict[str, Any]] = []
@@ -116,15 +173,15 @@ class BigQueryMentionsClient:
                     "url": raw_url,
                     "normalized_url": normalize_url(raw_url) or raw_url.lower(),
                     "snippet": str(r["snippet"] or "").strip(),
-                    "author": str(r["authorHandle"] or "Unknown").strip(),
-                    "followers": str(r["followers"] or "").strip(),
-                    "published_at": r["postTime"].isoformat() if r["postTime"] else "",
-                    "engagement_tier": str(r["engagement"] or "").strip(),
-                    "engagement_score": int(float(r["engagementScore"] or 0)),
-                    "sentiment": str(r["Sentiment"] or "Neutral").strip(),
-                    "network": str(r["SocialNetwork"] or "Social Media").strip(),
-                    "product": str(r["product"] or "").strip(),
-                    "kof_status": str(r["KOF"] or "No").strip(),
+                    "author": str(r["author_val"] or "Unknown").strip(),
+                    "followers": str(r["followers_val"] or "").strip(),
+                    "published_at": r["post_ts"].isoformat() if r["post_ts"] else "",
+                    "engagement_tier": str(r["engagement_tier"] or "").strip(),
+                    "engagement_score": int(float(r["eng_score"] or 0)),
+                    "sentiment": str(r["sentiment_val"] or "Neutral").strip(),
+                    "network": str(r["network_val"] or "Social Media").strip(),
+                    "product": str(r["product_val"] or "").strip(),
+                    "kof_status": str(r["kof_val"] or "No").strip(),
                 },
             )
         return out
@@ -136,40 +193,57 @@ class BigQueryMentionsClient:
             return {}
 
         sql = f"""
-        WITH sundar AS (
+        WITH dsd AS (
           SELECT
             url,
             snippet AS text_val,
-            authorHandle AS author_val,
-            followers AS followers_val,
-            SAFE_CAST(engagementScore AS INT64) AS eng_score,
-            Sentiment AS sentiment_val,
-            SocialNetwork AS network_val,
-            product AS product_val,
-            KOF AS kof_val
-          FROM `{self._cfg.bigquery_sundar_table}`
-          WHERE ingestionTimestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
+            author AS author_val,
+            CAST(follower_count AS STRING) AS followers_val,
+            COALESCE(
+              SAFE_CAST(total_engagements AS INT64),
+              SAFE_CAST(engagement_score AS INT64),
+              0
+            ) AS eng_score,
+            'Negative' AS sentiment_val,
+            platform AS network_val,
+            query_name AS product_val,
+            IF(UPPER(IFNULL(alert_type, '')) = 'KOF', 'KOF', 'No') AS kof_val
+          FROM `{self._cfg.bigquery_dsd_table}`
+          WHERE ingestion_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
             AND url IN UNNEST(@target_urls)
         ),
-        bw_arch AS (
+        bwm AS (
           SELECT
-            url,
-            COALESCE(NULLIF(full_text, ''), snippet) AS text_val,
-            COALESCE(NULLIF(author_Clean, ''), author) AS author_val,
-            '' AS followers_val,
-            SAFE_CAST(engagement_total AS INT64) AS eng_score,
+            post_url AS url,
+            COALESCE(NULLIF(TRIM(mention_text), ''), snippet) AS text_val,
+            author AS author_val,
+            CAST(reachEstimate AS STRING) AS followers_val,
+            COALESCE(
+              SAFE_CAST(
+                IFNULL(like_count, 0) + IFNULL(comment_count, 0) + IFNULL(reply_count, 0)
+                + IFNULL(retweet_count, 0) + IFNULL(share_count, 0) AS INT64
+              ),
+              SAFE_CAST(engagement_score AS INT64),
+              0
+            ) AS eng_score,
             sentiment AS sentiment_val,
-            page_type AS network_val,
-            '' AS product_val,
-            'No' AS kof_val
+            platform AS network_val,
+            product_config_name AS product_val,
+            COALESCE(
+              (SELECT t.name FROM UNNEST(tags) t
+               WHERE STARTS_WITH(UPPER(TRIM(IFNULL(t.name, ''))), 'KOF') LIMIT 1),
+              'No'
+            ) AS kof_val
           FROM `{self._cfg.bigquery_brandwatch_table}`
-          WHERE url IN UNNEST(@target_urls)
+          WHERE report_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+            AND post_url IN UNNEST(@target_urls)
         )
-        SELECT * FROM sundar
+        SELECT * FROM dsd
         UNION ALL
-        SELECT * FROM bw_arch
+        SELECT * FROM bwm
         """
         job_config = bigquery.QueryJobConfig(
+            maximum_bytes_billed=MAX_QUERY_BYTES_BILLED,
             query_parameters=[bigquery.ArrayQueryParameter("target_urls", "STRING", clean_urls)],
         )
         try:
@@ -178,7 +252,7 @@ class BigQueryMentionsClient:
             log_event(logger, logging.ERROR, "bigquery_hydrate_failed", error_type=type(exc).__name__)
             raise BigQueryMentionsError(
                 f"BigQuery URL hydration failed: {exc}",
-                table=self._cfg.bigquery_sundar_table,
+                table=self._cfg.bigquery_dsd_table,
             ) from exc
 
         by_norm: dict[str, dict[str, Any]] = {}

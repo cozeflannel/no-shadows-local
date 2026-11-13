@@ -126,16 +126,45 @@ class SonarLookup:
         ]
         labels = {"app": "slrr-triage-agent", "component": "sonar-lookup"}
 
-        # 1. Primary: bsip-s-bsip-gg-26-2cf3.google_bg.sonar_post_aggregates_7d_materialized (us-central1)
-        if self.cfg.table and "sonar_post_aggregates" in self.cfg.table:
-            sql_sonar = (
-                f"SELECT post_id, post_url, post_timestamp, platform, language, author, followers, "
-                f"summary, issue_name, relevance_score, criticality, likes, comments, shares, views, "
-                f"smart_alert_names, smart_tags, aggregated_content, first_received_at, last_received_at "
-                f"FROM `{self.cfg.table}` "
-                f"WHERE post_url IN UNNEST(@urls) OR (@token != '' AND STRPOS(post_url, @token) > 0) "
-                f"ORDER BY last_received_at DESC LIMIT 1"
-            )
+        # 1. Primary: bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw (us-central1, 48h partition window)
+        if self.cfg.table:
+            if self.cfg.table.endswith(".sonar_raw"):
+                latest = lambda expr: f"ARRAY_AGG({expr} IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)]"
+                sql_sonar = (
+                    "WITH ev AS ("
+                    "  SELECT post_id, post_url, post_timestamp, platform, language, follower_count, "
+                    "    engagement_likes, engagement_comments, engagement_shares, alert_criticality, "
+                    "    smart_tag, influencer_list, received_at, payload "
+                    f"  FROM `{self.cfg.table}` "
+                    "  WHERE received_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 48 HOUR) "
+                    "    AND (post_url IN UNNEST(@urls) OR (@token != '' AND STRPOS(post_url, @token) > 0))"
+                    ") "
+                    "SELECT "
+                    f"  {latest('post_id')} AS post_id, "
+                    f"  {latest('post_url')} AS post_url, "
+                    f"  {latest('post_timestamp')} AS post_timestamp, "
+                    f"  {latest('platform')} AS platform, "
+                    f"  {latest('language')} AS language, "
+                    f"  {latest('JSON_VALUE(payload, \"$.detail.channel.username\")')} AS author, "
+                    "  MAX(follower_count) AS followers, "
+                    f"  {latest('JSON_VALUE(payload, \"$.detail.classification.summary\")')} AS summary, "
+                    f"  {latest('JSON_VALUE(payload, \"$.detail.classification.issue_name\")')} AS issue_name, "
+                    f"  {latest('alert_criticality')} AS criticality, "
+                    "  MAX(engagement_likes) AS likes, "
+                    "  MAX(engagement_comments) AS comments, "
+                    "  MAX(engagement_shares) AS shares, "
+                    "  ARRAY_AGG(DISTINCT smart_tag IGNORE NULLS LIMIT 8) AS smart_tags, "
+                    f"  {latest('NULLIF(TRIM(influencer_list), \"\")')} AS kof_vertical, "
+                    f"  {latest('JSON_VALUE(payload, \"$.detail.post.snippet.text\")')} AS post_content, "
+                    "  MAX(received_at) AS last_received_at "
+                    "FROM ev HAVING COUNT(1) > 0"
+                )
+            else:
+                sql_sonar = (
+                    f"SELECT * FROM `{self.cfg.table}` "
+                    f"WHERE post_url IN UNNEST(@urls) OR (@token != '' AND STRPOS(post_url, @token) > 0) "
+                    f"ORDER BY last_received_at DESC LIMIT 1"
+                )
             try:
                 job = self.client.query(sql_sonar, job_config=bq.QueryJobConfig(query_parameters=params, labels=labels))
                 rows = [dict(r.items()) for r in job.result()]
@@ -144,18 +173,25 @@ class SonarLookup:
             except Exception:  # noqa: BLE001
                 log.warning("Primary sonar lookup failed on %s", self.cfg.table, exc_info=True)
 
-        # 2. Secondary: bsip-s-bsip-gg-26-2cf3.google_bg.collection_alerts (or configured alert_log_table)
-        if self.cfg.alert_log_table:
-            url_col = "url" if self.cfg.alert_log_table.endswith(".collection_alerts") else "post_url"
-            order_col = "created_at" if url_col == "url" else "alerted_at"
-            where_clause = (
-                f"{url_col} IN UNNEST(@urls) OR (@token != '' AND STRPOS({url_col}, @token) > 0)"
-                if url_col == "url"
-                else "post_url = @url AND alerted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)"
-            )
-            sql_log = f"SELECT * FROM `{self.cfg.alert_log_table}` WHERE {where_clause} ORDER BY {order_col} DESC LIMIT 1"
+        # 2. Optional secondary alert-log table (skipped when identical to slrr_table)
+        slrr_table = getattr(self.cfg, "slrr_table", "")
+        if self.cfg.alert_log_table and self.cfg.alert_log_table != slrr_table:
+            is_slrr = self.cfg.alert_log_table.endswith(".slrr_alerts")
+            sec_client = self.client_us if self.cfg.alert_log_table.startswith("brand-social-central-data.") else self.client
+            if is_slrr:
+                sql_log = (
+                    f"SELECT * FROM `{self.cfg.alert_log_table}` "
+                    "WHERE url IN UNNEST(@urls) OR (@token != '' AND STRPOS(url, @token) > 0) "
+                    "ORDER BY ingestion_timestamp DESC LIMIT 1"
+                )
+            else:
+                sql_log = (
+                    f"SELECT * FROM `{self.cfg.alert_log_table}` "
+                    "WHERE post_url = @url AND alerted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY) "
+                    "ORDER BY alerted_at DESC LIMIT 1"
+                )
             try:
-                job = self.client.query(sql_log, job_config=bq.QueryJobConfig(query_parameters=params, labels=labels))
+                job = sec_client.query(sql_log, job_config=bq.QueryJobConfig(query_parameters=params, labels=labels))
                 rows = [dict(r.items()) for r in job.result()]
                 if rows:
                     return _normalize_row(rows[0])
@@ -164,7 +200,6 @@ class SonarLookup:
                             exc_info=True)
 
         # 3. Tertiary: brand-social-central-data.slrr_alerts.slrr_alerts (US multi-region)
-        slrr_table = getattr(self.cfg, "slrr_table", "")
         if slrr_table:
             sql_slrr = (
                 f"SELECT * FROM `{slrr_table}` "

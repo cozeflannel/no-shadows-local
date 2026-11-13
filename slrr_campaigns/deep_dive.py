@@ -156,11 +156,12 @@ def run_deep_dive(
     parsed_ctx = extract_alert_context_from_chat(alert_text)
     lookup_alert_name = (alert_name_hint or parsed_ctx["alert_name"] or query_name).strip()
 
-    # Source 1: BigQuery first when mentions for this alert stream land in all_sundar_mentions.
+    # Source 1: BigQuery first when mentions land in DSD-story-selection or brandwatch_raw_mentions_base.
     bq_rows = bq.query_deep_dive_mentions(
         alert_name=lookup_alert_name,
         start_iso=start_iso,
         end_iso=end_iso,
+        query_ids=query_ids,
         limit=250,
     )
 
@@ -171,7 +172,7 @@ def run_deep_dive(
     top_authors: list[str] = []
     top_posts: list[dict[str, Any]] = []
     lacking_sources: set[str] = set()
-    primary_source = "BigQuery (all_sundar_mentions)"
+    primary_source = "BigQuery (DSD-story-selection / brandwatch_raw_mentions_base)"
 
     if bq_rows:
         total_mentions = len(bq_rows)

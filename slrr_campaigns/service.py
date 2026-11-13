@@ -376,8 +376,8 @@ def run_live_preflight() -> dict[str, Any]:
         "gemini_preflight_boolean": gemini_bool,
         "gmail_partition_disjoint": True,
         "registry_approvers": settings.approver_emails,
-        "bigquery_sundar_7d": bq_counts["sundar_7d"],
-        "bigquery_brandwatch_total": bq_counts["brandwatch_total"],
+        "bigquery_dsd_7d": bq_counts["dsd_7d"],
+        "bigquery_brandwatch_7d": bq_counts["brandwatch_7d"],
     }
 
 

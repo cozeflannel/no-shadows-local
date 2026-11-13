@@ -8,8 +8,8 @@ forbidden_burson_space: spaces/AAQAaa_0I9g
 drive_folder_id: 1D1TPdVmD1fFTDQQAWSkz6jI3eO3DZVXt
 registry_spreadsheet_id: 1dp5te1avPOkw34x8P0TPmM456u9UJLoJVWtl9myt2ng
 kof_spreadsheet_id: 17HIdayu6q9NDFRR-BC0VZWiAXfGHX1rjO5IKC0YreEQ
-bigquery_sundar_table: brand-social-central-data.social_alerts_dataset.all_sundar_mentions
-bigquery_brandwatch_table: brand-social-central-data.social_alerts_dataset.brandwatch_mentions
+bigquery_dsd_table: brand-social-central-data.DSD.DSD-story-selection
+bigquery_brandwatch_table: brand-social-central-data.raw_data.brandwatch_raw_mentions_base
 brandwatch_project_ids:
 - 1998344909
 - 1998368542

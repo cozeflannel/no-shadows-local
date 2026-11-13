@@ -266,8 +266,8 @@ function resultsLive_(flows) {
 }
 
 /**
- * The Alert log's rows for Burson's alerts: without the posts the bot took straight from BigQuery itself (Direct BigQuery
- * alerts, Control row 15: their `ingested` column says Sprinklr, BMIE or BSIP). Pure.
+ * The Alert log's rows for Burson's alerts: without the posts the bot took straight from BigQuery or its watches
+ * (their `ingested` column is non-empty: Sprinklr, BMIE [legacy code for DSD / Brandwatch], BSIP, Early detection, Watch). Pure.
  */
 function resultsBursonRows_(rows) {
   return (rows || []).filter(a => !(a && String(a.ingested === undefined || a.ingested === null ? '' : a.ingested).trim()));

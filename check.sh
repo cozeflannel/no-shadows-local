@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import ast
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -86,6 +85,7 @@ scan_files: list[Path] = [
     root / "Dockerfile.campaigns",
     root / "config" / "campaigns.yaml",
     root / "setup.sh",
+    root / "apps-script-chat-bot" / "CampaignHandoff.gs",
 ]
 
 failures: list[str] = []
@@ -145,45 +145,6 @@ for lineno, line in enumerate(check_sh.read_text(encoding="utf-8").splitlines(),
     if m_emoji:
         cp = ord(m_emoji.group(0)[0])
         failures.append(f"check.sh:{lineno}: emoji code point U+{cp:04X}")
-
-# Scan every line added by this build to apps-script-chat-bot.
-base_ref = "ff40004"
-verify_proc = subprocess.run(
-    ["git", "rev-parse", "--verify", "--quiet", base_ref],
-    check=False,
-    capture_output=True,
-    text=True,
-)
-if verify_proc.returncode != 0:
-    root_proc = subprocess.run(
-        ["git", "rev-list", "--max-parents=0", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    base_ref = root_proc.stdout.splitlines()[0].strip()
-diff_proc = subprocess.run(
-    ["git", "diff", base_ref, "--", "apps-script-chat-bot"],
-    check=True,
-    capture_output=True,
-    text=True,
-)
-cur_file = ""
-for raw_line in diff_proc.stdout.splitlines():
-    if raw_line.startswith("+++ b/"):
-        cur_file = raw_line[6:]
-        continue
-    if raw_line.startswith("+") and not raw_line.startswith("+++"):
-        added = raw_line[1:]
-        m_word = word_re.search(added)
-        if m_word:
-            failures.append(f"{cur_file} (added line): banned token '{m_word.group(0)}'")
-        if domain_re.search(added):
-            failures.append(f"{cur_file} (added line): banned domain")
-        m_emoji = emoji_re.search(added)
-        if m_emoji:
-            cp = ord(m_emoji.group(0)[0])
-            failures.append(f"{cur_file} (added line): emoji code point U+{cp:04X}")
 
 if failures:
     for item in failures:

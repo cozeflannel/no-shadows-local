@@ -318,7 +318,7 @@ function pwBuildLine_(b) {
 /**
  * The card's SLRR lines (pwAlertText_): Product, Exposure Tag, Sensitive Topic and KOF, from the AI pre-read
  * (pwPreRead_) or the listening tool's own classification (pwTaxOf_); "pending" when neither said anything, so the
- * triage in the thread decides. KOF only ever from the listening data (Sonar's influencer lists, BMIE's KOF flag, a DSD
+ * triage in the thread decides. KOF only ever from the listening data (Sonar's influencer lists, Brandwatch's KOF tag, a DSD
  * KOF alert), "Unknown" without it. Pure.
  */
 function pwAlertTaxLines_(a) {
@@ -710,7 +710,7 @@ function pwTaxProducts_(raw) {
 
 /**
  * The listening tool's own classification of a flagged post (ProactiveWatch.gs: Sonar's products, smart tag, Sensitive
- * Topics and influencer lists; BMIE's product and KOF flag; a DSD KOF alert), in SLRR's taxonomy: {p: products, t: the
+ * Topics and influencer lists; Brandwatch's product and KOF tag; a DSD KOF alert), in SLRR's taxonomy: {p: products, t: the
  * exposure tag ('' when the tool's tag isn't one), s: Sensitive Topics, k: KOF (true | false | null: unknown), l: the
  * KOF lists}; null when it says nothing. Pure.
  */
@@ -735,7 +735,7 @@ function pwTaxOf_(raw) {
     const named = list(o.k).map(words).filter(Boolean);
     kof = named.length > 0;
     lists = named.join(', ');
-  } else if (words(o.kv)) {  // BMIE's KOF column ("Yes (Viral KOF)", "Yes (but not Viral KOF)", "No"), or a DSD KOF alert
+  } else if (words(o.kv)) {  // Brandwatch / DSD KOF tag ("Yes (Viral KOF)", "Yes (but not Viral KOF)", "KOF", "No")
     const k = otherKof_(words(o.kv));
     const kind = k.kof === true && !k.lists ? words(o.kv).match(/^yes\s*\((.+)\)$/i) : null;
     kof = k.kof;

@@ -87,23 +87,15 @@ Recorded on 2026-10-29 before writing service code.
 
 ## 6. BigQuery Mention Tables
 
-Checked live in `brand-social-central-data.social_alerts_dataset` (location `US`):
+Configured in `brand-social-central-data` (location `US`), aligned with the approved 6-table social data inventory:
 
-1. **`brand-social-central-data.social_alerts_dataset.brandwatch_mentions`:**
-   - **Freshness:** Stale/archived (`61,060` rows total, `0` rows in the last 7 days; `MAX(ingested_at) = 2026-03-21T07:03:20Z`).
-   - **Columns:** `mention_id`, `resource_id`, `url`, `title`, `snippet`, `full_text`, `domain`, `page_type`, `published_at`, `ingested_at`, `language`, `country_code`, `author`, `author_Clean`, `sentiment`, `emotion`, `reach`, `impressions`, `impact`, `engagement_total`, `raw` (JSON). Has no numeric `queryId` column.
-2. **`brand-social-central-data.social_alerts_dataset.all_sundar_mentions`:**
-   - **Freshness:** Live and fresh (~9 minutes lag; `8,042,400` rows total, `173,412` rows in the last 7 days, partitioned by `DAY(ingestionTimestamp)`, clustered by `(alert_source, url)`).
-   - **Column mapping:**
-     - Alert/stream identifier: `alert_source` (`STRING` alert name; no numeric Brandwatch `queryId` column — mapped via alert name and normalized URL).
-     - URL: `url` (`STRING`).
-     - Text: `snippet` (`STRING`, populated across X and Online News rows where Brandwatch API strips text).
-     - Author: `authorHandle` (`STRING`), plus `followers` (`STRING`) and `KOF` (`STRING`).
-     - Date: `postTime` (`TIMESTAMP`) and `ingestionTimestamp` (`TIMESTAMP`).
-     - Engagement: `engagementScore` (`FLOAT` / numeric) and `engagement` (`STRING` tier).
-     - Sentiment: `Sentiment` (`STRING`: `Positive`, `Neutral`, `Negative`).
-     - Network/Product: `SocialNetwork` (`STRING`), `product` (`STRING`).
-   - **Deep-dive usage:** `slrr-campaigns` queries `all_sundar_mentions` first by `alert_source` (matching the Brandwatch alert name) within `[startDate, endDate]` when rows land there, and also queries `all_sundar_mentions` by normalized URLs to hydrate full snippets and engagement scores for Brandwatch API mentions whose text was stripped (X, LinkedIn, Online News 256-char truncation).
+1. **`brand-social-central-data.DSD.DSD-story-selection` (`bigquery_dsd_table`):**
+   - **Freshness:** Live (~30-minute cadence, `US`).
+   - **Columns:** `ingestion_time`, `platform`, `alert_type`, `author`, `follower_count`, `url`, `snippet`, `post_time`, `query_id`, `query_name`, `project_id`, `total_engagements`, `engagement_score`, `likes`, `shares`, `comments`.
+2. **`brand-social-central-data.raw_data.brandwatch_raw_mentions_base` (`bigquery_brandwatch_table`):**
+   - **Freshness:** Daily partitioned batch (`report_date`, clustered by `product_config_name, mention_id`, `US`).
+   - **Columns:** `report_date`, `mention_id`, `product_config_name`, `query_id`, `platform`, `sentiment`, `language`, `engagement_score`, `load_timestamp`, `tags`, `snippet`, `published_timestamp`, `mention_text`, `post_url`, `author`, `reachEstimate`, `comment_count`, `reply_count`, `retweet_count`, `like_count`, `share_count`.
+   - **Deep-dive & hydration usage:** `slrr-campaigns` queries `DSD-story-selection` and `brandwatch_raw_mentions_base` (partition-pruned on `report_date`) by `query_id` / `query_name` / `product_config_name` within `[startDate, endDate]`, and hydrates stripped snippets and engagement counts by normalized URL.
 
 ## 7. GCP Region, Services, and IAM Permissions
 
@@ -142,7 +134,7 @@ Checked live in `brand-social-central-data.social_alerts_dataset` (location `US`
   - `slrr_campaigns/store.py` — Firestore Native (`slrr-social-alerts`) state store, distributed per-thread and per-campaign leases, created-message registry, cursors, registry snapshots, and client-wide Brandwatch rate-limit ledger.
   - `slrr_campaigns/brandwatch.py` — Queued, rate-limited Brandwatch Consumer Research API client (enforcing `<= 50%` of `x-rate-limit`, `429` window wait, 24h caching of queries/filters/metrics/exclusion snippets).
   - `slrr_campaigns/workspace.py` — User-OAuth clients for Google Chat (enforcing space/thread allowlist and `client-scmp-` own-message tracking), Gmail, Sheets, Drive, Docs, and People API directory resolution.
-  - `slrr_campaigns/bigquery_mentions.py` — BigQuery reader for `all_sundar_mentions` and `brandwatch_mentions` (deep-dive primary source and stripped-text/engagement hydration).
+  - `slrr_campaigns/bigquery_mentions.py` — BigQuery reader for `DSD.DSD-story-selection` and `raw_data.brandwatch_raw_mentions_base` (deep-dive primary source and stripped-text/engagement hydration).
   - `slrr_campaigns/email_parser.py` — Python port/extension of `v1 Chrome Alerts` Brandwatch HTML alert email parser, engagement tier/score resolver, KOF lookup, and URL deduplication (reusing `triage_agent.qa.record_key.normalize_url`).
   - `slrr_campaigns/gemini_flows.py` — Structured `gemini-3.8-flash` (`location="global"`) schemas and calls (reusing `triage_agent.llm.VertexGemini`) for conversation step parsing, semantic query ranking, boolean drafting + validation loop, mention summaries, and deep-dive synthesis.
   - `slrr_campaigns/deep_dive.py` — End-to-end Brandwatch + BigQuery deep-dive engine (strictly `<= 8` Brandwatch calls), Google Doc report writer, thread summary poster, and prefilled campaign offer.

@@ -256,25 +256,25 @@ after the other spaces:
   made (a script's temporary table is gone when the script ends). BigQuery reads one location a job, so a look is two
   jobs:
 
-  | Source | Location | What it adds | How fresh (measured Oct 31) |
+  | Source | Location | What it adds | How fresh |
   |---|---|---|---|
   | Sonar (`bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw`) | us-central1 | The posts Pendulum first saw since the last look (none it saw in the 24 hours before), posted within 24 hours, with a risk smart tag, from accounts with 1,000+ followers or 100+ engagements (~4,200 a day); plus what wasn't noticeable at first: posts that were small when first seen and grew past that floor later (~90 a day), and posts already checked that broke out (10x the engagements, 1,000+; ~165 a day), both posted within 72 hours. Breakouts first, then the biggest accounts, 150 a look at most | Current to the minute |
   | Tubular (`google_tubular_mentions.tubular_videos`) | us-central1 | Videos that mention Google (YouTube, Instagram, Facebook, TikTok), each run's new ones, posted within 72 hours (1,000+ followers, 100+ engagements or 10K+ views), 60 a look, the most viewed first | A run every few hours; it finds a video a median ~39 hours after it went up |
-  | Sprinklr outbound (`external_data_share.stg_sprinklr_outbound_media_assets_json_source`) | us-central1 | Google's own posts published since the last export (40 a look, the most engaged first), in case one touches a watch; read only when the export changed | A periodic bulk export (last Oct 29) |
-  | Brandwatch BMIE (`social_alerts_dataset.all_sundar_mentions`) | US | The BMIE alert queries' new mentions, not all positive, from 1,000+ follower accounts, none already checked that day: every one from the brand-safety and Google product queries (SLRR KOFs, All Sundar, Google Spikes, AI criticism, safety and accuracy, policy and elections, Googlers and execs, Chrome, Android, Search, Gemini; ~1,800 a day); from the other queries (regional, sports, culture, competitors, general AI news; ~3,900 a day) only those with a sign something is wrong: Brandwatch negative, a KOF author or risk words (~700 a day), plus a 5% sample of the rest, so the Watch sources tab and the sample's flags show what the filter misses; the rest are counted as not sent. 100 a look | Every few minutes, but most posts arrive about a day after they went up |
+  | Brandwatch mentions (`raw_data.brandwatch_raw_mentions_base`) | US | Brandwatch's mentions of Google's products (`Google Search`, `Google AI`, `Google Cloud`, `Gemini`, `Google Pixel`, `Google Glasses`, `Googlebook`) on Reddit, Bluesky, Facebook and Instagram that Brandwatch rates negative and tags with an SLRR exposure tag: English, no shares, 1,000+ reach or 100+ engagements, posted within 72 hours, each mention once, the biggest first, 60 a look (a bigger batch over the next looks) and 1,000 a day at most (X comes from Sonar; YouTube and TikTok from Tubular and Sonar) | Loaded in a nightly batch (1–6 days after posting); read when the table changes |
+  | Sprinklr owned posts (`reporting_data.sprinklr_outbound_reporting`) | US | Google's own posts in English from the last 72 hours whose comments turned negative (25+ negative comments, or 30%+ negative once there are 20+), on X, Reddit, Bluesky, Facebook, Instagram, YouTube and TikTok, 40 a look, the most negative first | Loaded once a day (~10 AM ET); read when the table changes |
   | Sprinklr comments (`reporting_data.sprinklr_inbound_comments`) | US | Comments on Google's own posts: a post whose negative comments reach 5 within an hour, or a negative comment from a 100K+ account | A median ~22 minutes after the comment |
-  | DSD story selection (`DSD.DSD-story-selection`) | US | Brandwatch's HIGH and KOF alert emails about Google, one row a post (the DSD desk's story pool, ~42 a day): posted within 72 hours, with text; no reach floor, since Brandwatch's alert already picked them and the feed's follower and engagement counts are empty (all zeros or 500/500/500/2000 go to Gemini as unknown). KOF first, 40 a look | Every ~30 minutes (measured Nov 1); a median ~2.4 hours after posting |
+  | DSD story selection (`DSD.DSD-story-selection`) | US | Brandwatch's HIGH and KOF alert emails about Google, one row a post (the DSD desk's story pool, ~42 a day): posted within 72 hours, with text; no reach floor, since Brandwatch's alert already picked them. KOF first, 40 a look | Every ~30 minutes; a median ~2.4 hours after posting |
   | Other alerts space (the Alert log) | US (a query parameter) | The Brandwatch alerts (and other tools' alerts) posted in the Other alerts space (B33, e.g. Midterms 2026), as the bot read them | As they're posted |
-  | Brandwatch: 2026 Election Alerts (Brandwatch's API: project 1998344909, query 2004167929) | US (a query parameter) | What Brandwatch added to the query since the last look (an hour back on a first look, 6 hours at most), posted within 72 hours, the newest added first (100 a page, 3 pages a look at most). Read with the shared token slrr-campaigns keeps in Secret Manager (`slrr-campaigns-bw-token`, read each look; never kept, logged or written). Brandwatch's API gives X posts without their text, author or link (X's licensing; about half of this query), so the bot reads those from X's public embed data, the same the bot already uses for alert posts (60 a look, the biggest accounts first, in one round trip); an X post X won't show is counted as not sent. Followers: Brandwatch's potential audience on X, Bluesky and the other social networks; unknown for news, Reddit, forums and blogs. 100 a look | Usually minutes after posting (an X post seen 2 minutes after it went up on Nov 1). Editing the query makes Brandwatch add its matches again: the next look takes the newest 300 |
+  | Brandwatch: 2026 Election Alerts (Brandwatch's API: project 1998344909, query 2004167929) | US (a query parameter) | What Brandwatch added to the query since the last look (an hour back on a first look, 6 hours at most), posted within 72 hours, the newest added first (100 a page, 3 pages a look at most). Read with the shared token slrr-campaigns keeps in Secret Manager (`slrr-campaigns-bw-token`, read each look; never kept, logged or written). Brandwatch's API gives X posts without their text, author or link (X's licensing; about half of this query), so the bot reads those from X's public embed data (60 a look, the biggest accounts first); an X post X won't show is counted as not sent. 100 a look | Usually minutes after posting |
 
-  Dropped Nov 1 as stale (no new rows): the daily Brandwatch export (`DSD.brandwatch_daily`, nothing since Sep 20), the
-  DSD content vectors (`DSD.content_vectors`, since Sep 24) and Reddit Pulse (`reddit_pulse.reddit_items_raw`, since
-  Oct 25). A Watch sources tab made before then loses their rows at its next update.
+  Dropped Nov 1 as stale (no new rows): the daily Brandwatch export, DSD content vectors and Reddit Pulse. Dropped Nov 11
+  (not on the approved table list): BMIE alert mentions and Sprinklr's older outbound media export. A Watch sources tab
+  made before then loses their rows at its next update.
 
   Each source keeps its own place: Sonar and the comments go by the look's window; the others start after the newest
-  item they last handed over (on a first look: 15 minutes back for BMIE, an hour for the Other alerts space and the
-  Brandwatch query, 2 hours for DSD story selection, 24 to 72 hours for the batch feeds), so a feed that stops and
-  starts again counts again at once.
+  item they last handed over (on a first look: an hour for the Other alerts space and the Brandwatch query, 2 hours for
+  DSD story selection and Brandwatch mentions, 24 to 30 hours for Tubular and Sprinklr owned posts), so a feed that
+  stops and starts again counts again at once.
   Each source runs in a block of its own: one that fails is noted and the others carry on.
 - **Gemini, inside BigQuery.** For each watch ON on the **Watches** tab (up to 5), `AI.IF` answers the watch's yes/no
   question for each post (the same post from two sources once, the first to hand it over); for the posts that match,
@@ -290,7 +290,7 @@ after the other spaces:
   (within 2 of it, to tune the bar), goes on the **Watch detections** tab once a watch: when its source had it (never
   before the look's window: a late feed can't claim a lead it couldn't have had), the watch, the score, the topic, the
   post, its **source** (and why it was asked about when that isn't the usual: `Sonar · grew`, `Sonar · broke out`,
-  `Brandwatch (BMIE) · negative`, `· KOF author`, `· risk words`, `· sample`), network, author, followers and engagements, the source's issue or query (Pendulum's issue name,
+  `Brandwatch mentions · negative`, `Sprinklr owned posts · negative comments`), network, author, followers and engagements, the source's issue or query (Pendulum's issue name,
   the Brandwatch query, the subreddit...) and whether it's a new issue, its summary, and a **Rating** column for you
   (Useful or Noise). With **Watch alerts** (row 35) OFF, as it starts, nothing is posted in any space or emailed; nothing
   is ever written to BigQuery.
@@ -302,8 +302,7 @@ after the other spaces:
 - **The Watch sources tab**: one row a source: what it adds, the table it reads, its status (live; stale when its table
   hasn't changed for longer than it usually goes; an error at its last look), when its table last changed (read free
   from the dataset's `__TABLES__`), the newest item it handed over, what was new and what Gemini checked at the last
-  look and why (for example `new 27, grew 3, broke out 2`, or BMIE's `brand-safety query 21, negative 2, KOF author 2,
-  risk words 1, sample 2, not sent 94`), and today's checked and flagged.
+  look and why (for example `new 27, grew 3, broke out 2`), and today's checked and flagged.
 
 The **Watches** tab starts with two watches, both `OFF`: **Midterms 2026 × Google** (posts tying Search, AI Overviews,
 Gemini, YouTube, Android, Waymo, Google ads or Google's executives to the 2026 midterms: election info, political ads,
@@ -448,7 +447,7 @@ or not.
 | 12 | Auto-submit T&S form | The pre-filled T&S form link, for a person to submit | The bot submits the form itself (the test copy while Testing; the real form when LIVE), and the urgent email when it's urgent |
 | 13 | KB & Guidance can start alerts | The Resources documents and the Guidance tab can only stop an alert or correct it | They can also start a Social Alert the rules wouldn't, when Gemini quotes a Guidance row or a document and the quote checks out |
 | 14 | Auto-find missing links | A missing link or author is asked of Burson | Looked up in the listening feeds (BigQuery) first |
-| 15 | Direct BigQuery alerts | Only the alerts posted in Chat are reviewed | Sprinklr, BMIE and BSIP posts are taken straight from BigQuery too (test feed and Mirror only) |
+| 15 | Direct BigQuery alerts | Only the alerts posted in Chat are reviewed | Sprinklr, DSD / Brandwatch and Sonar posts are taken straight from BigQuery too (test feed and Mirror only) |
 | 16 | Write back to SLRR BigQuery | Nothing is written to BigQuery: Burson and shared dashboards can't see the bot at work | When LIVE, finished alerts and sends are written to the shared SLRR tables, marked as the bot's (in Testing, writes only to `TEST` or skips shared tables) |
 | 17 | Learn from IM calls | No learning | The IMs' different calls go on a Learned precedents tab, and Gemini sees the similar ones |
 | 18 | Watch sent alerts (24h) | The bot stops once the Social Alert is sent | For a day it re-checks the post and replies on the email thread on a surge, a deletion or press pickup |
@@ -558,7 +557,7 @@ started today.
 
 - **OFF** (the default): an alert without its link or author is asked of Burson, as always.
 - **ON**: before asking, the bot looks the post up in the listening feeds: one read-only BigQuery query (`us-central1`)
-  over Pendulum's posts from the last 48 hours and BSIP's SLRR log (same issue name). It takes a link only when one
+  over Pendulum's posts (`sonar_raw`) from the last 48 hours and a small `US` check of the SLRR log (`slrr_alerts`, same issue name). It takes a link only when one
   post clearly matches: same network, never another author, posted within a day of the alert's time, a similar
   engagement count, and no second post close to it. When the alert names its author, a post the feeds have no author
   for isn't enough on its own. A post the bot already alerted in the last 14 days is never taken (it may be the same
@@ -583,11 +582,11 @@ started today.
 - **ON**: at most every 5 minutes, before reviewing the Burson space, the bot reads new posts straight from BigQuery
   (read-only) and posts each one it hasn't seen, as a Zapier-format alert, in the space it reads as Burson's, so it
   reviews and actions it like any alert (at most 2 a check, `BQ_POLL_MAX_PER_RUN_`): **Sprinklr** owned posts with 30+
-  comments and 30%+ negativity, and **BMIE** negative earned posts (MODERATE, HIGH or a KOF), each its own US query,
-  so one that fails doesn't stop the other; **BSIP**: posts Pendulum tagged and saw in the last hour, posted at most 48
-  hours ago, with 500+ engagements, the most engaged first (placeholder numbers, until the SLRR leads set them:
-  `BQ_BSIP_MIN_ENGAGEMENTS_` and `BQ_BSIP_MAX_AGE_H_` in BigQuery.gs), a `us-central1` query plus a small US check of
-  the SLRR alert log (for the Sprinklr and BMIE posts too). A post is never posted twice: not if the bot already has it,
+  comments and 30%+ negativity, and **DSD story selection / Brandwatch mentions** (`DSD.DSD-story-selection` HIGH/KOF
+  plus `raw_data.brandwatch_raw_mentions_base` negative/KOF earned posts), each its own US query,
+  so one that fails doesn't stop the other; **BSIP** (`sonar_raw` + `tubular_videos`): posts Pendulum tagged and saw in the lookback window, posted at most 48
+  hours ago, with 500+ engagements or KOF, the most engaged first (`BQ_BSIP_MIN_ENGAGEMENTS_` and `BQ_BSIP_MAX_AGE_H_` in BigQuery.gs), a `us-central1` query plus a small US check of
+  the SLRR alert log. A post is never posted twice: not if the bot already has it,
   took it before, the SLRR alert log has it from the last 7 days (under any link to it), or Burson's alert of it is
   already in the space waiting to be reviewed. The alert gives the post's time in UTC (`2026-10-14 11:40 UTC`), as
   BigQuery has it.
@@ -600,8 +599,8 @@ started today.
   live one, a space people outside Google can join, or in a dry run, so nothing new ever reaches Burson. "Into the
   analyst/test space" therefore means the test feed or the Mirror training space: the bot reviews only the space it
   reads as Burson's, and from there analysts get the alert as usual.
-- **Results tab**: these alerts weren't Burson's, so they're left out (their Alert log rows say `Sprinklr`, `BMIE` or
-  `BSIP` in the `ingested` column). When Burson then alerts the same post and the bot ❌s it as already alerted, the
+- **Results tab**: these alerts weren't Burson's, so they're left out (their Alert log rows carry `Sprinklr`, `BMIE`
+  [legacy code for DSD / Brandwatch] or `BSIP` in the `ingested` column). When Burson then alerts the same post and the bot ❌s it as already alerted, the
   bot's call on Burson's alert is the Social Alert it sent from BigQuery (its email time, 0 minutes when it went out
   before Burson posted, and its reason). Column C shows `last check … · N posts today`.
 - **Sandbox**: emails, DMs and forms for these alerts follow the same stand-in rules as any alert. Nothing is written to
@@ -681,17 +680,14 @@ it's watching, the last check and today's updates (the main run's, not the auto-
 
 #### Row 19: Early wave & velocity check
 
-- **OFF** (the default): no early-detection read, review or card. (The older BigQuery pipeline in
-  `analytics/early_detection/` is a separate scheduled query that the bot no longer reads; its README says how to turn
-  it off.)
+- **OFF** (the default): no early-detection read, review or card.
 - **ON**: open-world early detection over low-tier posts. The bot builds the signals itself (`EarlyWaveSource.gs`): it
   clusters small accounts' posts by meaning and spots fast-rising topics without knowing the topic in advance. After
   each run's alerts, at most every 15 minutes, it reads what is new in the approved source tables, read-only, with one
   BigQuery job per location (`US` and `us-central1`): Sonar's posts and Sprinklr's comments in real time; Brandwatch
   and Tubular later, only to join a story that already exists. It embeds the posts it hasn't seen (Vertex AI
   `text-embedding-005`), clusters them and checks their velocity in Apps Script, and **queues** the new signals (script
-  properties). Nothing is posted at that point, nothing is written to BigQuery, and nothing is read from the
-  `early_detection` dataset or its view `vw_chatbot_pending_early_alerts`.
+  properties). Nothing is posted at that point and nothing is written to BigQuery.
 - **Review, then one card**: every run (after the alerts, never while they catch up, within the API guard's background
   budget) the bot reviews up to 2 queued signals. Each gets ONE Gemini review with the web search on, the knowledge base
   documents (Resources tab), the guidance rules, the playbook, earlier alerts and known issues, and a still of the main
@@ -1158,12 +1154,12 @@ Facebook show posts only to people signed in (Burson can't open them either: its
 available" for them), so there, and when Instagram refuses, the review checks Burson's write-up against **the post as
 the listening feeds captured it**, the same text Burson writes from:
 - Pendulum's pieces of the post's text: the caption, text read off its images and video frames, a transcript, a machine
-  description of the image, plus Pendulum's own summary and issue name (`sonar_post_aggregates_7d_materialized`);
-- the post's text as Burson's collection stored it (`collection_alerts`), when Pendulum's table no longer has it;
-- Brandwatch's snippet of the post, from Google's Brandwatch alert table (`social_alerts_dataset.all_sundar_mentions`).
+  description of the image, plus Pendulum's own summary and issue name (`bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw`);
+- Brandwatch's snippet of the post, from the DSD story selection feed (`DSD.DSD-story-selection`) and Brandwatch raw
+  mentions (`raw_data.brandwatch_raw_mentions_base`).
 
 Gemini gets this for any post the feeds have, on any network; where the bot has the post's own data, that wins. It's
-all read from BigQuery: the bot never calls the Brandwatch API, so none of it counts against Brandwatch's mention
+all read from BigQuery: the bot never calls the Brandwatch API on alert reviews, so none of it counts against Brandwatch's mention
 allowance. The run log notes what the review had, for example `feed text: Pendulum: description, ocr · Brandwatch`.
 
 **Video and audio.** Gemini watches and listens to the whole video, start to finish (every second, sampled at one
@@ -1252,7 +1248,7 @@ The switches on the Control tab need no YAML and no rebuild; their thresholds ar
 | `OtherSpace.gs` | The Other alerts space (B33): a Google-only space with other alerts, worked directly every minute beside the Mirror space, always Testing, never connected to S-F Burson |
 | `WatchAlerts.gs` | Watch alerts (row 35, OFF to start): the Proactive watch's flags at a watch's bar posted as the bot's own "🔭 Watch alert" text messages in the Other alerts space (B33), the Mirror space (B9) or the Auto-correct space (B10), a few a run, each once; the space's flow works them like any alert (❌ for a repeat, else a Social Alert). Never in S-F Burson, the Burson test copy or a space people outside Google can join |
 | `TempCheck.gs` | Temp checks (row 36, OFF to start): "temp check <Brandwatch query>" in a thread of the Mirror space or B33, queued by its flow (never relayed to S-F Burson) and worked after the run's alerts: the query found by name, link or id in [SLRR] Private, counts by hour, sentiment, sources and mention types from Brandwatch's totals (GETs only), at most 35 posts (reposts excluded; X's words from X's embed data), Gemini's summary, drivers and themes, and the team's write-up in PT posted in the request's thread; "refresh" for the update; Brandwatch busy: waits up to 30 minutes |
-| `ProactiveWatch.gs` | Proactive watch (row 34): a watch over every source's new rows, read-only in BigQuery (two jobs, us-central1 and US: Sonar, Tubular, Sprinklr outbound and comments, Brandwatch BMIE, the DSD story selection feed, the Other alerts space's alerts from the Alert log, and the Brandwatch query "2026 Election Alerts" from Brandwatch's API, its X posts' text from X's embed data), Gemini's AI.IF, AI.SCORE and AI.CLASSIFY run inside BigQuery for each watch on the Watches tab, what they'd flag on the Watch detections tab, its scorecard against Burson's alerts, and the Watch sources tab; posts nothing itself (Watch alerts, row 35, post its flags only where B35 says) |
+| `ProactiveWatch.gs` | Proactive watch (row 34): a watch over every source's new rows, read-only in BigQuery (two jobs, us-central1 and US: Sonar, Tubular, Brandwatch raw mentions, Sprinklr owned posts and comments, the DSD story selection feed, the Other alerts space's alerts from the Alert log, and the Brandwatch query "2026 Election Alerts" from Brandwatch's API, its X posts' text from X's embed data), Gemini's AI.IF, AI.SCORE and AI.CLASSIFY run inside BigQuery for each watch on the Watches tab, what they'd flag on the Watch detections tab, its scorecard against Burson's alerts, and the Watch sources tab; posts nothing itself (Watch alerts, row 35, post its flags only where B35 says) |
 | `Alert.gs` | Parses Burson's alerts and rebuilds the corrected copy in Burson's exact format |
 | `OtherAlerts.gs` | Alerts in other formats (in the Other alerts space, B33; in B25 with row 32 ON; or the Mirror space): spots them, triages each with Gemini (the SLRR rules first, then the stream's own call), and posts the triage note, the Social Alert, 👍 or ❌ |
 | `Review.gs` | The rule checks plus Gemini's judgment |

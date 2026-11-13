@@ -104,8 +104,8 @@ module.exports = function (H) {
     t.g.services.UrlFetchApp.fetch = (url, params) => {
       if (url.includes('bigquery.googleapis.com/')) {
         const sql = String((params && params.payload) || '');
-        if (/sprinklr_candidates|bmie_candidates|sonar_post_aggregates/.test(sql) && !/enrichAlert|sonar_snippets_json/.test(sql)) {
-          if (/track_min/.test(sql)) bqWaveQueries++;
+        if (/sprinklr_candidates|bmie_candidates|sonar_candidates|-- ews:/.test(sql) && !/enrichAlert|sonar_snippets_json/.test(sql)) {
+          if (/-- ews:/.test(sql)) bqWaveQueries++;
           else bqDirectQueries++;
         }
         const empty = { jobComplete: true, schema: { fields: [] }, rows: [] };

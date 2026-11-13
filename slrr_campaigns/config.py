@@ -39,7 +39,7 @@ class CampaignsConfig(BaseModel):
     drive_folder_id: str
     registry_spreadsheet_id: str
     kof_spreadsheet_id: str = Field(min_length=1)
-    bigquery_sundar_table: str = Field(min_length=1)
+    bigquery_dsd_table: str = Field(min_length=1)
     bigquery_brandwatch_table: str = Field(min_length=1)
     brandwatch_project_ids: list[int] = Field(min_length=1)
     secrets: SecretNamesConfig

@@ -119,7 +119,7 @@ const CONTROL_HELP_ = [
   '• Auto-find missing links: when an alert has no link or author, the bot looks for the post in BigQuery (SLRR and ' +
     'Sonar, the last 48 hours) before asking Burson (with Never wait on Burson ON: found or not, the alert is processed ' +
     'right away, and Burson is told when it isn\'t found).',
-  '• Direct BigQuery alerts: the bot also reviews qualifying Sprinklr, BMIE and BSIP posts straight from BigQuery, ' +
+  '• Direct BigQuery alerts: the bot also reviews qualifying Sprinklr, DSD / Brandwatch and Sonar posts straight from BigQuery, ' +
     'never one it has already seen (in a test feed or the Mirror space only, never the live Burson space).',
   '• Write back to SLRR BigQuery: finalized alerts and sends are written to the shared SLRR BigQuery tables, where ' +
     'other teams and dashboards see them. Keep it OFF while testing.',
@@ -136,9 +136,9 @@ const CONTROL_HELP_ = [
     'card in the Mirror space or test feed (never S-F Burson), so the bot reviews it, marks its emojis, and drafts a ' +
     'Social Alert, Temp Check query, or T&S intake behind human review when warranted.',
   '• BigQuery lookback (B31): how far back Direct BigQuery alerts and Early detection look: 15, 30, 45 or 60 minutes ' +
-    '(blank: 60; never more than an hour). Sprinklr and BMIE posts count only if they went live in that time; BSIP ' +
-    'posts count if Pendulum saw them in that time and they went live in the last 48 hours. Brandwatch (BMIE) takes in ' +
-    'most posts hours late and Sprinklr\'s comments arrive about 30 minutes late, so a shorter lookback means fewer ' +
+    '(blank: 60; never more than an hour). Sprinklr posts count only if they went live in that time; DSD story selection, ' +
+    'Brandwatch mentions and Sonar posts count if the feed took them in in that time and they went live in the last 48 to 72 hours. ' +
+    'Brandwatch and DSD take in most posts hours late and Sprinklr\'s comments arrive about 30 minutes late, so a shorter lookback means fewer ' +
     'Direct BigQuery alerts. C31 shows what the bot is using.',
   '• Check outage & comms docs: for an outage or a widespread bug, Gemini checks whether it is confirmed and adds any ' +
     'approved holding statement from the Resources documents to the analyst note and the Social Alert email.',
@@ -208,11 +208,11 @@ const CONTROL_HELP_ = [
   '• Proactive watch: row 34, spotting issues before Burson does. Every 5 minutes the bot reads, ' +
     'read-only in BigQuery, what is new since its last look in each source: the posts Pendulum (Sonar) first saw ' +
     '(accounts with 1,000+ followers or posts with 100+ engagements, risk tags only) and the ones that grew past that ' +
-    'later or broke out, Brandwatch\'s BMIE mentions (every one from the brand-safety and product queries; from the ' +
-    'others, those with a sign of trouble plus a sample), comments piling up on Google\'s own posts (Sprinklr), ' +
-    'Google\'s own posts, Tubular\'s videos, the DSD story selection feed (Brandwatch\'s HIGH and KOF alerts), the ' +
-    'alerts the bot read in the Other alerts space (B33) and the Brandwatch query "2026 Election Alerts" (straight from ' +
-    'Brandwatch, usually minutes after posting). Gemini answers each ' +
+    'later or broke out, Brandwatch\'s negative mentions of Google\'s products on Reddit, Bluesky, Facebook and Instagram ' +
+    'tagged with an SLRR exposure tag, Google\'s own posts whose comments turned negative (Sprinklr), comments piling up ' +
+    'on Google\'s own posts (Sprinklr), Tubular\'s videos, the DSD story selection feed (Brandwatch\'s HIGH and KOF ' +
+    'alerts), the alerts the bot read in the Other alerts space (B33) and the Brandwatch query "2026 Election Alerts" ' +
+    '(straight from Brandwatch\'s API, usually minutes after posting). Gemini answers each ' +
     'watch ON on the Watches tab: does the post match its question, how likely is it to become an issue in the next 6 ' +
     'hours (1-10), and what is it about. What scores at a watch\'s bar (and the near misses) goes on the Watch ' +
     'detections tab, with its source and a Rating column for you; the scorecard at its top compares it with Burson\'s ' +
@@ -378,7 +378,7 @@ const CONTROL_SWITCHES_ = [
       : '✓ ON: looks in BigQuery (SLRR, Sonar) for a missing link or author before asking Burson') },
   { key: 'directBq', label: 'Direct BigQuery alerts',
     off: 'OFF (reviews the alerts posted in Chat only)',
-    on: () => '✓ ON: also reviews Sprinklr, BMIE and BSIP posts straight from BigQuery (each post once)' },
+    on: () => '✓ ON: also reviews Sprinklr, DSD / Brandwatch and Sonar posts straight from BigQuery (each post once)' },
   { key: 'writeBackBq', label: 'Write back to SLRR BigQuery',
     off: 'OFF (writes only to this sheet: nothing goes to the shared SLRR BigQuery tables)',
     on: () => '✓ ON: finalized alerts and sends are written to the shared SLRR BigQuery tables' },

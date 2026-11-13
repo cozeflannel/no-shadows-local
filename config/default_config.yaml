@@ -111,7 +111,7 @@ sonar_lookup:   # ground truth from Sonar data in bsip-s-bsip-gg-26-2cf3.google_
   enabled: true
   project: brand-social-central-data
   table: bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw
-  alert_log_table: brand-social-central-data.slrr_alerts.slrr_alerts
+  alert_log_table: ""
   slrr_table: brand-social-central-data.slrr_alerts.slrr_alerts
   location: us-central1
   lookback_days: 7

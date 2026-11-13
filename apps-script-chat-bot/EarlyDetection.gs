@@ -2,11 +2,11 @@
  * EarlyDetection.gs — Open-world early-detection review & output drafting for unknown build-ups (Control row 19).
  *
  * Unlike ProactiveWatch.gs / WatchAlerts.gs / OtherAlerts.gs (which monitor pre-defined targeted campaign topics or
- * time-bound watches), EarlyDetection.gs pairs with BigQuery's topic-agnostic low-tier semantic clustering (Capability 1)
- * and multi-grain velocity acceleration (Capability 2) in `brand-social-central-data.early_detection`.
+ * time-bound watches), EarlyDetection.gs pairs with EarlyWaveSource.gs's topic-agnostic low-tier semantic clustering
+ * (Capability 1) and multi-grain velocity acceleration (Capability 2) over the 6 approved BigQuery social tables.
  *
- * Flow (the bot reads each signal straight from BigQuery; nothing lands in any space before its review is done):
- *   1. `earlyWaveCheck_` (BigQuery.gs, at most every 15m when Row 19 is ON) reads `vw_chatbot_pending_early_alerts` and
+ * Flow (the bot produces and reads each signal itself; nothing lands in any space before its review is done):
+ *   1. `earlyWaveCheck_` (BigQuery.gs, at most every 15m when Row 19 is ON) calls `ewsRows_` (`EarlyWaveSource.gs`) and
  *      queues up to EW_MAX_PER_CHECK_ new signals (EW_MAX_PER_DAY_ a day) in script properties.
  *   2. `edDrainQueue_` (every run after the alerts, never while they catch up, within ApiGuard's background budget, at
  *      most EW_DRAIN_MAX_PER_RUN_ a run) reviews the top signal: `edPrepare_` (primary post, BigQuery ground truth,
@@ -26,10 +26,10 @@
  *          a card in the space and its review); its reason is logged and Control C19 counts it.
  *   3. A raw `🚨 *Early Detection Alert: …* 🚨` card posted before the queue existed is still reviewed when Bot.gs meets
  *      it (`edAlertOf_` -> `handleEarlyDetection_`: the same prepare / review / act steps, the note in its thread).
- *   Same-story dedup (one story, one card, unless it materially grew): BigQuery holds back a cluster within
- *   story_dedup_max_cosine_distance of one alerted in the last 24h; the queue (earlyWaveCheck_) and the review
+ *   Same-story dedup (one story, one card, unless it materially grew): EarlyWaveSource.gs holds back a cluster within
+ *   EWS_STORY_SIM_ of one alerted in the last 24h; the queue (earlyWaveCheck_) and the review
  *   (edDrainQueue_) hold back a signal whose story already has a card from the last 24h (`edStoryVerdict_`: same cluster,
- *   the alert BigQuery says it updates, or 2+ of the same posts) unless it reached 2x the accounts and 3 more, or a new
+ *   the alert the producer says it updates, or 2+ of the same posts) unless it reached 2x the accounts and 3 more, or a new
  *   platform: then its card goes in the earlier card's thread as `📈 *Early Detection Update: …*` with what's new. A
  *   review that finds an issue already alerted with nothing new posts no card, nor does any other dismissal (filtered
  *   out): Control C19 counts the repeats held back and the dismissals filtered out.

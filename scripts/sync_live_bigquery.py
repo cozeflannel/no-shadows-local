@@ -62,8 +62,8 @@ def fetch_latest_slrr_alerts(client_us: bigquery.Client, limit: int = 6) -> list
       product, overview, original_post, engagement_level, engagements_actual, shares_rts,
       comments, likes, url, identifier_analyst, viral_kof, social_network, social_alert, ts_action
     FROM `brand-social-central-data.slrr_alerts.slrr_alerts`
-    WHERE date_added LIKE '2026-10-%'
-    ORDER BY date_added DESC, sheet_row_number DESC
+    WHERE ingestion_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)
+    ORDER BY ingestion_timestamp DESC, sheet_row_number DESC
     LIMIT @n
     """
     job = client_us.query(
@@ -76,15 +76,32 @@ def fetch_latest_slrr_alerts(client_us: bigquery.Client, limit: int = 6) -> list
     return [dict(r.items()) for r in job.result()]
 
 
-def fetch_latest_sonar_aggregates(client_central: bigquery.Client, limit: int = 5) -> list[dict[str, Any]]:
+def fetch_latest_sonar_raw(client_central: bigquery.Client, limit: int = 5) -> list[dict[str, Any]]:
     sql = """
     SELECT
-      post_id, post_url, post_timestamp, platform, language, author, followers,
-      summary, issue_name, relevance_score, criticality, likes, comments, shares, views,
-      smart_alert_names, smart_tags, aggregated_content, first_received_at, last_received_at
-    FROM `bsip-s-bsip-gg-26-2cf3.google_bg.sonar_post_aggregates_7d_materialized`
-    WHERE summary IS NOT NULL AND summary != ''
-      AND ARRAY_LENGTH(smart_tags) > 0
+      ANY_VALUE(post_id) AS post_id,
+      post_url,
+      ARRAY_AGG(post_timestamp IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS post_timestamp,
+      ARRAY_AGG(platform IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS platform,
+      ARRAY_AGG(language IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS language,
+      ARRAY_AGG(JSON_VALUE(payload, "$.detail.channel.username") IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS author,
+      MAX(follower_count) AS followers,
+      ARRAY_AGG(JSON_VALUE(payload, "$.detail.classification.summary") IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS summary,
+      ARRAY_AGG(JSON_VALUE(payload, "$.detail.classification.issue_name") IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS issue_name,
+      ARRAY_AGG(alert_criticality IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS criticality,
+      MAX(engagement_likes) AS likes,
+      MAX(engagement_comments) AS comments,
+      MAX(engagement_shares) AS shares,
+      ARRAY_AGG(DISTINCT smart_tag IGNORE NULLS LIMIT 8) AS smart_tags,
+      ARRAY_AGG(JSON_VALUE(payload, "$.detail.post.snippet.text") IGNORE NULLS ORDER BY received_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS aggregated_content,
+      MIN(received_at) AS first_received_at,
+      MAX(received_at) AS last_received_at
+    FROM `bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw`
+    WHERE received_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+      AND post_url IS NOT NULL
+      AND smart_tag IS NOT NULL AND TRIM(smart_tag) != ''
+    GROUP BY post_url
+    HAVING summary IS NOT NULL AND summary != ''
     ORDER BY last_received_at DESC
     LIMIT @n
     """
@@ -202,10 +219,10 @@ def sync_live(db_path: str = ".local/live.db", reset: bool = False) -> dict[str,
                 f"track={c_obj.track if c_obj else None} status={c_obj.status.value if c_obj else None}"
             )
 
-    # 2. Pull today's real alerts from brand-social-central-data.slrr_alerts.slrr_alerts (US)
+    # 2. Pull recent real alerts from brand-social-central-data.slrr_alerts.slrr_alerts (US)
     slrr_rows = fetch_latest_slrr_alerts(sonar.client_us, limit=6)
     print(
-        f"\nFetched {len(slrr_rows)} live rows from brand-social-central-data.slrr_alerts.slrr_alerts (Oct 2026)"
+        f"\nFetched {len(slrr_rows)} live rows from brand-social-central-data.slrr_alerts.slrr_alerts (last 14d)"
     )
     for row in slrr_rows:
         parsed = row_to_parsed(ctx, row)
@@ -255,13 +272,13 @@ def sync_live(db_path: str = ".local/live.db", reset: bool = False) -> dict[str,
             )
 
     # 3. Pull real in-house rows from brand-social-central-data.slrr_alerts.slrr_source_mirror (US)
-    #    and bsip-s-bsip-gg-26-2cf3.google_bg.sonar_post_aggregates_7d_materialized (us-central1)
+    #    and bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw (us-central1)
     mirror_rows = fetch_latest_slrr_source_mirror(sonar.client_us, limit=4)
-    sonar_rows = fetch_latest_sonar_aggregates(sonar.client, limit=4)
+    sonar_rows = fetch_latest_sonar_raw(sonar.client, limit=4)
     inhouse_rows = mirror_rows + sonar_rows
     print(
         f"\nFetched {len(mirror_rows)} rows from slrr_source_mirror + {len(sonar_rows)} rows from "
-        f"google_bg.sonar_post_aggregates_7d_materialized"
+        f"google_bg.sonar_raw"
     )
     ih_resp = handle(
         {

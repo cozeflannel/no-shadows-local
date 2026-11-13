@@ -74,7 +74,7 @@ FORBIDDEN_SPACE="$(cfg_get forbidden_burson_space)"
 DRIVE_FOLDER_ID="$(cfg_get drive_folder_id)"
 REGISTRY_SHEET_ID="$(cfg_get registry_spreadsheet_id)"
 KOF_SHEET_ID="$(cfg_get kof_spreadsheet_id)"
-BQ_SUNDAR_TABLE="$(cfg_get bigquery_sundar_table)"
+BQ_DSD_TABLE="$(cfg_get bigquery_dsd_table)"
 BQ_BW_TABLE="$(cfg_get bigquery_brandwatch_table)"
 BW_PROJECT_IDS="$(cfg_get brandwatch_project_ids)"
 SECRET_OAUTH_CLIENT="$(cfg_get secrets.oauth_client_json)"
@@ -235,9 +235,9 @@ bq_table_resource() {
   tbl="$(cut -d. -f3 <<<"${dotted}")"
   echo "projects/${proj}/datasets/${ds}/tables/${tbl}"
 }
-BQ_SUNDAR_RES="$(bq_table_resource "${BQ_SUNDAR_TABLE}")"
+BQ_DSD_RES="$(bq_table_resource "${BQ_DSD_TABLE}")"
 BQ_BW_RES="$(bq_table_resource "${BQ_BW_TABLE}")"
-BQ_COND_EXPR="resource.service == \"bigquery.googleapis.com\" && (resource.name == \"${BQ_SUNDAR_RES}\" || resource.name == \"${BQ_BW_RES}\")"
+BQ_COND_EXPR="resource.service == \"bigquery.googleapis.com\" && (resource.name == \"${BQ_DSD_RES}\" || resource.name == \"${BQ_BW_RES}\")"
 ensure_project_binding "serviceAccount:${RUNTIME_SA}" "roles/bigquery.dataViewer" "slrr-campaigns-mention-tables" "${BQ_COND_EXPR}"
 
 SCHED_AGENT="service-${PROJECT_NUM}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
@@ -676,7 +676,7 @@ rows = [
     ("Vertex AI Gemini 3.8 Flash", "PASS", str(preflight["gemini_preflight_boolean"])),
     ("Gmail Partition Disjoint", "PASS", str(preflight["mailbox_email"])),
     ("People API User Lookup", "PASS", str(preflight["setup_user_id"])),
-    ("BigQuery Mention Tables", "PASS", f"sundar_7d={preflight['bigquery_sundar_7d']} bw_total={preflight['bigquery_brandwatch_total']}"),
+    ("BigQuery Mention Tables", "PASS", f"dsd_7d={preflight['bigquery_dsd_7d']} bw_7d={preflight['bigquery_brandwatch_7d']}"),
 ]
 
 print("\n================ SLRR CAMPAIGNS SETUP & PREFLIGHT SUMMARY ================")

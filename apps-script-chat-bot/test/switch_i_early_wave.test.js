@@ -331,7 +331,7 @@ module.exports = H => {
     }));
     const calls = fakeBq(t.g, c => {
       if (!isEdQuery(c)) return null;
-      if (mode === 'not_found') return { code: 404, body: { error: { message: 'Not found: Table brand-social-central-data:early_detection.vw_chatbot_pending_early_alerts' } } };
+      if (mode === 'not_found') return { code: 404, body: { error: { message: 'Not found: Table brand-social-central-data:DSD.DSD-story-selection' } } };
       if (mode === 'timeout') return { timeout: true };
       return { cols: COLS, rows: manyRows };
     });
@@ -339,7 +339,7 @@ module.exports = H => {
     t.poll();
     eq(edQueries(calls).length, 1);
     eq([edQueries(calls)[0].location, edQueries(calls)[0].params], ['US', { minutes: '30', max_rows: '25' }]);
-    assert.match(note(t), /early_detection view not provisioned yet; it tries again at the next check/);
+    assert.match(note(t), /a BigQuery source table was not found; it tries again at the next check/);
     eq(lastRun(t).errors, []);
 
     // Within 15 minutes: throttled (no second query)

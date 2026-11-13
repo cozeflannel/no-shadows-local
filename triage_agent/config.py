@@ -605,21 +605,21 @@ class SonarLookup(ConfigModel):
 
     enabled: bool = True
     project: str = "brand-social-central-data"
-    table: str = "bsip-s-bsip-gg-26-2cf3.google_bg.sonar_post_aggregates_7d_materialized"
-    alert_log_table: str = "bsip-s-bsip-gg-26-2cf3.google_bg.collection_alerts"
+    table: str = "bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw"
+    alert_log_table: str = ""
     slrr_table: str = "brand-social-central-data.slrr_alerts.slrr_alerts"
     location: str = "us-central1"
     lookback_days: int = 7
 
 
 class InhouseSource(ConfigModel):
-    """Path B: in-house alerts from BigQuery (google_bg / slrr_alerts)."""
+    """Path B: in-house alerts from BigQuery (DSD / google_bg / slrr_alerts)."""
 
     enabled: bool = True
     project: str = "brand-social-central-data"
-    outbox_view: str = "brand-social-central-data.slrr_alerts.slrr_source_mirror"
+    outbox_view: str = "brand-social-central-data.DSD.DSD-story-selection"
     alert_log_table: str = "brand-social-central-data.slrr_alerts.slrr_alerts"
-    sonar_table: str = "bsip-s-bsip-gg-26-2cf3.google_bg.sonar_post_aggregates_7d_materialized"
+    sonar_table: str = "bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw"
     location: str = "US"
     sonar_location: str = "us-central1"
     mark_delivered: bool = False  # True only after cutover (parity mode leaves the log untouched)

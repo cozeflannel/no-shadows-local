@@ -10,7 +10,7 @@
  *   - removed product (e.g. Gems) -> its replacement; product aliases are accepted as written
  *   - Social Network must match the link's domain
  *   - engagement level from the count (KOF authors -> VIRAL KOF); KOF = Yes when the author is on a KOF list
- *     (including live BMIE and BSIP KOF/KOL lookup)
+ *     (including live DSD / Brandwatch and Sonar KOF/KOL lookup)
  *   - "New" issue that was already reported in the last 14 days (by Jaccard token overlap, or the same story by meaning in
  *     the shared alert memory: AlertMemory.gs, passed in as opts.memoryStory) -> "Ongoing Issue"
  *   - required fields present; post date not in the future / not older than the max age
@@ -181,7 +181,7 @@ function reviewAlert_(parsed, opts) {
   const urlNet = networkForDomain_(domain);
   if (urlNet && f.social_network && urlNet !== f.social_network) fix('social_network', urlNet, `the link is on ${domain}`);
 
-  // 5. KOF list -> KOF = Yes (including live BMIE/Brandwatch and BSIP KOF/KOL lookup when present)
+  // 5. KOF list -> KOF = Yes (including live DSD / Brandwatch and Sonar KOF/KOL lookup when present)
   const bq = (parsed && parsed.bq) || opts.bq || null;
   const bmieKof = bq && bq.bmie_kof && String(bq.bmie_kof).trim().toLowerCase() !== 'no' ? String(bq.bmie_kof).trim() : '';
   const bsipKof = bq && (bq.bsip_kof_vertical || (bq.bsip_is_kol ? 'BSIP KOL' : '')) ? String(bq.bsip_kof_vertical || 'BSIP KOL').trim() : '';

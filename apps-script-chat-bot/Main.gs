@@ -23,7 +23,7 @@
  *   setupTnsTestForm()  While testing: makes (or finds) the test copy of the T&S form in your Drive and logs its link
  *                   (TnsForm.gs). The bot also makes it by itself the first time a T&S note needs it.
  *   poll()          The every-minute run, started by setup(). With Direct BigQuery alerts ON (Control row 15) it first
- *                   posts new Sprinklr, BMIE and BSIP posts from BigQuery in the test feed or Mirror space (BigQuery.gs
+ *                   posts new Sprinklr, DSD / Brandwatch and Sonar posts from BigQuery in the test feed or Mirror space (BigQuery.gs
  *                   pollBigQuerySources_), so the run reviews them like Burson's; a failure there never stops the run.
  *                   With Early detection ON (Control row 19), after the alerts and at most every 15 minutes, it takes the
  *                   new signals of the bot's own early-wave producer (BigQuery.gs earlyWaveCheck_; EarlyWaveSource.gs
