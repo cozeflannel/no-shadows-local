@@ -10,6 +10,10 @@
  *   2. Short Vertex AI HTTP 429 cooldown (`API_GUARD_V429_MS_`): when Vertex AI rate-limits all tries of a call, the next
  *      30 seconds skip 3x retry amplification (and multi-second retry sleeps): text calls route straight to the BigQuery
  *      ML fallback (`bqGeminiFallback_`) for faster SLA completion, and non-fallback calls make at most 1 fast probe.
+ *   3. Gemini Decisions calls (`decisions`: Decisions.gs, the early-wave fast triage, Control row 38) are counted in the
+ *      same minute buckets under their own kind, with their own rolling ceilings (`apiGuardAllowDecisions_`). They are
+ *      background work only, so they never count against the Gemini or BigQuery ceilings above, and past their own
+ *      ceilings the fast triage stops asking (each signal is then handled as it was before the fast triage).
  */
 
 const API_GUARD_CACHE_KEY_ = 'api_guard_v1';
@@ -22,11 +26,18 @@ const API_GUARD_GEMINI_60M_ = 90;
 const API_GUARD_BQ_10M_ = 50;
 const API_GUARD_BQ_60M_ = 180;
 
+// Rolling ceilings for Gemini Decisions calls (the fast triage's own: past either, it stops asking until the window cools)
+const API_GUARD_DECISIONS_10M_ = 30;  // two full checks' worth (DEC_MAX_PER_CHECK_ a check, Decisions.gs)
+const API_GUARD_DECISIONS_60M_ = 90;  // as the Gemini 60-minute ceiling: one call a signal, like its one review
+
 // Vertex AI HTTP 429 retry-storm cooldown (ms)
 const API_GUARD_V429_KEY_ = 'api_guard_v429';
 const API_GUARD_V429_MS_ = 30 * 1000;
 
-/** Reads and prunes minute-bucketed call counts `{minuteEpoch: {g, b}}` from CacheService. Never throws. */
+/**
+ * Reads and prunes minute-bucketed call counts `{minuteEpoch: {g, b}}` from CacheService (`d`, Gemini Decisions calls,
+ * only on a minute that had some). Never throws.
+ */
 function apiGuardReadBuckets_(nowMs) {
   const now = Number(nowMs) || Date.now();
   const curMin = Math.floor(now / 60000);
@@ -43,14 +54,15 @@ function apiGuardReadBuckets_(nowMs) {
       if (Number.isInteger(m) && m >= minKeep && m <= curMin + 1 && v && typeof v === 'object') {
         const g = Math.max(0, Math.floor(Number(v.g) || 0));
         const b = Math.max(0, Math.floor(Number(v.b) || 0));
-        if (g || b) out[m] = { g, b };
+        const d = Math.max(0, Math.floor(Number(v.d) || 0));
+        if (g || b || d) out[m] = d ? { g, b, d } : { g, b };
       }
     });
   } catch (e) {}
   return out;
 }
 
-/** Records `count` outbound API calls of `kind` ('gemini' | 'bigquery') in the rolling minute buckets. Never throws. */
+/** Records `count` outbound API calls of `kind` ('gemini' | 'bigquery' | 'decisions') in the rolling minute buckets. Never throws. */
 function apiGuardNote_(kind, count, nowMs) {
   try {
     const n = Math.max(1, Math.floor(Number(count === undefined ? 1 : count) || 1));
@@ -61,6 +73,7 @@ function apiGuardNote_(kind, count, nowMs) {
     const cur = buckets[curMin] || { g: 0, b: 0 };
     if (kind === 'gemini') cur.g += n;
     else if (kind === 'bigquery') cur.b += n;
+    else if (kind === 'decisions') cur.d = (Number(cur.d) || 0) + n;
     else return;
     buckets[curMin] = cur;
     CacheService.getScriptCache().put(API_GUARD_CACHE_KEY_, JSON.stringify(buckets), API_GUARD_CACHE_SEC_);
@@ -104,6 +117,30 @@ function apiGuardAllowBackground_(kind, slaBusy, nowMs) {
   if (checkGemini && (c.gemini10m >= API_GUARD_GEMINI_10M_ || c.gemini60m >= API_GUARD_GEMINI_60M_)) return false;
   if (checkBq && (c.bq10m >= API_GUARD_BQ_10M_ || c.bq60m >= API_GUARD_BQ_60M_)) return false;
   return true;
+}
+
+/** Rolling 10-minute and 60-minute Gemini Decisions call counts: `{decisions10m, decisions60m}`. Never throws. */
+function apiGuardDecisionsCounts_(nowMs) {
+  const now = Number(nowMs) || Date.now();
+  const min10 = Math.floor(now / 60000) - 9;
+  const buckets = apiGuardReadBuckets_(now);
+  let decisions10m = 0;
+  let decisions60m = 0;
+  Object.keys(buckets).forEach(k => {
+    const d = Number((buckets[k] || {}).d) || 0;
+    decisions60m += d;
+    if (Number(k) >= min10) decisions10m += d;
+  });
+  return { decisions10m, decisions60m };
+}
+
+/**
+ * True when one more Gemini Decisions call fits under its own rolling ceilings (API_GUARD_DECISIONS_10M_ / _60M_). The
+ * fast triage asks this before every call; SLA triage never makes one. Never throws.
+ */
+function apiGuardAllowDecisions_(nowMs) {
+  const c = apiGuardDecisionsCounts_(nowMs);
+  return c.decisions10m < API_GUARD_DECISIONS_10M_ && c.decisions60m < API_GUARD_DECISIONS_60M_;
 }
 
 /** True while Vertex AI is inside its brief post-429 retry-storm cooldown window. Never throws. */
