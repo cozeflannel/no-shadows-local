@@ -6,7 +6,7 @@
  *
  * Sources (read-only; nothing else is read on this path):
  *   us-central1  bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw             real time: posts Sonar first saw since the last check
- *                google_tubular_mentions.tubular_videos                   slow lane: videos first seen since the last read (a day)
+ *                google_tubular_mentions.tubular_videos                   slow lane: videos first seen since the last read (6 hours)
  *   US           reporting_data.sprinklr_inbound_comments                 real time: comments on Google's posts appended since
  *                raw_data.brandwatch_raw_mentions_base                    slow lane: yesterday's batch, read once after it loads
  *                reporting_data.sprinklr_outbound_reporting               Google's own accounts (their posts are left out)

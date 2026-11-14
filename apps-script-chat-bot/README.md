@@ -55,8 +55,8 @@ sheet, and its link is in the bot's first message in the analyst space. You don'
 | **Today** (B7) | Alerts reviewed, alerts sent back to Burson, questions answered | The bot |
 | **Runs as** (B8) | The account the bot posts as. It must be a member of both spaces | `setup()` |
 | **Mirror space**, **Auto-correct space** (B9, B10) | Optional test spaces (below) | You |
-| **The switches** (B11:B24, B27:B29, B32, B34, B36, B37) | `ON` or `OFF`, all OFF to start: what the bot may do on its own (below) | You |
-| C11:C24, C27:C29, C32, C34, C36, C37 | What each switch does when OFF, or what it is doing when ON | The bot, every minute |
+| **The switches** (B11:B24, B27:B29, B32, B34, B36:B40) | `ON` or `OFF`, all OFF to start: what the bot may do on its own (below) | You |
+| C11:C24, C27:C29, C32, C34, C36:C40 | What each switch does when OFF, or what it is doing when ON | The bot, every minute |
 | **S-F Burson space** (B25) | Which space is the real Burson space, S-F Burson: its link, id or exact name. Only this cell decides it; the code never names it. Blank to start (see "S-F Burson space (B25)" below) | You |
 | C25 | ✓ and the name of the space the bot found, ✗ and what to fix, or ⚠️ Not set and what waits for it | The bot |
 | **Burson test copy** (B26) | Optional. A Google-only space to practise the Relay in without touching S-F Burson: the bot copies S-F Burson there, and while it's set the Relay sends the analysts' side (and, with row 24 ON, the bot's own Burson replies and emojis) there instead of S-F Burson. Blank to start (see "Practising the Relay with a Burson test copy" below) | You |
@@ -65,8 +65,9 @@ sheet, and its link is in the bot's first message in the analyst space. You don'
 | **Brand safety groups** tab | Read-only worksheet (`Google Group Name`, `Google Group Email`) supplying live Social Alert Google Group addresses at runtime (cached 10 minutes; zero hardcoded emails in code) | You |
 | **BigQuery lookback** (B31) | How far back Direct BigQuery alerts (row 15) and the Early wave check (row 19) look: 15, 30, 45 or 60 minutes (blank: 60). C31 shows what the bot is using | You |
 | **Other alerts space** (B33) | Optional. A Google-only space with other alerts (a campaign space, say) the bot works every minute beside the Mirror space, always in Testing (see "Other alerts space (B33)" below). C33 shows how it's doing | You |
-| **How it works** (from A39) | A plain-language guide to all of the above | `setup()` and the bot |
+| **How it works** (from A42) | A plain-language guide to all of the above | `setup()` and the bot |
 | **Watches**, **Watch detections** and **Watch sources** tabs | Only with Proactive watch ON (row 34): what to look for (one watch a row, each ON / OFF), what the watches would have flagged (with its source and a scorecard against Burson's alerts), and which sources are live or stale (see "Proactive watch (row 34)" below) | You edit the watches and rate the rows; the bot writes the rest |
+| **Fast triage** tab | Only with Fast triage ON (row 38): what Gemini Decisions said about each early-wave signal beside its full review's call, plus held-back signals and early-watch stories asked about (see "Rows 38-40: Fast triage" below) | The bot writes the rows; you mark cards `Useful` or `Noise` |
 | **Follow-up** tab | Only with Track post-alert outcomes ON (row 21): what came of the bot's Social Alerts, which teams replied, each alert's status and next step, and editable P0/P1/P2 reply deadlines in B5:B7 | The bot updates it; you can edit B5:B7 |
 | **Burson outbox** tab | Only with Post in S-F Burson ON (row 24) while LIVE: what the bot or the Relay would post in S-F Burson, each row waiting for you to set it to Send or Skip | The bot adds rows; you set Status |
 
@@ -434,9 +435,9 @@ The thread only gets a short note: `🌡️ Temp check sent: @asker (10/29) 2020
   OFF (as it starts), nothing changes: such a message is an analyst's message like any other.
 - C36 says how the last one went.
 
-### The switches: what the bot may do on its own (rows 11-24, 27-29, 32, 34, 36, 37)
+### The switches: what the bot may do on its own (rows 11-24, 27-29, 32, 34, 36-40)
 
-Rows 11-24, 27-29, 32, 34, 36 and 37 are ON / OFF switches (a dropdown in column B). Each starts **OFF**, and with every switch OFF the bot works
+Rows 11-24, 27-29, 32, 34 and 36-40 are ON / OFF switches (a dropdown in column B). Each starts **OFF**, and with every switch OFF the bot works
 exactly as the rest of this README describes (in S-F Burson itself, it posts nothing: row 24). Column C says what OFF
 means, or what an ON switch is doing (its counts today and its last check). The bot rewrites column C every run, paused
 or not.
@@ -451,7 +452,7 @@ or not.
 | 16 | Write back to SLRR BigQuery | Nothing is written to BigQuery: Burson and shared dashboards can't see the bot at work | When LIVE, finished alerts and sends are written to the shared SLRR tables, marked as the bot's (in Testing, writes only to `TEST` or skips shared tables) |
 | 17 | Learn from IM calls | No learning | The IMs' different calls go on a Learned precedents tab, and Gemini sees the similar ones |
 | 18 | Watch sent alerts (24h) | The bot stops once the Social Alert is sent | For a day it re-checks the post and replies on the email thread on a surge, a deletion or press pickup |
-| 19 | Early wave & velocity check | One post at a time | Every 15 minutes it builds open-world clusters and velocity spikes itself from the approved source tables in BigQuery (read-only), reviews each (web search, knowledge base, guidance) and posts ONE story card with the posts linked, next steps and a picture in the Mirror space (40 a day at most; never relayed or forwarded to Burson) |
+| 19 | Early wave & velocity check | One post at a time | Every 15 minutes (`EW_EVERY_MS_`) it builds open-world clusters and velocity spikes itself from the approved source tables in BigQuery (read-only), reviews each (web search, knowledge base, guidance; dismissals filtered out) and posts ONE story card in the Mirror space, a test feed, or the Auto-correct space when B9 is blank (40 queued a day at most, after which it still reads and keeps stories current while queueing stops; never relayed or forwarded to Burson) |
 | 20 | Check outage & comms docs | The standard review | Gemini checks outage claims and the email gets the approved holding statement |
 | 21 | Track post-alert outcomes | Nothing is read after the Social Alert is sent | Replies and T&S confirmations are read for a week, the outcome is logged, and the **Follow-up** tab is kept up to date |
 | 22 | Relay with S-F Burson | The Mirror space gets Zapier's alerts only; nothing is posted in S-F Burson | Analysts work in the Mirror space only: everything in S-F Burson comes over in its own order (Zapier's alerts, everyone's replies, messages and emojis); the analysts' (never the bot's) go straight to the Burson test copy (B26) when it's set, or wait on the Burson outbox when LIVE and Post in S-F Burson is ON |
@@ -464,13 +465,16 @@ or not.
 | 34 | Proactive watch | The bot reviews only the alerts posted in Chat | Every 5 minutes Gemini (inside BigQuery) checks what's new in each source, read-only (Sonar, Brandwatch, Sprinklr, Tubular, the DSD story selection feed, the Other alerts space's alerts and the Brandwatch query "2026 Election Alerts" straight from Brandwatch's API), against the watches ON on the Watches tab, and what it would flag goes on the Watch detections tab, with a scorecard against Burson's alerts; the Watch sources tab says which sources are live. Nothing is posted or emailed unless **Watch alerts** (row 35, not a switch: `OFF`, `Other alerts space (B33)`, `Mirror space (B9)` or `Auto-correct space (B10)`) says where its flags go; nothing is written to BigQuery |
 | 36 | Temp checks | Temp checks are done by hand; a `temp check` message is an analyst's message like any other | `temp check <Brandwatch query name>` in a thread of the Mirror space or B33 gets the team's temp check write-up in that thread after the run's alerts (above); never relayed to S-F Burson; Brandwatch only read |
 | 37 | Group test emails | When LIVE, Social Alerts go to the live Google Group emails in column B of the Brand safety groups tab; the test emails in column C are ignored | Puts the bot in **Testing** and sends each Social Alert to its group's test email in column C of the Brand safety groups tab; a group with no test email is skipped and logged |
+| 38 | Fast triage (Gemini Decisions) | Early-wave signals go straight to the review queue as before; Gemini Decisions is never called | Asks `gemini-decision-1` six structured questions about each early-wave signal before it is queued and records the answers beside the full review's call on the **Fast triage** tab and in the log; with rows 39 and 40 OFF nothing else changes |
+| 39 | Fast triage: rank and early watch | Queue order is priority, then accounts, then oldest; stories below the usual 5-account bar wait | Needs row 38 ON: orders candidates and the review queue by P0 risk group, tier, severity score and brand-risk probability (unanswered first, never ranked down), and asks about 3+ account stories below the promotion bar, raising an `EARLY_WATCH` signal (up to 8 of the day's 40) once its calibrated bars are set |
+| 40 | Fast triage: hold back noise | Every queued signal gets its full Gemini review | Needs row 38 ON: once its calibrated bars are set, drops a signal without a review only when it has no P0 risk group and no taxonomy raise, its severity level is `none` or `low` above the confidence bar, and it is clearly not about Google or clearly routine noise (counted on C19 and logged) |
 
 What holds for every switch:
 
 - **ON only when it says so.** A switch is ON only when its row has the switch's own label and column B says ON. The
   bot never sets a switch ON: a row whose label is missing or changed is put back OFF. A Control tab from before the
-  switches gets rows 11-24, 27-29, 32, 34, 36 and 37 on the next run (no need to run `setup()`), all OFF, row 25 (S-F Burson space) blank, row 26 (Burson test copy) blank, row 33 (Other alerts space) blank and row 35 (Watch alerts) OFF.
-  The values in B2:B10, B25:B26, B30:B31, B33, B35, and any switch someone already set, are kept, and "How it works" moves to row 39.
+  switches gets rows 11-24, 27-29, 32, 34 and 36-40 on the next run (no need to run `setup()`), all OFF, row 25 (S-F Burson space) blank, row 26 (Burson test copy) blank, row 33 (Other alerts space) blank and row 35 (Watch alerts) OFF.
+  The values in B2:B10, B25:B26, B30:B31, B33, B35, and any switch someone already set, are kept, and "How it works" moves to row 42.
 - **Testing vs. LIVE is decided on the Control tab every run (`Main.gs` `runMode_`).**
   - The run is **LIVE** only when **Safety valve (row 29)** and **Group test emails (row 37)** are `OFF`, **Burson test copy (B26)** is blank, and **S-F Burson (B25)** is set and found (with alerts coming from S-F Burson via B3 or Mirror B9). While LIVE, Status (B5) starts with the LIVE badge, emails/drafts use real `Brand safety groups` recipients, the real T&S form is used, leads receive DMs, SLRR BigQuery write-back (row 16) writes to the shared tables, and the **Burson outbox** can send rows marked `Send` to S-F Burson.
   - Everything else (Safety valve `ON`, or Group test emails `ON`, or B26 set even if failing checks, or B25 blank/not found, or row 32 working directly in a Google-only B25) is **Testing** (fail closed): every email or draft goes only to the email addresses in `Control!B30` (`Testing: send to`; nothing is sent while `B30` is blank), except that with Group test emails `ON` each Social Alert goes to its group's test email in column C of `Brand safety groups` (a group with none is skipped and logged); only the test copy of the T&S form is submitted, and nothing is ever queued for or sent to live S-F Burson (any outbox row set to `Send` while in Testing is reset to `Pending` with a note). The **Auto-correct space (B10)** and the **Other alerts space (B33)** always stay in Testing even when the Mirror run is LIVE.
@@ -484,9 +488,10 @@ What holds for every switch:
   that's safe; it never stops the run.
 - **Thresholds are constants** at the top of the `.gs` file that owns the feature (no YAML, no rebuild): for example
   `BQ_LINK_*` (row 14), `BQ_POLL_MAX_PER_RUN_`, `BQ_BSIP_MIN_ENGAGEMENTS_` and `BQ_BSIP_MAX_AGE_H_` (row 15) and row
-  19's queue and daily caps (`EW_*`, `ED_QUEUE_*`) in `BigQuery.gs`, row 19's detection thresholds (`EWS_*`: the
-  low-tier gates, the similarity bars, the promotion and velocity rules) in `EarlyWaveSource.gs`, and the watch and
-  outcome timings in `Watch.gs` and `Outcomes.gs`.
+  19's queue and daily caps (`EW_*`, `ED_QUEUE_*`) in `BigQuery.gs`, row 19's detection and early-watch bars (`EWS_*`:
+  the low-tier gates, the similarity bars, the promotion and velocity rules, and the early-watch bars) in
+  `EarlyWaveSource.gs`, rows 38-40's client timings and caps (`DEC_*`) in `Decisions.gs` and hold-back bars
+  (`EW_TRIAGE_*`, `FT_*`) in `FastTriage.gs`, and the watch and outcome timings in `Watch.gs` and `Outcomes.gs`.
 - **Check BigQuery before turning on rows 14, 15, 16 and 19.** Their tables' columns couldn't be checked from here:
   run `bq show --schema` on the tables named below first. A query that fails does nothing (the bot carries on as with
   the switch OFF); a write can't be taken back for a while (row 16).
@@ -683,30 +688,32 @@ it's watching, the last check and today's updates (the main run's, not the auto-
 - **OFF** (the default): no early-detection read, review or card.
 - **ON**: open-world early detection over low-tier posts. The bot builds the signals itself (`EarlyWaveSource.gs`): it
   clusters small accounts' posts by meaning and spots fast-rising topics without knowing the topic in advance. After
-  each run's alerts, at most every 15 minutes, it reads what is new in the approved source tables, read-only, with one
-  BigQuery job per location (`US` and `us-central1`): Sonar's posts and Sprinklr's comments in real time; Brandwatch
-  and Tubular later, only to join a story that already exists. It embeds the posts it hasn't seen (Vertex AI
-  `text-embedding-005`), clusters them and checks their velocity in Apps Script, and **queues** the new signals (script
-  properties). Nothing is posted at that point and nothing is written to BigQuery.
+  each run's alerts, at most every 15 minutes (`EW_EVERY_MS_`), it reads what is new in the approved source tables,
+  read-only, with one BigQuery job per location (`US` and `us-central1`): Sonar's posts and Sprinklr's comments in real
+  time; Brandwatch and Tubular (every 6 hours) later, only to join a story that already exists. It embeds the posts it
+  hasn't seen (Vertex AI `text-embedding-005`), clusters them and checks their velocity in Apps Script, logs one line
+  with the producer's time and the rolling 10- and 60-minute API counts (`ewLogCheck_`), and **queues** the new signals
+  (script properties). Nothing is posted at that point and nothing is written to BigQuery.
 - **Review, then one card**: every run (after the alerts, never while they catch up, within the API guard's background
   budget) the bot reviews up to 2 queued signals. Each gets ONE Gemini review with the web search on, the knowledge base
   documents (Resources tab), the guidance rules, the playbook, earlier alerts and known issues, and a still of the main
-  post at most (never its video). Only then does it post ONE story card in the Mirror space (or the Google-only test
-  feed):
-  - a headline saying exactly what people are posting about, the call (📦 Social Alert / 👍 monitor / ❌ no action), how
-    many accounts on which platforms and when (ET);
+  post at most (never its video). A dismissal is filtered out (no card, note, mark, Social Alert or T&S intake; its
+  reason is logged and C19 counts `N dismissals filtered out`). Only a signal kept for escalation or monitoring gets ONE
+  story card:
+  - a headline saying exactly what people are posting about, the call (📦 Social Alert / 👍 monitor), how many accounts
+    on which platforms and when (ET);
   - a short story with the posts linked inline (only links to the signal's own posts: anything else Gemini writes is
     dropped), what the web says with its sources linked, and suggested next steps inside the escalation process;
   - every post as a link, and the picture of the post that best shows the topic (Gemini picks it; else the main post).
   The review note (why, SLRR classification, Temp Check query, T&S) goes in the card's thread, with the marks and any
-  Social Alert / T&S draft behind human review, as for any alert. With no AI review, the card tells the story from the
-  posts themselves.
+  Social Alert / T&S draft behind human review, as for any alert. With no AI review (except on an early-watch signal:
+  below), the card tells the story from the posts themselves.
 - **One story, one card** (same-story dedup), within 24 hours. A signal tells the same story as a card already posted
   when it has the same cluster, the bot's own producer marked it as an update of that card's alert, or it shares 2+ of
   the card's posts (the producer, `EarlyWaveSource.gs`, also holds back a story whose centroid is within
   `EWS_STORY_SIM_` of one it signalled in the last 24 hours, unless it grew). The rules:
   - **Nothing new:** it is held back without a review. "New" means 2x the accounts on the last card and 3 more, or a
-    platform the card wasn't on.
+    platform the card wasn't on (or a story first flagged by the early watch reaching the usual 5-account bar).
   - **The story grew:** it is reviewed (Gemini sees the earlier card and what changed). Its card goes in the earlier
     card's thread as `📈 *Early Detection Update: …*` with a `*What's new:*` line ("14 accounts now, up from 6; now also
     on Reddit"), without a picture.
@@ -716,18 +723,63 @@ it's watching, the last check and today's updates (the main run's, not the auto-
 
   The check runs when signals are queued and again right before each review, so two signals on one story never both
   get a card. Column C adds `· N repeats held back` to its count of the day.
-- **Ceilings** (constants in the early detection section of `BigQuery.gs`): 5 signals queued a check, **40 a day** (then
-  not even the BigQuery read until tomorrow), 2 reviews a run, at most 12 waiting, each signal reviewed at most twice (a
-  run that dies mid-review counts) and dropped if not reviewed within 3 hours. So early detection costs at most 40
-  Gemini reviews and 40 cards a day (80 reviews in the worst case of failed retries), plus what producing the signals
-  takes each check (`EWS_*` constants in `EarlyWaveSource.gs`): two read-only BigQuery jobs (BigQuery refuses one that
-  would read more than 5 GiB) and at most 400 new embeddings, 20,000 a day. Column C shows `last check … ·
-  N waiting for review · N cluster, M velocity alerts today` and says when the daily cap is reached.
-- **Where**: only the Mirror space (B9) or a Google-only test feed: never S-F Burson (B25), the Burson test copy (B26),
-  a space people outside Google can join, the auto-correct space, row 32's direct mode, or a dry run. The cards'
+- **Ceilings** (constants in the early detection section of `BigQuery.gs`): 5 signals queued a check, **40 queued a
+  day** (once 40 are queued the check still reads and clusters so active stories stay up to date for tomorrow's first
+  check, and only queueing stops), 2 reviews a run, at most 12 waiting, each signal reviewed at most twice (a run that
+  dies mid-review counts) and dropped if not reviewed within 3 hours. So early detection costs at most 40 Gemini reviews
+  and 40 cards a day (80 reviews in the worst case of failed retries), plus what producing the signals takes each check
+  (`EWS_*` constants in `EarlyWaveSource.gs`): two read-only BigQuery jobs (BigQuery refuses one that would read more
+  than 5 GiB) and at most 400 new embeddings, 20,000 a day. Column C shows `last check … · N waiting for review · N
+  cluster, M velocity alerts today` and says when the daily cap is reached.
+- **Where**: the Mirror space (B9), a Google-only test feed (B3 → B4), or the Auto-correct space standing alone (B10,
+  when B9 is blank and the main flow itself cannot post them): never S-F Burson (B25), the Burson test copy (B26), a
+  space people outside Google can join, the Other alerts space (B33), row 32's direct mode, or a dry run. The cards'
   `client-zeda-` ids keep the Relay from ever sending them to S-F Burson.
 - **Sandbox**: the card itself sends no email, DM or form and writes nothing to BigQuery; a Social Alert draft or T&S
-  intake it leads to follows the usual Testing rules (stand-in / B30 testers only).
+  intake it leads to follows the usual Testing rules (`Control!B30` testers only).
+
+#### Rows 38-40: Fast triage (Gemini Decisions)
+
+Three switches on the early-wave path (`Decisions.gs`, `FastTriage.gs`), all OFF to start; rows 39 and 40 need row 38 ON
+(while row 38 or row 19 is OFF, C39 and C40 say what they wait for and do nothing):
+
+- **Row 38 — Fast triage (Gemini Decisions):** before a signal is queued, the bot asks `gemini-decision-1`
+  (`POST /v1beta/decisions`, key in Secret Manager `agentic_assistant` sent only in `x-goog-api-key`) six structured
+  questions in one call (`about_google`, `brand_risk`, `independent_reports`, `routine_noise`, `category`, `severity`)
+  over a sanitized summary (headline, signal type, counts, platforms, window and up to 8 post snippets with links,
+  handles, emails and internal IDs stripped). With row 38 ON alone (recording only), only the signals this check queues
+  are asked about; ordering, what is queued, `edDecide_` (and its confidence bars) and the cards are unchanged. Each
+  reviewed signal is written on the bot-owned **Fast triage** tab (with a `Rating` dropdown of `Useful` or `Noise` for
+  analysts, protected against overwriting foreign tabs and escaped against formula injection) and in one
+  `fast triage and review: …` log line beside the full review's disposition, confidence and severity.
+- **Row 39 — Fast triage: rank and early watch:** asks all candidates this check still has call budget for, orders both
+  queueing and `edDrainQueue_` so signals with a P0 risk group go first, then P0 > P1 > P2, and within a tier an
+  unanswered signal goes first (never ranked down for a missed call), followed by higher `severity` score and higher
+  `brand_risk` probability (unanswered candidates left over for the next check reuse their cached answers without a
+  second API call). Turning row 39 OFF strips the ranking keys from waiting entries so review order goes right back to
+  priority, accounts and age. Row 39 also runs the **early watch** (`EARLY_WATCH`, capped at 8 of the day's 40 queued
+  signals): stories at 3+ accounts within 180 minutes with 2+ links and a risk-term group, an Exposure Tag hint, or no
+  older story within `EWS_STORY_SIM_` are asked about (up to 5 a check, 30 a day) and raised once the calibrated bars
+  (`EWS_WATCH_ABOUT_MIN_`, `EWS_WATCH_RISK_MIN_`, `EWS_WATCH_INDEPENDENT_MIN_`, `null` until set from recorded signals)
+  hold and the most probable severity level is `medium` or higher. Every raised early-watch signal still goes through
+  the full Gemini review before any card; its card carries `*Early signal:* this rests on N accounts so far…`; if its
+  review fails it posts **no** card (retried once up to `ED_QUEUE_MAX_TRIES_`, then dropped; turning row 39 OFF drops
+  any waiting early-watch signal unreviewed); and because queuing an early-watch signal marks only its own `alert_id`
+  as seen, when the story later reaches the 5-account promotion bar that promotion goes into the early card's thread as
+  an `📈 *Early Detection Update*` (`edWatchNews_`), never as a second card.
+- **Row 40 — Fast triage: hold back noise:** once all three calibrated bars (`EW_TRIAGE_ABOUT_GOOGLE_MAX_`,
+  `EW_TRIAGE_NOISE_MIN_`, `EW_TRIAGE_CONF_MIN_`, `null` until set from recorded signals) are set, drops a signal
+  without a full review only when it has **no** P0 risk group and **no** taxonomy raise (`ftProtected_`), its most
+  probable severity level is `none` or `low` strictly above `EW_TRIAGE_CONF_MIN_`, and either `about_google` is below
+  `EW_TRIAGE_ABOUT_GOOGLE_MAX_` or `routine_noise` is above `EW_TRIAGE_NOISE_MIN_`. Held-back signals are counted on
+  C19 (`N filtered by fast triage`), logged in one line with the reason and probabilities, and recorded on the **Fast
+  triage** tab.
+- **Fail-open and ceilings:** any missing secret, HTTP error, HTTP 429 rate limit, safety refusal (counted for that
+  signal without pausing the rest), invalid JSON, call slower than 10 s (counts as failed and pauses Decisions calls for
+  15 minutes), fewer than 20 s left in the run, per-check cap (`15`), daily cap (`120`, or `40` queued early-wave
+  signals reached), or `ApiGuard` rolling ceiling (`30` in 10 min, `90` in 60 min, tracked in its own bucket so SLA and
+  Gemini/BigQuery ceilings are untouched) falls back to today's behavior for that signal. `verifyFastTriageLive()`
+  (`LiveVerify.gs`) runs a read-only check on up to 5 current buffer/queue signals and logs `LIVE_VERIFY_FAST_TRIAGE`.
 
 #### Row 20: Check outage & comms docs
 
@@ -1237,7 +1289,7 @@ The switches on the Control tab need no YAML and no rebuild; their thresholds ar
 | File | What it is |
 |---|---|
 | `Main.gs` | `setup()`, `status()`, `listMySpaces()`, `tryAlert()`, and `poll()`, the every-minute run (one at a time: a run that finds another still going skips) |
-| `Control.gs` | The Control tab (with its switches, rows 11-24, 27-29, 32, 34, 36 and 37, and the S-F Burson space, row 25), and the Resources and Guidance tabs |
+| `Control.gs` | The Control tab (with its switches, rows 11-24, 27-29, 32, 34 and 36-40, and the S-F Burson space, row 25), and the Resources and Guidance tabs |
 | `Knowledge.gs` | The knowledge base: reads the Resources tab's documents, keeps them current in the bot's own hidden "Knowledge cache (bot)" tab, and picks the parts that bear on each alert or question |
 | `Config.gs` | Fixed settings: the Cloud project and what a new Control tab starts with; and this run's S-F Burson space, as the Control tab's B25 names it (no S-F Burson id is in the code) |
 | `Bot.gs` | One pass over the Burson space: alerts, resends, replies, copying analyst emojis |
@@ -1249,6 +1301,12 @@ The switches on the Control tab need no YAML and no rebuild; their thresholds ar
 | `WatchAlerts.gs` | Watch alerts (row 35, OFF to start): the Proactive watch's flags at a watch's bar posted as the bot's own "🔭 Watch alert" text messages in the Other alerts space (B33), the Mirror space (B9) or the Auto-correct space (B10), a few a run, each once; the space's flow works them like any alert (❌ for a repeat, else a Social Alert). Never in S-F Burson, the Burson test copy or a space people outside Google can join |
 | `TempCheck.gs` | Temp checks (row 36, OFF to start): "temp check <Brandwatch query>" in a thread of the Mirror space or B33, queued by its flow (never relayed to S-F Burson) and worked after the run's alerts: the query found by name, link or id in [SLRR] Private, counts by hour, sentiment, sources and mention types from Brandwatch's totals (GETs only), at most 35 posts (reposts excluded; X's words from X's embed data), Gemini's summary, drivers and themes, and the team's write-up in PT posted in the request's thread; "refresh" for the update; Brandwatch busy: waits up to 30 minutes |
 | `ProactiveWatch.gs` | Proactive watch (row 34): a watch over every source's new rows, read-only in BigQuery (two jobs, us-central1 and US: Sonar, Tubular, Brandwatch raw mentions, Sprinklr owned posts and comments, the DSD story selection feed, the Other alerts space's alerts from the Alert log, and the Brandwatch query "2026 Election Alerts" from Brandwatch's API, its X posts' text from X's embed data), Gemini's AI.IF, AI.SCORE and AI.CLASSIFY run inside BigQuery for each watch on the Watches tab, what they'd flag on the Watch detections tab, its scorecard against Burson's alerts, and the Watch sources tab; posts nothing itself (Watch alerts, row 35, post its flags only where B35 says) |
+| `EarlyWaveSource.gs` | Early wave & velocity producer (row 19): reads the 6 approved BigQuery source tables read-only (`US` and `us-central1`), embeds unseen low-tier posts, clusters them incrementally, checks velocity, keeps a 3-hour buffer, and (with row 39) asks about 3+ account early-watch stories |
+| `EarlyDetection.gs` | Early detection review and story cards (row 19): drains queued signals, runs same-story dedup (including promoting a story first flagged early into its card's thread), runs the full Gemini review, filters out dismissals, posts one story card, and records calibration rows |
+| `Decisions.gs` | Gemini Decisions REST client (`gemini-decision-1`, Secret Manager key in `x-goog-api-key`), sanitized signal input builder, six structured questions, caps and 15-minute pause on failure or slowness |
+| `FastTriage.gs` | Fast-triage switches (rows 38-40): queue-time ordering (`ftRank_`), calibrated noise hold-back (`ftHoldWhy_`, never on P0 risk groups or taxonomy raises), answer cache, and the bot-owned **Fast triage** tab |
+| `ApiGuard.gs` | Baseline rolling 10- and 60-minute call telemetry and ceilings (`gemini`, `bigquery`, and `decisions`) plus Vertex 429 cooldown so SLA triage is never delayed |
+| `LiveVerify.gs` | Editor-run read-only live checks (`verifyLookbackAndPipelineLive`, `verifyFastTriageLive`) with zero writes to user cells |
 | `Alert.gs` | Parses Burson's alerts and rebuilds the corrected copy in Burson's exact format |
 | `OtherAlerts.gs` | Alerts in other formats (in the Other alerts space, B33; in B25 with row 32 ON; or the Mirror space): spots them, triages each with Gemini (the SLRR rules first, then the stream's own call), and posts the triage note, the Social Alert, 👍 or ❌ |
 | `Review.gs` | The rule checks plus Gemini's judgment |
