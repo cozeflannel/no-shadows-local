@@ -1656,6 +1656,110 @@ module.exports = function (H) {
     const d92Off = b.edDecide_(fakeDecCtxOff, baseParsed, rev92, { fields: {} }, [], NOW);
     const d92On = b.edDecide_(fakeDecCtxOn, parsedWithNoisyDec, rev92, { fields: {} }, [], NOW);
     eq([d92Off.disposition, d92Off.basis, d92On.disposition, d92On.basis], ['escalate', 'early_detection', 'escalate', 'early_detection']);
+
+    // Verify ftCell_ checks formula prefixes after stripping control chars + leading whitespace, and ftTabAppend_ re-escapes
+    // strings whose leading apostrophe Google Sheets stripped on getValues() during row trimming!
+    eq(b.ftCell_('   \t\r\n  =IMPORTXML("https://x.test","//a")', 300), '\'=IMPORTXML("https://x.test","//a")');
+    eq(b.ftCell_('   \t  +cmd', 300), '\'+cmd');
+    eq(b.ftCell_('   \n  PlainControl', 300), '\'PlainControl');
+    eq(b.ftCell_('\'=ALREADY_ESCAPED', 300), '\'=ALREADY_ESCAPED'); // never doubles a leading apostrophe
+
+    const stripEnv = makeFastTriageE2e(() => [], () => ({ code: 200, body: FX.probe.six_questions_doc_input.response.body }));
+    const mkStripRow = (i, h) => b.ftTabRow_({
+      row: { alert_id: `ED-S-${i}`, signal_type: 'CLUSTER_EMERGENCE', unique_low_tier_authors: 5, platforms_csv: 'X', headline: h || `Safe ${i}`, cluster_id: `cs_${i}` },
+      dec: { g: 0.9, r: 0.8, i: 0.7, n: 0.1, c: i === 503 ? '@cat_formula' : 'Product - Other/general criticism', cp: 0.5, p0: 0.1, s: 2.0, l: 2, sc: 0.7 },
+      did: 'answered (recording only)',
+      review: { disposition: 'monitor', basis: 'early_detection', confidence: 0.85, severity: 'medium' },
+      card: `QA-S${i}`,
+      kind: 'r',
+    });
+    const stripRows = Array.from({ length: 5500 }, (_, idx) => mkStripRow(idx + 1, idx + 1 === 503 ? '=SUM(A1:A2)' : ''));
+    stripEnv.t.bot.ftTabAppend_(stripRows);
+    const stripSh = stripEnv.t.sheet().getSheetByName('Fast triage');
+    // FakeSheet's store(v) (matching real Google Sheets) stripped the leading `'` on write, so getValues() reads back raw '=SUM(A1:A2)' & '@cat_formula'
+    eq([stripSh.cell(507, 6), stripSh.cell(507, 11)], ['=SUM(A1:A2)', '@cat_formula']);
+    const trimSetCalls = [];
+    const origStripRange = stripSh.getRange.bind(stripSh);
+    stripSh.getRange = (r, c, nr, nc) => {
+      const rng = origStripRange(r, c, nr, nc);
+      const origSv = rng.setValues.bind(rng);
+      rng.setValues = values => {
+        trimSetCalls.push({ r, c, nr: nr || 1, firstRow: values[0] && values[0].slice() });
+        return origSv(values);
+      };
+      return rng;
+    };
+    stripEnv.t.bot.ftTabAppend_([mkStripRow(5501), mkStripRow(5502)]);
+    // Verify the trim rewrite call (r=5, nr=5000) re-prefixed `'` on both Headline and Category before calling setValues!
+    const trimWrite = trimSetCalls.find(w => w.r === 5 && w.nr === 5000);
+    assert.ok(trimWrite, 'trim rewrite setValues(5, 1, 5000, 23) executed');
+    eq([trimWrite.firstRow[1], trimWrite.firstRow[5], trimWrite.firstRow[10]], ['ED-S-503', '\'=SUM(A1:A2)', '\'@cat_formula']);
+    eq([stripSh.cell(5, 2), stripSh.cell(5, 6), stripSh.cell(5, 11)], ['ED-S-503', '=SUM(A1:A2)', '@cat_formula']);
+  });
+
+  // =============================================================================================================
+  // Section 6 — Live check in LiveVerify.gs (verifyFastTriageLive)
+  // =============================================================================================================
+
+  test('live check (6): verifyFastTriageLive reads buffer + queue up to LIVE_VERIFY_FT_MAX_ (5), logs LIVE_VERIFY_FAST_TRIAGE, and writes zero Sheet cells or Chat posts', () => {
+    // 1. Empty buffer and empty queue: asks 0 signals, makes 0 Secret Manager or Decisions API calls, logs summary cleanly
+    let decCalls = 0;
+    const emptyLogs = [];
+    const emptyEnv = makeEnv(() => {
+      decCalls++;
+      return { code: 200, body: FX.probe.six_questions_doc_input.response.body };
+    });
+    emptyEnv.bot.console.log = m => emptyLogs.push(String(m));
+    const emptySummary = emptyEnv.bot.verifyFastTriageLive();
+    eq([emptySummary.signals, emptySummary.answered, emptySummary.latency_ms, decCalls, emptyEnv.secretCalls()],
+      [{ in_buffer: 0, in_queue: 0, asked: 0 }, 0, null, 0, 0]);
+    eq(emptyLogs.length, 1);
+    assert.ok(emptyLogs[0].startsWith('LIVE_VERIFY_FAST_TRIAGE '), emptyLogs[0]);
+
+    // 2. Real archive signals across producer 3-hour buffer + review queue (with 1 shared alert_id deduped, capped at LIVE_VERIFY_FT_MAX_ = 5)
+    const liveEnv = makeFastTriageE2e(() => [], (payload, _u, _p) => {
+      liveEnv.t.g.clock.now += 280;
+      return matchRecordedResponse(liveEnv.t.bot, payload);
+    });
+    const { t } = liveEnv;
+    const consoleLogs = [];
+    t.bot.console = Object.assign({}, t.bot.console || console, { log: m => consoleLogs.push(String(m)) });
+
+    // Seed 4 real archive signals into producer buffer and 3 into ED_ALERT_QUEUE (1 overlapping -> 6 unique -> capped at 5)
+    const bufSignals = SIGNAL_IDS_WITH_ANSWERS.slice(0, 4).map(id => Object.assign({}, FX.signals.find(s => s.alert_id === id), {
+      _at: t.g.clock.now - 10 * 60 * 1000,
+    }));
+    t.bot.ewsCachePut_(t.bot.ewsCache_(), { buf: bufSignals });
+
+    const props = t.g.services.PropertiesService.getScriptProperties();
+    const qSignals = [
+      FX.signals.find(s => s.alert_id === SIGNAL_IDS_WITH_ANSWERS[3]), // duplicate of bufSignals[3] -> deduped!
+      FX.signals.find(s => s.alert_id === SIGNAL_IDS_WITH_ANSWERS[4]), // 5th unique signal -> included!
+      FX.signals.find(s => s.alert_id === SIGNAL_IDS_WITH_ANSWERS[5]), // 6th unique signal -> past LIVE_VERIFY_FT_MAX_ (5)
+    ];
+    qSignals.forEach((r, idx) => t.bot.edQueuePut_(props, r, t.g.clock.now + idx * 1000));
+
+    const controlBefore = JSON.stringify(t.control().rows);
+    const tabsBefore = t.sheet().sheets.map(s => s.name).slice();
+
+    const summary = t.bot.verifyFastTriageLive();
+    eq([summary.endpoint, summary.model], ['https://generativelanguage.googleapis.com/v1beta/decisions', 'gemini-decision-1']);
+    eq(summary.signals, { in_buffer: 4, in_queue: 3, asked: 5 });
+    eq([summary.answered, summary.not_answered, liveEnv.decCalls(), liveEnv.secretCalls()], [5, [], 5, 1]);
+    eq(summary.results.map(r => r.alert_id), SIGNAL_IDS_WITH_ANSWERS.slice(0, 4).concat([SIGNAL_IDS_WITH_ANSWERS[5]]));
+    eq(summary.latency_ms, { min: 280, median: 280, max: 280 });
+    eq([summary.bars.hold_back_ready, summary.bars.early_watch_ready], [false, false]);
+    summary.results.forEach(r => {
+      eq([r.ok, r.would_hold_back, r.would_raise_early], [true, 'no', false]);
+      assert.ok(r.input_chars > 100 && typeof r.answers.s === 'number');
+    });
+
+    // Zero writes to Control tab, zero new tabs created (no Fast triage tab!), zero Chat posts, queue untouched
+    eq(JSON.stringify(t.control().rows), controlBefore);
+    eq(t.sheet().sheets.map(s => s.name), tabsBefore);
+    eq(edCardsOf(t).length, 0);
+    eq(t.bot.edQueueList_(props).length, 3);
+    assert.ok(consoleLogs.some(l => l.startsWith('LIVE_VERIFY_FAST_TRIAGE ')));
   });
 };
 

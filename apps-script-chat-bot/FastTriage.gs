@@ -361,7 +361,7 @@ function ftCell_(v, max) {
   const raw = String(v === undefined || v === null ? '' : v);
   const s = truncate_(raw.replace(/[\x00-\x1f\x7f]+/g, ' ').replace(/\s+/g, ' ').trim(), max || FT_HEADLINE_CHARS_);
   if (!s) return '';
-  return (/^[=+\-@]/.test(s) || /^[\x00-\x1f]/.test(raw)) ? '\'' + s : s;
+  return (/^[=+\-@]/.test(s) || /^[ \u00a0]*[\x00-\x1f\x7f]/.test(raw)) ? '\'' + s : s;
 }
 
 /**
@@ -433,7 +433,10 @@ function ftTabAppend_(rows) {
     const count = sh.getLastRow() - FT_HEAD_ROW_;
     if (count > FT_MAX_ROWS_ + FT_TRIM_SLACK_) {
       const all = sh.getRange(FT_HEAD_ROW_ + 1, 1, count, FT_HEADER_.length).getValues();
-      const keep = all.slice(count - FT_MAX_ROWS_);
+      // Sheets strips a leading escape apostrophe on getValues(), so re-apply ftCell_ before rewriting kept rows
+      const keep = all.slice(count - FT_MAX_ROWS_).map(r => r.map((c, j) => (
+        j === FT_COL_.key - 1 || typeof c !== 'string' || !c ? c : capCell_(ftCell_(c, SHEET_CELL_MAX_CHARS_), SHEET_CELL_MAX_CHARS_)
+      )));
       sh.getRange(FT_HEAD_ROW_ + 1, 1, keep.length, FT_HEADER_.length).setValues(keep);
       const tail = sh.getRange(FT_HEAD_ROW_ + 1 + keep.length, 1, count - keep.length, FT_HEADER_.length);
       tail.clearContent();

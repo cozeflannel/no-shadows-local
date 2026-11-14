@@ -5,7 +5,13 @@
  * (`us-central1` Sonar table via `UrlFetchApp` + `ScriptApp.getOAuthToken()`), and real Vertex AI Gemini 3-Step
  * Dual-Track pipeline (`geminiClient_()`), logging real execution output directly via `console.log`.
  * Makes zero mutations to user cells on the live Control tab.
+ *
+ * verifyFastTriageLive() does the same for the fast triage (Decisions.gs, FastTriage.gs): real Gemini Decisions calls
+ * about the real early-wave signals the bot holds right now, through the client the checks use. It writes to no sheet
+ * cell and posts nowhere; its output is one LIVE_VERIFY_FAST_TRIAGE line in the log.
  */
+
+const LIVE_VERIFY_FT_MAX_ = 5;  // signals asked about by verifyFastTriageLive (a look, not a load test)
 
 function verifyLookbackAndPipelineLive() {
   const ss = openStore_(false);
@@ -127,5 +133,61 @@ function verifyLookbackAndPipelineLive() {
     },
   };
   console.log('LIVE_VERIFY_RESULT ' + JSON.stringify(summary, null, 2));
+  return summary;
+}
+
+/**
+ * The fast triage, live: one real Gemini Decisions call about each real early-wave signal the bot holds right now
+ * (the producer's 3-hour buffer, then the review queue; LIVE_VERIFY_FT_MAX_ at most), through the same client the
+ * checks use (the key from Secret Manager, the caps, the pause after a failure). Reads only: nothing is queued,
+ * reviewed, posted or written to a sheet (the client counts its own calls in script state, as it always does). Logs,
+ * for each signal, what was sent's size, the six answers, the time it took, and what the fast triage would do with
+ * them (hold back, raise); then the latencies and the day's call counts. No signal at hand: it says so and asks
+ * nothing. Run it from the editor.
+ */
+function verifyFastTriageLive() {
+  const props = PropertiesService.getScriptProperties();
+  const buffer = ewsReadBuffer_(ewsCache_());
+  const queued = edQueueList_(props).map(e => edQueueRow_(props, e.k)).filter(Boolean);
+  const ids = new Set();
+  const signals = buffer.concat(queued).filter(r => {
+    if (!r || !r.alert_id || ids.has(r.alert_id)) return false;
+    ids.add(r.alert_id);
+    return true;
+  }).slice(0, LIVE_VERIFY_FT_MAX_);
+  const session = decSession_(() => Infinity, false);
+  const results = signals.map(r => {
+    const res = decSignalAsk_(r, session);
+    return {
+      alert_id: r.alert_id,
+      signal_type: r.signal_type || '',
+      accounts: ewCount_(r.unique_low_tier_authors),
+      headline: truncate_(String(r.headline || ''), 120),
+      input_chars: decSignalInput_(r).length,
+      ok: res.ok,
+      why: res.ok ? '' : res.why,
+      ms: res.ok ? res.ms : null,
+      tokens: res.ok ? res.tokens : null,
+      answers: res.ok ? res.dec : null,
+      p0_risk_group: ftP0Group_(r),
+      never_held_back: ftProtected_(r),
+      would_hold_back: res.ok ? (ftHoldWhy_(r, res.dec) || 'no') : null,
+      would_raise_early: res.ok ? ewsWatchRaise_(res.dec) : null,
+    };
+  });
+  const times = results.filter(x => x.ok).map(x => x.ms).sort((a, b) => a - b);
+  const st = decState_(props, Date.now());
+  const summary = {
+    endpoint: decUrl_(),
+    model: DEC_MODEL_,
+    signals: { in_buffer: buffer.length, in_queue: queued.length, asked: results.length },
+    answered: times.length,
+    not_answered: results.filter(x => !x.ok).map(x => `${x.alert_id}: ${x.why}`),
+    latency_ms: times.length ? { min: times[0], median: times[Math.floor(times.length / 2)], max: times[times.length - 1] } : null,
+    calls_today: { asked: st.asked, failed: st.failed, refused: st.refused, paused_until: st.until ? new Date(st.until).toISOString() : '', why: st.why },
+    bars: { hold_back: ftHoldBars_(), hold_back_ready: ftHoldReady_(), early_watch: ewsWatchBars_(), early_watch_ready: ewsWatchReady_() },
+    results,
+  };
+  console.log('LIVE_VERIFY_FAST_TRIAGE ' + JSON.stringify(summary, null, 2));
   return summary;
 }
