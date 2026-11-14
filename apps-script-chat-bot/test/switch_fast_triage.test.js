@@ -1168,6 +1168,185 @@ module.exports = function (H) {
     const dayAfter = JSON.parse(propsCap.getProperty('EARLY_DETECTION_TODAY'));
     eq([dayAfter.watchq, dayAfter.queued], [8, 9]); // 1 watch queued (reaching 8/8) + 1 regular cluster queued (reaching 9/40); 2nd watch skipped!
   });
+
+  test('fast triage (5D): cadence telemetry (ewLogCheck_), dynamic C19 label, B31 lookback invariance, and daily-cap producer continuity without Decisions calls', () => {
+    const MIN = 60 * 1000;
+    const env = makeEnv(() => ({ code: 200, body: FX.probe.six_questions_doc_input.response.body }));
+    const { bot, g } = env;
+
+    // 1. Constants remain at 15 min / 10 min pending 1-day live measurement (Decision 13)
+    eq([bot.ev('EW_EVERY_MS_'), bot.ev('EWS_EVERY_MS_')], [15 * MIN, 10 * MIN]);
+
+    // 2. Control C19 ON text derives dynamically from EW_EVERY_MS_
+    const ewSwitch = bot.ev('CONTROL_SWITCHES_').find(s => s.key === 'earlyWave');
+    assert.match(ewSwitch.on(), /^✓ ON: every 15 min, groups new low-reach posts/);
+    eq(
+      bot.ev('(() => { const was = EW_EVERY_MS_; return `every ${Math.round((5 * 60 * 1000) / 60000)} min (now ${Math.round(was / 60000)} min)`; })()'),
+      'every 5 min (now 15 min)'
+    );
+
+    // 3. B31 lookback dropdown validation is untouched; edLookbackMinutes_ absorbs 5-min and 15-min intervals seamlessly
+    const probeEnv = makeFastTriageE2e(() => [], () => ({ code: 200, body: FX.probe.six_questions_doc_input.response.body }));
+    const sh = probeEnv.t.control();
+    eq([sh.validations['31,2'].values, sh.validations['31,2'].allowInvalid], [['15 minutes', '30 minutes', '45 minutes', '60 minutes'], false]);
+    const T0 = g.clock.now;
+    eq(bot.edLookbackMinutes_({ bq_lookback_minutes: 15 }, T0 - 5 * MIN, T0), 25);   // 5m check + 20m margin > 15m B31
+    eq(bot.edLookbackMinutes_({ bq_lookback_minutes: 60 }, T0 - 5 * MIN, T0), 60);   // 60m B31 > 25m
+    eq(bot.edLookbackMinutes_({ bq_lookback_minutes: 15 }, T0 - 15 * MIN, T0), 35);  // 15m check + 20m margin
+
+    // 4. ewLogCheck_ records producer timing + rolling 10m/60m Gemini, BigQuery, and Decisions counts + remaining run budget
+    const props = g.services.PropertiesService.getScriptProperties();
+    const logs = [];
+    const fakeCtx = { log: m => logs.push(String(m)) };
+
+    // Before EWS_STATE.last exists and with unbounded left(): logs "time not known" and "all of the run left"
+    bot.ewLogCheck_(fakeCtx, props, () => Infinity);
+    eq(logs.length, 1);
+    assert.match(logs[0], /^early wave check: producer time not known \(read 0, kept 0, embedded 0\) · calls in the last 10 \/ 60 min: Gemini 0 \/ 0, BigQuery 0 \/ 0, Decisions 0 \/ 0 · all of the run left$/);
+
+    // Record real ApiGuard ticks + EWS_STATE.last and verify exact numbers in ewLogCheck_
+    bot.apiGuardNote_('gemini', 1);
+    bot.apiGuardNote_('bigquery', 2);
+    bot.apiGuardNote_('decisions', 1);
+    props.setProperty('EWS_STATE', JSON.stringify({
+      last: { at: T0, ms: 6140, read: 142, kept: 58, embedded: 31 },
+    }));
+    logs.length = 0;
+    bot.ewLogCheck_(fakeCtx, props, () => 245000);
+    eq(logs.length, 1);
+    eq(
+      logs[0],
+      'early wave check: producer 6.1 s (read 142, kept 58, embedded 31) · calls in the last 10 / 60 min: Gemini 1 / 1, BigQuery 2 / 2, Decisions 1 / 1 · 245 s of the run left'
+    );
+
+    // 5. Daily cap option (b): at queued === 40 with Rows 19 + 38 + 39 ON, producer keeps reading & clustering,
+    //    makes ZERO Decisions calls, queues nothing, returns capped: true even when buffer is empty, and leaves new
+    //    stories unmarked so tomorrow's first check after midnight picks them up!
+    const vecStory = new Array(768).fill(0);
+    vecStory[0] = 0.72;
+    vecStory[1] = 0.694;
+    let currentPosts = [];
+    let bqReads = 0;
+    let decCount = 0;
+    const capT = H.e2e();
+    capT.chat.addSpace(MIRROR, 'Google Mirror');
+    capT.bot.setup();
+    const origCapFetch = capT.g.services.UrlFetchApp.fetch;
+    capT.g.services.UrlFetchApp.fetch = (url, params) => {
+      const u = String(url);
+      if (u.includes('secretmanager.googleapis.com/')) {
+        return {
+          getResponseCode: () => 200,
+          getContentText: () => JSON.stringify({ payload: { data: Buffer.from(TEST_KEY, 'utf8').toString('base64') } }),
+          getHeaders: () => ({}),
+        };
+      }
+      if (u.includes('/decisions')) {
+        decCount++;
+        return {
+          getResponseCode: () => 200,
+          getContentText: () => JSON.stringify(FX.signal_responses['ED-CLU-CLU-dc5a8afd13da-202611061731']),
+          getHeaders: () => ({}),
+        };
+      }
+      if (u.startsWith('https://bigquery.googleapis.com/')) {
+        const body = JSON.parse((params && params.payload) || '{}');
+        const loc = body.location || 'US';
+        const isEws = /-- ews:/.test(body.query || '');
+        if (isEws && loc === 'us-central1') bqReads++;
+        const rows = isEws && loc === 'us-central1' ? currentPosts : [];
+        const EWS_COLS = [
+          ['kind'], ['lane'], ['mid'], ['url'], ['platform'], ['author'],
+          ['audience', 'INTEGER'], ['eng', 'INTEGER'], ['posted_ms', 'INTEGER'], ['seen_ms', 'INTEGER'],
+          ['txt'], ['topic'], ['chash'], ['sig'], ['risk'], ['brand', 'BOOLEAN'],
+        ];
+        const cols = isEws ? EWS_COLS : [['url']];
+        return {
+          getResponseCode: () => 200,
+          getHeaders: () => ({}),
+          getContentText: () => JSON.stringify({
+            jobComplete: true,
+            jobReference: { projectId: 'brand-social-central-data', jobId: `j_cap_${loc}_${capT.g.clock.now}`, location: loc },
+            schema: { fields: cols.map(c => ({ name: c[0], type: c[1] || 'STRING' })) },
+            rows: rows.map(r => ({ f: cols.map(c => ({ v: r[c[0]] === undefined || r[c[0]] === null ? null : String(r[c[0]]) })) })),
+          }),
+        };
+      }
+      return origCapFetch(url, params);
+    };
+    capT.bot.embedTexts_ = texts => texts.map(() => vecStory);
+    capT.bot.vecEvergreenOfVecs_ = vecs => vecs.map(() => null);
+    capT.bot.vecTagHintsOfVecs_ = vecs => vecs.map(() => ({
+      tag: 'Product - Scams involving Google products',
+      priority: 'P1',
+      similarity: 0.78,
+      topics: [],
+    }));
+    capT.control().getRange(9, 2).setValue(MIRROR);
+    capT.control().getRange(19, 2).setValue('ON');
+    capT.control().getRange(38, 2).setValue('ON');
+    capT.control().getRange(39, 2).setValue('ON');
+
+    const capProps = capT.g.services.PropertiesService.getScriptProperties();
+    capProps.setProperty('EARLY_DETECTION_TODAY', JSON.stringify({
+      day: capT.bot.dayKey_(),
+      clusters: 5,
+      velocity: 0,
+      queued: 40, // already at EW_MAX_PER_DAY_
+    }));
+
+    // Check 1 at cap with empty posts: still reads BigQuery, logs ewLogCheck_, returns capped: true, 0 Decisions calls
+    const ctxCap1 = {
+      now: () => capT.g.clock.now,
+      deadline: capT.g.clock.now + 240000,
+      outboundBlocked: true,
+      settings: { bq_lookback_minutes: 60 },
+      switches: { earlyWave: true, fastTriage: true, fastTriageRank: true, fastTriageHold: false },
+      spaces: { burson: { id: MIRROR, externalUserAllowed: false }, analyst: { id: MIRROR, externalUserAllowed: false } },
+      store: { alerts: [] },
+      log: m => capT.g.logs.push(String(m)),
+    };
+    const resEmptyAtCap = capT.bot.earlyWaveCheck_(ctxCap1);
+    eq([resEmptyAtCap.capped, resEmptyAtCap.queued, bqReads, decCount], [true, 0, 1, 0]);
+    assert.ok(capT.g.logs.some(l => l.startsWith('early wave check: producer ')), 'ewLogCheck_ logged on capped check');
+
+    // Check 2 at cap (15 min later) with 5 distinct accounts reporting a brand-new story:
+    // producer clusters and buffers the 5-account story, but queueing stops at cap with 0 Decisions calls!
+    capT.g.clock.now += 15 * MIN;
+    currentPosts = [1, 2, 3, 4, 5].map(i => ({
+      kind: 'post',
+      lane: 'sonar',
+      mid: `M-CAP-${i}`,
+      url: `https://x.com/cap_sec_${i}/status/${99000 + i}`,
+      platform: 'twitter',
+      author: `cap_sec_${i}`,
+      audience: 350 + i * 20,
+      eng: 9 + i,
+      posted_ms: capT.g.clock.now - (7 - i) * MIN,
+      seen_ms: capT.g.clock.now - MIN,
+      txt: 'New malware family stealing active Gmail session cookies from Windows browsers without triggering 2FA prompts',
+      topic: 'Workspace',
+      chash: `ch_cap_${i}`,
+      sig: `sig_cap_${i}`,
+      risk: 'security_scam_malware',
+      brand: true,
+    }));
+    const resStoryAtCap = capT.bot.earlyWaveCheck_(Object.assign({}, ctxCap1, { deadline: capT.g.clock.now + 240000 }));
+    eq([resStoryAtCap.capped, resStoryAtCap.queued, bqReads, decCount, capT.bot.edQueueList_(capProps).length], [true, 0, 2, 0, 0]);
+
+    // Roll day forward past midnight (simulate yesterday's day key on EARLY_DETECTION_TODAY) + 15 min:
+    // the warm buffered story was NOT marked seen at the cap, so tomorrow's first check asks Decisions and queues it!
+    currentPosts = [];
+    capProps.setProperty('EARLY_DETECTION_TODAY', JSON.stringify({
+      day: '2026-11-12',
+      clusters: 5,
+      velocity: 0,
+      queued: 40,
+    }));
+    capT.g.clock.now += 15 * MIN;
+    const resNextDay = capT.bot.earlyWaveCheck_(Object.assign({}, ctxCap1, { deadline: capT.g.clock.now + 240000 }));
+    eq([resNextDay.capped, resNextDay.queued, decCount, capT.bot.edQueueList_(capProps).length], [false, 1, 1, 1]);
+  });
 };
 
 

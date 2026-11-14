@@ -3361,6 +3361,26 @@ function edQueuePrune_(props, now) {
 }
 
 /**
+ * One log line a check with the numbers its cadence rests on: the producer's own time for its last read (EWS_STATE),
+ * the rolling API call counts (ApiGuard.gs: Gemini, BigQuery and Gemini Decisions, last 10 and 60 minutes) and how much
+ * of the run is left. Never throws.
+ */
+function ewLogCheck_(ctx, props, left) {
+  try {
+    const last = (typeof ewsState_ === 'function' ? ewsState_(props).last : null) || {};
+    const c = apiGuardCounts_();
+    const d = apiGuardDecisionsCounts_();
+    const ms = Number(last.ms);
+    ctx.log(`early wave check: producer ${isFinite(ms) && ms >= 0 && last.at ? `${(ms / 1000).toFixed(1)} s` : 'time not known'} ` +
+      `(read ${Number(last.read) || 0}, kept ${Number(last.kept) || 0}, embedded ${Number(last.embedded) || 0}) \u00b7 ` +
+      `calls in the last 10 / 60 min: Gemini ${c.gemini10m} / ${c.gemini60m}, BigQuery ${c.bq10m} / ${c.bq60m}, ` +
+      `Decisions ${d.decisions10m} / ${d.decisions60m} \u00b7 ${isFinite(left()) ? `${Math.round(left() / 1000)} s` : 'all'} of the run left`);
+  } catch (e) {
+    console.warn('Early detection: could not log the check\'s numbers: ' + ((e && e.message) || e));
+  }
+}
+
+/**
  * Early detection (clusters & velocity) (Control row 19, OFF unless switched ON): at most every EW_EVERY_MS_ (15
  * minutes), runs EarlyWaveSource.gs (`ewsRows_`) over the 6 approved BigQuery tables + Vertex AI embeddings for signals
  * created since just before its last check (edLookbackMinutes_: at least the B31 lookback, `@minutes`): newly emerged
@@ -3400,16 +3420,13 @@ function earlyWaveCheck_(ctx) {
   const last = Number(props.getProperty(ED_AT_PROP_)) || 0;
   if (last && now >= last && now - last < EW_EVERY_MS_) return null;
   props.setProperty(ED_AT_PROP_, String(now));
-  if (!ftRankOn_(ctx)) ftQueueUnrank_(props);  // row 39 OFF: the review order goes back to what it was
-  // The daily ceiling: once today's signals are all queued, not even the BigQuery read happens until tomorrow
+  // The daily ceiling: once today's signals are all queued, the check still reads and clusters, and only queueing stops
   const today = edDayState_(props);
   const room = Math.max(0, EW_MAX_PER_DAY_ - (Number(today.queued) || 0));
-  if (!room) {
-    noteEarlyWave_(props, 0, 0, '');
-    return { queued: 0, failed: 0, capped: true };
-  }
   const minutes = edLookbackMinutes_(ctx.settings, last, now);
-  const ft = ftStart_(ctx, left);
+  // The fast triage (null with row 38 OFF; at the daily ceiling nothing can be queued, so nothing is asked either)
+  const ft = room ? ftStart_(ctx, left) : null;
+  if (!ftRankOn_(ctx)) ftQueueUnrank_(props);  // row 39 OFF: the review order goes back to what it was
 
   let rows;
   try {
@@ -3426,6 +3443,7 @@ function earlyWaveCheck_(ctx) {
     ftFinish_(ft, props);
     return { queued: 0, failed: 0, capped: false, query_error: true };
   }
+  ewLogCheck_(ctx, props, left);
 
   const seen = earlyWaveSeen_(props, now);
   // Read only once a row is new: the story cards posted in the last 24h (same-story dedup, EarlyDetection.gs edLedger_)
@@ -3452,7 +3470,7 @@ function earlyWaveCheck_(ctx) {
   let repeats = 0;
   let updates = 0;
   let triaged = 0;
-  let capped = false;
+  let capped = !room;
   const isWatch = r => typeof EWS_WATCH_SIGNAL_ !== 'undefined' && String(r.signal_type || '').trim().toUpperCase() === EWS_WATCH_SIGNAL_;
   const watchRoom = Math.max(0, EW_WATCH_QUEUE_PER_DAY_ - (Number(today.watchq) || 0));
   // Queues one signal (the fast triage's answers with it, when it has them) and marks its keys as seen

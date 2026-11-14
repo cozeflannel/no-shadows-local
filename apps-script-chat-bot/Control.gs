@@ -416,8 +416,8 @@ const CONTROL_SWITCHES_ = [
         'post, press pickup)') },
   { key: 'earlyWave', label: 'Early wave & velocity check',
     off: 'OFF (one post at a time)',
-    on: () => '✓ ON: every 15 min, groups new low-reach posts from the BigQuery source tables into stories itself and ' +
-      'sends story clusters and velocity spikes for full triage' },
+    on: () => `✓ ON: every ${Math.round(EW_EVERY_MS_ / 60000)} min, groups new low-reach posts from the BigQuery source ` +
+      'tables into stories itself and sends story clusters and velocity spikes for full triage' },
   { key: 'outageComms', label: 'Check outage & comms docs',
     off: 'OFF (standard review)',
     on: () => '✓ ON: checks outage claims and adds approved holding statements from the Resources documents' },
