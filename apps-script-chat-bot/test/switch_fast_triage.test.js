@@ -1347,6 +1347,316 @@ module.exports = function (H) {
     const resNextDay = capT.bot.earlyWaveCheck_(Object.assign({}, ctxCap1, { deadline: capT.g.clock.now + 240000 }));
     eq([resNextDay.capped, resNextDay.queued, decCount, capT.bot.edQueueList_(capProps).length], [false, 1, 1, 1]);
   });
+
+  // =============================================================================================================
+  // Section 5E — Recording & calibration on the Fast triage tab (FastTriage.gs, EarlyDetection.gs)
+  // =============================================================================================================
+
+  test('fast triage (5E): formula-injection escaping across all string fields, 49,000-char cell cap, and row trimming preserving analyst Rating values & dropdown alignment', () => {
+    const env = makeEnv(() => ({ code: 200, body: FX.probe.six_questions_doc_input.response.body }));
+    const { bot } = env;
+
+    // 1. Guardrail 1: Formula-injection escaping (`'` prefix on leading =, +, -, @, or control characters) across ALL string columns
+    const vectors = [
+      ['=HYPERLINK("https://evil.example","click")', '\'=HYPERLINK("https://evil.example","click")'],
+      ['   =SUM(A1:A2)', '\'=SUM(A1:A2)'],
+      ['+cmd|"/c calc"!A0', '\'+cmd|"/c calc"!A0'],
+      ['-2+3', '\'-2+3'],
+      ['@researcher_handle claim', '\'@researcher_handle claim'],
+      ['\t=1+1', '\'=1+1'],
+      ['\tcmd', '\'cmd'],
+      ['\n+1+1', '\'+1+1'],
+      ['\r\nFormulaLine', '\'FormulaLine'],
+    ];
+    for (const [inj, expected] of vectors) {
+      const row = bot.ftTabRow_({
+        row: {
+          alert_id: inj,
+          signal_type: 'CLUSTER_EMERGENCE',
+          unique_low_tier_authors: 5,
+          platforms_csv: inj,
+          headline: inj,
+          cluster_id: inj,
+          topic_product: inj,
+        },
+        dec: { g: 0.91, r: 0.84, i: 0.72, n: 0.08, c: inj, cp: 0.66, p0: 0.12, s: 2.75, l: 3, sc: 0.81 },
+        did: inj,
+        review: { disposition: inj, basis: 'early_detection', confidence: 0.89, severity: inj },
+        card: inj,
+        kind: 'r',
+      });
+      // Every free-text column (1 Signal, 4 Platforms, 5 Headline, 10 Category, 16 Fast triage, 17 Review, 19 Review severity, 20 Card) is escaped
+      for (const colIdx of [1, 4, 5, 10, 16, 17, 19, 20]) {
+        assert.ok(String(row[colIdx]).startsWith("'"), `col ${colIdx} must start with apostrophe for ${JSON.stringify(inj)}, got ${JSON.stringify(row[colIdx])}`);
+        assert.ok(!/[\x00-\x1f\x7f]/.test(String(row[colIdx])), `col ${colIdx} must contain zero control characters`);
+      }
+      eq(row[5], expected);
+      // Key column (22) is valid JSON starting with `{`, never a formula
+      assert.strictEqual(row[22][0], '{');
+      const keyObj = JSON.parse(row[22]);
+      eq(keyObj.k, 'r');
+      // Across all 23 cells, zero cells begin with raw =, +, -, @, or control characters
+      row.forEach((cell, idx) => {
+        if (typeof cell === 'string' && cell.length > 0) {
+          assert.ok(!/^[=+\-@\x00-\x1f]/.test(cell), `cell ${idx} unsafe: ${JSON.stringify(cell)}`);
+        }
+      });
+    }
+
+    // Normal strings (including mid-string =, +, -, @ or leading spaces before normal text) do NOT get spurious apostrophes
+    const cleanRow = bot.ftTabRow_({
+      row: {
+        alert_id: '  ED-CLU-123  ',
+        signal_type: 'VELOCITY_SPIKE',
+        unique_low_tier_authors: 6,
+        platforms_csv: 'X, Reddit',
+        headline: '  Users discuss Chrome flag a=b + update - bug @google  ',
+        cluster_id: 'clu_123',
+      },
+      dec: { g: 0.95, r: 0.7, i: 0.6, n: 0.1, c: 'Product - Widespread product outage or bug', cp: 0.8, p0: 0.05, s: 2.2, l: 2, sc: 0.78 },
+      did: 'answered (recording only)',
+      review: { disposition: 'monitor', basis: 'low_confidence', confidence: 0.74, severity: 'medium' },
+      card: 'QA-9001',
+      kind: 'r',
+    });
+    eq([cleanRow[1], cleanRow[2], cleanRow[4], cleanRow[5]], ['ED-CLU-123', 'Velocity', 'X, Reddit', 'Users discuss Chrome flag a=b + update - bug @google']);
+    eq([cleanRow[10], cleanRow[14], cleanRow[16], cleanRow[17], cleanRow[18], cleanRow[19], cleanRow[20], cleanRow[21]], [
+      'Product - Widespread product outage or bug', 'medium', 'answered (recording only)', 'monitor (low confidence)', 0.74, 'medium', 'QA-9001', '',
+    ]);
+
+    // 2. Guardrail 3 (cell cap): every cell stays strictly <= SHEET_CELL_MAX_CHARS_ (49,000), even under giant inputs or raised FT_HEADLINE_CHARS_
+    const huge = '=' + 'W'.repeat(65000);
+    const giantRow = bot.ftTabRow_({
+      row: { alert_id: huge, platforms_csv: huge, headline: huge, cluster_id: huge },
+      dec: { g: 0.5, r: 0.5, i: 0.5, n: 0.5, c: huge, cp: 0.5, p0: 0.5, s: 1.5, l: 1, sc: 0.6 },
+      did: huge,
+      review: { disposition: huge, basis: huge, confidence: 0.8, severity: huge },
+      card: huge,
+    });
+    giantRow.forEach(c => {
+      if (typeof c === 'string') assert.ok(c.length <= 49000, `cell exceeded 49k: ${c.length}`);
+    });
+    // Also exercise the 49,000-char safety net in ftTabRow_'s final map directly by temporarily stubbing truncate_
+    const origTrunc = bot.truncate_;
+    try {
+      bot.truncate_ = s => String(s);
+      const uncapped = bot.ftTabRow_({ row: { alert_id: 'ED-CAP', headline: '=' + 'Z'.repeat(60000) } });
+      eq([uncapped[5].startsWith("'="), uncapped[5].length], [true, 49000]);
+    } finally {
+      bot.truncate_ = origTrunc;
+    }
+
+    // 3. Guardrail 4: Row trimming (FT_MAX_ROWS_ = 5000, FT_TRIM_SLACK_ = 500) preserves analyst Rating edits & validation alignment
+    const trimEnv = makeFastTriageE2e(() => [], () => ({ code: 200, body: FX.probe.six_questions_doc_input.response.body }));
+    const { t } = trimEnv;
+    const mkRow = i => bot.ftTabRow_({
+      row: { alert_id: `ED-TRIM-${i}`, signal_type: 'CLUSTER_EMERGENCE', unique_low_tier_authors: 5, platforms_csv: 'X', headline: `Story ${i}`, cluster_id: `c_${i}` },
+      dec: { g: 0.9, r: 0.8, i: 0.7, n: 0.1, c: 'Product - Other/general criticism', cp: 0.5, p0: 0.1, s: 2.0, l: 2, sc: 0.7 },
+      did: 'answered (recording only)',
+      review: { disposition: 'monitor', basis: 'early_detection', confidence: 0.85, severity: 'medium' },
+      card: `QA-${i}`,
+      kind: 'r',
+    });
+
+    // Seed 5,500 rows (4 header rows + 5,500 data rows = 5,504 total, right at FT_MAX_ROWS_ + FT_TRIM_SLACK_ without trimming yet)
+    const initialBatch = Array.from({ length: 5500 }, (_, idx) => mkRow(idx + 1));
+    eq(t.bot.ftTabAppend_(initialBatch), { added: 5500, problem: '' });
+    const ftSh = t.sheet().getSheetByName('Fast triage');
+    eq([ftSh.getLastRow(), ftSh.frozenRows, ftSh.hidden], [5504, 4, [23]]);
+    eq([ftSh.protections.length, ftSh.protections[0].warningOnly], [1, true]);
+    eq(ftSh.validations['5,22'].values, ['Useful', 'Noise']);
+
+    // Analysts enter ratings on specific rows:
+    // - data row #1 (sheet row 5, ED-TRIM-1): 'Noise' (will be trimmed off when 502 oldest rows go)
+    // - data row #503 (sheet row 507, ED-TRIM-503): 'Useful' (becomes sheet row 5 — the new first retained row!)
+    // - data row #2500 (sheet row 2504, ED-TRIM-2500): 'Noise' (becomes sheet row 2002!)
+    // - data row #5500 (sheet row 5504, ED-TRIM-5500): 'Useful' (becomes sheet row 5002!)
+    ftSh.getRange(5, 22).setValue('Noise');
+    ftSh.getRange(507, 22).setValue('Useful');
+    ftSh.getRange(2504, 22).setValue('Noise');
+    ftSh.getRange(5504, 22).setValue('Useful');
+
+    // Spy on getRange to verify exact validation & clearDataValidations range calls during trim
+    const rangeOps = [];
+    const origGetRange = ftSh.getRange.bind(ftSh);
+    ftSh.getRange = (r, c, nr, nc) => {
+      const rng = origGetRange(r, c, nr, nc);
+      const origSetDv = rng.setDataValidation.bind(rng);
+      rng.setDataValidation = rule => {
+        rangeOps.push({ op: 'setDataValidation', r, c, nr: nr || 1, nc: nc || 1, values: rule && rule.values });
+        return origSetDv(rule);
+      };
+      rng.clearDataValidations = () => {
+        rangeOps.push({ op: 'clearDataValidations', r, c, nr: nr || 1, nc: nc || 1 });
+        return rng;
+      };
+      return rng;
+    };
+
+    // Append 2 more rows (total 5,502 > 5,500) -> trims oldest 502 rows (ED-TRIM-1 .. ED-TRIM-502), keeping newest 5,000 (ED-TRIM-503 .. ED-TRIM-5502)
+    eq(t.bot.ftTabAppend_([mkRow(5501), mkRow(5502)]), { added: 2, problem: '' });
+    eq(ftSh.getLastRow(), 5004); // 4 header rows + 5,000 retained rows
+
+    // Verify retained rows preserved their exact analyst Rating values and stayed aligned with Signal, Headline, Card, and Key!
+    eq([ftSh.cell(5, 2), ftSh.cell(5, 6), ftSh.cell(5, 21), ftSh.cell(5, 22), JSON.parse(ftSh.cell(5, 23)).id],
+      ['ED-TRIM-503', 'Story 503', 'QA-503', 'Useful', 'ED-TRIM-503']);
+    eq([ftSh.cell(2002, 2), ftSh.cell(2002, 21), ftSh.cell(2002, 22)], ['ED-TRIM-2500', 'QA-2500', 'Noise']);
+    eq([ftSh.cell(5002, 2), ftSh.cell(5002, 21), ftSh.cell(5002, 22)], ['ED-TRIM-5500', 'QA-5500', 'Useful']);
+    eq([ftSh.cell(5003, 2), ftSh.cell(5003, 22)], ['ED-TRIM-5501', '']);
+    eq([ftSh.cell(5004, 2), ftSh.cell(5004, 22)], ['ED-TRIM-5502', '']);
+
+    // Verify Rating dropdown validation was re-aligned on retained rows (5..5004, col 22) and cleared on trimmed tail (5005..5506, col 22)
+    assert.ok(rangeOps.some(o => o.op === 'setDataValidation' && o.r === 5 && o.c === 22 && o.nr === 5000 && o.nc === 1 &&
+      JSON.stringify(o.values) === JSON.stringify(['Useful', 'Noise'])), 're-applied Useful/Noise validation on all 5000 retained rows');
+    assert.ok(rangeOps.some(o => o.op === 'clearDataValidations' && o.r === 5005 && o.c === 22 && o.nr === 502 && o.nc === 1),
+      'cleared orphan validations on the 502 trimmed trailing rows');
+
+    // Appending one more row after trim lands cleanly at row 5005 with Useful/Noise validation without disturbing row 5..5004 ratings
+    rangeOps.length = 0;
+    eq(t.bot.ftTabAppend_([mkRow(5503)]), { added: 1, problem: '' });
+    eq([ftSh.getLastRow(), ftSh.cell(5005, 2), ftSh.cell(5, 22), ftSh.cell(5002, 22)], [5005, 'ED-TRIM-5503', 'Useful', 'Useful']);
+    eq(rangeOps, [{ op: 'setDataValidation', r: 5005, c: 22, nr: 1, nc: 1, values: ['Useful', 'Noise'] }]);
+  });
+
+  test('fast triage (5E): review-side recording & log lines, OFF-switch zero-touch, foreign-tab & Sheet-error isolation, and edDecide_ invariance', () => {
+    const sigCard = FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-e9dddc0be913-202611071746');  // Android CERT-In -> monitor card
+    const sigDismiss = FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-abe6decf9a2a-202611121446'); // routine chatter -> dismiss
+
+    // 1. Guardrail 3 (OFF-switch zero-touch): with Rows 38-40 OFF, zero Fast triage tab creation/reads/writes and zero fast-triage review logs
+    const offEnv = makeFastTriageE2e(() => [sigCard, sigDismiss], () => {
+      throw new Error('Decisions API must not be called when Rows 38-40 are OFF');
+    });
+    const ssOff = offEnv.t.sheet();
+    let ftSheetTouches = 0;
+    const origInsert = ssOff.insertSheet.bind(ssOff);
+    ssOff.insertSheet = (name, idx) => {
+      if (name === 'Fast triage') ftSheetTouches++;
+      return origInsert(name, idx);
+    };
+    const origByName = ssOff.getSheetByName.bind(ssOff);
+    ssOff.getSheetByName = name => {
+      if (name === 'Fast triage') ftSheetTouches++;
+      return origByName(name);
+    };
+    offEnv.t.control().getRange(19, 2).setValue('ON');
+    offEnv.t.poll();
+    eq([ftSheetTouches, origByName('Fast triage'), edCardsOf(offEnv.t).length], [0, null, 2]);
+    assert.ok(!offEnv.t.g.logs.some(l => l.includes('fast triage')), 'zero fast-triage log lines when Row 38 is OFF');
+
+    // 2. Row 38 ON (recording-only): records both carded and dismissed reviews alongside Decisions answers + Alert log ID + 1 log line each
+    const recEnv = makeFastTriageE2e(() => [sigCard, sigDismiss], payload => matchRecordedResponse(recEnv.t.bot, payload));
+    const origVertex = recEnv.t.g.vertex.earlyDetection;
+    recEnv.t.g.vertex.earlyDetection = payload => {
+      const base = origVertex(payload);
+      const txt = payload.contents[0].parts.map(p => p.text || '').join('\n');
+      if (txt.includes(sigDismiss.alert_id)) {
+        base.early_detection_call = {
+          disposition: 'dismiss',
+          severity: 'low',
+          confidence: 0.91,
+          reason: 'Routine low-tier discussion with no emerging brand risk',
+          build_up_signals: 'None',
+          watch_for: 'None',
+        };
+      }
+      return base;
+    };
+    recEnv.t.control().getRange(19, 2).setValue('ON');
+    recEnv.t.control().getRange(38, 2).setValue('ON');
+    recEnv.t.poll();
+
+    eq(edCardsOf(recEnv.t).length, 1); // sigCard posted a card; sigDismiss was dismissed (no card)
+    const alertLogSh = recEnv.t.sheet().getSheetByName('Alert log');
+    const qaId = alertLogSh.cell(2, 1);
+    assert.match(String(qaId), /^QA-\d+$/);
+
+    const ftTab = recEnv.t.sheet().getSheetByName('Fast triage');
+    assert.ok(ftTab, 'Fast triage tab created on review recording');
+    eq([ftTab.cell(1, 1), ftTab.getLastRow()], [recEnv.t.bot.ev('FT_TITLE_'), 6]); // header row 4 + 2 reviewed rows (5 & 6)
+    eq(ftTab.rows[3], recEnv.t.bot.ev('FT_HEADER_'));
+
+    // Row 38 alone preserves author-count review order (sigDismiss has more authors -> row 5; sigCard -> row 6)
+    eq([ftTab.cell(5, 2), ftTab.cell(5, 17), ftTab.cell(5, 18), ftTab.cell(5, 19), ftTab.cell(5, 20), ftTab.cell(5, 21)],
+      [sigDismiss.alert_id, 'answered (recording only)', 'dismiss', 0.91, 'low', '']);
+    eq([ftTab.cell(6, 2), ftTab.cell(6, 3), ftTab.cell(6, 17), ftTab.cell(6, 18), ftTab.cell(6, 19), ftTab.cell(6, 20), ftTab.cell(6, 21), ftTab.cell(6, 22)],
+      [sigCard.alert_id, 'Cluster', 'answered (recording only)', 'monitor', 0.88, 'medium', qaId, '']);
+    assert.strictEqual(typeof ftTab.cell(6, 7), 'number'); // About Google p
+    assert.strictEqual(typeof ftTab.cell(6, 14), 'number'); // Severity score
+
+    // One single-line calibration log entry per reviewed signal with Decisions answers
+    const reviewLogs = recEnv.t.g.logs.filter(l => l.startsWith('fast triage and review: '));
+    eq(reviewLogs.length, 2);
+    assert.match(reviewLogs[0], /fast triage and review: ED-CLU-CLU-abe6decf9a2a-202611121446 · about Google .* · review: dismiss \(early_detection, 0\.91 sure, low\)/);
+    assert.match(reviewLogs[1], /fast triage and review: ED-CLU-CLU-e9dddc0be913-202611071746 · about Google .* · review: monitor \(early_detection, 0\.88 sure, medium\)/);
+
+    // 3. Guardrail 3 (foreign-tab refusal): user-created 'Fast triage' tab is NEVER overwritten or cleared, and review/cards proceed normally
+    const foreignEnv = makeFastTriageE2e(() => [sigCard], payload => matchRecordedResponse(foreignEnv.t.bot, payload));
+    const foreignSh = foreignEnv.t.sheet().insertSheet('Fast triage');
+    foreignSh.getRange(1, 1, 2, 2).setValues([['Analyst scratch notes', 'Do not touch'], ['Row 2', 'Keep']]);
+    const snapshotBefore = JSON.stringify(foreignSh.rows);
+    let foreignWrites = 0;
+    const origForeignRange = foreignSh.getRange.bind(foreignSh);
+    foreignSh.getRange = (r, c, nr, nc) => {
+      const rng = origForeignRange(r, c, nr, nc);
+      ['setValue', 'setValues', 'clearContent', 'setDataValidation'].forEach(m => {
+        rng[m] = () => { foreignWrites++; throw new Error(`foreign tab must never call ${m}`); };
+      });
+      return rng;
+    };
+    foreignEnv.t.control().getRange(19, 2).setValue('ON');
+    foreignEnv.t.control().getRange(38, 2).setValue('ON');
+    foreignEnv.t.poll();
+
+    eq([foreignWrites, JSON.stringify(foreignSh.rows), edCardsOf(foreignEnv.t).length], [0, snapshotBefore, 1]);
+    assert.ok(foreignEnv.t.g.logs.some(l => l.includes('fast triage: not recording: a tab named "Fast triage" exists that the bot didn\'t make')),
+      'foreign-tab refusal logged cleanly during review drain');
+
+    // 4. Guardrail 3 (Sheet write failure isolation): throwing inside Fast triage setValues logs cleanly and never blocks edReviewAndPost_ or cards
+    const errEnv = makeFastTriageE2e(() => [sigCard], payload => matchRecordedResponse(errEnv.t.bot, payload));
+    const botTab = errEnv.t.bot.ftTab_(errEnv.t.sheet(), true).sh;
+    const origBotRange = botTab.getRange.bind(botTab);
+    botTab.getRange = (r, c, nr, nc) => {
+      const rng = origBotRange(r, c, nr, nc);
+      if (r >= 5) {
+        rng.setValues = () => { throw new Error('Spreadsheets service transient 503'); };
+      }
+      return rng;
+    };
+    errEnv.t.control().getRange(19, 2).setValue('ON');
+    errEnv.t.control().getRange(38, 2).setValue('ON');
+    errEnv.t.poll();
+
+    eq(edCardsOf(errEnv.t).length, 1, 'card delivery succeeds despite Sheet error on Fast triage tab');
+    assert.ok(errEnv.t.g.logs.some(l => l.includes('fast triage: the Fast triage tab couldn\'t be written')),
+      'Sheet write failure logged cleanly');
+
+    // 5. Section 5E rule: edDecide_ and its three 0.8 confidence bars + 0.92 evergreen override are completely unchanged & ignore row.dec
+    const b = recEnv.t.bot;
+    eq(
+      [b.ev('ED_ESCALATE_MIN_CONFIDENCE_'), b.ev('ED_SLRR_TAG_MIN_CONFIDENCE_'), b.ev('ED_KNOWN_MIN_CONFIDENCE_')],
+      [0.8, 0.8, 0.8]
+    );
+    const fakeDecCtxOff = { now: () => NOW, settings: { react: false }, switches: { fastTriage: false, fastTriageRank: false, fastTriageHold: false } };
+    const fakeDecCtxOn = { now: () => NOW, settings: { react: false }, switches: { fastTriage: true, fastTriageRank: true, fastTriageHold: true } };
+    const baseParsed = {
+      ed: b.edFromRow_(sigCard),
+      post: { url: sigCard.primary_url, lang: 'en', text: sigCard.headline },
+      bq: { is_evergreen_noise: true, evergreen_topic_label: 'Routine feature requests' },
+    };
+    const parsedWithNoisyDec = {
+      ed: b.edFromRow_(Object.assign({}, sigCard, { dec: { g: 0.01, r: 0.01, i: 0.01, n: 0.99, s: 0.05, l: 0, sc: 0.99 } })),
+      post: baseParsed.post,
+      bq: baseParsed.bq,
+    };
+    const rev91 = { disposition: 'escalate', confidence: 0.91, severity: 'high', reason: 'Below 0.92 evergreen override', slrr: { is: false, confidence: 0.5, topics: [], others: [] } };
+    const rev92 = { disposition: 'escalate', confidence: 0.92, severity: 'high', reason: 'Meets 0.92 evergreen override', slrr: { is: true, priority: 'P1', confidence: 0.9, tag: 'Product - Privacy & security concerns', product: 'Android', topics: [], others: [] } };
+    const d91Off = b.edDecide_(fakeDecCtxOff, baseParsed, rev91, {}, [], NOW);
+    const d91On = b.edDecide_(fakeDecCtxOn, parsedWithNoisyDec, rev91, {}, [], NOW);
+    eq([d91Off.disposition, d91Off.basis, d91On.disposition, d91On.basis], ['dismiss', 'evergreen', 'dismiss', 'evergreen']);
+    const d92Off = b.edDecide_(fakeDecCtxOff, baseParsed, rev92, { fields: {} }, [], NOW);
+    const d92On = b.edDecide_(fakeDecCtxOn, parsedWithNoisyDec, rev92, { fields: {} }, [], NOW);
+    eq([d92Off.disposition, d92Off.basis, d92On.disposition, d92On.basis], ['escalate', 'early_detection', 'escalate', 'early_detection']);
+  });
 };
 
 

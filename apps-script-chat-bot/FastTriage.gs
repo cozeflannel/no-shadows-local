@@ -356,11 +356,19 @@ function ftTab_(ss, create) {
   return { sh, foreign: false };
 }
 
+/** A Fast triage tab text cell: one line, capped, and never read by Sheets as a formula. Pure. */
+function ftCell_(v, max) {
+  const raw = String(v === undefined || v === null ? '' : v);
+  const s = truncate_(raw.replace(/[\x00-\x1f\x7f]+/g, ' ').replace(/\s+/g, ' ').trim(), max || FT_HEADLINE_CHARS_);
+  if (!s) return '';
+  return (/^[=+\-@]/.test(s) || /^[\x00-\x1f]/.test(raw)) ? '\'' + s : s;
+}
+
 /**
  * A Fast triage tab row. o: {row (the signal), dec (its answers or null), did (what the fast triage did with it),
  * review ({disposition, basis, confidence, severity} or null), card (its Alert-log id), kind ('r' reviewed, 'h' held
- * back, 'w' an early-watch story asked about)}. Every cell is short (the headline FT_HEADLINE_CHARS_ at most). Pure
- * (but for the clock).
+ * back, 'w' an early-watch story asked about)}. Every cell is short (the headline FT_HEADLINE_CHARS_ at most) and
+ * escaped against formula injection. Pure (but for the clock).
  */
 function ftTabRow_(o) {
   const r = (o && o.row) || {};
@@ -368,36 +376,36 @@ function ftTabRow_(o) {
   const rev = (o && o.review) || null;
   const sig = String(r.signal_type || 'CLUSTER_EMERGENCE').trim().toUpperCase();
   const num = v => (v === null || v === undefined || v === '' || !isFinite(Number(v)) ? '' : Number(v));
-  const text = (v, n) => truncate_(String(v === undefined || v === null ? '' : v).replace(/\s+/g, ' ').trim(), n);
+  const clean = (v, n) => truncate_(String(v === undefined || v === null ? '' : v).replace(/[\x00-\x1f\x7f]+/g, ' ').replace(/\s+/g, ' ').trim(), n);
   const out = new Array(FT_HEADER_.length).fill('');
   out[0] = Utilities.formatDate(new Date(Date.now()), (typeof GEN !== 'undefined' && GEN && GEN.timezone) || 'America/New_York',
     'yyyy-MM-dd HH:mm');
-  out[1] = text(r.alert_id, 120);
-  out[2] = sig === 'VELOCITY_SPIKE' ? 'Velocity' : typeof EWS_WATCH_SIGNAL_ !== 'undefined' && sig === EWS_WATCH_SIGNAL_ ? 'Early watch' : 'Cluster';
+  out[1] = ftCell_(r.alert_id, 120);
+  out[2] = ftCell_(sig === 'VELOCITY_SPIKE' ? 'Velocity' : typeof EWS_WATCH_SIGNAL_ !== 'undefined' && sig === EWS_WATCH_SIGNAL_ ? 'Early watch' : 'Cluster', 20);
   out[3] = num(r.unique_low_tier_authors);
-  out[4] = text(r.platforms_csv, 120);
-  out[5] = text(r.headline, FT_HEADLINE_CHARS_);
+  out[4] = ftCell_(r.platforms_csv, 120);
+  out[5] = ftCell_(r.headline, FT_HEADLINE_CHARS_);
   if (d) {
     out[6] = num(d.g);
     out[7] = num(d.r);
     out[8] = num(d.i);
     out[9] = num(d.n);
-    out[10] = text(d.c, 128);
+    out[10] = ftCell_(d.c, 128);
     out[11] = num(d.cp);
     out[12] = num(d.p0);
     out[13] = num(d.s);
-    out[14] = ED_SEVERITIES_[d.l] || '';
+    out[14] = ftCell_(ED_SEVERITIES_[d.l] || '', 20);
     out[15] = num(d.sc);
   }
-  out[16] = text(o && o.did, 300);
+  out[16] = ftCell_(o && o.did, 300);
   if (rev) {
-    out[17] = text(`${rev.disposition || ''}${rev.basis && rev.basis !== 'early_detection' ? ` (${String(rev.basis).replace(/_/g, ' ')})` : ''}`, 80);
+    out[17] = ftCell_(`${rev.disposition || ''}${rev.basis && rev.basis !== 'early_detection' ? ` (${String(rev.basis).replace(/_/g, ' ')})` : ''}`, 80);
     out[18] = num(rev.confidence);
-    out[19] = text(rev.severity, 20);
+    out[19] = ftCell_(rev.severity, 20);
   }
-  out[20] = text(o && o.card, 40);
-  out[FT_COL_.key - 1] = JSON.stringify({ id: text(r.alert_id, 120), cid: text(r.cluster_id, 64), k: (o && o.kind) || 'r' });
-  return out.map(v => (typeof v === 'string' && v.length > SHEET_CELL_MAX_CHARS_ ? v.slice(0, SHEET_CELL_MAX_CHARS_) : v));
+  out[20] = ftCell_(o && o.card, 40);
+  out[FT_COL_.key - 1] = JSON.stringify({ id: clean(r.alert_id, 120), cid: clean(r.cluster_id, 64), k: clean((o && o.kind) || 'r', 8) || 'r' });
+  return out.map(v => (typeof v === 'string' && v.length > SHEET_CELL_MAX_CHARS_ ? capCell_(v, SHEET_CELL_MAX_CHARS_) : v));
 }
 
 /**
@@ -411,21 +419,29 @@ function ftTabAppend_(rows) {
   try {
     const tab = ftTab_(openStore_(false), true);
     if (tab.foreign) {
-      return { added: 0, problem: `not recording: a tab named "${FT_TAB_}" exists that the bot didn't make (rename it and the bot makes its own)` };
+      const problem = `not recording: a tab named "${FT_TAB_}" exists that the bot didn't make (rename it and the bot makes its own)`;
+      console.warn('fast triage: ' + problem);
+      return { added: 0, problem };
     }
     const sh = tab.sh;
     const at = Math.max(sh.getLastRow(), FT_HEAD_ROW_) + 1;
     sh.getRange(at, 1, list.length, FT_HEADER_.length).setValues(list);
+    const ratingRule = () => SpreadsheetApp.newDataValidation().requireValueInList(FT_RATINGS_, true).build();
     try {
-      sh.getRange(at, FT_COL_.rating, list.length, 1)
-        .setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(FT_RATINGS_, true).build());
+      sh.getRange(at, FT_COL_.rating, list.length, 1).setDataValidation(ratingRule());
     } catch (e) { /* the column works without its dropdown */ }
     const count = sh.getLastRow() - FT_HEAD_ROW_;
     if (count > FT_MAX_ROWS_ + FT_TRIM_SLACK_) {
       const all = sh.getRange(FT_HEAD_ROW_ + 1, 1, count, FT_HEADER_.length).getValues();
       const keep = all.slice(count - FT_MAX_ROWS_);
       sh.getRange(FT_HEAD_ROW_ + 1, 1, keep.length, FT_HEADER_.length).setValues(keep);
-      sh.getRange(FT_HEAD_ROW_ + 1 + keep.length, 1, count - keep.length, FT_HEADER_.length).clearContent();
+      const tail = sh.getRange(FT_HEAD_ROW_ + 1 + keep.length, 1, count - keep.length, FT_HEADER_.length);
+      tail.clearContent();
+      try {
+        sh.getRange(FT_HEAD_ROW_ + 1, FT_COL_.rating, keep.length, 1).setDataValidation(ratingRule());
+        const tailRating = sh.getRange(FT_HEAD_ROW_ + 1 + keep.length, FT_COL_.rating, count - keep.length, 1);
+        if (typeof tailRating.clearDataValidations === 'function') tailRating.clearDataValidations();
+      } catch (e) { /* the column works without its dropdown */ }
     }
     return { added: list.length, problem: '' };
   } catch (e) {

@@ -1679,19 +1679,21 @@ function edReviewAndPost_(ctx, row, report) {
   }
   const d = edConclude_(ctx, prep, assessed, now);
   const named = (d.rev && d.rev.story && d.rev.story.title) || ed.headline;
+  const call = { disposition: d.disposition, basis: d.basis, confidence: d.rev ? d.rev.confidence : null,
+    severity: d.rev ? d.rev.severity : '' };
   // An early-watch signal whose review failed: no card (the usual kinds keep their "needs a human look" card); it is
   // tried once more, then dropped (edDrainQueue_, ED_QUEUE_MAX_TRIES_)
   if (d.basis === 'failed' && ed.signalType === EWS_WATCH_SIGNAL_) {
     ctx.log(`early detection: no card for the early signal "${truncate_(ewText_(named), 90)}": its review failed` +
       `${d.llmError ? ` (${truncate_(d.llmError, 140)})` : ''}`);
-    return { card: null, held: '', dismissed: '', retry: 'its review failed' };
+    return { card: null, held: '', dismissed: '', retry: 'its review failed', call };
   }
   // Same-story dedup or non-English exclusion, after the review: posts no card
   if (d.basis === 'repeat' || d.basis === 'non_english') {
     const why = d.why || 'already alerted';
     ctx.log(`early detection: held back "${truncate_(ewText_(named), 90)}" after its review: ${truncate_(why, 240)}`);
     if (report) report.early_detection_held = (report.early_detection_held || 0) + 1;
-    return { card: null, held: why, dismissed: '' };
+    return { card: null, held: why, dismissed: '', call };
   }
   // A dismissal is filtered out: nothing of it gets through (no card, note, mark, Social Alert or T&S intake); its
   // reason is logged and C19 counts it
@@ -1699,7 +1701,7 @@ function edReviewAndPost_(ctx, row, report) {
     const why = d.why || 'benign or unrelated low-tier chatter';
     ctx.log(`early detection: dismissed "${truncate_(ewText_(named), 90)}" after its review, so it was filtered out: ${truncate_(why, 240)}`);
     if (report) report.early_detection_dismissed = (report.early_detection_dismissed || 0) + 1;
-    return { card: null, held: '', dismissed: why };
+    return { card: null, held: '', dismissed: why, call };
   }
   const text = edStoryCardText_(ed, d, now);
   const upd = ed.update && ed.update.thread ? ed.update : null;
@@ -1716,7 +1718,7 @@ function edReviewAndPost_(ctx, row, report) {
     }
   }
   if (!card) card = ctx.chat.post(space, text, opts);
-  if (!card || !card.name) return { card: null, held: '' };
+  if (!card || !card.name) return { card: null, held: '', call };
   if (ctx.recent && typeof ctx.recent.add === 'function') ctx.recent.add(card.name, card.createTime || now);
   edRememberPosted_(card.name, {
     alertId: ed.alertId,
@@ -1732,8 +1734,8 @@ function edReviewAndPost_(ctx, row, report) {
     priorityHint: ed.priorityHint,
     samples: ed.samples,
   });
-  edAct_(ctx, Object.assign({}, card, { text: card.text || text }), d, report);
-  return { card, held: '' };
+  const logged = edAct_(ctx, Object.assign({}, card, { text: card.text || text }), d, report);
+  return { card, held: '', call, logged: (logged && logged.alert_id) || '' };
 }
 
 /**
@@ -1758,6 +1760,8 @@ function edDrainQueue_(ctx, report) {
   if (!props.getProperty(ED_QUEUE_PROP_)) return out;
   const ranking = ftRankOn_(ctx);
   if (!ranking) ftQueueUnrank_(props);
+  const recording = ftOn_(ctx);
+  const tabRows = [];  // the Fast triage tab's rows for this run's reviews (row 38 ON)
   const left = () => (ctx.deadline ? ctx.deadline - ctx.now() : Infinity);
   const prune = () => {
     const p = edQueuePrune_(props, ctx.now());
@@ -1803,11 +1807,20 @@ function edDrainQueue_(ctx, report) {
         break;
       }
     }
+    const dec = row && row.dec && typeof row.dec === 'object' ? row.dec : null;
     if (res && res.retry) {  // an early-watch signal whose review failed: no card; one more try, then it is dropped
       if (tries >= ED_QUEUE_MAX_TRIES_) {
         edQueueDrop_(props, entry.k);
         out.dropped++;
         ctx.log(`early detection: dropped ${entry.id || 'an early signal'} (${res.retry} ${tries} times: no card without a review)`);
+        if (recording) {
+          try {
+            tabRows.push(ftTabRow_({ row, dec, did: `early watch: raised, but ${res.retry} ${tries} times: no card`,
+              review: res.call || null, kind: 'r' }));
+          } catch (e) {
+            console.warn('fast triage: could not build tab row: ' + ((e && e.message) || e));
+          }
+        }
       } else {
         ctx.log(`early detection: ${entry.id || 'an early signal'} stays queued for one more try (${res.retry})`);
       }
@@ -1815,6 +1828,21 @@ function edDrainQueue_(ctx, report) {
       break;
     }
     edQueueDrop_(props, entry.k);
+    if (recording && row && res) {
+      try {
+        const did = entry.sig === 'w' ? 'early watch: raised, then reviewed'
+          : !dec ? 'no answer on record' : ranking ? 'answered, and ranked by it' : 'answered (recording only)';
+        tabRows.push(ftTabRow_({ row, dec, did, review: res.call || null, card: res.logged || '', kind: 'r' }));
+        if (dec && res.call) {
+          ctx.log(`fast triage and review: ${entry.id || 'a signal'} \u00b7 ${ftAnswerWords_(dec)} \u00b7 review: ` +
+            `${res.call.disposition} (${res.call.basis}` +
+            `${res.call.confidence === null || res.call.confidence === undefined ? '' : `, ${Math.round(res.call.confidence * 100) / 100} sure`}` +
+            `${res.call.severity ? `, ${res.call.severity}` : ''})`);
+        }
+      } catch (e) {
+        console.warn('fast triage: could not record reviewed signal: ' + ((e && e.message) || e));
+      }
+    }
     if (res && res.card) {
       out.posted++;
       const early = entry.sig === 'w';
@@ -1828,6 +1856,10 @@ function edDrainQueue_(ctx, report) {
     list = prune();
   }
   out.waiting = list.length;
+  if (tabRows.length) {
+    const tabRes = ftTabAppend_(tabRows);
+    if (tabRes && tabRes.problem) ctx.log(`fast triage: ${tabRes.problem}`);
+  }
   if (out.held || out.dismissed) {
     noteEarlyWave_(props, 0, 0, '', { checked: false, repeats: out.held, dismissed: out.dismissed, waiting: out.waiting });
   } else if (out.dropped && !out.posted) {
