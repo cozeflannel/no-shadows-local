@@ -98,7 +98,7 @@ async function handleGetControlStatus(args) {
     cols: s.properties.gridProperties && s.properties.gridProperties.columnCount,
   }));
 
-  const gridUrl = `${SHEETS_BASE}/${encodeURIComponent(sheetId)}?ranges=${encodeURIComponent('Control!A1:C39')}&includeGridData=true`;
+  const gridUrl = `${SHEETS_BASE}/${encodeURIComponent(sheetId)}?ranges=${encodeURIComponent('Control!A1:C43')}&includeGridData=true`;
   const gridDoc = await gcpFetchJson(gridUrl);
   const rowData =
     (gridDoc.sheets &&
