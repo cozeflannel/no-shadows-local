@@ -184,7 +184,7 @@ alert_template:
     - {name: comments, labels: [Comments, Replies], type: integer, min: 0}
     - {name: shares, labels: [Shares, Reposts, Retweets], type: integer, min: 0}
     - {name: views, labels: [Views], type: integer, min: 0}
-    - {name: product, labels: [Product, Google Product], type: string, required: true, reference_list: products, correctable: true,
+    - {name: product, labels: [Product, Google Product, "Product(s)", Products, "Google Product(s)", Google Products], type: string, required: true, reference_list: products, correctable: true,
        description: "Google product (distro name), e.g. Gemini App, AI Overviews, Pixel.",
        fix_hint: Use the product names from the distribution list (Gems -> Gemini App; AI Studio/Antigravity -> Devs Products).}
     - {name: other_products, labels: [Other Products, Other Google Products, "Product #2", "Product #3", Product 2, Additional Products], type: list, correctable: true}

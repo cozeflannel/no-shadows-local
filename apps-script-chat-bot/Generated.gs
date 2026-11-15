@@ -187,7 +187,11 @@ const GEN = {
    "name": "product",
    "labels": [
     "Product",
-    "Google Product"
+    "Google Product",
+    "Product(s)",
+    "Products",
+    "Google Product(s)",
+    "Google Products"
    ],
    "type": "string",
    "required": true,
