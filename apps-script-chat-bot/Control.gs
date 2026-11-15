@@ -101,6 +101,9 @@ const CONTROL_HELP_ = [
     'it fixed, how often it made the same Social Alert call as the IMs, and how much sooner it sent it (matched on the ' +
     'post\'s link, not the subject line). Gemini writes the summary at the top from those numbers only. It updates ' +
     'right after the bot handles an alert, and every 10 minutes.',
+  '• The Head start tab shows this app\'s own alerts (Early Detection cards and early signals, Watch alerts, Direct ' +
+    'BigQuery alerts) next to Burson\'s alert on the same story and the IMs\' email: who alerted first, and by how ' +
+    'much. It appears once this app has an alert of its own, and updates every 10 minutes at most.',
   '• The Follow-up tab (with Track post-alert outcomes ON, row 21) lists every Social Alert the bot sent in the last 14 ' +
     'days, from both of its spaces: which teams replied on its email thread and how soon, its status (Resolved, ' +
     'Answered, Question waiting, Waiting, Overdue, No reply in 7 days) and the next step. Edit the deadlines at its top ' +
@@ -289,7 +292,7 @@ const CONTROL_HELP_ = [
 // three more switches (Fast triage), 41-45 five fast-triage bars, 46 one more switch (Write early-wave records to
 // BigQuery), 47 the sixth fast-triage bar, 48 blank)
 const CONTROL_HELP_ROW_ = 49;
-const CONTROL_HELP_ROWS_ = 45;  // rows kept for the help text (blank ones clear older, longer text)
+const CONTROL_HELP_ROWS_ = 46;  // rows kept for the help text (blank ones clear older, longer text)
 
 // Row 30: Testing: send to (B30). Up to 5 email addresses; blank holds test emails until filled in.
 const TESTERS_ROW_ = 30;

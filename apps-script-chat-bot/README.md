@@ -1108,12 +1108,14 @@ The Results tab counts only the alerts Burson posted. The **Head start** tab (`H
 app raised itself: Early Detection cards and early signals (row 19), Watch alerts (row 35) and Direct BigQuery alerts
 (row 15), told apart by the Alert log's `ingested` column. It answers: how often did this app alert a story before
 Burson did, how often before the IMs emailed, by how much, and which stories did it have first. It has no switch and
-no Control tab row. It only reads the Alert log and writes its own tab: nothing is posted in any space, nothing is
-emailed, Gmail and BigQuery are not asked, and the Alert memory is not touched.
+no Control tab row ("How it works" there has one line about it). It only reads the Alert log and its own tab, and
+writes only its own tab: nothing is posted in any space, nothing is emailed, Gmail and BigQuery are not asked, and the
+Alert memory is not touched.
 
 - **A story** is one of this app's alerts and its updates, counted once and timed from its first alert: an Early
   Detection card that updates an earlier card belongs to that card's story, and so do two of this app's alerts on the
-  same post. The time is when the alert was posted in Chat.
+  same post. The time is when the alert was posted in Chat. A row whose time is not a real date (a text, a number no
+  date can hold) is left out: this app's alert is not a story then, and Burson's row does not count.
 - **Burson's alert** on the story, and the tab's "Matched on" column says which rule gave it, so you can judge it.
   Two rules are sure: `same post` (Burson alerted one of the story's posts) and `same story` (Burson's alert on another
   post carries the story's exact issue name and the later of the two is an Ongoing Issue: what a review records when it
@@ -1131,23 +1133,31 @@ emailed, Gmail and BigQuery are not asked, and the Alert memory is not touched.
   under the same exposure tag, and such a card often has no exposure tag. So "this app alerted first" is, if anything,
   undercounted, and a story in this count may have been alerted by Burson under another name.
 - **The IMs' email** is the IMs' time for that Burson post as the Results tab has it (their email, else their draft),
-  taken from the Results tab's rebuild in the same run. It is blank when the Results tab has no time for the post, or
-  no longer shows it (the Results tab covers 7 days).
+  taken from the Results tab's rebuild in the same run. The Results tab shows Burson's alerts of the last 7 days only,
+  so the Head start tab keeps each story's IM time itself, in three hidden columns at the far right of its tables (the
+  Burson post's key, the time, and whether it is their email or their draft), and reads them back before each rebuild.
+  For a Burson alert the Results tab shows, the Results tab's answer is used, also when it has no time for it. For an
+  older one, the time is the one the Head start tab last had, so the 30-day numbers cover 30 days. A remembered time
+  is only as old as the tab: there is none for a Burson alert that was already older than the Results tab's days when
+  the Head start tab was first made, or when its story first came onto it.
 
 From top to bottom: the title and what's counted; **Headline numbers** for the last 7 and the last 30 days (stories,
 those Burson alerted too, this app first and its median head start, Burson first and the median time behind, no
 Burson alert found, this app's alert before the IMs' email and the median time between them, and Burson's alerts with
 how many of them this app had alerted first: those that came after a story this app was first on); **Biggest head
 starts** (the ten longest over Burson); **Every story**, newest first. A head start reads `2 d 15 h`, `3 h 10 min` or
-`45 min`, and `behind by 20 min` when this app was later; the same in plain minutes is at the far right, to sort by.
-A cell is blank where there is no Burson alert or no IM time.
+`45 min`, and `behind by 20 min` when this app was later; the same in plain minutes is at the far right, to sort by
+(the three hidden columns after them are the bot's own: leave them as they are). A cell is blank where there is no
+Burson alert or no IM time.
 
 The tab is made the first time this app has an alert of its own to show, and is rebuilt at most every 10 minutes, in a
-run where the Results tab was rebuilt (10 more minutes without one and it is rebuilt without the IMs' times). It is
-never rebuilt in a run that is still catching up on alerts (a flow held an alert for the next run, handled as many
-messages as a run may, or ran out of time): it waits for a run that has caught up, so it never keeps an alert
-waiting. Run `refreshHeadStart()` to rebuild it now. The tab is the bot's own (its title in A1 says so): a tab named
-"Head start" that the bot didn't make is never read, cleared or written, and the log says so until it's renamed.
+run where the Results tab was rebuilt (10 more minutes without one and it is rebuilt with the IMs' times it
+remembers). It is never rebuilt in a run that is still catching up on alerts (a flow held an alert for the next run,
+handled as many messages as a run may, or ran out of time): it waits for a run that has caught up, so it never keeps
+an alert waiting. Run `refreshHeadStart()` to rebuild it now: it keeps the IMs' times the tab remembers, and newer
+ones follow at the next run that has them. The tab is the bot's own (its title in A1 says so): a tab named "Head
+start" that the bot didn't make is never read, cleared or written. The log says so at each rebuild, and the Control
+tab's Status (B5) from the next run on, until the first rebuild after the tab is renamed.
 
 ## T&S pre-filled link
 

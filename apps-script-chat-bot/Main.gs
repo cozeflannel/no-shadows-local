@@ -412,11 +412,13 @@ function poll() {
       const needs = sfb.space ? [] : sfbNeeds_(wanted, null);
       const memNote = amControlNote_();  // AlertMemory.gs: its memory couldn't be read lately ('' when it could)
       const resultsNote = resultsBlockedNote_();  // Speed.gs: a "Results" tab the bot didn't make is in the way ('' when not)
+      const headStartNote = headStartBlockedNote_();  // HeadStart.gs: the same for a "Head start" tab ('' when not)
       writeControlStatus_(control, {
         bursonNote: '\u2014 not used (working in Auto-correct space, B10)',
         analystNote: '',
         status: needs.length ? `\u26a0\ufe0f ${sfbProblemText_(sfb, needs)}`
-          : (memNote ? `\u26a0\ufe0f ${memNote}` : resultsNote ? `\u26a0\ufe0f ${resultsNote}` : okStatusText_()),
+          : (memNote ? `\u26a0\ufe0f ${memNote}` : resultsNote ? `\u26a0\ufe0f ${resultsNote}`
+            : headStartNote ? `\u26a0\ufe0f ${headStartNote}` : okStatusText_()),
         lastCheck: nowLabel_(),
         today: todayText_(readStats_(), dayKey_(), wanted.switches.noWait) + amTodayText_(),
       });
@@ -620,9 +622,12 @@ function poll() {
     const memNote = amControlNote_();  // AlertMemory.gs: its memory couldn't be read lately ('' when it could)
     // Speed.gs: a tab named Results that the bot didn't make is in the way, so the Results tab isn't updated ('' when it is)
     const resultsNote = resultsBlockedNote_();
+    // HeadStart.gs: the same for a tab named Head start that the bot didn't make ('' when its last rebuild found none)
+    const headStartNote = headStartBlockedNote_();
     const status = sfbStatus || (issues.length ? `⚠️ Something needs another try: ${truncate_(issues[0], 240)} The bot keeps retrying.`
       : (notice ? `⚠️ ${notice}` : memNote ? `⚠️ ${memNote}` : resultsNote ? `⚠️ ${resultsNote}`
-        : direct.space ? directB25StatusText_(cfg.burson) : okStatusText_()));
+        : headStartNote ? `⚠️ ${headStartNote}`
+          : direct.space ? directB25StatusText_(cfg.burson) : okStatusText_()));
     writeControlStatus_(control, Object.assign(statusNotes, {
       status: mode && mode.live ? `${LIVE_STATUS_PREFIX_}${status}` : status,
       lastCheck: nowLabel_(), today: todayText_(today, day, wanted.switches.noWait) + amTodayText_(),
@@ -722,8 +727,8 @@ function poll() {
           }
           // The Head start tab (HeadStart.gs): this app's own alerts next to Burson's alerts and the IMs' emails, at most
           // every 10 minutes, after the Results tab (whose rebuild in this run has the IMs' times); it only reads the
-          // Alert log and writes its own tab, and never throws. Never in a run where a flow is still catching up on
-          // alerts (`flows`: it waits for a run that has caught up, so the next run is never kept waiting by it)
+          // Alert log and its own tab, writes only that tab, and never throws. Never in a run where a flow is still
+          // catching up on alerts (`flows`: it waits for a run that has caught up, so the next run is never kept waiting)
           if (activity > 0 || bgIdleOk) {
             maybeRefreshHeadStart_(ss, any, { deadline: runStart + RUN_HARD_STOP_MS_, runStart, flows: [mainCtx, ac, os] });
           }

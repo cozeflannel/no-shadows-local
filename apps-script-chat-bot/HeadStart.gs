@@ -5,9 +5,10 @@
  * posted and leaves this app's own alerts out; the Watch detections scorecard (ProactiveWatch.gs) measures a watch's
  * flag against Burson on the same post only.
  *
- * It only reads the Alert log and writes its own tab. Nothing is posted in any Chat space, nothing is emailed, no Gmail
- * search and no BigQuery read is made, the Alert memory is neither asked nor written, and there is no Control tab row
- * or switch for it.
+ * It only reads the Alert log and its own tab, and writes only its own tab. Nothing is posted in any Chat space,
+ * nothing is emailed, no Gmail search and no BigQuery read is made, the Alert memory is neither asked nor written, and
+ * there is no Control tab row or switch for it (the Control tab's "How it works" has one line about it, and its Status
+ * says when the tab can't be updated).
  *
  * What's counted (headStartReport_, pure: Alert-log rows in, the stories and the numbers out):
  *   own alert    an Alert-log row whose `ingested` column is the Early Detection value (ED_ALERT_INGESTED_), the Watch
@@ -21,15 +22,29 @@
  *                its EARLIEST alert
  *   this app     when its alert was posted: the row's source_at (for an own card that is the card's own post time in
  *   alerted      Chat), else created_at
+ *   a time       a number of ms that is a real date (headStartTime_: finite, above 0, below 8.64e15), in a row's
+ *                source_at or created_at and in an IM time alike. Anything else there (a text, a number past the last
+ *                date there is) is no time: an own alert without a time is left out, a row of Burson's without one
+ *                doesn't count, and an IM time that isn't one is no IM time
  *   post keys    the row's record_key, plus forwarded_fields.early_detection.post_keys when there are any (8 at most),
  *                over every row of the story
  *   Burson       an Alert-log row with a blank `ingested` that isn't the Other alerts space's and has a link and a
- *   alerted      recorded source_at: exactly what ProactiveWatch.gs pwBursonTimes_ counts. When: the earliest source_at
- *                of Burson's rows for that post key (both test spaces usually hold one row each)
+ *   alerted      recorded source_at: what ProactiveWatch.gs pwBursonTimes_ counts, of the rows whose source_at is a
+ *                time. When: the earliest source_at of Burson's rows for that post key (both test spaces usually hold
+ *                one row each)
  *   the IMs      the IMs' time for the matched Burson post as the Results tab works it out (Speed.gs speedImAt_: their
- *   emailed      email, else their draft), taken from the Results rebuild made earlier in the same run (Speed.gs
- *                RESULTS_RUN_): never looked up here, and never one of the bot's own emails (Speed.gs leaves those out).
- *                Blank when that rebuild didn't run, or no longer shows the post (it covers settings.speed_days days)
+ *   emailed      email, else their draft): never looked up here, and never one of the bot's own emails (Speed.gs leaves
+ *                those out). It comes from the Results rebuild made earlier in the same run (Speed.gs RESULTS_RUN_),
+ *                which shows Burson's posts of the last settings.speed_days (7) days only, and not every rebuild of
+ *                this tab has one in its run. So the tab keeps each story's IM time itself, in hidden columns at the
+ *                far right of its stories tables (the Burson post's key as the Results tab has it, the time in ms, and
+ *                `email` or `draft`), the way the Results tab keeps its own state. Before a rebuild writes the tab
+ *                anew they are read back (readHeadStartState_) and merged with the run's (headStartImMerge_): for a post
+ *                this run's Results rebuild shows, its answer wins, "no time" included (the Results tab knows the post
+ *                and says none: a remembered time is dropped); for a post it doesn't show (older than its days, or no
+ *                Results rebuild in this run), the remembered time is used. So the 30-day numbers cover 30 days. A
+ *                remembered time is only as old as the tab: there is none for a Burson alert that was already older
+ *                than the Results tab's days when the tab was first made, or when its story first came onto it
  *
  * Matching a story with a Burson alert (the tab's "Matched on" says which rule gave it, so a person can judge it).
  * Burson may be earlier OR later. The two sure rules come first:
@@ -88,22 +103,28 @@
  * Head start over the IMs · Matched on · App alert · Burson alert, then the two head starts in plain minutes at the far
  * right, to sort by (negative when this app was later). A head start is in words ("2 d 15 h", "3 h 10 min", "45 min";
  * "behind by 20 min" when this app was later); a cell is blank, never a zero, where there's no Burson alert or no IM time.
+ * After those, hidden (HEAD_START_STATE_COL_), the three columns the tab remembers the IMs' times in: the Burson
+ * post's key, the IMs' time in ms, and whether it is their email or their draft.
  *
  * poll() calls maybeRefreshHeadStart_() at the end of every run, after the Results tab: the tab is rebuilt at most
- * every 10 minutes, in a run where the Results tab was rebuilt too (it has the IMs' times; 10 more minutes without one
- * and it is rebuilt without them), never with under 30 seconds of the run left, and never in a run that is still
- * catching up on alerts (one of its flows held an alert for the next run, stopped at its limit of messages or ran out
- * of time: headStartRunBusy_). Such a run must end as soon as it can, so the next one starts on time; the tab shows
- * nothing that can't wait, and is rebuilt in the first run that has caught up. It never throws: a failure is logged
- * and the run carries on. refreshHeadStart() rebuilds it now, from the editor (the IMs' times follow at the next run
- * that has them). The tab is made the first time this app has an alert of its own to show.
+ * every 10 minutes, in a run where the Results tab was rebuilt too (it has the IMs' latest times; 10 more minutes
+ * without one and it is rebuilt with the times it remembers), never with under 30 seconds of the run left, and never in
+ * a run that is still catching up on alerts (one of its flows held an alert for the next run, stopped at its limit of
+ * messages or ran out of time: headStartRunBusy_). Such a run must end as soon as it can, so the next one starts on
+ * time; the tab shows nothing that can't wait, and is rebuilt in the first run that has caught up. It never throws: a
+ * failure is logged and the run carries on. refreshHeadStart() rebuilds it now, from the editor, with the IMs' times
+ * the tab remembers (newer ones follow at the next run that has them). The tab is made the first time this app has an
+ * alert of its own to show.
  *
- * The tab is the bot's own: its title in A1 says so (isHeadStartTab_), checked before every clear and write. A tab
- * named "Head start" that the bot didn't make is never read, cleared or written: the log says so (and
- * headStartBlockedNote_) until it's renamed, and the bot then makes its own. Every cell stays at or under 49,000
- * characters, and text the bot didn't write itself (issue names, headlines, products, tags, alert ids) can never be read
- * as a formula (Speed.gs speedText_, ProactiveWatch.gs pwCell_); the only formulas are the quoted links (Speed.gs
- * resultsLink_).
+ * The tab is the bot's own: its title in A1 says so (isHeadStartTab_), checked before every read, clear and write. A
+ * tab named "Head start" that the bot didn't make is never read, cleared or written: the log says so at each rebuild,
+ * and so does the Control tab's Status (B5: Main.gs poll() reads headStartBlockedNote_ right after the Results tab's
+ * note) from the next run on, until the first rebuild after the tab is renamed. Every cell stays at or under 49,000
+ * characters, and text the bot didn't write itself (issue names, headlines, products, tags, alert ids, post keys) can
+ * never be read as a formula (Speed.gs speedText_, ProactiveWatch.gs pwCell_); the only formulas are the quoted links
+ * (Speed.gs resultsLink_). A rebuild writes its cells over the old ones and only then clears what is left beyond them
+ * (writeHeadStartTab_), so one that stops before its write, or whose write fails, leaves the tab as it was, the IMs'
+ * times it remembers included.
  */
 
 const HEAD_START_TAB_ = 'Head start';
@@ -113,12 +134,16 @@ const HEAD_START_TITLE_ = 'Head start: how far ahead of Burson\'s alerts and the
 const HEAD_START_OWN_TITLES_ = [HEAD_START_TITLE_];
 const HEAD_START_HEADER_ = ['Type', 'This app alerted (ET)', 'Story', 'Product', 'Exposure Tag', 'Burson alerted (ET)',
   'Head start over Burson', 'IMs emailed (ET)', 'Head start over the IMs', 'Matched on', 'App alert', 'Burson alert',
-  'Head start over Burson (min)', 'Head start over the IMs (min)'];
+  'Head start over Burson (min)', 'Head start over the IMs (min)', 'Burson post key', 'IM time (ms)', 'IM time from'];
+// Hidden from here on: the IMs' time the tab remembers for each story's Burson post (its key, the time, `email` or
+// `draft`), read back by the next rebuild (readHeadStartState_)
+const HEAD_START_STATE_COL_ = 15;
 const HEAD_START_WIDTHS_ = [[1, 330], [2, 140], [3, 320], [4, 140], [5, 220], [6, 140], [7, 160], [8, 140], [9, 160], [10, 190],
   [11, 130], [12, 110], [13, 110], [14, 110]];
 const HEAD_START_WIDE_ = 8;                        // the long texts (what's counted, the notes) are merged across A:H
 const HEAD_START_MIN_MS_ = 60 * 1000;
 const HEAD_START_DAY_MS_ = 24 * 60 * HEAD_START_MIN_MS_;
+const HEAD_START_TIME_END_MS_ = 8.64e15;           // a time is below this, the last moment a date can hold (headStartTime_)
 const HEAD_START_DAYS_ = 30;                       // the tab's stories: the last 30 days, by when this app alerted
 const HEAD_START_WEEK_DAYS_ = 7;                   // the headline numbers' shorter window
 const HEAD_START_STORY_DAYS_ = 14;                 // same story: Burson's alerts this many days either side of the story
@@ -129,7 +154,8 @@ const HEAD_START_MIN_LEFT_MS_ = 30 * 1000;                    // a rebuild needs
 const HEAD_START_WAIT_RESULTS_MS_ = 10 * HEAD_START_MIN_MS_;  // once due, it waits this long for a run with a Results rebuild
 const HEAD_START_RUN_MS_ = 6 * HEAD_START_MIN_MS_;            // Apps Script's longest run (when the run's start isn't given)
 const HEAD_START_AT_PROP_ = 'HEAD_START_AT';                  // when it was last rebuilt (ms)
-const HEAD_START_BLOCKED_PROP_ = 'HEAD_START_BLOCKED';        // 'true' while a "Head start" tab the bot didn't make is in the way
+// 'true' while a "Head start" tab the bot didn't make is in the way (the Control tab's Status, B5, says so)
+const HEAD_START_BLOCKED_PROP_ = 'HEAD_START_BLOCKED';
 const HEAD_START_READ_ROWS_ = 16000;               // Alert-log rows read at most (as Speed.gs resultsAlertRows_)
 const HEAD_START_NAME_CHARS_ = 200;                // a story's name on the tab
 const HEAD_START_LINK_CHARS_ = 2000;               // a longer link isn't linked
@@ -149,8 +175,8 @@ function refreshHeadStart() {
     console.warn(`Head start tab not rebuilt: ${headStartBlockedText_()}`);
     return null;
   }
-  // The IMs' times come with the Results tab's rebuild in the every-minute run: the tab is due again right away, so
-  // the next run that has them fills them in
+  // The IMs' times come with the Results tab's rebuild in the every-minute run: this rebuild keeps the ones the tab
+  // remembers, and the tab is due again right away, so the next run that has them brings them up to date
   PropertiesService.getScriptProperties().setProperty(HEAD_START_AT_PROP_, String(now - HEAD_START_EVERY_MS_));
   console.log(JSON.stringify(out.windows, null, 2));
   return out.windows;
@@ -161,9 +187,9 @@ function refreshHeadStart() {
  * {deadline (ms: when the run must be done), runStart (ms: when this run began), flows (what each flow of this run
  * left: its ctx, or its {ctx, report})}. Due: 10 minutes after the last rebuild, in a run where the Results tab was
  * rebuilt (its posts carry the IMs' times: headStartResultsRun_); when no such run comes for 10 more minutes (or the
- * Results tab is off: settings.speed_tab), it is rebuilt without the IMs' times. Never with under 30 seconds of the run
- * left, and never in a run that is still catching up on alerts (headStartRunBusy_): nothing is read or noted then, and
- * the tab stays due. True when it wrote the tab. Never throws.
+ * Results tab is off: settings.speed_tab), it is rebuilt with the IMs' times the tab remembers and no new ones. Never
+ * with under 30 seconds of the run left, and never in a run that is still catching up on alerts (headStartRunBusy_):
+ * nothing is read or noted then, and the tab stays due. True when it wrote the tab. Never throws.
  */
 function maybeRefreshHeadStart_(ss, ctx, opts) {
   try {
@@ -180,7 +206,8 @@ function maybeRefreshHeadStart_(ss, ctx, opts) {
     const resultsOn = ((ctx && ctx.settings) || {}).speed_tab !== false;
     if (!run && last && resultsOn && now - last < HEAD_START_EVERY_MS_ + HEAD_START_WAIT_RESULTS_MS_) return false;
     props.setProperty(HEAD_START_AT_PROP_, String(now));
-    const out = refreshHeadStart_(ss, { now, im: run ? headStartImTimes_(run.posts) : null });
+    const out = refreshHeadStart_(ss, { now, im: run ? headStartImTimes_(run.posts) : null,
+      covered: run ? headStartImCovered_(run.posts) : null });
     return !!out.written;
   } catch (e) {
     console.error('Head start tab not refreshed: ' + ((e && e.message) || e));
@@ -216,12 +243,16 @@ function headStartRunBusy_(ctx, flows) {
 }
 
 /**
- * Rebuilds the Head start tab: headStartReport_'s {stories, top, windows, …} plus `written` (the tab was written).
- * opts: now (ms), im (the IMs' time per Burson post, headStartImTimes_; null when it isn't at hand), make (make the tab
- * even with no story to show: refreshHeadStart()); tests: alerts (the Alert log's rows). The tab is made the first time
- * there's a story to show, so a sheet where this app never alerted on its own gets no tab. {blocked: true} when a tab
- * named Head start that the bot didn't make is in the way: that tab is left as it is (never read, cleared or written),
- * nothing else is read, and the log says so.
+ * Rebuilds the Head start tab: headStartReport_'s {stories, top, windows, …} plus `written` (the tab was written) and
+ * `im_from_run` (this run's Results rebuild gave the IMs' times; false: only the ones the tab remembers, if any).
+ * opts: now (ms), im (the IMs' time per Burson post from this run's Results rebuild, headStartImTimes_; null when there
+ * was none), covered (the Burson posts that rebuild shows, headStartImCovered_; without it, the posts `im` has a time
+ * for), make (make the tab even with no story to show: refreshHeadStart()); tests: alerts (the Alert log's rows). The
+ * IMs' times the tab remembers (readHeadStartState_: read from the bot's own tab before it is written anew) are merged with
+ * the run's (headStartImMerge_). The tab is made the first time there's a story to show, so a sheet where this app
+ * never alerted on its own gets no tab. {blocked: true} when a tab named Head start that the bot didn't make is in the
+ * way: that tab is left as it is (never read, cleared or written), nothing else is read, and the log and the Control
+ * tab's Status say so (noteHeadStartBlocked_).
  */
 function refreshHeadStart_(ss, opts) {
   const o = opts || {};
@@ -233,7 +264,11 @@ function refreshHeadStart_(ss, opts) {
     return { blocked: true, written: false, stories: [], top: [], windows: null };
   }
   const since = now - (HEAD_START_DAYS_ + HEAD_START_STORY_DAYS_) * HEAD_START_DAY_MS_;
-  const report = headStartReport_(o.alerts || headStartAlertRows_(ss, since), o.im || null, now);
+  // What the last rebuild left in the tab's hidden columns (the bot's own tab only: readHeadStartState_ checks), read
+  // now, before this rebuild writes over them
+  const im = headStartImMerge_(o.im || null, o.covered || null, readHeadStartState_(ss.getSheetByName(HEAD_START_TAB_)));
+  const report = headStartReport_(o.alerts || headStartAlertRows_(ss, since), im, now);
+  report.im_from_run = !!o.im;
   report.written = false;
   if (!ss.getSheetByName(HEAD_START_TAB_) && !o.make && !report.stories.length) return report;  // nothing of its own to show yet
   const sh = ensureHeadStartTab_(ss);
@@ -286,16 +321,96 @@ function headStartResultsRun_(runStart, now) {
 /**
  * The IMs' time per Burson post from the Results tab's posts (Speed.gs speedPosts_, after speedImEmails_): {post key
  * (Speed.gs postKey_): {at (ms), from: 'email' | 'draft'}}, as Speed.gs speedImAt_ gives it (their email, else their
- * draft). Only posts with a time. The bot's own emails and drafts never count as the IMs' (Speed.gs botEmailThreads_,
- * resultsHumanDrafts_). Pure.
+ * draft). Only posts with a time (headStartTime_). The bot's own emails and drafts never count as the IMs' (Speed.gs
+ * botEmailThreads_, resultsHumanDrafts_). Pure.
  */
 function headStartImTimes_(posts) {
   const out = {};
   (Array.isArray(posts) ? posts : []).forEach(p => {
     if (!p || !p.key) return;
-    const at = Number(speedImAt_(p)) || 0;
-    if (at > 0) out[String(p.key)] = { at, from: Number(p.im_email_at) > 0 ? 'email' : 'draft' };
+    const at = headStartTime_(speedImAt_(p));
+    if (at) out[String(p.key)] = { at, from: headStartTime_(p.im_email_at) ? 'email' : 'draft' };
   });
+  return out;
+}
+
+/**
+ * The Burson posts a Results rebuild shows (its posts: Speed.gs speedPosts_): their post keys (Speed.gs postKey_), with
+ * or without an IM time. For these the rebuild's answer is the answer, "no time" included (headStartImMerge_). A post
+ * without a link has no key, and isn't one of them. Pure.
+ */
+function headStartImCovered_(posts) {
+  const seen = new Set();
+  (Array.isArray(posts) ? posts : []).forEach(p => { if (p && p.key) seen.add(String(p.key)); });
+  return Array.from(seen);
+}
+
+/**
+ * The IMs' time per Burson post for one rebuild, from this run's Results rebuild and from what the tab remembers:
+ * {post key: {at (ms), from: 'email' | 'draft'}}, or null when neither has anything to give (no Results rebuild in
+ * this run, and nothing remembered). `run`: headStartImTimes_ of this run's Results rebuild, or null without one;
+ * `covered`: the posts that rebuild shows (headStartImCovered_; a post `run` has a time for is one of them, listed or
+ * not); `remembered`: what the tab's hidden columns held (readHeadStartState_'s Map, or the same as a plain object).
+ * For a post the rebuild shows, its answer wins, "no time" included: the Results tab knows the post and says none, so
+ * a remembered time is dropped. For a post it doesn't show (older than its days, or no Results rebuild in this run),
+ * the remembered time is used. A time that isn't one (headStartTime_) is no time, wherever it is from. Pure.
+ */
+function headStartImMerge_(run, covered, remembered) {
+  const times = run && typeof run === 'object' && !Array.isArray(run) ? run : null;
+  const shown = new Set((Array.isArray(covered) ? covered : []).map(String));
+  if (times) Object.keys(times).forEach(k => shown.add(k));
+  const out = {};
+  let any = false;
+  const take = (key, hit) => {
+    const at = hit && typeof hit === 'object' ? headStartTime_(hit.at) : 0;
+    if (!key || !at) return;
+    out[key] = { at, from: hit.from === 'email' ? 'email' : 'draft' };
+    any = true;
+  };
+  const kept = remembered && typeof remembered === 'object' && !Array.isArray(remembered) ? remembered : null;
+  const keep = (hit, key) => { if (!shown.has(String(key))) take(String(key), hit); };
+  if (kept && typeof kept.forEach === 'function') kept.forEach(keep);  // a Map
+  else if (kept) Object.keys(kept).forEach(k => keep(kept[k], k));
+  if (times) Object.keys(times).forEach(k => take(k, times[k]));
+  return times || any ? out : null;
+}
+
+/**
+ * The IMs' times the last rebuild left on the tab, by Burson post: a Map {post key: {at (ms), from: 'email' |
+ * 'draft'}}, from the hidden columns (HEAD_START_STATE_COL_ on) of every story row of both stories tables (the same
+ * story can be in both; they agree). The tables are found wherever the numbers above them left them: a row that starts
+ * with "Type" is a table's header, and the rows under it, down to the first blank one, are its stories. Only the tab
+ * the bot made is read (isHeadStartTab_: of a tab people made, nothing but the A1 that check looks at). Reading never
+ * throws, and a cell that isn't what the bot wrote there is no state: a row counts only with a key, a time that is one
+ * (headStartTime_) and the word email or draft. An empty Map for a tab from before these columns.
+ */
+function readHeadStartState_(sh) {
+  const out = new Map();
+  try {
+    if (!isHeadStartTab_(sh)) return out;
+    const last = sh.getLastRow();
+    if (last < 2) return out;
+    const first = sh.getRange(1, 1, last, 1).getValues().map(r => headStartText_(r[0]));
+    const head = first.indexOf(HEAD_START_HEADER_[0]) + 1;  // the first table's header row
+    if (!head || head >= last) return out;
+    const header = sh.getRange(head, 1, 1, Math.max(1, sh.getLastColumn())).getValues()[0].map(headStartText_);
+    const col = header.indexOf(HEAD_START_HEADER_[HEAD_START_STATE_COL_ - 1]) + 1;
+    if (!col) return out;
+    const state = sh.getRange(head + 1, col, last - head, 3).getValues();
+    let inTable = true;
+    state.forEach((cells, i) => {
+      const label = first[head + i];  // column A of this row
+      if (label === HEAD_START_HEADER_[0] || !label) { inTable = !!label; return; }
+      if (!inTable) return;
+      // the key as it was written (Sheets hands a text back without the apostrophe that kept it from being a formula)
+      const key = typeof cells[0] === 'string' ? cells[0] : typeof cells[0] === 'number' ? String(cells[0]) : '';
+      const at = headStartTime_(cells[1]);
+      const from = headStartText_(cells[2]);
+      if (key && at && (from === 'email' || from === 'draft') && !out.has(key)) out.set(key, { at, from });
+    });
+  } catch (e) {
+    console.error('Head start tab: the IMs\' times it remembers could not be read: ' + ((e && e.message) || e));
+  }
   return out;
 }
 
@@ -311,6 +426,22 @@ function headStartObj_(v) {
 /** A text or a number as one line of text; '' for none, and for anything else a broken cell could hold. Pure. */
 function headStartText_(v) {
   return typeof v === 'string' || typeof v === 'number' ? String(v).replace(/\s+/g, ' ').trim() : '';
+}
+
+/**
+ * A time in ms, when the value is one: a number (or a text that is a number, or a date) that is finite, above 0 and
+ * below 8.64e15, so a real date can be made of it; else 0. A cell's 1e20, "Infinity", NaN or -5 is no time: taken for
+ * one, it would stop the tab's writer ("Invalid time value"). Never throws. Pure.
+ */
+function headStartTime_(v) {
+  try {
+    const n = typeof v === 'number' ? v
+      : typeof v === 'string' && v.trim() ? Number(v)
+        : v && typeof v === 'object' && typeof v.getTime === 'function' ? Number(v.getTime()) : NaN;
+    return isFinite(n) && n > 0 && n < HEAD_START_TIME_END_MS_ ? n : 0;
+  } catch (e) {
+    return 0;
+  }
 }
 
 /**
@@ -332,21 +463,21 @@ function headStartOwnType_(row) {
 }
 
 /**
- * What the report reads from one Alert-log row: {id, at (when it reached the space: source_at, else created_at),
- * source_at, name (the issue name, without a status suffix), name_key (how issue names compare), ongoing (its issue
- * status is Ongoing Issue), headline (an Early Detection card's), product, tag, tag_key (how exposure tags compare: by
- * the tag's current name, in lower case; '' for none), url, key (record_key), ed (the Early Detection snapshot), view
- * (the Alert memory's view of its story, for the word check; null without issue words)}. Never throws: a broken cell
- * reads as blank. Pure.
+ * What the report reads from one Alert-log row: {id, at (when it reached the space: source_at, else created_at; 0 when
+ * neither is a time: headStartTime_), source_at (0 when it isn't a time), name (the issue name, without a status
+ * suffix), name_key (how issue names compare), ongoing (its issue status is Ongoing Issue), headline (an Early
+ * Detection card's), product, tag, tag_key (how exposure tags compare: by the tag's current name, in lower case; ''
+ * for none), url, key (record_key), ed (the Early Detection snapshot), view (the Alert memory's view of its story, for
+ * the word check; null without issue words)}. Never throws: a broken cell reads as blank. Pure.
  */
 function headStartRowFacts_(a) {
   const ff = headStartObj_(a.forwarded_fields);
   const ef = headStartObj_(headStartObj_(a.email_input).fields);
   const pick = k => headStartText_(ff[k] === undefined || ff[k] === null || ff[k] === '' ? ef[k] : ff[k]);
-  const sourceAt = Number(a.source_at) > 0 ? Number(a.source_at) : 0;
+  const sourceAt = headStartTime_(a.source_at);
   const name = issueNameText_(pick('issue_name'));
   const out = {
-    id: headStartText_(a.alert_id), at: sourceAt || (Number(a.created_at) > 0 ? Number(a.created_at) : 0), source_at: sourceAt,
+    id: headStartText_(a.alert_id), at: sourceAt || headStartTime_(a.created_at), source_at: sourceAt,
     name, name_key: issueNameKey_(name), ongoing: pick('issue_status').toLowerCase().indexOf(ONGOING_STATUS_SUFFIX_.toLowerCase()) === 0,
     headline: headStartText_(headStartObj_(ff.early_detection).story_title),
     product: pick('product'), tag: pick('exposure_tag') || headStartText_(a.exposure_tag), url: pick('post_url'),
@@ -375,7 +506,8 @@ function headStartRowFacts_(a) {
  * This app's own alerts as stories: [{type, at, name, url, product, tag, alert_id, alert_ids, alerts, keys, rows (each
  * row's headStartRowFacts_)}]. An update card joins the card it updates (update_of: that card's Alert-log id, or its
  * BigQuery alert id), and own alerts that share a post key are one story; a story's time, type, name and link are its
- * earliest alert's. Rows that aren't own alerts, have no time, or can't be read are left out. Pure.
+ * earliest alert's. Rows that aren't own alerts, have no time (headStartTime_: a source_at or created_at that is a
+ * real date), or can't be read are left out. Pure.
  */
 function headStartStories_(rows) {
   const own = [];
@@ -430,21 +562,24 @@ function headStartStories_(rows) {
 
 /**
  * Burson's alerts by post: a Map {record key: {key, at (when Burson alerted: the earliest source_at of its rows),
- * alert_id, url, name, rows (each row's headStartRowFacts_, earliest first)}}. What counts is exactly what
- * ProactiveWatch.gs pwBursonTimes_ counts (a link, a blank `ingested`, not the Other alerts space's partition, a
- * source_at above 0), and the time is the one it gives. Pure.
+ * alert_id, url, name, rows (each row's headStartRowFacts_, earliest first)}}. What counts is what ProactiveWatch.gs
+ * pwBursonTimes_ counts (a link, a blank `ingested`, not the Other alerts space's partition, a source_at above 0) of
+ * the rows whose source_at is a time (headStartTime_: a row whose source_at is no real date doesn't count), and the
+ * time is the one it gives for them. Pure.
  */
 function headStartBurson_(rows) {
-  const list = Array.isArray(rows) ? rows : [];
+  // the rows with a source_at that is a time: of these, pwBursonTimes_ says which are Burson's and when Burson alerted
+  const list = (Array.isArray(rows) ? rows : []).filter(a => {
+    try { return !!a && typeof a === 'object' && headStartTime_(a.source_at) > 0; } catch (e) { return false; }
+  });
   const times = pwBursonTimes_(list);
   const out = new Map();
   list.forEach(a => {
     try {
-      if (!a || !a.record_key || a.ingested || String(a.space || '').endsWith(OS_PARTITION_SUFFIX_)) return;
-      if (!((Number(a.source_at) || 0) > 0)) return;
+      if (!a.record_key || a.ingested || String(a.space || '').endsWith(OS_PARTITION_SUFFIX_)) return;
       const key = String(a.record_key);
-      const at = Number(times[key]) || 0;
-      if (!(at > 0)) return;
+      const at = headStartTime_(times[key]);
+      if (!at) return;
       if (!out.has(key)) out.set(key, { key, at, alert_id: '', url: '', name: '', rows: [] });
       out.get(key).rows.push(headStartRowFacts_(a));
     } catch (e) { /* a row that can't be read is left out */ }
@@ -590,11 +725,13 @@ function headStartWindow_(stories, bursonList, since) {
 
 /**
  * The whole report from the Alert log's rows (`rows`), the IMs' time per Burson post when it's at hand (`im`:
- * headStartImTimes_, or null) and the time (`now`, ms): {now, im_at_hand, stories (the last 30 days by when this app
- * alerted, newest first: {type, at, name, url, product, tag, alert_id, alert_ids, alerts, keys, burson: {key, at,
- * alert_id, url, name} | null, matched, lead_ms, im: {at, from} | null, im_lead_ms}), top (the ten of them with the
- * longest head start over Burson, longest first), windows: {week, month} (headStartWindow_ for 7 and 30 days)}. A
- * broken row is left out; it never fails the report. Pure.
+ * headStartImTimes_, or what headStartImMerge_ made of it and of the times the tab remembers; or null) and the time
+ * (`now`, ms): {now, im_at_hand, stories (the last 30 days by when this app alerted, newest first: {type, at, name,
+ * url, product, tag, alert_id, alert_ids, alerts, keys, burson: {key, at, alert_id, url, name} | null, matched,
+ * lead_ms, im: {at, from} | null, im_key (the Burson post's key that time was found under, as the Results tab has the
+ * post: what the tab remembers the time by; '' without one), im_lead_ms}), top (the ten of them with the longest head
+ * start over Burson, longest first), windows: {week, month} (headStartWindow_ for 7 and 30 days)}. A broken row is
+ * left out, and so is a row without a time that is one (headStartTime_); neither ever fails the report. Pure.
  */
 function headStartReport_(rows, im, now) {
   const t = Number(now) || Date.now();
@@ -604,6 +741,7 @@ function headStartReport_(rows, im, now) {
   headStartMatch_(stories, burson);
   stories.forEach(s => {
     s.im = null;
+    s.im_key = '';
     s.im_lead_ms = null;
     const g = s.burson && times ? burson.get(s.burson.key) : null;
     if (!g) return;
@@ -611,7 +749,10 @@ function headStartReport_(rows, im, now) {
     for (let i = 0; i < g.rows.length && !s.im; i++) {
       const post = postKey_(g.rows[i].url);
       const hit = post && Object.prototype.hasOwnProperty.call(times, post) ? times[post] : null;
-      if (hit && Number(hit.at) > 0) s.im = { at: Number(hit.at), from: hit.from === 'email' ? 'email' : 'draft' };
+      const at = hit && typeof hit === 'object' ? headStartTime_(hit.at) : 0;
+      if (!at) continue;
+      s.im = { at, from: hit.from === 'email' ? 'email' : 'draft' };
+      s.im_key = post;
     }
     if (s.im) s.im_lead_ms = s.im.at - s.at;
   });
@@ -663,7 +804,12 @@ function headStartLink_(url, label) {
   return resultsLink_({ url: usable ? link : '', network: name, author: '' });
 }
 
-/** One story's row in a stories table (HEAD_START_HEADER_): blank, never a zero, without a Burson alert or an IM time. */
+/**
+ * One story's row in a stories table (HEAD_START_HEADER_): blank, never a zero, without a Burson alert or an IM time.
+ * Its last three cells are the hidden state (HEAD_START_STATE_COL_ on), filled only for a story with an IM time: the
+ * Burson post's key that time was found under (never read as a formula: Speed.gs speedText_), the time in ms, and
+ * `email` or `draft`. The next rebuild reads them back (readHeadStartState_).
+ */
 function headStartRow_(s) {
   const words = ms => headStartWords_(ms / HEAD_START_MIN_MS_);
   const minutes = ms => Math.round(ms / 6000) / 10;
@@ -673,7 +819,13 @@ function headStartRow_(s) {
     pwCell_(s.tag, HEAD_START_NAME_CHARS_), b ? speedTime_(b.at) : '', b ? words(s.lead_ms) : '',
     s.im ? speedTime_(s.im.at) : '', s.im ? words(s.im_lead_ms) : '', s.matched || '',
     pwCell_(ids, HEAD_START_NAME_CHARS_), b ? headStartLink_(b.url, b.alert_id || 'Burson\'s alert') : '',
-    b ? minutes(s.lead_ms) : '', s.im ? minutes(s.im_lead_ms) : ''];
+    b ? minutes(s.lead_ms) : '', s.im ? minutes(s.im_lead_ms) : '',
+    s.im ? speedText_(s.im_key) : '', s.im ? s.im.at : '', s.im ? (s.im.from === 'email' ? 'email' : 'draft') : ''];
+}
+
+/** The days of Burson's alerts the Results tab shows (settings.speed_days, as Speed.gs refreshSpeed_ reads it). */
+function headStartResultsDays_() {
+  return Math.max(1, Number(((typeof GEN === 'object' && GEN && GEN.settings) || {}).speed_days) || 7);
 }
 
 /** What's counted and when it was rebuilt (the line under the title). */
@@ -684,9 +836,19 @@ function headStartScopeText_(r) {
     `are when each alert was posted. Rebuilt ${speedTime_(r.now)} ET.`;
 }
 
-/** How the stories are matched and where the IMs' times come from (the note under the headline numbers). */
+/**
+ * How the stories are matched and where the IMs' times come from (the note under the headline numbers). The IMs' part
+ * says which of three rebuilds this was: one with this run's Results rebuild (its times, and the remembered ones for
+ * Burson's alerts older than the Results tab's days); one without it (`r.im_from_run` false, set by refreshHeadStart_:
+ * only the times the tab remembers); or one with no IM time at hand at all (those columns are blank).
+ */
 function headStartNoteText_(r) {
   const m = r.windows.month;
+  const emails = `their email for ${m.im_from_email} of ${m.im_known} in the last ${HEAD_START_DAYS_} days`;
+  // a remembered time is only as old as the tab
+  const kept = `For a Burson alert older than the Results tab's ${headStartResultsDays_()} days, the IMs' time is the one ` +
+    'this tab last had for it: there is none for an alert that was already older than that when this tab was first made, ' +
+    'or when its story first came onto it.';
   return `Matched on: "${HEAD_START_SAME_POST_}" (Burson alerted one of the story's posts); "${HEAD_START_SAME_STORY_}" ` +
     '(Burson\'s alert and this app\'s carry the same issue name, and the later of the two was recorded as an Ongoing ' +
     'Issue; Burson\'s other alerts under that name then count too). A story is measured against the earliest of ' +
@@ -701,17 +863,21 @@ function headStartNoteText_(r) {
     'name only when this app\'s alert went out as a Social Alert. An alert that was only to be watched is found again ' +
     'only on its own posts, on an identical issue name, or on similar wording under the same exposure tag, so "this app ' +
     'alerted first" is, if anything, undercounted. ' +
-    (r.im_at_hand
-      ? `The IMs' time is their email for Burson's post, else their draft, as the Results tab has it (their email for ${m.im_from_email} ` +
-        `of ${m.im_known} in the last ${HEAD_START_DAYS_} days); it is blank for a Burson alert the Results tab no longer shows.`
-      : 'The IMs\' times weren\'t at hand for this rebuild (they come with the Results tab\'s rebuild in the every-minute run), ' +
-        'so those columns are blank.');
+    (!r.im_at_hand
+      ? 'The IMs\' times weren\'t at hand for this rebuild (they come with the Results tab\'s rebuild in the every-minute run), ' +
+        'so those columns are blank.'
+      : r.im_from_run === false
+        ? 'The IMs\' times are the ones this tab last had: the Results tab wasn\'t rebuilt in the run of this rebuild, and ' +
+          'newer ones come with its rebuild in the every-minute run. Each is their email for Burson\'s post, else their ' +
+          `draft (${emails}). ${kept}`
+        : `The IMs' time is their email for Burson's post, else their draft, as the Results tab has it (${emails}). ${kept}`);
 }
 
 /**
- * The tab's cells, top to bottom, every row HEAD_START_HEADER_ wide: {rows, marks: {section, head, merged, numbers,
- * times}} (row numbers for the formats; numbers: the headline numbers' rows; times: [first row, count] of each stories
- * table). Every text cell fits a cell (Sheets.gs capCell_). `r`: headStartReport_'s. Pure.
+ * The tab's cells, top to bottom, every row HEAD_START_HEADER_ wide (the last three columns are the hidden state:
+ * headStartRow_): {rows, marks: {section, head, merged, numbers, times}} (row numbers for the formats; numbers: the
+ * headline numbers' rows; times: [first row, count] of each stories table). Every text cell fits a cell (Sheets.gs
+ * capCell_). `r`: headStartReport_'s. Pure.
  */
 function headStartTabRows_(r) {
   const width = HEAD_START_HEADER_.length;
@@ -774,8 +940,10 @@ function headStartTabRows_(r) {
 }
 
 /**
- * Writes the whole tab (values first, then the formats). `r`: headStartReport_'s. Refuses (throws, nothing cleared or
- * written) unless the tab is the one the bot made (isHeadStartTab_).
+ * Writes the whole tab (values first, then the formats; the state columns, HEAD_START_STATE_COL_ on, are hidden). `r`:
+ * headStartReport_'s. Refuses (throws, nothing cleared or written) unless the tab is the one the bot made
+ * (isHeadStartTab_). The new cells replace the old ones, the state columns too: the caller has read those first
+ * (refreshHeadStart_), and the stories' rows written here carry the IMs' times on.
  */
 function writeHeadStartTab_(sh, r) {
   if (!isHeadStartTab_(sh)) throw new Error(`"${sh && sh.getName()}" isn't the bot's ${HEAD_START_TAB_} tab: left as it is`);
@@ -785,21 +953,23 @@ function writeHeadStartTab_(sh, r) {
   const width = HEAD_START_HEADER_.length;
   const prev = sh.getLastRow();
   const prevCols = sh.getLastColumn();
-  // The bot's mark (its title in A1: isHeadStartTab_) goes in first and is never cleared, so a rebuild that stops
-  // before the values are written leaves a tab the next rebuild still knows as its own. Then every other cell the last
-  // rebuild left is cleared
-  sh.getRange(1, 1).setValue(HEAD_START_TITLE_);
-  if (prevCols > 1) sh.getRange(1, 2, 1, prevCols - 1).clearContent();
-  if (prev > 1) sh.getRange(2, 1, prev - 1, Math.max(prevCols, 1)).clearContent();
   const fmt = f => { try { f(); } catch (e) { /* formatting only */ } };
   fmt(() => sh.clearFormats());  // the bold headers and merged notes move with the tables' lengths
   fmt(() => sh.getRange(1, 1, Math.max(prev, out.length, 6), width).breakApart());
+  // The new cells go in over the old ones in one write (every row is the header's width, and A1 is the bot's mark
+  // again: isHeadStartTab_), and only then is what the last rebuild left beyond them cleared: the rows under a tab that
+  // got shorter, any column to the right. So a rebuild that stops before the write, or whose write fails, leaves the
+  // tab as it was, with the bot's mark and the IMs' times it remembers. Cleared first, those times would be lost for
+  // good with a failed write: the Results tab no longer has the older ones
   sh.getRange(1, 1, out.length, width).setValues(out);
+  if (prev > out.length) sh.getRange(out.length + 1, 1, prev - out.length, Math.max(prevCols, width)).clearContent();
+  if (prevCols > width) sh.getRange(1, width + 1, out.length, prevCols - width).clearContent();
   fmt(() => sh.getRange(1, 1).setFontWeight('bold').setFontSize(13));
   if (marks.numbers.length) fmt(() => sh.getRange(marks.numbers[0], 1, marks.numbers.length, 1).setWrap(true));  // their labels
   marks.section.forEach(row => fmt(() => sh.getRange(row, 1, 1, HEAD_START_WIDE_).setFontWeight('bold').setBackground('#e8eaed')
     .setWrap(true)));
-  marks.head.forEach(row => fmt(() => sh.getRange(row, 1, 1, width).setFontWeight('bold').setBackground('#f1f3f4').setWrap(true)));
+  marks.head.forEach(row => fmt(() => sh.getRange(row, 1, 1, HEAD_START_STATE_COL_ - 1).setFontWeight('bold').setBackground('#f1f3f4')
+    .setWrap(true)));
   marks.merged.forEach(row => fmt(() => {
     sh.getRange(row, 1, 1, HEAD_START_WIDE_).merge().setWrap(true).setVerticalAlignment('top').setFontColor('#5f6368')
       .setFontStyle('italic');
@@ -808,6 +978,8 @@ function writeHeadStartTab_(sh, r) {
   // the three times of each story (this app's, Burson's, the IMs'), as the Results tab shows its times
   marks.times.forEach(([first, count]) => [2, 6, 8].forEach(col => fmt(() => sh.getRange(first, col, count, 1)
     .setNumberFormat('yyyy-mm-dd hh:mm'))));
+  // the state columns: for the next rebuild to read (readHeadStartState_), not for people
+  fmt(() => sh.hideColumns(HEAD_START_STATE_COL_, width - HEAD_START_STATE_COL_ + 1));
   return { rows: out.length };
 }
 
@@ -830,15 +1002,15 @@ function headStartTabForeign_(ss) {
   return !!sh && !isHeadStartTab_(sh);
 }
 
-/** Why the Head start tab isn't updated while a tab people made has its name (the log, and headStartBlockedNote_). */
+/** Why the Head start tab isn't updated while a tab people made has its name (the Control tab's Status, and the log). */
 function headStartBlockedText_() {
   return `a tab named "${HEAD_START_TAB_}" that the bot didn't make is in the way (or its title in A1 was changed). ` +
     'Rename that tab, and the bot makes its own.';
 }
 
 /**
- * Remembers whether a "Head start" tab the bot didn't make is in the way (`blocked`: HEAD_START_BLOCKED_PROP_);
- * forgotten at the first rebuild once it's gone. Never throws.
+ * Remembers whether a "Head start" tab the bot didn't make is in the way (`blocked`: HEAD_START_BLOCKED_PROP_), for
+ * the Control tab's Status (headStartBlockedNote_); forgotten at the first rebuild once it's gone. Never throws.
  */
 function noteHeadStartBlocked_(blocked) {
   try {
@@ -851,7 +1023,10 @@ function noteHeadStartBlocked_(blocked) {
   }
 }
 
-/** Why the Head start tab isn't being updated ('' when it is): for a status line. Never throws. */
+/**
+ * Control tab: why the Head start tab isn't being updated ('' when it is), for the status line (Main.gs poll(): B5,
+ * right after the Results tab's note, in the main status and in the standalone Auto-correct space's). Never throws.
+ */
 function headStartBlockedNote_() {
   try {
     if (PropertiesService.getScriptProperties().getProperty(HEAD_START_BLOCKED_PROP_) !== 'true') return '';
