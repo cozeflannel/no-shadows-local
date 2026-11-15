@@ -844,6 +844,43 @@ module.exports = H => {
     assert.ok(big.startsWith('\ud83d\udea8 *EARLY DETECTION* \u00b7 New story\n*TTT') && big.includes('\n*Next steps:*\n1. sss'), big.slice(0, 300));
   });
 
+  test('early detection story card: a Markdown link in words from outside ("[words](address)": Gemini\'s headline, the call\'s reason, a web source\'s name, the signal\'s own headline, a post\'s own words in the plain story, a platform\'s name, an update\'s news) stays words when the card is posted (every post goes through normalizeChatLinks_): the card links only the signal\'s posts and its https web sources', () => {
+    const EVIL = 'https://phish.testing.test/login';
+    const MD = `[the leaked memo](${EVIL})`;
+    const linked = text => (text.match(/<https?:\/\/[^|>\s]+\|[^>]*>/g) || []).map(l => l.slice(1, l.indexOf('|')));
+    const sent = text => B.normalizeChatLinks_(text);  // as chatPostMessage_ posts it
+    const story = o => B.edStoryOf_(Object.assign({ story_title: 'Owners say the dialer froze.', story: 'Nine accounts said it [froze](P1).',
+      web_context: 'No coverage yet.', next_steps: ['Re-check in 2 hours'], driver_post: 'P1' }, o));
+    const d = o => ({ disposition: 'monitor', basis: 'early_detection', why: 'Worth watching', rev: { story: story(o) } });
+    const plain = { disposition: 'monitor', basis: 'failed', why: 'AI review unavailable, so a person makes the call' };
+    const ed = B.edFromRow_(B.edQueueCompact_(clusterRow()));
+    const onePost = snippet => JSON.stringify([{ platform: 'X', author_handle: 'pixelowner1', followers: 410, engagement_total: 18,
+      published_at: '2026-10-14 11:42 UTC', url: CLUSTER_URL, snippet }]);
+    const twoNets = JSON.stringify([
+      { platform: `[X](${EVIL})`, author_handle: 'pixelowner1', followers: 410, engagement_total: 18, published_at: '2026-10-14 11:42 UTC',
+        url: CLUSTER_URL, snippet: 'It froze.' },
+      { platform: 'Reddit', author_handle: 'u_droidcommuter', followers: null, engagement_total: 14, published_at: '2026-10-14 11:49 UTC',
+        url: REDDIT_URL, snippet: 'Same here.' }]);
+    const cards = {
+      'Gemini\'s headline': [ed, d({ story_title: `Owners say ${MD}` })],
+      'the call\'s reason': [ed, Object.assign(d({}), { why: `Because ${MD}` })],
+      'a web source\'s name': [ed, Object.assign(d({}), { web: { sources: [{ title: `[news](${EVIL})`, uri: GROUNDING_URI }] } })],
+      'the signal\'s own headline': [B.edFromRow_(B.edQueueCompact_(clusterRow({ headline: `Dialer ${MD} freezing` }))), plain],
+      'a post\'s own words': [B.edFromRow_(B.edQueueCompact_(clusterRow({ representative_posts_json: onePost(`It froze ${MD} look`) }))), plain],
+      'a platform\'s name': [B.edFromRow_(B.edQueueCompact_(clusterRow({ platforms_csv: `[X](${EVIL})`, representative_posts_json: twoNets }))), d({})],
+      'an update\'s news': [Object.assign({}, ed, { update: { news: `more accounts ${MD}`, at: NOW - 3600 * 1000, thread: 'spaces/x/threads/y' } }), d({})],
+    };
+    for (const name of Object.keys(cards)) {
+      const text = sent(B.edStoryCardText_(cards[name][0], cards[name][1], NOW));
+      eq(linked(text).filter(u => u.indexOf('phish.testing.test') >= 0), [], name);
+      assert.ok(text.indexOf('] (https://phish.testing.test') >= 0, `${name}: the words stay, the address in the open`);
+      assert.ok(linked(text).indexOf(CLUSTER_URL) >= 0, `${name}: the signal's post is still linked`);
+    }
+    // Gemini's own Markdown links in the story are as before: a post's reference is linked, any other is words only
+    const own = sent(B.edStoryCardText_(ed, d({ story: `Nine accounts said it [froze](P1); see [this](${EVIL}).` }), NOW));
+    assert.ok(own.includes(`*What's happening:* Nine accounts said it <${CLUSTER_URL}|froze>; see this.`), own);
+  });
+
   test('early detection and watch cards: the bot\'s own alert cards are known by their first line (Alert.gs ownCardHeadParse_, isOwnAlertCardHeader_; the same list as tests/test_parser.py for the Python twin): the four first lines of today, with or without the mark Chat can put after an emoji, and the headers the cards had before the shared layout (cards posted then are still in the spaces), are the bot\'s own and never a Burson alert; the emoji and the capitals are both needed, and nothing but " \u00b7 detail" may follow the kind, so a person\'s or another tool\'s line is never taken for a card', () => {
     // the lines under the first: enough labelled lines to pass for a Burson alert (as a Watch alert and an Early Detection card have)
     const taxonomy = '*Product:* Waymo\n*Exposure Tag:* Product - Product failures - physical safety issues (P1)\n' +

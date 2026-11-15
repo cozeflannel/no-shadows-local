@@ -396,6 +396,8 @@ function chatMyUserId_(space, email) {
  * API message -> the shape Bot.gs works with. clientId: the custom id Chat has for it, else, for one of the bot's own
  * posts, the id the bot meant it to have (botPostId_): with Chat refusing custom ids (clientIdsOff_) the bot still tells
  * its own work, its Mirror copies and its relays apart from people's messages, and pairs a copy with its live alert.
+ * A message that carries links (messageLinks_) also has `links` and, when Chat gave it, `formatted`: its text in Chat's
+ * own markup (formattedText), the only place a hyperlink's address stands on the line that holds the link.
  */
 function normalizeMessage_(m) {
   m = m || {};
@@ -404,6 +406,7 @@ function normalizeMessage_(m) {
     .filter(a => a.type === 'USER_MENTION' && a.userMention && a.userMention.user && a.userMention.user.name)
     .map(a => a.userMention.user.name);
   const links = messageLinks_(m);  // only when there are any: every other message is as before
+  const linked = links.length ? Object.assign({ links }, m.formattedText ? { formatted: String(m.formattedText) } : {}) : {};
   return Object.assign({
     name: m.name || '',
     text: m.text || m.formattedText || m.fallbackText || '',
@@ -420,7 +423,7 @@ function normalizeMessage_(m) {
     reactions: (m.emojiReactionSummaries || []).filter(s => s.emoji && s.emoji.unicode)
       .map(s => ({ emoji: s.emoji.unicode, count: s.reactionCount || 0 })),
     attachments: (m.attachment || []).map(a => ({ name: a.contentName || '', type: a.contentType || '' })),
-  }, links.length ? { links } : {});
+  }, linked);
 }
 
 /**

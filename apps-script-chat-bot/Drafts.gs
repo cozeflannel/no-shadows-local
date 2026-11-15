@@ -401,7 +401,8 @@ function draftRowFor_(ctx, review, esc, related) {
     Object.assign(review.fields, withExistingIssue_(review.fields, existing));
     esc = Object.assign({}, esc, { issue_name: existing.name });
   }
-  const input = emailInput_(review.fields, esc, switchOn_(ctx, 'noWait'));  // no_wait: Never wait on Burson (Email.gs)
+  // no_wait: Never wait on Burson; review.changed: the email's code follows the corrections (Email.gs)
+  const input = emailInput_(review.fields, esc, switchOn_(ctx, 'noWait'), review.changed);
   input.recommended_groups = review.recommendedGroups || [];
   input.ai_reasons = review.groupReasons || {};
   if (review.screenshot) input.screenshot = review.screenshot;  // the picture of the post, shown in the email (Post.gs)
@@ -1678,7 +1679,7 @@ function noEmailNeeded_(ctx, row, review, history, report) {
     bqWriteBack_(ctx, row, 'decided', report);  // Write back to SLRR BigQuery (nothing while it's OFF)
   }
   if (!repeat && ((esc.escalated && !veto) || esc.action === 'YOUTUBE_CHAT_ONLY')) return;  // the YouTube chat ping is a person's job
-  const input = Object.assign(emailInput_(review.fields, esc, switchOn_(ctx, 'noWait')), { ai_reasons: review.groupReasons || {} });
+  const input = Object.assign(emailInput_(review.fields, esc, switchOn_(ctx, 'noWait'), review.changed), { ai_reasons: review.groupReasons || {} });
   if (review.screenshot) input.screenshot = review.screenshot;
   if (!repeat && tnsWhy_(input)) {
     const tnsNote = autoSubmitTns_(ctx, row, input, report);  // '' while Auto-submit T&S form is OFF

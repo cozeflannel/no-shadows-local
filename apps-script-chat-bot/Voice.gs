@@ -71,6 +71,16 @@ function normalizeChatLinks_(text) {
 }
 
 /**
+ * `text` with every "](" opened up ("] ("), for words from outside (a post's own, a listening tool's summary, an
+ * author's name): chatPostMessage_ runs normalizeChatLinks_ on every post, so a Markdown `[words](address)` left in
+ * them would go out as a hyperlink to that address under those words. Opened up, it stays words, the address in the
+ * open. Pure.
+ */
+function noMarkdownLinks_(text) {
+  return String(text === undefined || text === null ? '' : text).replace(/\]\(/g, '] (');
+}
+
+/**
  * Converts CommonMark formatting (`**bold**`, `__bold__`, `***bold italic***`, `# Heading`, `* bullet`, `[label](url)`)
  * into Google Chat's `MARKUP_SYNTAX_CHAT` (`*bold*`, `_italic_`, `- bullet`, `<url|label>`), while keeping code blocks,
  * inline `code` spans, `<url|label>` / `<users/...>` chips, and bare URLs untouched. Pure.

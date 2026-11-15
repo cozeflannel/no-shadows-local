@@ -189,9 +189,7 @@ const GEN = {
     "Product",
     "Google Product",
     "Product(s)",
-    "Products",
-    "Google Product(s)",
-    "Google Products"
+    "Google Product(s)"
    ],
    "type": "string",
    "required": true,

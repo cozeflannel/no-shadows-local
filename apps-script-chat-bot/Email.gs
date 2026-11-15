@@ -12,7 +12,8 @@
  *                                             multipart/related with the screenshot when there is one)
  *   addRecipientsToMime_(raw, to, cc)      -> the same message with addresses added (the body, including any edits
  *                                             someone made in Gmail, is untouched)
- *   emailInput_(fields, esc, noWait)       -> what the email is built from, stored on the row. escalation.kb_basis (only
+ *   emailInput_(fields, esc, noWait, changed) -> what the email is built from, stored on the row (its code as the
+ *                                             corrected alert has it: `changed`, the review's). escalation.kb_basis (only
  *                                             when KB & Guidance started the alert) is for analysts' "Why", never the email.
  *                                             no_wait (only when "Never wait on Burson", Control row 23, was ON for the
  *                                             review): the email (and the T&S form, TnsForm.gs) gets the video's
@@ -40,11 +41,15 @@ const EMAIL_INPUT_FIELDS_ = ['issue_name', 'issue_status', 'engagement_level', '
 /**
  * What an alert's email (and its recipients) is built from: the corrected values + the escalation. Stored on the row.
  * kb_basis (KB & Guidance can start alerts) is copied only when there is one, and no_wait only when "Never wait on
- * Burson" is ON (noWait), so every other row is as before.
+ * Burson" is ON (noWait), so every other row is as before. `changed` (a review's corrected fields: review.changed):
+ * Burson's code then follows them (Alert.gs alertCode_), so the email's "Code:" line and its utm_term carry the
+ * corrected alert's own [Code], never the product, tag, topic, count or status the review corrected.
  */
-function emailInput_(fields, esc, noWait) {
+function emailInput_(fields, esc, noWait, changed) {
   const values = {};
   EMAIL_INPUT_FIELDS_.forEach(k => { if (!isBlank_(fields[k])) values[k] = k === 'post_content' ? truncate_(fields[k], 1500) : fields[k]; });
+  const code = values.code && changed ? alertCode_(values.code, fields, changed) : null;
+  if (code) values.code = code;
   const input = {
     fields: values,
     escalation: {

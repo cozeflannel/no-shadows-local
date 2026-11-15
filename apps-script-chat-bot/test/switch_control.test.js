@@ -153,6 +153,42 @@ module.exports = H => {
     eq(JSON.parse(t.g.props.get('SWITCH_NOTES')).autoTns.at, at + 3600e3);
   });
 
+  test('standalone Auto-correct space (B10; B9 and B4 blank; B25 the live space, read only; the Safety valve OFF and B26 blank): the Control tab says what is so. Today (B7) is that flow\'s own count, the one C10 shows, in the same run (the main flow\'s counters never move there); and the Safety valve\'s note (C29) says the run is Testing because the bot works in the Auto-correct space, without the line that B26 blank and S-F Burson set make the bot LIVE (both are so here, and it is Testing: every email goes only to B30)', () => {
+    const t = e2e(null, { noWait: true });
+    t.bot.setup();
+    t.set('B30', 'tester@testing.test');
+    const AC = 'spaces/AAQAautocorrect8';
+    t.chat.addSpace(AC, 'SLRR Unified Auto-correct');
+    t.set('B25', H.REAL);
+    t.set('B3', `https://chat.google.com/app/chat/${AC.replace('spaces/', '')}`);
+    t.set('B4', '');
+    t.set('B9', '');
+    t.set('B10', 'SLRR Unified Auto-correct');
+    eq([t.get('B29'), t.get('B26')], ['OFF', '']);
+    t.poll();  // the Auto-correct flow starts reading the live space from here
+    eq([t.get('B5'), t.get('B7'), t.get('C10')], ['✅ Working', 'No alerts yet today', '✓ SLRR Unified Auto-correct · no alerts yet today']);
+    const C29 = 'OFF · 🧪 Testing (working in the Auto-correct space (B10)): nothing goes to S-F Burson, and every email goes only to ' +
+      'tester@testing.test (B30). The bot works only in the Auto-correct space, which is always Testing';
+    eq(t.get('C29'), C29);
+    t.g.clock.now += 60 * 1000;
+    t.chat.say(H.REAL, H.F.MISTAKES, { sender: 'users/zapier', type: 'BOT', displayName: 'Zapier' });
+    t.poll();
+    // one alert, corrected, its Social Alert sent to the tester only: C10 and B7 say the same, in this very run
+    const social = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
+    eq([social.length, social.every(m => m.to.join() === 'tester@testing.test' && !(m.cc || []).length)], [1, true]);
+    eq(t.get('C10'), '✓ SLRR Unified Auto-correct · today: 1 alert, 1 corrected, 1 Social Alert sent, 0 questions answered');
+    eq(t.get('B7'), '1 alert, 1 corrected, 1 Social Alert sent, 0 questions answered (in the Auto-correct space, B10)');
+    eq([t.get('C29'), /LIVE/.test(t.get('C29')), t.get('B5')], [C29, false, '✅ Working']);
+    // an idle run later: both as they were
+    t.poll();
+    eq([t.get('B7'), t.get('C10')], ['1 alert, 1 corrected, 1 Social Alert sent, 0 questions answered (in the Auto-correct space, B10)',
+      '✓ SLRR Unified Auto-correct · today: 1 alert, 1 corrected, 1 Social Alert sent, 0 questions answered']);
+    // Any other reason a run is Testing keeps the line that says how to go LIVE (the first test above: no S-F Burson)
+    const off = B.ev('CONTROL_SWITCHES_').find(s => s.key === 'safetyValve').off;
+    assert.match(off({}, false, { modeWhy: 'the Burson test copy, B26, is set' }), /\(B30\)\. With B26 blank and S-F Burson set, the bot is fully LIVE$/);
+    eq(t.chat.botPosts(H.REAL), []);
+  });
+
   test('cell cap: no cell the bot writes goes over 49,000 characters; a JSON column stays JSON that parses, keeping its short fields', () => {
     assert.strictEqual(B.ev('SHEET_CELL_MAX_CHARS_'), 49000);
     const huge = 'x'.repeat(120000);

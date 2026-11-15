@@ -481,7 +481,9 @@ const CONTROL_SWITCHES_ = [
         '(the Follow-up tab says it needs an IM)') },
   // Row 29: Testing or LIVE (Main.gs runMode_). ON: Testing, whatever B26 says. OFF: the Burson test copy (B26) decides:
   // set, Testing; blank (with S-F Burson found, people outside Google able to join it, and the alerts coming from it),
-  // LIVE. Column C says which, either way (extra.modeWhy: why this run is Testing)
+  // LIVE. Column C says which, either way (extra.modeWhy: why this run is Testing). A run that works alone in the
+  // Auto-correct space is Testing whatever B26 and B25 hold (Main.gs AC_STANDALONE_MODE_WHY_): its note says that, not
+  // what would make another run LIVE
   { key: 'safetyValve', label: 'Safety valve', row: 29,
     off: (sw, live, extra) => (live === true
       ? 'OFF · 🔴 LIVE: Social Alerts and the bot\'s other emails go to the real recipients, the T&S form is the real ' +
@@ -489,8 +491,10 @@ const CONTROL_SWITCHES_ = [
         'to go back to Testing'
       : live === false
         ? `OFF · 🧪 Testing (${(extra && extra.modeWhy) || 'not live'}): nothing goes to S-F Burson, and every email ` +
-          `goes only to ${testersWho_('', extra) || 'the stand-in'} (B30). With B26 blank and S-F Burson ` +
-          'set, the bot is fully LIVE'
+          `goes only to ${testersWho_('', extra) || 'the stand-in'} (B30). ` +
+          (extra && extra.modeWhy === AC_STANDALONE_MODE_WHY_
+            ? 'The bot works only in the Auto-correct space, which is always Testing'
+            : 'With B26 blank and S-F Burson set, the bot is fully LIVE')
         : 'OFF (the Burson test copy, B26, decides: set, Testing; blank, fully LIVE. ON: always Testing)'),
     on: (standIn, live, sw, extra) => `✓ ON · 🧪 Testing, even with B26 blank: nothing goes to S-F Burson, and every email goes only to ` +
       `${testersWho_(standIn, extra) || 'the stand-in'} (B30). Set OFF and clear B26 to go LIVE` },

@@ -223,7 +223,7 @@ module.exports = H => {
     // a video's: "Watch the video on <network>"; a network a label doesn't name (news, say): just "View the post"
     assert.match(B.pwAlertText_(Object.assign({}, a, { video: true })), new RegExp(`\\n\\*Posts:\\* <${POST.replace(/[.]/g, '\\.')}\\|Watch the video on X>$`));
     assert.match(B.pwAlertText_(Object.assign({}, a, { network: 'news', url: 'https://example.com/a' })), /\n\*Posts:\* <https:\/\/example\.com\/a\|View the post>$/);
-    // the post's link is the message's first hyperlink (the flow reads it from the message's links when Chat hides the address)
+    // the post's link is the message's first hyperlink (the flow reads it from the card's Posts line in Chat's markup when Chat hides the address)
     eq((rich.match(/<(https?:\/\/[^|>]+)\|/) || [])[1], POST);
     // an alert posted in the older format still reads its score, bar, topic and where it was found
     const older = [`🔭 *Watch alert · ${MIDTERMS}*`, '*Score:* 6.5 of 10 (flags at 4) · *Topic:* Elections and civics', `*Link:* ${POST}`,
@@ -304,6 +304,88 @@ module.exports = H => {
     const before = [`🔭 *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post on X>`, '*Author:* @CorrDove · X',
       `*Summary:* Proof Google rigged it: <${EVIL}|see the proof> now`].join('\n');
     eq([met(before).links, t.bot.pwAlertOf_(ctx, met(before)).url], [[POST, EVIL], POST]);
+  });
+
+  test('watch alerts: a Markdown link in the words from outside ("[words](address)": every post goes through normalizeChatLinks_, which would make it a Chat hyperlink) stays words, on the card whichever line carries it (the watch\'s summary, the AI pre-read\'s, the post\'s own words, the author, the network, the posted time, the watch\'s name, the SLRR lines, the Building networks, the Same story names) and in the same-story reply; and the alert\'s link is read from the card\'s own Posts line (Link on an older card) in the text as Chat\'s markup has it, never by a link\'s place among the message\'s links or by what the plain text shows', () => {
+    const t = e2e();
+    t.bot.setup();
+    const EVIL = 'https://phish.example/login';
+    const MD = `[the leaked memo](${EVIL})`;
+    const ctx = { botUser: 'users/bot' };
+    const base = { watch: MIDTERMS, url: POST, author: '@CorrDove', network: 'X', followers: 1700, eng: 520, posted: '2026-11-01 23:26',
+      summary: 'Claims Google helped rig the midterms.' };
+    const linked = text => (text.match(/<https?:\/\/[^|>\s]+\|[^>]*>/g) || []).map(l => l.slice(1, l.indexOf('|')));
+    const sent = text => B.normalizeChatLinks_(text);  // as chatPostMessage_ posts it
+    /** The card as the flow meets it: posted, then Chat's message (a hyperlink's address only in formattedText), normalized. */
+    const met = (text, shows, extra) => B.normalizeMessage_((shows || chatShows)(Object.assign({ name: 'spaces/AAQAmidterm1/messages/m1',
+      text: sent(text), clientAssignedMessageId: 'client-zwat-abc', sender: { name: 'users/bot' } }, extra || {})));
+    const preRead = B.pwPreReadOf_({ watch_posts: [{ ref: 'C1', summary: `A post claims Google rigged it ${MD}.`, story: `Rigging claim ${MD}` }] }, 1, 0)[0];
+    eq([preRead.summary.indexOf(']('), preRead.story.indexOf('](')], [-1, -1]);
+    const cases = {
+      'the watch\'s own summary': { summary: `A Reddit post says Google rigged it, proof ${MD} share now` },
+      'the AI pre-read\'s summary': { summary: B.pwCardSummary_({ summary: 'the watch\'s own' }, preRead, null) },
+      'the post\'s own words': { summary: B.pwCardSummary_({ summary: '' }, null, { text: `Google is hiding this ${MD} wake up` }) },
+      'the author': { author: `[@CorrDove](${EVIL})` },
+      'the network': { network: `[X](${EVIL})` },
+      'the posted time': { posted: `[2026-11-01](${EVIL})` },
+      'the watch\'s name': { watch: `[Midterms](${EVIL})` },
+      'a product': { products: [`[Search](${EVIL})`], classified: true },
+      'the exposure tag': { tag: `[Product - Perceived bias](${EVIL})`, classified: true },
+      'a Sensitive Topic': { topics: [`[Politics](${EVIL})`], classified: true },
+      'the KOF lists': { kof: true, kofLists: `[Viral KOFs](${EVIL})` },
+      'the Building networks': { build: { n: 4, accounts: 3, ms: HOUR, networks: [`[X](${EVIL})`], eng: 50 } },
+      'the Same story names': { sameStory: { n: 2, names: [`[FOX 29](${EVIL})`] } },
+    };
+    for (const name of Object.keys(cases)) {
+      const text = sent(B.pwAlertText_(Object.assign({}, base, cases[name])));
+      eq(linked(text), [POST], name);
+      assert.ok(text.indexOf('] (https://phish.') >= 0, `${name}: the words stay, the address in the open`);
+      const m = met(B.pwAlertText_(Object.assign({}, base, cases[name])));
+      eq([m.links, t.bot.pwAlertOf_(ctx, m).url], [[POST], POST], name);
+    }
+    eq(sent(B.pwAlertText_(Object.assign({}, base, cases['the watch\'s own summary']))).split('\n')[6],
+      `*What's happening:* A Reddit post says Google rigged it, proof [the leaked memo] (${EVIL}) share now`);
+    // the same-story reply in the alert's thread: each post linked by its own address only
+    const reply = sent(B.pwStoryReplyText_([{ url: POST2, author: `[@someone](${EVIL})`, network: `[X](${EVIL})`, posted: `[2026-11-01](${EVIL})`,
+      summary: `Says the same, proof ${MD}` }], false));
+    eq(linked(reply), [POST2]);
+    // The alert's link is the one on the card's own Posts line, whatever else the message's links hold and whatever the
+    // plain text shows. Should Chat list bare addresses in the words as links (before the post's: the summary is above
+    // *Posts:*):
+    const wraps = msg => {
+      chatShows(msg);
+      msg.formattedText = msg.formattedText.replace(/(^|[\s(])(https?:\/\/[^\s<>|]+)/g, '$1<$2|$2>');
+      return msg;
+    };
+    const url = (a, shows, extra) => t.bot.pwAlertOf_(ctx, met(B.pwAlertText_(Object.assign({}, base, a)), shows, extra)).url;
+    // ... another address and the post's own, both in the words (both shown in the plain text)
+    eq(url({ summary: `see ${EVIL} and my post ${POST}` }, wraps), POST);
+    // ... a longer address that contains the post's
+    eq(url({ url: 'https://x.com/a/status/1', summary: 'see https://x.com/a/status/12 now' }, wraps), 'https://x.com/a/status/1');
+    eq(url({ url: 'https://x.com/a/status/1', summary: 'see https://x.com/a/status/1?s=20 now' }, wraps), 'https://x.com/a/status/1');
+    // ... an address Chat spells another way than the text does
+    eq(url({ summary: `see ${EVIL} now` }, msg => {
+      wraps(msg);
+      msg.formattedText = msg.formattedText.replace(`<${EVIL}|${EVIL}>`, `<${EVIL}/|${EVIL}>`);
+      return msg;
+    }), POST);
+    // The post's own address in the words, and a rich-link chip (to it in another spelling, or to another address)
+    eq(url({ summary: `my post ${POST} here` }, null, { annotations: [{ type: 'RICH_LINK', richLinkMetadata: { uri: `${POST}/` } }] }), POST);
+    eq(url({ summary: `my post ${POST} and https://docs.google.com/document/d/abc here` }, null,
+      { annotations: [{ type: 'RICH_LINK', richLinkMetadata: { uri: 'https://docs.google.com/document/d/abc/edit' } }] }), POST);
+    // A card from before the shared layout (its Link line first) with the post's own address and a hyperlink in its summary
+    const before = [`🔭 *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post on X>`, '*Author:* @CorrDove · X',
+      `*Summary:* my post ${POST} proof <${EVIL}|see the proof> now`].join('\n');
+    eq([met(before).links, t.bot.pwAlertOf_(ctx, met(before)).url], [[POST, EVIL], POST]);
+    // Only when the card's own line shows no address either way do the message's links count, and then never one whose
+    // address the plain text shows (whole addresses compared): that one is in the words
+    const chip = uri => ({ annotations: [{ type: 'RICH_LINK', richLinkMetadata: { uri } }] });
+    const noLine = (summary, extra) => B.normalizeMessage_(Object.assign({ name: 'spaces/AAQAmidterm1/messages/m2',
+      text: [`🔭 WATCH · ${MIDTERMS}`, `What's happening: ${summary}`, 'Activity: @CorrDove · X', 'Posts: View the post on X'].join('\n'),
+      clientAssignedMessageId: 'client-zwat-abd', sender: { name: 'users/bot' } }, extra));
+    eq(t.bot.pwAlertOf_(ctx, noLine('Claims Google rigged it.', chip(POST))).url, POST);
+    eq(t.bot.pwAlertOf_(ctx, noLine(`see ${EVIL}, now`, chip(EVIL))), null);
+    eq(t.bot.pwAlertOf_(ctx, noLine('see https://x.com/a/status/12 now', chip('https://x.com/a/status/1'))).url, 'https://x.com/a/status/1');
   });
 
   test('watch alerts: the Activity line read back: the posted time is its last part only, so an author whose name starts with "posted " is still the author, and a card with no network has none', () => {
@@ -820,6 +902,62 @@ module.exports = H => {
     assert.match(social[0].text, new RegExp(`\\nLink: ${POST.replace(/[.?]/g, '\\$&')}\\r?\\n`));
     assert.ok(!/\nLink: https:\/\/phish\.example/.test(social[0].text), 'the Social Alert is on the post');
     eq([writes(t), outbox(t)], [[], []]);
+  });
+
+  test('Watch alerts: a post whose words carry a Markdown link ("[words](address)" in the listening tool\'s summary, no AI pre-read summary) is triaged, logged and emailed on the post\'s own link: in the standalone Auto-correct space (B10; B9 and B4 blank) the card\'s only hyperlink is the post\'s, and the next run\'s Alert-log row, triage note and Social Alert carry the post; and a Markdown link to a post already alerted doesn\'t make the new post a repeat (its Social Alert still goes out)', () => {
+    const EVIL = 'https://phish.example/login';
+    const linked = text => (text.match(/<https?:\/\/[^|>\s]+\|[^>]*>/g) || []).map(l => l.slice(1, l.indexOf('|')));
+    const socialAlerts = t => t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
+    {
+      const w = world();
+      const { t } = w;
+      const AC = 'spaces/AAQAautocorrectW3';
+      t.chat.addSpace(AC, 'SLRR Auto-correct Unified');
+      t.control().getRange(4, 2).setValue('');   // B4 blank
+      t.control().getRange(9, 2).setValue('');   // B9 blank
+      t.control().getRange(10, 2).setValue('SLRR Auto-correct Unified');
+      t.control().getRange(35, 2).setValue(AUTOCORRECT);
+      t.g.vertex.triage = triage();
+      look(w, [hit({ summary: `A Reddit post says Google rigged it, proof [the leaked memo](${EVIL}) share now` })]);
+      const out = posted(t, AC);
+      eq(out.length, 1);
+      const msg = out[0];
+      eq(linked(msg.text), [POST]);
+      eq(msg.text.split('\n')[6], `*What's happening:* A Reddit post says Google rigged it, proof [the leaked memo] (${EVIL}) share now`);
+      chatShows(msg);  // as Chat gives it back: the hyperlink's address only in formattedText
+      t.poll();
+      const row = alertRow(t, msg);
+      eq([row.ingested, row.record_key, row.forwarded_fields.post_url], ['Watch alert', B.recordKey_({ post_url: POST }), POST]);
+      const notes = inThread(t, AC, msg);
+      eq(notes.length, 1);
+      assert.ok(notes[0].text.includes(`(<${POST}|@CorrDove on X>)`), notes[0].text);
+      assert.ok(!notes[0].text.includes(`<${EVIL}|`), 'the triage note links nothing to the address in the words');
+      eq(socialAlerts(t).length, 1);
+      assert.match(socialAlerts(t)[0].text, new RegExp(`\\nLink: ${POST.replace(/[.?]/g, '\\$&')}\\r?\\n`));
+      eq([writes(t), outbox(t)], [[], []]);
+    }
+    {
+      // Other alerts space: POST is alerted already (the stream's own alert); a new post whose words link to it in Markdown
+      const w = world(OTHER);
+      const { t } = w;
+      t.g.vertex.triage = triage(P0);
+      sayMidterms(t, POST);
+      t.poll();
+      const social0 = socialAlerts(t).length;
+      assert.ok(social0 >= 1, 'the first alert\'s Social Alert went out');
+      t.g.vertex.triage = triage(Object.assign({}, P0, {
+        summary: 'An X post (@VoterOrg, 12K followers) reporting broken voter-registration links in Search.',
+        issue_name: 'Broken voter-registration link in Search' }));
+      look(w, [hit({ post_url: POST2, author: '@VoterOrg', summary: `Broken voter-registration link in Search, [as they said](${POST}).` })]);
+      const msg = posted(t, MID)[0];
+      assert.ok(msg, 'the watch alert for the new post is posted');
+      eq(linked(msg.text), [POST2]);
+      chatShows(msg);
+      t.poll();
+      eq(alertRow(t, msg).record_key, B.recordKey_({ post_url: POST2 }));
+      assert.ok(!t.chat.botReactions(msg.name).includes('❌'), 'the new post is not taken for the one its words link to');
+      eq(socialAlerts(t).length, social0 + 1);
+    }
   });
 
   test('Watch alerts: a post two watches flag gets one alert (the other watch\'s flag says so: a: \'d\'); the Proactive watch OFF, nothing is posted and C35 says why', () => {

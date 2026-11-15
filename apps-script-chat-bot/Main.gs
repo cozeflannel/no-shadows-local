@@ -267,7 +267,7 @@ function tryAlert() {
   const esc = escalation_(review.fields, {});
   let draftPreview = `Not escalated (${esc.reason})`;
   if (esc.escalated) {
-    const input = emailInput_(review.fields, esc, noWait);
+    const input = emailInput_(review.fields, esc, noWait, review.changed);
     const plan = planRecipients_(esc, esc.text, []);
     const email = socialAlertEmail_(input, plan, { test: false, mailbox: GEN.email.from_email, sendId: 'PREVIEW' });
     draftPreview = `Subject: ${email.subject}\nTo (${email.to.length}): ${email.to.join(', ')}\nCc (${email.cc.length}): ${email.cc.join(', ')}\n\n${email.text}`;
@@ -319,6 +319,7 @@ function poll() {
   let mode = null;  // this run's mode (runMode_): {live, why}, once the spaces are known
   let mainCtx = null;
   let acStandalone = false;
+  let acToday = null;  // working alone in the Auto-correct space: what this run wrote in Today (B7), before that flow ran
   let activity = 0;  // alerts handled and emails sent this run (either space): the Results tab rebuilds right after
   let followActivity = 0;  // new replies seen, drafts made, Social Alerts sent (either space): the Follow-up tab rebuilds right after
   let relayRan = false;  // the relay ran this run (when the run fails before it does, it starts afresh: relayFailStop_)
@@ -408,7 +409,7 @@ function poll() {
     acStandalone = !direct.space && !mirror && !!String(wanted.autocorrect || '').trim() &&
       (!String(wanted.burson || '').trim() || !String(wanted.analyst || '').trim());
     if (acStandalone) {
-      mode = { live: false, why: 'working in the Auto-correct space (B10)' };
+      mode = { live: false, why: AC_STANDALONE_MODE_WHY_ };
       const needs = sfb.space ? [] : sfbNeeds_(wanted, null);
       const memNote = amControlNote_();  // AlertMemory.gs: its memory couldn't be read lately ('' when it could)
       const resultsNote = resultsBlockedNote_();  // Speed.gs: a "Results" tab the bot didn't make is in the way ('' when not)
@@ -420,7 +421,9 @@ function poll() {
           : (memNote ? `\u26a0\ufe0f ${memNote}` : resultsNote ? `\u26a0\ufe0f ${resultsNote}`
             : headStartNote ? `\u26a0\ufe0f ${headStartNote}` : okStatusText_()),
         lastCheck: nowLabel_(),
-        today: todayText_(readStats_(), dayKey_(), wanted.switches.noWait) + amTodayText_(),
+        // Today (B7): the Auto-correct flow's own count, the one C10 shows (the main flow's counters never move
+        // here). The flow runs below, in this run's finally, which brings B7 up to date with what it handled
+        today: (acToday = autoCorrectTodayCell_(props, dayKey_()) + amTodayText_()),
       });
       props.setProperty('FAIL_STREAK', '0');
       return;
@@ -671,6 +674,12 @@ function poll() {
         });
         if (ac) activity += activityOf_(ac.report);
         if (ac) followActivity += followupActivityOf_(ac.report);
+        // Working alone in the Auto-correct space: Today (B7) says what C10 says, this run's alerts included (it was
+        // written above, before the flow ran). Written only when the flow changed it
+        if (acStandalone && acToday !== null) {
+          const todayNow = autoCorrectTodayCell_(props, dayKey_()) + amTodayText_();
+          if (todayNow !== acToday) control.getRange(7, 2).setValue(todayNow);
+        }
         // Temp checks (Control row 36, TempCheck.gs): what analysts asked for in a thread of the Mirror space or the Other
         // alerts space (queued by their flows above), worked now, after the alerts, in what's left of the run (one that
         // can't be done waits for the next run): emailed to this run's testers (B30, else the stand-in), the thread told
@@ -823,6 +832,12 @@ function runMode_(switches, testCopyCell, sfbSpace, cfg) {
 // outbox aren't used; Direct BigQuery alerts and the Early wave check don't post there (BigQuery.gs). People outside
 // Google can join the real S-F Burson, so it is never worked this way, whatever row 32 says.
 // ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Why a run that works alone in the Auto-correct space (B10 set; B9 blank; B3 or B4 blank) is Testing (C29, the run
+ * log). No cell lifts it: B26 blank and S-F Burson set don't make that run LIVE (Control.gs: the Safety valve's note).
+ */
+const AC_STANDALONE_MODE_WHY_ = 'working in the Auto-correct space (B10)';
 
 /** Why a run that works directly in B25 is Testing (C29, the run log), and what the cells it doesn't use say. */
 const DIRECT_B25_MODE_WHY_ = 'the bot works directly in B25, a Google-only space (row 32)';

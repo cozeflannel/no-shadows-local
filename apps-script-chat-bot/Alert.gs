@@ -14,7 +14,14 @@ const RX_URL_IN_TEXT_ = /https?:\/\/[^\s<>|"')\]]+/i;
 const RX_BARE_URL_ = /^https?:\/\/\S+$/i;
 const RX_BANNER_ = /THIS ALERT MEETS\s+(P[012])\s+CRITERIA/i;
 const RX_HEADER_ = /^(?:[^\w\s]\s*)*SOCIAL ALERT(?:\s*[^\w\s])*\s*:\s*(.*)$/iu;
-const RX_BOILERPLATE_ = /^(?:As a reminder,\s*all alerts can be found|Note:\s*Brand-Social-Sends@|Please note:\s*screenshots are not available|(?:🔷🔍|🔷📊|🔍📊)?\s*\[?BigQuery\b)/i;
+// Lines of an alert that are no field and no part of its summary: Burson's footers, the bot's own BigQuery lines, and
+// the fixed lines of Burson's live layout (its title, its automated-message note, "Do Not Forward", whether the alert
+// meets the Collection Requirements, the words of its link to the post). They are skipped when the alert is read and
+// stay as they are when it is rebuilt (triage_agent/qa/parser.py _BOILERPLATE has the same list, but for BigQuery)
+const RX_BOILERPLATE_ = new RegExp('^(?:As a reminder,\\s*all alerts can be found|Note:\\s*Brand-Social-Sends@|' +
+  'Please note:\\s*screenshots are not available|(?:🔷🔍|🔷📊|🔍📊)?\\s*\\[?BigQuery\\b|' +
+  'Automated Alert via Burson\\b|Note:\\s*This is an automated message\\b|Do Not Forward\\b|' +
+  'This alert (?:does not meet|meets) the defined Collection Requirements\\b|Click here for link to post\\b)', 'i');
 const RX_COMPOUND_ENGAGEMENT_ = /^([A-Za-z ]+?)\s*\(\s*([\d,]+(?:\.\d+)?[km]?)\s*(?:engagements?)?\s*\)$/i;
 const RX_COMPOUND_NAME_ = /^(.+?)\s+\/\s+(Ongoing Issue|New\s*\/\s*not previously reported over the past 14 days|NEW|Recently Reported)\s*$/i;
 const RX_COMPOUND_KOF_ = /^(yes|true|1|no|false|0)\s*\(([^)]+)\)\s*$/i;
@@ -344,6 +351,7 @@ function parseAlert_(text) {
   const raw = {};
   const labeled = {};
   const unmatched = [];
+  const unmatchedAt = [];  // the line each of `unmatched` is on
   const extra = {};
   let current = null;
   String(text || '').split(/\r?\n/).forEach((orig, i) => {
@@ -384,7 +392,7 @@ function parseAlert_(text) {
         current = null;
         return;
       }
-      if (!('post_url' in raw)) raw.post_url = bare; else unmatched.push(bare);
+      if (!('post_url' in raw)) raw.post_url = bare; else { unmatched.push(bare); unmatchedAt.push(i); }
       current = null;
       return;
     }
@@ -393,6 +401,7 @@ function parseAlert_(text) {
       raw[current] = (raw[current] + '\n' + bare).trim();
     } else {
       unmatched.push(bare);
+      unmatchedAt.push(i);
       current = null;
     }
   });
@@ -431,10 +440,11 @@ function parseAlert_(text) {
     }
   }
   if (unmatched.length && !('summary' in raw) && !('post_content' in raw)) {  // unlabeled paragraph = summary
-    const summary = unmatched.filter(u => !RX_BARE_URL_.test(u));
-    if (summary.length) {
-      raw.summary = summary.join('\n').trim();
+    const kept = unmatched.map((u, k) => k).filter(k => !RX_BARE_URL_.test(unmatched[k]));
+    if (kept.length) {
+      raw.summary = kept.map(k => unmatched[k]).join('\n').trim();
       extra.summary_from_paragraph = true;
+      extra.summary_lines = kept.map(k => unmatchedAt[k]);  // where its lines are in the alert, for rebuildAlert_
     }
   }
 
@@ -763,6 +773,27 @@ function bannerLine_(priority, original) {
   return (priority === 'P0' ? '\ud83d\udea8' + core + '\ud83d\udea8' : core) + tail;
 }
 
+// The fields Burson's [Code] line carries ("tag,engagement,author,risk,product,status"; the author is never corrected)
+const ALERT_CODE_FIELDS_ = ['exposure_tag', 'total_engagement', 'risk_tags', 'product', 'issue_status'];
+
+/**
+ * Burson's [Code] value after a review: each part whose field was corrected (`changed`: the corrected fields' names,
+ * a list or a Set) carries the final value (`fin`), every other part stays as Burson wrote it. null when the code has
+ * nothing to change: none of its fields was corrected, or it hasn't its six parts. The corrected alert's [Code] line
+ * (rebuildAlert_) and the Social Alert email's code (Email.gs emailInput_) are this one value. Pure.
+ */
+function alertCode_(code, fin, changed) {
+  const ch = changed instanceof Set ? changed : new Set(changed || []);
+  if (!ALERT_CODE_FIELDS_.some(c => ch.has(c))) return null;
+  const parts = splitTopLevel_(String(code === undefined || code === null ? '' : code), true).map(p => p.trim());
+  if (parts.length < 6) return null;
+  const f = fin || {};
+  const status = ch.has('issue_status') ? statusSuffix_(f.issue_status, parts.slice(5).join(',')) : parts.slice(5).join(',');
+  const risk = (f.risk_tags && f.risk_tags.length) ? f.risk_tags[0] : parts[3];
+  return [ch.has('exposure_tag') ? f.exposure_tag : parts[0], ch.has('total_engagement') ? f.total_engagement : parts[1],
+    parts[2], ch.has('risk_tags') ? risk : parts[3], ch.has('product') ? f.product : parts[4], status].join(',');
+}
+
 /**
  * Rewrite only the lines whose value changed; order, spacing and boilerplate stay exactly as Burson sent them.
  * `fin` = final field values, `changed` = array of field names whose value was corrected.
@@ -773,7 +804,6 @@ function rebuildAlert_(text, parsed, fin, changed) {
   const ex = parsed.extra || {};
   const index = labelIndex_();
   const lines = String(text).split(/\r?\n/);
-  const codeFields = ['exposure_tag', 'total_engagement', 'risk_tags', 'product', 'issue_status'];
   const hasOtherLine = lines.some((ln, idx) => idx !== ex.banner_line && idx !== ex.header_line &&
     ((splitLabel_(ln, index) || {}).spec || {}).name === 'other_products');
   const productChanged = ch.has('product') || ch.has('other_products');
@@ -807,22 +837,20 @@ function rebuildAlert_(text, parsed, fin, changed) {
     const prefix = hit.prefix;
     let value = null;
     if (f === 'engagement_level' && (ch.has('engagement_level') || ch.has('total_engagement'))) {
-      value = ex.compound_engagement && RX_COMPOUND_ENGAGEMENT_.test(hit.value.replace(RX_MD_, '').trim())
-        ? `${fin.engagement_level} (${fin.total_engagement} engagements)` : String(fin.engagement_level);
+      // "LOW (373 engagement)": the level changes, and what Burson wrote in the parentheses stays (its own word, the
+      // count as it wrote it); only a corrected count is put in its place there
+      const compound = ex.compound_engagement && RX_COMPOUND_ENGAGEMENT_.test(hit.value.replace(RX_MD_, '').trim());
+      const paren = compound ? hit.value.slice(hit.value.indexOf('(')).replace(RX_MD_, '').trim() : '';
+      value = !compound ? String(fin.engagement_level)
+        : `${fin.engagement_level} ${ch.has('total_engagement') ? paren.replace(/[\d,]+(?:\.\d+)?[km]?/i, String(fin.total_engagement)) : paren}`;
     } else if (f === 'alert_name' && ex.burson_name_format && (ch.has('alert_name') || ch.has('issue_name') || ch.has('issue_status'))) {
       value = `${fin.issue_name} / ${statusSuffix_(fin.issue_status, ex.burson_status_suffix)}`;
     } else if (f === 'alert_name' && ch.has('alert_name')) {
       value = String(fin.alert_name);
     } else if (f === 'kof' && ch.has('kof')) {
       value = fin.kof ? 'Yes' + (fin.kof_lists && fin.kof_lists.length ? ` (${fin.kof_lists.join(', ')})` : '') : 'No';
-    } else if (f === 'code' && codeFields.some(c => ch.has(c))) {
-      const parts = splitTopLevel_(hit.value, true).map(p => p.trim());
-      if (parts.length >= 6) {
-        const status = ch.has('issue_status') ? statusSuffix_(fin.issue_status, parts.slice(5).join(',')) : parts.slice(5).join(',');
-        const risk = (fin.risk_tags && fin.risk_tags.length) ? fin.risk_tags[0] : parts[3];
-        value = [ch.has('exposure_tag') ? fin.exposure_tag : parts[0], ch.has('total_engagement') ? fin.total_engagement : parts[1],
-          parts[2], ch.has('risk_tags') ? risk : parts[3], ch.has('product') ? fin.product : parts[4], status].join(',');
-      }
+    } else if (f === 'code') {
+      value = alertCode_(hit.value, fin, ch);  // null: nothing of the code changed
     } else if (f === 'product' && (ch.has('product') || (ch.has('other_products') && !hasOtherLine))) {
       value = !hasOtherLine && Array.isArray(fin.other_products) && fin.other_products.length
         ? allProductsText_(fin, null, fin.product)
@@ -830,13 +858,34 @@ function rebuildAlert_(text, parsed, fin, changed) {
     } else if (ch.has(f) && !['alert_name', 'engagement_level', 'code', 'kof'].includes(f)) {
       value = displayValue_(f, fin[f], hit.value);
     }
-    if (value !== null) lines[i] = prefix + value;
+    // a line Burson left empty ("[Product(s)]:") has no space after its colon to keep: the value gets one
+    if (value !== null) lines[i] = prefix + (hit.value === '' && /[:：]$/.test(prefix) && String(value) !== '' ? ' ' : '') + value;
   }
 
   let out = lines.join('\n');
   if (ch.has('summary') && ex.summary_from_paragraph && ex.raw && ex.raw.summary && fin.summary) {
     const original = ex.raw.summary;
-    if (out.includes(original)) out = out.replace(original, () => fin.summary);
+    if (out.includes(original)) {
+      out = out.replace(original, () => fin.summary);
+    } else {
+      // Burson's paragraph isn't there as one piece (a hyperlink in it, which the summary reads as its address; blank
+      // lines between its lines; a line the bot doesn't know, read with it): its own lines are replaced (parseAlert_'s
+      // summary_lines), so a summary the note says was updated is never left as it was. Of several runs of those lines
+      // (only blank lines between a run's), the one that holds most of the text: a line elsewhere stays as Burson wrote it
+      const at = (Array.isArray(ex.summary_lines) ? ex.summary_lines : []).filter(i => Number.isInteger(i) && i >= 0 && i < lines.length);
+      const runs = [];
+      at.forEach(i => {
+        const run = runs[runs.length - 1];
+        if (run && lines.slice(run[run.length - 1] + 1, i).every(l => !l.trim())) run.push(i); else runs.push([i]);
+      });
+      const size = run => run.reduce((n, i) => n + lines[i].trim().length, 0);
+      const most = runs.slice().sort((a, b) => size(b) - size(a))[0];
+      if (most) {
+        const lead = (lines[most[0]].match(RX_BULLET_) || lines[most[0]].match(/^\s*/))[0];
+        lines.splice(most[0], most[most.length - 1] - most[0] + 1, lead + fin.summary);
+        out = lines.join('\n');
+      }
+    }
   }
   return out;
 }

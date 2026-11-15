@@ -1588,14 +1588,17 @@ function edStoryCardText_(ed, d, now) {
       `${o.sources && sources.length ? ` (${sources.join(', ')})` : ''}` : '';
     const stepLines = steps.slice(0, 3).map((s, i) => `${i + 1}. ${edLinkify_(s, posts, inline)}`);
     const links = postLinks.slice(0, o.links);
-    return `${head}\n\n${[
+    // The card's links are the ones written here in Chat's markup (edLinkify_, edChatLink_). A Markdown link left in
+    // words from outside (a headline, the call's reason, a post's own words in the plain story, a platform's or a
+    // source's name, an update's news) is opened up, so it stays words when posted (Voice.gs noMarkdownLinks_)
+    return noMarkdownLinks_(`${head}\n\n${[
       `*What's happening:* ${body}`,
       web,
       call,
       activity,
       stepLines.length ? `*Next steps:*\n${stepLines.join('\n')}` : '',
       links.length ? `*Posts:* ${links.join(' \u00b7 ')}` : '',
-    ].filter(Boolean).join('\n')}`;
+    ].filter(Boolean).join('\n')}`);
   };
   // Longest first; past ED_CARD_MAX_CHARS_: fewer post links, then no web sources, then the story and steps without
   // inline links (the posts line still links them), then a shorter story. The headline and the steps always stay.

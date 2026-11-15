@@ -97,6 +97,27 @@ module.exports = H => {
     return { headRow: headIdx + 1, header, data };
   }
 
+  test('Analysis tab: the Auto-correct flow\'s own marks are not an analyst\'s: the emojis on its Alert-log row (`mirrored`) are the ones the bot put on its own corrected alert (that flow copies no analyst\'s reaction), so they are never shown as "Analyst Chat emojis" or "Analyst reacted"; a main-flow row, whose column also holds the analysts\' emojis, is shown as before', () => {
+    const B = H.B;
+    const chatIndex = { names: new Map(), byMsg: new Map(), byThread: new Map() };
+    const AC = `spaces/AAQAaa_0I9g > spaces/AUTOFIX${B.ev('AC_PARTITION_SUFFIX_')}`;
+    const MAIN = 'spaces/MIRROR > (isolated)';
+    const row = (space, mirrored) => ({ alert_id: 'QA-1', space, source_message: 'spaces/A/messages/1', forward_message: 'spaces/B/messages/2', mirrored });
+    const p = { im_call: 'Not yet' };
+    // the standalone Auto-correct space: the bot's marks on its corrected alert, and nobody else's
+    const ac = B.analysisAlertChatActivity_([row(AC, '📰 📦')], chatIndex);
+    eq(ac.googleEmojis, []);
+    eq([B.formatAnalystAlertResponse_(p, ac).split('\n'), B.formatAlertAlignment_(p, ac, []).label],
+      [['⏳ IM Call: Not yet (<24h since Burson posted)', '💬 Chat: No Google analyst reply or emoji recorded on this thread'], '⏳ Pending IM window (<24h)']);
+    // the main flow's row: as before
+    const main = B.analysisAlertChatActivity_([row(MAIN, '📰 📦')], chatIndex);
+    eq(main.googleEmojis, [{ emoji: '📰', who: 'Analyst space' }, { emoji: '📦', who: 'Analyst space' }]);
+    assert.match(B.formatAnalystAlertResponse_(p, main), /\n💬 Analyst Chat emojis: 📰 📦 \(Analyst space\)$/);
+    eq(B.formatAlertAlignment_(p, main, []).label, '⏳ Pending IM window (<24h) · Analyst reacted 📰 📦');
+    // a post both flows worked: the main flow's row counts, the Auto-correct flow's adds nothing
+    eq(B.analysisAlertChatActivity_([row(MAIN, '📰'), row(AC, '📰 📦')], chatIndex).googleEmojis, [{ emoji: '📰', who: 'Analyst space' }]);
+  });
+
   test('Analysis tab: pairs Bot response (Social Alert, QA fixes, emojis & Q&A) next to Google Analyst response (Relay Chat replies, emojis & IM call), with Bot Logic and verbatim Knowledge Base snippets', () => {
     const { g, bot, ss, ctx } = makeAnalysisEnv();
 

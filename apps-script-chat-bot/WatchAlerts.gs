@@ -285,7 +285,8 @@ function pwAlertNum_(n) {
 function pwAlertText_(a) {
   const one = (v, n) => truncate_(String(v === undefined || v === null ? '' : v).replace(/\s+/g, ' ').trim(), n);
   // Words from outside (the summary, which can be the post's own words; the author; the network; the posted time) go
-  // on the card without Chat's link marks: left in, a post's "<address|words>" would be a hyperlink of its own
+  // on the card without Chat's link marks: left in, a post's "<address|words>" would be a hyperlink of its own (a
+  // Markdown link in them: `plain` below)
   const words = (v, n) => one(String(v === undefined || v === null ? '' : v).replace(/[<>|]/g, ' '), n);
   const num = v => (Number(v) > 0 ? fmtInt_(Math.round(Number(v))) : '');
   const posted = words(a.posted, 40);
@@ -295,16 +296,16 @@ function pwAlertText_(a) {
     posted ? `posted ${posted} ET` : ''].filter(Boolean);
   const summary = words(a.summary, PW_ALERT_TEXT_CHARS_);
   const label = `${a.video ? 'Watch the video' : 'View the post'}${PW_ALERT_NETS_.indexOf(net) >= 0 ? ` on ${net}` : ''}`;
-  const head = [ownCardHead_('watch', one(a.watch, 80) || 'Proactive watch')].concat(pwAlertTaxLines_(a)).filter(Boolean);
-  // The post's link is the card's only hyperlink (pwAlertOf_ reads it from the message's links): every other line is
-  // written without link marks (the first line: ownCardHead_; the SLRR, Building and Same story lines; `words` above)
-  const rest = [
+  // The post's link is the card's only hyperlink (pwAlertOf_ reads it from the card's own *Posts:* line): every other
+  // line is written without link marks (the first line: ownCardHead_; the SLRR, Building and Same story lines; `words`
+  // above) and with no Markdown link either (noMarkdownLinks_: posted, a "[words](address)" would be a hyperlink too)
+  const plain = lines => lines.filter(Boolean).map(noMarkdownLinks_);
+  const head = plain([ownCardHead_('watch', one(a.watch, 80) || 'Proactive watch')].concat(pwAlertTaxLines_(a)));
+  const rest = plain([
     summary ? `*What's happening:* ${summary}` : '',
     `*Activity:* ${who.join(' · ')}`,
     pwBuildLine_(a.build),
-    `*Posts:* ${chatLink_(one(a.url, 500), label)}`,
-    pwSameStoryLine_(a.sameStory),
-  ].filter(Boolean);
+  ]).concat([`*Posts:* ${chatLink_(one(a.url, 500), label)}`], plain([pwSameStoryLine_(a.sameStory)]));
   return `${head.join('\n')}\n\n${rest.join('\n')}`;
 }
 
@@ -438,15 +439,18 @@ function pwAlertOf_(ctx, m) {
       : !!(ctx && ctx.botUser) && m.senderName === ctx.botUser && pwAlertPosted_(m.name);
     if (!mine) return null;
     const a = pwAlertParse_(m.text);
-    // Chat keeps a hyperlink's address out of the plain text (only "View the post on X" stays there): the message's
-    // links have it (Chat.gs messageLinks_: formattedText's <url|words>). The post's link is the card's only hyperlink
-    // (pwAlertText_; on a card from before the shared layout, its first), so it is the first link whose address the
-    // plain text doesn't show: an address the text does show is a bare one in the post's words, never the post's link,
-    // wherever Chat lists it
+    // Chat keeps a hyperlink's address out of the plain text (only "View the post on X" stays there); the text in Chat's
+    // own markup has it (Chat.gs normalizeMessage_: `formatted`). So the post's link is read from the card's own Posts
+    // line there (Link on a card from before the shared layout): nothing in the words on another line can stand in for
+    // it, wherever Chat lists that among the message's links and whatever the plain text shows
+    const own = a && m.formatted ? pwAlertParse_(m.formatted) : null;
+    if (own && own.url) a.url = own.url;
+    // The card's own line showing no address either way, the message's links (Chat.gs messageLinks_) are all there is:
+    // the first whose address the plain text doesn't show, whole addresses compared. One the text does show is a bare
+    // address in the words, never taken for the post's
     if (a && !a.url && Array.isArray(m.links) && m.links.length) {
-      const shown = String(m.text || '');
-      const links = m.links.map(u => String(u || '')).filter(Boolean);
-      a.url = links.find(u => shown.indexOf(u) < 0) || links[0] || '';
+      const shown = (String(m.text || '').match(/https?:\/\/[^\s<>|]+/gi) || []).map(u => u.replace(/[)\].,;!?'"]+$/, ''));
+      a.url = m.links.map(u => String(u || '')).filter(Boolean).find(u => shown.indexOf(u) < 0) || '';
     }
     if (!a || !a.url) return null;
     const info = pwAlertInfo_(m.name) || {};
@@ -878,12 +882,12 @@ function pwPreReadOf_(llm, n, m) {
     if (sm && sm[1].toUpperCase() === 'C' && j >= 0 && j < n && j !== i) same = { c: j };
     if (sm && sm[1].toUpperCase() === 'R' && j >= 0 && j < m) same = { r: j };
     out[i] = {
-      summary: one(r.summary, PW_ALERT_TEXT_CHARS_).replace(/[<>|]/g, ' '),
+      summary: noMarkdownLinks_(one(r.summary, PW_ALERT_TEXT_CHARS_).replace(/[<>|]/g, ' ')),
       about: r.about_google !== false,
       products: allProductsList_({ product, other_products: others }),
       tag: pwTagText_(String(r.exposure_tag || '').trim()),
       topics: normalizeProposal_('risk_tags', Array.isArray(r.sensitive_topics) ? r.sensitive_topics : []) || [],
-      story: one(r.story, 120).replace(/[*_~`<>|]/g, ''),
+      story: noMarkdownLinks_(one(r.story, 120).replace(/[*_~`<>|]/g, '')),
       same,
       news: !!same && r.adds_new === true,
       meaningful: r.meaningful === true ? true : r.meaningful === false ? false : null,
@@ -1268,16 +1272,19 @@ function pwStoryReplyText_(posts, later) {
   const list = (posts || []).filter(Boolean);
   const n = list.length;
   const one = (v, k) => truncate_(String(v === undefined || v === null ? '' : v).replace(/\s+/g, ' ').trim(), k);
+  // The words from outside (the account, the network, the posted time, the summary) go without Chat's link marks and
+  // with no Markdown link (noMarkdownLinks_), as on the card (pwAlertText_): a line's only hyperlink is its post's
+  const words = (v, k) => noMarkdownLinks_(one(String(v === undefined || v === null ? '' : v).replace(/[<>|]/g, ' '), k));
   const num = v => (Number(v) > 0 ? fmtInt_(Math.round(Number(v))) : '');
   const head = `${PW_STORY_HEAD_} *Same story: ${fmtInt_(n)} more post${n === 1 ? '' : 's'}*` +
     `${later ? ' (seen since this alert was posted)' : ''}`;
   const build = chars => {
     const lines = list.slice(0, PW_STORY_LIST_MAX_).map(x => {
-      const net = one(x.network, 30);
-      const label = one(x.author, 80) || `the post${PW_ALERT_NETS_.indexOf(net) >= 0 ? ` on ${net}` : ''}`;
+      const net = words(x.network, 30);
+      const label = words(x.author, 80) || `the post${PW_ALERT_NETS_.indexOf(net) >= 0 ? ` on ${net}` : ''}`;
       const facts = [net, num(x.followers) ? `${num(x.followers)} followers` : '', num(x.eng) ? `${num(x.eng)} engagements` : '',
-        x.kof ? 'KOF' : '', one(x.posted, 40) ? `${one(x.posted, 40)} ET` : ''].filter(Boolean).join(' \u00b7 ');
-      const sum = chars ? one(x.summary, chars).replace(/[<>|]/g, ' ') : '';
+        x.kof ? 'KOF' : '', words(x.posted, 40) ? `${words(x.posted, 40)} ET` : ''].filter(Boolean).join(' \u00b7 ');
+      const sum = chars ? words(x.summary, chars) : '';
       return `\u2022 ${chatLink_(one(x.url, 500), label)}${facts ? ` \u00b7 ${facts}` : ''}${sum ? ` \u2014 ${sum}` : ''}`;
     });
     if (n > PW_STORY_LIST_MAX_) lines.push(`\u2026 and ${fmtInt_(n - PW_STORY_LIST_MAX_)} more`);

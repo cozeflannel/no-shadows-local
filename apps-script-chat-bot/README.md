@@ -52,7 +52,7 @@ sheet, and its link is in the bot's first message in the analyst space. You don'
 | Column C | ✓ and the name of the space the bot found, or ✗ next to the space to fix | The bot |
 | **Status** (B5) | ✅ Working (or `🔴 LIVE · ✅ Working` when LIVE), ⏸ Paused, or ⚠️ followed by what to fix | The bot, every minute |
 | **Last check** (B6) | When the bot last ran | The bot, every minute |
-| **Today** (B7) | Alerts reviewed, alerts sent back to Burson, questions answered | The bot |
+| **Today** (B7) | Alerts reviewed, alerts sent back to Burson, questions answered. While the bot works alone in the Auto-correct space (B10 set, B9 blank, B3 or B4 blank): that space's own count, the one C10 shows | The bot |
 | **Runs as** (B8) | The account the bot posts as. It must be a member of both spaces | `setup()` |
 | **Mirror space**, **Auto-correct space** (B9, B10) | Optional test spaces (below) | You |
 | **The switches** (B11:B24, B27:B29, B32, B34, B36:B40, B46) | `ON` or `OFF`, all OFF to start: what the bot may do on its own (below) | You |
@@ -387,8 +387,11 @@ The `Building:` line is only on an alert for a build-up of small posts, and `Sam
 listed in its thread. The score, the watch's bar and topic and the source that found the post stay off the message; the
 triage gets them from the bot's own record. On a Watch alert the post's link is the card's only hyperlink: the summary
 (which can be the post's own words), the author, the network and the posted time are written as plain words, without
-Chat's link marks (`<`, `>`, `|`), so link markup in a post can't put a link of its own on the card, and the triage
-and the Social Alert are always about the post itself.
+Chat's link marks (`<`, `>`, `|`) and with a Markdown link (`[words](address)`) opened up (`[words] (address)`), on
+every line but `*Posts:*` and in the same-story reply in the thread too, so link markup in a post can't put a link of
+its own on the card. The next run reads the post's link from the card's own `*Posts:*` line, so the triage and the
+Social Alert are always about the post itself. The Early Detection cards open up a Markdown link in the same way: their
+links are only the signal's posts and the web sources.
 
 The space's flow works the alert on its next run (a minute later) with a full Gemini triage: ❌ No action, 👍 Worth a
 look, or a Social Alert to the right teams (only the testers while Testing, as for any alert), and T&S only when the
@@ -1137,6 +1140,11 @@ and the Alert memory is not touched.
   Burson's first alert on the story was on another post: one of this app's alerts that its own review took for an
   issue Burson alerted days before (its name, an Ongoing Issue) reads `behind by 13 d` on the story, and its row still
   shows that this app had that very post, say, `10 min` before Burson. The story-level numbers are not changed by it.
+  The head start on a post is from this app's own alert on that post, not from the story's first alert: a post that a
+  later card or update of the story brought is measured from that card, and its cell then says when this app alerted
+  it (`behind by 10 min (from this app's alert on this post, … ET)`). When Burson alerted several of a story's posts,
+  the row shows the one Burson alerted first, and the headline line counts each of those posts (it counts posts, not
+  stories).
 - **No Burson alert found** is not the same as "Burson never alerted it". Burson's later alert takes a story's issue
   name only when this app's alert went out as a Social Alert. An alert that was only to be watched (an Early Detection
   card to monitor, for one) is found again only on its own posts, on an identical issue name, or on similar wording
@@ -1145,7 +1153,8 @@ and the Alert memory is not touched.
 - **The IMs' email** is the IMs' time for that Burson post as the Results tab has it (their email, else their draft),
   taken from the Results tab's rebuild in the same run. The Results tab shows Burson's alerts of the last 7 days only,
   so the Head start tab keeps each story's IM time itself, in three hidden columns at the far right of its tables (the
-  Burson post's key, the time, and whether it is their email or their draft), and reads them back before each rebuild.
+  Burson post's key, the time, and whether it is their email or their draft), and reads them back before each rebuild
+  (when Sheets doesn't answer for that read, the rebuild writes nothing and the tab stays as it was, so no time is lost).
   For a Burson alert the Results tab shows, the Results tab's answer is used, also when it has no time for it. For an
   older one, the time is the one the Head start tab last had, so the 30-day numbers cover 30 days. A remembered time
   is only as old as the tab: there is none for a Burson alert that was already older than the Results tab's days when
@@ -1160,8 +1169,8 @@ starts** (the ten longest over Burson's first alert on the story); **Every story
 `2 d 15 h`, `3 h 10 min` or `45 min`, and `behind by 20 min` when this app was later; the same in plain minutes is in
 columns of its own (`… (min)`), to sort by. The last columns you see are the post-level ones: `Burson on this post (ET)`,
 `Head start on the post`, `Burson alert on this post` and that head start in plain minutes (the three hidden columns
-after them are the bot's own: leave them as they are). A cell is blank where there is no Burson alert (on the story,
-or on one of its posts) or no IM time.
+after them are the bot's own: leave them as they are; a column you hide yourself stays hidden). A cell is blank where
+there is no Burson alert (on the story, or on one of its posts) or no IM time.
 
 The tab is made the first time this app has an alert of its own to show, and is rebuilt at most every 10 minutes, in a
 run where the Results tab was rebuilt (10 more minutes without one and it is rebuilt with the IMs' times it

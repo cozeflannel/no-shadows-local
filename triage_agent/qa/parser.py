@@ -46,8 +46,13 @@ _PRIORITY_BANNER = re.compile(r"THIS ALERT MEETS\s+(P[012])\s+CRITERIA", re.I)
 _SOCIAL_HEADER = re.compile(
     r"^(?:[^\w\s]\s*)*SOCIAL ALERT(?:\s*[^\w\s])*\s*:\s*(.*)$", re.I
 )
+# Lines that are no field and no part of the summary: Burson's footers, and the fixed lines of its live layout (its
+# title, its automated-message note, "Do Not Forward", whether the alert meets the Collection Requirements, the words of
+# its link to the post). The Apps Script bot's Alert.gs RX_BOILERPLATE_ has these lines too (and the bot's own BigQuery lines).
 _BOILERPLATE = re.compile(
-    r"^(?:As a reminder,\s*all alerts can be found|Note:\s*Brand-Social-Sends@|Please note:\s*screenshots are not available)",
+    r"^(?:As a reminder,\s*all alerts can be found|Note:\s*Brand-Social-Sends@|Please note:\s*screenshots are not available|"
+    r"Automated Alert via Burson\b|Note:\s*This is an automated message\b|Do Not Forward\b|"
+    r"This alert (?:does not meet|meets) the defined Collection Requirements\b|Click here for link to post\b)",
     re.I,
 )
 _AUTHOR_FOLLOWERS = re.compile(

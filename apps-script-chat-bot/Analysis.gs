@@ -461,7 +461,11 @@ function analysisAlertChatActivity_(alertRows, chatIndex) {
         }
       });
     });
-    String(a.mirrored || '').split(/\s+/).filter(Boolean).forEach(e => mirroredEmojis.add(e));
+    // The row's `mirrored` marks count as the analyst space's emojis, but for a row of the Auto-correct flow: there
+    // they are only the bot's own, put on its corrected alert (Drafts.gs markEmojis_; that flow copies no analyst's
+    // reaction, Bot.gs analystReactions_), never an analyst's
+    const ownMarks = typeof AC_PARTITION_SUFFIX_ === 'string' && String(a.space || '').endsWith(AC_PARTITION_SUFFIX_);
+    if (!ownMarks) String(a.mirrored || '').split(/\s+/).filter(Boolean).forEach(e => mirroredEmojis.add(e));
     String(a.feedback || '').split(/\s+/).filter(Boolean).forEach(e => feedbackEmojis.add(e));
   });
 

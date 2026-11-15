@@ -274,6 +274,19 @@ function autoCorrectTodayText_(s) {
     `${n(s.emails || 0, 'Social Alert', 'Social Alerts')} sent, ${n(s.answers || 0, 'question', 'questions')} answered`;
 }
 
+/**
+ * The Control tab's Today (B7) while the bot works alone in the Auto-correct space (Main.gs poll()): this flow's own
+ * counts for `day`, the ones C10 shows: "3 alerts, 1 corrected, 3 Social Alerts sent, 0 questions answered (in the
+ * Auto-correct space, B10)"; "No alerts yet today" before the first. The main flow's counters (Control.gs todayText_)
+ * never move there. Never throws.
+ */
+function autoCorrectTodayCell_(props, day) {
+  let s = null;
+  try { s = JSON.parse(props.getProperty(AC_STATS_PROP_) || 'null'); } catch (e) { s = null; }
+  if (!s || s.day !== day || !(s.alerts || s.answers)) return 'No alerts yet today';
+  return `${autoCorrectTodayText_(s).replace(/^today: /, '')} (in the Auto-correct space, B10)`;
+}
+
 /** Row 10 ("Auto-correct space") on the Control tab; on an older tab, "How it works" moves down a row to make room. */
 function ensureAutoCorrectRow_(sh) {
   if (!sh) return;
