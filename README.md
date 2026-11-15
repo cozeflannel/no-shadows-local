@@ -214,5 +214,3 @@ In either the dedicated campaign space or the owned originating thread in `space
    ```bash
    gcloud run services delete slrr-campaigns --region=us-central1 --project=brand-social-central-data --quiet
    ```
-
-# no-shadows-slrr-agent
