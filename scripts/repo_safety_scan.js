@@ -11,7 +11,10 @@
  *     (B30, the Brand safety groups tab), never in a file;
  *   - something shaped like a credential (API key, OAuth client secret or token, private key, webhook URL with its
  *     key): keys live in Secret Manager or the environment, never in a file;
- *   - a personal home directory path (/Users/<name>/..., /home/<name>/...): it names a person.
+ *   - a personal home directory path (/Users/<name>/..., /home/<name>/...): it names a person;
+ *   - an email address put together from pieces so that a search doesn't see it (a domain glued from two quoted
+ *     parts, or a quoted part straight after the @ of a template): two addresses at a real domain sat in the
+ *     tests that way. No scan can see through every way of building a string, so this catches the usual ones.
  * The matched text itself is never printed, only what kind of thing it is.
  *
  * Also run by apps-script-chat-bot/test/run_tests.js, so the test suite fails on any of these. No dependencies.
@@ -45,6 +48,12 @@ const CREDENTIALS = [
   ['a Google Chat webhook with its key', new RegExp('chat\\.googleapis\\.com/v1/spaces/[^\\s"\']+/messages\\?' + 'key=')],
   ['a Zapier webhook', new RegExp('hooks\\.zapier\\.com/hooks/' + 'catch/\\d+/')],
 ];
+// An address assembled so a plain search misses it: a domain glued from a quoted name and a quoted ending, and a
+// quoted part straight after the @ of a template
+const ASSEMBLED = [
+  new RegExp('[\'"][A-Za-z0-9-]+[\'"]\\s*\\+\\s*[\'"]\\.(?:com|org|net|io|co|edu|gov)\\b'),
+  new RegExp('@' + '\\{\\s*[\'"]'),
+];
 const HOME_PATH = new RegExp('(?:/Users/|/home/|[A-Za-z]:\\\\Users\\\\)(?!user\\b|runner\\b|node\\b|app\\b|root\\b)[A-Za-z][A-Za-z0-9._-]{2,}[/\\\\]');
 
 /** True for an email address a file may hold: a made-up test one, or Google Chat's own. */
@@ -66,6 +75,7 @@ function scanText(text) {
     }
     CREDENTIALS.forEach(([what, rx]) => { if (rx.test(line)) hits.push({ line: i + 1, what }); });
     if (HOME_PATH.test(line)) hits.push({ line: i + 1, what: 'a personal home directory path' });
+    if (ASSEMBLED.some(rx => rx.test(line))) hits.push({ line: i + 1, what: 'an email address assembled from pieces' });
   });
   return hits;
 }

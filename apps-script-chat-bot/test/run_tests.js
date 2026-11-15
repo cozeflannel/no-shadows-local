@@ -1192,6 +1192,10 @@ test('no real email address, key, token or personal path is in any file git trac
   eq(what('-----BEGIN ' + 'PRIVATE ' + 'KEY-----'), ['a private key']);
   eq(what('cd ' + '/Us' + 'ers/' + 'someone/Desktop/project'), ['a personal home directory path']);
   eq(what('cd /home/user/project && ls'), []);
+  // an address put together from pieces so a search doesn't see it (two at a real domain sat in the tests that way)
+  eq(what(['addr = f"viewer@', '{', "'exa", "mple' + '.c", "om'}", '"'].join('')), ['an email address assembled from pieces']);
+  eq(what(['const d = "exa', 'mple" + ".o', 'rg";'].join('')), ['an email address assembled from pieces']);
+  eq(what('const file = name + ".json"; const url = base + "/v1"; const who = "viewer@" + VIEWER_DOMAIN;'), []);
 });
 
 test('setup() with a space it can\'t find still installs the bot and explains the problem on the Control tab', () => {

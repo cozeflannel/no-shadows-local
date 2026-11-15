@@ -35,6 +35,7 @@ IAP_EMAIL_HEADER = "X-Goog-Authenticated-User-Email"
 IAP_JWT_HEADER = "X-Goog-IAP-JWT-Assertion"
 IAP_CERTS_URL = "https://www.gstatic.com/iap/verify/public_key"
 DEFAULT_DEV_USER = "dev@local.invalid"
+VIEWER_DOMAIN = "google.com"  # anyone signed in at this domain may read (role "viewer"); no address is ever written here
 
 # `im` is the config label for Incident Managers (config.Analyst.role); it carries analyst rights.
 ROLE_RANK = {"none": 0, "viewer": 1, "analyst": 2, "im": 2, "lead": 3, "admin": 4}
@@ -135,7 +136,7 @@ def resolve_role(ctx: AgentContext, email: str) -> tuple[str, str | None, str]:
         person = None
     if person:
         return "analyst", person.name, "roster"
-    if email.endswith("@google.com"):
+    if email.endswith("@" + VIEWER_DOMAIN):
         return "viewer", None, "domain"
     return "none", None, "none"
 

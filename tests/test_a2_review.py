@@ -346,7 +346,7 @@ def test_agency_member_dm_gets_the_external_treatment(ctx, clock):
 
 def test_external_answers_never_carry_emails_or_escalation_details(ctx, clock, fake_llm):
     connect(ctx, clock, IM)
-    internal_addr = f"doodle-team@{'google' + '.com'}"
+    internal_addr = "doodle-team@corp.test"  # a made-up internal address: any address is removed from an answer
     ctx.store.save_fact(KnowledgeFact(fact_id="FACT-1", text=f"Doodle questions go to {internal_addr}.",
                                       source="chat", status=ProposalStatus.APPROVED, created_by=IM, created_at=clock.now))
     burson = dict(space_id=BURSON_SPACE["space_id"], space_name=BURSON_SPACE["space_name"])

@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from console.backend.app import create_app
-from console.backend.auth import DEFAULT_DEV_USER
+from console.backend.auth import DEFAULT_DEV_USER, VIEWER_DOMAIN
 from _console_fixtures.seed_demo import seed_database
 from conftest import SeededAgentContext, seed_test_config
 from triage_agent import operations
@@ -42,7 +42,7 @@ SEED_NOW = datetime(2026, 10, 13, 10, 5, tzinfo=timezone.utc)  # Tue 06:05 Ameri
 ADMIN = "admin@ops.test"  # config.analysts: admin
 LEAD = "lead@ops.test"  # config.analysts: lead
 IM = "ana.ruiz@roster.test"  # demo slrr_im roster person -> analyst
-VIEWER = f"viewer@{'google' + '.com'}"  # domain viewer role -> read-only
+VIEWER = "viewer@" + VIEWER_DOMAIN  # a made-up person at the viewer domain -> read-only (no address is written out)
 OUTSIDER = "stranger@external.invalid"  # no access
 
 
