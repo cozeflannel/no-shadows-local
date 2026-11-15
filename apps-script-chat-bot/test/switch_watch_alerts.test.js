@@ -1,6 +1,6 @@
 // Watch alerts (Control tab row 35, WatchAlerts.gs): the Proactive watch's flags (a watch's yes and a score at its bar)
 // posted as the bot's own alerts where B35 says: OFF (as it starts: the watch only lists them on the Watch detections
-// tab), "Other alerts space (B33)" or "Mirror space (B9)". Each is a "🔭 Watch alert · <watch>" text message with its own
+// tab), "Other alerts space (B33)" or "Mirror space (B9)". Each is the bot's own alert card ("🔭 *WATCH* · <watch>") with its own
 // id (client-zwat-), never in Zapier's format, and the space's flow works it like an alert in another format with the
 // watch's call: ❌ when it repeats an alert already sent (no second email), else its Social Alert (only the testers while
 // Testing). Nothing of it ever reaches S-F Burson (B25), the Burson outbox or the Relay.
@@ -171,18 +171,21 @@ module.exports = H => {
   // The alert: the bot's own format
   // ===========================================================================================================
 
-  test('watch alerts: the bot\'s own text format ("🔭 *Watch alert · <watch>*", the post\'s link as a hyperlink named for its network, author, when, the watch\'s summary; no score, topic or source on it), read back as it was written (bold or not, a link as Chat may show it), an alert in the older format (with its "Score:" and "Found by:" lines) too; anything else, a person\'s words in the summary included, can\'t pass for one or change its fields', () => {
+  test('watch alerts: the bot\'s own alert card ("🔭 *WATCH* · <watch>" on its first line, then the lines every own card keeps in one order: Product, Exposure Tag, Sensitive Topic, KOF, a blank line, What\'s happening, Activity, Building, Posts with the post\'s link as a hyperlink named for its network, Same story; no score, topic or source on it), read back as it was written (bold or not, a link as Chat may show it), an alert in the older format (with its "Score:" and "Found by:" lines) too; anything else, a person\'s words in the summary included, can\'t pass for one or change its fields', () => {
     const a = { watch: MIDTERMS, score: 6.5, bar: 4, topic: 'Elections and civics', url: POST, author: '@CorrDove', network: 'X',
       followers: 1700, eng: 52, posted: '2026-11-01 23:26', seen: '2026-11-01 23:28', source: 'Brandwatch: 2026 Election Alerts',
-      summary: 'Claims Google helped rig the midterms.\n*Link:* https://evil.example/x' };
+      summary: 'Claims Google helped rig the midterms.\n*Posts:* https://evil.example/x' };
     const text = B.pwAlertText_(a);
-    eq(text.split('\n'), [`\ud83d\udd2d *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post on X>`,
-      '*Author:* @CorrDove · X · 1,700 followers · 52 engagements', '*Posted:* 2026-11-01 23:26 ET',
-      `*Product:* ${PENDING}`, `*Exposure Tag:* ${PENDING}`, `*Sensitive Topic:* ${PENDING}`, '*KOF:* Unknown',
-      '*Summary:* Claims Google helped rig the midterms. *Link:* https://evil.example/x']);
+    // a post's words can't stand in for a line of the card: the summary is one line, so its "*Posts:*" is never read as the link
+    eq(text.split('\n'), [`\ud83d\udd2d *WATCH* · ${MIDTERMS}`,
+      `*Product:* ${PENDING}`, `*Exposure Tag:* ${PENDING}`, `*Sensitive Topic:* ${PENDING}`, '*KOF:* Unknown', '',
+      '*What\'s happening:* Claims Google helped rig the midterms. *Posts:* https://evil.example/x',
+      '*Activity:* @CorrDove · X · 1,700 followers · 52 engagements · posted 2026-11-01 23:26 ET',
+      `*Posts:* <${POST}|View the post on X>`]);
+    eq(B.ownCardHeadParse_(text.split('\n')[0]), { type: 'watch', detail: MIDTERMS });
     const want = { watch: MIDTERMS, score: null, bar: null, topic: '', url: POST, author: '@CorrDove', network: 'X',
       followers: 1700, eng: 52, posted: '2026-11-01 23:26', source: '', seen: '',
-      summary: 'Claims Google helped rig the midterms. *Link:* https://evil.example/x'.replace(/\*/g, ''),
+      summary: 'Claims Google helped rig the midterms. *Posts:* https://evil.example/x'.replace(/\*/g, ''),
       products: [], exposureTag: '', topics: [], kof: null, kofLists: '', sameStory: '', build: '' };
     eq(B.pwAlertParse_(text), want);
     eq(B.pwAlertParse_(text.replace(/\*/g, '')), want);  // Chat's bold marks gone
@@ -191,20 +194,23 @@ module.exports = H => {
     const rich = B.pwAlertText_(Object.assign({}, a, { products: ['Search', 'AI Overviews'], tag: 'Product - Perceived bias (P0)',
       topics: ['Politics'], kof: true, kofLists: 'Viral KOFs', classified: true,
       sameStory: { n: 5, names: ['FOX 29', 'FOX 2 Detroit', '@WSJ', 'FOX6 News', 'Engadget'] } }));
-    eq(rich.split('\n').slice(4), ['*Product:* Search, AI Overviews', '*Exposure Tag:* Product - Perceived bias (P0)',
-      '*Sensitive Topic:* Politics', '*KOF:* Yes (Viral KOFs)',
-      '*Summary:* Claims Google helped rig the midterms. *Link:* https://evil.example/x',
+    eq(rich.split('\n').slice(1), ['*Product:* Search, AI Overviews', '*Exposure Tag:* Product - Perceived bias (P0)',
+      '*Sensitive Topic:* Politics', '*KOF:* Yes (Viral KOFs)', '',
+      '*What\'s happening:* Claims Google helped rig the midterms. *Posts:* https://evil.example/x',
+      '*Activity:* @CorrDove · X · 1,700 followers · 52 engagements · posted 2026-11-01 23:26 ET',
+      `*Posts:* <${POST}|View the post on X>`,
       '*Same story:* 5 more posts in the thread (FOX 29, FOX 2 Detroit, @WSJ, FOX6 News and 1 more)']);
     const back = B.pwAlertParse_(rich);
     eq([back.products, back.exposureTag, back.topics, back.kof, back.kofLists, back.sameStory],
       [['Search', 'AI Overviews'], 'Product - Perceived bias', ['Politics'], true, 'Viral KOFs',
         '5 more posts in the thread (FOX 29, FOX 2 Detroit, @WSJ, FOX6 News and 1 more)']);
     // a build-up's card says what built up (the small posts, their accounts, how fast, where, their engagements together),
-    // above its Same story line, and reads back for the triage; an alert for one post has no such line
+    // under its Activity line, and reads back for the triage; an alert for one post has no such line
     const built = B.pwAlertText_(Object.assign({}, a, { build: { n: 4, accounts: 3, ms: 2.5 * 3600 * 1000, networks: ['X', 'Reddit', 'X'], eng: 57 },
       sameStory: { n: 3, names: ['@a', '@b'] } }));
-    eq(built.split('\n').slice(-2), ['*Building:* 4 small posts from 3 accounts within 3 hours (X, Reddit) \u00b7 57 engagements in all',
-      '*Same story:* 3 more posts in the thread (@a, @b)']);
+    eq(built.split('\n').slice(-4), ['*Activity:* @CorrDove · X · 1,700 followers · 52 engagements · posted 2026-11-01 23:26 ET',
+      '*Building:* 4 small posts from 3 accounts within 3 hours (X, Reddit) \u00b7 57 engagements in all',
+      `*Posts:* <${POST}|View the post on X>`, '*Same story:* 3 more posts in the thread (@a, @b)']);
     eq(B.pwAlertParse_(built).build, '4 small posts from 3 accounts within 3 hours (X, Reddit) \u00b7 57 engagements in all');
     eq([B.pwBuildLine_(null), B.pwBuildLine_({ n: 1, accounts: 1 }), B.pwBuildLine_({ n: 3, accounts: 3, ms: 60000 })],
       ['', '', '*Building:* 3 small posts from 3 accounts within 1 hour']);
@@ -215,17 +221,32 @@ module.exports = H => {
       '*Sensitive Topic:* None', '*KOF:* Unknown']);
     eq(B.pwAlertParse_(B.pwAlertText_({ watch: MIDTERMS, url: POST, notGoogle: true, kof: false })).products, []);
     // a video's: "Watch the video on <network>"; a network a label doesn't name (news, say): just "View the post"
-    assert.match(B.pwAlertText_(Object.assign({}, a, { video: true })), new RegExp(`\\n\\*Link:\\* <${POST.replace(/[.]/g, '\\.')}\\|Watch the video on X>\\n`));
-    assert.match(B.pwAlertText_(Object.assign({}, a, { network: 'news', url: 'https://example.com/a' })), /\n\*Link:\* <https:\/\/example\.com\/a\|View the post>\n/);
+    assert.match(B.pwAlertText_(Object.assign({}, a, { video: true })), new RegExp(`\\n\\*Posts:\\* <${POST.replace(/[.]/g, '\\.')}\\|Watch the video on X>$`));
+    assert.match(B.pwAlertText_(Object.assign({}, a, { network: 'news', url: 'https://example.com/a' })), /\n\*Posts:\* <https:\/\/example\.com\/a\|View the post>$/);
+    // the post's link is the message's first hyperlink (the flow reads it from the message's links when Chat hides the address)
+    eq((rich.match(/<(https?:\/\/[^|>]+)\|/) || [])[1], POST);
     // an alert posted in the older format still reads its score, bar, topic and where it was found
     const older = [`🔭 *Watch alert · ${MIDTERMS}*`, '*Score:* 6.5 of 10 (flags at 4) · *Topic:* Elections and civics', `*Link:* ${POST}`,
       '*Author:* @CorrDove · X · 1,700 followers · 52 engagements', '*Found by:* Brandwatch: 2026 Election Alerts · 2026-11-01 23:28 ET'].join('\n');
     eq(['score', 'bar', 'topic', 'source', 'seen', 'url'].map(k => B.pwAlertParse_(older)[k]),
       [6.5, 4, 'Elections and civics', 'Brandwatch: 2026 Election Alerts', '2026-11-01 23:28', POST]);
+    // a card posted before the shared layout (its "Watch alert · <watch>" first line and its Link, Author, Posted and Summary
+    // lines) still reads back whole, so one waiting in a space is worked as before
+    const before = [`🔭 *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post on X>`,
+      '*Author:* @CorrDove · X · 1,700 followers · 52 engagements', '*Posted:* 2026-11-01 23:26 ET',
+      '*Product:* Search, AI Overviews', '*Exposure Tag:* Product - Perceived bias (P0)', '*Sensitive Topic:* Politics', '*KOF:* Yes (Viral KOFs)',
+      '*Summary:* Claims Google helped rig the midterms.', '*Building:* 4 small posts from 3 accounts within 3 hours',
+      '*Same story:* 3 more posts in the thread (@a, @b)'].join('\n');
+    eq(B.pwAlertParse_(before), { watch: MIDTERMS, score: null, bar: null, topic: '', url: POST, author: '@CorrDove', network: 'X',
+      followers: 1700, eng: 52, posted: '2026-11-01 23:26', source: '', seen: '', summary: 'Claims Google helped rig the midterms.',
+      products: ['Search', 'AI Overviews'], exposureTag: 'Product - Perceived bias', topics: ['Politics'], kof: true, kofLists: 'Viral KOFs',
+      sameStory: '3 more posts in the thread (@a, @b)', build: '4 small posts from 3 accounts within 3 hours' });
+    eq([B.isOwnAlertCardHeader_(before), B.isOwnAlertCardHeader_(text)], [true, true]);
     // little known: no followers, engagements, posted time or summary
     const bare = B.pwAlertText_({ watch: MIDTERMS, score: 4, bar: 4, url: POST, source: 'Sonar' });
-    eq(bare.split('\n'), [`\ud83d\udd2d *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post>`, '*Author:* unknown author',
-      `*Product:* ${PENDING}`, `*Exposure Tag:* ${PENDING}`, `*Sensitive Topic:* ${PENDING}`, '*KOF:* Unknown']);
+    eq(bare.split('\n'), [`\ud83d\udd2d *WATCH* · ${MIDTERMS}`,
+      `*Product:* ${PENDING}`, `*Exposure Tag:* ${PENDING}`, `*Sensitive Topic:* ${PENDING}`, '*KOF:* Unknown', '',
+      '*Activity:* unknown author', `*Posts:* <${POST}|View the post>`]);
     eq([B.pwAlertParse_(bare).author, B.pwAlertParse_(bare).followers, B.pwAlertParse_(bare).summary], ['', null, '']);
     // not one: a Zapier alert, the bot's own notes, a quote of one
     for (const other of ['🚨 *X Alert: 2026 Midterm Elections / Civics - Negative* 🚨\n*Author:* @CorrDove', '🤖 *Triage: ❌ No action*',
@@ -347,13 +368,14 @@ module.exports = H => {
     const out = posted(t, MID);
     eq(out.length, 1);
     const msg = out[0];
-    eq(msg.text.split('\n'), [`\ud83d\udd2d *Watch alert · ${MIDTERMS}*`, `*Link:* <${POST}|View the post on X>`,
-      '*Author:* @CorrDove · X · 1,700 followers · 520 engagements',
-      `*Product:* ${PENDING}`, `*Exposure Tag:* ${PENDING}`, `*Sensitive Topic:* ${PENDING}`, '*KOF:* Unknown',
-      '*Summary:* An X reply (@CorrDove, 1.7K followers) claims Google helped rig the midterms.']);
+    eq(msg.text.split('\n'), [`\ud83d\udd2d *WATCH* · ${MIDTERMS}`,
+      `*Product:* ${PENDING}`, `*Exposure Tag:* ${PENDING}`, `*Sensitive Topic:* ${PENDING}`, '*KOF:* Unknown', '',
+      '*What\'s happening:* An X reply (@CorrDove, 1.7K followers) claims Google helped rig the midterms.',
+      '*Activity:* @CorrDove · X · 1,700 followers · 520 engagements',
+      `*Posts:* <${POST}|View the post on X>`]);
     assert.ok(!/Score:|Found by:|(?<!Sensitive )Topic:/.test(msg.text), 'no score, topic or source on it');
     eq(msg.attachment, undefined);  // X wouldn't show the post (no picture): a text alert
-    chatShows(msg);  // read back as Chat gives it: "*Link:* View the post on X", the address only in formattedText
+    chatShows(msg);  // read back as Chat gives it: "*Posts:* View the post on X", the address only in formattedText
     // the Watch detections tab: the flag went out (a: 'p', the message, B33, when); the near miss never waited
     const k = keys(t);
     eq(k.map(x => [x.b, x.a]), [[1, 'p'], [0, undefined]]);
@@ -381,7 +403,7 @@ module.exports = H => {
     assert.match(social[0].text, new RegExp(`^SOCIAL ALERT\\r?\\n\\r?\\nAn X reply \\(@CorrDove, 1\\.7K followers\\)[^\\n]*\\r?\\n\\r?\\nLink: ${POST.replace(/[.?]/g, '\\$&')}\\r?\\n`));
     assert.match(social[0].text, /\nWould have gone to: To: Brand alert POCs; Cc: GCPA, standard CC list/);
     // nothing anywhere else: no write in S-F Burson, nothing on the outbox, nothing of it in the Mirror space
-    eq([writes(t), outbox(t), t.chat.botPosts(MIRROR).filter(p => /Watch alert|CorrDove/.test(p.text))], [[], [], []]);
+    eq([writes(t), outbox(t), t.chat.botPosts(MIRROR).filter(p => /WATCH|Watch alert|CorrDove/.test(p.text))], [[], [], []]);
     eq(t.get('B5'), '\u2705 Working');
     t.poll();  // worked once, posted once
     eq([inThread(t, MID, msg).length, posted(t, MID).length], [1, 1]);
@@ -412,8 +434,8 @@ module.exports = H => {
     eq(t.chat.uploads.map(u => [u.space, u.filename, u.contentType, u.bytes.equals(JPEG)]),
       [[MID, 'post.jpg', 'image/jpeg', true], [MID, 'post.jpg', 'image/jpeg', true]]);
     eq(out.map(m => (m.attachment || []).map(a => [a.contentName, a.contentType])), [[['post.jpg', 'image/jpeg']], [['post.jpg', 'image/jpeg']]]);
-    assert.match(out[0].text, new RegExp(`\\n\\*Link:\\* <${POST.replace(/[.]/g, '\\.')}\\|View the post on X>\\n`));
-    assert.match(out[1].text, new RegExp(`\\n\\*Link:\\* <${POST2.replace(/[.]/g, '\\.')}\\|Watch the video on X>\\n`));
+    assert.match(out[0].text, new RegExp(`\\n\\*Posts:\\* <${POST.replace(/[.]/g, '\\.')}\\|View the post on X>$`));
+    assert.match(out[1].text, new RegExp(`\\n\\*Posts:\\* <${POST2.replace(/[.]/g, '\\.')}\\|Watch the video on X>$`));
     // the flow works it with the watch's score (the bot's record of it), as before, read back as Chat gives it
     out.forEach(chatShows);
     t.poll();
@@ -734,9 +756,9 @@ module.exports = H => {
     const out = posted(t, MID);
     eq(out.length, 1);
     const msg = out[0];
-    eq(msg.text.split('\n').slice(3), ['*Product:* Search, AI Overviews', '*Exposure Tag:* Product - Perceived bias (P0)',
-      '*Sensitive Topic:* Politics', '*KOF:* Yes (Viral KOFs)',
-      '*Summary:* X user @CorrDove (1.7K followers) claims Google rigged search results for the midterms.']);
+    eq(msg.text.split('\n').slice(1, 7), ['*Product:* Search, AI Overviews', '*Exposure Tag:* Product - Perceived bias (P0)',
+      '*Sensitive Topic:* Politics', '*KOF:* Yes (Viral KOFs)', '',
+      '*What\'s happening:* X user @CorrDove (1.7K followers) claims Google rigged search results for the midterms.']);
     // the keys: the alert's thread, space and story (for later flags on it), the listening tool's classification
     // (Pendulum's names in SLRR's: "Search & Shopping" is two products, "AIOverviews" AI Overviews); the blank post: a: 'n'
     const byKey = Object.fromEntries(keys(t).map(k => [k.k, k]));
@@ -814,6 +836,7 @@ module.exports = H => {
     eq([FOX13, FOX29, FOX2].map(u => !!alertOf(u)), [false, false, false]);
     assert.ok(story.text.includes('\n*Product:* Waymo\n*Exposure Tag:* Product - Product failures - physical safety issues (P1)\n'), story.text);
     assert.ok(story.text.endsWith('\n*Building:* 4 small posts from 4 accounts within 1 hour (X, Facebook, Instagram) \u00b7 25 engagements in all' +
+      `\n*Posts:* <${WSJ}|View the post on X>` +
       '\n*Same story:* 3 more posts in the thread (FOX 29, FOX 2 Detroit, fox13seattle)'), story.text);
     assert.ok(!alertOf(POST).text.includes('*Building:*'), 'an alert for one post has no Building line');
     // the others: one reply in its thread, in the same order (the most followers first), each linked and summed up
@@ -879,7 +902,7 @@ module.exports = H => {
     t.poll();
     const out = posted(t, MID);
     eq(out.length, 1);
-    eq(out[0].text.split('\n').slice(3, 7), ['*Product:* Brand', '*Exposure Tag:* Brand - Conspiratorial theories about Google (P2)',
+    eq(out[0].text.split('\n').slice(1, 5), ['*Product:* Brand', '*Exposure Tag:* Brand - Conspiratorial theories about Google (P2)',
       '*Sensitive Topic:* None', '*KOF:* No']);
     eq(keys(t)[0].a, 'p');
   });
@@ -989,11 +1012,12 @@ module.exports = H => {
     const out = posted(t, MID);
     eq(out.length, 1);
     const msg = out[0];
-    eq(msg.text.split('\n'), [`\ud83d\udd2d *Watch alert · ${MIDTERMS}*`, `*Link:* <${REDDIT}|View the post on Reddit>`,
-      '*Author:* u/gamerdad · Reddit · 300 followers · 7 engagements',
-      '*Product:* Search', '*Exposure Tag:* None', '*Sensitive Topic:* None', '*KOF:* Unknown',
-      '*Summary:* Post 4: Gemini gave my kid wrong homework answers.',
+    eq(msg.text.split('\n'), [`\ud83d\udd2d *WATCH* · ${MIDTERMS}`,
+      '*Product:* Search', '*Exposure Tag:* None', '*Sensitive Topic:* None', '*KOF:* Unknown', '',
+      '*What\'s happening:* Post 4: Gemini gave my kid wrong homework answers.',
+      '*Activity:* u/gamerdad · Reddit · 300 followers · 7 engagements',
       '*Building:* 4 small posts from 3 accounts within 1 hour (Reddit, X) \u00b7 24 engagements in all',
+      `*Posts:* <${REDDIT}|View the post on Reddit>`,
       '*Same story:* 3 more posts in the thread (@parent1, @parent2)']);
     // the small posts that waited: one reply in its thread, each linked
     const storyReplies = () => inThread(t, MID, msg).filter(m => /^\ud83d\udd17 /.test(m.text));
@@ -1035,7 +1059,7 @@ module.exports = H => {
     look(w, [hit({ eng: 180, impact: 7 })]);
     const out = posted(t, MID);
     eq(out.length, 1);
-    assert.ok(out[0].text.includes('\n*Author:* @CorrDove · X · 1,700 followers · 180 engagements\n'), out[0].text);
+    assert.ok(out[0].text.includes('\n*Activity:* @CorrDove · X · 1,700 followers · 180 engagements\n'), out[0].text);
     assert.ok(!out[0].text.includes('*Building:*'));
     const k = keys(t)[0];
     eq([keys(t).length, k.a, k.sc, k.bg, k.ac, k.rq > k.s, k.m], [1, 'p', 7, undefined, undefined, true, out[0].name]);
@@ -1065,7 +1089,8 @@ module.exports = H => {
       [3, [false, true, true, true], ['o', 'p', 'p', 'p']]);
     assert.ok(of(3).text.includes('\n*Product:* None (not about Google)\n'), of(3).text);
     assert.ok(of(2).text.includes('\n*Product:* Search, Shopping\n'), of(2).text);
-    assert.ok(of(4).text.includes('\n*Author:* @Poster4 · X · 1,700 followers · 4 engagements\n*Product:* Search\n*Exposure Tag:* Product - Perceived bias (P0)\n'), of(4).text);
+    assert.ok(of(4).text.includes('\n*Product:* Search\n*Exposure Tag:* Product - Perceived bias (P0)\n'), of(4).text);
+    assert.ok(of(4).text.includes('\n*Activity:* @Poster4 · X · 1,700 followers · 4 engagements\n'), of(4).text);
     assert.match(c35(t), / · today: 3 posted, 1 off-topic not posted$/);
     assert.ok(t.g.logs.some(l => l.includes(`Watch alerts: not posting ${u(1)}: the pre-read says it isn't about Google`)));
     eq([writes(t), outbox(t)], [[], []]);

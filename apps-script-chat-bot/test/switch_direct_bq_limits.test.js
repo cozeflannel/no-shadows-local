@@ -97,6 +97,14 @@ module.exports = H => {
     w.g.props.set('LAST_RUN', JSON.stringify({ at: '2026-10-14T12:03:00.000Z', errors: [] }));
     w.g.clock.now += 5 * 60e3;
     eq(w.bot.pollBigQuerySources_(onCtx(w), w.BUR).bmie, 1);
+    // Only a main run writes LAST_RUN. One it left more than 10 minutes ago says nothing about now: with the Auto-correct
+    // space working alone (B10, no main run to write a newer one) the poll is not held back for good by that old report
+    const alone = world();
+    const aloneCalls = fakeBq(alone.g, { us: [bmieRow(1)], bsip: [], log: [] });
+    alone.g.props.set('LAST_RUN', JSON.stringify({ at: '2026-10-14T11:40:00.000Z', errors: ['time budget reached; the rest is handled next run'] }));
+    eq(alone.bot.pollBigQuerySources_(onCtx(alone), alone.BUR).bmie, 1);
+    assert.ok(aloneCalls.length > 0, 'BigQuery was read');
+    eq(alone.bot.ev('BQ_DIRECT_LAST_RUN_MS_'), 10 * 60 * 1000);
   });
 
   test('direct BQ limits: no check while 3 or more posts it took are still waiting to be reviewed (2 aren\'t enough; Burson\'s own alerts waiting don\'t count); once the run reviews them, the poll goes on', () => {

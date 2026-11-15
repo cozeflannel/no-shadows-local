@@ -12,8 +12,9 @@
  *                                                   the Relay carry on exactly as before (nothing the bot posts is ever
  *                                                   relayed to S-F Burson: Relay.gs relayBotsOwn_)
  *
- * Each alert is posted once, in the bot's own format (pwAlertText_: "(telescope) Watch alert · <watch>", which neither
- * Burson nor a monitoring tool writes, so it never looks like a Zapier alert), with an id of its own
+ * Each alert is posted once, as the bot's own alert card (pwAlertText_: its first line "(telescope) *WATCH* · <watch>",
+ * the card the Early Detection alerts share, Alert.gs OWN_CARD_TYPES_; neither Burson nor a monitoring tool writes it,
+ * so it never looks like a Zapier alert), with an id of its own
  * (PW_ALERT_ID_PREFIX_): the post's link as a hyperlink, its author, when it was posted, its Product, Exposure Tag,
  * Sensitive Topic and KOF lines and a summary, with the post's picture attached when one can be found
  * (pwAlertPicture_: its photo, or its video's frame or cover; what an X or Bluesky post shows from the post it quotes or
@@ -263,39 +264,45 @@ function pwAlertNum_(n) {
  * A watch alert's message (`a`: {watch, url, author, network, followers, eng, posted, summary, video: true when its
  * picture is a video's frame or cover, and for its SLRR lines (pwAlertTaxLines_): products, tag, topics, kof, kofLists,
  * classified, notGoogle; sameStory: {n, names} when the story's other posts go in its thread}), plain text in Chat's
- * markup, in the bot's own format (pwAlertParse_ reads it back), the post's picture attached under it when it has one
- * (pwPostAlerts_):
- *   (telescope) *Watch alert · Midterms 2026 × Civics*
- *   *Link:* <https://x.com/…|View the post on X>          (a hyperlink; "Watch the video on X" for a video)
- *   *Author:* @someone · X · 4,470 followers · 52 engagements
- *   *Posted:* 2026-11-01 23:26 ET
+ * markup, as the bot's own alert card (Alert.gs OWN_CARD_TYPES_, shared with the Early Detection cards: the first line
+ * says which kind it is, the lines under it keep one order; pwAlertParse_ reads it back), the post's picture attached
+ * under it when it has one (pwPostAlerts_):
+ *   (telescope) *WATCH* · Midterms 2026 × Civics
  *   *Product:* Search, AI Overviews
  *   *Exposure Tag:* Product - Perceived bias (P0)
  *   *Sensitive Topic:* Politics
  *   *KOF:* Yes (Viral KOFs)
- *   *Summary:* … (the AI pre-read's neutral summary, else the watch's own)
+ *   (blank line)
+ *   *What's happening:* … (the AI pre-read's neutral summary, else the watch's own)
+ *   *Activity:* @someone · X · 4,470 followers · 52 engagements · posted 2026-11-01 23:26 ET
+ *   *Building:* 4 small posts from 3 accounts within 3 hours (…)      (a story that built up, only)
+ *   *Posts:* <https://x.com/…|View the post on X>          (the message's first hyperlink; "Watch the video on X" for a video)
  *   *Same story:* 3 more posts in the thread (…)
- * The score, the watch's bar and topic, and the source that found it aren't on it (the flow gets them from the bot's
- * record of what it posted: pwRememberPosted_). Pure.
+ * A Watch alert is posted before its triage, so it has no headline, Call or Next steps lines: those are left out, never
+ * shown empty (the triage is the note in its thread). The score, the watch's bar and topic, and the source that found
+ * it aren't on it (the flow gets them from the bot's record of what it posted: pwRememberPosted_). Pure.
  */
 function pwAlertText_(a) {
   const one = (v, n) => truncate_(String(v === undefined || v === null ? '' : v).replace(/\s+/g, ' ').trim(), n);
   const num = v => (Number(v) > 0 ? fmtInt_(Math.round(Number(v))) : '');
+  const posted = one(a.posted, 40);
   const who = [one(a.author, 120) || 'unknown author', one(a.network, 40),
-    num(a.followers) ? `${num(a.followers)} followers` : '', num(a.eng) ? `${num(a.eng)} engagements` : ''].filter(Boolean);
+    num(a.followers) ? `${num(a.followers)} followers` : '', num(a.eng) ? `${num(a.eng)} engagements` : '',
+    posted ? `posted ${posted} ET` : ''].filter(Boolean);
   const summary = one(a.summary, PW_ALERT_TEXT_CHARS_);
   const net = one(a.network, 40);
   const label = `${a.video ? 'Watch the video' : 'View the post'}${PW_ALERT_NETS_.indexOf(net) >= 0 ? ` on ${net}` : ''}`;
-  return [
-    `${PW_ALERT_HEAD_} *Watch alert · ${one(a.watch, 80) || 'Proactive watch'}*`,
-    `*Link:* ${chatLink_(one(a.url, 500), label)}`,
-    `*Author:* ${who.join(' · ')}`,
-    one(a.posted, 40) ? `*Posted:* ${one(a.posted, 40)} ET` : '',
-  ].concat(pwAlertTaxLines_(a), [
-    summary ? `*Summary:* ${summary}` : '',
+  const head = [ownCardHead_('watch', one(a.watch, 80) || 'Proactive watch')].concat(pwAlertTaxLines_(a)).filter(Boolean);
+  // The post's link stays the message's first hyperlink (pwAlertOf_ reads it from the message's links): no line
+  // above *Posts:* carries a link
+  const rest = [
+    summary ? `*What's happening:* ${summary}` : '',
+    `*Activity:* ${who.join(' · ')}`,
     pwBuildLine_(a.build),
+    `*Posts:* ${chatLink_(one(a.url, 500), label)}`,
     pwSameStoryLine_(a.sameStory),
-  ]).filter(Boolean).join('\n');
+  ].filter(Boolean);
+  return `${head.join('\n')}\n\n${rest.join('\n')}`;
 }
 
 /**
@@ -354,7 +361,9 @@ function pwTagText_(name) {
 }
 
 /**
- * A watch alert read back (pwAlertText_'s lines, with or without Chat's bold marks, a link as Chat may show it):
+ * A watch alert read back (pwAlertText_'s lines, with or without Chat's bold marks, a link as Chat may show it; and a
+ * card from before the shared layout: its `Watch alert · <watch>` first line and its Link, Author, Posted and Summary
+ * lines):
  * {watch, score, bar, topic, url, author, network, followers, eng, posted, source, seen, summary, products,
  * exposureTag, topics, kof (true | false | null), kofLists, sameStory}; null when the text isn't one. Score, bar,
  * topic, source and seen are read only from an alert posted before they left the message (its "Score:" and "Found by:"
@@ -366,14 +375,19 @@ function pwAlertParse_(text) {
   if (!t.trim() || t.length > OTHER_TEXT_MAX_CHARS_) return null;
   const bare = s => String(s || '').replace(/<(https?:\/\/[^|>\s]+)\|[^>]*>/g, '$1').replace(/\*/g, '').trim();
   const lines = t.split(/\r?\n/).map(bare).filter(Boolean);
-  const head = (lines[0] || '').match(/^\ud83d\udd2d\s*Watch alert · (.+)$/);
-  if (!head) return null;
+  const old = (lines[0] || '').match(/^\ud83d\udd2d\s*Watch alert · (.+)$/);
+  const own = old ? null : ownCardHeadParse_(lines[0]);
+  const watch = old ? old[1].trim() : own && own.type === 'watch' ? own.detail : '';
+  if (!watch) return null;
   const get = label => {
     const hit = lines.slice(1).find(l => l.indexOf(`${label}:`) === 0);
     return hit ? hit.slice(label.length + 1).trim() : '';
   };
   const score = get('Score').match(/^([\d.]+|\?) of 10 \(flags at ([\d.]+|\?)\)(?: · Topic: (.+))?$/) || [];
-  const who = get('Author').split(' · ').map(s => s.trim()).filter(Boolean);
+  // The shared layout's *Activity:* line ends "· posted <when> ET"; a card from before it has Author and Posted lines
+  const whoAll = (get('Activity') || get('Author')).split(' · ').map(s => s.trim()).filter(Boolean);
+  const postedAt = whoAll.find(seg => /^posted \S/.test(seg)) || '';
+  const who = whoAll.filter(seg => seg !== postedAt);
   const isCount = s => /^[\d,]+ (?:followers|engagements)$/.test(s);
   const count = word => {
     const hit = who.find(s => new RegExp(`^[\\d,]+ ${word}$`).test(s));
@@ -388,10 +402,12 @@ function pwAlertParse_(text) {
   const kofRaw = get('KOF');
   const kof = /^yes\b/i.test(kofRaw) ? true : /^no\b/i.test(kofRaw) ? false : null;
   return {
-    watch: head[1].trim(), score: num(score[1]), bar: num(score[2]), topic: String(score[3] || '').trim(),
-    url: (get('Link').match(/https?:\/\/\S+/) || [''])[0], author: who[0] && who[0] !== 'unknown author' ? who[0] : '',
+    watch, score: num(score[1]), bar: num(score[2]), topic: String(score[3] || '').trim(),
+    url: ((get('Posts') || get('Link')).match(/https?:\/\/\S+/) || [''])[0],
+    author: who[0] && who[0] !== 'unknown author' ? who[0] : '',
     network: who.find((s, i) => i > 0 && !isCount(s)) || '', followers: count('followers'), eng: count('engagements'),
-    posted: get('Posted').replace(/ ET$/, ''), source: found.join(' · ').trim(), seen, summary: get('Summary'),
+    posted: (postedAt ? postedAt.replace(/^posted\s+/, '') : get('Posted')).replace(/ ET$/, ''),
+    source: found.join(' · ').trim(), seen, summary: get("What's happening") || get('Summary'),
     products: list(get('Product')), exposureTag: unset(tag) ? '' : tag, topics: list(get('Sensitive Topic')),
     kof, kofLists: kof === true ? ((kofRaw.match(/\((.+)\)\s*$/) || [])[1] || '').trim() : '', sameStory: get('Same story'),
     build: get('Building'),

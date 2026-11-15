@@ -2137,12 +2137,18 @@ function bqDirectWaiting_(ctx, msgs) {
 /**
  * Why the direct poll doesn't check this time ('' when it does): the Burson space's alerts come first. The last main run
  * stopped at its time budget (LAST_RUN's errors), or BQ_DIRECT_MAX_WAITING_ or more of the posts the poll took are still
- * waiting to be reviewed (`msgs`: bqSpaceMessages_). Never throws.
+ * waiting to be reviewed (`msgs`: bqSpaceMessages_). Only a main run writes LAST_RUN, every minute it runs: one from
+ * more than BQ_DIRECT_LAST_RUN_MS_ ago says nothing about now (the Auto-correct space working alone, B10 with no main
+ * run, would otherwise be held back for good by the last report the main run happened to leave). Never throws.
  */
+const BQ_DIRECT_LAST_RUN_MS_ = 10 * 60 * 1000;
 function bqDirectBusy_(ctx, msgs) {
   try {
     const last = JSON.parse(PropertiesService.getScriptProperties().getProperty('LAST_RUN') || 'null');
-    if (last && (last.errors || []).some(e => /^time budget/.test(String(e)))) return 'the last run ran out of time';
+    const at = last && last.at ? Date.parse(String(last.at)) : NaN;
+    const now = ctx && typeof ctx.now === 'function' ? ctx.now() : Date.now();
+    const stale = isFinite(at) && now - at > BQ_DIRECT_LAST_RUN_MS_;
+    if (last && !stale && (last.errors || []).some(e => /^time budget/.test(String(e)))) return 'the last run ran out of time';
   } catch (e) { /* no last run to go by */ }
   const waiting = bqDirectWaiting_(ctx, msgs);
   return waiting >= BQ_DIRECT_MAX_WAITING_ ? `${waiting} posts it took are still waiting to be reviewed` : '';

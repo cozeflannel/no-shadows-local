@@ -990,7 +990,7 @@ module.exports = function (H) {
         slrr: { is_slrr: true, confidence: 0.9, product: 'Gmail', exposure_tag: 'Product - Scams involving Google products', sensitive_topics: [] },
       },
     }, NOW);
-    assert.ok(cardText.includes('*Early signal:* this rests on 3 accounts so far (a story is usually flagged at 5).'), cardText);
+    eq(cardText.split('\n')[0], '\u26a1 *EARLY SIGNAL* \u00b7 3 accounts so far (a story is usually flagged at 5)');  // the card's first line says so
     const parsedCard = bot.edParseCard_(cardText, []);
     assert.ok(parsedCard && parsedCard.headline === 'Early malware reports targeting Gmail sessions');
     eq(bot.detectAlert_(cardText, bot.parseAlert_(cardText), ''), false);
@@ -1137,7 +1137,7 @@ module.exports = function (H) {
     const topCards1 = edCardsOf(cal.t);
     eq(topCards1.length, 1);
     const firstCard = topCards1[0];
-    assert.ok(firstCard.text.includes('*Early signal:* this rests on 3 accounts so far (a story is usually flagged at 5).'), firstCard.text);
+    eq(firstCard.text.split('\n')[0], '\u26a1 *EARLY SIGNAL* \u00b7 3 accounts so far (a story is usually flagged at 5)');
     assert.match(cal.t.control().cell(19, 3), /0 cluster, 0 velocity alerts today · 1 early watch/);
 
     // 15 minutes later: 2 more distinct accounts report the same story (total 5 -> crosses normal promotion bar!)
@@ -1152,7 +1152,7 @@ module.exports = function (H) {
       m.threadReply && m.thread.name === firstCard.thread.name && /^client-zeda-/.test(m.clientAssignedMessageId || '')
     );
     eq(threadReplies.length, 1, 'normal promotion arrives as an Early Detection Update in the first card\'s thread');
-    assert.ok(threadReplies[0].text.startsWith('📈 *Early Detection Update*'), threadReplies[0].text);
+    assert.ok(threadReplies[0].text.startsWith('📈 *UPDATE* \u00b7 More on a story already alerted\n'), threadReplies[0].text);
     assert.match(threadReplies[0].text, /\*What's new:\* 5 accounts now, up from 3: the story is now past the usual bar/);
 
     // 3. Watch-tier failed review (Decision 11 / Rule 2): posts NO card, retries once more up to ED_QUEUE_MAX_TRIES_ (2), then drops

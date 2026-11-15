@@ -267,7 +267,7 @@ const CONTROL_HELP_ = [
   '• Fast triage: rank and early watch: row 39, OFF until you turn it ON; it needs row 38. The most severe signals are ' +
     'queued and reviewed first (P0 risk groups first, then severity, then brand_risk, then the order before), and a story ' +
     'below the promotion bar that passes the watch bars in B43:B45 and B47 is emitted as an early signal and takes the normal ' +
-    'route: queued, deduplicated, fully reviewed, and posted as an Early Detection Alert card that says it is an early ' +
+    'route: queued, deduplicated, fully reviewed, and posted as an alert card whose first line says it is an early ' +
     'signal and how many accounts it rests on (when the story reaches the usual size, that goes in the same thread, never ' +
     'as a second alert).',
   '• Fast triage: hold back noise: row 40, OFF until you turn it ON; it needs row 38. A signal with no P0 risk group, no ' +

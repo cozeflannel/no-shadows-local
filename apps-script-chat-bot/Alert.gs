@@ -520,9 +520,59 @@ function isBlank_(v) {
   return v === null || v === undefined || v === '' || (Array.isArray(v) && v.length === 0);
 }
 
-/** True when `text` opens with the bot's own Watch alert or Early Detection header (never a Zapier/Burson alert). Pure. */
+/**
+ * The first line of every alert card the bot posts as its own (never Burson's format): an emoji, the kind of alert in
+ * capitals, and one detail. The four kinds share ONE card: the lines under the first keep one order (the headline, the
+ * Product / Exposure Tag / Sensitive Topic / KOF lines, a blank line, What's happening, then Web, Call, Activity, Next
+ * steps and Posts where the kind has them: EarlyDetection.gs edStoryCardText_, WatchAlerts.gs pwAlertText_), so a
+ * reader finds the same thing in the same place and tells the kinds apart by the first line alone:
+ *   story    (siren) *EARLY DETECTION* · New story                        a story at the usual bar
+ *   signal   (bolt) *EARLY SIGNAL* · 3 accounts so far (a story is …)     a story flagged below the usual bar
+ *   update   (chart) *UPDATE* · More on a story already alerted            in the earlier card's thread
+ *   watch    (telescope) *WATCH* · <the watch's name>                      a Proactive watch flag
+ * Burson's alerts keep Burson's own format (the other card people see). The words are plain ones no guard list of
+ * what may reach S-F Burson holds, and the cards never go there anyway (their ids: Relay.gs RELAY_ID_RX_).
+ */
+const OWN_CARD_TYPES_ = {
+  story: { emoji: '\ud83d\udea8', label: 'EARLY DETECTION' },
+  signal: { emoji: '\u26a1', label: 'EARLY SIGNAL' },
+  update: { emoji: '\ud83d\udcc8', label: 'UPDATE' },
+  watch: { emoji: '\ud83d\udd2d', label: 'WATCH' },
+};
+
+/** An own card's first line for `type` (OWN_CARD_TYPES_' key) and its `detail` (one line, no markup of its own). Pure. */
+function ownCardHead_(type, detail) {
+  const t = OWN_CARD_TYPES_[type] || OWN_CARD_TYPES_.story;
+  const d = String(detail === undefined || detail === null ? '' : detail).replace(/[*<>|]/g, ' ').replace(/\s+/g, ' ').trim();
+  return `${t.emoji} *${t.label}*${d ? ` \u00b7 ${d}` : ''}`;
+}
+
+/**
+ * An own card's first line read back: {type, detail} when `line` (with or without Chat's bold marks) is one of
+ * OWN_CARD_TYPES_' (its emoji, its label in capitals, then " · detail"), else null. The emoji and the capitals are
+ * both required, so a person's "Update · …" or "Watch · …" is never taken for a card. Pure.
+ */
+function ownCardHeadParse_(line) {
+  const s = String(line || '').replace(/\*/g, '').trim();
+  for (const type of Object.keys(OWN_CARD_TYPES_)) {
+    const t = OWN_CARD_TYPES_[type];
+    if (s.indexOf(t.emoji) !== 0) continue;
+    const rest = s.slice(t.emoji.length).replace(/^\ufe0f/, '').trim();
+    if (rest === t.label) return { type, detail: '' };
+    if (rest.indexOf(t.label) !== 0) continue;
+    const m = rest.slice(t.label.length).match(/^\s*\u00b7\s*(.*)$/);
+    if (m) return { type, detail: m[1].trim() };
+  }
+  return null;
+}
+
+/**
+ * True when `text` opens with one of the bot's own alert cards' first lines (ownCardHead_, or the headers the cards
+ * had before: "Watch alert · …", "Early Detection Alert", "Early Detection Update"), never a Zapier/Burson alert. Pure.
+ */
 function isOwnAlertCardHeader_(text) {
   const first = String(text || '').split(/\r?\n/).map(l => l.replace(/\*/g, '').trim()).find(Boolean) || '';
+  if (ownCardHeadParse_(first)) return true;
   const clean = first.replace(/^[^\p{L}\p{N}]+/u, '').replace(/[^\p{L}\p{N})\]]+$/u, '').trim();
   return /^(?:Watch alert\s*\u00b7|Early Detection (?:Alert|Update)\b)/i.test(clean);
 }

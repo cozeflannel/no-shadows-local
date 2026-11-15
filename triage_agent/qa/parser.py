@@ -219,11 +219,21 @@ def normalize_value(spec: FieldSpec, raw: Any, default_tz: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
+# The first line of the bot's own alert cards (apps-script-chat-bot/Alert.gs OWN_CARD_TYPES_): an emoji, the kind of
+# alert in capitals, then " · detail". Both the emoji and the capitals are required.
+_OWN_CARD_HEAD_RE = re.compile(
+    "^(?:\U0001f6a8\ufe0f?\\s*EARLY DETECTION|\u26a1\ufe0f?\\s*EARLY SIGNAL|\U0001f4c8\ufe0f?\\s*UPDATE"
+    "|\U0001f52d\ufe0f?\\s*WATCH)(?:\\s*\u00b7.*)?$"
+)
+
+
 def _is_own_alert_card_header(text: str | None) -> bool:
     for raw in (text or "").splitlines():
         line = raw.replace("*", "").strip()
         if not line:
             continue
+        if _OWN_CARD_HEAD_RE.match(line):
+            return True
         clean = re.sub(r"^[^\w]+|[^\w)\]]+$", "", line, flags=re.UNICODE).strip()
         return bool(re.match(r"^(?:Watch alert\s*\u00b7|Early Detection (?:Alert|Update)\b)", clean, re.I))
     return False

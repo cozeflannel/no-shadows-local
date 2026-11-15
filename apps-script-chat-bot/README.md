@@ -346,22 +346,42 @@ The thresholds are SLRR's own: 100 engagements is the collection floor, 2,000 th
 novelty window. Follower count alone never makes a post an alert: in two days of live Watch alerts (Nov 10 to 12, 2026)
 it didn't predict which cards were useful.
 
-Each alert is a text message in the bot's own format, so it never looks like a Zapier alert, with the post's picture
-attached when one can be found:
+Each alert is a text message in the bot's own card (the one the Early Detection alerts use too, see "The bot's own
+alert card" below), so it never looks like a Zapier alert, with the post's picture attached when one can be found:
 
 ```
-🔭 *Watch alert · Midterms 2026 × Google*
-*Link:* View the post on X                    (a hyperlink)
-*Author:* @someone · X · 1,700 followers · 520 engagements
-*Posted:* 2026-11-01 23:26 ET
+🔭 *WATCH* · Midterms 2026 × Google
 *Product:* Search, AI Overviews
 *Exposure Tag:* Product - Perceived bias (P0)
 *Sensitive Topic:* Politics
 *KOF:* Yes (Viral KOFs)
-*Summary:* … (the pre-read's neutral summary, else the watch's own)
+
+*What's happening:* … (the pre-read's neutral summary, else the watch's own)
+*Activity:* @someone · X · 1,700 followers · 520 engagements · posted 2026-11-01 23:26 ET
 *Building:* 4 small posts from 3 accounts within 2 hours (X, Reddit) · 57 engagements in all
+*Posts:* View the post on X                    (a hyperlink)
 *Same story:* 3 more posts in the thread (@a, @b, @c)
 ```
+
+#### The bot's own alert card
+
+People see two cards in a space the bot works: Burson's alert in Burson's own format (corrected by the bot in the
+Auto-correct space), and the bot's own alert card. The bot's card is one layout for its four kinds of alert, told apart
+by the first line (`OWN_CARD_TYPES_` in `Alert.gs`):
+
+| First line | Kind |
+|---|---|
+| `🚨 *EARLY DETECTION* · New story` | A story at the usual bar (row 19) |
+| `⚡ *EARLY SIGNAL* · 3 accounts so far (a story is usually flagged at 5)` | A story flagged below the usual bar (rows 38 and 39) |
+| `📈 *UPDATE* · More on a story already alerted` | More on a story that already has a card, in that card's thread |
+| `🔭 *WATCH* · <the watch's name>` | A Proactive watch flag (rows 34 and 35) |
+
+Under the first line the lines always come in the same order, and a line a kind doesn't have is left out, never shown
+empty: the headline, `*What's new:*` (an update), `*Product:*`, `*Exposure Tag:*`, `*Sensitive Topic:*`, `*KOF:*`, a
+blank line, `*What's happening:*`, `*Web:*`, `*Call:*`, `*Activity:*`, `*Building:*`, `*Next steps:*` (numbered),
+`*Posts:*`, `*Same story:*`. A Watch alert is posted before its triage, so it has no headline, Call or Next steps (its
+triage is the note in its thread). Cards posted before this layout (`🚨 *Early Detection Alert* 🚨`,
+`🔭 *Watch alert · …*`) are still read as the bot's own.
 
 The `Building:` line is only on an alert for a build-up of small posts, and `Same story:` only when other posts are
 listed in its thread. The score, the watch's bar and topic and the source that found the post stay off the message; the
@@ -709,7 +729,7 @@ it's watching, the last check and today's updates (the main run's, not the auto-
   - **Nothing new:** it is held back without a review. "New" means 2x the accounts on the last card and 3 more, or a
     platform the card wasn't on (or a story first flagged by the early watch reaching the usual 5-account bar).
   - **The story grew:** it is reviewed (Gemini sees the earlier card and what changed). Its card goes in the earlier
-    card's thread as `📈 *Early Detection Update: …*` with a `*What's new:*` line ("14 accounts now, up from 6; now also
+    card's thread as `📈 *UPDATE* · More on a story already alerted` with a `*What's new:*` line ("14 accounts now, up from 6; now also
     on Reddit"), without a picture.
   - **Already alerted:** a review that finds the issue already alerted, with nothing materially new, posts no card.
   - **Covered by another alert:** a signal whose main post another alert (Burson's, Direct BigQuery's) covered in the
@@ -737,7 +757,7 @@ it's watching, the last check and today's updates (the main run's, not the auto-
 Four switches and five bar cells on the early-wave path (`Decisions.gs`, `FastTriage.gs`, `EarlyWaveSource.gs`), with all switches `OFF` to start; rows 39 and 40 need row 38 `ON` (while row 38 or row 19 is `OFF`, C39 and C40 say what they wait for and do nothing):
 
 - **Row 38 — Fast triage (Gemini Decisions):** enables rows 39 and 40. When rows 39 and 40 are both `OFF`, turning row 38 `ON` by itself changes nothing, makes no Gemini Decisions call, and writes nothing (at the daily cap of 40 queued signals the check stops reading BigQuery exactly as it does with row 38 `OFF`). When row 39 or row 40 is `ON`, the bot asks `gemini-decision-1` (`POST /v1beta/decisions`, key in Secret Manager `agentic_assistant` sent only in `x-goog-api-key`) six structured questions in one call (`about_google`, `brand_risk`, `independent_reports`, `routine_noise`, `category`, `severity`) over a sanitized summary (headline, signal type, counts, platforms, window and up to 8 post snippets with links, handles, emails and internal IDs stripped).
-- **Row 39 — Fast triage: rank and early watch:** asks candidates within this check's call budget, orders both queueing and `edDrainQueue_` so signals with a P0 risk group go first, then P0 > P1 > P2, and within a tier an unanswered signal goes first (never ranked down for a missed call), followed by higher `severity` score and higher `brand_risk` probability (unanswered candidates left over for the next check reuse their cached answers without a second API call). Turning row 39 `OFF` strips the ranking keys from waiting entries so review order goes right back to priority, accounts and age. Row 39 also runs the **early watch** (`EARLY_WATCH`, capped at 8 of the day's 40 queued signals): stories at least at the accounts bar (`B45`, seed `3`) within 180 minutes with 2+ links and a risk-term group, an Exposure Tag hint, or no older story within `EWS_STORY_SIM_` are asked about (up to 5 a check, 30 a day) and raised when `about_google` and `brand_risk` are each at or above `B44` (seed `0.80`), `independent_reports` is at or above `B47` (seed `0.30`), the most probable severity level is `medium` or higher, and its probability is at or above `B43` (seed `0.55`; an answer with no confidence raises nothing). Every raised early-watch signal goes through the full Gemini review before any card; its card carries `*Early signal:* this rests on N accounts so far…`; if its review fails it posts **no** card (retried once up to `ED_QUEUE_MAX_TRIES_`, then dropped; turning row 39 `OFF` drops any waiting early-watch signal unreviewed); and because queuing an early-watch signal marks only its own `alert_id` as seen, when the story later reaches the 5-account promotion bar that promotion goes into the early card's thread as an `📈 *Early Detection Update*` (`edWatchNews_`), never as a second card.
+- **Row 39 — Fast triage: rank and early watch:** asks candidates within this check's call budget, orders both queueing and `edDrainQueue_` so signals with a P0 risk group go first, then P0 > P1 > P2, and within a tier an unanswered signal goes first (never ranked down for a missed call), followed by higher `severity` score and higher `brand_risk` probability (unanswered candidates left over for the next check reuse their cached answers without a second API call). Turning row 39 `OFF` strips the ranking keys from waiting entries so review order goes right back to priority, accounts and age. Row 39 also runs the **early watch** (`EARLY_WATCH`, capped at 8 of the day's 40 queued signals): stories at least at the accounts bar (`B45`, seed `3`) within 180 minutes with 2+ links and a risk-term group, an Exposure Tag hint, or no older story within `EWS_STORY_SIM_` are asked about (up to 5 a check, 30 a day) and raised when `about_google` and `brand_risk` are each at or above `B44` (seed `0.80`), `independent_reports` is at or above `B47` (seed `0.30`), the most probable severity level is `medium` or higher, and its probability is at or above `B43` (seed `0.55`; an answer with no confidence raises nothing). Every raised early-watch signal goes through the full Gemini review before any card; its card's first line reads `⚡ *EARLY SIGNAL* · N accounts so far (a story is usually flagged at 5)`; if its review fails it posts **no** card (retried once up to `ED_QUEUE_MAX_TRIES_`, then dropped; turning row 39 `OFF` drops any waiting early-watch signal unreviewed); and because queuing an early-watch signal marks only its own `alert_id` as seen, when the story later reaches the 5-account promotion bar that promotion goes into the early card's thread as an `📈 *Early Detection Update*` (`edWatchNews_`), never as a second card.
 - **Row 40 — Fast triage: hold back noise:** drops a signal without a full review when it has **no** P0 risk group and **no** taxonomy raise (`ftProtected_`), its most probable severity level is `none` or `low` at or above the confidence bar (`B43`, seed `0.55`), and either `about_google` is at or below `B41` (seed `0.10`) or `routine_noise` is at or above `B42` (seed `0.90`). Held-back signals are counted on C19 (`N filtered by fast triage`) and logged in one line with the signal ID, reason, and probabilities.
 - **Rows 41-45 and 47 — Control tab bar cells:** six dropdown-validated cells read on each run (`B41` `Hold-back: about_google at or below` seed `0.10`; `B42` `Hold-back: routine_noise at or above` seed `0.90`; `B43` `Hold-back and early watch: answer confidence at or above` seed `0.55`; `B44` `Early watch: about_google and brand_risk, each at or above` seed `0.80`; `B45` `Early watch: distinct accounts, at least` seed `3`; `B47` `Early watch: independent_reports at or above` seed `0.30`, below the BigQuery switch because rows 41-46 were already on the tab). A blank or invalid cell never turns a feature off; it uses its seed and its Column C note says so. The seeds come from the eight real signals of Nov 6-12, 2026 in `test/decisions_fixtures.json` (3 risks, 5 noise): at them the early watch raises 2 of the 3 risks, and the hold-back drops 3 of the 5 noise signals and none of the risks. With one bar of `0.80` for everything, the early watch raised none: few accounts tell an early story, so `independent_reports` ran at `0.13` to `0.62` on the real risks.
 - **Row 46 — Write early-wave records to BigQuery:** writes each check's early-wave records to `brand-social-central-data.early_wave` (`US`) across `story_snapshots`, `story_posts`, `signals`, `signal_events`, and `triage_verdicts` (`ewBqFlush_`). Batches at most one `tabledata.insertAll` request per table per check with a deterministic `insertId` per row, never reads from `early_wave`, includes zero emails, display names, or Burson write-ups, skips while `ctx.slaBusy` or past the run deadline or `ApiGuard` BigQuery ceiling, and on error or timeout logs the table, reason, and dropped row count, pauses that one table for 15 minutes (C46 names it; the other four tables go on), and changes nothing else about the run. A signal gets one `signals` row: one queued or held in a later check than the one that created it is not written again. `triage_verdicts.action` is `ranked`, `kept`, `held_back`, `emitted` or `not_emitted` (`EW_BQ_ACTIONS_`; `infra/early_wave_descriptions.sql` puts that in the table's description). **Before turning row 46 `ON`**, run `verifyEarlyWaveBqLive()` from the editor: it reads the five live tables' schemas (no row written) and lists any column the writer's rows (`EW_BQ_COLUMNS_`) would be refused for; `ready: true` means they fit.
@@ -1260,7 +1280,7 @@ The switches on the Control tab need no YAML and no rebuild; their thresholds ar
 | `Outbox.gs` | Post in S-F Burson (row 24): everything bound for S-F Burson held back (OFF) or queued on the Burson outbox tab (ON), and only the rows a person sets to Send posted, after the wider check |
 | `AutoCorrect.gs` | The auto-correct space (B10): live alerts posted there already corrected, read-only on the live space |
 | `OtherSpace.gs` | The Other alerts space (B33): a Google-only space with other alerts, worked directly every minute beside the Mirror space, always Testing, never connected to S-F Burson |
-| `WatchAlerts.gs` | Watch alerts (row 35, OFF to start): the Proactive watch's flags at a watch's bar posted as the bot's own "🔭 Watch alert" text messages in the Other alerts space (B33), the Mirror space (B9) or the Auto-correct space (B10), a few a run, each once; the space's flow works them like any alert (❌ for a repeat, else a Social Alert). Never in S-F Burson, the Burson test copy or a space people outside Google can join |
+| `WatchAlerts.gs` | Watch alerts (row 35, OFF to start): the Proactive watch's flags at a watch's bar posted as the bot's own alert card (`🔭 *WATCH* · <watch>`) in the Other alerts space (B33), the Mirror space (B9) or the Auto-correct space (B10), a few a run, each once; the space's flow works them like any alert (❌ for a repeat, else a Social Alert). Never in S-F Burson, the Burson test copy or a space people outside Google can join |
 | `TempCheck.gs` | Temp checks (row 36, OFF to start): "temp check <Brandwatch query>" in a thread of the Mirror space or B33, queued by its flow (never relayed to S-F Burson) and worked after the run's alerts: the query found by name, link or id in [SLRR] Private, counts by hour, sentiment, sources and mention types from Brandwatch's totals (GETs only), at most 35 posts (reposts excluded; X's words from X's embed data), Gemini's summary, drivers and themes, and the team's write-up in PT posted in the request's thread; "refresh" for the update; Brandwatch busy: waits up to 30 minutes |
 | `ProactiveWatch.gs` | Proactive watch (row 34): a watch over every source's new rows, read-only in BigQuery (two jobs, us-central1 and US: Sonar, Tubular, Brandwatch raw mentions, Sprinklr owned posts and comments, the DSD story selection feed, the Other alerts space's alerts from the Alert log, and the Brandwatch query "2026 Election Alerts" from Brandwatch's API, its X posts' text from X's embed data), Gemini's AI.IF, AI.SCORE and AI.CLASSIFY run inside BigQuery for each watch on the Watches tab, what they'd flag on the Watch detections tab, its scorecard against Burson's alerts, and the Watch sources tab; posts nothing itself (Watch alerts, row 35, post its flags only where B35 says) |
 | `EarlyWaveSource.gs` | Early wave & velocity producer (row 19): reads the 6 approved BigQuery source tables read-only (`US` and `us-central1`), embeds unseen low-tier posts, clusters them incrementally, checks velocity, keeps a 3-hour buffer, and (with row 39) asks about 3+ account early-watch stories |

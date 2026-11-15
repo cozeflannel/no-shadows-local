@@ -15,7 +15,8 @@
  *      `edConclude_`. Only then does it post ONE story card (`edStoryCardText_`): Gemini's headline, the call and the
  *      spread, a short story with the posts linked inline, what the web says (its sources linked), suggested next steps
  *      inside the escalation process, every post as a link, and the driver post's picture (`edThemePicture_`), into the
- *      Google-only Mirror space (B9) or test feed (B3). `edAct_` then posts the review note in the card's thread,
+ *      Google-only Mirror space (B9) or test feed (B3), or the Auto-correct space (B10) when it works alone. `edAct_`
+ *      then posts the review note in the card's thread,
  *      applies the marks and drafts outputs behind human review:
  *        • `escalate` (>= 0.8 confidence or P0 tag, not a repeat): Social Alert Gmail draft (strictly stand-in / B30
  *          testers while Testing), priority/group marks, T&S intake when needed, plus Temp Check query brief.
@@ -30,14 +31,15 @@
  *   EWS_STORY_SIM_ of one alerted in the last 24h; the queue (earlyWaveCheck_) and the review
  *   (edDrainQueue_) hold back a signal whose story already has a card from the last 24h (`edStoryVerdict_`: same cluster,
  *   the alert the producer says it updates, or 2+ of the same posts) unless it reached 2x the accounts and 3 more, or a new
- *   platform: then its card goes in the earlier card's thread as `📈 *Early Detection Update: …*` with what's new. A
+ *   platform: then its card goes in the earlier card's thread as `📈 *UPDATE* · …` with what's new. A
  *   review that finds an issue already alerted with nothing new posts no card, nor does any other dismissal (filtered
  *   out): Control C19 counts the repeats held back and the dismissals filtered out.
  *   The fast triage (Control rows 38-45 and 47, FastTriage.gs; OFF, nothing here differs): Gemini Decisions answers six
  *   questions about each signal before it is queued; row 38 enables rows 39 and 40, row 39 orders the queue and runs
  *   the early-watch tier, and row 40 holds back a signal that is plainly noise. Under row 39 a story still below the
  *   usual bar that passes the watch bars is raised as an EARLY_WATCH signal: it is queued, deduplicated and reviewed
- *   here like any other, its card says it is an early signal and how many accounts it rests on (edEarlyLine_), a
+ *   here like any other, its card's first line says it is an early signal and how many accounts it rests on
+ *   (`⚡ *EARLY SIGNAL* · …`, edEarlyDetail_), a
  *   failed review gives it no card (one more try, then it is dropped), and when its story reaches the usual bar that
  *   signal goes in the early card's thread as an update (edWatchNews_), never as a second card.
  *   Relay.gs (`RELAY_ID_RX_`) treats `client-zeda-` as the bot's own work, so nothing ever relays to S-F Burson (B25) or
@@ -62,9 +64,11 @@ const ED_REF_RX_ = /\[([^\[\]\n]{1,160})\]\(\s*P(\d{1,2})\s*\)/g;
 
 /**
  * Parses a formatted Early Detection Alert card (`edAlertCardText_` in BigQuery.gs, or the story card edStoryCardText_)
- * into structured fields: its first line `(siren) *Early Detection Alert: <headline>* (siren)`, or `(siren) *Early
- * Detection Alert* (siren)` with the headline on the next line. Returns null if `text` is not an Early Detection Alert
- * card. Pure.
+ * into structured fields. Its first line is the own card's (Alert.gs ownCardHead_: `(siren) *EARLY DETECTION* · New
+ * story`, or `(bolt) *EARLY SIGNAL* · …` for a story flagged below the usual bar) with the headline on the next line;
+ * or, on a card from before that, `(siren) *Early Detection Alert* (siren)` with the headline on the next line, or the
+ * one line `(siren) *Early Detection Alert: <headline>* (siren)`. An update (`*UPDATE*`, in an earlier card's thread)
+ * is not a card to review, as before. Returns null if `text` is not an Early Detection Alert card. Pure.
  */
 function edParseCard_(text, links) {
   const raw = String(text || '');
@@ -75,7 +79,8 @@ function edParseCard_(text, links) {
   const hm = first.match(/^Early Detection Alert\s*[:：–—-]\s*(.+)$/i);
   let headline = hm ? hm[1].trim() : '';
   let from = 1;
-  if (!hm && /^Early Detection Alert$/i.test(first)) {
+  const own = hm ? null : ownCardHeadParse_(lines[0]);
+  if (!hm && ((own && (own.type === 'story' || own.type === 'signal')) || /^Early Detection Alert$/i.test(first))) {
     const at = lines.findIndex((l, i) => i > 0 && String(l || '').trim());
     headline = at > 0 ? String(lines[at]).replace(/\*/g, '').trim() : '';
     from = at + 1;
@@ -1493,7 +1498,7 @@ function edCallLine_(d) {
     : x.basis === 'p0_tag' ? 'a P0 exposure tag is escalated at any size' : x.why;
   const plain = x.disposition === 'dismiss' && x.basis !== 'repeat' && !x.tnsActive && !x.tnsPlanned ? ' (no action needed)' : '';
   const words = truncate_(String(why || '').replace(/\s+/g, ' ').replace(/[.\s]+$/, '').trim(), 220);
-  return `\u2022 *Call:* ${edCallWords_(x)}${plain}${words ? `: ${words}` : ''}`;
+  return `*Call:* ${edCallWords_(x)}${plain}${words ? `: ${words}` : ''}`;
 }
 
 /** When the posts happened, in words: "between 10:39 AM and 12:55 PM ET", "at 7:42 AM ET" (dates when not today), or ''. */
@@ -1515,37 +1520,43 @@ function edActivityLine_(ed, posts, now) {
   const plats = String(x.platformsCsv || x.platform || '').split(',').map(s => s.trim()).filter(Boolean);
   const where = plats.length > 1 ? `${plats.slice(0, -1).join(', ')} and ${plats[plats.length - 1]}` : plats[0] || '';
   const when = edWindowWords_(x, posts, now);
-  return `\u2022 *Activity:* ${n ? `${fmtInt_(n)} small account${n === 1 ? '' : 's'}` : 'Small accounts'}` +
+  return `*Activity:* ${n ? `${fmtInt_(n)} small account${n === 1 ? '' : 's'}` : 'Small accounts'}` +
     `${where ? ` on ${where}` : ''} posted about this${m > n ? ` ${fmtInt_(m)} times` : ''}${when ? ` ${when}` : ''}` +
     `${x.velocityRatio ? ` (${Number(x.velocityRatio).toFixed(1)}x the usual pace)` : ''}`;
 }
 
 /**
- * The line an early-watch card carries under its headline: that it is an early signal, and how many accounts it rests
- * on against the usual bar. Pure.
+ * What an early-signal card's first line says after its kind: how many accounts it rests on so far, against the usual
+ * bar ("3 accounts so far (a story is usually flagged at 5)"). Pure.
  */
-function edEarlyLine_(ed) {
+function edEarlyDetail_(ed) {
   const n = Number(ed && ed.distinctAuthors) || 0;
-  return `*Early signal:* this rests on ${n ? `${fmtInt_(n)} account${n === 1 ? '' : 's'}` : 'a few accounts'} so far ` +
-    `(a story is usually flagged at ${EWS_MIN_AUTHORS_}). It was flagged early because the first reports already read ` +
-    'as a real problem for Google.';
+  return `${n ? `${fmtInt_(n)} account${n === 1 ? '' : 's'}` : 'a few accounts'} so far ` +
+    `(a story is usually flagged at ${EWS_MIN_AUTHORS_})`;
 }
 
 /**
- * The ONE card a queued signal gets in the space, after its review (edReviewAndPost_), laid out for a quick read:
- *   (siren) *Early Detection Alert* (siren)
+ * The ONE card a queued signal gets in the space, after its review (edReviewAndPost_): the bot's own alert card
+ * (Alert.gs OWN_CARD_TYPES_, shared with the Watch alerts), whose first line says which kind it is and whose other
+ * lines keep one order:
+ *   (siren) *EARLY DETECTION* · New story          a story at the usual bar
+ *   (bolt) *EARLY SIGNAL* · 3 accounts so far (a story is usually flagged at 5)     one flagged below it (EARLY_WATCH)
+ *   (chart) *UPDATE* · More on a story already alerted     an update of an earlier card on the same story
+ *                                                   (`ed.update`, same-story dedup), in that card's thread
  *   *<Gemini's headline>*
+ *   *What's new:* … (since the <time> card).        (an update only)
  *   *Product:* … / *Exposure Tag:* … / *Sensitive Topic:* … / *KOF:* …   (edTaxonomyLines_)
  *   (blank line)
- *   its story with the posts linked inline; suggested next steps (numbered); what the web says (its sources linked)
- *   • *Call:* the call and why (edCallLine_)   • *Activity:* how many small accounts, where, when (edActivityLine_)
- *   • *Posts:* every post as a link
- * A plain story, headline and steps from the signal itself when Gemini gave none. edParseCard_ reads the header (and
- * the older one-line `*Early Detection Alert: …*`). An update of an earlier card on the same story (`ed.update`,
- * same-story dedup) opens `(chart) *Early Detection Update*`, its headline, then a `*What's new:*` line. An early-watch
- * signal's card (a story flagged below the usual bar) says so on a line of its own under the headline (edEarlyLine_).
- * Chat markup (<url|text>), under ED_CARD_MAX_CHARS_ (fewer post links, then no web sources, when it would be longer).
- * Pure.
+ *   *What's happening:* its story with the posts linked inline
+ *   *Web:* what the web says (its sources linked)
+ *   *Call:* the call and why (edCallLine_)
+ *   *Activity:* how many small accounts, where, when (edActivityLine_)
+ *   *Next steps:* then the suggested steps, numbered
+ *   *Posts:* every post as a link
+ * A plain story, headline and steps from the signal itself when Gemini gave none. edParseCard_ reads the first line
+ * (and the cards' earlier headers: `*Early Detection Alert*` with the headline under it, and the one-line `*Early
+ * Detection Alert: …*`). Chat markup (<url|text>), under ED_CARD_MAX_CHARS_ (fewer post links, then no web sources,
+ * when it would be longer). Pure.
  */
 function edStoryCardText_(ed, d, now) {
   const x = ed || {};
@@ -1555,9 +1566,9 @@ function edStoryCardText_(ed, d, now) {
   const upd = x.update && x.update.news ? x.update : null;
   const since = upd ? edCardTime_(upd.at, now) : '';
   const newsLine = upd ? `*What's new:* ${ewText_(upd.news)}${since ? ` (since the ${since} card)` : ''}.` : '';
-  const early = x.signalType === EWS_WATCH_SIGNAL_ ? [edEarlyLine_(x)] : [];
-  const head = (upd ? ['\ud83d\udcc8 *Early Detection Update*', `*${title}*`, newsLine]
-    : ['\ud83d\udea8 *Early Detection Alert* \ud83d\udea8', `*${title}*`]).concat(early, edTaxonomyLines_(x, d || {})).join('\n');
+  const first = upd ? ownCardHead_('update', 'More on a story already alerted')
+    : x.signalType === EWS_WATCH_SIGNAL_ ? ownCardHead_('signal', edEarlyDetail_(x)) : ownCardHead_('story', 'New story');
+  const head = [first, `*${title}*`].concat(upd ? [newsLine] : [], edTaxonomyLines_(x, d || {})).join('\n');
   const call = edCallLine_(d || {});
   const activity = edActivityLine_(x, posts, now);
   const sources = ((d && d.web && d.web.sources) || [])
@@ -1573,17 +1584,17 @@ function edStoryCardText_(ed, d, now) {
     const inline = o.inline ? undefined : 0;
     let body = (story && story.text ? edLinkify_(story.text, posts, inline) : '') || edFallbackStory_(x, posts);
     if (o.body && body.length > o.body) body = truncate_(o.inline ? body : body.replace(/<[^>|]+\|([^>]*)>/g, '$1'), o.body);
-    const web = story && story.web ? `\u2022 *Web:* ${edLinkify_(story.web, posts, inline)}` +
+    const web = story && story.web ? `*Web:* ${edLinkify_(story.web, posts, inline)}` +
       `${o.sources && sources.length ? ` (${sources.join(', ')})` : ''}` : '';
     const stepLines = steps.slice(0, 3).map((s, i) => `${i + 1}. ${edLinkify_(s, posts, inline)}`);
     const links = postLinks.slice(0, o.links);
     return `${head}\n\n${[
-      body,
-      stepLines.length ? stepLines.join('\n') : '',
+      `*What's happening:* ${body}`,
       web,
       call,
       activity,
-      links.length ? `\u2022 *Posts:* ${links.join(' \u00b7 ')}` : '',
+      stepLines.length ? `*Next steps:*\n${stepLines.join('\n')}` : '',
+      links.length ? `*Posts:* ${links.join(' \u00b7 ')}` : '',
     ].filter(Boolean).join('\n')}`;
   };
   // Longest first; past ED_CARD_MAX_CHARS_: fewer post links, then no web sources, then the story and steps without

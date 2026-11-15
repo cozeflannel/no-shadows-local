@@ -86,7 +86,24 @@ def test_bots_own_cards_are_never_burson_alerts():
         "*Product:* Waymo\n*Exposure Tag:* Product - Product failures - physical safety issues (P1)\n"
         "*Sensitive Topic:* None\n*KOF:* No\n*Author:* FOX 29\n*Summary:* A federal investigation into a Waymo recall.\n"
     )
-    for head in ("\U0001f52d *Watch alert \u00b7 Google brand safety (all)*", "\U0001f6a8 *Early Detection Alert* \U0001f6a8"):
+    heads = (
+        # the bot's own card today: its first line names the kind of alert (Alert.gs OWN_CARD_TYPES_)
+        "\U0001f6a8 *EARLY DETECTION* \u00b7 New story",
+        "\u26a1 *EARLY SIGNAL* \u00b7 3 accounts so far (a story is usually flagged at 5)",
+        "\u26a1\ufe0f *EARLY SIGNAL* \u00b7 3 accounts so far (a story is usually flagged at 5)",
+        "\U0001f4c8 *UPDATE* \u00b7 More on a story already alerted",
+        "\U0001f52d *WATCH* \u00b7 Google brand safety (all)",
+        # the headers its cards had before: still the bot's own
+        "\U0001f52d *Watch alert \u00b7 Google brand safety (all)*",
+        "\U0001f6a8 *Early Detection Alert* \U0001f6a8",
+        "\U0001f4c8 *Early Detection Update*",
+    )
+    for head in heads:
         text = f"{head}\n*Link:* https://x.com/someone/status/1234567890123\n{taxonomy}"
         verdict = detect(CFG, ChatMessage(text=text, sender=ChatUser(name="Zapier")), parse(CFG, text))
-        assert verdict == (False, "bot own card")
+        assert verdict == (False, "bot own card"), head
+    # the emoji and the capitals are both needed: a person's line that only starts with the same word is not a card
+    for not_a_card in ("Update \u00b7 More on a story", "WATCH \u00b7 this space", "\U0001f52d Watch \u00b7 this"):
+        text = f"{not_a_card}\n*Link:* https://x.com/someone/status/1234567890123\n{taxonomy}"
+        verdict = detect(CFG, ChatMessage(text=text, sender=ChatUser(name="Zapier")), parse(CFG, text))
+        assert verdict != (False, "bot own card"), not_a_card
