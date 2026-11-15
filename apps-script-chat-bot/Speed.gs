@@ -103,6 +103,10 @@ const RESULTS_OUTCOME_WIDTH_ = 200;
 const RESULTS_WIDTHS_ = [[1, 330], [2, 150], [3, 140], [4, 240], [5, 280], [6, 150], [7, 120], [8, 90], [9, 110], [10, 110],
   [11, 140], [12, 300], [13, 150], [14, 200], [15, 300], [16, 100], [17, 120]];
 const RESULTS_SYNOPSIS_SCHEMA_ = { type: 'OBJECT', properties: { synopsis: { type: 'STRING' } }, required: ['synopsis'] };
+// The posts of the latest rebuild, with the IMs' times filled in: {at (the rebuild's `now`), posts}; null before one.
+// Only read elsewhere: the Head start tab (HeadStart.gs) takes the IMs' time for a Burson post from the rebuild made
+// in the same run, so it never searches Gmail or reads BigQuery itself
+let RESULTS_RUN_ = null;
 
 /** Run this to rebuild the Results tab now (while the bot is ON, poll() keeps it up to date: see maybeRefreshSpeed_). */
 function refreshResults() {
@@ -237,6 +241,7 @@ function refreshSpeed_(ss, ctx, opts) {
   // A post without a link can't be matched with the IMs' email or draft
   speedImEmails_(posts.filter(p => p.key), readSpeedState_(sh), timeLeft(40 * 1000) ? ctx.gmail : null, now, S, own);
   posts.forEach(p => { p.im_call = p.key ? speedImCall_(p, now) : RESULTS_NO_LINK_; });
+  RESULTS_RUN_ = { at: now, posts };  // for the Head start tab's rebuild later in this run (HeadStart.gs)
   const noWait = switchOn_(ctx, 'noWait');  // Never wait on Burson (Control row 23): how the tab words the Mirror's work
   const summary = resultsSummary_(posts, now, days, (flows.main && flows.main.label) || 'Mirror space');
   const facts = resultsFacts_(summary, noWait);

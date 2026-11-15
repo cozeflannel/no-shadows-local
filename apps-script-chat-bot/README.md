@@ -1102,6 +1102,40 @@ The tab updates right after a run that handled an alert or sent an email (at mos
 otherwise. Run `refreshResults()` to rebuild it now (`refreshSpeed()` still works). Settings: `speed_tab`,
 `speed_days`, `speed_im_table`, `speed_log_table`, `speed_im_sender`, `speed_gmail`.
 
+### The Head start tab: this app's own alerts next to Burson's and the IMs'
+
+The Results tab counts only the alerts Burson posted. The **Head start** tab (`HeadStart.gs`) is about the alerts this
+app raised itself: Early Detection cards and early signals (row 19), Watch alerts (row 35) and Direct BigQuery alerts
+(row 15), told apart by the Alert log's `ingested` column. It answers: how often did this app alert a story before
+Burson did, how often before the IMs emailed, by how much, and which stories did it have first. It has no switch and
+no Control tab row. It only reads the Alert log and writes its own tab: nothing is posted in any space, nothing is
+emailed, Gmail and BigQuery are not asked, and the Alert memory is not touched.
+
+- **A story** is one of this app's alerts and its updates, counted once and timed from its first alert: an Early
+  Detection card that updates an earlier card belongs to that card's story, and so do two of this app's alerts on the
+  same post. The time is when the alert was posted in Chat.
+- **Burson's alert** on the story is found in this order, and the tab's "Matched on" column says which, so you can
+  judge it: `same post` (Burson alerted one of the story's posts); `same story` (Burson's alert on another post carries
+  the story's exact issue name and the later of the two is an Ongoing Issue: what a review records when it takes an
+  alert for an issue already alerted); `same story (similar wording)` (the same exposure tag and issue names alike: a
+  weaker match, check it). The two same-story rules look 14 days either side of the story. When several of Burson's
+  alerts match, the earliest counts. Burson can be earlier or later than this app.
+- **The IMs' email** is the IMs' time for that Burson post as the Results tab has it (their email, else their draft),
+  taken from the Results tab's rebuild in the same run. It is blank when the Results tab has no time for the post, or
+  no longer shows it (the Results tab covers 7 days).
+
+From top to bottom: the title and what's counted; **Headline numbers** for the last 7 and the last 30 days (stories,
+those Burson alerted too, this app first and its median head start, Burson first and the median time behind, not
+alerted by Burson, this app's alert before the IMs' email and the median time between them, and Burson's alerts with
+how many of them this app had alerted first); **Biggest head starts** (the ten longest over Burson); **Every story**,
+newest first. A head start reads `2 d 15 h`, `3 h 10 min` or `45 min`, and `behind by 20 min` when this app was later;
+the same in plain minutes is at the far right, to sort by. A cell is blank where there is no Burson alert or no IM time.
+
+The tab is made the first time this app has an alert of its own to show, and is rebuilt at most every 10 minutes, in a
+run where the Results tab was rebuilt (10 more minutes without one and it is rebuilt without the IMs' times). Run
+`refreshHeadStart()` to rebuild it now. The tab is the bot's own (its title in A1 says so): a tab named "Head start"
+that the bot didn't make is never read, cleared or written, and the log says so until it's renamed.
+
 ## T&S pre-filled link
 
 When T&S should see an alert, the note under it has a link that opens the T&S Intake Form with the answers already in.
@@ -1301,6 +1335,7 @@ The switches on the Control tab need no YAML and no rebuild; their thresholds ar
 | `Chat.gs`, `Gemini.gs` | The Google Chat API and Gemini on Vertex AI |
 | `Sheets.gs`, `Store.gs` | The sheet's log tabs ("Alert log", "Message log") and what the bot remembers. No cell the bot writes goes over 49,000 characters (Sheets refuses 50,000); a JSON column is shortened so it still reads back |
 | `Speed.gs` | The Results tab: what the bot did with Burson's alerts next to what the IMs did, with Gemini's summary of the numbers; the Learned precedents tab (row 17) |
+| `HeadStart.gs` | The Head start tab: this app's own alerts (Early Detection, Watch alerts, Direct BigQuery alerts) next to Burson's alerts and the IMs' emails: who alerted a story first, and by how much |
 | `TnsForm.gs` | The pre-filled T&S Intake Form link (the real form live; while testing, a test copy in the tester's Drive) |
 | `Watch.gs` | Watch sent alerts (24h), a Control tab switch: re-checks sent alerts' posts and replies on the email thread |
 | `Outcomes.gs` | Track post-alert outcomes, a Control tab switch: reads replies to sent alerts and logs what came of them |

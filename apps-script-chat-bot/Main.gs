@@ -720,6 +720,10 @@ function poll() {
               flows: resultsFlows_(mainCtx, ac && ac.ctx, cfg),
             });
           }
+          // The Head start tab (HeadStart.gs): this app's own alerts next to Burson's alerts and the IMs' emails, at most
+          // every 10 minutes, after the Results tab (whose rebuild in this run has the IMs' times); it only reads the
+          // Alert log and writes its own tab, and never throws
+          if (activity > 0 || bgIdleOk) maybeRefreshHeadStart_(ss, any, { deadline: runStart + RUN_HARD_STOP_MS_, runStart });
         }
       }
     } catch (e) {
