@@ -357,6 +357,13 @@ B35 says where the Proactive watch's flags go (a dropdown; `OFF` to start, and o
 **Not every flag is an alert.** Before anything is posted, one Gemini pre-read of the waiting flags (up to 12 a run)
 writes each card's summary and its Product, Exposure Tag and Sensitive Topic lines, says which flags tell the same
 story, and compares them with the alerts posted lately, the small posts still waiting, and the stories already alerted.
+The pre-read searches the web (the review's search, `settings.web_grounding`) when the run has 90 seconds left for it
+(else it reads the flags without the search). Its summary is the card's write-up, in English, no links, at most 600
+characters: who posted it and what the post claims, specific (its key words quoted when short), what Google or its
+product is said to have done (or that the post doesn't say), then who the post names ("Lula, Brazil's president") and
+what news outlets say about the claim. That background comes only from the search: the bot keeps it only when Gemini's
+answer came back with web sources, so with no search, nothing found, or the search refused, the card has the summary
+alone. Gemini is told never to identify a private individual.
 Then, story by story:
 
 | The flag | What happens |
@@ -374,7 +381,9 @@ novelty window. Follower count alone never makes a post an alert: in two days of
 it didn't predict which cards were useful.
 
 Each alert is a text message in the bot's own card (the one the Early Detection alerts use too, see "The bot's own
-alert card" below), so it never looks like a Zapier alert, with the post's picture attached when one can be found:
+alert card" below), so it never looks like a Zapier alert, with the post's own picture attached when one can be found
+(see "Pictures under the bot's own cards" below); without one, the card shows the post's first words on a `*Post:*`
+line, unless its summary quotes them already:
 
 ```
 🔭 *WATCH* · Midterms 2026 × Google
@@ -383,7 +392,8 @@ alert card" below), so it never looks like a Zapier alert, with the post's pictu
 *Sensitive Topic:* Politics
 *KOF:* Yes (Viral KOFs)
 
-*What's happening:* … (the pre-read's neutral summary, else the watch's own)
+*What's happening:* … (the pre-read's write-up, else the watch's own summary)
+*Post:* "…"                                    (no picture of the post: its first 200 characters)
 *Activity:* @someone · X · 1,700 followers · 520 engagements · posted 2026-11-01 23:26 ET
 *Building:* 4 small posts from 3 accounts within 2 hours (X, Reddit) · 57 engagements in all
 *Posts:* View the post on X                    (a hyperlink)
@@ -405,10 +415,22 @@ by the first line (`OWN_CARD_TYPES_` in `Alert.gs`):
 
 Under the first line the lines always come in the same order, and a line a kind doesn't have is left out, never shown
 empty: the headline, `*What's new:*` (an update), `*Product:*`, `*Exposure Tag:*`, `*Sensitive Topic:*`, `*KOF:*`, a
-blank line, `*What's happening:*`, `*Web:*`, `*Call:*`, `*Activity:*`, `*Building:*`, `*Next steps:*` (numbered),
-`*Posts:*`, `*Same story:*`. A Watch alert is posted before its triage, so it has no headline, Call or Next steps (its
+blank line, `*What's happening:*`, `*Post:*` (the post's first words, on a card with no picture of the post that
+quotes none of its words), `*Web:*`, `*Call:*`, `*Activity:*`, `*Building:*`, `*Next steps:*` (numbered), `*Posts:*`,
+`*Same story:*`. A Watch alert is posted before its triage, so it has no headline, Call or Next steps (its
 triage is the note in its thread). Cards posted before this layout (`🚨 *Early Detection Alert* 🚨`,
 `🔭 *Watch alert · …*`) are still read as the bot's own.
+
+**Pictures under the bot's own cards.** A Watch alert, a Direct BigQuery card and an Early Detection story card get
+only the post's own imagery: its photo, its video's frame, a video's thumbnail or cover, or what it shows from a post it
+quotes or its link card (`alertPicture_` in `Post.gs`). Never the picture the post's page shows link previews, which
+can be a site's generic image, and the bot never makes a picture. With none, a Watch alert and a story card show the
+post's first 200 characters on a `*Post:*` line instead, when the bot has its words (a Watch alert: what the post's
+lookup gives, for X, Bluesky, TikTok and Instagram; a story card: the signal's own posts), unless the card quotes the
+post already (a Watch alert whose
+summary is the post's own words, the plain story card from the posts) or it is an update (its first card shows the
+post). A Direct BigQuery card is in Burson's format, so it gets no such line (a `Post:` line there would be read back as
+the post's content in place of its summary); its DSD / Brandwatch and Sprinklr summaries quote the post already.
 
 The `Building:` line is only on an alert for a build-up of small posts, and `Same story:` only when other posts are
 listed in its thread. The score, the watch's bar and topic and the source that found the post stay off the message; the
@@ -756,8 +778,12 @@ it's watching, the last check and today's updates (the main run's, not the auto-
   - a headline saying exactly what people are posting about, the call (📦 Social Alert / 👍 monitor), how many accounts
     on which platforms and when (ET);
   - a short story with the posts linked inline (only links to the signal's own posts: anything else Gemini writes is
-    dropped), what the web says with its sources linked, and suggested next steps inside the escalation process;
-  - every post as a link, and the picture of the post that best shows the topic (Gemini picks it; else the main post).
+    dropped): what the posts claim and how Google or its product comes into it; what the web says (who the posts name,
+    what outlets say about the claim, only from the review's web search) with its sources linked, a line shown only
+    when the search came back with sources; and suggested next steps inside the escalation process;
+  - every post as a link, and the picture of the post that best shows the topic (Gemini picks it; else the main post;
+    only a post's own imagery: see "Pictures under the bot's own cards"); with none, that post's first words on a
+    `*Post:*` line.
   The review note (why, SLRR classification, Temp Check query, T&S) goes in the card's thread, with the marks and any
   Social Alert / T&S draft behind human review, as for any alert. With no AI review (except on an early-watch signal:
   below), the card tells the story from the posts themselves.
@@ -1284,8 +1310,10 @@ the SLRR log records them). Gemini can't turn a listed author into "No".
 for Enterprise) for what Burson's write-up doesn't say: news coverage, whether a claim or incident is real, who the
 author is, and whether Google has responded. Answers to Burson never search. `web_grounding: enterprise | google | off`
 switches it; if Vertex AI refuses the tool, the bot retries without it and leaves it off for 6 hours. The searches and
-sources Gemini used are in the run log; in the Auto-correct space, the write-up's background comes only from them and
-the note names them (`Sources: …`).
+sources Gemini used are in the run log. In the Auto-correct space, the write-up's background comes only from them and
+the note names them (`Sources: …`). The Watch alerts' pre-read and the Early Detection review search too, and what
+their cards say from the web (a Watch alert's background, a story card's `*Web:*` line) is shown only when the answer
+came back with web sources.
 
 **Earlier alerts.** Gemini also sees earlier alerts: the bot's own from the last 14 days and the SLRR alert log's, for
 the same author (90 days), for the same post, and for any post this one replies under or quotes (whoever posted it),
