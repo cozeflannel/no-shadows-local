@@ -13,7 +13,7 @@ const path = require('path');
 module.exports = H => {
   const { test, eq, assert, B, F, NOW, e2e, makeGoogle, loadBot, KB, REAL, TEST_FEED, TRIAGED } = H;
 
-  test('BigQuery 6-table invariant: all .gs files reference ONLY the 6 approved social-data tables (+ slrr_alerts/alert_sends memory & DSD.gemini_analyzer fallback)', () => {
+  test('BigQuery approved-tables invariant: all .gs files reference ONLY the 6 approved social-data tables (+ slrr_alerts/alert_sends memory, DSD.gemini_analyzer fallback, and write-only early_wave.{story_snapshots,story_posts,signals,signal_events,triage_verdicts})', () => {
     const approved = new Set([
       'brand-social-central-data.reporting_data.sprinklr_inbound_comments',
       'brand-social-central-data.raw_data.brandwatch_raw_mentions_base',
@@ -25,12 +25,26 @@ module.exports = H => {
       'brand-social-central-data.slrr_alerts.slrr_alerts',
       'brand-social-central-data.slrr_feedback.alert_sends',
       'brand-social-central-data.DSD.gemini_analyzer',
+      // Write-only early_wave tables (row 46)
+      'brand-social-central-data.early_wave.story_snapshots',
+      'brand-social-central-data.early_wave.story_posts',
+      'brand-social-central-data.early_wave.signals',
+      'brand-social-central-data.early_wave.signal_events',
+      'brand-social-central-data.early_wave.triage_verdicts',
+    ]);
+    const approvedEarlyWaveShort = new Set([
+      'early_wave.story_snapshots',
+      'early_wave.story_posts',
+      'early_wave.signals',
+      'early_wave.signal_events',
+      'early_wave.triage_verdicts',
     ]);
     const dir = path.join(__dirname, '..');
     const gsFiles = fs.readdirSync(dir).filter(f => f.endsWith('.gs'));
     assert.ok(gsFiles.length >= 25);
     const bad = [];
     const tableRx = /\b(?:brand-social-central-data|bsip-s-bsip-gg-26-2cf3)\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
+    const ewShortRx = /\bearly_wave\.[A-Za-z0-9_-]+/g;
     for (const file of gsFiles) {
       const src = fs.readFileSync(path.join(dir, file), 'utf8')
         // Strip // line comments and /* ... */ block comments so doc comments about retired tables don't mask code checks
@@ -42,6 +56,13 @@ module.exports = H => {
         if (/^brand-social-central-data\.[A-Za-z0-9_-]+\.__TABLES__$/.test(ref)) continue;
         if (/^bsip-s-bsip-gg-26-2cf3\.[A-Za-z0-9_-]+\.__TABLES__$/.test(ref)) continue;
         if (!approved.has(ref)) bad.push(`${file}: ${ref}`);
+      }
+      while ((m = ewShortRx.exec(src)) !== null) {
+        if (!approvedEarlyWaveShort.has(m[0])) bad.push(`${file}: ${m[0]}`);
+      }
+      if (/\b(?:FROM|JOIN)\s+`?(?:brand-social-central-data\.)?early_wave\b/i.test(src) ||
+          /\bSELECT\b[\s\S]{0,400}\bearly_wave\./i.test(src)) {
+        bad.push(`${file}: reads from early_wave`);
       }
       assert.ok(!/vw_chatbot_pending_early_alerts|all_sundar_mentions|sonar_post_aggregates_7d_materialized|content_vectors|evergreen_topics|reddit_items_raw/.test(src),
         `Retired table token still in executable code of ${file}`);

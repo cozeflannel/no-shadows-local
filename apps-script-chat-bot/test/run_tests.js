@@ -1075,11 +1075,15 @@ test('setup(): one run creates the control sheet (ready for testing), starts the
   eq(['B2', 'B3', 'B4', 'C3', 'C4', 'B5', 'B8'].map(t.get),
     ['ON', 'SLRR Test Feed (Burson Sim)', TRIAGED, '\u2713 SLRR Test Feed (Burson Sim)', `\u2713 ${ANALYST_NAME}`, '\u2705 Working', 'bot@runner.test']);
   eq(t.control().validations['2,2'].values, ['ON', 'OFF']);
-  eq([9, 10, 11, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42].map(r => t.control().cell(r, 1)), ['Mirror space', 'Auto-correct space',
+  eq([9, 10, 11, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48].map(r => t.control().cell(r, 1)), ['Mirror space', 'Auto-correct space',
     'Auto-send Social Alerts', 'Track post-alert outcomes', 'Relay with S-F Burson', 'Never wait on Burson', 'Post in S-F Burson',
     'S-F Burson space', 'Burson test copy', 'Draft follow-ups', 'Draft answers to questions', 'Safety valve', 'Testing: send to',
     'BigQuery lookback', 'Work directly in B25 (Google-only)', 'Other alerts space', 'Proactive watch', 'Watch alerts', 'Temp checks', 'Group test emails',
-    'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise', '', 'How it works']);
+    'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise',
+    'Hold-back: about_google at or below', 'Hold-back: routine_noise at or above',
+    'Hold-back and early watch: answer confidence at or above',
+    'Early watch: about_google, brand_risk and independent_reports, each at or above',
+    'Early watch: distinct accounts, at least', 'Write early-wave records to BigQuery', '', 'How it works']);
   eq([t.get('B29'), t.control().validations['29,2'].values], ['OFF', ['ON', 'OFF']]);  // starts OFF, like every switch
   eq([t.control().cell(32, 2), t.control().validations['32,2'].values], ['OFF', ['ON', 'OFF']]);  // row 32 too: a person turns it ON
   eq([t.control().cell(34, 2), t.control().validations['34,2'].values], ['OFF', ['ON', 'OFF']]);  // and row 34 (Proactive watch)
@@ -1097,9 +1101,9 @@ test('setup(): one run creates the control sheet (ready for testing), starts the
   eq([t.get('B25'), t.get('C25')], ['', t.bot.ev('SFB_BLANK_NOTE_')]);  // S-F Burson is only ever pasted there by a person
   assert.match(t.get('C25'), /^⚠️ Not set: paste S-F Burson's link \(the real Burson space\)\. Until then the Mirror, Auto-correct and Relay are paused, and the bot posts nothing in any space people outside Google can join\.$/);
   eq([t.control().cell(26, 2), t.control().cell(26, 3)], ['', t.bot.ev('RTC_BLANK_NOTE_')]);
-  assert.match(t.control().cell(43, 1), /^• Every minute the bot reads the Burson space/);
-  assert.match(t.control().cell(46, 1), /^• S-F Burson space \(B25\): which space is the real Burson space/);
-  assert.match(t.control().cell(48, 1), /^• The Resources tab is the bot's knowledge base\. Gemini reads every document listed there/);
+  assert.match(t.control().cell(49, 1), /^• Every minute the bot reads the Burson space/);
+  assert.match(t.control().cell(52, 1), /^• S-F Burson space \(B25\): which space is the real Burson space/);
+  assert.match(t.control().cell(54, 1), /^• The Resources tab is the bot's knowledge base\. Gemini reads every document listed there/);
   assert.ok(t.sheet().getSheetByName('Alert log').protections[0].warningOnly);
   eq(g.triggers, [{ handler: 'poll', minutes: 1 }]);
   assert.strictEqual(g.props.get('BOT_USER'), 'users/bot');
@@ -1897,10 +1901,15 @@ test('auto-correct space (B10) beside the Mirror space: each live Zapier alert i
   eq([started.autocorrect, t.control().cell(10, 1), t.control().cell(10, 2), t.control().cell(11, 1),
     t.control().cell(31, 1), t.control().cell(32, 1), t.control().cell(33, 1), t.control().cell(34, 1), t.control().cell(35, 1),
     t.control().cell(36, 1), t.control().cell(37, 1), t.control().cell(38, 1), t.control().cell(39, 1), t.control().cell(40, 1),
-    t.control().cell(41, 1), t.control().cell(42, 1)],
+    t.control().cell(41, 1), t.control().cell(42, 1), t.control().cell(43, 1), t.control().cell(44, 1), t.control().cell(45, 1),
+    t.control().cell(46, 1), t.control().cell(47, 1), t.control().cell(48, 1)],
   [AC, 'Auto-correct space', 'SLRR Auto-correct Test', 'Auto-send Social Alerts', 'BigQuery lookback',
     'Work directly in B25 (Google-only)', 'Other alerts space', 'Proactive watch', 'Watch alerts', 'Temp checks', 'Group test emails',
-    'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise', '', 'How it works']);
+    'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise',
+    'Hold-back: about_google at or below', 'Hold-back: routine_noise at or above',
+    'Hold-back and early watch: answer confidence at or above',
+    'Early watch: about_google, brand_risk and independent_reports, each at or above',
+    'Early watch: distinct accounts, at least', 'Write early-wave records to BigQuery', '', 'How it works']);
   eq([t.chat.botPosts(AC), t.control().cell(10, 3)], [[], '✓ SLRR Auto-correct Test · no alerts yet today']);
 
   // Live activity in the real Burson space: chatter, an alert a person pasted, a Zapier alert with mistakes, an IM's

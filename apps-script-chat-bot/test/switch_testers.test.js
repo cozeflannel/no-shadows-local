@@ -220,10 +220,17 @@ module.exports = function ({ assert, F, B, NOW, test, eq, world, e2e, decodeMime
     t.poll();
     eq([sh.cell(30, 1), sh.cell(30, 2), sh.cell(31, 1), sh.cell(31, 2), sh.cell(32, 1), sh.cell(32, 2), sh.cell(33, 1), sh.cell(33, 2),
       sh.cell(34, 1), sh.cell(34, 2), sh.cell(35, 1), sh.cell(35, 2), sh.cell(36, 1), sh.cell(36, 2), sh.cell(37, 1), sh.cell(37, 2), sh.cell(38, 1), sh.cell(38, 2),
-      sh.cell(39, 1), sh.cell(39, 2), sh.cell(40, 1), sh.cell(40, 2), sh.cell(41, 1), sh.cell(42, 1)],
+      sh.cell(39, 1), sh.cell(39, 2), sh.cell(40, 1), sh.cell(40, 2),
+      sh.cell(41, 1), sh.cell(41, 2), sh.cell(42, 1), sh.cell(42, 2), sh.cell(43, 1), sh.cell(43, 2), sh.cell(44, 1), sh.cell(44, 2), sh.cell(45, 1), sh.cell(45, 2),
+      sh.cell(46, 1), sh.cell(46, 2), sh.cell(47, 1), sh.cell(48, 1)],
       ['Testing: send to', '', 'BigQuery lookback', '60 minutes', 'Work directly in B25 (Google-only)', 'OFF', 'Other alerts space', '',
         'Proactive watch', 'OFF', 'Watch alerts', 'OFF', 'Temp checks', 'OFF', 'Group test emails', 'OFF', 'Fast triage (Gemini Decisions)', 'OFF',
-        'Fast triage: rank and early watch', 'OFF', 'Fast triage: hold back noise', 'OFF', '', 'How it works']);
+        'Fast triage: rank and early watch', 'OFF', 'Fast triage: hold back noise', 'OFF',
+        'Hold-back: about_google at or below', '0.10', 'Hold-back: routine_noise at or above', '0.90',
+        'Hold-back and early watch: answer confidence at or above', '0.80',
+        'Early watch: about_google, brand_risk and independent_reports, each at or above', '0.80',
+        'Early watch: distinct accounts, at least', '3',
+        'Write early-wave records to BigQuery', 'OFF', '', 'How it works']);
 
     sh.getRange(30, 1).setValue('');
     sh.getRange(30, 2).setValue('keepme@external.test');

@@ -381,15 +381,14 @@ module.exports = H => {
     eq(edCards(t.chat, TEST_FEED).length, 7);
     assert.match(note(t), /7 cluster, 0 velocity alerts today$/);
 
-    // the daily ceiling: once EW_MAX_PER_DAY_ signals were queued today, the check still reads (the producer keeps its
-    // stories up to date for tomorrow's first check) and only queueing stops: nothing more is queued, reviewed or carded
+    // the daily ceiling: once EW_MAX_PER_DAY_ signals were queued today, no more queries or reviews run until tomorrow PT
     const day = JSON.parse(t.g.props.get('EARLY_DETECTION_TODAY'));
     eq(day.queued, 7);
     t.g.props.set('EARLY_DETECTION_TODAY', JSON.stringify(Object.assign(day, { queued: 40 })));
     manyRows.push(clusterRow({ alert_id: 'ED-CLU-AT-THE-CAP', cluster_id: 'clu_at_cap', signal_key: 'clu_at_cap' }));  // a new story, at the cap
     t.g.clock.now += 15 * MIN;
     t.poll();
-    eq([edQueries(calls).length, edCards(t.chat, TEST_FEED).length], [5, 7]);
+    eq([edQueries(calls).length, edCards(t.chat, TEST_FEED).length], [4, 7]);
     eq([t.g.props.has('ED_ALERT_QUEUE'), JSON.parse(t.g.props.get('EARLY_DETECTION_TODAY')).queued, edReviewsOf(t)], [false, 40, 7]);
     assert.match(note(t), / · daily cap of 40 reached, more tomorrow · 7 cluster, 0 velocity alerts today$/);
     eq(lastRun(t).errors, []);

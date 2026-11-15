@@ -229,7 +229,7 @@ module.exports = function (H) {
 
     // 1a. Live recorded HTTP 429 ("too_many_requests") pauses for 15 minutes and surfaces in Control note
     const r429Live = bot.decisionsAsk_('mug cracked', q, bot.decSession_(() => 60000, false));
-    eq(r429Live, { ok: false, why: 'HTTP 429: too_many_requests' });
+    eq(r429Live, { ok: false, why: 'HTTP 429: too_many_requests', ms: 0 });
     assert.match(bot.decStatusText_(props, g.clock.now), /1 asked today · 1 failed · paused until .* \(HTTP 429: too_many_requests\): signals go on without it$/);
     const fetchCountAfterLive429 = fetches.length;
     const skippedDuringPause = bot.decisionsAsk_('mug cracked', q, bot.decSession_(() => 60000, false));
@@ -240,7 +240,7 @@ module.exports = function (H) {
     g.clock.now += PAUSE + 1;
     mode = '429_doc';
     const r429Doc = bot.decisionsAsk_('mug cracked', q, bot.decSession_(() => 60000, false));
-    eq(r429Doc, { ok: false, why: 'HTTP 429: rate_limit_exceeded' });
+    eq(r429Doc, { ok: false, why: 'HTTP 429: rate_limit_exceeded', ms: 0 });
     assert.match(bot.decStatusText_(props, g.clock.now), /2 asked today · 2 failed · paused until .* \(HTTP 429: rate_limit_exceeded\): signals go on without it$/);
     eq(
       bot.decisionsAsk_('mug cracked', q, bot.decSession_(() => 60000, false)),
@@ -249,19 +249,19 @@ module.exports = function (H) {
 
     // 2. Remaining Rule 4 failure modes: bad key, invalid_request, 503, unparseable JSON, missing answer, slow call, network throw with key, missing secret
     const cases = [
-      ['bad_key', 'HTTP 400: invalid_argument'],
-      ['bad_req', 'HTTP 400: invalid_request'],
-      ['503', 'HTTP 503: service_unavailable'],
-      ['bad_json', 'an answer that couldn\'t be read'],
-      ['missing_ans', 'an answer that couldn\'t be read (is_damaged)'],
-      ['slow', 'a slow answer (11 s)'],
-      ['throw_key', 'DNS lookup failed while sending header [key] to host'],
+      ['bad_key', { ok: false, why: 'HTTP 400: invalid_argument', ms: 0 }],
+      ['bad_req', { ok: false, why: 'HTTP 400: invalid_request', ms: 0 }],
+      ['503', { ok: false, why: 'HTTP 503: service_unavailable', ms: 0 }],
+      ['bad_json', { ok: false, why: 'an answer that couldn\'t be read', ms: 0 }],
+      ['missing_ans', { ok: false, why: 'an answer that couldn\'t be read (is_damaged)', ms: 0 }],
+      ['slow', { ok: false, why: 'a slow answer (11 s)', ms: 10500 }],
+      ['throw_key', { ok: false, why: 'DNS lookup failed while sending header [key] to host' }],
     ];
-    for (const [m, expectedWhy] of cases) {
+    for (const [m, expected] of cases) {
       g.clock.now += PAUSE + 1;
       mode = m;
       const out = bot.decisionsAsk_('mug cracked', q, bot.decSession_(() => 60000, false));
-      eq(out, { ok: false, why: expectedWhy }, m);
+      eq(out, expected, m);
       assert.ok(bot.decState_(props, g.clock.now).until > g.clock.now, `${m} sets cooldown`);
     }
 
@@ -273,16 +273,18 @@ module.exports = function (H) {
     env.setSecret(() => ({ code: 200, body: { payload: { data: Buffer.from('   ', 'utf8').toString('base64') } } }));
     eq(bot.decisionsAsk_('mug cracked', q, bot.decSession_(() => 60000, false)), { ok: false, why: 'no API key (the secret is empty)' });
 
-    // Restore valid secret and verify safety-filter refusals (Decision 12(ii)): counted, NO pause, next signal succeeds immediately
+    // Restore valid secret and verify safety-filter refusals (error code + HTTP 200 prompt_feedback.block_reason): counted, NO pause, next signal succeeds immediately
     env.setSecret(() => ({ code: 200, body: { payload: { data: Buffer.from(TEST_KEY, 'utf8').toString('base64') } } }));
     g.clock.now += PAUSE + 1;
     const checkSession = bot.decSession_(() => 60000, false);
     for (const code of ['safety', 'prohibited_content', 'blocklist', 'image_safety', 'content_blocked']) {
       mode = `refusal:${code}`;
       const ref = bot.decisionsAsk_('self-harm report', q, checkSession);
-      eq(ref, { ok: false, refused: true, why: `the safety filter refused the input (${code})` });
+      eq(ref, { ok: false, refused: true, why: `the safety filter refused the input (${code})`, ms: 0 });
       eq(bot.decState_(props, g.clock.now).until, 0, `${code} must not pause subsequent signals`);
     }
+    const pfBlock = bot.decRead_(200, JSON.stringify({ prompt_feedback: { block_reason: 'SAFETY' } }), q, 120);
+    eq(pfBlock, { ok: false, refused: true, why: 'the safety filter refused the input (safety)', ms: 120 });
     mode = 'ok';
     const nextOk = bot.decisionsAsk_('mug cracked', q, checkSession);
     eq(nextOk.ok, true);
@@ -562,7 +564,8 @@ module.exports = function (H) {
       eq([sh.cell(38, 1), sh.cell(38, 2), sh.validations['38,2'].values], ['Fast triage (Gemini Decisions)', 'OFF', ['ON', 'OFF']]);
       eq([sh.cell(39, 1), sh.cell(39, 2), sh.validations['39,2'].values], ['Fast triage: rank and early watch', 'OFF', ['ON', 'OFF']]);
       eq([sh.cell(40, 1), sh.cell(40, 2), sh.validations['40,2'].values], ['Fast triage: hold back noise', 'OFF', ['ON', 'OFF']]);
-      eq([sh.cell(41, 1), sh.cell(42, 1)], ['', 'How it works']);
+      eq([sh.cell(46, 1), sh.cell(46, 2), sh.validations['46,2'].values], ['Write early-wave records to BigQuery', 'OFF', ['ON', 'OFF']]);
+      eq([sh.cell(47, 1), sh.cell(48, 1)], ['', 'How it works']);
 
       if (disableFastTriageHooks) {
         t.bot.ftStart_ = () => null;
@@ -687,12 +690,13 @@ module.exports = function (H) {
     eq([factRows.length, factRows[0].risk_groups, typeof factRows[0].tag_raised], [1, 'privacy_data_leak', 'boolean']);
     eq([bot.ftP0Group_(factRows[0]), bot.ftProtected_(factRows[0])], [true, true]);
 
-    // Pure protection & hold-back rules (Rule 3 & Section 5B)
+    // Pure protection & hold-back rules (Section 3 & Section 4 seed bars: about <= 0.10, noise >= 0.90, conf >= 0.80)
     const baseRow = { priority_hint: 'P1', risk_groups: '', tag_raised: false };
-    const lowNotGoogle = { g: 0.05, r: 0.02, i: 0.1, n: 0.4, s: 0.12, l: 0, sc: 0.91 };
-    const lowNoise = { g: 0.96, r: 0.04, i: 0.2, n: 0.92, s: 0.65, l: 1, sc: 0.85 };
-    eq(bot.ftHoldReady_(), false);
-    eq(bot.ftHoldWhy_(baseRow, lowNotGoogle), ''); // default bars are null -> never holds back
+    const lowNotGoogle = { g: 0.10, r: 0.02, i: 0.1, n: 0.4, s: 0.12, l: 0, sc: 0.80 };
+    const lowNoise = { g: 0.96, r: 0.04, i: 0.2, n: 0.90, s: 0.65, l: 1, sc: 0.80 };
+    eq(bot.ftBars_(), { about: 0.10, noise: 0.90, conf: 0.80, watch: 0.80, accounts: 3 });
+    eq(bot.ftHoldWhy_(baseRow, lowNotGoogle), 'not about Google (about Google 0.1, severity none 0.8)');
+    eq(bot.ftHoldWhy_(baseRow, lowNoise), 'routine noise (routine noise 0.9, severity low 0.8)');
 
     const bars = { about: 0.15, noise: 0.85, conf: 0.8 };
     eq(bot.ftHoldWhy_(baseRow, null, bars), ''); // no answer -> fail open
@@ -700,9 +704,8 @@ module.exports = function (H) {
     eq(bot.ftHoldWhy_({ priority_hint: 'P2', risk_groups: 'safety_csam_selfharm', tag_raised: false }, lowNotGoogle, bars), ''); // P0 group protected
     eq(bot.ftHoldWhy_({ priority_hint: 'P2', risk_groups: '', tag_raised: true }, lowNoise, bars), ''); // taxonomy raise protected
     eq(bot.ftHoldWhy_(baseRow, Object.assign({}, lowNotGoogle, { l: 2 }), bars), ''); // medium+ severity never held back
-    eq(bot.ftHoldWhy_(baseRow, Object.assign({}, lowNotGoogle, { sc: 0.8 }), bars), ''); // must be strictly above conf bar
-    eq(bot.ftHoldWhy_(baseRow, lowNotGoogle, bars), 'not about Google (about Google 0.05, severity none 0.91)');
-    eq(bot.ftHoldWhy_(baseRow, lowNoise, bars), 'routine noise (routine noise 0.92, severity low 0.85)');
+    eq(bot.ftHoldWhy_(baseRow, Object.assign({}, lowNotGoogle, { sc: 0.79 }), bars), ''); // below conf bar -> not held back
+    eq(bot.ftHoldWhy_(baseRow, Object.assign({}, lowNotGoogle, { sc: 0.8 }), bars), 'not about Google (about Google 0.1, severity none 0.8)'); // at conf bar -> held back
 
     // Pure ordering (ftRank_ and edQueueRank_ + ftQueueUnrank_): P0 group > tier > unanswered (fail-open) > severity > brand_risk > prior order
     const items = [
@@ -727,8 +730,8 @@ module.exports = function (H) {
     eq(bot.edQueueList_(props).map(e => e.id), ['ED-LOW-AU20', 'ED-HIGH-AU4']); // row 39 OFF -> back to author-count order
   });
 
-  test('fast triage (5B): earlyWaveCheck_ recording-only (row 38), queue ranking + answer cache (row 39), and calibrated hold-back with C19 count & log line (row 40)', () => {
-    // 1. Recording-only (Row 38 ON alone): asks only on the 5 queued signals, attaches `dec` without dropping posts, changes neither queue order nor cards
+  test('fast triage (5B): row 38 alone makes zero Decisions calls and writes nothing; row 38+39 ranks queue & caches answers; row 38+40 holds back noise at Control bars (B41:B43) with C19 count & log line', () => {
+    // 1. Row 38 ON alone (while rows 39 and 40 are OFF): makes 0 Decisions calls, writes nothing, and states that it only enables rows 39 and 40
     const sixP1 = [
       'ED-CLU-CLU-3287667bddd9-202611101231', // s=0.19 (pos 1)
       'ED-CLU-CLU-abe6decf9a2a-202611121446', // s=0.22 (pos 2)
@@ -738,19 +741,21 @@ module.exports = function (H) {
       'ED-CLU-CLU-e9dddc0be913-202611071746', // Android CERT-In, P1, s=2.53 (pos 6 — beyond EW_MAX_PER_CHECK_=5 without row 39!)
     ].map(id => FX.signals.find(s => s.alert_id === id));
 
-    const recordOnly = makeFastTriageE2e(() => sixP1, (payload) => matchRecordedResponse(recordOnly.t.bot, payload));
-    recordOnly.t.control().getRange(19, 2).setValue('ON');
-    recordOnly.t.control().getRange(38, 2).setValue('ON');
-    recordOnly.t.poll();
-    eq(recordOnly.decCalls(), 5); // only the 5 queued candidates were asked; 6th was untouched in recording-only mode
-    assert.match(recordOnly.t.control().cell(38, 3), /5 asked today/);
-    const recordQueue = recordOnly.t.bot.edQueueList_(recordOnly.t.g.services.PropertiesService.getScriptProperties());
-    eq(recordQueue.length, 3); // 5 queued - 2 reviewed this run = 3 waiting
-    assert.ok(!recordQueue.some(e => e.id === 'ED-CLU-CLU-e9dddc0be913-202611071746'));
-    recordQueue.forEach(e => {
-      eq([e.sv, e.br], [undefined, undefined]); // no ranking keys with row 39 OFF
-      const row = recordOnly.t.bot.edQueueRow_(recordOnly.t.g.services.PropertiesService.getScriptProperties(), e.k);
-      assert.strictEqual(typeof row.dec.s, 'number');
+    const gateOnly = makeFastTriageE2e(() => sixP1, () => {
+      throw new Error('Row 38 ON alone must make zero Decisions calls while rows 39 and 40 are OFF');
+    });
+    gateOnly.t.control().getRange(19, 2).setValue('ON');
+    gateOnly.t.control().getRange(38, 2).setValue('ON');
+    gateOnly.t.poll();
+    eq([gateOnly.decCalls(), gateOnly.secretCalls(), !!gateOnly.t.sheet().getSheetByName('Fast triage')], [0, 0, false]);
+    assert.match(gateOnly.t.control().cell(38, 3), /only enables rows 39 and 40; while both are OFF, no Gemini Decisions call is made and nothing is written/);
+    const gateQueue = gateOnly.t.bot.edQueueList_(gateOnly.t.g.services.PropertiesService.getScriptProperties());
+    eq(gateQueue.length, 3); // 5 queued - 2 reviewed this run = 3 waiting
+    assert.ok(!gateQueue.some(e => e.id === 'ED-CLU-CLU-e9dddc0be913-202611071746'));
+    gateQueue.forEach(e => {
+      eq([e.sv, e.br], [undefined, undefined]);
+      const row = gateOnly.t.bot.edQueueRow_(gateOnly.t.g.services.PropertiesService.getScriptProperties(), e.k);
+      eq(row.dec, undefined);
     });
 
     // 2. Order (Rows 38 + 39 ON): asks all 6 candidates, promotes Android CERT-In (s=2.53) to #1, and caches the 6th candidate's answer for the next check
@@ -769,44 +774,45 @@ module.exports = function (H) {
     ranked.t.poll();
     eq(ranked.decCalls(), 6);
 
-    // 3. Hold-back (Rows 38 + 40 ON): default null bars hold back 0; calibrated bars hold back noise/off-topic while protecting P0 risk groups & taxonomy raises
+    // 3. Hold-back (Rows 38 + 40 ON): acts immediately on the Control tab seed bars (B41=0.10, B42=0.90, B43=0.80) and updates when B41:B43 are edited
     const holdSignals = [
       FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-dc5a8afd13da-202611061731'), // P0 group -> protected
-      FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-abe6decf9a2a-202611121446'), // n=0.89, l=0, sc=0.86 -> held back (routine noise)
-      FX.signals.find(s => s.alert_id === 'ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402'), // g=0.07, l=0, sc=0.84 -> held back (not about Google)
-      FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-3aa05dedf0a7-202611072231'), // n=0.95, l=1, sc=0.60 <= 0.80 -> NOT held back
+      FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-abe6decf9a2a-202611121446'), // n=0.89, l=0, sc=0.86 -> NOT held at seed 0.90, held when B42='0.85'
+      FX.signals.find(s => s.alert_id === 'ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402'), // g=0.07 <= 0.10, l=0, sc=0.84 >= 0.80 -> held back at seed!
+      FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-3aa05dedf0a7-202611072231'), // n=0.95, l=1, sc=0.60 < 0.80 -> NOT held back
     ];
-    const holdDefault = makeFastTriageE2e(() => holdSignals, (payload) => matchRecordedResponse(holdDefault.t.bot, payload));
-    holdDefault.t.control().getRange(19, 2).setValue('ON');
-    holdDefault.t.control().getRange(38, 2).setValue('ON');
-    holdDefault.t.control().getRange(40, 2).setValue('ON');
-    holdDefault.t.poll();
-    assert.match(holdDefault.t.control().cell(40, 3), /^✓ ON, but nothing is held back yet: its bars are not set/);
-    assert.ok(!holdDefault.t.control().cell(19, 3).includes('filtered by fast triage'));
+    const holdSeed = makeFastTriageE2e(() => holdSignals, (payload) => matchRecordedResponse(holdSeed.t.bot, payload));
+    holdSeed.t.control().getRange(19, 2).setValue('ON');
+    holdSeed.t.control().getRange(38, 2).setValue('ON');
+    holdSeed.t.control().getRange(40, 2).setValue('ON');
+    holdSeed.t.poll();
+    assert.match(holdSeed.t.control().cell(40, 3), /^✓ ON: a low-severity signal that meets the hold-back bars in B41:B43 is dropped without a review/);
+    assert.match(holdSeed.t.control().cell(19, 3), / · 1 filtered by fast triage$/); // ED-VEL-CLUSTER (g=0.07 <= 0.10) held back at seed!
+    assert.match(holdSeed.t.g.logs.join('\n'), /early detection: fast triage held back ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402: not about Google/);
 
-    const holdCal = makeFastTriageE2e(() => holdSignals, (payload) => {
-      // Force low/noise answers even for the P0-group signal to prove Rule 3 protection holds under worst-case model output
+    // Editing Control B42 ('Hold-back: routine_noise at or above') from '0.90' to '0.85' also holds back abe6decf9a2a (n=0.89), while P0-group signal stays protected
+    const holdEdited = makeFastTriageE2e(() => holdSignals, (payload) => {
+      // Force low/noise answers even for the P0-group signal to prove P0 protection holds under worst-case model output
       const p0Row = FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-dc5a8afd13da-202611061731');
-      if (holdCal.t.bot.decSignalInput_(p0Row) === payload.input) {
+      if (holdEdited.t.bot.decSignalInput_(p0Row) === payload.input) {
         return { code: 200, body: FX.signal_responses['ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402'] };
       }
-      return matchRecordedResponse(holdCal.t.bot, payload);
+      return matchRecordedResponse(holdEdited.t.bot, payload);
     });
-    holdCal.t.bot.ftHoldBars_ = () => ({ about: 0.15, noise: 0.85, conf: 0.8 });
-    holdCal.t.control().getRange(19, 2).setValue('ON');
-    holdCal.t.control().getRange(38, 2).setValue('ON');
-    holdCal.t.control().getRange(40, 2).setValue('ON');
-    holdCal.t.poll();
+    holdEdited.t.control().getRange(19, 2).setValue('ON');
+    holdEdited.t.control().getRange(38, 2).setValue('ON');
+    holdEdited.t.control().getRange(40, 2).setValue('ON');
+    holdEdited.t.control().getRange(42, 2).setValue('0.85');
+    holdEdited.t.poll();
 
-    assert.match(holdCal.t.control().cell(19, 3), / · 2 filtered by fast triage$/);
-    eq(edCardsOf(holdCal.t).length, 2); // P0-group signal + low-confidence Chrome adblock signal both reviewed and carded!
-    assert.ok(edCardsOf(holdCal.t).some(m => m.text.includes('ED-CLU-CLU-dc5a8afd13da-202611061731')), 'P0-group signal never held back');
-    assert.ok(edCardsOf(holdCal.t).some(m => m.text.includes('ED-CLU-CLU-3aa05dedf0a7-202611072231')), 'below-confidence signal never held back');
-    const logs = holdCal.t.g.logs.join('\n');
+    assert.match(holdEdited.t.control().cell(19, 3), / · 2 filtered by fast triage$/);
+    eq(edCardsOf(holdEdited.t).length, 2); // P0-group signal + low-confidence Chrome adblock signal both reviewed and carded!
+    assert.ok(edCardsOf(holdEdited.t).some(m => m.text.includes('ED-CLU-CLU-dc5a8afd13da-202611061731')), 'P0-group signal never held back');
+    assert.ok(edCardsOf(holdEdited.t).some(m => m.text.includes('ED-CLU-CLU-3aa05dedf0a7-202611072231')), 'below-confidence signal never held back');
+    const logs = holdEdited.t.g.logs.join('\n');
     assert.match(logs, /early detection: fast triage held back ED-CLU-CLU-abe6decf9a2a-202611121446: routine noise/);
     assert.match(logs, /early detection: fast triage held back ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402: not about Google/);
-    const ftSh = holdCal.t.sheet().getSheetByName('Fast triage');
-    assert.ok(ftSh && ftSh.rows.some(r => r[1] === 'ED-CLU-CLU-abe6decf9a2a-202611121446' && String(r[16]).startsWith('held back: routine noise')));
+    eq(holdEdited.t.sheet().getSheetByName('Fast triage'), null);
   });
 
   test('fast triage (5B / 9.3): each Rule 4 failure mode in earlyWaveCheck_ falls back to today\'s queueing, ordering, review, and cards', () => {
@@ -836,12 +842,13 @@ module.exports = function (H) {
       const responder = (payload, clock, n) => fm.responder(payload, clock, n);
       if (fm.secret) responder.secret = fm.secret;
       const env = makeFastTriageE2e(() => twoReal, responder);
-      // Enable ALL THREE switches (38, 39, 40) AND active hold-back bars that WOULD hold both signals back if Decisions succeeded!
-      env.t.bot.ftHoldBars_ = () => ({ about: 0.15, noise: 0.85, conf: 0.8 });
+      // Enable ALL THREE switches (38, 39, 40) AND set B41/B42 bars that WOULD hold both signals back if Decisions succeeded!
       env.t.control().getRange(19, 2).setValue('ON');
       env.t.control().getRange(38, 2).setValue('ON');
       env.t.control().getRange(39, 2).setValue('ON');
       env.t.control().getRange(40, 2).setValue('ON');
+      env.t.control().getRange(41, 2).setValue('0.15');
+      env.t.control().getRange(42, 2).setValue('0.85');
       env.t.poll();
 
       eq(JSON.parse(env.t.g.props.get('LAST_RUN')).errors, [], fm.name);
@@ -865,20 +872,23 @@ module.exports = function (H) {
     const g = makeGoogle(NOW);
     const bot = loadBot(g.services, g.clock);
 
-    // 1. Default bars are unset (null) -> ewsWatchReady_ is false and ewsWatchRaise_ never emits
+    // 1. Seed bars are live (watch=0.80, conf=0.80, accounts=3) -> ewsWatchRaise_ checks about_google, brand_risk, independent_reports >= watch, l >= 2, and sc >= conf
     eq([bot.ev('EWS_WATCH_MIN_AUTHORS_'), bot.ev('EWS_WATCH_MIN_LEVEL_'), bot.ev('EW_WATCH_QUEUE_PER_DAY_')], [3, 2, 8]);
-    eq([bot.ewsWatchReady_(), bot.ewsWatchRaise_({ g: 0.99, r: 0.99, i: 0.99, l: 4 })], [false, false]);
+    eq(bot.ewsWatchBars_(), { about: 0.80, risk: 0.80, independent: 0.80, conf: 0.80, accounts: 3 });
+    eq(bot.ewsWatchRaise_({ g: 0.99, r: 0.99, i: 0.99, l: 4, sc: 0.95 }), true);
+    eq(bot.ewsWatchRaise_({ g: 0.99, r: 0.99, i: 0.62, l: 4, sc: 0.95 }), false); // i < 0.80 seed
+    eq(bot.ewsWatchRaise_({ g: 0.99, r: 0.99, i: 0.99, l: 4, sc: 0.79 }), false); // sc < 0.80 seed
 
-    // With calibrated bars: requires about_google, brand_risk, independent_reports at/above bars AND severity level >= 2
-    const wBars = { about: 0.8, risk: 0.7, independent: 0.5 };
-    eq(bot.ewsWatchRaise_({ g: 0.98, r: 0.94, i: 0.62, l: 3 }, wBars), true);
-    eq(bot.ewsWatchRaise_({ g: 0.8, r: 0.7, i: 0.5, l: 2 }, wBars), true);
-    eq(bot.ewsWatchRaise_({ g: 0.79, r: 0.94, i: 0.62, l: 3 }, wBars), false);
-    eq(bot.ewsWatchRaise_({ g: 0.98, r: 0.69, i: 0.62, l: 3 }, wBars), false);
-    eq(bot.ewsWatchRaise_({ g: 0.98, r: 0.94, i: 0.49, l: 3 }, wBars), false);
-    eq(bot.ewsWatchRaise_({ g: 0.98, r: 0.94, i: 0.62, l: 1 }, wBars), false);
+    const wBars = { about: 0.8, risk: 0.7, independent: 0.5, conf: 0.8 };
+    eq(bot.ewsWatchRaise_({ g: 0.98, r: 0.94, i: 0.62, l: 3, sc: 0.85 }, wBars), true);
+    eq(bot.ewsWatchRaise_({ g: 0.8, r: 0.7, i: 0.5, l: 2, sc: 0.8 }, wBars), true);
+    eq(bot.ewsWatchRaise_({ g: 0.79, r: 0.94, i: 0.62, l: 3, sc: 0.85 }, wBars), false);
+    eq(bot.ewsWatchRaise_({ g: 0.98, r: 0.69, i: 0.62, l: 3, sc: 0.85 }, wBars), false);
+    eq(bot.ewsWatchRaise_({ g: 0.98, r: 0.94, i: 0.49, l: 3, sc: 0.85 }, wBars), false);
+    eq(bot.ewsWatchRaise_({ g: 0.98, r: 0.94, i: 0.62, l: 1, sc: 0.85 }, wBars), false);
+    eq(bot.ewsWatchRaise_({ g: 0.98, r: 0.94, i: 0.62, l: 3, sc: 0.79 }, wBars), false);
 
-    // 2. ewsWatchPick_ and ewsWatchNovel_: 3-4 accounts on 1 platform (below 5), >= 2 URLs, no copy ring, no cooldown, not already marked/raised
+    // 2. ewsWatchPick_ and ewsWatchNovel_: respects minAuthors bar (seed 3, or 4 when B45='4'), >= 2 URLs, no copy ring, no cooldown, not already marked/raised
     const vecA = new Array(768).fill(0); vecA[0] = 1;
     const vecB = new Array(768).fill(0); vecB[1] = 1;
     const encA = bot.ewsEnc_(vecA);
@@ -909,7 +919,7 @@ module.exports = function (H) {
     };
 
     const c2 = makeCluster('two_au', 2, { risk: 'security_scam_malware' }); // below floor of 3 -> skipped
-    const c3Risk = makeCluster('three_risk', 3, { risk: 'security_scam_malware' }); // 3 accounts + risk -> picked first
+    const c3Risk = makeCluster('three_risk', 3, { risk: 'security_scam_malware' }); // 3 accounts + risk -> picked first at minAuthors=3
     const c4Plain = makeCluster('four_plain', 4, { vec: encB }); // 4 accounts on 1 platform (<5) -> picked second
     const c4TwoPlat = makeCluster('four_two_plat', 4, { twoPlat: true, risk: 'security_scam_malware' }); // 4 on 2 platforms == promotion bar -> skipped (ewsPromote_'s)
     const c5 = makeCluster('five_au', 5, { risk: 'security_scam_malware' }); // at promotion bar -> skipped
@@ -922,8 +932,10 @@ module.exports = function (H) {
       marked_3: [NOW - 5 * MIN, 3, 0], // already asked at 3 accounts -> wait until it grows
       already_raised: [NOW - 5 * MIN, 3, 1], // already raised -> never ask again even at 4
     };
-    const picked = bot.ewsWatchPick_([c2, c4Plain, c3Risk, c4TwoPlat, c5, cCopy, cCool, cMarkedSame, cMarkedRaised], [], marks, NOW);
+    const picked = bot.ewsWatchPick_([c2, c4Plain, c3Risk, c4TwoPlat, c5, cCopy, cCool, cMarkedSame, cMarkedRaised], [], marks, NOW, 3);
     eq(picked.map(x => x.id), ['three_risk', 'four_plain']);
+    const pickedAt4 = bot.ewsWatchPick_([c2, c4Plain, c3Risk], [], marks, NOW, 4);
+    eq(pickedAt4.map(x => x.id), ['four_plain']);
 
     // Novelty check against older stored clusters
     const olderSameVec = makeCluster('older_same', 3, { t0: NOW - 60 * MIN, vec: encA });
@@ -960,7 +972,7 @@ module.exports = function (H) {
     eq(Array.from(bot.relayGuardHits_(cardText)), []);
   });
 
-  test('early watch (5C): 3-account producer watch -> card -> 5-account promotion updates in the first card\'s thread (never a second card), failed-review retry/drop, and 8-of-40 daily cap share', () => {
+  test('early watch (5C): 3-account producer watch at Control bars (B43:B45) -> card -> 5-account promotion updates in the first card\'s thread (never a second card), failed-review retry/drop, and 8-of-40 daily cap share', () => {
     const EWS_COLS = [
       ['kind'], ['lane'], ['mid'], ['url'], ['platform'], ['author'],
       ['audience', 'INTEGER'], ['eng', 'INTEGER'], ['posted_ms', 'INTEGER'], ['seen_ms', 'INTEGER'],
@@ -985,7 +997,7 @@ module.exports = function (H) {
       brand: true,
     });
 
-    function makeProducerWatchEnv(barsReady) {
+    function makeProducerWatchEnv() {
       const t = e2e();
       t.chat.addSpace(MIRROR, MIRROR_NAME);
       t.bot.setup();
@@ -994,9 +1006,6 @@ module.exports = function (H) {
       t.chat.addDm('tester@testing.test', 'spaces/DMSTANDIN');
       t.bot.startMirror(MIRROR_NAME);
       t.control().getRange(29, 2).setValue('ON');
-      if (barsReady) {
-        t.bot.ewsWatchBars_ = () => ({ about: 0.8, risk: 0.7, independent: 0.5 });
-      }
       let currentPosts = [];
       let decCalls = 0;
       const origFetch = t.g.services.UrlFetchApp.fetch;
@@ -1011,7 +1020,7 @@ module.exports = function (H) {
         }
         if (u.includes('/decisions')) {
           decCalls++;
-          // Real recorded high-severity response (g=0.98, r=0.97, i=0.62, l=4)
+          // Real recorded high-severity response (g=0.98, r=0.97, i=0.62, l=4, sc=0.95)
           return {
             getResponseCode: () => 200,
             getContentText: () => JSON.stringify(FX.signal_responses['ED-CLU-CLU-dc5a8afd13da-202611061731']),
@@ -1074,23 +1083,24 @@ module.exports = function (H) {
       return { t, setPosts: list => { currentPosts = list; }, decCalls: () => decCalls };
     }
 
-    // 1. Default unset bars: Row 39 asks and records on Fast triage tab, raises 0 cards
-    const uncal = makeProducerWatchEnv(false);
-    uncal.t.control().getRange(19, 2).setValue('ON');
-    uncal.t.control().getRange(38, 2).setValue('ON');
-    uncal.t.control().getRange(39, 2).setValue('ON');
-    uncal.setPosts([1, 2, 3].map(i => makePost(i, uncal.t.g.clock.now)));
-    uncal.t.poll();
-    eq([uncal.decCalls(), edCardsOf(uncal.t).length], [1, 0]);
-    assert.match(uncal.t.control().cell(38, 3), /1 early story asked about/);
-    const uncalTab = uncal.t.sheet().getSheetByName('Fast triage');
-    assert.ok(uncalTab && uncalTab.rows.some(r => String(r[16]).includes('early watch: asked at 3 accounts (its bars are not set: nothing is raised)')));
+    // 1. At seed bar B44='0.80': recorded response has independent_reports=0.62 < 0.80 -> asks 1 story, does not raise
+    const belowBar = makeProducerWatchEnv();
+    belowBar.t.control().getRange(19, 2).setValue('ON');
+    belowBar.t.control().getRange(38, 2).setValue('ON');
+    belowBar.t.control().getRange(39, 2).setValue('ON');
+    belowBar.setPosts([1, 2, 3].map(i => makePost(i, belowBar.t.g.clock.now)));
+    belowBar.t.poll();
+    eq([belowBar.decCalls(), edCardsOf(belowBar.t).length], [1, 0]);
+    assert.match(belowBar.t.control().cell(38, 3), /1 early story asked about/);
+    eq(belowBar.t.sheet().getSheetByName('Fast triage'), null);
 
-    // 2. Calibrated watch bars: 3 accounts -> EARLY_WATCH card -> 5 accounts -> thread update in first card's thread (NEVER a second card!)
-    const cal = makeProducerWatchEnv(true);
+    // 2. With B43 set to '0.75' and B44 set to '0.60' on Control tab: 3 accounts -> EARLY_WATCH card -> 5 accounts -> thread update in first card's thread (NEVER a second card!)
+    const cal = makeProducerWatchEnv();
     cal.t.control().getRange(19, 2).setValue('ON');
     cal.t.control().getRange(38, 2).setValue('ON');
     cal.t.control().getRange(39, 2).setValue('ON');
+    cal.t.control().getRange(43, 2).setValue('0.75');
+    cal.t.control().getRange(44, 2).setValue('0.60');
     cal.setPosts([1, 2, 3].map(i => makePost(i, cal.t.g.clock.now)));
     cal.t.poll();
 
@@ -1349,293 +1359,239 @@ module.exports = function (H) {
   });
 
   // =============================================================================================================
-  // Section 5E — Recording & calibration on the Fast triage tab (FastTriage.gs, EarlyDetection.gs)
+  // Section 4, 5 & 6.4 — Control tab bar cells (rows 41-45), early_wave BigQuery writer (row 46), and record-only guard
   // =============================================================================================================
 
-  test('fast triage (5E): formula-injection escaping across all string fields, 49,000-char cell cap, and row trimming preserving analyst Rating values & dropdown alignment', () => {
-    const env = makeEnv(() => ({ code: 200, body: FX.probe.six_questions_doc_input.response.body }));
-    const { bot } = env;
-
-    // 1. Guardrail 1: Formula-injection escaping (`'` prefix on leading =, +, -, @, or control characters) across ALL string columns
-    const vectors = [
-      ['=HYPERLINK("https://evil.example","click")', '\'=HYPERLINK("https://evil.example","click")'],
-      ['   =SUM(A1:A2)', '\'=SUM(A1:A2)'],
-      ['+cmd|"/c calc"!A0', '\'+cmd|"/c calc"!A0'],
-      ['-2+3', '\'-2+3'],
-      ['@researcher_handle claim', '\'@researcher_handle claim'],
-      ['\t=1+1', '\'=1+1'],
-      ['\tcmd', '\'cmd'],
-      ['\n+1+1', '\'+1+1'],
-      ['\r\nFormulaLine', '\'FormulaLine'],
-    ];
-    for (const [inj, expected] of vectors) {
-      const row = bot.ftTabRow_({
-        row: {
-          alert_id: inj,
-          signal_type: 'CLUSTER_EMERGENCE',
-          unique_low_tier_authors: 5,
-          platforms_csv: inj,
-          headline: inj,
-          cluster_id: inj,
-          topic_product: inj,
-        },
-        dec: { g: 0.91, r: 0.84, i: 0.72, n: 0.08, c: inj, cp: 0.66, p0: 0.12, s: 2.75, l: 3, sc: 0.81 },
-        did: inj,
-        review: { disposition: inj, basis: 'early_detection', confidence: 0.89, severity: inj },
-        card: inj,
-        kind: 'r',
-      });
-      // Every free-text column (1 Signal, 4 Platforms, 5 Headline, 10 Category, 16 Fast triage, 17 Review, 19 Review severity, 20 Card) is escaped
-      for (const colIdx of [1, 4, 5, 10, 16, 17, 19, 20]) {
-        assert.ok(String(row[colIdx]).startsWith("'"), `col ${colIdx} must start with apostrophe for ${JSON.stringify(inj)}, got ${JSON.stringify(row[colIdx])}`);
-        assert.ok(!/[\x00-\x1f\x7f]/.test(String(row[colIdx])), `col ${colIdx} must contain zero control characters`);
-      }
-      eq(row[5], expected);
-      // Key column (22) is valid JSON starting with `{`, never a formula
-      assert.strictEqual(row[22][0], '{');
-      const keyObj = JSON.parse(row[22]);
-      eq(keyObj.k, 'r');
-      // Across all 23 cells, zero cells begin with raw =, +, -, @, or control characters
-      row.forEach((cell, idx) => {
-        if (typeof cell === 'string' && cell.length > 0) {
-          assert.ok(!/^[=+\-@\x00-\x1f]/.test(cell), `cell ${idx} unsafe: ${JSON.stringify(cell)}`);
-        }
-      });
-    }
-
-    // Normal strings (including mid-string =, +, -, @ or leading spaces before normal text) do NOT get spurious apostrophes
-    const cleanRow = bot.ftTabRow_({
-      row: {
-        alert_id: '  ED-CLU-123  ',
-        signal_type: 'VELOCITY_SPIKE',
-        unique_low_tier_authors: 6,
-        platforms_csv: 'X, Reddit',
-        headline: '  Users discuss Chrome flag a=b + update - bug @google  ',
-        cluster_id: 'clu_123',
-      },
-      dec: { g: 0.95, r: 0.7, i: 0.6, n: 0.1, c: 'Product - Widespread product outage or bug', cp: 0.8, p0: 0.05, s: 2.2, l: 2, sc: 0.78 },
-      did: 'answered (recording only)',
-      review: { disposition: 'monitor', basis: 'low_confidence', confidence: 0.74, severity: 'medium' },
-      card: 'QA-9001',
-      kind: 'r',
-    });
-    eq([cleanRow[1], cleanRow[2], cleanRow[4], cleanRow[5]], ['ED-CLU-123', 'Velocity', 'X, Reddit', 'Users discuss Chrome flag a=b + update - bug @google']);
-    eq([cleanRow[10], cleanRow[14], cleanRow[16], cleanRow[17], cleanRow[18], cleanRow[19], cleanRow[20], cleanRow[21]], [
-      'Product - Widespread product outage or bug', 'medium', 'answered (recording only)', 'monitor (low confidence)', 0.74, 'medium', 'QA-9001', '',
+  test('fast triage (Section 4): Control tab bar cells (rows 41-45) have strict dropdowns, read on each run, fall back to seed on blank or invalid with C41:C45 note, and never turn a feature off', () => {
+    const t = e2e();
+    t.bot.setup();
+    const sh = t.control();
+    const specs = t.bot.ev('FT_BAR_SPECS_');
+    eq(specs.map(s => [s.row, s.key, s.label, s.seedText, s.seed]), [
+      [41, 'about', 'Hold-back: about_google at or below', '0.10', 0.10],
+      [42, 'noise', 'Hold-back: routine_noise at or above', '0.90', 0.90],
+      [43, 'conf', 'Hold-back and early watch: answer confidence at or above', '0.80', 0.80],
+      [44, 'watch', 'Early watch: about_google, brand_risk and independent_reports, each at or above', '0.80', 0.80],
+      [45, 'accounts', 'Early watch: distinct accounts, at least', '3', 3],
     ]);
 
-    // 2. Guardrail 3 (cell cap): every cell stays strictly <= SHEET_CELL_MAX_CHARS_ (49,000), even under giant inputs or raised FT_HEADLINE_CHARS_
-    const huge = '=' + 'W'.repeat(65000);
-    const giantRow = bot.ftTabRow_({
-      row: { alert_id: huge, platforms_csv: huge, headline: huge, cluster_id: huge },
-      dec: { g: 0.5, r: 0.5, i: 0.5, n: 0.5, c: huge, cp: 0.5, p0: 0.5, s: 1.5, l: 1, sc: 0.6 },
-      did: huge,
-      review: { disposition: huge, basis: huge, confidence: 0.8, severity: huge },
-      card: huge,
-    });
-    giantRow.forEach(c => {
-      if (typeof c === 'string') assert.ok(c.length <= 49000, `cell exceeded 49k: ${c.length}`);
-    });
-    // Also exercise the 49,000-char safety net in ftTabRow_'s final map directly by temporarily stubbing truncate_
-    const origTrunc = bot.truncate_;
-    try {
-      bot.truncate_ = s => String(s);
-      const uncapped = bot.ftTabRow_({ row: { alert_id: 'ED-CAP', headline: '=' + 'Z'.repeat(60000) } });
-      eq([uncapped[5].startsWith("'="), uncapped[5].length], [true, 49000]);
-    } finally {
-      bot.truncate_ = origTrunc;
+    // 1. Every bar row has strict dropdown validation (allowInvalid === false) and seed value on setup()
+    for (const s of specs) {
+      eq([sh.cell(s.row, 1), sh.cell(s.row, 2), sh.validations[`${s.row},2`].values, sh.validations[`${s.row},2`].allowInvalid],
+        [s.label, s.seedText, s.choices, false], `row ${s.row}`);
+      assert.match(sh.cell(s.row, 3), /^✓ /, `C${s.row} seed note`);
     }
+    eq(t.bot.ftBarsFor_(t.bot.readControl_(sh).ftBars).values, { about: 0.10, noise: 0.90, conf: 0.80, watch: 0.80, accounts: 3 });
 
-    // 3. Guardrail 4: Row trimming (FT_MAX_ROWS_ = 5000, FT_TRIM_SLACK_ = 500) preserves analyst Rating edits & validation alignment
-    const trimEnv = makeFastTriageE2e(() => [], () => ({ code: 200, body: FX.probe.six_questions_doc_input.response.body }));
-    const { t } = trimEnv;
-    const mkRow = i => bot.ftTabRow_({
-      row: { alert_id: `ED-TRIM-${i}`, signal_type: 'CLUSTER_EMERGENCE', unique_low_tier_authors: 5, platforms_csv: 'X', headline: `Story ${i}`, cluster_id: `c_${i}` },
-      dec: { g: 0.9, r: 0.8, i: 0.7, n: 0.1, c: 'Product - Other/general criticism', cp: 0.5, p0: 0.1, s: 2.0, l: 2, sc: 0.7 },
-      did: 'answered (recording only)',
-      review: { disposition: 'monitor', basis: 'early_detection', confidence: 0.85, severity: 'medium' },
-      card: `QA-${i}`,
-      kind: 'r',
-    });
+    // 2. Editing each bar cell updates ftBars on the next run and updates C41:C45
+    sh.getRange(41, 2).setValue('0.15');
+    sh.getRange(42, 2).setValue('0.85');
+    sh.getRange(43, 2).setValue('0.75');
+    sh.getRange(44, 2).setValue('0.70');
+    sh.getRange(45, 2).setValue('4');
+    t.poll();
+    eq(t.bot.ftBarsFor_(t.bot.readControl_(sh).ftBars).values, { about: 0.15, noise: 0.85, conf: 0.75, watch: 0.70, accounts: 4 });
+    assert.match(sh.cell(41, 3), /^✓ Hold-back \(row 40\) drops a low-severity signal when about_google is at or below 0\.15/);
+    assert.match(sh.cell(45, 3), /^✓ Early watch \(row 39\) looks at stories below the promotion bar with at least 4 distinct accounts/);
 
-    // Seed 5,500 rows (4 header rows + 5,500 data rows = 5,504 total, right at FT_MAX_ROWS_ + FT_TRIM_SLACK_ without trimming yet)
-    const initialBatch = Array.from({ length: 5500 }, (_, idx) => mkRow(idx + 1));
-    eq(t.bot.ftTabAppend_(initialBatch), { added: 5500, problem: '' });
-    const ftSh = t.sheet().getSheetByName('Fast triage');
-    eq([ftSh.getLastRow(), ftSh.frozenRows, ftSh.hidden], [5504, 4, [23]]);
-    eq([ftSh.protections.length, ftSh.protections[0].warningOnly], [1, true]);
-    eq(ftSh.validations['5,22'].values, ['Useful', 'Noise']);
-
-    // Analysts enter ratings on specific rows:
-    // - data row #1 (sheet row 5, ED-TRIM-1): 'Noise' (will be trimmed off when 502 oldest rows go)
-    // - data row #503 (sheet row 507, ED-TRIM-503): 'Useful' (becomes sheet row 5 — the new first retained row!)
-    // - data row #2500 (sheet row 2504, ED-TRIM-2500): 'Noise' (becomes sheet row 2002!)
-    // - data row #5500 (sheet row 5504, ED-TRIM-5500): 'Useful' (becomes sheet row 5002!)
-    ftSh.getRange(5, 22).setValue('Noise');
-    ftSh.getRange(507, 22).setValue('Useful');
-    ftSh.getRange(2504, 22).setValue('Noise');
-    ftSh.getRange(5504, 22).setValue('Useful');
-
-    // Spy on getRange to verify exact validation & clearDataValidations range calls during trim
-    const rangeOps = [];
-    const origGetRange = ftSh.getRange.bind(ftSh);
-    ftSh.getRange = (r, c, nr, nc) => {
-      const rng = origGetRange(r, c, nr, nc);
-      const origSetDv = rng.setDataValidation.bind(rng);
-      rng.setDataValidation = rule => {
-        rangeOps.push({ op: 'setDataValidation', r, c, nr: nr || 1, nc: nc || 1, values: rule && rule.values });
-        return origSetDv(rule);
-      };
-      rng.clearDataValidations = () => {
-        rangeOps.push({ op: 'clearDataValidations', r, c, nr: nr || 1, nc: nc || 1 });
-        return rng;
-      };
-      return rng;
-    };
-
-    // Append 2 more rows (total 5,502 > 5,500) -> trims oldest 502 rows (ED-TRIM-1 .. ED-TRIM-502), keeping newest 5,000 (ED-TRIM-503 .. ED-TRIM-5502)
-    eq(t.bot.ftTabAppend_([mkRow(5501), mkRow(5502)]), { added: 2, problem: '' });
-    eq(ftSh.getLastRow(), 5004); // 4 header rows + 5,000 retained rows
-
-    // Verify retained rows preserved their exact analyst Rating values and stayed aligned with Signal, Headline, Card, and Key!
-    eq([ftSh.cell(5, 2), ftSh.cell(5, 6), ftSh.cell(5, 21), ftSh.cell(5, 22), JSON.parse(ftSh.cell(5, 23)).id],
-      ['ED-TRIM-503', 'Story 503', 'QA-503', 'Useful', 'ED-TRIM-503']);
-    eq([ftSh.cell(2002, 2), ftSh.cell(2002, 21), ftSh.cell(2002, 22)], ['ED-TRIM-2500', 'QA-2500', 'Noise']);
-    eq([ftSh.cell(5002, 2), ftSh.cell(5002, 21), ftSh.cell(5002, 22)], ['ED-TRIM-5500', 'QA-5500', 'Useful']);
-    eq([ftSh.cell(5003, 2), ftSh.cell(5003, 22)], ['ED-TRIM-5501', '']);
-    eq([ftSh.cell(5004, 2), ftSh.cell(5004, 22)], ['ED-TRIM-5502', '']);
-
-    // Verify Rating dropdown validation was re-aligned on retained rows (5..5004, col 22) and cleared on trimmed tail (5005..5506, col 22)
-    assert.ok(rangeOps.some(o => o.op === 'setDataValidation' && o.r === 5 && o.c === 22 && o.nr === 5000 && o.nc === 1 &&
-      JSON.stringify(o.values) === JSON.stringify(['Useful', 'Noise'])), 're-applied Useful/Noise validation on all 5000 retained rows');
-    assert.ok(rangeOps.some(o => o.op === 'clearDataValidations' && o.r === 5005 && o.c === 22 && o.nr === 502 && o.nc === 1),
-      'cleared orphan validations on the 502 trimmed trailing rows');
-
-    // Appending one more row after trim lands cleanly at row 5005 with Useful/Noise validation without disturbing row 5..5004 ratings
-    rangeOps.length = 0;
-    eq(t.bot.ftTabAppend_([mkRow(5503)]), { added: 1, problem: '' });
-    eq([ftSh.getLastRow(), ftSh.cell(5005, 2), ftSh.cell(5, 22), ftSh.cell(5002, 22)], [5005, 'ED-TRIM-5503', 'Useful', 'Useful']);
-    eq(rangeOps, [{ op: 'setDataValidation', r: 5005, c: 22, nr: 1, nc: 1, values: ['Useful', 'Noise'] }]);
+    // 3. Blank or invalid value in any bar cell never turns a feature off: uses its seed and states so in Column C
+    sh.getRange(41, 2).setValue('');
+    sh.getRange(42, 2).setValue('not-a-number');
+    sh.getRange(43, 2).setValue('2.50'); // out of (0, 1) range
+    sh.getRange(44, 2).setValue('-0.1');
+    sh.getRange(45, 2).setValue('9');    // out of [2, 4] range
+    t.poll();
+    eq(t.bot.ftBarsFor_(t.bot.readControl_(sh).ftBars).values, { about: 0.10, noise: 0.90, conf: 0.80, watch: 0.80, accounts: 3 });
+    assert.match(sh.cell(41, 3), /^Blank: using seed 0\.10 /);
+    assert.match(sh.cell(42, 3), /^⚠️ Couldn't use "not-a-number": using seed 0\.90 /);
+    assert.match(sh.cell(43, 3), /^⚠️ Couldn't use "2\.50": using seed 0\.80 /);
+    assert.match(sh.cell(44, 3), /^⚠️ Couldn't use "-0\.1": using seed 0\.80 /);
+    assert.match(sh.cell(45, 3), /^⚠️ Couldn't use "9": using seed 3 /);
   });
 
-  test('fast triage (5E): review-side recording & log lines, OFF-switch zero-touch, foreign-tab & Sheet-error isolation, and edDecide_ invariance', () => {
-    const sigCard = FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-e9dddc0be913-202611071746');  // Android CERT-In -> monitor card
-    const sigDismiss = FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-abe6decf9a2a-202611121446'); // routine chatter -> dismiss
-
-    // 1. Guardrail 3 (OFF-switch zero-touch): with Rows 38-40 OFF, zero Fast triage tab creation/reads/writes and zero fast-triage review logs
-    const offEnv = makeFastTriageE2e(() => [sigCard, sigDismiss], () => {
-      throw new Error('Decisions API must not be called when Rows 38-40 are OFF');
+  test('early_wave BigQuery writer (Section 5 & 6.4): row 46 defaults OFF (0 writes), batches <=1 insertAll per table per check with deterministic insertIds and zero PII, fails open with 15m cooldown, and codebase has zero record-only paths', () => {
+    const EWS_COLS = [
+      ['kind'], ['lane'], ['mid'], ['url'], ['platform'], ['author'],
+      ['audience', 'INTEGER'], ['eng', 'INTEGER'], ['posted_ms', 'INTEGER'], ['seen_ms', 'INTEGER'],
+      ['txt'], ['topic'], ['chash'], ['sig'], ['risk'], ['brand', 'BOOLEAN'],
+    ];
+    const makePost = (i, nowMs) => ({
+      kind: 'post',
+      lane: 'sonar',
+      mid: `M-BQ-${i}`,
+      url: `https://x.com/sec_acct_${i}/status/218000000000000000${i}?utm_source=share`,
+      platform: 'twitter',
+      author: `@sec_acct_${i}`,
+      audience: 500,
+      eng: 20,
+      posted_ms: nowMs - (8 - i) * MIN,
+      seen_ms: nowMs - (7 - i) * MIN,
+      txt: 'Chrome update causes password manager sync failure across enterprise profiles',
+      topic: 'Chrome',
+      chash: `ch_bq_${i}`,
+      sig: `sig_bq_${i}`,
+      risk: 'widespread_outage_bug',
+      brand: true,
     });
-    const ssOff = offEnv.t.sheet();
-    let ftSheetTouches = 0;
-    const origInsert = ssOff.insertSheet.bind(ssOff);
-    ssOff.insertSheet = (name, idx) => {
-      if (name === 'Fast triage') ftSheetTouches++;
-      return origInsert(name, idx);
-    };
-    const origByName = ssOff.getSheetByName.bind(ssOff);
-    ssOff.getSheetByName = name => {
-      if (name === 'Fast triage') ftSheetTouches++;
-      return origByName(name);
-    };
-    offEnv.t.control().getRange(19, 2).setValue('ON');
-    offEnv.t.poll();
-    eq([ftSheetTouches, origByName('Fast triage'), edCardsOf(offEnv.t).length], [0, null, 2]);
-    assert.ok(!offEnv.t.g.logs.some(l => l.includes('fast triage')), 'zero fast-triage log lines when Row 38 is OFF');
 
-    // 2. Row 38 ON (recording-only): records both carded and dismissed reviews alongside Decisions answers + Alert log ID + 1 log line each
-    const recEnv = makeFastTriageE2e(() => [sigCard, sigDismiss], payload => matchRecordedResponse(recEnv.t.bot, payload));
-    const origVertex = recEnv.t.g.vertex.earlyDetection;
-    recEnv.t.g.vertex.earlyDetection = payload => {
-      const base = origVertex(payload);
-      const txt = payload.contents[0].parts.map(p => p.text || '').join('\n');
-      if (txt.includes(sigDismiss.alert_id)) {
-        base.early_detection_call = {
-          disposition: 'dismiss',
-          severity: 'low',
-          confidence: 0.91,
-          reason: 'Routine low-tier discussion with no emerging brand risk',
-          build_up_signals: 'None',
-          watch_for: 'None',
-        };
-      }
-      return base;
-    };
-    recEnv.t.control().getRange(19, 2).setValue('ON');
-    recEnv.t.control().getRange(38, 2).setValue('ON');
-    recEnv.t.poll();
-
-    eq(edCardsOf(recEnv.t).length, 1); // sigCard posted a card; sigDismiss was dismissed (no card)
-    const alertLogSh = recEnv.t.sheet().getSheetByName('Alert log');
-    const qaId = alertLogSh.cell(2, 1);
-    assert.match(String(qaId), /^QA-\d+$/);
-
-    const ftTab = recEnv.t.sheet().getSheetByName('Fast triage');
-    assert.ok(ftTab, 'Fast triage tab created on review recording');
-    eq([ftTab.cell(1, 1), ftTab.getLastRow()], [recEnv.t.bot.ev('FT_TITLE_'), 6]); // header row 4 + 2 reviewed rows (5 & 6)
-    eq(ftTab.rows[3], recEnv.t.bot.ev('FT_HEADER_'));
-
-    // Row 38 alone preserves author-count review order (sigDismiss has more authors -> row 5; sigCard -> row 6)
-    eq([ftTab.cell(5, 2), ftTab.cell(5, 17), ftTab.cell(5, 18), ftTab.cell(5, 19), ftTab.cell(5, 20), ftTab.cell(5, 21)],
-      [sigDismiss.alert_id, 'answered (recording only)', 'dismiss', 0.91, 'low', '']);
-    eq([ftTab.cell(6, 2), ftTab.cell(6, 3), ftTab.cell(6, 17), ftTab.cell(6, 18), ftTab.cell(6, 19), ftTab.cell(6, 20), ftTab.cell(6, 21), ftTab.cell(6, 22)],
-      [sigCard.alert_id, 'Cluster', 'answered (recording only)', 'monitor', 0.88, 'medium', qaId, '']);
-    assert.strictEqual(typeof ftTab.cell(6, 7), 'number'); // About Google p
-    assert.strictEqual(typeof ftTab.cell(6, 14), 'number'); // Severity score
-
-    // One single-line calibration log entry per reviewed signal with Decisions answers
-    const reviewLogs = recEnv.t.g.logs.filter(l => l.startsWith('fast triage and review: '));
-    eq(reviewLogs.length, 2);
-    assert.match(reviewLogs[0], /fast triage and review: ED-CLU-CLU-abe6decf9a2a-202611121446 · about Google .* · review: dismiss \(early_detection, 0\.91 sure, low\)/);
-    assert.match(reviewLogs[1], /fast triage and review: ED-CLU-CLU-e9dddc0be913-202611071746 · about Google .* · review: monitor \(early_detection, 0\.88 sure, medium\)/);
-
-    // 3. Guardrail 3 (foreign-tab refusal): user-created 'Fast triage' tab is NEVER overwritten or cleared, and review/cards proceed normally
-    const foreignEnv = makeFastTriageE2e(() => [sigCard], payload => matchRecordedResponse(foreignEnv.t.bot, payload));
-    const foreignSh = foreignEnv.t.sheet().insertSheet('Fast triage');
-    foreignSh.getRange(1, 1, 2, 2).setValues([['Analyst scratch notes', 'Do not touch'], ['Row 2', 'Keep']]);
-    const snapshotBefore = JSON.stringify(foreignSh.rows);
-    let foreignWrites = 0;
-    const origForeignRange = foreignSh.getRange.bind(foreignSh);
-    foreignSh.getRange = (r, c, nr, nc) => {
-      const rng = origForeignRange(r, c, nr, nc);
-      ['setValue', 'setValues', 'clearContent', 'setDataValidation'].forEach(m => {
-        rng[m] = () => { foreignWrites++; throw new Error(`foreign tab must never call ${m}`); };
+    function makeBqWriterEnv() {
+      const t = e2e();
+      t.chat.addSpace(MIRROR, MIRROR_NAME);
+      t.bot.setup();
+      t.set('B25', ROOM);
+      t.set('B30', 'tester@testing.test');
+      t.chat.addDm('tester@testing.test', 'spaces/DMSTANDIN');
+      t.bot.startMirror(MIRROR_NAME);
+      t.control().getRange(29, 2).setValue('ON');
+      let currentPosts = [1, 2, 3, 4, 5].map(i => makePost(i, t.g.clock.now));
+      const inserts = [];
+      let failTable = '';
+      const origFetch = t.g.services.UrlFetchApp.fetch;
+      t.g.services.UrlFetchApp.fetch = (url, params) => {
+        const u = String(url);
+        if (u.includes('secretmanager.googleapis.com/')) {
+          return {
+            getResponseCode: () => 200,
+            getContentText: () => JSON.stringify({ payload: { data: Buffer.from(TEST_KEY, 'utf8').toString('base64') } }),
+            getHeaders: () => ({}),
+          };
+        }
+        if (u.includes('/decisions')) {
+          return {
+            getResponseCode: () => 200,
+            getContentText: () => JSON.stringify(FX.signal_responses['ED-CLU-CLU-e9dddc0be913-202611071746']),
+            getHeaders: () => ({}),
+          };
+        }
+        if (u.includes('/insertAll')) {
+          const m = u.match(/\/datasets\/([^/]+)\/tables\/([^/]+)\/insertAll/);
+          const dataset = m ? m[1] : '';
+          const table = m ? m[2] : '';
+          const body = JSON.parse((params && params.payload) || '{}');
+          inserts.push({ url: u, dataset, table, rows: body.rows || [] });
+          if (failTable && table === failTable) {
+            return {
+              getResponseCode: () => 503,
+              getHeaders: () => ({}),
+              getContentText: () => JSON.stringify({ error: { message: 'Backend unavailable' } }),
+            };
+          }
+          return {
+            getResponseCode: () => 200,
+            getHeaders: () => ({}),
+            getContentText: () => JSON.stringify({ kind: 'bigquery#tableDataInsertAllResponse' }),
+          };
+        }
+        if (u.startsWith('https://bigquery.googleapis.com/')) {
+          const body = JSON.parse((params && params.payload) || '{}');
+          const loc = body.location || 'US';
+          const isEws = /-- ews:/.test(body.query || '');
+          const rows = isEws && loc === 'us-central1' ? currentPosts : [];
+          const cols = isEws ? EWS_COLS : [['url']];
+          return {
+            getResponseCode: () => 200,
+            getHeaders: () => ({}),
+            getContentText: () => JSON.stringify({
+              jobComplete: true,
+              jobReference: { projectId: 'brand-social-central-data', jobId: `j_${loc}_${t.g.clock.now}`, location: loc },
+              schema: { fields: cols.map(c => ({ name: c[0], type: c[1] || 'STRING' })) },
+              rows: rows.map(r => ({ f: cols.map(c => ({ v: r[c[0]] === undefined || r[c[0]] === null ? null : String(r[c[0]]) })) })),
+            }),
+          };
+        }
+        return origFetch(url, params);
+      };
+      t.g.vertex.earlyDetection = () => ({
+        summary: 'Enterprise profiles report Chrome password sync bug.',
+        issue_name: 'Chrome password sync bug',
+        emerging_narrative: 'Five accounts report Chrome sync failure.',
+        early_detection_call: {
+          disposition: 'monitor',
+          severity: 'medium',
+          confidence: 0.88,
+          reason: 'Multi-account cluster on Chrome sync',
+          build_up_signals: '5 accounts on X',
+          watch_for: 'Broader enterprise reports',
+        },
+        temp_check_draft: { recommended: false, query_suggestion: '', scope_note: '' },
+        slrr: {
+          is_slrr: false,
+          confidence: 0.85,
+          exposure_tag: 'Product - Widespread product outage or bug',
+          product: 'Chrome',
+          other_products: [],
+          sensitive_topics: [],
+          location: 'US',
+        },
+        known_issue: { matches: false, confidence: 0.9 },
+        tns: { needed: false, reason: '' },
+        recommended_groups: [],
+        story_title: 'Chrome password sync failure reports',
+        story: 'Five accounts reported Chrome password sync issues on [the first post](P1).',
+        web_context: 'No external coverage.',
+        next_steps: ['Monitor volume.'],
       });
-      return rng;
-    };
-    foreignEnv.t.control().getRange(19, 2).setValue('ON');
-    foreignEnv.t.control().getRange(38, 2).setValue('ON');
-    foreignEnv.t.poll();
+      return { t, inserts, setFailTable: tbl => { failTable = tbl; }, setPosts: p => { currentPosts = p; } };
+    }
 
-    eq([foreignWrites, JSON.stringify(foreignSh.rows), edCardsOf(foreignEnv.t).length], [0, snapshotBefore, 1]);
-    assert.ok(foreignEnv.t.g.logs.some(l => l.includes('fast triage: not recording: a tab named "Fast triage" exists that the bot didn\'t make')),
-      'foreign-tab refusal logged cleanly during review drain');
+    // 1. With row 46 OFF (default): zero insertAll requests are made even when rows 19, 38, 39, 40 are ON
+    const offEnv = makeBqWriterEnv();
+    offEnv.t.control().getRange(19, 2).setValue('ON');
+    offEnv.t.control().getRange(38, 2).setValue('ON');
+    offEnv.t.control().getRange(39, 2).setValue('ON');
+    offEnv.t.control().getRange(40, 2).setValue('ON');
+    eq(offEnv.t.control().cell(46, 2), 'OFF');
+    offEnv.t.poll();
+    eq([offEnv.inserts.length, edCardsOf(offEnv.t).length], [0, 1]);
 
-    // 4. Guardrail 3 (Sheet write failure isolation): throwing inside Fast triage setValues logs cleanly and never blocks edReviewAndPost_ or cards
-    const errEnv = makeFastTriageE2e(() => [sigCard], payload => matchRecordedResponse(errEnv.t.bot, payload));
-    const botTab = errEnv.t.bot.ftTab_(errEnv.t.sheet(), true).sh;
-    const origBotRange = botTab.getRange.bind(botTab);
-    botTab.getRange = (r, c, nr, nc) => {
-      const rng = origBotRange(r, c, nr, nc);
-      if (r >= 5) {
-        rng.setValues = () => { throw new Error('Spreadsheets service transient 503'); };
+    // 2. With row 46 ON: writes batched rows to story_snapshots, story_posts, signals, signal_events, and triage_verdicts
+    //    with deterministic insertIds, <=1 request per table per phase, zero PII, and never sets BQ_WRITEBACK_EVER_PROP_
+    const onEnv = makeBqWriterEnv();
+    onEnv.t.control().getRange(19, 2).setValue('ON');
+    onEnv.t.control().getRange(38, 2).setValue('ON');
+    onEnv.t.control().getRange(39, 2).setValue('ON');
+    onEnv.t.control().getRange(40, 2).setValue('ON');
+    onEnv.t.control().getRange(46, 2).setValue('ON');
+    onEnv.t.poll();
+
+    eq(edCardsOf(onEnv.t).length, 1);
+    eq(onEnv.t.g.props.has('BQ_WRITEBACK_EVER_ON'), false, 'early_wave writes never touch slrr.slrr_alerts write-back state');
+    const tablesWritten = onEnv.inserts.map(x => `${x.dataset}.${x.table}`);
+    for (const tbl of ['early_wave.story_snapshots', 'early_wave.story_posts', 'early_wave.signals', 'early_wave.signal_events', 'early_wave.triage_verdicts']) {
+      assert.ok(tablesWritten.includes(tbl), `expected write to ${tbl}, got ${JSON.stringify(tablesWritten)}`);
+    }
+    // Every insertAll call targets only early_wave.<tableName>, has non-empty deterministic insertIds, and contains zero emails or handles
+    for (const call of onEnv.inserts) {
+      eq(call.dataset, 'early_wave');
+      assert.ok(call.rows.length >= 1, call.table);
+      for (const r of call.rows) {
+        assert.ok(typeof r.insertId === 'string' && r.insertId.length >= 5, `${call.table} insertId`);
+        const jsonStr = JSON.stringify(r.json);
+        assert.ok(!/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}/.test(jsonStr), `${call.table}: email leaked`);
+        assert.ok(!/@sec_acct_/.test(jsonStr), `${call.table}: raw @handle leaked`);
+        assert.ok(!/utm_source=/.test(jsonStr), `${call.table}: tracking param leaked`);
       }
-      return rng;
-    };
-    errEnv.t.control().getRange(19, 2).setValue('ON');
-    errEnv.t.control().getRange(38, 2).setValue('ON');
-    errEnv.t.poll();
+    }
+    // Deterministic insertId check on identical inputs
+    const b = onEnv.t.bot;
+    const snap1 = b.ewBqSnapshotRow_({ cluster_id: 'clu_1', snapshot_at: '2026-11-14T20:00:00.000Z', author_count: 5 });
+    const snap2 = b.ewBqSnapshotRow_({ cluster_id: 'clu_1', snapshot_at: '2026-11-14T20:00:00.000Z', author_count: 5 });
+    eq(snap1.insertId, snap2.insertId);
+    assert.match(onEnv.t.control().cell(46, 3), /rows written today/);
 
-    eq(edCardsOf(errEnv.t).length, 1, 'card delivery succeeds despite Sheet error on Fast triage tab');
-    assert.ok(errEnv.t.g.logs.some(l => l.includes('fast triage: the Fast triage tab couldn\'t be written')),
-      'Sheet write failure logged cleanly');
+    // 3. Fail-open on BigQuery error: logs table, reason, and dropped row count, sets 15m pause in C46, and cards still post
+    const failEnv = makeBqWriterEnv();
+    failEnv.setFailTable('signals');
+    failEnv.t.control().getRange(19, 2).setValue('ON');
+    failEnv.t.control().getRange(46, 2).setValue('ON');
+    failEnv.t.poll();
+    eq(edCardsOf(failEnv.t).length, 1, 'card still posted when early_wave BigQuery write fails');
+    assert.match(failEnv.t.g.logs.join('\n'), /early wave BigQuery: couldn't write \d+ row\(s\) to early_wave\.signals \(dropped\): .*HTTP 503/);
+    assert.match(failEnv.t.control().cell(46, 3), /paused until .* \(signals: .*HTTP 503/);
 
-    // 5. Section 5E rule: edDecide_ and its three 0.8 confidence bars + 0.92 evergreen override are completely unchanged & ignore row.dec
-    const b = recEnv.t.bot;
-    eq(
-      [b.ev('ED_ESCALATE_MIN_CONFIDENCE_'), b.ev('ED_SLRR_TAG_MIN_CONFIDENCE_'), b.ev('ED_KNOWN_MIN_CONFIDENCE_')],
-      [0.8, 0.8, 0.8]
-    );
+    // 4. Section 5E rule preserved: edDecide_ and its three 0.8 confidence bars + 0.92 evergreen override are completely unchanged & ignore row.dec
+    const sigCard = FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-e9dddc0be913-202611071746');
+    eq([b.ev('ED_ESCALATE_MIN_CONFIDENCE_'), b.ev('ED_SLRR_TAG_MIN_CONFIDENCE_'), b.ev('ED_KNOWN_MIN_CONFIDENCE_')], [0.8, 0.8, 0.8]);
     const fakeDecCtxOff = { now: () => NOW, settings: { react: false }, switches: { fastTriage: false, fastTriageRank: false, fastTriageHold: false } };
     const fakeDecCtxOn = { now: () => NOW, settings: { react: false }, switches: { fastTriage: true, fastTriageRank: true, fastTriageHold: true } };
     const baseParsed = {
@@ -1650,51 +1606,27 @@ module.exports = function (H) {
     };
     const rev91 = { disposition: 'escalate', confidence: 0.91, severity: 'high', reason: 'Below 0.92 evergreen override', slrr: { is: false, confidence: 0.5, topics: [], others: [] } };
     const rev92 = { disposition: 'escalate', confidence: 0.92, severity: 'high', reason: 'Meets 0.92 evergreen override', slrr: { is: true, priority: 'P1', confidence: 0.9, tag: 'Product - Privacy & security concerns', product: 'Android', topics: [], others: [] } };
-    const d91Off = b.edDecide_(fakeDecCtxOff, baseParsed, rev91, {}, [], NOW);
-    const d91On = b.edDecide_(fakeDecCtxOn, parsedWithNoisyDec, rev91, {}, [], NOW);
-    eq([d91Off.disposition, d91Off.basis, d91On.disposition, d91On.basis], ['dismiss', 'evergreen', 'dismiss', 'evergreen']);
-    const d92Off = b.edDecide_(fakeDecCtxOff, baseParsed, rev92, { fields: {} }, [], NOW);
-    const d92On = b.edDecide_(fakeDecCtxOn, parsedWithNoisyDec, rev92, { fields: {} }, [], NOW);
-    eq([d92Off.disposition, d92Off.basis, d92On.disposition, d92On.basis], ['escalate', 'early_detection', 'escalate', 'early_detection']);
+    eq([b.edDecide_(fakeDecCtxOff, baseParsed, rev91, {}, [], NOW).disposition, b.edDecide_(fakeDecCtxOn, parsedWithNoisyDec, rev91, {}, [], NOW).disposition], ['dismiss', 'dismiss']);
+    eq([b.edDecide_(fakeDecCtxOff, baseParsed, rev92, { fields: {} }, [], NOW).disposition, b.edDecide_(fakeDecCtxOn, parsedWithNoisyDec, rev92, { fields: {} }, [], NOW).disposition], ['escalate', 'escalate']);
 
-    // Verify ftCell_ checks formula prefixes after stripping control chars + leading whitespace, and ftTabAppend_ re-escapes
-    // strings whose leading apostrophe Google Sheets stripped on getValues() during row trimming!
-    eq(b.ftCell_('   \t\r\n  =IMPORTXML("https://x.test","//a")', 300), '\'=IMPORTXML("https://x.test","//a")');
-    eq(b.ftCell_('   \t  +cmd', 300), '\'+cmd');
-    eq(b.ftCell_('   \n  PlainControl', 300), '\'PlainControl');
-    eq(b.ftCell_('\'=ALREADY_ESCAPED', 300), '\'=ALREADY_ESCAPED'); // never doubles a leading apostrophe
-
-    const stripEnv = makeFastTriageE2e(() => [], () => ({ code: 200, body: FX.probe.six_questions_doc_input.response.body }));
-    const mkStripRow = (i, h) => b.ftTabRow_({
-      row: { alert_id: `ED-S-${i}`, signal_type: 'CLUSTER_EMERGENCE', unique_low_tier_authors: 5, platforms_csv: 'X', headline: h || `Safe ${i}`, cluster_id: `cs_${i}` },
-      dec: { g: 0.9, r: 0.8, i: 0.7, n: 0.1, c: i === 503 ? '@cat_formula' : 'Product - Other/general criticism', cp: 0.5, p0: 0.1, s: 2.0, l: 2, sc: 0.7 },
-      did: 'answered (recording only)',
-      review: { disposition: 'monitor', basis: 'early_detection', confidence: 0.85, severity: 'medium' },
-      card: `QA-S${i}`,
-      kind: 'r',
-    });
-    const stripRows = Array.from({ length: 5500 }, (_, idx) => mkStripRow(idx + 1, idx + 1 === 503 ? '=SUM(A1:A2)' : ''));
-    stripEnv.t.bot.ftTabAppend_(stripRows);
-    const stripSh = stripEnv.t.sheet().getSheetByName('Fast triage');
-    // FakeSheet's store(v) (matching real Google Sheets) stripped the leading `'` on write, so getValues() reads back raw '=SUM(A1:A2)' & '@cat_formula'
-    eq([stripSh.cell(507, 6), stripSh.cell(507, 11)], ['=SUM(A1:A2)', '@cat_formula']);
-    const trimSetCalls = [];
-    const origStripRange = stripSh.getRange.bind(stripSh);
-    stripSh.getRange = (r, c, nr, nc) => {
-      const rng = origStripRange(r, c, nr, nc);
-      const origSv = rng.setValues.bind(rng);
-      rng.setValues = values => {
-        trimSetCalls.push({ r, c, nr: nr || 1, firstRow: values[0] && values[0].slice() });
-        return origSv(values);
-      };
-      return rng;
-    };
-    stripEnv.t.bot.ftTabAppend_([mkStripRow(5501), mkStripRow(5502)]);
-    // Verify the trim rewrite call (r=5, nr=5000) re-prefixed `'` on both Headline and Category before calling setValues!
-    const trimWrite = trimSetCalls.find(w => w.r === 5 && w.nr === 5000);
-    assert.ok(trimWrite, 'trim rewrite setValues(5, 1, 5000, 23) executed');
-    eq([trimWrite.firstRow[1], trimWrite.firstRow[5], trimWrite.firstRow[10]], ['ED-S-503', '\'=SUM(A1:A2)', '\'@cat_formula']);
-    eq([stripSh.cell(5, 2), stripSh.cell(5, 6), stripSh.cell(5, 11)], ['ED-S-503', '=SUM(A1:A2)', '@cat_formula']);
+    // 5. Section 6.4 guard: fails if ftHoldReady_, ewsWatchReady_, or Fast triage tab exist anywhere in .gs files,
+    //    or if FastTriage.gs, Decisions.gs, or the Control text for rows 38-46 describe a retired, record-only, observe-only, or dry-run mode
+    const dir = path.join(__dirname, '..');
+    const gsFiles = fs.readdirSync(dir).filter(f => f.endsWith('.gs'));
+    for (const file of gsFiles) {
+      const src = fs.readFileSync(path.join(dir, file), 'utf8');
+      assert.ok(!/\b(?:ftHoldReady_|ewsWatchReady_|ftTabAppend_|ftTabRow_|ftTab_|isFtTab_|FT_TAB_)\b/.test(src), `${file} still references removed symbol`);
+    }
+    const modeRx = /\b(?:s[h]adow|record-only|recording only|observe-only|dry-run)\b/i;
+    for (const file of ['FastTriage.gs', 'Decisions.gs']) {
+      const src = fs.readFileSync(path.join(dir, file), 'utf8');
+      assert.ok(!modeRx.test(src), `${file} describes record-only mode`);
+    }
+    const sw38to46 = b.ev('CONTROL_SWITCHES_').filter(s => s.row >= 38);
+    for (const s of sw38to46) {
+      const texts = [s.label, b.switchOffText_(s), typeof s.on === 'function' ? s.on() : s.on, s.help].join(' ');
+      assert.ok(!modeRx.test(texts) && !/bars are not set/i.test(texts), `row ${s.row} Control text describes record-only mode: ${texts}`);
+    }
   });
 
   // =============================================================================================================
@@ -1748,9 +1680,9 @@ module.exports = function (H) {
     eq([summary.answered, summary.not_answered, liveEnv.decCalls(), liveEnv.secretCalls()], [5, [], 5, 1]);
     eq(summary.results.map(r => r.alert_id), SIGNAL_IDS_WITH_ANSWERS.slice(0, 4).concat([SIGNAL_IDS_WITH_ANSWERS[5]]));
     eq(summary.latency_ms, { min: 280, median: 280, max: 280 });
-    eq([summary.bars.hold_back_ready, summary.bars.early_watch_ready], [false, false]);
+    eq(summary.bars, { about: 0.10, noise: 0.90, conf: 0.80, watch: 0.80, accounts: 3 });
     summary.results.forEach(r => {
-      eq([r.ok, r.would_hold_back, r.would_raise_early], [true, 'no', false]);
+      eq([r.ok, r.hold_back, typeof r.raise_early], [true, 'no', 'boolean']);
       assert.ok(r.input_chars > 100 && typeof r.answers.s === 'number');
     });
 
