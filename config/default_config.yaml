@@ -75,7 +75,7 @@ burson_qa:
   dry_run: false                 # true = post nothing in the Burson space ("would reply" notes go under the forward)
   llm_min_confidence: 0.9        # Gemini suggestions below this are "double-check" notes for analysts, not fix requests
   llm_fix_severities: [blocking, warning]  # Gemini checks that can become fix requests: tag, product, topics + KOF, issue name, summary
-  autocorrect_min_confidence: 0.6  # the Auto-correct space (B10) only: Gemini's value is applied from this (the agentic assistant decides; below it Burson's value stays), never on the summary or a field the rules corrected
+  autocorrect_min_confidence: 0.6  # the Auto-correct space (B10) only: Gemini's value (and its existing-issue call) is applied from this (the agentic assistant decides; below it Burson's value stays), never on the summary or a field the rules decided
   autocorrect_writeup: true      # the Auto-correct space (B10) only: the review call also writes the alert's summary paragraph (web background only with web sources), for the corrected alert, its note and the Social Alert email
   check_issue_status: true       # Burson's "New" -> "Ongoing Issue" when the same issue was alerted in the last 14 days
   pending_fix_hours: 48          # an alert for the same post within 48 h of a fix request is Burson's fix

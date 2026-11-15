@@ -847,26 +847,38 @@ const LINK_FINDS_PROP_ = 'LINK_FINDS_TODAY';  // Auto-find missing links: today'
  * Only blank fields are filled. parsed.found keeps what was found for reviewAlert_: a correction analysts see, never
  * asked of Burson. Nothing found, a post the bot already alerted (in the last novelty_days), short of time
  * (BQ_LINK_MIN_LEFT_MS_) or BQ_LINK_MAX_PER_RUN_ lookups already made this run: nothing changes, and Burson is asked as
- * with the switch OFF (Never wait on Burson ON: the alert is processed without it). Never throws.
+ * with the switch OFF (Never wait on Burson ON: the alert is processed without it). A missing link that isn't filled
+ * leaves why on parsed.linkLookup, for the Auto-correct space's note (Voice.gs notFixedLine_): 'none' (the feeds had no
+ * sure match), 'alerted' (their match is a post already alerted), 'time' or 'cap' (not searched this run), 'failed'
+ * (the lookup failed, or there's none to make). Never throws.
  */
 function findMissingLink_(ctx, parsed, report) {
+  const f = (parsed && parsed.fields) || {};
+  const needUrl = isBlank_(f.post_url);
+  const why = outcome => { if (needUrl && parsed) parsed.linkLookup = outcome; };
   try {
-    const f = parsed.fields || {};
-    const needUrl = isBlank_(f.post_url);
     const needAuthor = isBlank_(f.author);
-    if ((!needUrl && !needAuthor) || typeof ctx.findLink !== 'function') return;
+    if (!needUrl && !needAuthor) return;
+    if (typeof ctx.findLink !== 'function') { why('failed'); return; }
     const what = needUrl ? (needAuthor ? 'link and author' : 'link') : 'author';
     const without = switchOn_(ctx, 'noWait') ? 'the alert is processed without it' : 'Burson is asked as usual';
     const capped = (report.link_lookups || 0) >= BQ_LINK_MAX_PER_RUN_;
     if (capped || ctx.deadline - ctx.now() < BQ_LINK_MIN_LEFT_MS_) {
       ctx.log(`auto-find missing links: ${capped ? `already ${BQ_LINK_MAX_PER_RUN_} lookups` : 'no time left'} this run, so the ` +
         `missing ${what} isn't looked up; ${without}`);
+      why(capped ? 'cap' : 'time');
       return;
     }
     report.link_lookups = (report.link_lookups || 0) + 1;
     const ident = JSON.stringify([issueNameOf_(f) || '', normHandle_(f.author), f.social_network || '', f.post_url || '']);
     let hit = null;
-    try { hit = ctx.findLink(parsed); } catch (e) { ctx.log('auto-find missing links failed: ' + ((e && e.message) || e)); }
+    let failed = false;
+    try {
+      hit = ctx.findLink(parsed);
+    } catch (e) {
+      failed = true;
+      ctx.log('auto-find missing links failed: ' + ((e && e.message) || e));
+    }
     const found = {};
     if (hit && needUrl && hit.post_url && domainOf_(hit.post_url)) found.post_url = { old: '', new: String(hit.post_url).trim() };
     if (hit && needAuthor && hit.author && String(hit.author).trim()) found.author = { old: '', new: String(hit.author).trim() };
@@ -882,6 +894,7 @@ function findMissingLink_(ctx, parsed, report) {
       delete found.author;  // it came with that post
     }
     noteLinkFind_(ident, !!(found.post_url || found.author));
+    if (!found.post_url) why(failed ? 'failed' : alerted ? 'alerted' : 'none');
     if (!found.post_url && !found.author) {
       if (!alerted) ctx.log(`auto-find missing links: no sure match for the missing ${what}; ${without}`);
       return;
@@ -896,6 +909,7 @@ function findMissingLink_(ctx, parsed, report) {
       .filter(Boolean).join(' by ')} (${found.how || 'feeds'}, ${Math.round(found.confidence * 100)}% sure)`);
   } catch (e) {
     ctx.log('auto-find missing links failed: ' + ((e && e.message) || e));
+    if (isBlank_(f.post_url)) why('failed');  // still missing (a find fills it)
   }
 }
 
@@ -983,6 +997,27 @@ function withFoundLink_(text, found) {
 }
 
 /**
+ * The auto-correct space's corrected alert with the write-up (Review.gs writeupOf_: `writeup.text`) as its summary
+ * paragraph when Burson's alert had none for rebuildAlert_ to replace (summary is no required field): its own paragraph
+ * in Burson's place for one, below the "SOCIAL ALERT" line and above the [Link] line, the first footer or the [Code]
+ * line, whichever comes first (else at the end), where parseAlert_ reads it back as the summary. `text` as it is
+ * without a write-up or when it's in it already. Pure.
+ */
+function withWriteup_(text, writeup) {
+  const s = String((writeup && writeup.text) || '').trim();
+  if (!s || String(text).indexOf(s) >= 0) return text;
+  const lines = String(text).split('\n');
+  const index = labelIndex_();
+  const bare = l => cleanLine_(l).trim().replace(RX_MD_, '').trim();
+  const head = lines.findIndex(l => RX_HEADER_.test(bare(l)));
+  const at = lines.findIndex((l, i) => i > head && (RX_FOOTER_.test(bare(l)) ||
+    (h => !!h && (h.spec.name === 'post_url' || h.spec.name === 'code'))(splitLabel_(cleanLine_(l), index))));
+  if (at < 0) return `${String(text).replace(/\s+$/, '')}\n\n${s}`;
+  lines.splice(at, 0, ...(at === 0 || !lines[at - 1].trim() ? [] : ['']), s, '');
+  return lines.join('\n');
+}
+
+/**
  * The corrected alert with the video timestamp the bot added (Review.gs rule 12: where Google comes up in the video) on a
  * "[Timestamp]: …" line, when Burson's alert had no such line to rewrite: before [Link], else before the reminder at the
  * bottom, else before [Code], else at the end. `text` as it is when the bot didn't add one or it's already there. Pure.
@@ -1063,7 +1098,10 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
   if (fwd && !inPlace) report.forwarded++;
   // A Direct BigQuery or sheet-test card in the auto-correct space was posted before its review, and the bot never edits
   // a message: what the review changed, and the write-up the email uses, go in the card's thread (inPlaceNote_)
-  if (inPlace && ctx.changeNotes) inPlaceNote_(ctx, m, review);
+  if (inPlace && ctx.changeNotes) inPlaceNote_(ctx, m, review, parsed);
+  // C10's "corrected" in the auto-correct space: the changes as the space shows them (reviewedLine_, or the in-place
+  // note: only those the email uses), counted here, before the Social Alert draft can take an existing issue's name
+  const corrected = !!ctx.sourceReadOnly && noteChanges_(review, inPlace).length > 0;
   const alertId = ctx.store.nextAlertId();
   const draft = draftPlan_(ctx, review, history);  // escalated: a Social Alert draft is due (made after Burson's side)
   const row = ctx.store.addAlert(Object.assign({
@@ -1093,7 +1131,7 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
     //    was processed (no resend needed); 👍 (receipt) right away here only when people take the action from here (drafts
     //    off). The auto-correct test space never acts in the Burson space: its corrected alert is the alert.
     if (ctx.sourceReadOnly) {
-      if (noteChanges_(review).length) report.corrected = (report.corrected || 0) + 1;  // as the space shows it (reviewedLine_)
+      if (corrected) report.corrected = (report.corrected || 0) + 1;  // as the space shows it
     } else if (sendAlertActions_(ctx, m, requested, fwd, !draftsOn_(ctx))) report.fix_requests++;
     ctx.store.updateAlert(row, { burson_done: true });
     ctx.store.markDone(m.name, 'alert', alertId);
@@ -1108,7 +1146,7 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
   //    only when people take the action from here (drafts off). The auto-correct test space never acts in the Burson
   //    space: the bot made the fixes itself, and its corrected alert is the alert.
   if (ctx.sourceReadOnly) {
-    if (noteChanges_(review).length) report.corrected = (report.corrected || 0) + 1;  // as the space shows it (reviewedLine_)
+    if (corrected) report.corrected = (report.corrected || 0) + 1;  // as the space shows it
   } else if (sendAlertActions_(ctx, m, requested, fwd, !draftsOn_(ctx))) report.fix_requests++;
   ctx.store.updateAlert(row, { burson_done: true });
 
@@ -1135,15 +1173,16 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
  * The corrected alert, in Burson's own format, posted to the analyst space with what was corrected underneath. The
  * auto-correct test space (ctx.changeNotes): the corrected alert on its own, in Burson's layout under the bot's own first
  * line ("✅ *Reviewed and corrected by the agentic assistant* · Original alert", the link to Burson's message: Voice.gs
- * reviewedLine_), with the write-up in the summary's place (Review.gs writtenFields_) and the post's own picture under
- * it when the run has time (correctedAlertPicture_), then a note in its thread listing what the agentic assistant
- * changed (changeNoteText_; none when there's nothing to say). With Never wait on Burson ON, a video timestamp the bot
- * added goes on its own "[Timestamp]" line (withTimestamp_).
+ * reviewedLine_), with the write-up in the summary's place (Review.gs writtenFields_; withWriteup_ when Burson's alert
+ * has no summary paragraph) and the post's own picture under it when the run has time (correctedAlertPicture_), then a
+ * note in its thread listing what the agentic assistant changed (changeNoteText_; none when there's nothing to say).
+ * With Never wait on Burson ON, a video timestamp the bot added goes on its own "[Timestamp]" line (withTimestamp_).
  */
 function forwardAlert_(ctx, m, parsed, review, extraNote) {
   const noWait = switchOn_(ctx, 'noWait');
   const shown = ctx.changeNotes ? writtenFields_(review) : { fields: review.fields, changed: review.changed };
-  const rebuilt = withFoundLink_(rebuildAlert_(m.text, parsed, shown.fields, shown.changed), parsed.found);
+  const remade = rebuildAlert_(m.text, parsed, shown.fields, shown.changed);
+  const rebuilt = withFoundLink_(ctx.changeNotes ? withWriteup_(remade, review.writeup) : remade, parsed.found);
   const stamped = noWait ? withTimestamp_(rebuilt, review.fields, review.changed) : rebuilt;
   const body = parsed && parsed.ingested && typeof withBqBadge_ === 'function'
     ? withBqBadge_(stamped, parsed.ingested)
@@ -1162,8 +1201,8 @@ function forwardAlert_(ctx, m, parsed, review, extraNote) {
     }
     if (!fwd) fwd = postTo_(ctx, ctx.spaces.analyst.id, text, null, 'fwd:' + m.name);
     logLeftAsIs_(ctx, review);
-    const note = [extraNote || '', changeNoteText_(review, { findLinks: switchOn_(ctx, 'autoFindLinks') })]
-      .filter(Boolean).join('\n');
+    const note = [extraNote || '', changeNoteText_(review, { findLinks: switchOn_(ctx, 'autoFindLinks'),
+      linkLookup: parsed && parsed.linkLookup })].filter(Boolean).join('\n');
     if (note && fwd && fwd.name) {
       try {
         postTo_(ctx, ctx.spaces.analyst.id, note, fwd.thread || null, 'chg:' + m.name);
@@ -1220,9 +1259,10 @@ function logLeftAsIs_(ctx, review) {
  * (changeNoteText_ with inPlace: "The agentic assistant reviewed this alert. The card above was posted before the
  * review; the email uses these corrections:"). Nothing when there's nothing to say; a note that fails is only logged.
  */
-function inPlaceNote_(ctx, m, review) {
+function inPlaceNote_(ctx, m, review, parsed) {
   logLeftAsIs_(ctx, review);
-  const note = changeNoteText_(review, { inPlace: true, findLinks: switchOn_(ctx, 'autoFindLinks') });
+  const note = changeNoteText_(review, { inPlace: true, findLinks: switchOn_(ctx, 'autoFindLinks'),
+    linkLookup: parsed && parsed.linkLookup });
   if (!note) return;
   try {
     postTo_(ctx, ctx.spaces.analyst.id, note, m.thread || null, 'chg:' + m.name);

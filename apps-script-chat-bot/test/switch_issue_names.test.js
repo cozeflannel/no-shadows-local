@@ -111,6 +111,40 @@ module.exports = H => {
     eq([otherTag.fields.issue_name, otherTag.existingIssue], [FINLAND.toLowerCase(), null]);
   });
 
+  test('one name per issue, the Auto-correct space: the agentic assistant decides on Gemini\'s existing-issue call from autocorrect_min_confidence (0.6), so the alert takes that issue\'s name and its note lists it, instead of a question nobody there is shown; Gemini\'s own wording never wins over it; the main flow keeps 0.85', () => {
+    const n = B.recentKnownIssues_(B.parseAlert_(ALERT).fields, [], ISSUES, [], NOW).find(x => x.issue_name === FINLAND).n;
+    const call = (confidence, checks) => ({ checks: checks || [], known_issue: { matches: true, issue_n: n, confidence } });
+    const ac = (llm, autoCorrect) => {
+      const parsed = B.parseAlert_(ALERT);
+      parsed.knownIssues = B.recentKnownIssues_(parsed.fields, [], ISSUES, [], NOW);
+      return B.reviewAlert_(parsed, { now: NOW, history: [], llm, autoCorrect });
+    };
+    const on = ac(call(0.7), true);
+    eq([on.fields.issue_name, on.fields.issue_status, on.existingIssue.by, on.unsure.filter(u => u.field === 'issue_name')],
+      [FINLAND, 'Ongoing Issue', 'gemini', []]);
+    eq(on.fixes.filter(x => x.field === 'issue_name').map(x => [x.old, x.new, x.source]), [[VARIANT, FINLAND, 'llm']]);
+    // with a wording suggestion the 0.6 rule would apply: the existing name still wins (one name per issue)
+    const worded = ac(call(0.7, [{ id: 'issue_name_neutral', ok: false, confidence: 0.8, finding: 'Could be more neutral',
+      proposed_value: 'Reports of Google data center tree felling in Finland' }]), true);
+    eq(worded.fields.issue_name, FINLAND);
+    // under 0.6, and in the main flow at 0.7: as before (a question for analysts, nothing changes)
+    eq(ac(call(0.7), false).unsure.filter(u => u.field === 'issue_name').map(u => [u.proposed, u.confidence]), [[FINLAND, 0.7]]);
+    eq(ac(call(0.7), false).fields.issue_name, VARIANT);
+    eq(ac(call(0.55), true).fields.issue_name, VARIANT);
+    // end to end in the Auto-correct space: the corrected alert carries the issue's name, and the note says so
+    const w = world({ drafts: STAND_IN, bq: () => ({ recent_issues: ISSUES }) });
+    const base = w.ctx;
+    w.ctx = () => Object.assign(base(), { sourceReadOnly: true, changeNotes: true });
+    w.vertex.assess = sameStory(0.7);
+    w.paste(ALERT);
+    w.run();
+    const [top] = w.analystPosts().filter(m => !m.threadReply);
+    assert.ok(top.text.includes(`\n[Name]: ${FINLAND} / Ongoing Issue\n`) && !top.text.includes(VARIANT), top.text);
+    const notes = w.analystPosts().filter(m => m.threadReply && m.thread.name === top.thread.name).map(m => m.text);
+    assert.ok(notes.some(t => t.includes(`\n- Issue name: ${VARIANT} to ${FINLAND}`)), notes.join('\n---\n'));
+    eq(w.bursonPosts(), []);
+  });
+
   test('one name per issue, the rules: what ties an alert to an existing issue (a sent email it replies on, an alerted follow-up or near-identical alert, Gemini\'s call on a listed issue, its own name), the most certain first; an alert that never went out makes no issue; names compare without case, spacing, quotes or a status suffix', () => {
     eq(B.issueNameKey_('  Criticism against \u201cAI Overviews\u201d  / Ongoing Issue '), 'criticism against ai overviews');
     eq(B.issueNameKey_(`${FINLAND} / ${NEW}`), FINLAND.toLowerCase());

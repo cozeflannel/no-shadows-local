@@ -543,7 +543,8 @@ function isBlank_(v) {
  * The first line of every alert card the bot posts as its own (never Burson's format): an emoji, the kind of alert in
  * capitals, and one detail. The four kinds share ONE card: the lines under the first keep one order (the headline, the
  * Product / Exposure Tag / Sensitive Topic / KOF lines, a blank line, What's happening, then Post (the post's first
- * words, on a card that goes without a picture of the post and quotes none of its words: ownCardPostLine_), Web, Call,
+ * words, on a card in the Auto-correct space that goes without a picture of the post and quotes none of its words:
+ * ownCardPostLine_), Web, Call,
  * Activity, Next steps and Posts where the kind has them: EarlyDetection.gs edStoryCardText_, WatchAlerts.gs
  * pwAlertText_), so a reader finds the same thing in the same place and tells the kinds apart by the first line alone:
  *   story    (siren) *EARLY DETECTION* · New story                        a story at the usual bar
@@ -567,12 +568,13 @@ function ownCardHead_(type, detail) {
   return `${t.emoji} *${t.label}*${d ? ` \u00b7 ${d}` : ''}`;
 }
 
-// The post's own words on a card of the bot's own that goes without a picture of the post (ownCardPostLine_)
+// The post's own words on a card of the bot's own that goes without a picture of the post, in the Auto-correct space
+// (ownCardPostLine_)
 const OWN_CARD_QUOTE_CHARS_ = 200;
 
 /**
- * The line an own card carries under its What's happening line when it goes without a picture of the post and quotes
- * none of the post's words elsewhere: `*Post:* "<the post's first OWN_CARD_QUOTE_CHARS_ characters>"`, on one line,
+ * The line an own card in the Auto-correct space (B10) carries under its What's happening line when it goes without a
+ * picture of the post and quotes none of the post's words elsewhere: `*Post:* "<the post's first OWN_CARD_QUOTE_CHARS_ characters>"`, on one line,
  * with no address or Chat link marks left in the words (the post's link stays the card's own, on its Posts line); ''
  * when the post has no words. The label is read back by no card's reader (WatchAlerts.gs pwAlertParse_ reads Posts,
  * EarlyDetection.gs edParseCard_ gives "post" no meaning). Pure.

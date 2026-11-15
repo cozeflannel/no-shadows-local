@@ -1,11 +1,11 @@
 // Pictures under the bot's own alerts (Post.gs alertPicture_): a watch alert (WatchAlerts.gs; in a run:
 // switch_watch_alerts.test.js), a Direct BigQuery card (BigQuery.gs bqPostCard_) and an Early Detection story card get
-// the post's own imagery only: its photo, its video's frame or cover, else what it still shows with no media of its own
-// (its preview: an X video's frame, the photo or frame of the post it quotes, an X or Bluesky link card's image, a
-// TikTok photo post's image). The picture its page shows link previews (pagePicture_: og:image / twitter:image, never a
-// site's logo, a banner or a profile picture) only when alertPicture_ is asked for it (pageOk true), which none of the
-// bot's cards does. Gemini's media and the post in its prompt don't change; Chat refusing a picture leaves the alert as
-// text, never a missed one.
+// the post's picture: its photo, its video's frame or cover, else what it still shows with no media of its own (its
+// preview: an X video's frame, the photo or frame of the post it quotes, an X or Bluesky link card's image, a TikTok
+// photo post's image), else the picture its page shows link previews (pagePicture_: og:image / twitter:image), never a
+// site's logo, a banner or a profile picture. In the Auto-correct space (B10) the cards get the post's own imagery only
+// (pageOk false): never the page's picture. Gemini's media and the post in its prompt don't change; Chat refusing a
+// picture leaves the alert as text, never a missed one.
 'use strict';
 
 module.exports = H => {
@@ -194,7 +194,34 @@ module.exports = H => {
     eq([g.fetches[0].headers['User-Agent'], g.fetches[0].headers.Accept], [UA, 'image/jpeg,image/png,image/webp,image/gif;q=0.9,*/*;q=0.5']);
   });
 
-  test('alert pictures: alertPicture_ takes the post\'s own picture, else its preview, and nothing else: never its page\'s picture for link previews (no page is read) unless asked for it (pageOk true); one that won\'t download: none, the alert goes as text; "video" for a video\'s picture or link; it never makes a picture', () => {
+  test('alert pictures: alertPicture_ takes the post\'s own picture, else its preview, else (with time for a page) its page\'s; one that won\'t download falls back to the page\'s; "video" for a video\'s picture or link', () => {
+    const g = makeGoogle(NOW);
+    const bot = loadBot(g.services, g.clock);
+    const IG = 'https://www.instagram.com/p/DfQi552mksL/';
+    const IG_IMG = 'https://scontent-iad3-2.cdninstagram.com/v/t51.29350-15/p_n.jpg';
+    g.pages.set(IG, page(og('og:image', IG_IMG)));
+    g.pages.set(IG_IMG, image(JPEG, 'image/jpeg'));
+    // the post couldn't be looked up (Instagram didn't serve its embed page): its page's picture, read as a link preview
+    const ig = bot.alertPicture_(IG, null);
+    eq([ig.img.mime, ig.img.label, ig.video, /^facebookexternalhit\//.test(g.fetches.find(f => f.url === IG).headers['User-Agent'])],
+      ['image/jpeg', 'Image from the post\'s page', false, true]);
+    // no time for a page: none, and no page is read
+    const before = g.fetches.length;
+    eq([bot.alertPicture_('https://www.facebook.com/abc/posts/1', null, false), g.fetches.length], [null, before]);
+    // the post's own picture first; one that won't download: its page's (a reel's link: a video's)
+    const FB = 'https://www.facebook.com/reel/4087902134846187';
+    const FB_THUMB = 'https://scontent.xx.fbcdn.net/v/t15.5256-10/r_n.jpg';
+    g.pages.set(FB, page(og('og:image', FB_THUMB)));
+    g.pages.set(FB_THUMB, image(PNG, 'image/png'));
+    const fb = bot.alertPicture_(FB, { platform: 'Facebook', photos: ['https://scontent.xx.fbcdn.net/v/gone.jpg'] });
+    eq([fb.img.mime, fb.video], ['image/png', true]);
+    // an X post's preview (its link card): the page is never read
+    const x = bot.alertPicture_('https://x.com/a/status/1', { platform: 'X', photos: [], video: null,
+      preview: { url: IG_IMG, label: 'Image from the link in the post', video: false } });
+    eq([x.img.label, x.video], ['Image from the link in the post', false]);
+  });
+
+  test('alert pictures: for the Auto-correct space\'s cards (pageOk false) alertPicture_ takes the post\'s own picture, else its preview, and nothing else: its page is never read for the picture link previews show; one that won\'t download: none, the alert goes as text; "video" for a video\'s picture or link; it never makes a picture', () => {
     const g = makeGoogle(NOW);
     const bot = loadBot(g.services, g.clock);
     const IG = 'https://www.instagram.com/p/DfQi552mksL/';
@@ -202,27 +229,19 @@ module.exports = H => {
     g.pages.set(IG, page(og('og:image', IG_IMG)));
     g.pages.set(IG_IMG, image(JPEG, 'image/jpeg'));
     // the post couldn't be looked up (Instagram didn't serve its embed page): no picture, and its page is never read
-    // (as the bot's cards all call it: a watch alert, a Direct BigQuery card, a story card; and with pageOk false)
-    eq([bot.alertPicture_(IG, null), bot.alertPicture_(IG, null, false), bot.alertPicture_('https://www.facebook.com/abc/posts/1', null)],
-      [null, null, null]);
+    eq([bot.alertPicture_(IG, null, false), bot.alertPicture_('https://www.facebook.com/abc/posts/1', null, false)], [null, null]);
     eq(g.fetches.filter(f => /instagram\.com|facebook\.com/.test(f.url)).length, 0);
-    // asked for it (pageOk true): its page's picture, read as a link preview
-    const ig = bot.alertPicture_(IG, null, true);
-    eq([ig.img.mime, ig.img.label, ig.video, /^facebookexternalhit\//.test(g.fetches.find(f => f.url === IG).headers['User-Agent'])],
-      ['image/jpeg', 'Image from the post\'s page', false, true]);
-    // the post's own picture first; one that won't download: none (its page isn't read), unless asked for the page's
+    // the post's own picture first; one that won't download: none (its page isn't read)
     const FB = 'https://www.facebook.com/reel/4087902134846187';
     const FB_THUMB = 'https://scontent.xx.fbcdn.net/v/t15.5256-10/r_n.jpg';
     g.pages.set(FB, page(og('og:image', FB_THUMB)));
     g.pages.set(FB_THUMB, image(PNG, 'image/png'));
     const gone = { platform: 'Facebook', photos: ['https://scontent.xx.fbcdn.net/v/gone.jpg'] };
-    eq([bot.alertPicture_(FB, gone), g.fetches.some(f => f.url === FB)], [null, false]);
-    const fb = bot.alertPicture_(FB, gone, true);
-    eq([fb.img.mime, fb.video], ['image/png', true]);
+    eq([bot.alertPicture_(FB, gone, false), g.fetches.some(f => f.url === FB)], [null, false]);
     // a photo of the post's own that downloads: that one, with its video flag from its link (a reel's: a video's)
     const OWN = 'https://scontent.xx.fbcdn.net/v/own.jpg';
     g.pages.set(OWN, image(JPEG, 'image/jpeg'));
-    const own = bot.alertPicture_(FB, { platform: 'Facebook', photos: [OWN] });
+    const own = bot.alertPicture_(FB, { platform: 'Facebook', photos: [OWN] }, false);
     eq([own.img.mime, own.img.label, own.video], ['image/jpeg', 'Image from the post', true]);
     // nothing in the bot asks an image model for one: no request to make a picture anywhere
     const src = require('fs').readdirSync(require('path').join(__dirname, '..')).filter(f => /\.gs$/.test(f))
@@ -230,7 +249,7 @@ module.exports = H => {
     assert.ok(!/models\/imagen|responseModalities|generateImages?\(|sampleCount/i.test(src), 'no image generation');
     // an X post's preview (its link card): the page is never read
     const x = bot.alertPicture_('https://x.com/a/status/1', { platform: 'X', photos: [], video: null,
-      preview: { url: IG_IMG, label: 'Image from the link in the post', video: false } });
+      preview: { url: IG_IMG, label: 'Image from the link in the post', video: false } }, false);
     eq([x.img.label, x.video], ['Image from the link in the post', false]);
   });
 
@@ -271,7 +290,7 @@ module.exports = H => {
     eq([(t.chat.uploads || []).filter(u => u.space === REAL).length, t.chat.botPosts(REAL).length], [0, 0]);
   });
 
-  test('Direct BigQuery cards (bqPostCard_): only the post\'s own imagery: a post the lookup shows no picture for (a Facebook video, a news story) goes as text, its page never read for the picture link previews show; the card is Burson\'s format as before (no line of the post\'s words), and reads back the same', () => {
+  test('Direct BigQuery cards (bqPostCard_) in the Auto-correct space (ownOnly): only the post\'s own imagery: a post the lookup shows no picture for (a Facebook video, a news story) goes as text, its page never read for the picture link previews show; the card is Burson\'s format as before (no line of the post\'s words), and reads back the same; anywhere else the page\'s picture as before', () => {
     const t = e2e();
     t.bot.setup();
     const FB = 'https://www.facebook.com/meidastouch/videos/2107937259924586';
@@ -284,10 +303,14 @@ module.exports = H => {
     const text = url => t.bot.formatBsipSonarAlertText_({ url, handle: 'MeidasTouch', network: 'Facebook', total: 900, followers: 4000,
       alert_names_json: '["Gemini App - Accuracy"]', summary: 'A Facebook video says Gemini told users the election was rigged.',
       issue_name: 'Gemini election claim', post_time: '2026-11-02 10:00:00' });
-    [[FB, 'k1'], [NEWS, 'k2']].forEach(([url, k]) => t.bot.bqPostCard_(TEST_FEED, text(url), `bq:BSIP:${k}`, url, true));
+    [[FB, 'k1'], [NEWS, 'k2']].forEach(([url, k]) => t.bot.bqPostCard_(TEST_FEED, text(url), `bq:BSIP:${k}`, url, true, true));
     const cards = t.chat.botPosts(TEST_FEED).filter(m => /Gemini election claim/.test(m.text));
     eq([cards.length, cards.map(m => m.attachment), (t.chat.uploads || []).length], [2, [undefined, undefined], 0]);
     eq(t.g.fetches.filter(f => [FB, NEWS, THUMB, NEWS_IMG].indexOf(f.url) >= 0).map(f => f.url), []);
+    // anywhere else (the Mirror, the test feed): the page's picture, as before
+    t.bot.bqPostCard_(TEST_FEED, text(FB).replace('Gemini election claim', 'Gemini vote claim'), 'bq:BSIP:k3', FB, true);
+    const main = t.chat.botPosts(TEST_FEED).filter(m => /Gemini vote claim/.test(m.text));
+    eq([main.length, (main[0].attachment || []).map(a => a.contentType), (t.chat.uploads || []).length], [1, ['image/jpeg'], 1]);
     // Burson's format exactly as built, so the review reads the same summary and fields from it
     eq(cards.map(m => m.text), [text(FB), text(NEWS)]);
     assert.ok(!/\*?Post:\*? "/.test(cards[0].text), cards[0].text);

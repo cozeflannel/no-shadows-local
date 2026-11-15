@@ -41,9 +41,10 @@
  *     feeds is its own correction (shown to analysts with how sure it is), never asked of Burson
  *   - The Auto-correct space (AutoCorrect.gs; opts.autoCorrect and parsed.writeup, Bot.gs): the agentic assistant
  *     decides, so Gemini's value is applied from settings.autocorrect_min_confidence (0.6) instead of becoming a
- *     double-check (never on a field the rules already corrected, never to blank a value, never on the summary), and
- *     the same call writes the summary paragraph (writeupPrompt_, writeupOf_: review.writeup). Everywhere else, the
- *     prompt, the schema and the review are exactly as before.
+ *     double-check (never on a field the rules already decided, never to blank a value, never on the summary), and so
+ *     is its call that the alert is an existing issue (rule 14b), and the same call writes the summary paragraph
+ *     (writeupPrompt_, writeupOf_: review.writeup). Everywhere else, the prompt, the schema and the review are exactly
+ *     as before.
  */
 
 const DAY_MS_ = 24 * 3600 * 1000;
@@ -121,7 +122,8 @@ function normalizeProposal_(field, value) {
  *   opts.llm._missed  {label, why: 'time' | 'failed'} when the review went without the post's own media (Gemini.gs
  *                   assess): a note tells analysts (mediaMissedNote_)
  *   opts.autoCorrect  the Auto-correct space (Bot.gs, ctx.changeNotes): Gemini's value is applied from
- *                   settings.autocorrect_min_confidence (rule 6), not only from llm_min_confidence
+ *                   settings.autocorrect_min_confidence (rule 6), not only from llm_min_confidence, and its existing-issue
+ *                   call too (rule 14b), not only from ISSUE_MATCH_MIN_CONFIDENCE_
  *   parsed.writeup  the Auto-correct space with settings.autocorrect_writeup (Bot.gs): Gemini writes the summary paragraph
  *                   in the same call (writeupPrompt_), kept as review.writeup when it's usable (writeupOf_)
  * Returns {fields, fixes, silentFixes, missing, unsure, notes, changed, recordKey, issueTokens, recommendedGroups,
@@ -209,12 +211,17 @@ function reviewAlert_(parsed, opts) {
     let llmClearedWrongOthers = false;
     // Gemini's value is applied at llm_min_confidence. In the Auto-correct space (opts.autoCorrect: Bot.gs, ctx.changeNotes)
     // the agentic assistant decides instead of leaving it for a reader to double-check: from autocorrect_min_confidence,
-    // except on a field the rules already corrected and on the summary (the write-up takes its place there: writeupOf_).
-    // Below that, Burson's value stays (review.unsure, the run log)
+    // except on a field the rules already decided and on the summary (the write-up takes its place there: writeupOf_).
+    // Below that, Burson's value stays (review.unsure, the run log). The rules decided a field they corrected, and KOF
+    // whenever rule 5 has a source (a KOF list Burson named, the DSD / Brandwatch or Sonar KOF lookup), also when Burson
+    // already wrote Yes and rule 5 had nothing to correct
     const decideAt = opts.autoCorrect && Number(S.autocorrect_min_confidence) > 0
       ? Math.min(Number(S.llm_min_confidence), Number(S.autocorrect_min_confidence)) : S.llm_min_confidence;
+    const kofByRule = !!((Array.isArray(f.kof_lists) && f.kof_lists.length) || bmieKof || bsipKof);
+    const ruleDecided = target => (target === 'kof' && kofByRule) ||
+      fixes.some(x => x.field === target && x.source !== 'llm');
     const applies = (target, conf, severity) => fixSeverities.includes(severity) && (conf >= S.llm_min_confidence ||
-      (conf >= decideAt && target !== 'summary' && !fixes.some(x => x.field === target && x.source !== 'llm')));
+      (conf >= decideAt && target !== 'summary' && !ruleDecided(target)));
     (opts.llm.checks || []).forEach(c => {
       const spec = GEN.llm_checks.find(x => x.id === c.id);
       if (!spec || c.ok) return;
@@ -383,13 +390,17 @@ function reviewAlert_(parsed, opts) {
   //      exact name and the Ongoing Issue status, as SLRR's tools count and group alerts by name. What ties it: the
   //      earlier alert it repeats or follows up on, an earlier alert with the same tag and a near-identical name (rule
   //      10), Gemini's call that it's one of the EXISTING ISSUES it was shown (at ISSUE_MATCH_MIN_CONFIDENCE_; a less sure
-  //      call is a question for analysts), or its own name written differently. Gemini's wording suggestions for an
-  //      existing issue's name are dropped: one name for the issue beats a better one. A repeat of the same post is left
-  //      as it is: nothing to ask of Burson for it (it's marked no action, or its update email replies on the earlier one
-  //      and takes that issue's name right before it's drafted: Drafts.gs draftRowFor_)
+  //      call is a question for analysts; in the Auto-correct space, opts.autoCorrect, the agentic assistant decides as in
+  //      rule 6: from autocorrect_min_confidence, as no one there is asked), or its own name written differently.
+  //      Gemini's wording suggestions for an existing issue's name are dropped: one name for the issue beats a better
+  //      one. A repeat of the same post is left as it is: nothing to ask of Burson for it (it's marked no action, or its
+  //      update email replies on the earlier one and takes that issue's name right before it's drafted: Drafts.gs
+  //      draftRowFor_)
   const repeatOfPost = !!(followUp && followUp.by === 'same_post');
   const kiSeen = S.check_issue_status && !repeatOfPost ? knownIssueCall_(opts.llm, parsed.knownIssues, ISSUE_MATCH_UNSURE_MIN_) : null;
-  const knownIssue = kiSeen && kiSeen.confidence >= ISSUE_MATCH_MIN_CONFIDENCE_ ? kiSeen : null;
+  const issueBar = opts.autoCorrect && Number(S.autocorrect_min_confidence) > 0
+    ? Math.min(ISSUE_MATCH_MIN_CONFIDENCE_, Number(S.autocorrect_min_confidence)) : ISSUE_MATCH_MIN_CONFIDENCE_;
+  const knownIssue = kiSeen && kiSeen.confidence >= issueBar ? kiSeen : null;
   const existingIssue = S.check_issue_status && !repeatOfPost
     ? existingIssueOf_({ fields: f, followUp, knownIssue, memoryStory: opts.memoryStory || null }, null, parsed.knownIssues, sameIssueRow) : null;
   if (existingIssue) {
@@ -563,7 +574,8 @@ function reviewAlert_(parsed, opts) {
   // The write-up (the Auto-correct space only: parsed.writeup, Bot.gs): Gemini's summary paragraph for the corrected
   // alert, its note and the Social Alert email, checked (writeupOf_: its background only when the call came back with
   // web sources). Never a change: the fields, the fixes and what the Alert log stores are as without it
-  const writeup = parsed.writeup === true && opts.llm ? writeupOf_(opts.llm.writeup, opts.llm._web) : null;
+  const writeup = parsed.writeup === true && opts.llm ? writeupOf_(opts.llm.writeup, opts.llm._web, { summary: f.summary,
+    own: [orig.summary, f.summary, orig.post_content, parsed.post && parsed.post.text].filter(Boolean).join('\n') }) : null;
 
   const out = {
     fields: f,
@@ -1337,8 +1349,22 @@ function commsKindName_(kind) {
 const WRITEUP_MAX_CHARS_ = 600;  // the whole paragraph
 const WRITEUP_MIN_CHARS_ = 40;   // a shorter one isn't a write-up: Burson's summary stays
 // What a write-up never says (the email reaches outside vendors on two aliases): how the alert was made (the tools that
-// found the post, this review, the bot). One that does is dropped, and Burson's summary stays
-const WRITEUP_HELD_RX_ = /\b(?:pendulum|brandwatch|sprinklr|big\s?query|listening (?:feeds?|tools?)|zapier|slrr|(?:the|our|this) bot|this review)\b/i;
+// found the post, this review, the bot). One that does is dropped, and Burson's summary stays, unless the post's own
+// words or Burson's summary say it too: then it's what the post is about ("the bot in Gemini", a post on BigQuery)
+const WRITEUP_HELD_RX_ = /\b(?:pendulum|brandwatch|sprinklr|big\s?query|listening (?:feeds?|tools?)|zapier|slrr|(?:the|our|this) bot|this (?:automated )?review (?:found|finds|flagged|shows?|checked))\b/gi;
+// Burson's video timestamps ([MM:SS] in its summary: rule 12 asks for them on a long video), kept in the
+// write-up (writeupOf_), at most this many
+const WRITEUP_STAMP_RX_ = /\[\d{1,2}:\d{2}(?::\d{2})?\]/g;
+const WRITEUP_STAMPS_MAX_ = 3;
+
+/**
+ * Whether write-up words `s` say how the alert was made (WRITEUP_HELD_RX_), a phrase the post's own words or Burson's
+ * summary (`own`) don't have. Pure.
+ */
+function writeupHeld_(s, own) {
+  const theirs = String(own || '').toLowerCase().replace(/\s+/g, ' ');
+  return (String(s || '').match(WRITEUP_HELD_RX_) || []).some(h => theirs.indexOf(h.toLowerCase().replace(/\s+/g, ' ')) < 0);
+}
 
 /**
  * The prompt paragraph that asks Gemini for the write-up (writeup), only in the Auto-correct space (parsed.writeup). ''
@@ -1363,15 +1389,24 @@ function writeupPrompt_(parsed) {
     'Pendulum, Brandwatch or BigQuery).';
 }
 
-/** Words from Gemini for the write-up, as plain prose on one line: no links, no web addresses, no Chat or Markdown marks. Pure. */
+// A web address in a write-up: one with its scheme or www., or a host with a path ("example.com/page"). Never an
+// account (@sam.news, u/some_user_) or a name with a dot in it (Google.com, Character.ai, gemini.google.com), which
+// stay as Gemini wrote them: the poster's account is the email's only mention of it, and products are named so
+const WRITEUP_LINK_RX_ = /(^|[^@\w.\/-])(?:(?:https?:\/\/|www\.)[^\s)]+|(?:[a-z0-9-]+\.)+[a-z]{2,}\/[^\s)]*)/gi;
+
+/**
+ * Words from Gemini for the write-up, as plain prose on one line: no links or web addresses (WRITEUP_LINK_RX_), no Chat
+ * or Markdown marks (an underscore only where it wraps words for emphasis: "_Reuters_", never in an account's name).
+ * Pure.
+ */
 function writeupPlain_(s) {
   return String(s === undefined || s === null ? '' : s)
     .replace(/\[([^\]\n]*)\]\((?:https?:\/\/|www\.)[^)\s]*\)/gi, '$1')
     .replace(/<(?:https?:\/\/|www\.)[^|>\s]*\|([^>\n]*)>/gi, '$1')
     .replace(/<[^>\n]*>/g, ' ')
-    .replace(/\b(?:https?:\/\/|www\.)\S+/gi, '')
-    .replace(COMMS_BARE_HOST_RX_, '')
-    .replace(/[*`~<>|]+/g, '').replace(/^#+\s*/, '').replace(/(^|\s)_+|_+(?=\s|$|[.,;:!?])/g, '$1')
+    .replace(WRITEUP_LINK_RX_, '$1')
+    .replace(/[*`~<>|]+/g, '').replace(/^#+\s*/, '')
+    .replace(/(^|\s)(_{1,2})([^_\s](?:[^_\n]*?[^_\s])?)\2(?=\s|$|[.,;:!?])/g, '$1$3')
     .replace(/\(\s*\)/g, '').replace(/\s+([.,;:!?])/g, '$1').replace(/\s+/g, ' ').trim();
 }
 
@@ -1421,20 +1456,30 @@ function webSourceName_(s) {
  * Gemini's writeup ({post, background}), checked, for the corrected alert, its note and the email: {text (one line,
  * WRITEUP_MAX_CHARS_ at most), background (true when the web's part is in it), sources (at most 3 names, webSourceName_,
  * only then)}, or null when it can't be used (empty, too short, not English, read as a "[Label]:" line, or it says how
- * the alert was made): Burson's summary stays then. The background is kept only when the call came back with web
- * sources (`web`, Gemini.gs llm._web), as commsContextOf_ does; without them, or when it doesn't fit, it's left out. Pure.
+ * the alert was made: writeupHeld_): Burson's summary stays then. The background is kept only when the call came back
+ * with web sources (`web`, Gemini.gs llm._web), as commsContextOf_ does; without them, or when it doesn't fit, it's left
+ * out. `src` (optional): {summary: the summary the write-up replaces, own: the post's words and Burson's text}; a video
+ * timestamp of the summary's that the post's part lacks is added to it ("See the video at [02:15].": Burson's fact,
+ * kept). Pure.
  */
-function writeupOf_(w, web) {
+function writeupOf_(w, web, src) {
   if (!w || typeof w !== 'object' || Array.isArray(w)) return null;
+  const own = (src && src.own) || '';
   const post = writeupPlain_(w.post);
-  if (post.length < WRITEUP_MIN_CHARS_ || WRITEUP_HELD_RX_.test(post) || isNonEnglishPost_(post, '') ||
+  if (post.length < WRITEUP_MIN_CHARS_ || writeupHeld_(post, own) || isNonEnglishPost_(post, '') ||
       splitLabel_(post, labelIndex_())) return null;
-  let text = writeupFit_(post, WRITEUP_MAX_CHARS_, true);
+  const stamps = Array.from(new Set(String((src && src.summary) || '').match(WRITEUP_STAMP_RX_) || []))
+    .slice(0, WRITEUP_STAMPS_MAX_);
+  const stampLine = list => (list.length ? `See the video at ${list.join(' and ')}.` : '');
+  const room0 = WRITEUP_MAX_CHARS_ - (stamps.length ? stampLine(stamps).length + 1 : 0);
+  let text = writeupFit_(post, room0, true);
+  const lacking = stampLine(stamps.filter(x => text.indexOf(x) < 0));
+  if (lacking) text = `${text} ${lacking}`;
   const names = [];
   const sourced = !!(web && Array.isArray(web.sources) && web.sources.length);
   const said = sourced ? writeupPlain_(w.background) : '';
   let background = false;
-  if (said && !WRITEUP_HELD_RX_.test(said) && !isNonEnglishPost_(said, '')) {
+  if (said && !writeupHeld_(said, own) && !isNonEnglishPost_(said, '')) {
     const room = WRITEUP_MAX_CHARS_ - text.length - 1;
     const fit = room >= WRITEUP_MIN_CHARS_ ? writeupFit_(said, room, false) : '';
     if (fit) {

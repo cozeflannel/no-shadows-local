@@ -155,4 +155,18 @@ module.exports = H => {
     t.poll();
     eq(synth(t.chat, TEST_FEED).map(linkOf), [url(1)]);
   });
+
+  test('direct BQ: the poll asks for the post\'s page picture as before, but in the Auto-correct space (ctx.sourceReadOnly) for the post\'s own imagery only (bqPostCard_ ownOnly: Post.gs alertPicture_ never reads its page)', () => {
+    const run = readOnly => {
+      const w = world();
+      fakeBq(w.g, { us: [], bsip: [bsipRow(1, 9000)], log: [] });
+      const asked = [];
+      const real = w.bot.bqPostCard_;
+      w.bot.bqPostCard_ = function (...args) { asked.push(args.slice(4)); return real.apply(null, args); };
+      const ctx = Object.assign(onCtx(w), readOnly ? { sourceReadOnly: true, changeNotes: true, allowDirectBq: true } : {});
+      eq(w.bot.pollBigQuerySources_(ctx, readOnly ? w.ANA : w.BUR).bsip, 1);  // the Auto-correct space's cards go in B10
+      return asked;
+    };
+    eq([run(false), run(true)], [[[true, false]], [[true, true]]]);
+  });
 };

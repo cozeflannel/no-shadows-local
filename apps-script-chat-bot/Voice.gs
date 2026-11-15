@@ -124,7 +124,11 @@ function isBotFormattedText_(text) {
   if (!t) return false;
   if (typeof GEN !== 'undefined' && GEN && GEN.prefix && t.indexOf(GEN.prefix) === 0) return true;
   if (/(?:^|[.!?]\s)Then resend the alert here\.$/.test(t) && t.split('\n').length === 1) return true;  // fixRequestText_, one item
-  return /^(?:\uD83C\uDF21\uFE0F? \*Temp check|The alert (?:has been updated|regarding |was already submitted)|Please make the following updates|One more change:|A few changes are still needed|Please check this alert against the alert requirements|Here is what (?:needs to be updated|is left) on this alert:|This alert does not need any updates\.|I can help with questions about this alert|For escalated alerts, review and send the Social Alert draft|The Social Alert email for this alert has already been sent|QA corrected:|QA:|QA check:|Updates made to this alert:|Processed without waiting for Burson:|Still needs Burson:|Double-check:|Comms \/ Status Context:|Burson resent this alert(?: with updates:|\.)|Dry run \(Burson space actions\):|✅️? \*Reviewed (?:and corrected )?by the agentic assistant\*|The agentic assistant reviewed this alert|Not fixed:|Sources:|The post's own media wasn't reviewed|Gemini couldn't review|Social Alert (?:sent|draft|update draft)|Could not (?:auto-submit the T&S form|check the T&S sheet|create the Social Alert draft)|No Social Alert draft was created|The Social Alert draft's T&S row wasn't updated|(?:(?:<users\/[^>\s]+>|@Incident Manager)\s+)?(?:Social Alert|Please ping the YouTube team|Could not create the Social Alert draft|T&S form needed)|T&S (?:form needed|is in\.|already has this post)|Outcome:|\*?Early Wave \/ Velocity Warning\*?|The bot (?:crashed the last time|was short of time)|The Burson QA bot (?:is set up|has had problems|is running again)|The relay with S-F Burson |An alert from S-F Burson couldn't be brought over|A message from S-F Burson couldn't be brought over|Not sent to |\*Escalation protocol\*)/.test(t);
+  // The auto-correct space's "Not fixed: …" and "Sources: …" note lines (changeNoteText_) only in the bot's own forms: a
+  // person's message that starts with those words stays theirs
+  if (/^Not fixed: /.test(t)) return isNotFixedLine_(t.split('\n')[0]);
+  if (/^Sources: /.test(t)) return t.indexOf('\n') < 0 && isSourcesLine_(t);
+  return /^(?:\uD83C\uDF21\uFE0F? \*Temp check|The alert (?:has been updated|regarding |was already submitted)|Please make the following updates|One more change:|A few changes are still needed|Please check this alert against the alert requirements|Here is what (?:needs to be updated|is left) on this alert:|This alert does not need any updates\.|I can help with questions about this alert|For escalated alerts, review and send the Social Alert draft|The Social Alert email for this alert has already been sent|QA corrected:|QA:|QA check:|Updates made to this alert:|Processed without waiting for Burson:|Still needs Burson:|Double-check:|Comms \/ Status Context:|Burson resent this alert(?: with updates:|\.)|Dry run \(Burson space actions\):|✅️? \*Reviewed (?:and corrected )?by the agentic assistant\*|The agentic assistant reviewed this alert|The post's own media wasn't reviewed|Gemini couldn't review|Social Alert (?:sent|draft|update draft)|Could not (?:auto-submit the T&S form|check the T&S sheet|create the Social Alert draft)|No Social Alert draft was created|The Social Alert draft's T&S row wasn't updated|(?:(?:<users\/[^>\s]+>|@Incident Manager)\s+)?(?:Social Alert|Please ping the YouTube team|Could not create the Social Alert draft|T&S form needed)|T&S (?:form needed|is in\.|already has this post)|Outcome:|\*?Early Wave \/ Velocity Warning\*?|The bot (?:crashed the last time|was short of time)|The Burson QA bot (?:is set up|has had problems|is running again)|The relay with S-F Burson |An alert from S-F Burson couldn't be brought over|A message from S-F Burson couldn't be brought over|Not sent to |\*Escalation protocol\*)/.test(t);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -726,9 +730,13 @@ function changedFields_(review) {
  * The auto-correct space's changes: changedFields_ without the summary. The summary paragraph there is the write-up
  * (Review.gs writeupOf_), rewritten on every alert, so a summary correction isn't listed as a change, nor does it make
  * the alert "corrected" (reviewedLine_; Bot.gs counts these for C10). The Alert log keeps it as before (requestedItems_).
+ * inPlace (a Direct BigQuery or sheet-test card, changeNoteText_): only the changes the email still uses, whose value is
+ * still in review.fields (a sheet test puts back the Test alert tab's product, tag, issue name and count after its
+ * review: SheetTestAlert.gs applySheetTestReviewOverrides_). Pure.
  */
-function noteChanges_(review) {
-  return changedFields_(review).filter(x => x.field !== 'summary');
+function noteChanges_(review, inPlace) {
+  const f = review && review.fields;
+  return changedFields_(review).filter(x => x.field !== 'summary' && (!inPlace || !f || sameValue_(f[x.field], x.new)));
 }
 
 const NOTE_HEAD_ = 'The agentic assistant reviewed this alert and made these changes:';
@@ -751,23 +759,64 @@ function noteChangeLine_(x) {
   return `- ${label}: ${v(x.old)} to ${v(x.new)}`;
 }
 
+// A missing link on the auto-correct space's note, by why the bot couldn't fill it (notFixedLine_)
+const NO_LINK_LINE_ = 'Not fixed: Burson\'s alert has no link to the post';
+const NO_LINK_WHY_ = {
+  none: ', and the listening feeds had no match',
+  alerted: ', and the listening feeds\' only match is a post already alerted',
+  time: ' (the listening feeds weren\'t searched: this run had no time left for it)',
+  cap: ' (the listening feeds weren\'t searched: this run had already looked up as many missing links as it may)',
+  failed: ' (the listening feeds couldn\'t be searched)',
+};
+
 /**
  * Something only Burson can supply, on the auto-correct space's note, one line each: "Not fixed: Link isn't a valid
- * link". A missing link says why the bot couldn't find it: findLinks, Auto-find missing links (Control row 14) was ON and
- * the listening feeds had no post that clearly matched; else that switch is OFF. Pure.
+ * link". A missing link says why the bot couldn't find it: findLinks false, Auto-find missing links (Control row 14) is
+ * OFF; else `lookup` (Bot.gs findMissingLink_, parsed.linkLookup): the feeds had no post that clearly matched ('none',
+ * also when it isn't known), their only match was a post already alerted ('alerted'), they weren't searched this run
+ * ('time', 'cap'), or the search failed ('failed'). Pure.
  */
-function notFixedLine_(m, findLinks) {
+function notFixedLine_(m, findLinks, lookup) {
   if (m.field === 'post_url' && m.problem === 'missing') {
-    return findLinks ? 'Not fixed: Burson\'s alert has no link to the post, and the listening feeds had no match'
-      : 'Not fixed: Burson\'s alert has no link to the post (Auto-find missing links, row 14, is OFF)';
+    if (!findLinks) return `${NO_LINK_LINE_} (Auto-find missing links, row 14, is OFF)`;
+    return NO_LINK_LINE_ + (Object.prototype.hasOwnProperty.call(NO_LINK_WHY_, String(lookup || ''))
+      ? NO_LINK_WHY_[lookup] : NO_LINK_WHY_.none);
   }
   return `Not fixed: ${burLabel_(m.field)} ${m.problem}`;
 }
 
+// An outlet's name on the "Sources: …" line (writeupSourcesLine_): short, as Review.gs webSourceName_ gives it (40
+// characters at most) and at most this many words, so the line reads apart from a person's sentence (isSourcesLine_)
+const SOURCE_NAME_MAX_WORDS_ = 5;
+
+/** Whether `n` is a name the "Sources: …" line shows: 40 characters and SOURCE_NAME_MAX_WORDS_ words at most. Pure. */
+function sourceNameOk_(n) {
+  const s = String(n === undefined || n === null ? '' : n).trim();
+  return !!s && s.length <= 40 && s.split(/\s+/).length <= SOURCE_NAME_MAX_WORDS_ && !/[,\n]|[.!?:;]$/.test(s);
+}
+
 /** "Sources: Reuters, Folha" when the write-up has background from the web (Review.gs writeupOf_), else ''. Pure. */
 function writeupSourcesLine_(writeup) {
-  const names = writeup && writeup.background && Array.isArray(writeup.sources) ? writeup.sources.filter(Boolean) : [];
+  const names = writeup && writeup.background && Array.isArray(writeup.sources) ? writeup.sources.filter(sourceNameOk_) : [];
   return names.length ? `Sources: ${names.slice(0, 3).join(', ')}` : '';
+}
+
+/** Whether `line` is writeupSourcesLine_'s: "Sources: " and 1 to 3 names (sourceNameOk_), comma separated. Pure. */
+function isSourcesLine_(line) {
+  const m = String(line || '').match(/^Sources: (.+)$/);
+  const names = m ? m[1].split(', ') : [];
+  return names.length >= 1 && names.length <= 3 && names.every(sourceNameOk_);
+}
+
+/**
+ * Whether `line` is notFixedLine_'s: the missing link's line (NO_LINK_LINE_), or "Not fixed: " and a field's label as
+ * Burson writes it (burLabel_), then its problem. Pure.
+ */
+function isNotFixedLine_(line) {
+  const l = String(line || '');
+  if (l.indexOf(NO_LINK_LINE_) === 0) return true;
+  const fields = typeof GEN !== 'undefined' && GEN && Array.isArray(GEN.fields) ? GEN.fields.map(f => f.name) : [];
+  return Object.keys(BURSON_LABELS_).concat(fields).some(k => l.indexOf(`Not fixed: ${burLabel_(k)} `) === 0);
 }
 
 /**
@@ -776,24 +825,25 @@ function writeupSourcesLine_(writeup) {
  *   The agentic assistant reviewed this alert and made these changes:
  *   - Product: Gems to Gemini App
  * then, each on its own line and only when it applies: what only Burson can supply (notFixedLine_: opts.findLinks is
- * Auto-find missing links, row 14), the "Comms / Status Context" line (Check outage & comms docs ON), that the post's
- * own media was left out of the review (a review with it crashed the run before, the run was too short for its video,
- * or Gemini couldn't review it), and, when the write-up has background from the web, "Sources: …" last. The agentic
- * assistant decides (Review.gs, autocorrect_min_confidence): there is nothing for the reader to double-check.
+ * Auto-find missing links, row 14, and opts.linkLookup what its search came to: Bot.gs findMissingLink_), the "Comms /
+ * Status Context" line (Check outage & comms docs ON), that the post's own media was left out of the review (a review
+ * with it crashed the run before, the run was too short for its video, or Gemini couldn't review it), and, when the
+ * write-up has background from the web, "Sources: …" last. The agentic assistant decides (Review.gs,
+ * autocorrect_min_confidence): there is nothing for the reader to double-check.
  * opts.inPlace: a Direct BigQuery or sheet-test card, posted before its review and never edited (Bot.gs inPlaceNote_):
  * NOTE_HEAD_IN_PLACE_, and the summary the email uses (the write-up, else a corrected summary) as "- Summary: …". ''
  * when there's none of that (no note is posted). Pure.
  */
 function changeNoteText_(review, opts) {
   const o = opts && typeof opts === 'object' ? opts : {};
-  const lines = noteChanges_(review).map(noteChangeLine_);
+  const lines = noteChanges_(review, !!o.inPlace).map(noteChangeLine_);
   if (o.inPlace) {
     const fixed = (review.fixes || []).find(x => x.field === 'summary');
     const summary = review.writeup ? review.writeup.text : fixed ? String(fixed.new || '').trim() : '';
     if (summary) lines.push(`- Summary: ${truncate_(summary.replace(/\s+/g, ' '), WRITEUP_MAX_CHARS_)}`);
   }
   const out = lines.length ? [o.inPlace ? NOTE_HEAD_IN_PLACE_ : NOTE_HEAD_].concat(lines) : [];
-  (review.missing || []).forEach(m => out.push(notFixedLine_(m, !!o.findLinks)));
+  (review.missing || []).forEach(m => out.push(notFixedLine_(m, !!o.findLinks, o.linkLookup)));
   if (review.commsContext) {  // Check outage & comms docs (Control tab row 20), only while it's ON
     out.push(`Comms / Status Context: ${commsLine_(review.commsContext)}`);
   }

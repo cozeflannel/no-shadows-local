@@ -2264,7 +2264,8 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
     const key = recordKey_({ post_url: url });
     if (mem && mem.active && mem.seenPost(url)) { skipped++; return; }
     try {
-      const msg = bqPostCard_(targetSpaceId, text, `bq:${kind}:${key}`, url, timeLeft(BQ_DIRECT_PIC_LEFT_MS_));
+      const msg = bqPostCard_(targetSpaceId, text, `bq:${kind}:${key}`, url, timeLeft(BQ_DIRECT_PIC_LEFT_MS_),
+        !!(ctx && ctx.sourceReadOnly));
       if (mem && mem.active) mem.claim(url, 'bq', info);
       seen.add(key);
       counts[kind]++;
@@ -2435,20 +2436,20 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
 /**
  * Posts a Direct BigQuery card (`text`) in `spaceId` as mirrorPostMessage_ posts it (its client-zmir- id from `key`),
  * with the post at `url`'s picture under it when `withPicture` and one can be found (Post.gs alertPicture_, as a watch
- * alert gets it: the post's own imagery only, its photo, video frame or cover, what it shows from a quoted post or link
- * card; never the picture its page shows link previews), uploaded to that space only (Chat.gs chatUploadImage_ refuses
- * S-F Burson, the test copy and outside spaces). Chat refusing the upload, or the card with the picture, leaves the
- * card as text, never a missed one (the same key: a card Chat did take is read back, never posted twice). A card
- * without a picture gets no line of the post's words (a Watch alert's or a story card's *Post:* line): it is in
- * Burson's format, where a "Post:" line would be read back as the post's content in place of its summary
- * (Alert.gs parseAlert_), and its DSD / Brandwatch and Sprinklr summaries quote the post already. The message, or
- * throws.
+ * alert gets it: the post's photo, video frame or cover, what it shows from a quoted post or link card, else its page's
+ * picture; with `ownOnly`, the Auto-correct space's cards, the post's own imagery only, never its page's picture),
+ * uploaded to that space only (Chat.gs chatUploadImage_ refuses S-F Burson, the test copy and outside spaces). Chat
+ * refusing the upload, or the card with the picture, leaves the card as text, never a missed one (the same key: a card
+ * Chat did take is read back, never posted twice). A card without a picture gets no line of the post's words (a Watch
+ * alert's or a story card's *Post:* line): it is in Burson's format, where a "Post:" line would be read back as the
+ * post's content in place of its summary (Alert.gs parseAlert_), and its DSD / Brandwatch and Sprinklr summaries quote
+ * the post already. The message, or throws.
  */
-function bqPostCard_(spaceId, text, key, url, withPicture) {
+function bqPostCard_(spaceId, text, key, url, withPicture, ownOnly) {
   const attachments = [];
   if (withPicture && typeof alertPicture_ === 'function') {
     try {
-      const pic = alertPicture_(url);
+      const pic = alertPicture_(url, undefined, ownOnly ? false : undefined);
       if (pic && pic.img) attachments.push({ attachmentDataRef: chatUploadImage_(spaceId, pic.img) });
     } catch (e) {
       console.warn(`BigQuery direct poll: the card for ${url} goes without the post's picture: ` +

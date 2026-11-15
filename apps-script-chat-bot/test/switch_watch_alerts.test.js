@@ -137,6 +137,20 @@ module.exports = H => {
     if (dest) t.control().getRange(35, 2).setValue(dest);
     return { t, bq };
   };
+  /**
+   * world() with the watch's alerts going to the standalone Auto-correct space (B10; B4 and B9 blank), where the cards get
+   * the post's own imagery only, its words when they go without, and the pre-read's write-up with the web search. {t, bq, AC}
+   */
+  const acWorld = () => {
+    const w = world();
+    const AC = 'spaces/AAQAautocorrectW9';
+    w.t.chat.addSpace(AC, 'SLRR Auto-correct Unified');
+    w.t.control().getRange(4, 2).setValue('');   // B4 blank
+    w.t.control().getRange(9, 2).setValue('');   // B9 blank
+    w.t.control().getRange(10, 2).setValue('SLRR Auto-correct Unified');
+    w.t.control().getRange(35, 2).setValue(AUTOCORRECT);
+    return Object.assign(w, { AC });
+  };
   /** The watch's next look (5 minutes on): sent, then collected a minute later with `hits` (us-central1). */
   const look = (w, hits) => {
     w.t.g.clock.now += 5 * MIN;
@@ -620,9 +634,55 @@ module.exports = H => {
     eq([writes(t), outbox(t)], [[], []]);
   });
 
-  test('Watch alerts: only the post\'s own imagery goes under its alert: an X post\'s link card (its preview); never the picture a Facebook video\'s or a Reddit post\'s page shows link previews (the pages aren\'t read: a text alert, a video\'s link still "Watch the video on Facebook"); a card with no picture of the post carries the post\'s first words on a *Post:* line under What\'s happening, unless its summary quotes them already; Chat refusing the alert with its picture posts it as text, once, with the post\'s words; the card reads back as before', () => {
+  test('Watch alerts: a post with no picture of its own still gets one: an X post\'s link card (its preview), a Facebook video\'s page picture (read as a link preview reads it: "Watch the video on Facebook"); a Reddit text post\'s banner never (a text alert); Chat refusing the alert with its picture posts it as text, once', () => {
     const w = world(OTHER);
     const { t } = w;
+    t.g.vertex.triage = triage();
+    const embed = id => `https://cdn.syndication.twimg.com/tweet-result?id=${id}&lang=en&token=${B.xEmbedToken_(id)}`;
+    const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70, 0, 1, 0xff, 0xd9]);
+    const CARD = 'https://pbs.twimg.com/card_img/1980/large.jpg';
+    const FB_THUMB = 'https://scontent-iad3-1.xx.fbcdn.net/v/t15.5256-10/123_n.jpg?stp=dst-jpg&_nc_cat=1';
+    const BANNER = 'https://share.redd.it/preview/post/1oabc12';
+    const [id1, id2] = ['1980000000000000011', '1980000000000000012'];
+    const X_CARD = `https://x.com/CorrDove/status/${id1}`;
+    const FB = 'https://www.facebook.com/meidastouch/videos/2107937259924586';
+    const REDDIT = 'https://www.reddit.com/r/California/comments/1oabc12/the_midterms/';
+    const withCard = (id, text) => JSON.stringify({ id_str: id, text, user: { screen_name: 'CorrDove' },
+      card: { name: 'summary_large_image', binding_values: { photo_image_full_size_large: { type: 'IMAGE', image_value: { url: CARD } } } } });
+    t.g.pages.set(embed(id1), withCard(id1, TEXT));
+    t.g.pages.set(FB, `<html><head><meta property="og:type" content="video.other"><meta property="og:image" content="${FB_THUMB.replace(/&/g, '&amp;')}"></head></html>`);
+    t.g.pages.set(REDDIT, `<html><head><meta property="og:image" content="${BANNER}"></head></html>`);
+    [CARD, FB_THUMB, BANNER].forEach(u => t.g.pages.set(u, { code: 200, bytes: JPEG, headers: { 'Content-Type': 'image/jpeg' } }));
+    look(w, [hit({ post_url: X_CARD, impact: 7 }), hit({ post_url: FB, platform: 'facebook', author: 'MeidasTouch', impact: 6 }),
+      hit({ post_url: REDDIT, platform: 'reddit', author: 'u/someone', impact: 5 })]);
+    const out = posted(t, MID);
+    eq(out.length, 3);
+    const of = u => out.find(m => m.text.includes(u));
+    eq([X_CARD, FB, REDDIT].map(u => (of(u).attachment || []).map(a => a.contentType)), [['image/jpeg'], ['image/jpeg'], []]);
+    assert.match(of(X_CARD).text, /\|View the post on X>/);
+    assert.match(of(FB).text, /\|Watch the video on Facebook>/);
+    assert.match(of(REDDIT).text, /\|View the post on Reddit>/);
+    // the Facebook and Reddit pages were read as a link preview reads them; the banner was never downloaded
+    const pageReads = t.g.fetches.filter(f => f.url === FB || f.url === REDDIT);
+    assert.ok(pageReads.length >= 2 && pageReads.every(f => /^facebookexternalhit\//.test(f.headers['User-Agent'])), JSON.stringify(pageReads));
+    assert.ok(!t.g.fetches.some(f => f.url === BANNER), 'the banner is never downloaded');
+    eq((t.chat.uploads || []).map(u => u.space), [MID, MID]);
+    // Chat refusing the alert with its picture: the alert goes as text, once
+    t.g.pages.set(embed(id2), withCard(id2, 'Another one'));
+    t.chat.fail = (method, path, query, body) => (body && body.attachment ? { code: 400, body: { error: { code: 400, message: 'Invalid attachment' } } } : null);
+    look(w, [hit({ post_url: `https://x.com/CorrDove/status/${id2}`, impact: 8, summary: 'Another claim.' })]);
+    t.chat.fail = null;
+    const refused = posted(t, MID).filter(m => m.text.includes(id2));
+    eq([refused.length, refused[0] && refused[0].attachment], [1, undefined]);
+    assert.ok(t.g.logs.some(l => /Watch alerts: Chat refused the alert with the post's picture, so it goes as text/.test(l)), 'logged');
+    // nothing of it anywhere else
+    eq([writes(t), outbox(t)], [[], []]);
+  });
+
+  test('Watch alerts in the Auto-correct space (B10): only the post\'s own imagery goes under its alert: an X post\'s link card (its preview); never the picture a Facebook video\'s or a Reddit post\'s page shows link previews (the pages aren\'t read: a text alert, a video\'s link still "Watch the video on Facebook"); a card with no picture of the post carries the post\'s first words on a *Post:* line under What\'s happening, unless its summary quotes them already; Chat refusing the alert with its picture posts it as text, once, with the post\'s words; the card reads back as before', () => {
+    const w = acWorld();
+    const { t } = w;
+    const MID = w.AC;  // the alerts' space here
     t.g.vertex.triage = triage();
     const embed = id => `https://cdn.syndication.twimg.com/tweet-result?id=${id}&lang=en&token=${B.xEmbedToken_(id)}`;
     const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70, 0, 1, 0xff, 0xd9]);
@@ -644,10 +704,19 @@ module.exports = H => {
     t.g.pages.set(FB, `<html><head><meta property="og:type" content="video.other"><meta property="og:image" content="${FB_THUMB.replace(/&/g, '&amp;')}"></head></html>`);
     t.g.pages.set(REDDIT, `<html><head><meta property="og:image" content="${BANNER}"></head></html>`);
     [CARD, FB_THUMB, BANNER].forEach(u => t.g.pages.set(u, { code: 200, bytes: JPEG, headers: { 'Content-Type': 'image/jpeg' } }));
+    // what each card asked for its picture (Post.gs alertPicture_: pageOk false, the post's own imagery only)
+    const asked = [];
+    const realPicture = t.bot.alertPicture_;
+    t.bot.alertPicture_ = function (url, post, pageOk) { asked.push([url, pageOk]); return realPicture.apply(null, arguments); };
     look(w, [hit({ post_url: X_CARD, impact: 7 }), hit({ post_url: FB, platform: 'facebook', author: 'MeidasTouch', impact: 6 }),
       hit({ post_url: REDDIT, platform: 'reddit', author: 'u/someone', impact: 5 }), hit({ post_url: X_TEXT, impact: 5 }),
       // the listening tool's summary is the post's own first words (no summary of its own): the card quotes it already
       hit({ post_url: X_SAID, author: '@VoterWatch', impact: 5, summary: 'Google is hiding the midterm results from Search, wake up people' })]);
+    // the first run posts the two highest (X_CARD, FB): the Facebook video's page was never read for its card's picture
+    eq(posted(t, MID).map(m => [X_CARD, FB].findIndex(u => m.text.includes(u))), [0, 1]);
+    eq(t.g.fetches.filter(f => [FB, FB_THUMB].indexOf(f.url) >= 0).map(f => f.url), []);
+    t.poll();  // PW_ALERTS_MAX_MIRROR_ (2) a run in the Auto-correct space: the next runs post the others
+    t.poll();
     const out = posted(t, MID);
     eq(out.length, 5);
     const of = u => out.find(m => m.text.includes(u));
@@ -655,8 +724,9 @@ module.exports = H => {
     assert.match(of(X_CARD).text, /\|View the post on X>/);
     assert.match(of(FB).text, /\|Watch the video on Facebook>/);
     assert.match(of(REDDIT).text, /\|View the post on Reddit>/);
-    // the Facebook and Reddit pages were never read for a picture, nor anything on them downloaded
-    eq(t.g.fetches.filter(f => [FB, REDDIT, FB_THUMB, BANNER].indexOf(f.url) >= 0).map(f => f.url), []);
+    // every card asked for the post's own imagery only (its page is read later only for the triage's own review of it)
+    eq(Array.from(new Set(asked.map(a => a[1]))), [false]);
+    eq([FB, REDDIT].map(u => asked.some(a => a[0] === u)), [true, true]);
     eq((t.chat.uploads || []).map(u => u.space), [MID]);
     // the post's own words, on the card with no picture of the post whose summary doesn't quote them: one line, under
     // What's happening, the post's address and Chat's link marks out of it (the post's link stays the card's only one)
@@ -1068,9 +1138,10 @@ module.exports = H => {
     eq([writes(t), outbox(t)], [[], []]);
   });
 
-  test('Watch alerts: the AI pre-read searches the web (the review\'s web search, settings.web_grounding) and writes each card\'s write-up: who posted it and what the post claims, then who it names and what outlets say, that background kept only when the call came back with web sources (else the summary alone); in English, no links, within the card\'s 600 characters; the card\'s lines don\'t change; with too little of the run left for a search it reads them without one; Vertex AI refusing the search: read again without it, no background', () => {
-    const w = world(OTHER);
+  test('Watch alerts in the Auto-correct space (B10): the AI pre-read searches the web (the review\'s web search, settings.web_grounding) and writes each card\'s write-up: who posted it and what the post claims, then who it names and what outlets say, that background kept only when the call came back with web sources (else the summary alone); in English, no links, within the card\'s 600 characters; the card\'s lines don\'t change; with too little of the run left for a search it reads them without one; Vertex AI refusing the search: read again without it, no background', () => {
+    const w = acWorld();
     const { t } = w;
+    const MID = w.AC;  // the alerts' space here
     t.g.vertex.triage = triage();
     const LULA = 'TikTok account @brasilnews (48K followers) says Google\'s AI is now spreading lies about Lula; the post doesn\'t say which product or answer.';
     const BG = 'Lula, Brazil\'s president; Reuters and AFP report no Gemini answer about him (see [Reuters](https://www.reuters.com/x) https://www.reuters.com/y).';
@@ -1116,17 +1187,88 @@ module.exports = H => {
     // 3. too little of the run left for a search (under 90 s): the pre-read reads the flags without it
     sources = [{ web: { uri: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/lula2', title: 'reuters.com' } }];
     const items = [{ q: { k: { s: t.g.clock.now } }, a: { network: 'X', author: '@a', summary: 'A post about Lula and Google.' } }];
-    const short = t.bot.pwPreReadFor_(items, [], () => 60 * 1000, t.g.clock.now);
+    const short = t.bot.pwPreReadFor_(items, [], () => 60 * 1000, t.g.clock.now, true);
     eq([asked.length, asked[2].tools, short.pre[0].summary, short.pre[0].background], [3, undefined, LULA, '']);
-    const roomy = t.bot.pwPreReadFor_(items, [], () => 120 * 1000, t.g.clock.now);
+    const roomy = t.bot.pwPreReadFor_(items, [], () => 120 * 1000, t.g.clock.now, true);
     eq([asked[3].tools, roomy.pre[0].background.indexOf('Lula, Brazil\'s president')], [[{ enterpriseWebSearch: {} }], 0]);
     // 4. Vertex AI refusing the search: the same call again without it (no background), and the card as usual
     t.g.vertex.fail = payload => (payload.tools ? { code: 400, body: { error: { message: 'Web Grounding for Enterprise (enterpriseWebSearch) is not enabled' } } } : null);
-    const refused = t.bot.pwPreReadFor_(items, [], () => 120 * 1000, t.g.clock.now);
+    const refused = t.bot.pwPreReadFor_(items, [], () => 120 * 1000, t.g.clock.now, true);
     t.g.vertex.fail = null;
     eq([refused.pre[0].summary, refused.pre[0].background, refused.wait], [LULA, '', '']);
     assert.ok(t.g.logs.some(l => /Gemini web grounding \(enterprise\) was refused/.test(l)), 'logged');
     eq([writes(t), outbox(t)], [[], []]);
+  });
+
+  test('Watch alerts outside the Auto-correct space (the Other alerts space here): the AI pre-read is as it always was: no web search, no background asked for, the summary\'s rule as before; a background in the answer never reaches a card', () => {
+    const w = world(OTHER);
+    const { t } = w;
+    t.g.vertex.triage = triage();
+    const asked = [];
+    t.g.vertex.watchPreRead = payload => {
+      asked.push(payload);
+      const posts = JSON.parse(payload.contents[0].parts.map(p => p.text || '').join('').match(/<watch_posts>\n([\s\S]*?)\n<\/watch_posts>/)[1]);
+      return { watch_posts: posts.map(p => ({ ref: p.ref, summary: 'X account @CorrDove (1.7K followers) claims Google helped rig the midterms.',
+        background: 'Elizabeth Warren, a US senator; Reuters reports it.', about_google: true, product: 'Brand', exposure_tag: '',
+        sensitive_topics: ['Politics'], story: p.text, same_story_as: '', meaningful: true })) };
+    };
+    t.g.vertex.grounding = payload => (payload.tools ? { webSearchQueries: ['q'], groundingChunks: [{ web: { uri: 'https://r', title: 'reuters.com' } }] } : null);
+    look(w, [hit()]);
+    const [card] = posted(t, MID);
+    eq(card.text.split('\n').find(l => l.indexOf('*What\'s happening:* ') === 0),
+      '*What\'s happening:* X account @CorrDove (1.7K followers) claims Google helped rig the midterms.');
+    eq([asked.length, asked[0].tools, 'background' in asked[0].generationConfig.responseSchema.properties.watch_posts.items.properties],
+      [1, undefined, false]);
+    const system = asked[0].systemInstruction.parts[0].text;
+    assert.ok(system.includes(B.ev('PW_SUMMARY_FIELD_')) && !system.includes('WEB SEARCH:') && !system.includes('- background:'), system);
+    eq(B.pwPreReadPrompts_([], [], false).system, system);
+    // pwPreReadFor_ without `write`: no search however much of the run is left
+    const items = [{ q: { k: { s: t.g.clock.now } }, a: { network: 'X', author: '@a', summary: 'A post about Google.' } }];
+    eq([t.bot.pwPreReadFor_(items, [], () => 120 * 1000, t.g.clock.now).pre[0].background, asked[1].tools], ['', undefined]);
+    eq([writes(t), outbox(t)], [[], []]);
+  });
+
+  test('Watch alerts in the Auto-correct space (B10): a flag that matters by itself (520 engagements) with no words and no picture of its own is still posted, as its link and Activity line (it no longer has its page\'s picture to show); a small one with nothing to show is not; elsewhere it goes with its page\'s picture, as before', () => {
+    const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70, 0, 1, 0xff, 0xd9]);
+    const FB = 'https://www.facebook.com/someone/posts/pfbid0abc123';
+    const OG = 'https://scontent.xx.fbcdn.net/v/someone.jpg';
+    const flag = (w, eng) => {
+      w.t.g.vertex.triage = triage();
+      w.t.g.vertex.watchPreRead = payload => ({ watch_posts: JSON.parse(payload.contents[0].parts.map(p => p.text || '').join('')
+        .match(/<watch_posts>\n([\s\S]*?)\n<\/watch_posts>/)[1]).map(p => ({ ref: p.ref, summary: '', about_google: true,
+        product: 'Brand', exposure_tag: '', sensitive_topics: [], story: 'A post', same_story_as: '', meaningful: true })) });
+      w.t.g.pages.set(FB, `<html><head><meta property="og:image" content="${OG}"></head></html>`);
+      w.t.g.pages.set(OG, { code: 200, bytes: JPEG, headers: { 'Content-Type': 'image/jpeg' } });
+      look(w, [hit({ post_url: FB, platform: 'facebook', author: 'someone', summary: '', eng })]);
+    };
+    const ac = acWorld();
+    flag(ac, 520);
+    const [card] = posted(ac.t, ac.AC);
+    assert.ok(card && !card.attachment, JSON.stringify(card));
+    eq(card.text.split('\n').filter(l => /^\*(?:What's happening|Post|Activity|Posts):\*/.test(l)).map(l => l.split(':*')[0] + ':*'),
+      ['*Activity:*', '*Posts:*']);
+    eq(keys(ac.t).map(k => k.a), ['p']);
+    eq(ac.t.bot.pwAlertOf_({ botUser: 'users/bot' }, B.normalizeMessage_(chatShows(card))).url, FB);
+    // a small one (under PW_SOLO_MIN_ENG_) with nothing to show: still not posted as a bare link
+    const small = acWorld();
+    flag(small, 40);
+    eq(posted(small.t, small.AC), []);
+    // the Other alerts space: with its page's picture, as before
+    const other = world(OTHER);
+    flag(other, 520);
+    const [withPic] = posted(other.t, MID);
+    eq([(withPic.attachment || []).map(a => a.contentType), keys(other.t).map(k => k.a)], [['image/jpeg'], ['p']]);
+  });
+
+  test('Watch alerts: the pre-read\'s web background on a card keeps no Markdown marks (**bold**, _emphasis_, `code`) and no links; an account\'s name keeps its underscores; an outlet\'s or product\'s name with a dot in it stays', () => {
+    const web = { queries: ['q'], sources: [{ title: 'reuters.com', uri: 'https://r' }] };
+    const bg = s => B.pwPreReadOf_({ watch_posts: [{ ref: 'C1', summary: 'A post.', background: s, story: 's' }], _web: web }, 1, 0)[0].background;
+    eq([bg('**Lula**, Brazil\'s president; _Reuters_ and __AFP__ report it, per `g1`.'),
+      bg('Lula, Brazil\'s president; reuters.com and g1.globo.com report it (https://www.reuters.com/x).'),
+      bg('@news_desk_ and u/some_user_ shared it; ~~not~~ confirmed.')],
+    ['Lula, Brazil\'s president; Reuters and AFP report it, per g1.',
+      'Lula, Brazil\'s president; reuters.com and g1.globo.com report it.',
+      '@news_desk_ and u/some_user_ shared it; not confirmed.']);
   });
 
   test('Watch alerts: one story, one alert: of several flags on the same story (the AI pre-read says so), the lead post goes in the space (one the pre-read judged meaningful enough to post about; the most followers when a post has no engagement count, as for the X posts here) and the others are listed in its thread (a: \'g\'), named on its Same story line; a later flag on that story joins the same thread, unless it raises the stakes (2,000+ engagements: an alert of its own); C35 counts them', () => {

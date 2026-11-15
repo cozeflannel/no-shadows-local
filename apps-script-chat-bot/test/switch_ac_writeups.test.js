@@ -187,9 +187,9 @@ module.exports = H => {
     // no web sources (no search, or a search that returned none): the post's part alone
     eq([B.writeupOf_(WRITEUP, null), B.writeupOf_(WRITEUP, { queries: ['q'], sources: [] })],
       [{ text: POST_PART, background: false, sources: [] }, { text: POST_PART, background: false, sources: [] }]);
-    // plain prose: links, web addresses and marks out
+    // plain prose: links, web addresses and marks out (a name with a dot in it stays: see the account test below)
     const marked = B.writeupOf_({ post: '**X user** @a_b posts [a clip](https://x.com/a/status/1) saying <https://g.co/x|Gemini> lied; ' +
-      'see https://example.com/page and theverge.com for more about it.', background: null }, web);
+      'see https://example.com/page and theverge.com/2026/10/gemini for more about it.', background: null }, web);
     eq(marked.text, 'X user @a_b posts a clip saying Gemini lied; see and for more about it.');
     // 600 characters at most, cut at a sentence; a background that doesn't fit is left out
     const long = 'The post says Gemini gave a wrong answer about the election in a long thread. '.repeat(9);
@@ -353,5 +353,218 @@ module.exports = H => {
     main.paste(F.P0_OK);
     main.run();
     eq([tops(main).map(attached), (main.chat.uploads || []).length], [[[]], 0]);
+  });
+
+  // =============================================================================================================
+  // What the review of this work found
+  // =============================================================================================================
+
+  test('reviewed alerts: a KOF the rules decided (the listening data\'s KOF lookup confirms Burson\'s Yes) is never turned to No by a Gemini check under 0.9, so the Social Alert still goes; at 0.9 Gemini wins in both flows, as before', () => {
+    const KOF_YES = H.MAPS_LOW.replace('[KOF]: No', '[KOF]: Yes');
+    const LOOKUP = [{ bmie_kof: 'Tech Journalists' }, { bsip_kof_vertical: 'Tech' }, { bsip_is_kol: true }];
+    const run = (bq, conf, autoCorrect) => {
+      const p = parse(KOF_YES);
+      if (bq) p.bq = bq;
+      return B.reviewAlert_(p, { now: NOW, history: [], llm: { checks: [check('kof_fit', 'No', conf)] }, autoCorrect });
+    };
+    LOOKUP.forEach(bq => {
+      const r = run(bq, 0.7, true);
+      eq([r.fields.kof, r.fixes.filter(x => x.field === 'kof'), r.unsure.map(u => [u.field, u.proposed])], [true, [], [['kof', false]]],
+        JSON.stringify(bq));
+      eq(run(bq, 0.95, true).fields.kof, false, JSON.stringify(bq));  // 0.9 and up: as in the main flow
+      eq(run(bq, 0.95, false).fields.kof, false, JSON.stringify(bq));
+    });
+    // nothing behind Burson's Yes: the agentic assistant decides from 0.6, as for any other field
+    eq(run(null, 0.7, true).fixes.filter(x => x.field === 'kof').map(x => [x.new, x.source]), [[false, 'llm']]);
+    // end to end: the alert keeps KOF Yes, the note lists no KOF change, and the Social Alert email goes out
+    const emails = (kofCheck) => {
+      const w = ac({ bq: () => ({ bmie_kof: 'Tech Journalists' }) });
+      if (kofCheck) w.vertex.assess = () => ({ checks: [check('kof_fit', 'No', 0.7)] });
+      w.paste(KOF_YES);
+      w.run();
+      const top = tops(w)[0];
+      assert.ok(top.text.includes('\n[KOF]: Yes\n'), top.text);
+      assert.ok(!notesUnder(w, top).some(n => /- KOF:/.test(n)), notesUnder(w, top).join('\n---\n'));
+      return w.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject)).length;
+    };
+    eq([emails(true), emails(false)], [1, 1]);
+  });
+
+  test('reviewed alerts: the note\'s missing-link line says truly why the bot has no link: the feeds had no match, their only match was already alerted, they weren\'t searched this run (no time, the per-run cap), or the search failed', () => {
+    const LINE = 'Not fixed: Burson\'s alert has no link to the post';
+    const FOUND = { post_url: SAM, author: '', confidence: 0.97, how: 'author and issue name' };
+    const linkLine = (findLink, extra) => {
+      const w = ac({}, w2 => Object.assign({ switches: Object.assign(w2.bot.switchesOff_(), { autoFindLinks: true }) },
+        findLink === undefined ? {} : { findLink }, typeof extra === 'function' ? extra(w2) : {}));
+      w.paste(F.NO_LINK);
+      w.run();
+      eq(w.bursonPosts(), []);
+      return notesUnder(w, tops(w)[0]).filter(n => n.startsWith('Not fixed:'));
+    };
+    eq(linkLine(() => null), [`${LINE}, and the listening feeds had no match`]);
+    eq(linkLine(() => { throw new Error('BigQuery refused'); }), [`${LINE} (the listening feeds couldn't be searched)`]);
+    eq(linkLine(undefined), [`${LINE} (the listening feeds couldn't be searched)`]);
+    eq(linkLine(() => FOUND, w2 => ({ deadline: w2.g.clock.now + 25 * 1000 })),
+      [`${LINE} (the listening feeds weren't searched: this run had no time left for it)`]);
+    // the per-run cap and a match already alerted (Bot.gs findMissingLink_ leaves why on parsed.linkLookup)
+    const u = ac();
+    const why = (ctx, report, store) => {
+      const parsed = parse(F.NO_LINK);
+      const c = Object.assign(u.ctx(), { switches: Object.assign(u.bot.switchesOff_(), { autoFindLinks: true }) }, ctx);
+      if (store) Object.defineProperty(c, 'store', { value: store });
+      u.bot.findMissingLink_(c, parsed, report || {});
+      return [parsed.linkLookup, parsed.fields.post_url];
+    };
+    eq(why({ findLink: () => FOUND }, { link_lookups: B.ev('BQ_LINK_MAX_PER_RUN_') }), ['cap', undefined]);
+    const alertedStore = { recentForwarded: () => [{ record_key: B.recordKey_({ post_url: SAM }), email_status: 'sent', alert_id: 'QA-1001' }] };
+    eq(why({ findLink: () => FOUND }, {}, alertedStore), ['alerted', undefined]);
+    eq(why({ findLink: () => FOUND }), [undefined, SAM]);  // found: the link is filled, nothing to say
+    const missing = { fixes: [], silentFixes: [], missing: [{ field: 'post_url', problem: 'missing' }] };
+    eq(['cap', 'alerted', 'none', undefined].map(l => B.changeNoteText_(missing, { findLinks: true, linkLookup: l })), [
+      `${LINE} (the listening feeds weren't searched: this run had already looked up as many missing links as it may)`,
+      `${LINE}, and the listening feeds' only match is a post already alerted`,
+      `${LINE}, and the listening feeds had no match`, `${LINE}, and the listening feeds had no match`]);
+    eq(B.changeNoteText_(missing, { findLinks: false, linkLookup: 'failed' }), `${LINE} (Auto-find missing links, row 14, is OFF)`);
+  });
+
+  test('reviewed alerts: a sheet-test card\'s note lists only the corrections its email uses (the Test alert tab\'s product, tag, issue name and count are put back after the review), and C10 counts it the same way', () => {
+    const sheetCard = (w, text) => {
+      const msg = w.bot.mirrorPostMessage_(w.ANA, text, 'sheet:t1');
+      w.bot.rememberSheetTestMessage_(msg.name, w.ANA, []);
+      return msg;
+    };
+    const w = ac();
+    sheetCard(w, F.MISTAKES);
+    const report = w.run();
+    eq(tops(w).map(m => m.text), [F.MISTAKES]);  // the card, as posted
+    eq(notesUnder(w, tops(w)[0]).filter(n => n.startsWith('The agentic assistant')), [`${IN_PLACE}\n` +
+      '- Social Network: Instagram to X\n- Priority banner: P2 to P0\n- Engagement: LOW to HIGH']);
+    const sent = w.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
+    eq(sent.length, 1);
+    assert.ok(/: Gems \|/.test(sent[0].subject) && /\nProduct: Gems\n/.test(sent[0].text), sent[0].text);  // the email keeps Gems
+    eq([report.corrected, w.bursonPosts()], [1, []]);
+    // a sheet test whose only correction the tab puts back: no note, and not counted as corrected
+    const only = ac();
+    sheetCard(only, F.MISTAKES_FIXED.replace('[Product]: Gemini App', '[Product]: Gems').split('Gemini App').join('Gems'));
+    const r2 = only.run();
+    eq([notesUnder(only, tops(only)[0]).filter(n => n.startsWith('The agentic assistant')), r2.corrected], [[], undefined]);
+    // the pure rule: in place, a change whose value isn't in the fields any more isn't listed; elsewhere as before
+    const rv = { fields: { product: 'Gems', social_network: 'X' }, silentFixes: [],
+      fixes: [{ field: 'product', old: 'Gems', new: 'Gemini App' }, { field: 'social_network', old: 'Instagram', new: 'X' }] };
+    eq([B.noteChanges_(rv, true).map(x => x.field), B.noteChanges_(rv).map(x => x.field)], [['social_network'], ['product', 'social_network']]);
+  });
+
+  test('reviewed alerts: only the bot\'s own "Not fixed: …" and "Sources: …" lines read as the bot\'s; a person\'s message from the account the bot runs as that starts with those words is still theirs (relayed, answered)', () => {
+    const missing = [{ field: 'post_url', problem: 'missing' }, { field: 'post_url', problem: 'isn\'t a valid link' },
+      { field: 'post_date', problem: 'is in the future' }, { field: 'video_timestamp', problem: 'missing' },
+      { field: 'product', problem: 'Gems is no longer used; use one of: Gemini App, Search' },
+      { field: 'exposure_tag', problem: '"Odd" isn\'t in the current Exposure Tag list' }];
+    const lines = [];
+    missing.forEach(m => [false, true].forEach(on => [undefined, 'none', 'alerted', 'time', 'cap', 'failed']
+      .forEach(l => lines.push(B.notFixedLine_(m, on, l)))));
+    const sources = ['Reuters', 'Le Monde, Reuters', 'The New York Times, BBC, Folha de S.Paulo', 'O Estado de S. Paulo']
+      .map(n => B.writeupSourcesLine_({ background: true, sources: n.split(', ') }));
+    eq(sources.filter(s => !s).length, 0);
+    lines.concat(sources).forEach(t => assert.ok(B.isBotFormattedText_(t), t));
+    // the whole note, as posted
+    assert.ok(B.isBotFormattedText_(`${lines[0]}\nSources: Le Monde, Reuters`));
+    const people = ['Not fixed: the link still goes to the wrong post, please check', 'Sources: Reuters and the BBC say this is fake',
+      'Sources: Reuters says it is fake.', 'Not fixed:', 'Sources: Reuters\nand the BBC too'];
+    const ctx = { botUser: 'users/bot', store: { isOwnPost: () => false } };
+    people.forEach(t => {
+      assert.ok(!B.isBotFormattedText_(t), t);
+      assert.ok(!B.isOwnMessage_(ctx, { senderName: 'users/bot', text: t }), t);
+    });
+    // a name too long to be an outlet's isn't shown (the line stays one the bot reads as its own)
+    eq(B.writeupSourcesLine_({ background: true, sources: ['Lula wins the election in Brazil by a narrow margin', 'Reuters'] }), 'Sources: Reuters');
+  });
+
+  test('reviewed alerts: the write-up\'s cleaning never changes the poster\'s account or a name with a dot in it (Google.com, Character.ai); only links, web addresses with a path, and Markdown marks go', () => {
+    const kept = ['X user @WasSamLowryEsq_ (652 followers) says Google Search showed mainly white protesters.',
+      'X user @sam.news (2K followers) says Gemini told users the election was rigged.', 'Reddit user u/some_user_ says Maps sent her the wrong way.',
+      'X user @news_ says Character.ai and Gemini both told users the same false thing.', 'X user @a says Google.org funded the project.',
+      'X user @a says Google.com showed a wrong answer and gemini.google.com told users it was right.', 'X user @a says snake_case_names are fine.'];
+    kept.forEach(t => eq(B.writeupPlain_(t), t));
+    eq(B.writeupPlain_('X user **@a** says _Lula_, per __Reuters__, x.com/a/status/1 (https://x.com/a) and www.example.com lied.'),
+      'X user @a says Lula, per Reuters, and lied.');
+    // end to end: the corrected alert and the Social Alert email name the account as Gemini wrote it
+    const HANDLE = POST_PART.replace('@WasSamLowryEsq', '@WasSamLowryEsq_');
+    const w = ac();
+    w.vertex.assess = () => ({ checks: [], writeup: { post: HANDLE, background: null } });
+    w.paste(F.P0_OK);
+    w.run();
+    eq(tops(w)[0].text, `${REVIEWED}\n${F.P0_OK.replace(P0_SUMMARY, HANDLE)}`);
+    const sent = w.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
+    assert.ok(sent.length === 1 && sent[0].text.startsWith(`SOCIAL ALERT\n\n${HANDLE}\n\n`), sent.map(m => m.text).join('\n'));
+  });
+
+  test('reviewed alerts: Burson\'s video timestamp ([MM:SS] in its summary) stays in the write-up, so the corrected alert and the Social Alert email still have it, with Never wait on Burson OFF and ON; a write-up that has it already gets nothing more', () => {
+    const STAMPED = F.P0_OK.replace(P0_SUMMARY, `${P0_SUMMARY} At [02:15] the video shows the results page.`);
+    [false, true].forEach(noWait => {
+      const w = ac({ noWait });
+      w.vertex.assess = () => ({ checks: [], writeup: WRITEUP });
+      w.paste(STAMPED);
+      w.run();
+      const [top] = tops(w);
+      assert.ok(top.text.includes(`\n${POST_PART} See the video at [02:15].\n`), top.text);
+      const sent = w.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
+      assert.ok(sent.length === 1 && sent[0].text.startsWith(`SOCIAL ALERT\n\n${POST_PART} See the video at [02:15].\n\n`),
+        sent.map(m => m.text).join('\n'));
+      eq(w.bursonPosts(), []);
+    });
+    const src = { summary: `${P0_SUMMARY} At [02:15] and [04:30] the video shows it.` };
+    eq(B.writeupOf_({ post: `${POST_PART} At [02:15] it shows the page.` }, null, src).text,
+      `${POST_PART} At [02:15] it shows the page. See the video at [04:30].`);
+    eq(B.writeupOf_({ post: `${POST_PART} It shows the page at [02:15] and [04:30].` }, null, src).text,
+      `${POST_PART} It shows the page at [02:15] and [04:30].`);
+    // the 600 characters hold with the timestamp, the web's part after it
+    const long = 'The post says Gemini gave a wrong answer about the election in a long thread. '.repeat(9);
+    const web = { queries: ['q'], sources: [{ title: 'Reuters', uri: '' }] };
+    const cut = B.writeupOf_({ post: long, background: WEB_PART }, web, src);
+    assert.ok(cut.text.length <= 600 && cut.text.endsWith('See the video at [02:15] and [04:30].'), cut.text);
+  });
+
+  test('reviewed alerts: when Burson\'s alert has no summary paragraph, the write-up goes in as one, in Burson\'s place for it (above [Link], else above the footers), so the corrected alert and the email agree; it reads back as the summary', () => {
+    const NO_SUMMARY = F.P0_OK.replace(`${P0_SUMMARY}\n\n`, '');
+    eq(parse(NO_SUMMARY).fields.summary, undefined);
+    const w = ac();
+    w.vertex.assess = () => ({ checks: [], writeup: WRITEUP });
+    w.paste(NO_SUMMARY);
+    w.run();
+    const [top] = tops(w);
+    eq(top.text, `${REVIEWED}\n${F.P0_OK.replace(P0_SUMMARY, POST_PART)}`);
+    eq(parse(top.text).fields.summary, POST_PART);
+    const sent = w.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
+    assert.ok(sent.length === 1 && sent[0].text.startsWith(`SOCIAL ALERT\n\n${POST_PART}\n\n`), sent.map(m => m.text).join('\n'));
+    // no link either: above the first footer; no footer: above [Code]; an alert of field lines only: at the end
+    const text = { text: POST_PART };
+    const noLink = F.NO_LINK.replace(`${P0_SUMMARY}\n\n`, '');
+    const placed = B.withWriteup_(noLink, text);
+    eq(placed, F.NO_LINK.replace(`${P0_SUMMARY}\n\n\n`, `\n${POST_PART}\n\n`));
+    eq(parse(placed).fields.summary, POST_PART);
+    eq(B.withWriteup_('SOCIAL ALERT:\n[Product]: Search\n[Code]: a,b', text), `SOCIAL ALERT:\n[Product]: Search\n\n${POST_PART}\n\n[Code]: a,b`);
+    eq(B.withWriteup_('SOCIAL ALERT:\n[Product]: Search', text), `SOCIAL ALERT:\n[Product]: Search\n\n${POST_PART}`);
+    // a summary already there (rebuilt in place) or no write-up: as it is
+    eq([B.withWriteup_(F.P0_OK.replace(P0_SUMMARY, POST_PART), text), B.withWriteup_(NO_SUMMARY, null)],
+      [F.P0_OK.replace(P0_SUMMARY, POST_PART), NO_SUMMARY]);
+  });
+
+  test('reviewed alerts: a write-up about a chatbot or a Maps review isn\'t dropped for the words "the bot" or "this review" when the post or Burson\'s summary has them; one that speaks of how the alert was made still is', () => {
+    const BOT = 'X user @a_b says the bot in Gemini told users that Lula rigged the election in Brazil.';
+    const MAPS = 'Google Maps user @diner_owner says Google removed this review of her restaurant and calls Maps unfair to small businesses.';
+    eq(B.writeupOf_({ post: MAPS }, null).text, MAPS);
+    eq(B.writeupOf_({ post: BOT }, null, { own: 'Asked the bot in Gemini about Lula and it lied' }).text, BOT);
+    eq(B.writeupOf_({ post: `${POST_PART} BigQuery pricing went up.` }, null, { own: 'BigQuery pricing went up again' }).text,
+      `${POST_PART} BigQuery pricing went up.`);
+    // still held: the bot, or this review, when only the write-up says it; the listening tools always
+    [BOT, `${POST_PART} This review found it in the feeds.`, `${POST_PART} Pendulum flagged it.`]
+      .forEach(post => eq(B.writeupOf_({ post }, null, { own: 'Gemini lied about Lula' }), null, post));
+    // end to end: the post's own words go to the review (parsed.post), so the write-up stays
+    const w = ac({ post: () => ({ platform: 'X', author: 'WasSamLowryEsq', text: 'Asked the bot in Gemini about the Paris riots', photos: [], video: null }) });
+    const CHAT = `${POST_PART} The post says the bot in Gemini agreed.`;
+    w.vertex.assess = () => ({ checks: [], writeup: { post: CHAT, background: null } });
+    w.paste(F.P0_OK);
+    w.run();
+    eq(tops(w)[0].text, `${REVIEWED}\n${F.P0_OK.replace(P0_SUMMARY, CHAT)}`);
   });
 };

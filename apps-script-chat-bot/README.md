@@ -214,9 +214,13 @@ right after the Mirror space's run:
    English, at most 600 characters, from everything that call has (the post and its media, Burson's text, the Resources
    documents, the Guidance, earlier alerts, its web search): who posted it and what it says, what Google is said to have
    done, and who the people named are and what outlets say, but that background only when the call came back with web
-   sources (`autocorrect_writeup` in the YAML turns it off). It takes the place of Burson's summary in the corrected
-   alert and in the Social Alert email (nothing else in the email changes). It's no correction: Burson's summary is what
-   the rules read, the Alert log keeps, and the link to the original shows.
+   sources (`autocorrect_writeup` in the YAML turns it off). The poster's account is kept exactly as Gemini wrote it
+   (only links, web addresses with a path and Markdown marks are taken out), and a video timestamp Burson's summary
+   gives (`[02:15]`) stays (`See the video at [02:15].`). A write-up that speaks of how the alert was made (the
+   listening tools, the bot, this review) is dropped, unless the post or Burson's summary says the same words (a post
+   about a chatbot). It takes the place of Burson's summary in the corrected alert (in Burson's place for one when
+   Burson's alert has none) and in the Social Alert email (nothing else in the email changes). It's no correction:
+   Burson's summary is what the rules read, the Alert log keeps, and the link to the original shows.
 4. **The note** in the alert's thread says who changed what:
    ```
    The agentic assistant reviewed this alert and made these changes:
@@ -224,15 +228,20 @@ right after the Mirror space's run:
    - Other Google Products: added Search
    ```
    then, each on its own line when it applies: what only Burson can supply (`Not fixed: Burson's alert has no link to
-   the post, and the listening feeds had no match`, or `(Auto-find missing links, row 14, is OFF)`), the Comms / Status
-   Context line, that the post's own media wasn't reviewed, and `Sources: …` (the outlets' names, never links) when the
-   write-up has background from the web. The agentic assistant decides: a Gemini value it's at least 60% sure of
-   (`autocorrect_min_confidence`; the main flow keeps 90%) is applied and listed, never on a field the rules already
-   corrected, never to blank a value and never on the summary; below that Burson's value stays (the run log says so),
+   the post, and the listening feeds had no match`, saying instead why the feeds weren't searched when they weren't:
+   `(Auto-find missing links, row 14, is OFF)`, `(the listening feeds weren't searched: this run had no time left for
+   it)`, the per-run cap, `(the listening feeds couldn't be searched)`, or that their only match is a post already
+   alerted), the Comms / Status Context line, that the post's own media wasn't reviewed, and `Sources: …` (the outlets'
+   names, never links) when the write-up has background from the web. The agentic assistant decides: a Gemini value
+   it's at least 60% sure of (`autocorrect_min_confidence`; the main flow keeps 90%) is applied and listed, never on a
+   field the rules already decided (one they corrected, and a KOF that a KOF list or the listening data's KOF lookup
+   confirms), never to blank a value and never on the summary; its call that the alert is an issue already alerted
+   counts from 60% too, so the alert takes that issue's name. Below that Burson's value stays (the run log says so),
    with nothing for the reader to double-check. The summary isn't listed. There's no note when there's nothing to say.
-   A Direct BigQuery card is posted before its review and never edited, so its note starts `The agentic assistant
-   reviewed this alert. The card above was posted before the review; the email uses these corrections:` and lists the
-   write-up as `- Summary: …`.
+   A Direct BigQuery or sheet-test card is posted before its review and never edited, so its note starts `The agentic
+   assistant reviewed this alert. The card above was posted before the review; the email uses these corrections:`,
+   lists only the corrections the email still uses (a sheet test keeps the Test alert tab's product, tag, issue name
+   and count) and the write-up as `- Summary: …`.
 5. It works the alert there as an IM would: the legend emojis, the Social Alert email (always in Testing, so only to the stand-in; its subject starts with `[Auto-correct test]`, so you can tell it from the Mirror space's), the pre-filled
    T&S test-form link in the alert's thread, the 🧑‍💻 escalation-protocol ping (to the stand-in), and answers to questions asked there.
 6. When the IMs in the live space ask Burson for fixes and Burson resends, the resend counts as the same alert: nothing
@@ -357,13 +366,14 @@ B35 says where the Proactive watch's flags go (a dropdown; `OFF` to start, and o
 **Not every flag is an alert.** Before anything is posted, one Gemini pre-read of the waiting flags (up to 12 a run)
 writes each card's summary and its Product, Exposure Tag and Sensitive Topic lines, says which flags tell the same
 story, and compares them with the alerts posted lately, the small posts still waiting, and the stories already alerted.
-The pre-read searches the web (the review's search, `settings.web_grounding`) when the run has 90 seconds left for it
-(else it reads the flags without the search). Its summary is the card's write-up, in English, no links, at most 600
-characters: who posted it and what the post claims, specific (its key words quoted when short), what Google or its
-product is said to have done (or that the post doesn't say), then who the post names ("Lula, Brazil's president") and
-what news outlets say about the claim. That background comes only from the search: the bot keeps it only when Gemini's
-answer came back with web sources, so with no search, nothing found, or the search refused, the card has the summary
-alone. Gemini is told never to identify a private individual.
+For the Auto-correct space (B10), the pre-read searches the web (the review's search, `settings.web_grounding`) when
+the run has 90 seconds left for it (else it reads the flags without the search), and its summary is the card's
+write-up, in English, no links, at most 600 characters: who posted it and what the post claims, specific (its key
+words quoted when short), what Google or its product is said to have done (or that the post doesn't say), then who the
+post names ("Lula, Brazil's president") and what news outlets say about the claim. That background comes only from the
+search: the bot keeps it only when Gemini's answer came back with web sources, so with no search, nothing found, or the
+search refused, the card has the summary alone. Gemini is told never to identify a private individual. For the other
+spaces the pre-read is as it always was: no search, a neutral summary of what the account posted.
 Then, story by story:
 
 | The flag | What happens |
@@ -374,16 +384,16 @@ Then, story by story:
 | On the story of a watch alert posted in the same space in the last 24 hours | Added to that alert's thread, not posted again. A KOF author where the alert had none, or 2,000+ engagements where the alert had fewer, is posted as a new alert |
 | On a story already alerted in the last 14 days (any flow: Burson's alerts, Direct BigQuery alerts, another space) | Not posted again, unless the stakes rose (as above) or the pre-read says the post reports something new (a ruling, an official response, new evidence) |
 | Not about Google (the pre-read), with no Google product from the listening tool | Not posted, unless a KOF wrote it or it has 2,000+ engagements |
-| The same post or X thread already alerted, a post not in English, or nothing to show (no summary, text or picture) | Not posted |
+| The same post or X thread already alerted, a post not in English, or nothing to show (no summary, text or picture) | Not posted (in the Auto-correct space, a flag that matters by itself still goes, as its link and Activity line) |
 
 The thresholds are SLRR's own: 100 engagements is the collection floor, 2,000 the high-engagement bar, 14 days the
 novelty window. Follower count alone never makes a post an alert: in two days of live Watch alerts (Nov 10 to 12, 2026)
 it didn't predict which cards were useful.
 
 Each alert is a text message in the bot's own card (the one the Early Detection alerts use too, see "The bot's own
-alert card" below), so it never looks like a Zapier alert, with the post's own picture attached when one can be found
-(see "Pictures under the bot's own cards" below); without one, the card shows the post's first words on a `*Post:*`
-line, unless its summary quotes them already:
+alert card" below), so it never looks like a Zapier alert, with the post's picture attached when one can be found
+(see "Pictures under the bot's own cards" below); in the Auto-correct space, a card without one shows the post's first
+words on a `*Post:*` line, unless its summary quotes them already:
 
 ```
 🔭 *WATCH* · Midterms 2026 × Google
@@ -392,8 +402,8 @@ line, unless its summary quotes them already:
 *Sensitive Topic:* Politics
 *KOF:* Yes (Viral KOFs)
 
-*What's happening:* … (the pre-read's write-up, else the watch's own summary)
-*Post:* "…"                                    (no picture of the post: its first 200 characters)
+*What's happening:* … (the pre-read's summary, its write-up in the Auto-correct space, else the watch's own)
+*Post:* "…"                                    (Auto-correct space, no picture of the post: its first 200 characters)
 *Activity:* @someone · X · 1,700 followers · 520 engagements · posted 2026-11-01 23:26 ET
 *Building:* 4 small posts from 3 accounts within 2 hours (X, Reddit) · 57 engagements in all
 *Posts:* View the post on X                    (a hyperlink)
@@ -415,21 +425,21 @@ by the first line (`OWN_CARD_TYPES_` in `Alert.gs`):
 
 Under the first line the lines always come in the same order, and a line a kind doesn't have is left out, never shown
 empty: the headline, `*What's new:*` (an update), `*Product:*`, `*Exposure Tag:*`, `*Sensitive Topic:*`, `*KOF:*`, a
-blank line, `*What's happening:*`, `*Post:*` (the post's first words, on a card with no picture of the post that
-quotes none of its words), `*Web:*`, `*Call:*`, `*Activity:*`, `*Building:*`, `*Next steps:*` (numbered), `*Posts:*`,
-`*Same story:*`. A Watch alert is posted before its triage, so it has no headline, Call or Next steps (its
-triage is the note in its thread). Cards posted before this layout (`🚨 *Early Detection Alert* 🚨`,
+blank line, `*What's happening:*`, `*Post:*` (the post's first words, on a card in the Auto-correct space with no
+picture of the post that quotes none of its words), `*Web:*`, `*Call:*`, `*Activity:*`, `*Building:*`, `*Next steps:*`
+(numbered), `*Posts:*`, `*Same story:*`. A Watch alert is posted before its triage, so it has no headline, Call or Next
+steps (its triage is the note in its thread). Cards posted before this layout (`🚨 *Early Detection Alert* 🚨`,
 `🔭 *Watch alert · …*`) are still read as the bot's own.
 
 **Pictures under the bot's own cards.** A Watch alert, a Direct BigQuery card and an Early Detection story card get
-only the post's own imagery: its photo, its video's frame, a video's thumbnail or cover, or what it shows from a post it
-quotes or its link card (`alertPicture_` in `Post.gs`). Never the picture the post's page shows link previews, which
-can be a site's generic image, and the bot never makes a picture. With none, a Watch alert and a story card show the
-post's first 200 characters on a `*Post:*` line instead, when the bot has its words (a Watch alert: what the post's
-lookup gives, for X, Bluesky, TikTok and Instagram; a story card: the signal's own posts), unless the card quotes the
-post already (a Watch alert whose
-summary is the post's own words, the plain story card from the posts) or it is an update (its first card shows the
-post). A Direct BigQuery card is in Burson's format, so it gets no such line (a `Post:` line there would be read back as
+the post's picture: its photo, its video's frame, a video's thumbnail or cover, or what it shows from a post it quotes
+or its link card, else the picture the post's page shows link previews (`alertPicture_` in `Post.gs`). The bot never
+makes a picture. In the Auto-correct space (B10) they get only the post's own imagery, never the page's picture (it
+can be a site's generic image), and with none, a Watch alert and a story card show the post's first 200 characters on
+a `*Post:*` line instead, when the bot has its words (a Watch alert: what the post's lookup gives, for X, Bluesky,
+TikTok and Instagram; a story card: the signal's own posts), unless the card quotes the post already (a Watch alert
+whose summary is the post's own words, the plain story card from the posts) or it is an update (its first card shows
+the post). A Direct BigQuery card is in Burson's format, so it gets no such line (a `Post:` line there would be read back as
 the post's content in place of its summary); its DSD / Brandwatch and Sprinklr summaries quote the post already. The
 corrected alert in the Auto-correct space follows the same picture rule (see "The auto-correct space").
 
@@ -779,12 +789,13 @@ it's watching, the last check and today's updates (the main run's, not the auto-
   - a headline saying exactly what people are posting about, the call (📦 Social Alert / 👍 monitor), how many accounts
     on which platforms and when (ET);
   - a short story with the posts linked inline (only links to the signal's own posts: anything else Gemini writes is
-    dropped): what the posts claim and how Google or its product comes into it; what the web says (who the posts name,
-    what outlets say about the claim, only from the review's web search) with its sources linked, a line shown only
-    when the search came back with sources; and suggested next steps inside the escalation process;
+    dropped), what the web says with its sources linked, and suggested next steps inside the escalation process. In the
+    Auto-correct space the story says what the posts claim and how Google or its product comes into it, and what the
+    web says (who the posts name, what outlets say about the claim) comes only from the review's web search, a line
+    shown only when the search came back with sources;
   - every post as a link, and the picture of the post that best shows the topic (Gemini picks it; else the main post;
-    only a post's own imagery: see "Pictures under the bot's own cards"); with none, that post's first words on a
-    `*Post:*` line.
+    in the Auto-correct space only a post's own imagery: see "Pictures under the bot's own cards", and with none, that
+    post's first words on a `*Post:*` line).
   The review note (why, SLRR classification, Temp Check query, T&S) goes in the card's thread, with the marks and any
   Social Alert / T&S draft behind human review, as for any alert. With no AI review (except on an early-watch signal:
   below), the card tells the story from the posts themselves.
@@ -1299,8 +1310,9 @@ To change this, edit the `burson_qa:` section of `config/default_config.yaml`:
 - `llm_fix_severities: [blocking, warning]` covers all six fields. Set it to `[blocking]` to limit Gemini to exposure
   tag, product and Sensitive Topics. KOF, issue name and summary then become double-check notes.
 - In the Auto-correct space (B10) the agentic assistant decides instead: `autocorrect_min_confidence: 0.6` is the
-  confidence there (never on a field the rules already corrected, never to blank a value, never on the summary, and
-  only for the checks `llm_fix_severities` covers); below it Burson's value stays, and there's no double-check note.
+  confidence there (never on a field the rules already decided, a KOF the listening data's KOF lookup confirms
+  included, never to blank a value, never on the summary, and only for the checks `llm_fix_severities` covers), and for
+  Gemini's call that the alert is an existing issue; below it Burson's value stays, and there's no double-check note.
   `autocorrect_writeup: true` has the same review call write the summary paragraph there (see "The auto-correct space").
 
 KOF comes from Burson's own lists: `[KOF]: Viral KOFs (KOFs)` or `[KOF]: CAM Tech/AI (INFs)` means the author is a KOF,
@@ -1312,9 +1324,9 @@ for Enterprise) for what Burson's write-up doesn't say: news coverage, whether a
 author is, and whether Google has responded. Answers to Burson never search. `web_grounding: enterprise | google | off`
 switches it; if Vertex AI refuses the tool, the bot retries without it and leaves it off for 6 hours. The searches and
 sources Gemini used are in the run log. In the Auto-correct space, the write-up's background comes only from them and
-the note names them (`Sources: …`). The Watch alerts' pre-read and the Early Detection review search too, and what
-their cards say from the web (a Watch alert's background, a story card's `*Web:*` line) is shown only when the answer
-came back with web sources.
+the note names them (`Sources: …`). The Early Detection review searches too, and so does the Watch alerts' pre-read
+for the Auto-correct space; there, what their cards say from the web (a Watch alert's background, a story card's
+`*Web:*` line) is shown only when the answer came back with web sources.
 
 **Earlier alerts.** Gemini also sees earlier alerts: the bot's own from the last 14 days and the SLRR alert log's, for
 the same author (90 days), for the same post, and for any post this one replies under or quotes (whoever posted it),
