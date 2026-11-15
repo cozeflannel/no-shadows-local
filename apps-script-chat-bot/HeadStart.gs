@@ -67,6 +67,13 @@
  * alert of Burson's on the same story: the head start is to Burson's first alert on the story, and when that came before
  * this app's, this app was behind, however soon after it Burson alerted the same post.
  *
+ * The post-level answer is kept beside the story-level one, and never changes it: Burson's first alert on one of the
+ * story's OWN posts (story.post), and the head start to it (story.post_lead_ms), whatever the story-level answer is.
+ * Mostly the two are the same alert. They differ when Burson's first alert on the story was on another post: an alert of
+ * this app's that its own review took for an issue Burson alerted days before (its name, an Ongoing Issue) is behind
+ * Burson by days on the story, and this app can still have alerted that very post before Burson did. The tab shows
+ * both, so "which posts did this app have first, and by how much" has its answer whatever the issue is called.
+ *
  * Only when neither sure rule finds an alert, the two weaker rules are tried, taken together in the same way (the
  * earliest alert, labelled with its rule) and labelled apart:
  *   same story   the two carry the same issue name and nothing says more: no review took one of Burson's alerts under
@@ -94,15 +101,19 @@
  *
  * The tab, top to bottom: its title in A1 (the bot's mark) and one line saying what's counted and when it was rebuilt
  * (ET); HEADLINE NUMBERS for the last 7 and the last 30 days, by when this app alerted (stories, those Burson alerted
- * too, this app first and its median head start, Burson first and the median time behind, no Burson alert found, this
- * app's alert before the IMs' email and the median time from one to the other, and the reverse view: Burson's alerts and
- * how many of them this app had alerted first: those that came after a story of this app's that was itself ahead of
- * Burson's first alert on it); BIGGEST HEAD STARTS (the ten longest over Burson, last 30 days); EVERY
+ * too, this app first and its median head start, Burson first and the median time behind, no Burson alert found, the
+ * post-level line: of the stories with a post Burson alerted too, those where this app alerted before Burson alerted
+ * the same post, with the median head start on the post; this app's alert before the IMs' email and the median time
+ * from one to the other, and the reverse view: Burson's alerts and how many of them are on a story this app had alerted
+ * first: those that came after a story of this app's that was itself ahead of Burson's first alert on it); BIGGEST HEAD
+ * STARTS (the ten longest over Burson's first alert on the story, last 30 days); EVERY
  * STORY (last 30 days, newest first): Type · This app alerted (ET) · Story (the issue name or the card's headline,
  * linked to the lead post) · Product · Exposure Tag · Burson alerted (ET) · Head start over Burson · IMs emailed (ET) ·
- * Head start over the IMs · Matched on · App alert · Burson alert, then the two head starts in plain minutes at the far
- * right, to sort by (negative when this app was later). A head start is in words ("2 d 15 h", "3 h 10 min", "45 min";
- * "behind by 20 min" when this app was later); a cell is blank, never a zero, where there's no Burson alert or no IM time.
+ * Head start over the IMs · Matched on · App alert · Burson alert, then the two head starts in plain minutes, to sort
+ * by (negative when this app was later), then the post-level answer: Burson on this post (ET) · Head start on the post ·
+ * Burson alert on this post · that head start in plain minutes. A head start is in words ("2 d 15 h", "3 h 10 min",
+ * "45 min"; "behind by 20 min" when this app was later); a cell is blank, never a zero, where there's no Burson alert
+ * (on the story, or on one of its posts) or no IM time.
  * After those, hidden (HEAD_START_STATE_COL_), the three columns the tab remembers the IMs' times in: the Burson
  * post's key, the IMs' time in ms, and whether it is their email or their draft.
  *
@@ -132,14 +143,18 @@ const HEAD_START_TAB_ = 'Head start';
 const HEAD_START_TITLE_ = 'Head start: how far ahead of Burson\'s alerts and the IMs\' emails this app\'s own alerts were ' +
   '(written by the Burson QA bot)';
 const HEAD_START_OWN_TITLES_ = [HEAD_START_TITLE_];
+// Columns 1 to 14: the story and Burson's first alert on it (the story-level answer), the two head starts in plain
+// minutes last. Columns 15 to 18: Burson's first alert on one of the story's OWN posts (the post-level answer)
 const HEAD_START_HEADER_ = ['Type', 'This app alerted (ET)', 'Story', 'Product', 'Exposure Tag', 'Burson alerted (ET)',
   'Head start over Burson', 'IMs emailed (ET)', 'Head start over the IMs', 'Matched on', 'App alert', 'Burson alert',
-  'Head start over Burson (min)', 'Head start over the IMs (min)', 'Burson post key', 'IM time (ms)', 'IM time from'];
+  'Head start over Burson (min)', 'Head start over the IMs (min)', 'Burson on this post (ET)', 'Head start on the post',
+  'Burson alert on this post', 'Head start on the post (min)', 'Burson post key', 'IM time (ms)', 'IM time from'];
 // Hidden from here on: the IMs' time the tab remembers for each story's Burson post (its key, the time, `email` or
-// `draft`), read back by the next rebuild (readHeadStartState_)
-const HEAD_START_STATE_COL_ = 15;
+// `draft`), read back by the next rebuild (readHeadStartState_, which finds the columns by their names)
+const HEAD_START_STATE_COL_ = 19;
+const HEAD_START_TIME_COLS_ = [2, 6, 8, 15];       // a time each: this app's, Burson's, the IMs', Burson's on the post
 const HEAD_START_WIDTHS_ = [[1, 330], [2, 140], [3, 320], [4, 140], [5, 220], [6, 140], [7, 160], [8, 140], [9, 160], [10, 190],
-  [11, 130], [12, 110], [13, 110], [14, 110]];
+  [11, 130], [12, 110], [13, 110], [14, 110], [15, 140], [16, 160], [17, 130], [18, 110]];
 const HEAD_START_WIDE_ = 8;                        // the long texts (what's counted, the notes) are merged across A:H
 const HEAD_START_MIN_MS_ = 60 * 1000;
 const HEAD_START_DAY_MS_ = 24 * 60 * HEAD_START_MIN_MS_;
@@ -159,6 +174,9 @@ const HEAD_START_BLOCKED_PROP_ = 'HEAD_START_BLOCKED';
 const HEAD_START_READ_ROWS_ = 16000;               // Alert-log rows read at most (as Speed.gs resultsAlertRows_)
 const HEAD_START_NAME_CHARS_ = 200;                // a story's name on the tab
 const HEAD_START_LINK_CHARS_ = 2000;               // a longer link isn't linked
+// The headline line of the post-level answer (headStartTabRows_)
+const HEAD_START_POST_LINE_ = 'Posts this app alerted before Burson alerted the same post ' +
+  '(of the stories with a post Burson alerted too)';
 const HEAD_START_SAME_POST_ = 'same post';
 const HEAD_START_SAME_STORY_ = 'same story';
 const HEAD_START_SAME_NAME_ = 'same story (same issue name)';
@@ -602,6 +620,9 @@ function headStartBurson_(rows) {
  * (same post, same story: Burson's first alert on the story, whichever post it was on); only when they give none, the
  * earliest one the two weaker rules give (same issue name, similar wording). An alert two rules give is labelled with
  * the surer one, and so is the earlier of two at the very same time.
+ * The post-level answer, beside it: story.post ({key, at, alert_id, url, name} of Burson's EARLIEST alert on one of the
+ * story's own post keys, or null) and story.post_lead_ms (that alert's time less the story's; null without one),
+ * whatever the story-level answer is. The two differ when Burson's first alert on the story was on another post.
  * The reverse view, on each of Burson's alerts: ahead (1 same post, 2 same story, 3 same issue name, 4 similar wording:
  * the surest rule that ties it to a story of this app's that came before it), set only by a story that was itself
  * first (ahead of the alert it is measured against): where Burson had the story first, Burson's later alerts on it
@@ -679,6 +700,12 @@ function headStartMatch_(stories, burson) {
     s.burson = g ? { key: g.key, at: g.at, alert_id: g.alert_id, url: g.url, name: g.name } : null;
     s.matched = g ? HEAD_START_RULES_[rank(g)] : '';
     s.lead_ms = g ? g.at - s.at : null;
+    // The post-level answer: Burson's first alert on one of the story's own posts, whatever the story-level one. Where
+    // a review gave this app's alert the name of an issue Burson alerted days before, the story is behind Burson by
+    // days, and this app can still have alerted the post itself before Burson did
+    const p = earliest([post]);
+    s.post = p ? { key: p.key, at: p.at, alert_id: p.alert_id, url: p.url, name: p.name } : null;
+    s.post_lead_ms = p ? p.at - s.at : null;
     // The reverse view: Burson's alerts this story came before, when this story was first. Where Burson had the story
     // first (its alert above is the earlier one), Burson's later alerts on it are not ones this app had first
     if (!(s.lead_ms > 0)) return;
@@ -692,7 +719,9 @@ function headStartMatch_(stories, burson) {
  * The headline numbers for the stories this app alerted since `since` and Burson's alerts since then: stories; matched
  * (a Burson alert was found for them) and its share; first (this app's alert strictly before Burson's), its share of
  * the matched and the median head start in minutes; behind (Burson strictly first) and the median minutes behind;
- * unmatched (no Burson alert found: not the same as never alerted by Burson, see this file's header); im_known (stories
+ * unmatched (no Burson alert found: not the same as never alerted by Burson, see this file's header); the post-level
+ * numbers: post_matched (stories with a post of their own that Burson alerted too), post_first (this app's alert
+ * strictly before Burson's first alert on such a post), its share of those and post_first_median_min; im_known (stories
  * with an IM time), im_first (this app's alert before the IMs' time), its share, im_median_min (the median minutes from
  * this app's alert to the IMs' time, over every story with one: below 0 when this app was later) and im_from_email (how
  * many of those times are their email, not their draft); and the reverse view: burson_alerts, burson_after (those that
@@ -706,6 +735,8 @@ function headStartWindow_(stories, bursonList, since) {
   const matched = list.filter(s => s.burson);
   const first = matched.filter(s => s.lead_ms > 0);
   const behind = matched.filter(s => s.lead_ms < 0);
+  const onPost = list.filter(s => s.post);
+  const postFirst = onPost.filter(s => s.post_lead_ms > 0);
   const withIm = list.filter(s => s.im);
   const imFirst = withIm.filter(s => s.im_lead_ms > 0);
   const theirs = bursonList.filter(g => g.at >= since);
@@ -715,6 +746,8 @@ function headStartWindow_(stories, bursonList, since) {
     first: first.length, first_pct: pct(first.length, matched.length), first_median_min: median(first.map(s => s.lead_ms)),
     behind: behind.length, behind_median_min: median(behind.map(s => -s.lead_ms)),
     unmatched: list.length - matched.length,
+    post_matched: onPost.length, post_first: postFirst.length, post_first_pct: pct(postFirst.length, onPost.length),
+    post_first_median_min: median(postFirst.map(s => s.post_lead_ms)),
     im_known: withIm.length, im_first: imFirst.length, im_first_pct: pct(imFirst.length, withIm.length),
     im_median_min: median(withIm.map(s => s.im_lead_ms)), im_from_email: withIm.filter(s => s.im.from === 'email').length,
     burson_alerts: theirs.length, burson_after: after.length, burson_after_pct: pct(after.length, theirs.length),
@@ -728,10 +761,12 @@ function headStartWindow_(stories, bursonList, since) {
  * headStartImTimes_, or what headStartImMerge_ made of it and of the times the tab remembers; or null) and the time
  * (`now`, ms): {now, im_at_hand, stories (the last 30 days by when this app alerted, newest first: {type, at, name,
  * url, product, tag, alert_id, alert_ids, alerts, keys, burson: {key, at, alert_id, url, name} | null, matched,
- * lead_ms, im: {at, from} | null, im_key (the Burson post's key that time was found under, as the Results tab has the
- * post: what the tab remembers the time by; '' without one), im_lead_ms}), top (the ten of them with the longest head
- * start over Burson, longest first), windows: {week, month} (headStartWindow_ for 7 and 30 days)}. A broken row is
- * left out, and so is a row without a time that is one (headStartTime_); neither ever fails the report. Pure.
+ * lead_ms, post: {key, at, alert_id, url, name} | null and post_lead_ms (Burson's first alert on one of the story's own
+ * posts: headStartMatch_), im: {at, from} | null, im_key (the Burson post's key that time was found under, as the
+ * Results tab has the post: what the tab remembers the time by; '' without one), im_lead_ms}), top (the ten of them
+ * with the longest head start over Burson, longest first), windows: {week, month} (headStartWindow_ for 7 and 30
+ * days)}. A broken row is left out, and so is a row without a time that is one (headStartTime_); neither ever fails
+ * the report. Pure.
  */
 function headStartReport_(rows, im, now) {
   const t = Number(now) || Date.now();
@@ -806,6 +841,8 @@ function headStartLink_(url, label) {
 
 /**
  * One story's row in a stories table (HEAD_START_HEADER_): blank, never a zero, without a Burson alert or an IM time.
+ * After the story-level cells come the post-level ones (when Burson alerted one of the story's own posts, the head
+ * start on the post in words, that alert, and the head start in plain minutes): blank when Burson alerted none of them.
  * Its last three cells are the hidden state (HEAD_START_STATE_COL_ on), filled only for a story with an IM time: the
  * Burson post's key that time was found under (never read as a formula: Speed.gs speedText_), the time in ms, and
  * `email` or `draft`. The next rebuild reads them back (readHeadStartState_).
@@ -814,12 +851,15 @@ function headStartRow_(s) {
   const words = ms => headStartWords_(ms / HEAD_START_MIN_MS_);
   const minutes = ms => Math.round(ms / 6000) / 10;
   const b = s.burson;
+  const p = s.post;
   const ids = (s.alert_ids || []).slice(0, 4).join(', ') + ((s.alert_ids || []).length > 4 ? ` and ${s.alert_ids.length - 4} more` : '');
   return [s.type, speedTime_(s.at), headStartLink_(s.url, s.name), pwCell_(s.product, HEAD_START_NAME_CHARS_),
     pwCell_(s.tag, HEAD_START_NAME_CHARS_), b ? speedTime_(b.at) : '', b ? words(s.lead_ms) : '',
     s.im ? speedTime_(s.im.at) : '', s.im ? words(s.im_lead_ms) : '', s.matched || '',
     pwCell_(ids, HEAD_START_NAME_CHARS_), b ? headStartLink_(b.url, b.alert_id || 'Burson\'s alert') : '',
     b ? minutes(s.lead_ms) : '', s.im ? minutes(s.im_lead_ms) : '',
+    p ? speedTime_(p.at) : '', p ? words(s.post_lead_ms) : '', p ? headStartLink_(p.url, p.alert_id || 'Burson\'s alert') : '',
+    p ? minutes(s.post_lead_ms) : '',
     s.im ? speedText_(s.im_key) : '', s.im ? s.im.at : '', s.im ? (s.im.from === 'email' ? 'email' : 'draft') : ''];
 }
 
@@ -855,10 +895,14 @@ function headStartNoteText_(r) {
     'Burson\'s alerts those two give: Burson\'s first alert on the story, even when Burson alerted the story\'s own post ' +
     `later. Only when they give none, two weaker matches are tried (check them): "${HEAD_START_SAME_NAME_}" (the same ` +
     `issue name and no more, never under two different exposure tags) and "${HEAD_START_SIMILAR_}" (the same exposure ` +
-    `tag and issue names alike). The same-story rules look ${HEAD_START_STORY_DAYS_} days either side of the story. A ` +
-    'head start is from this app\'s alert to Burson\'s alert (or to the IMs\' email: end to end); "behind by" means this ' +
-    'app was later. One of Burson\'s alerts counts as alerted first by this app when it came after a story this app was ' +
-    'first on, not when Burson already had that story. ' +
+    `tag and issue names alike). The same-story rules look ${HEAD_START_STORY_DAYS_} days either side of the story. ` +
+    'Beside that story-level answer is the post-level one ("Burson on this post", "Head start on the post"): Burson\'s ' +
+    'first alert on one of the story\'s own posts. So a story that carries the name of an issue Burson alerted days ' +
+    'before reads "behind by" days on the story, and still shows by how much this app had the post itself before Burson. ' +
+    'A head start is from this app\'s alert to Burson\'s alert (or to the IMs\' email: end to end); "behind by" means this ' +
+    'app was later. One of Burson\'s alerts counts as on a story this app had alerted first when it came after a story ' +
+    'this app was first on, not when Burson already had that story (this app may still have had that very post first: ' +
+    'the post-level line counts those). ' +
     '"No Burson alert found" doesn\'t mean Burson never alerted the story: Burson\'s later alert takes a story\'s issue ' +
     'name only when this app\'s alert went out as a Social Alert. An alert that was only to be watched is found again ' +
     'only on its own posts, on an identical issue name, or on similar wording under the same exposure tag, so "this app ' +
@@ -894,6 +938,8 @@ function headStartTabRows_(r) {
   const words = min => (min === null || min === undefined ? dash : headStartWords_(min));
   const w = r.windows.week;
   const m = r.windows.month;
+  const onPost = x => of(x.post_first, x.post_matched, x.post_first_pct) +
+    (x.post_first ? `: median head start ${headStartWords_(x.post_first_median_min)}` : '');
   const split = x => (x.burson_after ? `: ${[[x.burson_after_by.post, HEAD_START_SAME_POST_], [x.burson_after_by.story, HEAD_START_SAME_STORY_],
     [x.burson_after_by.name, 'same issue name'], [x.burson_after_by.wording, 'similar wording']].filter(p => p[0])
     .map(p => `${p[0]} ${p[1]}`).join(', ')}` : '');
@@ -911,11 +957,13 @@ function headStartTabRows_(r) {
     ['Median time this app was behind (where Burson was first)', words(w.behind_median_min), words(m.behind_median_min)],
     // not "not alerted by Burson": Burson may have alerted it under a name the matching can't tie to it (the note below)
     ['No Burson alert found', w.unmatched, m.unmatched],
+    // the post-level answer, whatever the story-level one above: this app's alert against Burson's alert on the same post
+    [HEAD_START_POST_LINE_, onPost(w), onPost(m)],
     ['This app\'s alert before the IMs\' email (of the stories with an IM email time)', of(w.im_first, w.im_known, w.im_first_pct),
       of(m.im_first, m.im_known, m.im_first_pct)],
     ['Median time from this app\'s alert to the IMs\' email (the end-to-end head start)', words(w.im_median_min), words(m.im_median_min)],
     ['Burson\'s alerts in the same days', w.burson_alerts, m.burson_alerts],
-    ['Of Burson\'s alerts, those this app had alerted first (same post or same story)',
+    ['Of Burson\'s alerts, those on a story this app had alerted first (same post or same story)',
       of(w.burson_after, w.burson_alerts, w.burson_after_pct) + split(w), of(m.burson_after, m.burson_alerts, m.burson_after_pct) + split(m)],
   ].forEach(row => add(row, 'numbers'));
   add([headStartNoteText_(r)], 'merged');
@@ -975,10 +1023,12 @@ function writeHeadStartTab_(sh, r) {
       .setFontStyle('italic');
     sh.setRowHeight(row, resultsRowHeight_(String(out[row - 1][0])));
   }));
-  // the three times of each story (this app's, Burson's, the IMs'), as the Results tab shows its times
-  marks.times.forEach(([first, count]) => [2, 6, 8].forEach(col => fmt(() => sh.getRange(first, col, count, 1)
+  // the times of each story (this app's, Burson's, the IMs', Burson's on the post), as the Results tab shows its times
+  marks.times.forEach(([first, count]) => HEAD_START_TIME_COLS_.forEach(col => fmt(() => sh.getRange(first, col, count, 1)
     .setNumberFormat('yyyy-mm-dd hh:mm'))));
-  // the state columns: for the next rebuild to read (readHeadStartState_), not for people
+  // the state columns: for the next rebuild to read (readHeadStartState_), not for people. Every other column is shown
+  // first: on a tab from before the post-level columns, the hidden state columns were where those are now
+  fmt(() => sh.showColumns(1, width));
   fmt(() => sh.hideColumns(HEAD_START_STATE_COL_, width - HEAD_START_STATE_COL_ + 1));
   return { rows: out.length };
 }

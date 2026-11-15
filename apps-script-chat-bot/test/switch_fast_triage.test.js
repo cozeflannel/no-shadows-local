@@ -1154,6 +1154,14 @@ module.exports = function (H) {
     eq(threadReplies.length, 1, 'normal promotion arrives as an Early Detection Update in the first card\'s thread');
     assert.ok(threadReplies[0].text.startsWith('📈 *UPDATE* \u00b7 More on a story already alerted\n'), threadReplies[0].text);
     assert.match(threadReplies[0].text, /\*What's new:\* 5 accounts now, up from 3: the story is now past the usual bar/);
+    // The Alert-log rows the flow wrote say which kind of signal each alert was (the Early Detection snapshot's
+    // signal_type, EarlyDetection.gs edSnap_): the Head start tab types the story by its first alert's ("Early signal"),
+    // and counts the card and its update as one story
+    const edRows = cal.t.bot.sheetBackend_(cal.t.sheet()).loadAlerts().filter(r => r.ingested === cal.t.bot.ev('ED_ALERT_INGESTED_'));
+    eq(edRows.map(r => [r.forwarded_fields.early_detection.signal_type, cal.t.bot.headStartOwnType_(r)]),
+      [[cal.t.bot.ev('EWS_WATCH_SIGNAL_'), 'Early signal'], ['CLUSTER_EMERGENCE', 'Early Detection']]);
+    eq(cal.t.bot.headStartReport_(edRows, null, cal.t.g.clock.now).stories.map(s => [s.type, s.alerts, s.alert_ids]),
+      [['Early signal', 2, edRows.map(r => r.alert_id)]]);
 
     // 3. Watch-tier failed review (Decision 11 / Rule 2): posts NO card, retries once more up to ED_QUEUE_MAX_TRIES_ (2), then drops
     const watchSample = Object.assign({}, FX.signals[2], {

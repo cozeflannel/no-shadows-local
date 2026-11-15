@@ -385,7 +385,10 @@ triage is the note in its thread). Cards posted before this layout (`🚨 *Early
 
 The `Building:` line is only on an alert for a build-up of small posts, and `Same story:` only when other posts are
 listed in its thread. The score, the watch's bar and topic and the source that found the post stay off the message; the
-triage gets them from the bot's own record.
+triage gets them from the bot's own record. On a Watch alert the post's link is the card's only hyperlink: the summary
+(which can be the post's own words), the author, the network and the posted time are written as plain words, without
+Chat's link marks (`<`, `>`, `|`), so link markup in a post can't put a link of its own on the card, and the triage
+and the Social Alert are always about the post itself.
 
 The space's flow works the alert on its next run (a minute later) with a full Gemini triage: ❌ No action, 👍 Worth a
 look, or a Social Alert to the right teams (only the testers while Testing, as for any alert), and T&S only when the
@@ -610,8 +613,10 @@ started today.
   already in the space waiting to be reviewed. The alert gives the post's time in UTC (`2026-10-14 11:40 UTC`), as
   BigQuery has it.
 - **Burson's alerts come first**: a check is skipped, and column C says why, when the last run ran out of time or while
-  3 or more of the posts it took still wait to be reviewed (`BQ_DIRECT_MAX_WAITING_`). The space is read first: when
-  that fails, BigQuery isn't queried.
+  3 or more of the posts it took still wait to be reviewed (`BQ_DIRECT_MAX_WAITING_`). "The last run" is the main
+  run's last report, and one from more than 10 minutes ago doesn't count (`BQ_DIRECT_LAST_RUN_MS_`): only a main run
+  writes it, so the Auto-correct space working alone (B10 with no main run) is never held back by an old one. The
+  space is read first: when that fails, BigQuery isn't queried.
 - **Cost**: the Sprinklr query reads about 3.3 GB a check, so up to about 0.95 TB a day at one check every 5 minutes
   (less when checks are skipped). It's billed only while the switch is ON.
 - **Where**: only in a test feed or the Mirror space. It does nothing (column C says why) when the Burson space is the
@@ -757,7 +762,7 @@ it's watching, the last check and today's updates (the main run's, not the auto-
 Four switches and five bar cells on the early-wave path (`Decisions.gs`, `FastTriage.gs`, `EarlyWaveSource.gs`), with all switches `OFF` to start; rows 39 and 40 need row 38 `ON` (while row 38 or row 19 is `OFF`, C39 and C40 say what they wait for and do nothing):
 
 - **Row 38 — Fast triage (Gemini Decisions):** enables rows 39 and 40. When rows 39 and 40 are both `OFF`, turning row 38 `ON` by itself changes nothing, makes no Gemini Decisions call, and writes nothing (at the daily cap of 40 queued signals the check stops reading BigQuery exactly as it does with row 38 `OFF`). When row 39 or row 40 is `ON`, the bot asks `gemini-decision-1` (`POST /v1beta/decisions`, key in Secret Manager `agentic_assistant` sent only in `x-goog-api-key`) six structured questions in one call (`about_google`, `brand_risk`, `independent_reports`, `routine_noise`, `category`, `severity`) over a sanitized summary (headline, signal type, counts, platforms, window and up to 8 post snippets with links, handles, emails and internal IDs stripped).
-- **Row 39 — Fast triage: rank and early watch:** asks candidates within this check's call budget, orders both queueing and `edDrainQueue_` so signals with a P0 risk group go first, then P0 > P1 > P2, and within a tier an unanswered signal goes first (never ranked down for a missed call), followed by higher `severity` score and higher `brand_risk` probability (unanswered candidates left over for the next check reuse their cached answers without a second API call). Turning row 39 `OFF` strips the ranking keys from waiting entries so review order goes right back to priority, accounts and age. Row 39 also runs the **early watch** (`EARLY_WATCH`, capped at 8 of the day's 40 queued signals): stories at least at the accounts bar (`B45`, seed `3`) within 180 minutes with 2+ links and a risk-term group, an Exposure Tag hint, or no older story within `EWS_STORY_SIM_` are asked about (up to 5 a check, 30 a day) and raised when `about_google` and `brand_risk` are each at or above `B44` (seed `0.80`), `independent_reports` is at or above `B47` (seed `0.30`), the most probable severity level is `medium` or higher, and its probability is at or above `B43` (seed `0.55`; an answer with no confidence raises nothing). Every raised early-watch signal goes through the full Gemini review before any card; its card's first line reads `⚡ *EARLY SIGNAL* · N accounts so far (a story is usually flagged at 5)`; if its review fails it posts **no** card (retried once up to `ED_QUEUE_MAX_TRIES_`, then dropped; turning row 39 `OFF` drops any waiting early-watch signal unreviewed); and because queuing an early-watch signal marks only its own `alert_id` as seen, when the story later reaches the 5-account promotion bar that promotion goes into the early card's thread as an `📈 *Early Detection Update*` (`edWatchNews_`), never as a second card.
+- **Row 39 — Fast triage: rank and early watch:** asks candidates within this check's call budget, orders both queueing and `edDrainQueue_` so signals with a P0 risk group go first, then P0 > P1 > P2, and within a tier an unanswered signal goes first (never ranked down for a missed call), followed by higher `severity` score and higher `brand_risk` probability (unanswered candidates left over for the next check reuse their cached answers without a second API call). Turning row 39 `OFF` strips the ranking keys from waiting entries so review order goes right back to priority, accounts and age. Row 39 also runs the **early watch** (`EARLY_WATCH`, capped at 8 of the day's 40 queued signals): stories at least at the accounts bar (`B45`, seed `3`) within 180 minutes with 2+ links and a risk-term group, an Exposure Tag hint, or no older story within `EWS_STORY_SIM_` are asked about (up to 5 a check, 30 a day) and raised when `about_google` and `brand_risk` are each at or above `B44` (seed `0.80`), `independent_reports` is at or above `B47` (seed `0.30`), the most probable severity level is `medium` or higher, and its probability is at or above `B43` (seed `0.55`; an answer with no confidence raises nothing). Every raised early-watch signal goes through the full Gemini review before any card; its card's first line reads `⚡ *EARLY SIGNAL* · N accounts so far (a story is usually flagged at 5)`; if its review fails it posts **no** card (retried once up to `ED_QUEUE_MAX_TRIES_`, then dropped; turning row 39 `OFF` drops any waiting early-watch signal unreviewed); and because queuing an early-watch signal marks only its own `alert_id` as seen, when the story later reaches the 5-account promotion bar that promotion goes into the early card's thread as an `📈 *UPDATE* · More on a story already alerted` (`edWatchNews_`), never as a second card.
 - **Row 40 — Fast triage: hold back noise:** drops a signal without a full review when it has **no** P0 risk group and **no** taxonomy raise (`ftProtected_`), its most probable severity level is `none` or `low` at or above the confidence bar (`B43`, seed `0.55`), and either `about_google` is at or below `B41` (seed `0.10`) or `routine_noise` is at or above `B42` (seed `0.90`). Held-back signals are counted on C19 (`N filtered by fast triage`) and logged in one line with the signal ID, reason, and probabilities.
 - **Rows 41-45 and 47 — Control tab bar cells:** six dropdown-validated cells read on each run (`B41` `Hold-back: about_google at or below` seed `0.10`; `B42` `Hold-back: routine_noise at or above` seed `0.90`; `B43` `Hold-back and early watch: answer confidence at or above` seed `0.55`; `B44` `Early watch: about_google and brand_risk, each at or above` seed `0.80`; `B45` `Early watch: distinct accounts, at least` seed `3`; `B47` `Early watch: independent_reports at or above` seed `0.30`, below the BigQuery switch because rows 41-46 were already on the tab). A blank or invalid cell never turns a feature off; it uses its seed and its Column C note says so. The seeds come from the eight real signals of Nov 6-12, 2026 in `test/decisions_fixtures.json` (3 risks, 5 noise): at them the early watch raises 2 of the 3 risks, and the hold-back drops 3 of the 5 noise signals and none of the risks. With one bar of `0.80` for everything, the early watch raised none: few accounts tell an early story, so `independent_reports` ran at `0.13` to `0.62` on the real risks.
 - **Row 46 — Write early-wave records to BigQuery:** writes each check's early-wave records to `brand-social-central-data.early_wave` (`US`) across `story_snapshots`, `story_posts`, `signals`, `signal_events`, and `triage_verdicts` (`ewBqFlush_`). Batches at most one `tabledata.insertAll` request per table per check with a deterministic `insertId` per row, never reads from `early_wave`, includes zero emails, display names, or Burson write-ups, skips while `ctx.slaBusy` or past the run deadline or `ApiGuard` BigQuery ceiling, and on error or timeout logs the table, reason, and dropped row count, pauses that one table for 15 minutes (C46 names it; the other four tables go on), and changes nothing else about the run. A signal gets one `signals` row: one queued or held in a later check than the one that created it is not written again. `triage_verdicts.action` is `ranked`, `kept`, `held_back`, `emitted` or `not_emitted` (`EW_BQ_ACTIONS_`; `infra/early_wave_descriptions.sql` puts that in the table's description). **Before turning row 46 `ON`**, run `verifyEarlyWaveBqLive()` from the editor: it reads the five live tables' schemas (no row written) and lists any column the writer's rows (`EW_BQ_COLUMNS_`) would be refused for; `ready: true` means they fit.
@@ -1107,10 +1112,10 @@ otherwise. Run `refreshResults()` to rebuild it now (`refreshSpeed()` still work
 The Results tab counts only the alerts Burson posted. The **Head start** tab (`HeadStart.gs`) is about the alerts this
 app raised itself: Early Detection cards and early signals (row 19), Watch alerts (row 35) and Direct BigQuery alerts
 (row 15), told apart by the Alert log's `ingested` column. It answers: how often did this app alert a story before
-Burson did, how often before the IMs emailed, by how much, and which stories did it have first. It has no switch and
-no Control tab row ("How it works" there has one line about it). It only reads the Alert log and its own tab, and
-writes only its own tab: nothing is posted in any space, nothing is emailed, Gmail and BigQuery are not asked, and the
-Alert memory is not touched.
+Burson did, how often before the IMs emailed, by how much, and which stories and which posts did it have first. It has
+no switch and no Control tab row ("How it works" there has one line about it). It only reads the Alert log and its own
+tab, and writes only its own tab: nothing is posted in any space, nothing is emailed, Gmail and BigQuery are not asked,
+and the Alert memory is not touched.
 
 - **A story** is one of this app's alerts and its updates, counted once and timed from its first alert: an Early
   Detection card that updates an earlier card belongs to that card's story, and so do two of this app's alerts on the
@@ -1127,6 +1132,11 @@ Alert memory is not touched.
   same issue name and no more, never under two different exposure tags) and `same story (similar wording)` (the same
   exposure tag and issue names alike). The same-story rules look 14 days either side of the story. Burson can be
   earlier or later than this app.
+- **Burson's alert on the same post** is shown beside that, whatever the story-level answer is: Burson's first alert on
+  one of the story's own posts, and this app's head start on the post. Mostly it is the same alert. It differs when
+  Burson's first alert on the story was on another post: one of this app's alerts that its own review took for an
+  issue Burson alerted days before (its name, an Ongoing Issue) reads `behind by 13 d` on the story, and its row still
+  shows that this app had that very post, say, `10 min` before Burson. The story-level numbers are not changed by it.
 - **No Burson alert found** is not the same as "Burson never alerted it". Burson's later alert takes a story's issue
   name only when this app's alert went out as a Social Alert. An alert that was only to be watched (an Early Detection
   card to monitor, for one) is found again only on its own posts, on an identical issue name, or on similar wording
@@ -1143,12 +1153,15 @@ Alert memory is not touched.
 
 From top to bottom: the title and what's counted; **Headline numbers** for the last 7 and the last 30 days (stories,
 those Burson alerted too, this app first and its median head start, Burson first and the median time behind, no
-Burson alert found, this app's alert before the IMs' email and the median time between them, and Burson's alerts with
-how many of them this app had alerted first: those that came after a story this app was first on); **Biggest head
-starts** (the ten longest over Burson); **Every story**, newest first. A head start reads `2 d 15 h`, `3 h 10 min` or
-`45 min`, and `behind by 20 min` when this app was later; the same in plain minutes is at the far right, to sort by
-(the three hidden columns after them are the bot's own: leave them as they are). A cell is blank where there is no
-Burson alert or no IM time.
+Burson alert found, the posts this app alerted before Burson alerted the same post with the median head start on the
+post, this app's alert before the IMs' email and the median time between them, and Burson's alerts with how many of
+them are on a story this app had alerted first: those that came after a story this app was first on); **Biggest head
+starts** (the ten longest over Burson's first alert on the story); **Every story**, newest first. A head start reads
+`2 d 15 h`, `3 h 10 min` or `45 min`, and `behind by 20 min` when this app was later; the same in plain minutes is in
+columns of its own (`… (min)`), to sort by. The last columns you see are the post-level ones: `Burson on this post (ET)`,
+`Head start on the post`, `Burson alert on this post` and that head start in plain minutes (the three hidden columns
+after them are the bot's own: leave them as they are). A cell is blank where there is no Burson alert (on the story,
+or on one of its posts) or no IM time.
 
 The tab is made the first time this app has an alert of its own to show, and is rebuilt at most every 10 minutes, in a
 run where the Results tab was rebuilt (10 more minutes without one and it is rebuilt with the IMs' times it

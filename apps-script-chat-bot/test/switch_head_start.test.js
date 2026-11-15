@@ -13,11 +13,16 @@ module.exports = H => {
   const DAY = 24 * HOUR;
   const TAB = 'Head start';
   const TITLE = B.ev('HEAD_START_TITLE_');
-  // the last three columns are hidden: the IMs' time the tab remembers for the story's Burson post (its key, ms, email or draft)
+  // Columns 1 to 14: the story against Burson's first alert on it. 15 to 18: against Burson's alert on the story's own post.
+  // The last three columns are hidden: the IMs' time the tab remembers for the story's Burson post (its key, ms, email or draft)
+  const POST_COLS = ['Burson on this post (ET)', 'Head start on the post', 'Burson alert on this post', 'Head start on the post (min)'];
+  const STATE = ['Burson post key', 'IM time (ms)', 'IM time from'];
   const HEADER = ['Type', 'This app alerted (ET)', 'Story', 'Product', 'Exposure Tag', 'Burson alerted (ET)', 'Head start over Burson',
     'IMs emailed (ET)', 'Head start over the IMs', 'Matched on', 'App alert', 'Burson alert', 'Head start over Burson (min)',
-    'Head start over the IMs (min)', 'Burson post key', 'IM time (ms)', 'IM time from'];
-  const STATE = ['Burson post key', 'IM time (ms)', 'IM time from'];
+    'Head start over the IMs (min)'].concat(POST_COLS, STATE);
+  const STATE_COL = HEADER.indexOf(STATE[0]) + 1;  // 19: the first hidden column
+  const POST_LINE = 'Posts this app alerted before Burson alerted the same post (of the stories with a post Burson alerted too)';
+  const REVERSE_LINE = 'Of Burson\'s alerts, those on a story this app had alerted first (same post or same story)';
   // The Alert log's `ingested` values, from the bot's own constants (never spelled out here)
   const ED = B.ev('ED_ALERT_INGESTED_');
   const WATCH = B.ev('PW_ALERT_INGESTED_');
@@ -158,13 +163,16 @@ module.exports = H => {
     const out = B.headStartTabRows_(r).rows;
     const head = out.findIndex(x => String(x[0]).indexOf('EVERY STORY') === 0) + 1;
     eq(out[head], HEADER);
+    // (matched on the same post, the post-level cells say the same as the story-level ones: the same alert of Burson's)
     eq(out.slice(head + 1), [
       ['Direct (Sprinklr)', B.speedTime_(NOW - 2 * HOUR), `=HYPERLINK("${link(6)}","Issue 6")`, 'Search', TAG, '', '', '', '', '', 'QA-6', '', '', '',
-        '', '', ''],
+        '', '', '', '', '', '', ''],
       ['Watch', B.speedTime_(NOW - 20 * HOUR), `=HYPERLINK("${link(4)}","Issue 4")`, 'Search', TAG, B.speedTime_(NOW - 20 * HOUR - 20 * MIN),
-        'behind by 20 min', '', '', 'same post', 'QA-4', `=HYPERLINK("${link(4)}","QA-5")`, -20, '', '', '', ''],
+        'behind by 20 min', '', '', 'same post', 'QA-4', `=HYPERLINK("${link(4)}","QA-5")`, -20, '',
+        B.speedTime_(NOW - 20 * HOUR - 20 * MIN), 'behind by 20 min', `=HYPERLINK("${link(4)}","QA-5")`, -20, '', '', ''],
       ['Early Detection', '2026-10-10 23:00', `=HYPERLINK("${link(1)}","Banking malware in Play Store apps")`, 'Play Store', TAG,
-        '2026-10-13 14:00', '2 d 15 h', '', '', 'same post', 'QA-1', `=HYPERLINK("${link(2)}","QA-3")`, 3780, '', '', '', ''],
+        '2026-10-13 14:00', '2 d 15 h', '', '', 'same post', 'QA-1', `=HYPERLINK("${link(2)}","QA-3")`, 3780, '',
+        '2026-10-13 14:00', '2 d 15 h', `=HYPERLINK("${link(2)}","QA-3")`, 3780, '', '', ''],
     ]);
     assert.ok(!out.slice(head + 1).some(x => x.slice(5, 9).concat(x.slice(12)).some(v => v === 0)), 'never a zero for a missing time');
   });
@@ -173,6 +181,79 @@ module.exports = H => {
     eq([45, 190, 3780, -20, 60, 24 * 60, 59.6, 0.4, -0.4, 0, 2 * 24 * 60 + 29, null, undefined, '', 'soon'].map(B.headStartWords_),
       ['45 min', '3 h 10 min', '2 d 15 h', 'behind by 20 min', '1 h', '1 d', '1 h', 'under 1 min', 'behind by under 1 min', 'the same minute',
         '2 d', '', '', '', '']);
+  });
+
+  test('head start: the small rules of a row and its cells: a day or more is rounded to the hour ("2 d 15 h 40 min" reads "2 d 16 h"); the plain minutes are to a tenth; an issue name, product, tag and link that are only among the Social Alert email\'s fields (or a tag only in the row\'s own column) are still read; a story of five alerts names four "and 1 more"; one of Burson\'s alerts without an id is named "Burson\'s alert"; a date in a time cell is a time; the IMs\' time is found by any row of Burson\'s post; one of Burson\'s alerts at the very moment of this app\'s story did not come after it; refreshHeadStart() makes the tab even with nothing to show', () => {
+    const T = NOW - 2 * DAY;
+    const col = name => HEADER.indexOf(name);
+    // a day or more: to the hour, rounded (not cut)
+    eq([2 * 24 * 60 + 15 * 60 + 40, 24 * 60 + 23 * 60 + 31, 24 * 60 + 29, 24 * 60 + 30, -(2 * 24 * 60 + 15 * 60 + 40)].map(B.headStartWords_),
+      ['2 d 16 h', '2 d', '1 d', '1 d 1 h', 'behind by 2 d 16 h']);
+    // the plain minutes: to a tenth of a minute (90 seconds are 1.5, 100 seconds 1.7), the words to the minute
+    const quick = report([own('QA-1', T, 1, WATCH), burson('QA-2', T + 90 * 1000, 1)], { [postKey(1)]: { at: T + 100 * 1000, from: 'email' } });
+    const quickRow = B.headStartRow_(quick.stories[0]);
+    eq(['Head start over Burson', 'Head start over Burson (min)', 'Head start over the IMs', 'Head start over the IMs (min)', 'Head start on the post',
+      'Head start on the post (min)'].map(h => quickRow[col(h)]), ['2 min', 1.5, '2 min', 1.7, '2 min', 1.5]);
+    eq([quick.windows.week.first_median_min, quick.windows.week.im_median_min], [1.5, 1.7]);
+
+    // The issue name, product, exposure tag and link are read from the row's forwarded fields, else from the Social
+    // Alert email's fields (email_input.fields); the tag, failing both, from the row's own exposure_tag column
+    const viaEmail = Object.assign(own('QA-1', T, 1, WATCH), { forwarded_fields: {},
+      email_input: { fields: { issue_name: 'Named in the email', post_url: link(1), product: 'Maps', exposure_tag: 'Brand - Litigation' } } });
+    const both = Object.assign(own('QA-2', T + HOUR, 2, WATCH), { email_input: { fields: { issue_name: 'Another name', post_url: link(9), product: 'Maps' } } });
+    const tagColumn = Object.assign(own('QA-3', T + 2 * HOUR, 3, WATCH, { exposure_tag: '' }), { exposure_tag: 'Brand - Litigation' });
+    eq([viaEmail, both, tagColumn].map(x => { const f = B.headStartRowFacts_(x); return [f.name, f.url, f.product, f.tag]; }),
+      [['Named in the email', link(1), 'Maps', 'Brand - Litigation'], ['Issue 2', link(2), 'Search', TAG], ['Issue 3', link(3), 'Search', 'Brand - Litigation']]);
+    eq(report([viaEmail, both, tagColumn]).stories.map(s => [s.alert_id, s.name, s.url, s.product, s.tag]).reverse(),
+      [['QA-1', 'Named in the email', link(1), 'Maps', 'Brand - Litigation'], ['QA-2', 'Issue 2', link(2), 'Search', TAG],
+        ['QA-3', 'Issue 3', link(3), 'Search', 'Brand - Litigation']]);
+    // ... and Burson's alert under a name that is only in its email's fields is still found by that name (same story)
+    const NAME = 'Banking malware in Play Store apps';
+    const theirs = Object.assign(burson('QA-5', T + 3 * HOUR, 5), { forwarded_fields: { post_url: link(5) },
+      email_input: { fields: { issue_name: NAME, issue_status: ONGOING, exposure_tag: 'Another tag' } } });
+    eq(report([own('QA-4', T, 4, WATCH, { issue_name: NAME }), theirs]).stories.map(brief), [['QA-4', 'Watch', 'same story', 'QA-5', 180]]);
+
+    // A story of five alerts names four and says how many more; one of four names them all
+    const chain = n => Array.from({ length: n }, (x, i) => card(`QA-${i + 1}`, T + i * HOUR, 20 + i, { update_of: i ? `QA-${i}` : '' }));
+    eq([5, 4, 7].map(n => B.headStartRow_(report(chain(n)).stories[0])[col('App alert')]),
+      ['QA-1, QA-2, QA-3, QA-4 and 1 more', 'QA-1, QA-2, QA-3, QA-4', 'QA-1, QA-2, QA-3, QA-4 and 3 more']);
+    // One of Burson's alerts without an id is still linked, as "Burson's alert" (on the story and on the post)
+    const anon = B.headStartRow_(report([own('QA-1', T, 1, WATCH), burson('', T + HOUR, 1)]).stories[0]);
+    eq([anon[col('Burson alert')], anon[col('Burson alert on this post')]], new Array(2).fill(`=HYPERLINK("${link(1)}","Burson's alert")`));
+
+    // A time cell that holds a date (Sheets can hand one back) is a time, for this app's rows and for Burson's
+    const dated = report([Object.assign(own('QA-1', T, 1, WATCH), { source_at: new Date(T) }),
+      Object.assign(own('QA-2', T, 2, WATCH), { source_at: '', created_at: new Date(T + HOUR) }),
+      Object.assign(burson('QA-3', T, 1), { source_at: new Date(T + 2 * HOUR) })]);
+    eq([dated.stories.map(s => [s.alert_id, s.at, s.lead_ms]).reverse(), B.headStartTime_(new Date(T)), B.headStartTime_(new Date(NaN))],
+      [[['QA-1', T, 2 * HOUR], ['QA-2', T + HOUR, null]], T, 0]);
+
+    // The IMs' time is found by any row of Burson's post: here its first row (the earlier one) has no link among its
+    // fields, and its second row, in the other test space, has
+    const split = [own('QA-1', T, 1, WATCH), burson('QA-2', T + HOUR, 1, { post_url: '' }), burson('QA-3', T + HOUR + 30 * 1000, 1, null, { space: AC })];
+    eq(report(split, { [postKey(1)]: { at: T + 2 * HOUR, from: 'email' } }).stories.map(s => [s.burson.alert_id, s.im, s.im_key, s.im_lead_ms / MIN]),
+      [['QA-2', { at: T + 2 * HOUR, from: 'email' }, postKey(1), 120]]);
+
+    // The reverse view: one of Burson's alerts on the story (here under its name, the weaker rule) at the very moment of
+    // this app's alert did not come after it; a millisecond later it did
+    const moment = ms => report([own('QA-1', T, 1, WATCH, { issue_name: NAME }), burson('QA-2', T + HOUR, 1),
+      burson('QA-3', T + ms, 3, { issue_name: NAME, issue_status: 'NEW' })]).windows.week;
+    eq([0, 1].map(ms => { const w = moment(ms); return [w.first, w.burson_alerts, w.burson_after, w.burson_after_by]; }),
+      [[1, 2, 1, { post: 1, story: 0, name: 0, wording: 0 }], [1, 2, 2, { post: 1, story: 0, name: 1, wording: 0 }]]);
+
+    // refreshHeadStart(), from the editor, makes the tab even when this app has no alert of its own yet (the
+    // every-minute rebuild waits for one), and hands back the numbers
+    const w = world();
+    const ss = sheetOf(w);
+    w.bot.sheetBackend_(ss).appendAlert(burson('QA-1', NOW - HOUR, 1));
+    w.g.props.set('STORE_SHEET_ID', ss.getId());
+    eq([w.bot.maybeRefreshHeadStart_(ss, w.ctx(), { deadline: w.g.clock.now + 4 * MIN, runStart: w.g.clock.now }), !!tabOf(ss)], [false, false]);
+    const numbers = w.bot.refreshHeadStart();
+    eq([numbers.week.stories, numbers.week.burson_alerts, tabOf(ss).cell(1, 1), tabOf(ss).rows.filter(x => x[0] === 'None yet').length], [0, 1, TITLE, 2]);
+    // With no sheet to work on, the every-minute rebuild does nothing: nothing noted, nothing in the log
+    const bare = world();
+    eq([bare.bot.maybeRefreshHeadStart_(null, bare.ctx(), { deadline: bare.g.clock.now + 4 * MIN, runStart: bare.g.clock.now }),
+      bare.g.props.get('HEAD_START_AT'), bare.g.logs.filter(l => /Head start/.test(l))], [false, undefined, []]);
   });
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -310,12 +391,16 @@ module.exports = H => {
     eq(r.top, []);
     const cells = B.headStartTabRows_(r).rows;
     eq(['This app alerted first (of those Burson alerted too)', 'Burson alerted first', 'Median time this app was behind (where Burson was first)',
-      'Of Burson\'s alerts, those this app had alerted first (same post or same story)'].map(label => cells.find(c => c[0] === label)[1]),
+      REVERSE_LINE].map(label => cells.find(c => c[0] === label)[1]),
     ['0 of 1 (0%)', 1, '2 h', '0 of 2 (0%)']);
     eq(cells.filter(c => c[10] === 'QA-12').map(c => [c[5], c[6], c[9], c[11], c[12]]),
       [[B.speedTime_(U - 2 * HOUR), 'behind by 2 h', 'same story', `=HYPERLINK("${link(8)}","QA-11")`, -120]]);
+    // ... while the post-level cells of the same row show Burson's alert on the post itself, ten minutes after this app's
+    eq(cells.filter(c => c[10] === 'QA-12').map(c => POST_COLS.map(h => c[HEADER.indexOf(h)])),
+      [[B.speedTime_(U + 10 * MIN), '10 min', `=HYPERLINK("${link(5)}","QA-13")`, 10]]);
+    eq(cells.find(c => c[0] === POST_LINE)[1], '1 of 1 (100%): median head start 10 min');
     assert.match(cells.map(c => String(c[0])).find(c => c.indexOf('Matched on:') === 0),
-      /A story is measured against the earliest of Burson's alerts those two give: Burson's first alert on the story, even when Burson alerted the story's own post later\..* One of Burson's alerts counts as alerted first by this app when it came after a story this app was first on, not when Burson already had that story\./);
+      /A story is measured against the earliest of Burson's alerts those two give: Burson's first alert on the story, even when Burson alerted the story's own post later\..* One of Burson's alerts counts as on a story this app had alerted first when it came after a story this app was first on, not when Burson already had that story \(/);
     // ... nor are Burson's next alerts on a story it had first (two more under the name, hours after this app's alert)
     r = report(behind.concat([burson('QA-14', U + 3 * HOUR, 14, taken), burson('QA-15', U + 6 * HOUR, 15, taken)]));
     eq([r.stories.map(brief), numbers(r.windows.week).slice(6)],
@@ -346,6 +431,91 @@ module.exports = H => {
       [['QA-1', 'Early Detection', 'same story', 'QA-3', 63 * 60]]);
   });
 
+  test('head start: the post-level answer, beside the story-level one: this app\'s alert on a post that carries an ongoing issue\'s name (its own review gave it the name of an issue Burson alerted days before) is "behind by" days on the story, and its row still shows Burson\'s alert on that very post and by how much this app had the post first ("10 min"); the headline numbers count the posts this app alerted before Burson alerted the same post, with the median; blank, never a zero, when Burson alerted none of the story\'s posts', () => {
+    const NAME = 'Criticism against AI Overviews';
+    const T = NOW - 2 * DAY;
+    const LONG = T - 13 * DAY - HOUR;  // Burson's first alert under the name: 13 days and an hour before this app's
+    const rows = [
+      burson('QA-1', LONG, 9, { issue_name: NAME }),
+      own('QA-2', T, 1, DIRECT.SPRINKLR, { issue_name: NAME, issue_status: ONGOING }),  // the bot's review: an ongoing issue under that name
+      burson('QA-3', T + 10 * MIN, 1, { issue_name: NAME, issue_status: ONGOING }),     // Burson on the same post, ten minutes later
+      own('QA-4', T + HOUR, 4, WATCH),                                                  // a post Burson never alerted
+    ];
+    const r = report(rows);
+    // the story-level answer is as it was: behind Burson's first alert on the story, by 13 days and an hour
+    eq(r.stories.map(brief), [['QA-4', 'Watch', '', null, null], ['QA-2', 'Direct (Sprinklr)', 'same story', 'QA-1', -(13 * 24 * 60 + 60)]]);
+    // the post-level answer: Burson's alert on the story's own post, ten minutes after this app's
+    eq(r.stories.map(s => [s.post, s.post_lead_ms]),
+      [[null, null], [{ key: key(1), at: T + 10 * MIN, alert_id: 'QA-3', url: link(1), name: NAME }, 10 * MIN]]);
+    const post = w => [w.post_matched, w.post_first, w.post_first_pct, w.post_first_median_min];
+    eq([post(r.windows.week), post(r.windows.month)], [[1, 1, 100, 10], [1, 1, 100, 10]]);
+    // the story-level numbers and the reverse view stay as they were (the story was Burson's first)
+    const w = r.windows.week;
+    eq([w.stories, w.matched, w.first, w.behind, w.behind_median_min, w.unmatched, w.burson_alerts, w.burson_after], [2, 1, 0, 1, 13 * 24 * 60 + 60, 1, 1, 0]);
+    eq(r.top, []);
+    const cells = B.headStartTabRows_(r).rows;
+    const lineOf = label => cells.find(c => c[0] === label).slice(1, 3);
+    eq(['This app alerted first (of those Burson alerted too)', 'Burson alerted first', 'Median time this app was behind (where Burson was first)',
+      'No Burson alert found', POST_LINE, REVERSE_LINE].map(lineOf),
+    [['0 of 1 (0%)', '0 of 1 (0%)'], [1, 1], ['13 d 1 h', '13 d 1 h'], [1, 1],
+      ['1 of 1 (100%): median head start 10 min', '1 of 1 (100%): median head start 10 min'], ['0 of 1 (0%)', '0 of 2 (0%)']]);
+    eq(cells.findIndex(c => c[0] === POST_LINE) - cells.findIndex(c => c[0] === 'No Burson alert found'), 1);  // right under the story-level numbers
+    // the story's row: the story-level cells, then the post-level ones
+    const story = Object.fromEntries(HEADER.map((h, j) => [h, cells.filter(c => c[10] === 'QA-2').pop()[j]]));
+    eq([story['Burson alerted (ET)'], story['Head start over Burson'], story['Matched on'], story['Burson alert'], story['Head start over Burson (min)']],
+      [B.speedTime_(LONG), 'behind by 13 d 1 h', 'same story', `=HYPERLINK("${link(9)}","QA-1")`, -(13 * 24 * 60 + 60)]);
+    eq(POST_COLS.map(h => story[h]), [B.speedTime_(T + 10 * MIN), '10 min', `=HYPERLINK("${link(1)}","QA-3")`, 10]);
+    // a story none of whose posts Burson alerted: blank, never a zero
+    const none = cells.filter(c => c[10] === 'QA-4').pop();
+    eq(POST_COLS.map(h => none[HEADER.indexOf(h)]), ['', '', '', '']);
+    const note = cells.map(c => String(c[0])).find(c => c.indexOf('Matched on:') === 0);
+    assert.match(note, /Beside that story-level answer is the post-level one \("Burson on this post", "Head start on the post"\): Burson's first alert on one of the story's own posts\. So a story that carries the name of an issue Burson alerted days before reads "behind by" days on the story, and still shows by how much this app had the post itself before Burson\. A head start is from/);
+    assert.match(note, /One of Burson's alerts counts as on a story this app had alerted first when it came after a story this app was first on, not when Burson already had that story \(this app may still have had that very post first: the post-level line counts those\)\./);
+    assert.match(note, /\(the same exposure tag and issue names alike\)\. The same-story rules look 14 days either side of the story\. Beside that/);
+    eq(B.ev('HEAD_START_STORY_DAYS_'), 14);
+
+    // Matched on the same post, the two answers are one: the same alert, the same head start
+    const same = report([own('QA-2', T, 1, WATCH), burson('QA-3', T + 45 * MIN, 1)]);
+    eq(same.stories.map(s => [brief(s), s.post.alert_id, s.post_lead_ms / MIN]), [[['QA-2', 'Watch', 'same post', 'QA-3', 45], 'QA-3', 45]]);
+    // Burson on the post BEFORE this app: behind on the post too, and not one this app alerted first
+    const late = report([burson('QA-1', LONG, 9, { issue_name: NAME }), own('QA-2', T, 1, DIRECT.SPRINKLR, { issue_name: NAME, issue_status: ONGOING }),
+      burson('QA-3', T - 20 * MIN, 1)]);
+    eq([late.stories.map(s => [s.burson.alert_id, s.post.alert_id, s.post_lead_ms / MIN]), post(late.windows.week)],
+      [[['QA-1', 'QA-3', -20]], [1, 0, 0, null]]);
+    const lateCells = B.headStartTabRows_(late).rows;
+    eq([lateCells.find(c => c[0] === POST_LINE).slice(1, 3), POST_COLS.map(h => lateCells.filter(c => c[10] === 'QA-2').pop()[HEADER.indexOf(h)])],
+      [['0 of 1 (0%)', '0 of 1 (0%)'], [B.speedTime_(T - 20 * MIN), 'behind by 20 min', `=HYPERLINK("${link(1)}","QA-3")`, -20]]);
+    // ... and at the very same millisecond: neither first nor behind, "the same minute"
+    const tie = report([own('QA-2', T, 1, WATCH), burson('QA-3', T, 1)]);
+    eq([post(tie.windows.week), B.headStartRow_(tie.stories[0])[HEADER.indexOf('Head start on the post')]], [[1, 0, 0, null], 'the same minute']);
+    // A card that rests on several posts: Burson's EARLIEST alert on one of them counts, in both test spaces' rows
+    // (a later alert of Burson's on another of its posts doesn't); Burson's alert on another post of the same story
+    // (same issue name, an Ongoing Issue) is no alert on the story's own posts
+    const several = report([
+      card('QA-1', T, 1, { post_keys: [key(1), key(2), key(3)] }, { issue_name: NAME }),
+      burson('QA-2', T + 3 * HOUR, 3), burson('QA-3', T + 2 * HOUR + 30 * 1000, 2), burson('QA-4', T + 2 * HOUR, 2, null, { space: AC }),
+      burson('QA-5', T + HOUR, 8, { issue_name: NAME, issue_status: ONGOING, exposure_tag: 'Another tag' }),
+    ]);
+    eq(several.stories.map(s => [brief(s), s.post.alert_id, s.post.key, s.post_lead_ms / MIN]),
+      [[['QA-1', 'Early Detection', 'same story', 'QA-5', 60], 'QA-4', key(2), 120]]);
+    const other = report([card('QA-1', T, 1, { post_keys: [key(1)] }, { issue_name: NAME }),
+      burson('QA-5', T + HOUR, 8, { issue_name: NAME, issue_status: ONGOING, exposure_tag: 'Another tag' })]);
+    eq([other.stories.map(s => [brief(s), s.post, s.post_lead_ms]), post(other.windows.week)],
+      [[[['QA-1', 'Early Detection', 'same story', 'QA-5', 60], null, null]], [0, 0, null, null]]);
+    eq(B.headStartTabRows_(other).rows.find(c => c[0] === POST_LINE).slice(1, 3), ['—', '—']);
+    // the 7-day and the 30-day numbers differ, by when this app alerted; the median is of the head starts on the post
+    const windows = report([
+      own('QA-1', NOW - 2 * DAY, 1, WATCH), burson('QA-2', NOW - 2 * DAY + 30 * MIN, 1),
+      own('QA-3', NOW - 3 * DAY, 3, WATCH), burson('QA-4', NOW - 3 * DAY - 5 * MIN, 3),
+      own('QA-5', NOW - 20 * DAY, 5, WATCH), burson('QA-6', NOW - 20 * DAY + 90 * MIN, 5),
+      own('QA-7', NOW - 21 * DAY, 7, WATCH), burson('QA-8', NOW - 21 * DAY + 4 * HOUR, 7),
+      own('QA-9', NOW - 22 * DAY, 9, WATCH),
+    ]);
+    eq([post(windows.windows.week), post(windows.windows.month)], [[2, 1, 50, 30], [4, 3, 75, 90]]);
+    eq(B.headStartTabRows_(windows).rows.find(c => c[0] === POST_LINE).slice(1, 3),
+      ['1 of 2 (50%): median head start 30 min', '3 of 4 (75%): median head start 1 h 30 min']);
+  });
+
   test('head start: the same-story rule, weaker: the same issue name and no more is labelled "same story (same issue name)": the owner\'s example as it usually goes (a card that was only to be watched, with no exposure tag, and Burson\'s alert days later on another post under that name); never under two different exposure tags, only when no sure rule gives an alert; a story without a match is counted as "No Burson alert found", and the tab says why that isn\'t "not alerted"', () => {
     const NAME = 'Banking malware in Play Store apps';
     const SAME_NAME = 'same story (same issue name)';
@@ -370,7 +540,7 @@ module.exports = H => {
     const cells = B.headStartTabRows_(r).rows;
     eq(cells.filter(c => c[10] === 'QA-1').map(c => [c[1], c[5], c[6], c[9], c[12]]),
       [['2026-10-10 23:00', '2026-10-13 14:00', '2 d 15 h', SAME_NAME, 3780], ['2026-10-10 23:00', '2026-10-13 14:00', '2 d 15 h', SAME_NAME, 3780]]);
-    eq(cells.find(c => c[0] === 'Of Burson\'s alerts, those this app had alerted first (same post or same story)').slice(1, 3),
+    eq(cells.find(c => c[0] === REVERSE_LINE).slice(1, 3),
       ['1 of 1 (100%): 1 same issue name', '1 of 1 (100%): 1 same issue name']);
 
     // however the name is written (case, spacing, quotes, a status suffix); with the tag on one side only, either side;
@@ -646,7 +816,7 @@ module.exports = H => {
     // Both of Burson's alerts are on the Results tab: both IM times come from this run's Results rebuild, and the tab
     // keeps each in its hidden columns (the Burson post's key, the time in ms, email or draft)
     eq([results(), run(), stories()], [[postKey(3), postKey(1)], true, [QA3(90), QA1]]);
-    eq([Array.from(new Set(tab().hidden)), numbers()], [[15, 16, 17], [['2 of 2 (100%)', '2 of 2 (100%)'], ['2 h', '2 h']]]);
+    eq([Array.from(new Set(tab().hidden)), numbers()], [[19, 20, 21], [['2 of 2 (100%)', '2 of 2 (100%)'], ['2 h', '2 h']]]);
     eq(B.headStartImCovered_(w.bot.ev('RESULTS_RUN_.posts')), [postKey(3), postKey(1)]);
 
     // Two days on, Burson's first alert is older than the Results tab's 7 days: its rebuild no longer shows the post.
@@ -747,9 +917,10 @@ module.exports = H => {
     eq(r.stories.map(x => [x.alert_id, x.im_key, x.im && x.im.at]).reverse(),
       KEYS.map((k, i) => [`QA-o${i}`, k, timeOf(i)]).concat([['QA-7', '', null], ['QA-9', '', null]]));
     const cells = B.headStartTabRows_(r).rows;
-    eq(cells.filter(c => c[0] === 'Type').map(c => c.slice(14)), [STATE, STATE]);
+    eq(cells.filter(c => c[0] === 'Type').map(c => c.slice(STATE_COL - 1)), [STATE, STATE]);
+    eq([STATE_COL, B.ev('HEAD_START_STATE_COL_'), cells[0].length], [19, 19, 21]);  // the last three columns
     // the state cells: the key with an apostrophe before = + - @ (so it is text, never a formula), the ms, the word
-    const stateOf = id => cells.filter(c => c[10] === id).map(c => c.slice(14));
+    const stateOf = id => cells.filter(c => c[10] === id).map(c => c.slice(STATE_COL - 1));
     eq(KEYS.map((k, i) => stateOf(`QA-o${i}`)), [
       new Array(2).fill(['\'=1+1.example.test/x', timeOf(0), 'draft']), [['\'-evil.example.test/p/1', timeOf(1), 'email']],
       new Array(2).fill(['\'@at.example.test/p', timeOf(2), 'draft']), [['\'+plus.example.test/p/2', timeOf(3), 'email']],
@@ -759,12 +930,12 @@ module.exports = H => {
     const LINK = /^=HYPERLINK\("https?:\/\/(?:[^"]|"")*","(?:[^"]|"")*"\)$/;
     const all = [].concat.apply([], cells);
     eq([all.filter(v => typeof v === 'string' && /^[=+\-@]/.test(v) && !LINK.test(v)), Math.max.apply(null, all.map(v => String(v).length)) <= 49000], [[], true]);
-    const stateCells = cells.map(c => c.slice(14)).filter(c => c.join('') !== '' && c[0] !== STATE[0]);
+    const stateCells = cells.map(c => c.slice(STATE_COL - 1)).filter(c => c.join('') !== '' && c[0] !== STATE[0]);
     assert.ok(stateCells.length === 8 && stateCells.every(c => typeof c[0] === 'string' && typeof c[1] === 'number' && /^(email|draft)$/.test(c[2])),
       JSON.stringify(stateCells));
     // a key too long for a cell is cut to fit one, still as text
     const huge = Object.assign({}, r.stories[r.stories.length - 1], { im_key: `=${'k'.repeat(60000)}` });
-    eq([B.headStartRow_(huge)[14].length, B.headStartRow_(huge)[14].slice(0, 3)], [49000, '\'=k']);
+    eq([B.headStartRow_(huge)[STATE_COL - 1].length, B.headStartRow_(huge)[STATE_COL - 1].slice(0, 3)], [49000, '\'=k']);
 
     // Written, the three columns are hidden, and the next rebuild reads every time back by its key as it was
     const w = world();
@@ -773,7 +944,7 @@ module.exports = H => {
     const tab = tabOf(ss);
     const sorted = map => Array.from(map.entries()).sort((x, y) => (x[0] < y[0] ? -1 : 1));
     const expected = KEYS.map((k, i) => [k, { at: timeOf(i), from: i % 2 ? 'email' : 'draft' }]).sort((x, y) => (x[0] < y[0] ? -1 : 1));
-    eq([Array.from(new Set(tab.hidden)), sorted(w.bot.readHeadStartState_(tab))], [[15, 16, 17], expected]);
+    eq([Array.from(new Set(tab.hidden)), sorted(w.bot.readHeadStartState_(tab))], [[19, 20, 21], expected]);
     const shown = () => table(tab, 'EVERY STORY').map(x => [x['App alert'], x['IMs emailed (ET)']].concat(STATE.map(h => x[h]))).reverse().slice(0, 5);
     const whole = KEYS.map((k, i) => [`QA-o${i}`, B.speedTime_(timeOf(i)), k, timeOf(i), i % 2 ? 'email' : 'draft']);
     w.bot.refreshHeadStart_(ss, { now: NOW + HOUR, alerts: rows });  // no Results rebuild in this run: all remembered
@@ -782,10 +953,10 @@ module.exports = H => {
     // with its state gone from either table, the other still has it
     const rowsOf = id => tab.rows.map((x, i) => (x[10] === id ? i + 1 : 0)).filter(Boolean);
     eq([rowsOf('QA-o0').length, rowsOf('QA-o1').length, rowsOf('QA-o0')[0] < at(tab, 'EVERY STORY'), rowsOf('QA-o1')[0] > at(tab, 'EVERY STORY')], [2, 1, true, true]);
-    tab.getRange(rowsOf('QA-o0')[0], 15, 1, 3).setValues([['', '', '']]);
+    tab.getRange(rowsOf('QA-o0')[0], STATE_COL, 1, 3).setValues([['', '', '']]);
     eq(sorted(w.bot.readHeadStartState_(tab)), expected);
-    tab.getRange(rowsOf('QA-o0')[1], 15, 1, 3).setValues([['', '', '']]);
-    tab.getRange(rowsOf('QA-o0')[0], 15, 1, 3).setValues([[KEYS[0], timeOf(0), 'draft']]);
+    tab.getRange(rowsOf('QA-o0')[1], STATE_COL, 1, 3).setValues([['', '', '']]);
+    tab.getRange(rowsOf('QA-o0')[0], STATE_COL, 1, 3).setValues([[KEYS[0], timeOf(0), 'draft']]);
     eq(sorted(w.bot.readHeadStartState_(tab)), expected);
     w.bot.refreshHeadStart_(ss, { now: NOW + 2 * HOUR, alerts: rows });
     eq(shown(), whole);
@@ -793,15 +964,15 @@ module.exports = H => {
     // A broken state cell is no state: a time that is a text, no real date or missing, a word that is neither email
     // nor draft, a missing key. Only that story's time is lost; the rebuild works and says nothing in the log
     const set = (id, col, values) => rowsOf(id).forEach((row, i) => tab.getRange(row, col).setValue(values[i % values.length]));
-    set('QA-o0', 16, ['soon', 1e20]);        // both of its rows
-    set('QA-o1', 17, ['fax']);
-    set('QA-o2', 16, ['Infinity', -5]);
-    set('QA-o3', 15, ['']);
-    set('QA-o4', 16, ['']);                  // its time is missing in both rows ...
+    set('QA-o0', STATE_COL + 1, ['soon', 1e20]);        // both of its rows
+    set('QA-o1', STATE_COL + 2, ['fax']);
+    set('QA-o2', STATE_COL + 1, ['Infinity', -5]);
+    set('QA-o3', STATE_COL, ['']);
+    set('QA-o4', STATE_COL + 1, ['']);                  // its time is missing in both rows ...
     let state;
     assert.doesNotThrow(() => { state = w.bot.readHeadStartState_(tab); });
     eq(sorted(state), []);
-    tab.getRange(rowsOf('QA-o4')[1], 16).setValue(timeOf(4));  // ... and then whole again in its EVERY STORY row
+    tab.getRange(rowsOf('QA-o4')[1], STATE_COL + 1).setValue(timeOf(4));  // ... and then whole again in its EVERY STORY row
     eq(sorted(w.bot.readHeadStartState_(tab)), [[KEYS[4], { at: timeOf(4), from: 'draft' }]]);
     let out;
     assert.doesNotThrow(() => { out = w.bot.refreshHeadStart_(ss, { now: NOW + 3 * HOUR, alerts: rows }); });
@@ -810,7 +981,7 @@ module.exports = H => {
 
     // Reading never throws. Sheets failing on the state columns: no state, the log says so, and the rebuild still writes the tab
     const real = tab.getRange.bind(tab);
-    tab.getRange = (row, col, n, m) => { if (col >= 15) throw new Error('Sheets is down'); return real(row, col, n, m); };
+    tab.getRange = (row, col, n, m) => { if (col >= STATE_COL) throw new Error('Sheets is down'); return real(row, col, n, m); };
     assert.doesNotThrow(() => { state = w.bot.readHeadStartState_(tab); });
     eq([sorted(state), w.g.logs.slice(-1)], [[], ['ERROR Head start tab: the IMs\' times it remembers could not be read: Sheets is down']]);
     assert.doesNotThrow(() => { out = w.bot.refreshHeadStart_(ss, { now: NOW + 4 * HOUR, alerts: rows, im: { [KEYS[3]]: im[KEYS[3]] } }); });
@@ -821,8 +992,18 @@ module.exports = H => {
       eq(sorted(state), []);
     }
     // A tab from before these columns (its tables' headers end at the minutes): nothing remembered, and the rebuild adds them
-    tab.getRange(1, 15, tab.rows.length, 3).clearContent();
+    tab.getRange(1, 15, tab.rows.length, 7).clearContent();
     eq([sorted(w.bot.readHeadStartState_(tab)), w.bot.refreshHeadStart_(ss, { now: NOW + 5 * HOUR, alerts: rows, im }).written, shown()], [[], true, whole]);
+    // A tab from before the post-level columns: its state columns were 15 to 17, hidden, where the post-level columns
+    // are now. The times are still read (the columns are found by their names), and the rebuild puts the state where
+    // it is now, hidden, with the post-level columns shown
+    tab.rows = tab.rows.map(x => x.slice(0, 14).concat(x.slice(STATE_COL - 1, STATE_COL + 2)));
+    tab.hidden = [15, 16, 17];
+    eq([tab.rows[at(tab, 'EVERY STORY') + 1].slice(14), sorted(w.bot.readHeadStartState_(tab))], [STATE, expected]);
+    eq([w.bot.refreshHeadStart_(ss, { now: NOW + 6 * HOUR, alerts: rows }).written, shown(), Array.from(new Set(tab.hidden)),
+      tab.rows[at(tab, 'EVERY STORY') + 1]], [true, whole, [19, 20, 21], HEADER]);
+    eq(table(tab, 'EVERY STORY').filter(x => x['App alert'] === 'QA-o0').map(x => POST_COLS.map(h => x[h])),
+      [[B.speedTime_(T + 30 * MIN), '30 min', `=HYPERLINK("${ODD[0]}","QA-b0")`, 30]]);
   });
 
   test('head start: a rebuild whose write fails leaves the tab as it was, with the IMs\' times it remembers (the new cells go in over the old ones in one write, and only then is what is left beyond them cleared): the next rebuild still has those times, and a tab that got shorter or narrower has nothing left over', () => {
@@ -863,10 +1044,10 @@ module.exports = H => {
     // theirs is left over, and the one story still has its time
     const length = tab.rows.length;
     tab.getRange(length + 5, 2).setValue('left over below');
-    tab.getRange(length + 6, 21).setValue('left over below and to the right');
-    tab.getRange(3, 20, 1, 2).setValues([['left over', 'to the right']]);
+    tab.getRange(length + 6, 25).setValue('left over below and to the right');
+    tab.getRange(3, 24, 1, 2).setValues([['left over', 'to the right']]);
     eq([w.bot.refreshHeadStart_(ss, { now: NOW + 3 * HOUR, alerts: rows.slice(0, 2) }).written, shown(), tab.rows.length < length,
-      tab.rows.every(x => x.length <= 21 && x.slice(17).every(v => v === '')), JSON.stringify(tab.rows).indexOf('left over')],
+      tab.rows.every(x => x.length <= 25 && x.slice(HEADER.length).every(v => v === '')), JSON.stringify(tab.rows).indexOf('left over')],
     [true, [whole[2]], true, true, -1]);
     eq([tab.cell(1, 1), tab.rows.filter(x => x[0] === 'Type').length, table(tab, 'BIGGEST HEAD STARTS').map(x => x['App alert'])], [TITLE, 2, ['QA-1']]);
   });
@@ -912,21 +1093,31 @@ module.exports = H => {
       own('QA-10', NOW - 20 * DAY, 10, WATCH), burson('QA-11', NOW - 20 * DAY - 2 * HOUR, 10),     // behind by 120 min (30 days only)
       own('QA-12', NOW - 40 * DAY, 12, WATCH), burson('QA-13', NOW - 39 * DAY, 12),                // older than 30 days: in neither
       burson('QA-14', NOW - DAY, 14),                                                              // an alert only Burson had
+      own('QA-15', NOW - 15 * DAY, 15, WATCH),                                                     // no Burson alert (30 days only)
+      // 30 days and 12 hours old, an hour ahead of Burson: just outside the 30 days, so in neither the table nor a number
+      own('QA-16', NOW - 30 * DAY - 12 * HOUR, 16, WATCH), burson('QA-17', NOW - 30 * DAY - 11 * HOUR, 16),
     ];
     const im = { [postKey(1)]: { at: NOW - 2 * DAY + 5 * HOUR, from: 'email' }, [postKey(5)]: { at: NOW - 4 * DAY - 10 * MIN, from: 'draft' },
       [postKey(8)]: { at: NOW - 7 * DAY, from: 'email' } };
     const r = report(rows, im);
-    eq(r.stories.map(s => s.alert_id), ['QA-1', 'QA-3', 'QA-5', 'QA-7', 'QA-8', 'QA-10']);  // the last 30 days, newest first
+    eq(r.stories.map(s => s.alert_id), ['QA-1', 'QA-3', 'QA-5', 'QA-7', 'QA-8', 'QA-15', 'QA-10']);  // the last 30 days, newest first
     eq(r.windows.week, {
       stories: 4, matched: 3, matched_pct: 75, first: 2, first_pct: 67, first_median_min: 120, behind: 1, behind_median_min: 30, unmatched: 1,
+      post_matched: 3, post_first: 2, post_first_pct: 67, post_first_median_min: 120,
       im_known: 2, im_first: 1, im_first_pct: 50, im_median_min: 145, im_from_email: 1,
       burson_alerts: 4, burson_after: 2, burson_after_pct: 50, burson_after_by: { post: 2, story: 0, name: 0, wording: 0 },
     });
     eq(r.windows.month, {
-      stories: 6, matched: 5, matched_pct: 83, first: 3, first_pct: 60, first_median_min: 180, behind: 2, behind_median_min: 75, unmatched: 1,
+      stories: 7, matched: 5, matched_pct: 71, first: 3, first_pct: 60, first_median_min: 180, behind: 2, behind_median_min: 75, unmatched: 2,
+      post_matched: 5, post_first: 3, post_first_pct: 60, post_first_median_min: 180,
       im_known: 3, im_first: 2, im_first_pct: 67, im_median_min: 300, im_from_email: 2,
       burson_alerts: 6, burson_after: 3, burson_after_pct: 50, burson_after_by: { post: 3, story: 0, name: 0, wording: 0 },
     });
+    // the 30-day edge, as the 7-day one: a story exactly 30 days old is in the table and the 30-day numbers, one a
+    // millisecond older is in neither; and exactly 7 days old it is in the 7-day numbers, a millisecond older not
+    const edge = ago => { const x = report([own('QA-1', NOW - ago, 1, WATCH)]); return [x.stories.length, x.windows.month.stories, x.windows.week.stories]; };
+    eq([edge(30 * DAY), edge(30 * DAY + 1), edge(30 * DAY + 12 * HOUR), edge(7 * DAY), edge(7 * DAY + 1)],
+      [[1, 1, 0], [0, 0, 0], [0, 0, 0], [1, 1, 1], [1, 1, 0]]);
     eq(r.top.map(s => [s.alert_id, s.lead_ms / MIN]), [['QA-8', 2880], ['QA-1', 180], ['QA-3', 60]]);  // the longest head start first
 
     const w = world();
@@ -936,11 +1127,19 @@ module.exports = H => {
     eq(tab.rows[at(tab, 'HEADLINE NUMBERS')].slice(0, 3), ['HEADLINE NUMBERS', 'Last 7 days', 'Last 30 days']);
     eq(['Stories this app alerted on its own', 'Of those, also alerted by Burson', 'This app alerted first (of those Burson alerted too)',
       'Median head start over Burson (where this app was first)', 'Burson alerted first', 'Median time this app was behind (where Burson was first)',
-      'No Burson alert found', 'This app\'s alert before the IMs\' email (of the stories with an IM email time)',
+      'No Burson alert found', POST_LINE, 'This app\'s alert before the IMs\' email (of the stories with an IM email time)',
       'Median time from this app\'s alert to the IMs\' email (the end-to-end head start)', 'Burson\'s alerts in the same days',
-      'Of Burson\'s alerts, those this app had alerted first (same post or same story)'].map(label => line(tab, label)),
-    [[4, 6], ['3 of 4 (75%)', '5 of 6 (83%)'], ['2 of 3 (67%)', '3 of 5 (60%)'], ['2 h', '3 h'], [1, 2], ['30 min', '1 h 15 min'], [1, 1],
+      REVERSE_LINE].map(label => line(tab, label)),
+    [[4, 7], ['3 of 4 (75%)', '5 of 7 (71%)'], ['2 of 3 (67%)', '3 of 5 (60%)'], ['2 h', '3 h'], [1, 2], ['30 min', '1 h 15 min'], [1, 2],
+      ['2 of 3 (67%): median head start 2 h', '3 of 5 (60%): median head start 3 h'],
       ['1 of 2 (50%)', '2 of 3 (67%)'], ['2 h 25 min', '5 h'], [4, 6], ['2 of 4 (50%): 2 same post', '3 of 6 (50%): 3 same post']]);
+    // the lines in their order: the story-level numbers, the post-level line, the IMs', then Burson's alerts
+    eq(tab.rows.slice(at(tab, 'HEADLINE NUMBERS') + 1, at(tab, 'Matched on:')).map(x => x[0]), ['Stories this app alerted on its own',
+      'Of those, also alerted by Burson', 'This app alerted first (of those Burson alerted too)', 'Median head start over Burson (where this app was first)',
+      'Burson alerted first', 'Median time this app was behind (where Burson was first)', 'No Burson alert found', POST_LINE,
+      'This app\'s alert before the IMs\' email (of the stories with an IM email time)',
+      'Median time from this app\'s alert to the IMs\' email (the end-to-end head start)', 'Burson\'s alerts in the same days', REVERSE_LINE]);
+    eq(table(tab, 'EVERY STORY').map(x => x['App alert']), ['QA-1', 'QA-3', 'QA-5', 'QA-7', 'QA-8', 'QA-15', 'QA-10']);  // QA-16 is on no row
     eq(table(tab, 'BIGGEST HEAD STARTS').map(x => [x['App alert'], x['Head start over Burson'], x['Head start over Burson (min)']]),
       [['QA-8', '2 d', 2880], ['QA-1', '3 h', 180], ['QA-3', '1 h', 60]]);
 
@@ -949,7 +1148,7 @@ module.exports = H => {
     eq([empty.stories, empty.top, empty.windows.month.stories, empty.windows.month.matched_pct, empty.windows.month.first_median_min,
       empty.windows.month.burson_alerts, empty.windows.month.burson_after_pct], [[], [], 0, null, null, 1, 0]);
     const lines = B.headStartTabRows_(empty).rows;
-    eq(lines.slice(4, 15).map(x => x[2]), [0, '—', '—', '—', 0, '—', 0, '—', '—', 1, '0 of 1 (0%)']);
+    eq(lines.slice(4, 16).map(x => x[2]), [0, '—', '—', '—', 0, '—', 0, '—', '—', '—', 1, '0 of 1 (0%)']);
     eq(lines.filter(x => x[0] === 'None yet').length, 2);
   });
 
@@ -960,6 +1159,7 @@ module.exports = H => {
     eq(r.stories.map(brief), [['QA-1', 'Watch', 'same post', 'QA-2', 0]]);
     eq(r.windows.week, {
       stories: 1, matched: 1, matched_pct: 100, first: 0, first_pct: 0, first_median_min: null, behind: 0, behind_median_min: null, unmatched: 0,
+      post_matched: 1, post_first: 0, post_first_pct: 0, post_first_median_min: null,
       im_known: 1, im_first: 0, im_first_pct: 0, im_median_min: 0, im_from_email: 1,
       burson_alerts: 1, burson_after: 0, burson_after_pct: 0, burson_after_by: { post: 0, story: 0, name: 0, wording: 0 },
     });
@@ -969,15 +1169,15 @@ module.exports = H => {
     w.bot.refreshHeadStart_(ss, { now: NOW, alerts: rows, im: { [postKey(1)]: { at: T, from: 'email' } } });
     const tab = tabOf(ss);
     eq(table(tab, 'EVERY STORY').map(x => [x['App alert'], x['Burson alerted (ET)'], x['Head start over Burson'], x['Head start over Burson (min)'],
-      x['Head start over the IMs'], x['Head start over the IMs (min)']]),
-    [['QA-1', B.speedTime_(T), 'the same minute', 0, 'the same minute', 0]]);
+      x['Head start over the IMs'], x['Head start over the IMs (min)'], x['Head start on the post'], x['Head start on the post (min)']]),
+    [['QA-1', B.speedTime_(T), 'the same minute', 0, 'the same minute', 0, 'the same minute', 0]]);
     eq([table(tab, 'BIGGEST HEAD STARTS'), tab.rows[at(tab, 'BIGGEST HEAD STARTS') + 2][0]], [[], 'None yet']);
     eq(['Of those, also alerted by Burson', 'This app alerted first (of those Burson alerted too)', 'Median head start over Burson (where this app was first)',
       'Burson alerted first', 'Median time this app was behind (where Burson was first)',
-      'This app\'s alert before the IMs\' email (of the stories with an IM email time)',
+      POST_LINE, 'This app\'s alert before the IMs\' email (of the stories with an IM email time)',
       'Median time from this app\'s alert to the IMs\' email (the end-to-end head start)',
-      'Of Burson\'s alerts, those this app had alerted first (same post or same story)'].map(label => line(tab, label)[0]),
-    ['1 of 1 (100%)', '0 of 1 (0%)', '—', 0, '—', '0 of 1 (0%)', 'the same minute', '0 of 1 (0%)']);
+      REVERSE_LINE].map(label => line(tab, label)[0]),
+    ['1 of 1 (100%)', '0 of 1 (0%)', '—', 0, '—', '0 of 1 (0%)', '0 of 1 (0%)', 'the same minute', '0 of 1 (0%)']);
     // a millisecond either way and it is one or the other
     eq([1, -1].map(ms => { const x = report([rows[0], burson('QA-2', T + ms, 1)]).windows.week; return [x.first, x.behind, x.burson_after]; }),
       [[1, 0, 1], [0, 1, 0]]);
@@ -1007,6 +1207,10 @@ module.exports = H => {
     assert.match(tab.rows[at(tab, 'BIGGEST HEAD STARTS')][0], /^BIGGEST HEAD STARTS \(last 30 days: the 10 stories this app alerted longest before Burson\)$/);
     // with ten or fewer, all of them
     eq(report(rows.filter(x => !/^QA-[ob](?:1|2|3|4)$/.test(x.alert_id))).top.map(s => s.lead_ms / HOUR), [13, 12, 11, 10, 9, 8, 7, 6, 5]);
+    // head starts of the same length: the newer story first
+    const even = [[5, 'a'], [2, 'b'], [9, 'c']].map(([days, id], i) => [own(`QA-${id}`, NOW - days * DAY, 200 + i, WATCH),
+      burson(`QA-${id}b`, NOW - days * DAY + HOUR, 200 + i)]);
+    eq(report([].concat.apply([], even)).top.map(s => [s.alert_id, s.lead_ms / HOUR]), [['QA-b', 1], ['QA-a', 1], ['QA-c', 1]]);
   });
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -1025,19 +1229,19 @@ module.exports = H => {
     assert.match(TITLE, /^Head start: .*\(written by the Burson QA bot\)$/);
     eq([tab.cell(1, 1), w.bot.isHeadStartTab_(tab), tab.protections.length, tab.protections[0].warningOnly], [TITLE, true, 1, true]);
     assert.match(tab.cell(2, 1), /^What's counted: every story this app alerted on its own in the last 30 days .* Rebuilt 2026-10-14 08:00 ET\.$/);
-    eq([at(tab, 'HEADLINE NUMBERS'), at(tab, 'Matched on:'), at(tab, 'BIGGEST HEAD STARTS'), at(tab, 'EVERY STORY')], [3, 15, 17, 21]);
-    eq([tab.rows[18], tab.rows[22], tab.rows.length], [HEADER, HEADER, 24]);
+    eq([at(tab, 'HEADLINE NUMBERS'), at(tab, 'Matched on:'), at(tab, 'BIGGEST HEAD STARTS'), at(tab, 'EVERY STORY')], [3, 16, 18, 22]);
+    eq([tab.rows[19], tab.rows[23], tab.rows.length], [HEADER, HEADER, 25]);
     // the story is the card's headline when it has no issue name, linked to its lead post
     eq(table(tab, 'EVERY STORY'), [Object.fromEntries(HEADER.map((h, i) => [h, ['Early Detection', '2026-10-10 23:00',
       `=HYPERLINK("${link(1)}","A card's headline")`, 'Search', TAG, '2026-10-13 14:00', '2 d 15 h', '', '', 'same post', 'QA-1',
-      `=HYPERLINK("${link(2)}","QA-2")`, 3780, '', '', '', ''][i]]))]);
-    eq(tab.merges, ['2,1,1,8', '16,1,1,8']);
-    eq(Array.from(new Set(tab.hidden)), [15, 16, 17]);  // the three state columns, hidden
+      `=HYPERLINK("${link(2)}","QA-2")`, 3780, '', '2026-10-13 14:00', '2 d 15 h', `=HYPERLINK("${link(2)}","QA-2")`, 3780, '', '', ''][i]]))]);
+    eq(tab.merges, ['2,1,1,8', '17,1,1,8']);
+    eq(Array.from(new Set(tab.hidden)), [19, 20, 21]);  // the three state columns, hidden
     // The next rebuild writes the tab whole: nothing of the last one is left below a shorter table
     tab.getRange(40, 3).setValue('left over');
     w.bot.refreshHeadStart_(ss, { now: NOW + HOUR, alerts: [own('QA-9', NOW, 9, WATCH)] });
     eq([tab.rows.length, tab.cell(1, 1), table(tab, 'EVERY STORY').map(x => x['App alert']), tab.rows.filter(x => x[0] === 'None yet').length,
-      ss.getSheets().filter(s => s.getName() === TAB).length], [24, TITLE, ['QA-9'], 1, 1]);
+      ss.getSheets().filter(s => s.getName() === TAB).length], [25, TITLE, ['QA-9'], 1, 1]);
     assert.match(tab.cell(2, 1), /Rebuilt 2026-10-14 09:00 ET\.$/);
 
     // A sheet where this app never alerted on its own gets no tab from the every-minute run; refreshHeadStart() makes one
@@ -1191,10 +1395,10 @@ module.exports = H => {
     // every cell that starts like a formula is one of the bot's quoted links, whole: a name can't close the quote
     const LINK = /^=HYPERLINK\("https?:\/\/(?:[^"]|"")*","(?:[^"]|"")*"\)$/;
     const formulas = all.filter(v => typeof v === 'string' && /^[=+\-@]/.test(v));
-    eq([formulas.length, formulas.filter(v => !LINK.test(v))], [7, []]);
+    eq([formulas.length, formulas.filter(v => !LINK.test(v))], [9, []]);
     const story = id => cells.filter(x => String(x[10]).replace(/^'/, '') === id).pop();
-    eq([story('QA-1')[2], story('QA-1')[3], story('QA-1')[4], story('QA-1')[11]],
-      [`=HYPERLINK("${link(1)}","=SUM(1,2)")`, '\'+cmd|\' /C calc\'!A0', '\'@tag', `=HYPERLINK("${link(1)}","=1+1")`]);
+    eq([story('QA-1')[2], story('QA-1')[3], story('QA-1')[4], story('QA-1')[11], story('QA-1')[HEADER.indexOf('Burson alert on this post')]],
+      [`=HYPERLINK("${link(1)}","=SUM(1,2)")`, '\'+cmd|\' /C calc\'!A0', '\'@tag', `=HYPERLINK("${link(1)}","=1+1")`, `=HYPERLINK("${link(1)}","=1+1")`]);
     eq([story('QA-3')[2], story('QA-4')[2], story('-QA-6')[2], story('-QA-6')[10], story('QA-7')[2]],
       ['\'=HYPERLINK("https://evil.test","x")&" (no link)', '=HYPERLINK("https://x.com/a""b/status/70004","He said ""hello"", then =1+1")',
         '\'-minus (no link)', '\'-QA-6', 'spread over lines (no link)']);
@@ -1448,6 +1652,15 @@ module.exports = H => {
     // a rebuild reads the 30 days of stories and the 14 days before them
     w.bot.refreshHeadStart_(ss, { now: NOW });
     eq([table(tabOf(ss), 'EVERY STORY').map(x => x['App alert']), JSON.stringify(log.rows)], [['QA-5'], before]);
+    // A tab named "Alert log" whose header has no alert_id column is not the Alert log: nothing is read from it, and
+    // it is left as it is
+    const other = w.g.services.SpreadsheetApp.create('other');
+    const odd = other.insertSheet('Alert log');
+    odd.getRange(1, 1, 3, 4).setValues([['created_at', 'record_key', 'ingested', 'source_at'], [NOW - HOUR, key(1), WATCH, NOW - HOUR],
+      [NOW, key(2), WATCH, NOW]]);
+    const oddBefore = JSON.stringify(odd.rows);
+    eq([w.bot.headStartAlertRows_(other, NOW - DAY), w.bot.refreshHeadStart_(other, { now: NOW }).written, JSON.stringify(odd.rows),
+      other.getSheets().map(x => x.getName())], [[], false, oddBefore, ['Sheet1', 'Alert log']]);
   });
 
   test('head start: the read window, through the sheet: a rebuild reads the Alert log 44 days back (the 30 days of stories and the 14 days the same-story rule looks before them) and no further: Burson\'s alert 43 days old is matched with this app\'s story 29.5 days old, and a row of this app\'s 45 days old, above the window, is not read', () => {

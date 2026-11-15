@@ -276,7 +276,7 @@ function pwAlertNum_(n) {
  *   *What's happening:* … (the AI pre-read's neutral summary, else the watch's own)
  *   *Activity:* @someone · X · 4,470 followers · 52 engagements · posted 2026-11-01 23:26 ET
  *   *Building:* 4 small posts from 3 accounts within 3 hours (…)      (a story that built up, only)
- *   *Posts:* <https://x.com/…|View the post on X>          (the message's first hyperlink; "Watch the video on X" for a video)
+ *   *Posts:* <https://x.com/…|View the post on X>          (the message's only hyperlink; "Watch the video on X" for a video)
  *   *Same story:* 3 more posts in the thread (…)
  * A Watch alert is posted before its triage, so it has no headline, Call or Next steps lines: those are left out, never
  * shown empty (the triage is the note in its thread). The score, the watch's bar and topic, and the source that found
@@ -284,17 +284,20 @@ function pwAlertNum_(n) {
  */
 function pwAlertText_(a) {
   const one = (v, n) => truncate_(String(v === undefined || v === null ? '' : v).replace(/\s+/g, ' ').trim(), n);
+  // Words from outside (the summary, which can be the post's own words; the author; the network; the posted time) go
+  // on the card without Chat's link marks: left in, a post's "<address|words>" would be a hyperlink of its own
+  const words = (v, n) => one(String(v === undefined || v === null ? '' : v).replace(/[<>|]/g, ' '), n);
   const num = v => (Number(v) > 0 ? fmtInt_(Math.round(Number(v))) : '');
-  const posted = one(a.posted, 40);
-  const who = [one(a.author, 120) || 'unknown author', one(a.network, 40),
+  const posted = words(a.posted, 40);
+  const net = words(a.network, 40);
+  const who = [words(a.author, 120) || 'unknown author', net,
     num(a.followers) ? `${num(a.followers)} followers` : '', num(a.eng) ? `${num(a.eng)} engagements` : '',
     posted ? `posted ${posted} ET` : ''].filter(Boolean);
-  const summary = one(a.summary, PW_ALERT_TEXT_CHARS_);
-  const net = one(a.network, 40);
+  const summary = words(a.summary, PW_ALERT_TEXT_CHARS_);
   const label = `${a.video ? 'Watch the video' : 'View the post'}${PW_ALERT_NETS_.indexOf(net) >= 0 ? ` on ${net}` : ''}`;
   const head = [ownCardHead_('watch', one(a.watch, 80) || 'Proactive watch')].concat(pwAlertTaxLines_(a)).filter(Boolean);
-  // The post's link stays the message's first hyperlink (pwAlertOf_ reads it from the message's links): no line
-  // above *Posts:* carries a link
+  // The post's link is the card's only hyperlink (pwAlertOf_ reads it from the message's links): every other line is
+  // written without link marks (the first line: ownCardHead_; the SLRR, Building and Same story lines; `words` above)
   const rest = [
     summary ? `*What's happening:* ${summary}` : '',
     `*Activity:* ${who.join(' · ')}`,
@@ -384,10 +387,13 @@ function pwAlertParse_(text) {
     return hit ? hit.slice(label.length + 1).trim() : '';
   };
   const score = get('Score').match(/^([\d.]+|\?) of 10 \(flags at ([\d.]+|\?)\)(?: · Topic: (.+))?$/) || [];
-  // The shared layout's *Activity:* line ends "· posted <when> ET"; a card from before it has Author and Posted lines
+  // The shared layout's *Activity:* line ends "· posted <when> ET"; a card from before it has Author and Posted lines.
+  // The posted time is the line's last part only (never its first: that is the author), so an author or a network
+  // whose name starts with "posted " is not taken for it
   const whoAll = (get('Activity') || get('Author')).split(' · ').map(s => s.trim()).filter(Boolean);
-  const postedAt = whoAll.find(seg => /^posted \S/.test(seg)) || '';
-  const who = whoAll.filter(seg => seg !== postedAt);
+  const lastPart = whoAll.length > 1 ? whoAll[whoAll.length - 1] : '';
+  const postedAt = /^posted \S/.test(lastPart) ? lastPart : '';
+  const who = postedAt ? whoAll.slice(0, -1) : whoAll;
   const isCount = s => /^[\d,]+ (?:followers|engagements)$/.test(s);
   const count = word => {
     const hit = who.find(s => new RegExp(`^[\\d,]+ ${word}$`).test(s));
@@ -433,8 +439,15 @@ function pwAlertOf_(ctx, m) {
     if (!mine) return null;
     const a = pwAlertParse_(m.text);
     // Chat keeps a hyperlink's address out of the plain text (only "View the post on X" stays there): the message's
-    // links have it (Chat.gs messageLinks_: formattedText's <url|words>), the Link line's first
-    if (a && !a.url && Array.isArray(m.links) && m.links.length) a.url = String(m.links[0] || '');
+    // links have it (Chat.gs messageLinks_: formattedText's <url|words>). The post's link is the card's only hyperlink
+    // (pwAlertText_; on a card from before the shared layout, its first), so it is the first link whose address the
+    // plain text doesn't show: an address the text does show is a bare one in the post's words, never the post's link,
+    // wherever Chat lists it
+    if (a && !a.url && Array.isArray(m.links) && m.links.length) {
+      const shown = String(m.text || '');
+      const links = m.links.map(u => String(u || '')).filter(Boolean);
+      a.url = links.find(u => shown.indexOf(u) < 0) || links[0] || '';
+    }
     if (!a || !a.url) return null;
     const info = pwAlertInfo_(m.name) || {};
     const known = v => (v === null || v === undefined || v === '' || !isFinite(Number(v)) ? null : Number(v));

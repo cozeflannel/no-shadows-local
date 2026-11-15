@@ -844,6 +844,127 @@ module.exports = H => {
     assert.ok(big.startsWith('\ud83d\udea8 *EARLY DETECTION* \u00b7 New story\n*TTT') && big.includes('\n*Next steps:*\n1. sss'), big.slice(0, 300));
   });
 
+  test('early detection and watch cards: the bot\'s own alert cards are known by their first line (Alert.gs ownCardHeadParse_, isOwnAlertCardHeader_; the same list as tests/test_parser.py for the Python twin): the four first lines of today, with or without the mark Chat can put after an emoji, and the headers the cards had before the shared layout (cards posted then are still in the spaces), are the bot\'s own and never a Burson alert; the emoji and the capitals are both needed, and nothing but " \u00b7 detail" may follow the kind, so a person\'s or another tool\'s line is never taken for a card', () => {
+    // the lines under the first: enough labelled lines to pass for a Burson alert (as a Watch alert and an Early Detection card have)
+    const taxonomy = '*Product:* Waymo\n*Exposure Tag:* Product - Product failures - physical safety issues (P1)\n' +
+      '*Sensitive Topic:* None\n*KOF:* No\n*Author:* FOX 29\n*Summary:* A federal investigation into a Waymo recall.\n';
+    const card = head => `${head}\n*Link:* https://x.com/someone/status/1234567890123\n${taxonomy}`;
+    const verdict = head => [B.isOwnAlertCardHeader_(card(head)), B.detectAlert_(card(head), B.parseAlert_(card(head)), 'Zapier')];
+    const SIREN = '\ud83d\udea8';
+    const BOLT = '\u26a1';
+    const CHART = '\ud83d\udcc8';
+    const SCOPE = '\ud83d\udd2d';
+    const VS = '\ufe0f';  // the variation mark Chat can hand back after an emoji
+    const own = [
+      // the bot's own card today: its first line names the kind of alert (Alert.gs OWN_CARD_TYPES_)
+      `${SIREN} *EARLY DETECTION* \u00b7 New story`,
+      `${BOLT} *EARLY SIGNAL* \u00b7 3 accounts so far (a story is usually flagged at 5)`,
+      `${CHART} *UPDATE* \u00b7 More on a story already alerted`,
+      `${SCOPE} *WATCH* \u00b7 Google brand safety (all)`,
+      // ... with the mark after the emoji, each of the four
+      `${SIREN}${VS} *EARLY DETECTION* \u00b7 New story`,
+      `${BOLT}${VS} *EARLY SIGNAL* \u00b7 3 accounts so far (a story is usually flagged at 5)`,
+      `${CHART}${VS} *UPDATE* \u00b7 More on a story already alerted`,
+      `${SCOPE}${VS} *WATCH* \u00b7 Google brand safety (all)`,
+      // ... without Chat's bold marks, and the kind alone (no detail)
+      `${SCOPE} WATCH \u00b7 Google brand safety (all)`,
+      `${SCOPE} *WATCH*`,
+      `${CHART} *UPDATE*`,
+      // the headers the cards had before: still the bot's own (cards posted then are still in the spaces)
+      `${SCOPE} *Watch alert \u00b7 Google brand safety (all)*`,
+      `${SIREN} *Early Detection Alert* ${SIREN}`,
+      `${SIREN} *Early Detection Alert: Pixel dialer freeze* ${SIREN}`,
+      `${CHART} *Early Detection Update*`,
+    ];
+    eq(own.filter(head => JSON.stringify(verdict(head)) !== '[true,false]'), []);
+    // the cards as the bot writes them and as it wrote them before, whole
+    const oldCards = [
+      `${SIREN} *Early Detection Alert* ${SIREN}\n*Pixel dialer freeze*\n${taxonomy}\nIt froze: ${CLUSTER_URL}`,
+      `${SIREN} *Early Detection Alert: Pixel dialer freeze* ${SIREN}\n*Link:* ${CLUSTER_URL}\n${taxonomy}`,
+      `${CHART} *Early Detection Update*\n*Pixel dialer freeze*\n*What's new:* 18 accounts now, up from 9.\n${taxonomy}`,
+    ];
+    eq(oldCards.map(c => [B.isOwnAlertCardHeader_(c), B.detectAlert_(c, B.parseAlert_(c), 'Zapier')]), oldCards.map(() => [true, false]));
+    // not a card: the emoji and the capitals are both needed, and only " \u00b7 detail" may follow the kind
+    const notCards = ['Update \u00b7 More on a story', 'WATCH \u00b7 this space', `${SCOPE} Watch \u00b7 this`, `${SCOPE} watch \u00b7 this`,
+      `${SCOPE} WATCHING this`, `${SCOPE} WATCH this space`, `${CHART} UPDATE: numbers`, `${CHART} UPDATED figures`,
+      `${SIREN} EARLY DETECTIONS \u00b7 New story`, `${BOLT} Early signal \u00b7 3 accounts so far`, `${SIREN} New Alert`];
+    eq(notCards.filter(head => B.isOwnAlertCardHeader_(card(head)) || B.ownCardHeadParse_(head)), []);
+    // ... so with a Burson alert's lines under it and Zapier as its sender, such a message is still an alert
+    eq(notCards.filter(head => B.detectAlert_(card(head), B.parseAlert_(card(head)), 'Zapier') !== true), []);
+    // what the first line says, read back: the kind and its detail
+    eq([`${SIREN} *EARLY DETECTION* \u00b7 New story`, `${BOLT}${VS} *EARLY SIGNAL* \u00b7 3 accounts so far (a story is usually flagged at 5)`,
+      `${CHART} UPDATE \u00b7 More on a story already alerted`, `${SCOPE} *WATCH* \u00b7 Google brand safety (all)`, `${SCOPE} *WATCH*`,
+      `${SCOPE} *Watch alert \u00b7 x*`].map(B.ownCardHeadParse_),
+    [{ type: 'story', detail: 'New story' }, { type: 'signal', detail: '3 accounts so far (a story is usually flagged at 5)' },
+      { type: 'update', detail: 'More on a story already alerted' }, { type: 'watch', detail: 'Google brand safety (all)' },
+      { type: 'watch', detail: '' }, null]);
+    // the first line as it is written: a detail from outside (a watch's name) carries no markup of its own into it
+    eq([B.ownCardHead_('watch', 'A*B <https://evil.example/x|c> | d'), B.ownCardHead_('watch', ''), B.ownCardHead_('story', 'New story')],
+      [`${SCOPE} *WATCH* \u00b7 A B https://evil.example/x c d`, `${SCOPE} *WATCH*`, `${SIREN} *EARLY DETECTION* \u00b7 New story`]);
+    eq(B.ownCardHeadParse_(B.ownCardHead_('watch', 'A*B <https://evil.example/x|c> | d')), { type: 'watch', detail: 'A B https://evil.example/x c d' });
+
+    // Each kind of card is read back only by its own reader: a Watch alert is no Early Detection card to review, and
+    // an Early Detection story, early signal or update is no Watch alert
+    const ed = B.edFromRow_(B.edQueueCompact_(clusterRow()));
+    const d = { disposition: 'monitor', basis: 'early_detection', why: 'Worth watching', rev: { story: B.edStoryOf_({
+      story_title: 'Pixel 9 owners say the overnight update froze the emergency dialer.', story: 'Nine small accounts said the dialer [froze](P1).',
+      web_context: '', next_steps: ['Re-check in 2 hours'] }) } };
+    const update = { news: '18 accounts now, up from 9', at: NOW - 2 * 3600 * 1000, thread: 'spaces/x/threads/y' };
+    const story = B.edStoryCardText_(ed, d, NOW);
+    const signal = B.edStoryCardText_(Object.assign({}, ed, { signalType: 'EARLY_WATCH', distinctAuthors: 3 }), d, NOW);
+    const updated = B.edStoryCardText_(Object.assign({}, ed, { update }), d, NOW);
+    const watch = B.pwAlertText_({ watch: 'Google brand safety (all)', url: CLUSTER_URL, author: '@pixelowner1', network: 'X',
+      summary: 'Owners say the overnight update froze the emergency dialer.', products: ['Pixel'], classified: true });
+    eq([story, signal, updated, watch].map(c => B.ownCardHeadParse_(c.split('\n')[0]).type), ['story', 'signal', 'update', 'watch']);
+    eq([story, signal, updated].map(c => B.pwAlertParse_(c)), [null, null, null]);
+    eq([B.edParseCard_(watch, []), B.edParseCard_(watch, [CLUSTER_URL]), B.pwAlertParse_(watch).watch], [null, null, 'Google brand safety (all)']);
+    eq([story, signal].map(c => B.edParseCard_(c, []).headline), new Array(2).fill('Pixel 9 owners say the overnight update froze the emergency dialer'));
+
+    // An early signal that is itself an update of an earlier card (the story grew, still below the usual bar) is an
+    // UPDATE in that card's thread, with what's new under its headline: never a second EARLY SIGNAL card
+    const signalUpdate = B.edStoryCardText_(Object.assign({}, ed, { signalType: 'EARLY_WATCH', distinctAuthors: 4, update }), d, NOW);
+    eq(signalUpdate.split('\n').slice(0, 2), [`${CHART} *UPDATE* \u00b7 More on a story already alerted`,
+      '*Pixel 9 owners say the overnight update froze the emergency dialer*']);
+    assert.match(signalUpdate.split('\n')[2], /^\*What's new:\* 18 accounts now, up from 9 \(since the .+ card\)\.$/);
+    eq([signalUpdate.split('\n')[3], B.edParseCard_(signalUpdate, [])], ['*Product:* Brand', null]);
+    // the early signal's detail: how many accounts so far, against the usual bar
+    eq([3, 1, 0, undefined].map(n => B.edEarlyDetail_({ distinctAuthors: n })), ['3 accounts so far (a story is usually flagged at 5)',
+      '1 account so far (a story is usually flagged at 5)', 'a few accounts so far (a story is usually flagged at 5)',
+      'a few accounts so far (a story is usually flagged at 5)']);
+  });
+
+  test('early detection and watch cards: the words people read say what the code does: the README names every own card\'s first line as the code writes it (an update\'s too: never the header it had before), the Control tab\'s help for row 19 names the card by its first line and says where it goes (the Auto-correct space, B10, when it works alone, too), and the README\'s Direct BigQuery rule gives the 10 minutes after which the last run\'s report no longer counts', () => {
+    const readme = require('fs').readFileSync(require('path').join(__dirname, '..', 'README.md'), 'utf8');
+    // the first lines the README quotes in code marks are the ones the code writes: all four kinds are there, and
+    // whatever it quotes behind the update's or the early signal's emoji is that kind's first line
+    const heads = { story: B.ownCardHead_('story', 'New story'), update: B.ownCardHead_('update', 'More on a story already alerted') };
+    const quoted = readme.match(/`(?:🚨|⚡|📈|🔭)[^`\n]*`/g) || [];
+    const kindOf = q => (B.ownCardHeadParse_(q.slice(1, -1)) || {}).type || '';
+    eq(Array.from(new Set(quoted.map(kindOf).filter(Boolean))).sort(), ['signal', 'story', 'update', 'watch']);
+    eq(quoted.filter(q => /^`(?:⚡|📈)/.test(q)).map(kindOf).filter(k => k !== 'signal' && k !== 'update'), []);
+    eq(quoted.filter(q => kindOf(q) === 'update' || kindOf(q) === 'story').filter(q => q !== `\`${heads.update}\`` && q !== `\`${heads.story}\``), []);
+    assert.ok(quoted.filter(q => q === `\`${heads.update}\``).length >= 3, 'the update\'s first line: the cards table, row 19\'s rules and row 39');
+    assert.ok(!/Early Detection Update/.test(readme), 'the README no longer names the update by the header it had before');
+    const before = readme.match(/Cards posted before this layout \(([^)]*)\) are still read as the bot's own/);
+    eq(before && before[1].replace(/\s+/g, ' '), '`🚨 *Early Detection Alert* 🚨`, `🔭 *Watch alert · …*`');
+    // the Control tab's help, row 19: the card by its first line, and every place it can go
+    const help = B.ev('CONTROL_HELP_').filter(l => /^• Early wave & velocity check: row 19/.test(l));
+    eq(help.length, 1);
+    assert.match(help[0], /Each one goes out as the bot's own alert card \(its first line says EARLY DETECTION, or UPDATE when it adds to a story already alerted\) in the Mirror space or test feed, or in the Auto-correct space \(B10\) when it works alone \(never S-F Burson\)/);
+    assert.ok(!B.ev('CONTROL_HELP_').some(l => /Early Detection Alert card/.test(l)), 'no help line names the card it was before');
+    // ... and row 39: an early signal is the same alert card, told apart by its first line
+    const help39 = B.ev('CONTROL_HELP_').filter(l => /^• Fast triage: rank and early watch: row 39/.test(l));
+    eq(help39.length, 1);
+    assert.match(help39[0], /posted as an alert card whose first line says it is an early signal and how many accounts it rests on \(when the story reaches the usual size, that goes in the same thread, never as a second alert\)\.$/);
+    eq([heads.story, heads.update].map(h => B.ownCardHeadParse_(h).type), ['story', 'update']);
+    assert.ok(heads.story.includes('*EARLY DETECTION*') && heads.update.includes('*UPDATE*'));
+    // Direct BigQuery alerts: the last run's report counts for 10 minutes (BigQuery.gs BQ_DIRECT_LAST_RUN_MS_)
+    const minutes = B.ev('BQ_DIRECT_LAST_RUN_MS_') / MIN;
+    eq(minutes, 10);
+    assert.ok(readme.replace(/\s+/g, ' ').includes(`one from more than ${minutes} minutes ago doesn't count (\`BQ_DIRECT_LAST_RUN_MS_\`)`),
+      'the README says when the last run\'s report stops counting');
+  });
+
   // ===========================================================================================================
   // 7. The review queue's ceilings: ranking, size, tries and age
   // ===========================================================================================================

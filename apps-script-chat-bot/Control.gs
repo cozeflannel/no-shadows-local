@@ -143,9 +143,10 @@ const CONTROL_HELP_ = [
     'approved BigQuery source tables (Sonar\'s posts and Sprinklr\'s comments as they arrive; Brandwatch and Tubular later, ' +
     'only to add to a story), groups the posts that say the same thing into stories itself, and flags a story once ' +
     'several different accounts tell it, or when the accounts on a topic jump well above the usual. Each one goes out as ' +
-    'an Early Detection Alert ' +
-    'card in the Mirror space or test feed (never S-F Burson), so the bot reviews it, marks its emojis, and drafts a ' +
-    'Social Alert, Temp Check query, or T&S intake behind human review when warranted.',
+    'the bot\'s own alert card (its first line says EARLY DETECTION, or UPDATE when it adds to a story already alerted) ' +
+    'in the Mirror space or test feed, or in the Auto-correct space (B10) when it works alone (never S-F Burson), so the ' +
+    'bot reviews it, marks its emojis, and drafts a Social Alert, Temp Check query, or T&S intake behind human review ' +
+    'when warranted.',
   '• BigQuery lookback (B31): how far back Direct BigQuery alerts and Early detection look: 15, 30, 45 or 60 minutes ' +
     '(blank: 60; never more than an hour). Sprinklr posts count only if they went live in that time; DSD story selection, ' +
     'Brandwatch mentions and Sonar posts count if the feed took them in in that time and they went live in the last 48 to 72 hours. ' +
