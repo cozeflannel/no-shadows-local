@@ -1114,27 +1114,40 @@ emailed, Gmail and BigQuery are not asked, and the Alert memory is not touched.
 - **A story** is one of this app's alerts and its updates, counted once and timed from its first alert: an Early
   Detection card that updates an earlier card belongs to that card's story, and so do two of this app's alerts on the
   same post. The time is when the alert was posted in Chat.
-- **Burson's alert** on the story is found in this order, and the tab's "Matched on" column says which, so you can
-  judge it: `same post` (Burson alerted one of the story's posts); `same story` (Burson's alert on another post carries
-  the story's exact issue name and the later of the two is an Ongoing Issue: what a review records when it takes an
-  alert for an issue already alerted); `same story (similar wording)` (the same exposure tag and issue names alike: a
-  weaker match, check it). The two same-story rules look 14 days either side of the story. When several of Burson's
-  alerts match, the earliest counts. Burson can be earlier or later than this app.
+- **Burson's alert** on the story, and the tab's "Matched on" column says which rule gave it, so you can judge it.
+  Two rules are sure: `same post` (Burson alerted one of the story's posts) and `same story` (Burson's alert on another
+  post carries the story's exact issue name and the later of the two is an Ongoing Issue: what a review records when it
+  takes an alert for an issue already alerted; Burson's other alerts under that name then count too). The story is
+  measured against the **earliest** alert those two give, taken together: Burson's first alert on the story. So when
+  Burson alerted the story on another post before it alerted the story's own post, the earlier alert counts, and when
+  Burson had the story before this app did, this app was behind, however soon after it Burson alerted the same post.
+  Only when neither gives an alert, two weaker matches are tried (check them): `same story (same issue name)` (the
+  same issue name and no more, never under two different exposure tags) and `same story (similar wording)` (the same
+  exposure tag and issue names alike). The same-story rules look 14 days either side of the story. Burson can be
+  earlier or later than this app.
+- **No Burson alert found** is not the same as "Burson never alerted it". Burson's later alert takes a story's issue
+  name only when this app's alert went out as a Social Alert. An alert that was only to be watched (an Early Detection
+  card to monitor, for one) is found again only on its own posts, on an identical issue name, or on similar wording
+  under the same exposure tag, and such a card often has no exposure tag. So "this app alerted first" is, if anything,
+  undercounted, and a story in this count may have been alerted by Burson under another name.
 - **The IMs' email** is the IMs' time for that Burson post as the Results tab has it (their email, else their draft),
   taken from the Results tab's rebuild in the same run. It is blank when the Results tab has no time for the post, or
   no longer shows it (the Results tab covers 7 days).
 
 From top to bottom: the title and what's counted; **Headline numbers** for the last 7 and the last 30 days (stories,
-those Burson alerted too, this app first and its median head start, Burson first and the median time behind, not
-alerted by Burson, this app's alert before the IMs' email and the median time between them, and Burson's alerts with
-how many of them this app had alerted first); **Biggest head starts** (the ten longest over Burson); **Every story**,
-newest first. A head start reads `2 d 15 h`, `3 h 10 min` or `45 min`, and `behind by 20 min` when this app was later;
-the same in plain minutes is at the far right, to sort by. A cell is blank where there is no Burson alert or no IM time.
+those Burson alerted too, this app first and its median head start, Burson first and the median time behind, no
+Burson alert found, this app's alert before the IMs' email and the median time between them, and Burson's alerts with
+how many of them this app had alerted first: those that came after a story this app was first on); **Biggest head
+starts** (the ten longest over Burson); **Every story**, newest first. A head start reads `2 d 15 h`, `3 h 10 min` or
+`45 min`, and `behind by 20 min` when this app was later; the same in plain minutes is at the far right, to sort by.
+A cell is blank where there is no Burson alert or no IM time.
 
 The tab is made the first time this app has an alert of its own to show, and is rebuilt at most every 10 minutes, in a
-run where the Results tab was rebuilt (10 more minutes without one and it is rebuilt without the IMs' times). Run
-`refreshHeadStart()` to rebuild it now. The tab is the bot's own (its title in A1 says so): a tab named "Head start"
-that the bot didn't make is never read, cleared or written, and the log says so until it's renamed.
+run where the Results tab was rebuilt (10 more minutes without one and it is rebuilt without the IMs' times). It is
+never rebuilt in a run that is still catching up on alerts (a flow held an alert for the next run, handled as many
+messages as a run may, or ran out of time): it waits for a run that has caught up, so it never keeps an alert
+waiting. Run `refreshHeadStart()` to rebuild it now. The tab is the bot's own (its title in A1 says so): a tab named
+"Head start" that the bot didn't make is never read, cleared or written, and the log says so until it's renamed.
 
 ## T&S pre-filled link
 

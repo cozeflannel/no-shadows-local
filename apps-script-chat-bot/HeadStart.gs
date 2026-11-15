@@ -31,8 +31,8 @@
  *                RESULTS_RUN_): never looked up here, and never one of the bot's own emails (Speed.gs leaves those out).
  *                Blank when that rebuild didn't run, or no longer shows the post (it covers settings.speed_days days)
  *
- * Matching a story with a Burson alert, in this order (the tab's "Matched on" says which, so a person can judge it);
- * when several of Burson's alerts match by the same rule, the earliest is taken, and Burson may be earlier OR later:
+ * Matching a story with a Burson alert (the tab's "Matched on" says which rule gave it, so a person can judge it).
+ * Burson may be earlier OR later. The two sure rules come first:
  *   same post    one of the story's post keys is a Burson alert's record key
  *   same story   Burson's alert tells the same story on another post, as the reviews themselves recorded it: one name
  *                per issue (IssueNames.gs existingIssueOf_). A review that recognises an alert as an issue already
@@ -42,22 +42,47 @@
  *                issue_status: Review.gs rule 14b for Burson's alerts, OtherAlerts.gs and EarlyDetection.gs for this
  *                app's own). So: the two carry the same issue name (IssueNames.gs issueNameKey_) and the LATER of the
  *                two is an Ongoing Issue. Nothing else on a row is as sure: the Alert memory's story id is never
- *                written on a row, and a decision names an earlier alert's id only when a Social Alert was held back
- *   same story   the weaker rule, labelled apart: the Alert memory's word check (AlertMemory.gs amSameStoryWords_, the
- *   (similar     one it falls back to when it has no vector) on the two rows' issue name, exposure tag and product, as
- *   wording)     the memory builds a story's view from them: the same exposure tag, issue words at least
- *                novelty_min_jaccard alike, never with clashing identifiers in them (a CVE, a long number, an @handle).
- *                That check doesn't compare the products themselves. To keep it quick, it is only run on Burson's alerts
- *                under the same tag that share a word of the name and are at least half that alike (the rest could
- *                never pass it)
- * The two same-story rules only look at Burson's alerts within HEAD_START_STORY_DAYS_ (14) days either side of the
+ *                written on a row, and a decision names an earlier alert's id only when a Social Alert was held back.
+ *                Once one of Burson's alerts is tied to the story that way, the name is the story's issue, and Burson's
+ *                other alerts under it (never under another exposure tag) are on the same story too. Burson's FIRST
+ *                alert under the name is often among them: where this app's alert was only to be watched, Burson's
+ *                first alert on the story was a New one, and only its next ones are Ongoing Issues under that name
+ * The story is measured against the EARLIEST of Burson's alerts those two rules give, taken together, and the row is
+ * labelled with the rule that gave that alert. So Burson's alert on one of the story's posts never hides an earlier
+ * alert of Burson's on the same story: the head start is to Burson's first alert on the story, and when that came before
+ * this app's, this app was behind, however soon after it Burson alerted the same post.
+ *
+ * Only when neither sure rule finds an alert, the two weaker rules are tried, taken together in the same way (the
+ * earliest alert, labelled with its rule) and labelled apart:
+ *   same story   the two carry the same issue name and nothing says more: no review took one of Burson's alerts under
+ *   (same issue  that name and this app's alert for one issue. As IssueNames.gs knownIssueName_ takes a name for an
+ *   name)        existing issue's: never when the two are under two different exposure tags (a generic name can cover
+ *                more than one issue), but a row without a tag can match
+ *   same story   the Alert memory's word check (AlertMemory.gs amSameStoryWords_, the one it falls back to when it has
+ *   (similar     no vector) on the two rows' issue name, exposure tag and product, as the memory builds a story's view
+ *   wording)     from them: the same exposure tag, issue words at least novelty_min_jaccard alike, never with clashing
+ *                identifiers in them (a CVE, a long number, an @handle). That check doesn't compare the products
+ *                themselves. To keep it quick, it is only run on Burson's alerts under the same tag that share a word
+ *                of the name and are at least half that alike (the rest could never pass it)
+ * The three same-story rules only look at Burson's alerts within HEAD_START_STORY_DAYS_ (14) days either side of the
  * story's time. alertMemory_().storyMatch is never called and no text is embedded.
+ *
+ * What the matching can't see, and the tab says so: the sure same-story rule depends on a review having given the later
+ * alert the earlier one's name, and a review only does that for an earlier alert that went out (a Social Alert sent,
+ * drafted or on its way, or a team's emoji: Escalate.gs earlierOutcome_). Burson's alerts usually did, so "Burson
+ * first" is seen well. One of this app's alerts that was only to be watched (an Early Detection card to monitor, a
+ * Watch alert with no Social Alert) never gives its name to Burson's later alert; such a story is found again only on
+ * its own posts, on an identical issue name, or on similar wording under the same exposure tag, and an Early Detection
+ * card has an exposure tag only when its review was sure it is an SLRR matter. So a story with no Burson alert FOUND
+ * may still have been alerted by Burson under another name: the count is called "No Burson alert found", never "not
+ * alerted", and "this app first" is, if anything, undercounted.
  *
  * The tab, top to bottom: its title in A1 (the bot's mark) and one line saying what's counted and when it was rebuilt
  * (ET); HEADLINE NUMBERS for the last 7 and the last 30 days, by when this app alerted (stories, those Burson alerted
- * too, this app first and its median head start, Burson first and the median time behind, not alerted by Burson, this
+ * too, this app first and its median head start, Burson first and the median time behind, no Burson alert found, this
  * app's alert before the IMs' email and the median time from one to the other, and the reverse view: Burson's alerts and
- * how many of them this app had alerted first); BIGGEST HEAD STARTS (the ten longest over Burson, last 30 days); EVERY
+ * how many of them this app had alerted first: those that came after a story of this app's that was itself ahead of
+ * Burson's first alert on it); BIGGEST HEAD STARTS (the ten longest over Burson, last 30 days); EVERY
  * STORY (last 30 days, newest first): Type · This app alerted (ET) · Story (the issue name or the card's headline,
  * linked to the lead post) · Product · Exposure Tag · Burson alerted (ET) · Head start over Burson · IMs emailed (ET) ·
  * Head start over the IMs · Matched on · App alert · Burson alert, then the two head starts in plain minutes at the far
@@ -66,7 +91,10 @@
  *
  * poll() calls maybeRefreshHeadStart_() at the end of every run, after the Results tab: the tab is rebuilt at most
  * every 10 minutes, in a run where the Results tab was rebuilt too (it has the IMs' times; 10 more minutes without one
- * and it is rebuilt without them), never with under 30 seconds of the run left. It never throws: a failure is logged
+ * and it is rebuilt without them), never with under 30 seconds of the run left, and never in a run that is still
+ * catching up on alerts (one of its flows held an alert for the next run, stopped at its limit of messages or ran out
+ * of time: headStartRunBusy_). Such a run must end as soon as it can, so the next one starts on time; the tab shows
+ * nothing that can't wait, and is rebuilt in the first run that has caught up. It never throws: a failure is logged
  * and the run carries on. refreshHeadStart() rebuilds it now, from the editor (the IMs' times follow at the next run
  * that has them). The tab is made the first time this app has an alert of its own to show.
  *
@@ -107,7 +135,10 @@ const HEAD_START_NAME_CHARS_ = 200;                // a story's name on the tab
 const HEAD_START_LINK_CHARS_ = 2000;               // a longer link isn't linked
 const HEAD_START_SAME_POST_ = 'same post';
 const HEAD_START_SAME_STORY_ = 'same story';
+const HEAD_START_SAME_NAME_ = 'same story (same issue name)';
 const HEAD_START_SIMILAR_ = 'same story (similar wording)';
+// "Matched on", by how sure the rule is (1 the surest): the two sure rules, then the two weaker ones (headStartMatch_)
+const HEAD_START_RULES_ = ['', HEAD_START_SAME_POST_, HEAD_START_SAME_STORY_, HEAD_START_SAME_NAME_, HEAD_START_SIMILAR_];
 
 /** Run this to rebuild the Head start tab now (while the bot is ON, poll() keeps it up to date: maybeRefreshHeadStart_). */
 function refreshHeadStart() {
@@ -127,15 +158,18 @@ function refreshHeadStart() {
 
 /**
  * From poll(), at the end of every run, after maybeRefreshSpeed_: rebuilds the Head start tab when it's due. opts:
- * {deadline (ms: when the run must be done), runStart (ms: when this run began)}. Due: 10 minutes after the last
- * rebuild, in a run where the Results tab was rebuilt (its posts carry the IMs' times: headStartResultsRun_); when no
- * such run comes for 10 more minutes (or the Results tab is off: settings.speed_tab), it is rebuilt without the IMs'
- * times. Never with under 30 seconds of the run left. True when it wrote the tab. Never throws.
+ * {deadline (ms: when the run must be done), runStart (ms: when this run began), flows (what each flow of this run
+ * left: its ctx, or its {ctx, report})}. Due: 10 minutes after the last rebuild, in a run where the Results tab was
+ * rebuilt (its posts carry the IMs' times: headStartResultsRun_); when no such run comes for 10 more minutes (or the
+ * Results tab is off: settings.speed_tab), it is rebuilt without the IMs' times. Never with under 30 seconds of the run
+ * left, and never in a run that is still catching up on alerts (headStartRunBusy_): nothing is read or noted then, and
+ * the tab stays due. True when it wrote the tab. Never throws.
  */
 function maybeRefreshHeadStart_(ss, ctx, opts) {
   try {
     const o = opts || {};
     if (!ss) return false;
+    if (headStartRunBusy_(ctx, o.flows)) return false;  // alerts are waiting for the next run: it must start on time
     const now = ctx && typeof ctx.now === 'function' ? ctx.now() : Date.now();
     const deadline = Number(o.deadline) || Number(ctx && ctx.deadline) || 0;
     if (deadline && deadline - now < HEAD_START_MIN_LEFT_MS_) return false;
@@ -152,6 +186,33 @@ function maybeRefreshHeadStart_(ss, ctx, opts) {
     console.error('Head start tab not refreshed: ' + ((e && e.message) || e));
     return false;
   }
+}
+
+/**
+ * Is this run still catching up on alerts? True when the run's ctx, or one of its flows (`flows`: each a flow's ctx,
+ * or the {ctx, report} its run gave: the Mirror space's, the auto-correct space's, the Other alerts space's), says
+ * so: the flow marked itself busy (ctx.slaBusy: Main.gs and AutoCorrect.gs set it), or its report shows what they go
+ * by: an alert held for the next run (report.held), as many messages handled as a run may handle
+ * (settings.max_messages_per_run: more may be waiting), or a stop at its time budget. The next run takes those alerts
+ * up, and it only starts when this one has ended (poll() skips a minute while the run before is still going): a
+ * rebuild here could make them wait a minute more. Pure; never throws.
+ */
+function headStartRunBusy_(ctx, flows) {
+  const busy = x => {
+    try {
+      if (!x || typeof x !== 'object') return false;
+      const c = x.ctx && typeof x.ctx === 'object' ? x.ctx : x;
+      const r = x.report && typeof x.report === 'object' ? x.report : null;
+      if (c.slaBusy) return true;
+      if (!r) return false;
+      const most = Number((c.settings || {}).max_messages_per_run);
+      return Number(r.held) > 0 || (most > 0 && Number(r.handled) >= most) ||
+        (Array.isArray(r.errors) ? r.errors : []).some(e => /^time budget/.test(String(e)));
+    } catch (e) {
+      return false;
+    }
+  };
+  return busy(ctx) || (Array.isArray(flows) ? flows : []).some(busy);
 }
 
 /**
@@ -273,9 +334,10 @@ function headStartOwnType_(row) {
 /**
  * What the report reads from one Alert-log row: {id, at (when it reached the space: source_at, else created_at),
  * source_at, name (the issue name, without a status suffix), name_key (how issue names compare), ongoing (its issue
- * status is Ongoing Issue), headline (an Early Detection card's), product, tag, url, key (record_key), ed (the Early
- * Detection snapshot), view (the Alert memory's view of its story, for the word check; null without issue words)}.
- * Never throws: a broken cell reads as blank. Pure.
+ * status is Ongoing Issue), headline (an Early Detection card's), product, tag, tag_key (how exposure tags compare: by
+ * the tag's current name, in lower case; '' for none), url, key (record_key), ed (the Early Detection snapshot), view
+ * (the Alert memory's view of its story, for the word check; null without issue words)}. Never throws: a broken cell
+ * reads as blank. Pure.
  */
 function headStartRowFacts_(a) {
   const ff = headStartObj_(a.forwarded_fields);
@@ -288,16 +350,19 @@ function headStartRowFacts_(a) {
     name, name_key: issueNameKey_(name), ongoing: pick('issue_status').toLowerCase().indexOf(ONGOING_STATUS_SUFFIX_.toLowerCase()) === 0,
     headline: headStartText_(headStartObj_(ff.early_detection).story_title),
     product: pick('product'), tag: pick('exposure_tag') || headStartText_(a.exposure_tag), url: pick('post_url'),
-    key: headStartText_(a.record_key), ed: headStartObj_(ff.early_detection), view: null,
+    key: headStartText_(a.record_key), ed: headStartObj_(ff.early_detection), view: null, tag_key: '',
   };
+  out.tag_key = out.tag.toLowerCase();  // as it is written, should the tag's current name not be found below
   try {
+    const tag = amTag_(out.tag);  // by its current name, as the Alert memory compares tags
+    out.tag_key = String(tag || '').trim().toLowerCase();
     // As AlertMemory.gs builds a story's view (storyView), from the issue name, the exposure tag and the product (the
     // summary is left out): its issue words, its tag, its product, and the identifiers those three name
     const fields = { issue_name: name, product: out.product, exposure_tag: out.tag };
     const author = pick('author') || headStartText_(a.author);
     const tok = issueTokens_(name);
     if (tok.length) {
-      out.view = { tag: amTag_(out.tag), prod: amProduct_(out.product), tok,
+      out.view = { tag, prod: amProduct_(out.product), tok,
         idt: amIdents_(amStoryText_(fields), [author, out.url ? authorFromUrl_(out.url) : '']) };
     }
   } catch (e) {
@@ -395,11 +460,17 @@ function headStartBurson_(rows) {
 }
 
 /**
- * Matches each story with Burson's alerts: sets story.burson ({key, at, alert_id, url, name} of the earliest alert
- * the first rule to match gives, or null), story.matched (which rule: HEAD_START_SAME_POST_, HEAD_START_SAME_STORY_,
- * HEAD_START_SIMILAR_, or '') and story.lead_ms (Burson's time less the story's: above 0 when this app was first; null
- * without a match). On each of Burson's alerts a story came before, by any rule: ahead (1 same post, 2 same story, 3
- * similar wording: the surest that holds). The rules are in this file's header. Pure (changes its arguments).
+ * Matches each story with Burson's alerts: sets story.burson ({key, at, alert_id, url, name} of Burson's alert, or
+ * null), story.matched (the rule that gave that alert: HEAD_START_SAME_POST_, HEAD_START_SAME_STORY_,
+ * HEAD_START_SAME_NAME_, HEAD_START_SIMILAR_, or '') and story.lead_ms (Burson's time less the story's: above 0 when
+ * this app was first; null without a match). The alert is the EARLIEST one the two sure rules give, taken together
+ * (same post, same story: Burson's first alert on the story, whichever post it was on); only when they give none, the
+ * earliest one the two weaker rules give (same issue name, similar wording). An alert two rules give is labelled with
+ * the surer one, and so is the earlier of two at the very same time.
+ * The reverse view, on each of Burson's alerts: ahead (1 same post, 2 same story, 3 same issue name, 4 similar wording:
+ * the surest rule that ties it to a story of this app's that came before it), set only by a story that was itself
+ * first (ahead of the alert it is measured against): where Burson had the story first, Burson's later alerts on it
+ * are not ones this app had first. The rules are in this file's header. Pure (changes its arguments).
  */
 function headStartMatch_(stories, burson) {
   const byName = new Map();  // issue name -> Burson's rows under it
@@ -422,18 +493,28 @@ function headStartMatch_(stories, burson) {
   });
   const span = HEAD_START_STORY_DAYS_ * HEAD_START_DAY_MS_;
   const bar = Number(GEN.novelty_min_jaccard) || 0.6;  // how alike two names' words must be (AlertMemory.gs amSameStoryWords_)
-  const earliest = set => Array.from(set).sort((x, y) => x.at - y.at || (x.key < y.key ? -1 : 1))[0] || null;
+  // two exposure tags that differ (one that's blank differs from none): IssueNames.gs knownIssueName_
+  const otherTag = (a, b) => !!a.tag_key && !!b.tag_key && a.tag_key !== b.tag_key;
   stories.forEach(s => {
     const near = g => Math.abs(g.at - s.at) <= span;
     const post = new Set();
     s.keys.forEach(k => { if (burson.has(k)) post.add(burson.get(k)); });
     const story = new Set();
+    const named = new Set();
     const similar = new Set();
     const compared = new Set();
     s.rows.forEach(r => {
-      // the same issue name, and the later of the two alerts is an Ongoing Issue: its review took it for that issue
-      (r.name_key ? byName.get(r.name_key) || [] : []).forEach(x => {
-        if (near(x.g) && (x.b.source_at >= r.at ? x.b.ongoing : r.ongoing)) story.add(x.g);
+      // Burson's alerts under the same issue name. A review took the later of the two for the earlier one's issue when
+      // the later one is an Ongoing Issue
+      const sameName = (r.name_key ? byName.get(r.name_key) || [] : []).filter(x => near(x.g));
+      const taken = x => (x.b.source_at >= r.at ? x.b.ongoing : r.ongoing);
+      const tied = sameName.some(taken);
+      sameName.forEach(x => {
+        if (taken(x)) story.add(x.g);
+        // The same name and no more, never under two different exposure tags. On its own that is the weaker rule. Once
+        // a review has tied one of Burson's alerts to this story under the name, the name is this story's issue (one
+        // name per issue), and Burson's other alerts under it are on the same story: its first one may be among them
+        else if (!otherTag(r, x.b)) (tied ? story : named).add(x.g);
       });
       // the Alert memory's word check, against Burson's alerts under the same tag that share a word of the name
       const tag = tagOf(r.view);
@@ -451,13 +532,22 @@ function headStartMatch_(stories, burson) {
         if (alike > 0) similar.add(x.g);
       });
     });
-    const rules = [[post, HEAD_START_SAME_POST_], [story, HEAD_START_SAME_STORY_], [similar, HEAD_START_SIMILAR_]];
-    const hit = rules.find(x => x[0].size > 0) || null;
-    const g = hit ? earliest(hit[0]) : null;
+    const rules = [post, story, named, similar];  // as HEAD_START_RULES_ numbers them, from 1
+    const rank = g => rules.findIndex(set => set.has(g)) + 1;  // the surest rule that gives this alert
+    const earliest = sets => {
+      const all = new Set();
+      sets.forEach(set => set.forEach(g => all.add(g)));
+      return Array.from(all).sort((x, y) => x.at - y.at || rank(x) - rank(y) || (x.key < y.key ? -1 : 1))[0] || null;
+    };
+    // Burson's first alert on the story by the sure rules, whichever post it was on; else by the weaker ones
+    const g = earliest([post, story]) || earliest([named, similar]);
     s.burson = g ? { key: g.key, at: g.at, alert_id: g.alert_id, url: g.url, name: g.name } : null;
-    s.matched = g ? hit[1] : '';
+    s.matched = g ? HEAD_START_RULES_[rank(g)] : '';
     s.lead_ms = g ? g.at - s.at : null;
-    rules.forEach((x, i) => x[0].forEach(b => {
+    // The reverse view: Burson's alerts this story came before, when this story was first. Where Burson had the story
+    // first (its alert above is the earlier one), Burson's later alerts on it are not ones this app had first
+    if (!(s.lead_ms > 0)) return;
+    rules.forEach((set, i) => set.forEach(b => {
       if (s.at < b.at && (!b.ahead || i + 1 < b.ahead)) b.ahead = i + 1;
     }));
   });
@@ -465,13 +555,14 @@ function headStartMatch_(stories, burson) {
 
 /**
  * The headline numbers for the stories this app alerted since `since` and Burson's alerts since then: stories; matched
- * (Burson alerted them too) and its share; first (this app's alert strictly before Burson's), its share of the matched
- * and the median head start in minutes; behind (Burson strictly first) and the median minutes behind; unmatched;
- * im_known (stories with an IM time), im_first (this app's alert before the IMs' time), its share, im_median_min (the
- * median minutes from this app's alert to the IMs' time, over every story with one: below 0 when this app was later) and
- * im_from_email (how many of those times are their email, not their draft); and the reverse view: burson_alerts,
- * burson_after (those a story of this app came before, by any rule), its share, and burson_after_by {post, story,
- * wording}. A share is a whole percent, null of nothing; a median is to 0.1 minute, null of nothing. Pure.
+ * (a Burson alert was found for them) and its share; first (this app's alert strictly before Burson's), its share of
+ * the matched and the median head start in minutes; behind (Burson strictly first) and the median minutes behind;
+ * unmatched (no Burson alert found: not the same as never alerted by Burson, see this file's header); im_known (stories
+ * with an IM time), im_first (this app's alert before the IMs' time), its share, im_median_min (the median minutes from
+ * this app's alert to the IMs' time, over every story with one: below 0 when this app was later) and im_from_email (how
+ * many of those times are their email, not their draft); and the reverse view: burson_alerts, burson_after (those that
+ * came after a story of this app's that was first, by any rule: headStartMatch_), its share, and burson_after_by {post,
+ * story, name, wording}. A share is a whole percent, null of nothing; a median is to 0.1 minute, null of nothing. Pure.
  */
 function headStartWindow_(stories, bursonList, since) {
   const list = stories.filter(s => s.at >= since);
@@ -493,7 +584,7 @@ function headStartWindow_(stories, bursonList, since) {
     im_median_min: median(withIm.map(s => s.im_lead_ms)), im_from_email: withIm.filter(s => s.im.from === 'email').length,
     burson_alerts: theirs.length, burson_after: after.length, burson_after_pct: pct(after.length, theirs.length),
     burson_after_by: { post: after.filter(g => g.ahead === 1).length, story: after.filter(g => g.ahead === 2).length,
-      wording: after.filter(g => g.ahead === 3).length },
+      name: after.filter(g => g.ahead === 3).length, wording: after.filter(g => g.ahead === 4).length },
   };
 }
 
@@ -598,10 +689,18 @@ function headStartNoteText_(r) {
   const m = r.windows.month;
   return `Matched on: "${HEAD_START_SAME_POST_}" (Burson alerted one of the story's posts); "${HEAD_START_SAME_STORY_}" ` +
     '(Burson\'s alert and this app\'s carry the same issue name, and the later of the two was recorded as an Ongoing ' +
-    `Issue); "${HEAD_START_SIMILAR_}" (the same exposure tag and issue names alike: a weaker match, check it). The ` +
-    `same-story rules look ${HEAD_START_STORY_DAYS_} days either side of the story. When several of Burson's alerts match, ` +
-    'the earliest counts. A head start is from this app\'s alert to Burson\'s alert (or to the IMs\' email: end to end); ' +
-    '"behind by" means this app was later. ' +
+    'Issue; Burson\'s other alerts under that name then count too). A story is measured against the earliest of ' +
+    'Burson\'s alerts those two give: Burson\'s first alert on the story, even when Burson alerted the story\'s own post ' +
+    `later. Only when they give none, two weaker matches are tried (check them): "${HEAD_START_SAME_NAME_}" (the same ` +
+    `issue name and no more, never under two different exposure tags) and "${HEAD_START_SIMILAR_}" (the same exposure ` +
+    `tag and issue names alike). The same-story rules look ${HEAD_START_STORY_DAYS_} days either side of the story. A ` +
+    'head start is from this app\'s alert to Burson\'s alert (or to the IMs\' email: end to end); "behind by" means this ' +
+    'app was later. One of Burson\'s alerts counts as alerted first by this app when it came after a story this app was ' +
+    'first on, not when Burson already had that story. ' +
+    '"No Burson alert found" doesn\'t mean Burson never alerted the story: Burson\'s later alert takes a story\'s issue ' +
+    'name only when this app\'s alert went out as a Social Alert. An alert that was only to be watched is found again ' +
+    'only on its own posts, on an identical issue name, or on similar wording under the same exposure tag, so "this app ' +
+    'alerted first" is, if anything, undercounted. ' +
     (r.im_at_hand
       ? `The IMs' time is their email for Burson's post, else their draft, as the Results tab has it (their email for ${m.im_from_email} ` +
         `of ${m.im_known} in the last ${HEAD_START_DAYS_} days); it is blank for a Burson alert the Results tab no longer shows.`
@@ -630,7 +729,8 @@ function headStartTabRows_(r) {
   const w = r.windows.week;
   const m = r.windows.month;
   const split = x => (x.burson_after ? `: ${[[x.burson_after_by.post, HEAD_START_SAME_POST_], [x.burson_after_by.story, HEAD_START_SAME_STORY_],
-    [x.burson_after_by.wording, 'similar wording']].filter(p => p[0]).map(p => `${p[0]} ${p[1]}`).join(', ')}` : '');
+    [x.burson_after_by.name, 'same issue name'], [x.burson_after_by.wording, 'similar wording']].filter(p => p[0])
+    .map(p => `${p[0]} ${p[1]}`).join(', ')}` : '');
 
   add([HEAD_START_TITLE_]);
   add([headStartScopeText_(r)], 'merged');
@@ -643,7 +743,8 @@ function headStartTabRows_(r) {
     ['Median head start over Burson (where this app was first)', words(w.first_median_min), words(m.first_median_min)],
     ['Burson alerted first', w.behind, m.behind],
     ['Median time this app was behind (where Burson was first)', words(w.behind_median_min), words(m.behind_median_min)],
-    ['Not alerted by Burson', w.unmatched, m.unmatched],
+    // not "not alerted by Burson": Burson may have alerted it under a name the matching can't tie to it (the note below)
+    ['No Burson alert found', w.unmatched, m.unmatched],
     ['This app\'s alert before the IMs\' email (of the stories with an IM email time)', of(w.im_first, w.im_known, w.im_first_pct),
       of(m.im_first, m.im_known, m.im_first_pct)],
     ['Median time from this app\'s alert to the IMs\' email (the end-to-end head start)', words(w.im_median_min), words(m.im_median_min)],

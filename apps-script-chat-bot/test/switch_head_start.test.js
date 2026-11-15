@@ -1,11 +1,11 @@
 // The Head start tab (HeadStart.gs): this app's own alerts (Early Detection cards and early signals, Watch alerts,
 // Direct BigQuery alerts) next to Burson's alerts and the IMs' Social Alert emails: who alerted a story first and by how
-// much. It has no switch: poll() rebuilds it at the end of a run, at most every 10 minutes. It reads the Alert log and
-// writes only its own tab.
+// much. It has no switch: poll() rebuilds it at the end of a run, at most every 10 minutes, and never in a run that is
+// still catching up on alerts. It reads the Alert log and writes only its own tab.
 'use strict';
 
 module.exports = H => {
-  const { test, eq, assert, B, NOW, world, e2e, F, TEST_FEED } = H;
+  const { test, eq, assert, B, NOW, world, e2e, F, TEST_FEED, TRIAGED } = H;
   const MIN = 60 * 1000;
   const HOUR = 60 * MIN;
   const DAY = 24 * HOUR;
@@ -55,6 +55,24 @@ module.exports = H => {
     }
     return out;
   };
+  const FLOW = `${TEST_FEED} > ${TRIAGED}`;  // the rows of the main flow in the Alert log of the sheet setup() makes
+  const ZAPIER = { type: 'BOT', sender: 'users/zapier', displayName: 'Zapier' };
+  /**
+   * The bot as setup() leaves it (Testing, a tester in B30), with `rows` on its Alert log as earlier runs left them:
+   * t.poll() is one every-minute run. The Results tab reads the IMs' drafts from `drafts` instead of BigQuery (which
+   * the tests can't reach), so its rebuild works as it does live.
+   */
+  const pollWorld = (rows, drafts) => {
+    const t = e2e();
+    t.bot.setup();
+    t.set('B30', 'tester@testing.test');
+    const log = t.bot.sheetTable_(t.sheet(), 'Alert log', t.bot.ev('ALERT_COLUMNS_'), 'alert_id', 4000);
+    rows.forEach(x => log.append(x));
+    t.bot.speedImDrafts_ = () => drafts || [];
+    t.bot.speedLogged_ = () => [];
+    return t;
+  };
+  const made = t => !!tabOf(t.sheet());  // the Head start tab is there (it is made by its first rebuild)
 
   // ---------------------------------------------------------------------------------------------------------------
   // What's an own alert, a story, a Burson alert
@@ -109,7 +127,7 @@ module.exports = H => {
   });
 
   // ---------------------------------------------------------------------------------------------------------------
-  // Ahead of Burson, behind Burson, not alerted by Burson
+  // Ahead of Burson, behind Burson, no Burson alert
   // ---------------------------------------------------------------------------------------------------------------
 
   test('head start: an own alert ahead of Burson on the same post (the card on Saturday at 11 PM, Burson\'s alert on Tuesday afternoon: "2 d 15 h"), one behind Burson ("behind by 20 min"), and one Burson never alerted (blank cells, never a zero)', () => {
@@ -131,7 +149,7 @@ module.exports = H => {
     const w = r.windows.week;
     eq([w.stories, w.matched, w.matched_pct, w.first, w.first_pct, w.first_median_min, w.behind, w.behind_median_min, w.unmatched],
       [3, 2, 67, 1, 50, 3780, 1, 20, 1]);
-    eq([w.burson_alerts, w.burson_after, w.burson_after_pct, w.burson_after_by], [2, 1, 50, { post: 1, story: 0, wording: 0 }]);
+    eq([w.burson_alerts, w.burson_after, w.burson_after_pct, w.burson_after_by], [2, 1, 50, { post: 1, story: 0, name: 0, wording: 0 }]);
 
     const out = B.headStartTabRows_(r).rows;
     const head = out.findIndex(x => String(x[0]).indexOf('EVERY STORY') === 0) + 1;
@@ -220,7 +238,143 @@ module.exports = H => {
       theirs(T + DAY, NAME, ONGOING)]), ['QA-1', 'Early Detection', 'same story', 'QA-2', 24 * 60]);
   });
 
-  test('head start: the same-story rule, weaker: the Alert memory\'s word check (the same exposure tag, issue words alike, no clashing identifiers) is labelled "same story (similar wording)"; the rules apply in order (same post, same story, similar wording) and the earliest of Burson\'s alerts counts; nothing is asked of the Alert memory and nothing is embedded', () => {
+  test('head start: a story is measured against Burson\'s FIRST alert on it: the earliest alert the same-post and same-story rules give together, labelled with the rule that gave it; a later alert of Burson\'s on the story\'s own post never hides an earlier one on the same story (the head start is not overstated), and never makes this app first on a story Burson already had', () => {
+    const NAME = 'Banking malware in Play Store apps';
+    const taken = { issue_name: NAME, issue_status: ONGOING, exposure_tag: 'Another tag' };  // a review took it for the story's issue
+    const numbers = w => [w.stories, w.matched, w.first, w.first_median_min, w.behind, w.behind_median_min, w.burson_alerts, w.burson_after,
+      w.burson_after_by];
+    // The card rests on three posts. Burson alerts the story on another post a day later, and the card's third post
+    // four days after the card: the head start is one day, to Burson's first alert on the story, not four
+    const T = NOW - 6 * DAY;
+    const ahead = [
+      card('QA-1', T, 1, { post_keys: [key(1), key(2), key(3)] }, { issue_name: NAME }),
+      burson('QA-2', T + DAY, 9, taken),
+      burson('QA-3', T + 4 * DAY, 3),
+    ];
+    let r = report(ahead);
+    eq(r.stories.map(brief), [['QA-1', 'Early Detection', 'same story', 'QA-2', 24 * 60]]);
+    eq(numbers(r.windows.week), [1, 1, 1, 1440, 0, null, 2, 2, { post: 1, story: 1, name: 0, wording: 0 }]);
+    eq(r.top.map(s => [s.alert_id, s.lead_ms / MIN]), [['QA-1', 1440]]);
+    // the IMs' time is the one for the Burson alert the story is measured against (the earlier one, on the other post)
+    const im = { [postKey(9)]: { at: T + DAY + 30 * MIN, from: 'email' }, [postKey(3)]: { at: T + 4 * DAY + HOUR, from: 'email' } };
+    eq(report(ahead, im).stories.map(s => [s.burson.key, s.im, s.im_lead_ms / MIN]), [[key(9), { at: T + DAY + 30 * MIN, from: 'email' }, 24 * 60 + 30]]);
+    // the other way round (Burson's alert on the card's own post is the earlier one): that one, as the same post
+    eq(report([ahead[0], burson('QA-2', T + 4 * DAY, 9, taken), burson('QA-3', T + DAY, 3)]).stories.map(brief),
+      [['QA-1', 'Early Detection', 'same post', 'QA-3', 24 * 60]]);
+
+    // Burson had the story first: its alert on post 8, two hours before this app's Watch alert on post 5, which this
+    // app's own review took for Burson's issue (its name, an Ongoing Issue). Burson alerted post 5 ten minutes after
+    // this app. This app was two hours behind on the story, not ten minutes ahead of Burson
+    const U = NOW - DAY;
+    const behind = [
+      burson('QA-11', U - 2 * HOUR, 8, { issue_name: NAME, exposure_tag: 'Another tag' }),
+      own('QA-12', U, 5, WATCH, { issue_name: NAME, issue_status: ONGOING }),
+      burson('QA-13', U + 10 * MIN, 5),
+    ];
+    r = report(behind);
+    eq(r.stories.map(brief), [['QA-12', 'Watch', 'same story', 'QA-11', -120]]);
+    // ... and neither of Burson's two alerts is one this app had first
+    eq(numbers(r.windows.week), [1, 1, 0, null, 1, 120, 2, 0, { post: 0, story: 0, name: 0, wording: 0 }]);
+    eq(r.top, []);
+    const cells = B.headStartTabRows_(r).rows;
+    eq(['This app alerted first (of those Burson alerted too)', 'Burson alerted first', 'Median time this app was behind (where Burson was first)',
+      'Of Burson\'s alerts, those this app had alerted first (same post or same story)'].map(label => cells.find(c => c[0] === label)[1]),
+    ['0 of 1 (0%)', 1, '2 h', '0 of 2 (0%)']);
+    eq(cells.filter(c => c[10] === 'QA-12').map(c => [c[5], c[6], c[9], c[11], c[12]]),
+      [[B.speedTime_(U - 2 * HOUR), 'behind by 2 h', 'same story', `=HYPERLINK("${link(8)}","QA-11")`, -120]]);
+    assert.match(cells.map(c => String(c[0])).find(c => c.indexOf('Matched on:') === 0),
+      /A story is measured against the earliest of Burson's alerts those two give: Burson's first alert on the story, even when Burson alerted the story's own post later\..* One of Burson's alerts counts as alerted first by this app when it came after a story this app was first on, not when Burson already had that story\./);
+    // ... nor are Burson's next alerts on a story it had first (two more under the name, hours after this app's alert)
+    r = report(behind.concat([burson('QA-14', U + 3 * HOUR, 14, taken), burson('QA-15', U + 6 * HOUR, 15, taken)]));
+    eq([r.stories.map(brief), numbers(r.windows.week).slice(6)],
+      [[['QA-12', 'Watch', 'same story', 'QA-11', -120]], [4, 0, { post: 0, story: 0, name: 0, wording: 0 }]]);
+    // without Burson's earlier alert on the story, its alert on the same post is all there is: ten minutes ahead
+    r = report(behind.slice(1));
+    eq([r.stories.map(brief), numbers(r.windows.week).slice(6)],
+      [[['QA-12', 'Watch', 'same post', 'QA-13', 10]], [1, 1, { post: 1, story: 0, name: 0, wording: 0 }]]);
+
+    // One alert both rules give (the story's own post, under its name as an Ongoing Issue) is labelled with the surer
+    // rule, and so is the same-post one of two alerts at the very same time
+    eq(report([card('QA-1', T, 9, null, { issue_name: NAME }), burson('QA-2', T + HOUR, 9, taken)]).stories.map(brief),
+      [['QA-1', 'Early Detection', 'same post', 'QA-2', 60]]);
+    eq(report([card('QA-1', T, 9, null, { issue_name: NAME }), burson('QA-2', T + HOUR, 1, taken), burson('QA-3', T + HOUR, 9)]).stories.map(brief),
+      [['QA-1', 'Early Detection', 'same post', 'QA-3', 60]]);
+
+    // Once a review has tied one of Burson's alerts to the story under its name, Burson's other alerts under that name
+    // are on the same story: its first one (here a New one on Sunday, two days before the one a review took for the
+    // story's issue) is what the story is measured against. Never one under another exposure tag
+    const SUN = SAT_11PM + 15 * HOUR;
+    const story = card('QA-1', SAT_11PM, 1, { post_keys: [key(1)] }, { issue_name: NAME });
+    const later = burson('QA-3', TUE_2PM, 3, { issue_name: NAME, issue_status: ONGOING });
+    eq(report([story, burson('QA-2', SUN, 2, { issue_name: NAME, issue_status: 'NEW' }), later]).stories.map(brief),
+      [['QA-1', 'Early Detection', 'same story', 'QA-2', 15 * 60]]);
+    eq(report([story, burson('QA-2', SUN, 2, { issue_name: NAME, issue_status: 'Recently Reported', exposure_tag: '' }), later]).stories.map(brief),
+      [['QA-1', 'Early Detection', 'same story', 'QA-2', 15 * 60]]);
+    eq(report([story, burson('QA-2', SUN, 2, { issue_name: NAME, issue_status: 'NEW', exposure_tag: 'Another tag' }), later]).stories.map(brief),
+      [['QA-1', 'Early Detection', 'same story', 'QA-3', 63 * 60]]);
+  });
+
+  test('head start: the same-story rule, weaker: the same issue name and no more is labelled "same story (same issue name)": the owner\'s example as it usually goes (a card that was only to be watched, with no exposure tag, and Burson\'s alert days later on another post under that name); never under two different exposure tags, only when no sure rule gives an alert; a story without a match is counted as "No Burson alert found", and the tab says why that isn\'t "not alerted"', () => {
+    const NAME = 'Banking malware in Play Store apps';
+    const SAME_NAME = 'same story (same issue name)';
+    const SIMILAR = 'same story (similar wording)';
+    const OTHER_TAG = 'Product - Security or privacy vulnerabilities';
+    // The card as its review leaves it when it isn't sure the story is an SLRR matter: to be watched (no Social Alert,
+    // so Burson's later alert never takes its name) and without an exposure tag (so the word check can't match it)
+    const watched = (when, fields) => card('QA-1', when, 1, { post_keys: [key(1)], disposition: 'monitor', story_title: 'Malware apps on the Play Store' },
+      Object.assign({ issue_name: NAME, exposure_tag: '', product: 'Play Store' }, fields || {}));
+    const theirs = (when, fields, id, n) => burson(id || 'QA-2', when, n || 2, Object.assign({ issue_name: NAME, issue_status: 'NEW' }, fields || {}));
+    const match = rows => brief(report(rows).stories.find(s => s.alert_id === 'QA-1'));
+    eq([B.headStartRowFacts_(watched(SAT_11PM)).view.tag, B.headStartRowFacts_(watched(SAT_11PM)).tag_key, B.headStartRowFacts_(theirs(TUE_2PM)).tag_key],
+      ['', '', TAG.toLowerCase()]);
+
+    // The owner's example: the card on Saturday at 11 PM, Burson's alert on Tuesday at 2 PM on another post
+    const r = report([watched(SAT_11PM), theirs(TUE_2PM)]);
+    eq(r.stories.map(brief), [['QA-1', 'Early Detection', SAME_NAME, 'QA-2', 63 * 60]]);
+    const w = r.windows.week;
+    eq([w.stories, w.matched, w.first, w.first_median_min, w.unmatched, w.burson_alerts, w.burson_after, w.burson_after_by],
+      [1, 1, 1, 3780, 0, 1, 1, { post: 0, story: 0, name: 1, wording: 0 }]);
+    eq(r.top.map(s => s.alert_id), ['QA-1']);
+    const cells = B.headStartTabRows_(r).rows;
+    eq(cells.filter(c => c[10] === 'QA-1').map(c => [c[1], c[5], c[6], c[9], c[12]]),
+      [['2026-10-10 23:00', '2026-10-13 14:00', '2 d 15 h', SAME_NAME, 3780], ['2026-10-10 23:00', '2026-10-13 14:00', '2 d 15 h', SAME_NAME, 3780]]);
+    eq(cells.find(c => c[0] === 'Of Burson\'s alerts, those this app had alerted first (same post or same story)').slice(1, 3),
+      ['1 of 1 (100%): 1 same issue name', '1 of 1 (100%): 1 same issue name']);
+
+    // however the name is written (case, spacing, quotes, a status suffix); with the tag on one side only, either side;
+    // with the same tag on both sides (the same name is the surer of the two weaker labels)
+    eq(match([watched(SAT_11PM), theirs(TUE_2PM, { issue_name: 'banking  malware in "Play Store" apps / NEW' })])[2], SAME_NAME);
+    eq(match([watched(SAT_11PM, { exposure_tag: TAG }), theirs(TUE_2PM, { exposure_tag: '' })])[2], SAME_NAME);
+    eq(match([watched(SAT_11PM, { exposure_tag: TAG }), theirs(TUE_2PM)])[2], SAME_NAME);
+    // never under two different exposure tags (a name can cover more than one issue), and never another name
+    eq(match([watched(SAT_11PM, { exposure_tag: TAG }), theirs(TUE_2PM, { exposure_tag: OTHER_TAG })]), ['QA-1', 'Early Detection', '', null, null]);
+    eq(match([watched(SAT_11PM), theirs(TUE_2PM, { issue_name: 'Play Store refund delays' })])[2], '');
+    eq(match([watched(SAT_11PM, { issue_name: '' }), theirs(TUE_2PM, { issue_name: '' })])[2], '');  // no name is not the same name
+    // Burson first under that name and this app later, neither an Ongoing Issue: the same, this app behind
+    eq(match([watched(TUE_2PM), theirs(SAT_11PM)]), ['QA-1', 'Early Detection', SAME_NAME, 'QA-2', -63 * 60]);
+    // 14 days either side of the story, no further
+    const far = d => match([watched(NOW - 20 * DAY), theirs(NOW - 20 * DAY + d)])[2];
+    eq([far(14 * DAY), far(14 * DAY + MIN), far(-14 * DAY), far(-14 * DAY - MIN)], [SAME_NAME, '', SAME_NAME, '']);
+
+    // Weaker than the sure rules: it is tried only when neither gives an alert, however early the alert under the name
+    eq(match([watched(SAT_11PM), theirs(SAT_11PM + HOUR), burson('QA-3', TUE_2PM, 1)]), ['QA-1', 'Early Detection', 'same post', 'QA-3', 63 * 60]);
+    // Of the two weaker rules together, Burson's earliest alert counts, labelled with the rule that gave it
+    const ALIKE = 'Malware found in Play Store banking apps';
+    const tagged = watched(SAT_11PM, { exposure_tag: TAG });
+    eq(match([tagged, theirs(TUE_2PM), theirs(SAT_11PM + DAY, { issue_name: ALIKE }, 'QA-3', 3)]), ['QA-1', 'Early Detection', SIMILAR, 'QA-3', 24 * 60]);
+    eq(match([tagged, theirs(SAT_11PM + DAY), theirs(TUE_2PM, { issue_name: ALIKE }, 'QA-3', 3)]), ['QA-1', 'Early Detection', SAME_NAME, 'QA-2', 24 * 60]);
+
+    // A story no rule finds a Burson alert for is counted as "No Burson alert found" (Burson may have alerted it under
+    // a name nothing ties to the story), and the tab says why that is not "not alerted by Burson"
+    const none = B.headStartTabRows_(report([watched(SAT_11PM), theirs(TUE_2PM, { issue_name: 'Play Store refund delays' })])).rows;
+    eq([none.find(c => c[0] === 'No Burson alert found').slice(1, 3), none.some(c => /not alerted by Burson/i.test(String(c[0])) && c[1] !== '')], [[1, 1], false]);
+    const note = none.map(c => String(c[0])).find(c => c.indexOf('Matched on:') === 0);
+    assert.match(note, /"No Burson alert found" doesn't mean Burson never alerted the story: Burson's later alert takes a story's issue name only when this app's alert went out as a Social Alert\. An alert that was only to be watched is found again only on its own posts, on an identical issue name, or on similar wording under the same exposure tag, so "this app alerted first" is, if anything, undercounted\./);
+    assert.match(note, /Only when they give none, two weaker matches are tried \(check them\): "same story \(same issue name\)" \(the same issue name and no more, never under two different exposure tags\) and "same story \(similar wording\)"/);
+    assert.ok(note.length <= 49000);
+  });
+
+  test('head start: the same-story rule, weaker: the Alert memory\'s word check (the same exposure tag, issue words alike, no clashing identifiers) is labelled "same story (similar wording)"; it is tried only when neither sure rule (same post, same story) gives an alert, and the earliest of Burson\'s alerts counts; nothing is asked of the Alert memory and nothing is embedded', () => {
     const T = NOW - 5 * DAY;
     const story = (name, fields) => card('QA-1', T, 1, { post_keys: [key(1)] }, Object.assign({ issue_name: name }, fields || {}));
     const match = rows => brief(report(rows).stories.find(s => s.alert_id === 'QA-1'));
@@ -247,8 +401,9 @@ module.exports = H => {
     eq(B.headStartRowFacts_(burson('QA-9', T, 9, { issue_name: OWN, summary: 'CVE-2026-33333 and @someone, 123456 times' })).view, view(OWN));
     eq(B.headStartRowFacts_(burson('QA-9', T, 9, { issue_name: 'the issue of a claim' })).view, null);  // no words to compare: never matched on wording
 
-    // In order: the same post wins over an earlier same-story alert, the same story over an earlier alert alike in
-    // wording; within a rule, the earliest of Burson's alerts
+    // The sure rules first: an alert alike in wording is never taken while the same post or the same story gives one,
+    // however much earlier it is. Of the alerts the two sure rules give, Burson's first counts (here a same-story one,
+    // two days before Burson alerted the story's own post); of the alerts alike in wording, the earliest
     const rows = [
       story(OWN, { post_url: link(1) }),
       burson('QA-2', T + 4 * DAY, 1),                                                   // the same post, four days on
@@ -257,12 +412,13 @@ module.exports = H => {
       burson('QA-5', T + DAY, 5, { issue_name: ALIKE }),                                // alike in wording, a day on
       burson('QA-6', T + 6 * HOUR, 6, { issue_name: ALIKE }),
     ];
-    eq(match(rows), ['QA-1', 'Early Detection', 'same post', 'QA-2', 4 * 24 * 60]);
+    eq(match(rows), ['QA-1', 'Early Detection', 'same story', 'QA-3', 2 * 24 * 60]);
+    eq(match(rows.filter(x => !['QA-3', 'QA-4'].includes(x.alert_id))), ['QA-1', 'Early Detection', 'same post', 'QA-2', 4 * 24 * 60]);
     eq(match(rows.filter(x => x.alert_id !== 'QA-2')), ['QA-1', 'Early Detection', 'same story', 'QA-3', 2 * 24 * 60]);
     eq(match(rows.filter(x => !['QA-2', 'QA-3', 'QA-4'].includes(x.alert_id))), ['QA-1', 'Early Detection', SIMILAR, 'QA-6', 6 * 60]);
     // the reverse view: every one of Burson's alerts this app's story came before, by the surest rule that holds
     const w = report(rows).windows.week;
-    eq([w.burson_alerts, w.burson_after, w.burson_after_pct, w.burson_after_by], [5, 5, 100, { post: 1, story: 2, wording: 2 }]);
+    eq([w.burson_alerts, w.burson_after, w.burson_after_pct, w.burson_after_by], [5, 5, 100, { post: 1, story: 2, name: 0, wording: 2 }]);
 
     // The Alert memory is never asked, no text is embedded, nothing is fetched or written
     const world1 = world();
@@ -286,21 +442,32 @@ module.exports = H => {
     const rows = [];
     for (let i = 0; i < 80; i++) rows.push(own(`QA-o${i}`, NOW - rnd(40 * 24) * HOUR - i * 1000, 1000 + i, WATCH, named()));
     for (let i = 0; i < 500; i++) rows.push(burson(`QA-b${i}`, NOW - rnd(44 * 24) * HOUR - i * 977, 5000 + i, named()));
-    // every pair, by the memory's own check (no post is shared and no alert is an Ongoing Issue: only wording can match)
+    // every pair, by the memory's own check (no post is shared and no alert is an Ongoing Issue: only the weaker rules
+    // can match; a pair with the very same name passes the word check too, and is labelled as the same issue name)
     const view = x => B.headStartRowFacts_(x).view;
-    const ours = rows.filter(x => x.ingested).map(x => ({ id: x.alert_id, at: x.source_at, view: view(x) }));
-    const theirs = rows.filter(x => !x.ingested).map(x => ({ id: x.alert_id, at: x.source_at, view: view(x) }));
+    const side = x => ({ id: x.alert_id, at: x.source_at, view: view(x), name: B.issueNameKey_(x.forwarded_fields.issue_name) });
+    const ours = rows.filter(x => x.ingested).map(side);
+    const theirs = rows.filter(x => !x.ingested).map(side);
     const alike = (o, b) => Math.abs(b.at - o.at) <= 14 * DAY && B.amSameStoryWords_(o.view, b.view) > 0;
+    const rule = (o, b) => (o.name === b.name ? 'same story (same issue name)' : 'same story (similar wording)');
+    const first = o => theirs.filter(b => alike(o, b)).sort((x, y) => x.at - y.at)[0] || null;  // Burson's first alert on it
     const expected = ours.filter(o => o.at >= NOW - 30 * DAY).sort((x, y) => y.at - x.at).map(o => {
-      const hits = theirs.filter(b => alike(o, b)).sort((x, y) => x.at - y.at);
-      return [o.id, hits.length ? hits[0].id : null];
+      const hit = first(o);
+      return [o.id, hit ? hit.id : null, hit ? rule(o, hit) : ''];
     });
-    const after = theirs.filter(b => b.at >= NOW - 30 * DAY && ours.some(o => o.at < b.at && alike(o, b))).length;
+    // the reverse view: Burson's alerts that came after a story of this app's that was itself first, each by the surest
+    // rule that ties it to such a story
+    const led = ours.filter(o => first(o) && first(o).at > o.at);
+    const after = theirs.filter(b => b.at >= NOW - 30 * DAY).map(b => led.filter(o => o.at < b.at && alike(o, b)).map(o => rule(o, b)))
+      .filter(by => by.length);
+    const byName = after.filter(by => by.includes('same story (same issue name)')).length;
     const r = B.headStartReport_(rows, null, NOW);
-    eq(r.stories.map(s => [s.alert_id, s.burson ? s.burson.alert_id : null]), expected);
-    eq(r.stories.filter(s => s.burson).every(s => s.matched === 'same story (similar wording)'), true);
-    eq([r.windows.month.burson_after, r.windows.month.burson_after_by], [after, { post: 0, story: 0, wording: after }]);
-    assert.ok(expected.filter(x => x[1]).length >= 10 && expected.filter(x => !x[1]).length >= 10 && after >= 10, JSON.stringify([expected.length, after]));
+    eq(r.stories.map(s => [s.alert_id, s.burson ? s.burson.alert_id : null, s.matched]), expected);
+    eq([r.windows.month.burson_after, r.windows.month.burson_after_by], [after.length, { post: 0, story: 0, name: byName, wording: after.length - byName }]);
+    assert.ok(expected.filter(x => x[1]).length >= 10 && expected.filter(x => !x[1]).length >= 10 && after.length >= 10,
+      JSON.stringify([expected.length, after.length]));
+    // without the rule that only a story that was first counts, more of Burson's alerts would be called this app's
+    assert.ok(theirs.filter(b => b.at >= NOW - 30 * DAY && ours.some(o => o.at < b.at && alike(o, b))).length > after.length);
   });
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -329,6 +496,32 @@ module.exports = H => {
       ['QA-3', B.speedTime_(T + 4 * HOUR), '3 h', 180], ['QA-1', B.speedTime_(T + 190 * MIN), '3 h 10 min', 190]]);
     const note = x => B.headStartTabRows_(x).rows.map(c => c[0]).find(c => String(c).indexOf('Matched on:') === 0);
     assert.match(note(r), /The IMs' time is their email for Burson's post, else their draft, as the Results tab has it \(their email for 2 of 3 in the last 30 days\)/);
+
+    // The time is looked up by BURSON's post, never by the story's own lead post: a card led by post 11 that also rests
+    // on post 12, Burson alerting post 12, and the IMs having emailed about both posts (about post 11 for another reason)
+    const led = [card('QA-21', T, 11, { post_keys: [key(11), key(12)] }), burson('QA-22', T + 2 * HOUR, 12)];
+    const both = { [postKey(11)]: { at: T + 30 * MIN, from: 'email' }, [postKey(12)]: { at: T + 150 * MIN, from: 'draft' } };
+    eq(report(led, both).stories.map(s => [s.alert_id, s.matched, s.burson.key, s.im, s.im_lead_ms / MIN]),
+      [['QA-21', 'same post', key(12), { at: T + 150 * MIN, from: 'draft' }, 150]]);
+    // ... and there is none when the IMs emailed only about the story's lead post, which Burson never alerted
+    eq(report(led, { [postKey(11)]: both[postKey(11)] }).stories.map(s => [s.burson.key, s.im, s.im_lead_ms]), [[key(12), null, null]]);
+
+    // A story that Burson alerted on ANOTHER post (any of the same-story rules) has the IMs' time for that post of
+    // Burson's too, and its end-to-end head start: this app's alert to the IMs' email about Burson's alert
+    const NAME = 'Banking malware in Play Store apps';
+    [
+      ['same story', { issue_name: NAME, issue_status: ONGOING }],
+      ['same story (same issue name)', { issue_name: NAME, issue_status: 'NEW' }],
+      ['same story (similar wording)', { issue_name: 'Malware found in Play Store banking apps' }],
+    ].forEach(([rule, fields]) => {
+      const elsewhere = [own('QA-31', T, 31, WATCH, { issue_name: NAME }), burson('QA-32', T + 5 * HOUR, 32, fields)];
+      const times = { [postKey(31)]: { at: T + HOUR, from: 'email' }, [postKey(32)]: { at: T + 6 * HOUR, from: 'email' } };
+      const x = report(elsewhere, times);
+      eq(x.stories.map(s => [s.matched, s.burson.key, s.im, s.im_lead_ms / MIN]), [[rule, key(32), { at: T + 6 * HOUR, from: 'email' }, 360]], rule);
+      eq([x.windows.week.im_known, x.windows.week.im_first, x.windows.week.im_median_min, x.windows.week.im_from_email], [1, 1, 360, 1], rule);
+      eq(B.headStartTabRows_(x).rows.filter(c => c[10] === 'QA-31').map(c => [c[5], c[6], c[7], c[8], c[9], c[13]]),
+        new Array(2).fill([B.speedTime_(T + 5 * HOUR), '5 h', B.speedTime_(T + 6 * HOUR), '6 h', rule, 360]), rule);
+    });
 
     // Absent: every IM cell blank (never a zero), the numbers say none, the note says why
     const none = report(rows);
@@ -385,12 +578,12 @@ module.exports = H => {
   // The numbers
   // ---------------------------------------------------------------------------------------------------------------
 
-  test('head start: the 7-day and 30-day numbers, by when this app alerted: stories, those Burson alerted too, this app first and Burson first with their medians and shares, not alerted by Burson, before the IMs\' email with its median, and the reverse view of Burson\'s alerts', () => {
+  test('head start: the 7-day and 30-day numbers, by when this app alerted: stories, those Burson alerted too, this app first and Burson first with their medians and shares, no Burson alert found, before the IMs\' email with its median, and the reverse view of Burson\'s alerts', () => {
     const rows = [
       own('QA-1', NOW - 2 * DAY, 1, WATCH), burson('QA-2', NOW - 2 * DAY + 3 * HOUR, 1),          // first by 180 min
       card('QA-3', NOW - 3 * DAY, 3), burson('QA-4', NOW - 3 * DAY + HOUR, 3),                     // first by 60 min
       own('QA-5', NOW - 4 * DAY, 5, DIRECT.BSIP), burson('QA-6', NOW - 4 * DAY - 30 * MIN, 5),     // behind by 30 min
-      own('QA-7', NOW - 5 * DAY, 7, WATCH),                                                        // not alerted by Burson
+      own('QA-7', NOW - 5 * DAY, 7, WATCH),                                                        // no Burson alert
       card('QA-8', NOW - 10 * DAY, 8), burson('QA-9', NOW - 8 * DAY, 8),                           // first by 2 days (30 days only)
       own('QA-10', NOW - 20 * DAY, 10, WATCH), burson('QA-11', NOW - 20 * DAY - 2 * HOUR, 10),     // behind by 120 min (30 days only)
       own('QA-12', NOW - 40 * DAY, 12, WATCH), burson('QA-13', NOW - 39 * DAY, 12),                // older than 30 days: in neither
@@ -403,12 +596,12 @@ module.exports = H => {
     eq(r.windows.week, {
       stories: 4, matched: 3, matched_pct: 75, first: 2, first_pct: 67, first_median_min: 120, behind: 1, behind_median_min: 30, unmatched: 1,
       im_known: 2, im_first: 1, im_first_pct: 50, im_median_min: 145, im_from_email: 1,
-      burson_alerts: 4, burson_after: 2, burson_after_pct: 50, burson_after_by: { post: 2, story: 0, wording: 0 },
+      burson_alerts: 4, burson_after: 2, burson_after_pct: 50, burson_after_by: { post: 2, story: 0, name: 0, wording: 0 },
     });
     eq(r.windows.month, {
       stories: 6, matched: 5, matched_pct: 83, first: 3, first_pct: 60, first_median_min: 180, behind: 2, behind_median_min: 75, unmatched: 1,
       im_known: 3, im_first: 2, im_first_pct: 67, im_median_min: 300, im_from_email: 2,
-      burson_alerts: 6, burson_after: 3, burson_after_pct: 50, burson_after_by: { post: 3, story: 0, wording: 0 },
+      burson_alerts: 6, burson_after: 3, burson_after_pct: 50, burson_after_by: { post: 3, story: 0, name: 0, wording: 0 },
     });
     eq(r.top.map(s => [s.alert_id, s.lead_ms / MIN]), [['QA-8', 2880], ['QA-1', 180], ['QA-3', 60]]);  // the longest head start first
 
@@ -419,7 +612,7 @@ module.exports = H => {
     eq(tab.rows[at(tab, 'HEADLINE NUMBERS')].slice(0, 3), ['HEADLINE NUMBERS', 'Last 7 days', 'Last 30 days']);
     eq(['Stories this app alerted on its own', 'Of those, also alerted by Burson', 'This app alerted first (of those Burson alerted too)',
       'Median head start over Burson (where this app was first)', 'Burson alerted first', 'Median time this app was behind (where Burson was first)',
-      'Not alerted by Burson', 'This app\'s alert before the IMs\' email (of the stories with an IM email time)',
+      'No Burson alert found', 'This app\'s alert before the IMs\' email (of the stories with an IM email time)',
       'Median time from this app\'s alert to the IMs\' email (the end-to-end head start)', 'Burson\'s alerts in the same days',
       'Of Burson\'s alerts, those this app had alerted first (same post or same story)'].map(label => line(tab, label)),
     [[4, 6], ['3 of 4 (75%)', '5 of 6 (83%)'], ['2 of 3 (67%)', '3 of 5 (60%)'], ['2 h', '3 h'], [1, 2], ['30 min', '1 h 15 min'], [1, 1],
@@ -673,6 +866,75 @@ module.exports = H => {
     eq([run(), im()], [true, B.speedTime_(T + 150 * MIN)]);
   });
 
+  test('head start: never rebuilt in a run that is still catching up on alerts (a flow held an alert for the next run, handled as many messages as a run may, or ran out of time): nothing is read or noted and the tab stays due, and it is rebuilt in the first run that has caught up; through poll(), the runs of a burst leave the tab alone, and so does a run whose auto-correct or Other alerts flow is catching up', () => {
+    const rows = [own('QA-1', NOW - 2 * HOUR, 1, WATCH), burson('QA-2', NOW - HOUR, 1)];
+    const w = world();
+    const ss = sheetOf(w);
+    const store = w.bot.sheetBackend_(ss);
+    rows.forEach(x => store.appendAlert(x));
+    const opts = flows => ({ deadline: w.g.clock.now + 4 * MIN, runStart: w.g.clock.now, flows });
+    // a sheet that says so when it is touched: a run that is catching up reads nothing, notes nothing and logs nothing
+    const guard = { getSheetByName() { throw new Error('the sheet was read'); }, getSheets() { throw new Error('the sheet was read'); } };
+    const quiet = (ctx, flows) => {
+      const logged = w.g.logs.length;
+      return [w.bot.maybeRefreshHeadStart_(guard, ctx, opts(flows)), w.g.logs.length - logged, w.g.props.has('HEAD_START_AT'), made({ sheet: () => ss })];
+    };
+    const idle = () => w.ctx();
+    const most = idle().settings.max_messages_per_run;
+    const TIME = 'time budget reached; the rest is handled next run';  // what a flow that ran out of time reports (Bot.gs runOnce_)
+    eq(quiet(Object.assign(idle(), { slaBusy: true })), [false, 0, false, false]);                      // the run's own flow
+    eq(quiet(idle(), [Object.assign(idle(), { slaBusy: true })]), [false, 0, false, false]);            // a flow's ctx
+    eq(quiet(idle(), [null, { ctx: Object.assign(idle(), { slaBusy: true }), report: { errors: [] } }]), [false, 0, false, false]);
+    eq(quiet(idle(), [idle(), { ctx: idle(), report: { held: 1, errors: [] } }]), [false, 0, false, false]);
+    eq(quiet(idle(), [{ ctx: idle(), report: { handled: most, errors: [] } }]), [false, 0, false, false]);
+    eq(quiet(idle(), [{ ctx: idle(), report: { handled: 1, errors: ['a request failed', TIME] } }]), [false, 0, false, false]);
+    eq([null, {}, { slaBusy: false }, { slaBusy: true }, 'ctx', 5].map(c => B.headStartRunBusy_(c)), [false, false, false, true, false, false]);
+    eq([undefined, 'flows', [], [null, undefined, 5, 'x', [], true], [{}], [{ ctx: {}, report: {} }], [{ ctx: 'x', report: 'y' }],
+      [{ ctx: { settings: { max_messages_per_run: 5 } }, report: { handled: 4, held: 0, errors: ['Chat is down', `not a ${TIME}`] } }],
+      [{ ctx: { settings: {} }, report: { handled: 0 } }], [{ report: { held: 1 } }], [{}, { ctx: { slaBusy: 1 } }],
+      [{ ctx: { settings: { max_messages_per_run: 5 } }, report: { handled: 5 } }], [{ report: { errors: [TIME] } }],
+    ].map(flows => B.headStartRunBusy_({}, flows)), [false, false, false, false, false, false, false, false, false, true, true, true, true]);
+    // A run that has caught up (its flows held nothing, and what failed in it isn't waiting alerts): rebuilt at once
+    eq([w.bot.maybeRefreshHeadStart_(ss, idle(), opts([idle(), null, { ctx: idle(), report: { held: 0, handled: most - 1, errors: ['a request failed'] } }])),
+      table(tabOf(ss), 'EVERY STORY').map(x => x['App alert']), Number(w.g.props.get('HEAD_START_AT'))], [true, ['QA-1'], w.g.clock.now]);
+    // ... and when it is due again in a run that is catching up, it stays due: the first run that has caught up rebuilds it
+    w.g.clock.now += 30 * MIN;
+    const rebuilt = () => tabOf(ss).cell(2, 1).match(/Rebuilt (.*) ET\.$/)[1];
+    const was = [rebuilt(), w.g.props.get('HEAD_START_AT')];
+    eq([w.bot.maybeRefreshHeadStart_(ss, Object.assign(idle(), { slaBusy: true }), opts()), rebuilt(), w.g.props.get('HEAD_START_AT')], [false].concat(was));
+    w.g.clock.now += MIN;
+    eq([w.bot.maybeRefreshHeadStart_(ss, idle(), opts()), rebuilt()], [true, B.speedTime_(w.g.clock.now)]);
+
+    // Through poll(): a burst. A run handles one message here, and three of Burson's alerts are waiting: each of the
+    // three runs that handle one is still catching up (more may be waiting), and none of them rebuilds the tab
+    const t = pollWorld(rows);
+    t.bot.ev('GEN.settings.max_messages_per_run = 1');
+    const calls = [];  // each time poll() got to the rebuild: [the run was catching up, the tab was rebuilt]
+    const rebuild = t.bot.maybeRefreshHeadStart_;
+    t.bot.maybeRefreshHeadStart_ = function (book, ctx) {
+      const out = rebuild.apply(this, arguments);
+      calls.push([!!ctx.slaBusy, out]);
+      return out;
+    };
+    [F.P0_OK, F.AIO, F.MAPS].forEach(text => t.chat.say(TEST_FEED, text, ZAPIER));
+    const handled = () => t.sheet().getSheetByName('Alert log').rows.length - 1 - rows.length;
+    const poll = x => { x.poll(); return [made(x), x.g.props.has('HEAD_START_AT')]; };
+    eq([poll(t), handled(), poll(t), handled(), poll(t), handled()], [[false, false], 1, [false, false], 2, [false, false], 3]);
+    eq([poll(t), handled(), calls], [[true, true], 3, [[true, false], [true, false], [true, false], [false, true]]]);
+    eq(table(tabOf(t.sheet()), 'EVERY STORY').map(x => [x['App alert'], x['Matched on']]), [['QA-1', 'same post']]);
+
+    // The other flows of a run count too. What the Other alerts space's run left (an alert held for the next run), then
+    // the auto-correct space's (it marked itself busy): no rebuild; a run where every flow has caught up rebuilds it
+    const u = pollWorld(rows);
+    u.bot.runOtherSpace_ = () => ({ ctx: {}, report: { held: 1, errors: [] } });
+    eq(poll(u), [false, false]);
+    u.bot.runOtherSpace_ = () => null;
+    u.bot.runAutoCorrect_ = () => ({ ctx: { slaBusy: true }, report: { errors: [] } });
+    eq(poll(u), [false, false]);
+    u.bot.runAutoCorrect_ = () => ({ ctx: { slaBusy: false }, report: { held: 0, errors: [] } });
+    eq(poll(u), [true, true]);
+  });
+
   test('head start: the Alert log is only read (never made, its header never touched), back as far as the stories need and no further', () => {
     const w = world();
     const ss = sheetOf(w);
@@ -748,5 +1010,107 @@ module.exports = H => {
     // it has no switch and no row of its own on the Control tab
     assert.ok(!on.t.control().rows.some(x => x.some(v => /head start/i.test(String(v)))));
     assert.ok(!B.ev('CONTROL_SWITCHES_').some(s => /head ?start/i.test(`${s.key} ${s.label}`)));
+  });
+
+  test('head start: poll() rebuilds the tab AFTER the Results tab, in the same run, which is where the IMs\' times come from: after ONE run the IMs\' email time and the end-to-end head start are on the tab, for the story whose Burson post the IMs emailed about', () => {
+    const T = NOW - 2 * DAY;
+    const rows = [
+      // a card led by post 1 that also rests on post 2; Burson alerted post 2 a day and two hours later (a row of the
+      // main flow, as the Results tab counts them), and the IMs drafted their Social Alert for it an hour after that
+      card('QA-901', T, 1, { post_keys: [key(1), key(2)], story_title: 'A build-up' }, { issue_name: 'Banking malware in Play Store apps' }),
+      burson('QA-902', T + 26 * HOUR, 2, null, { space: FLOW }),
+      own('QA-903', T + 3 * HOUR, 3, WATCH),
+    ];
+    const drafts = [
+      { post_url: link(2), at: T + 27 * HOUR, subject: '⭐ SOCIAL ALERT ⭐: Search | Issue 2 | X | 900 Engagements', drafted_by: 'im1@ops.test' },
+      // about the card's own lead post, which Burson never alerted: not on the Results tab, and never the story's IM time
+      { post_url: link(1), at: T + HOUR, subject: '⭐ SOCIAL ALERT ⭐: Search | Issue 1 | X | 900 Engagements', drafted_by: 'im2@ops.test' },
+    ];
+    const t = pollWorld(rows, drafts);
+    const order = [];  // the report tabs' rebuilds of the run, in the order poll() made them
+    ['maybeRefreshSpeed_', 'maybeRefreshHeadStart_'].forEach(name => {
+      const real = t.bot[name];
+      t.bot[name] = function () {
+        const out = real.apply(this, arguments);
+        order.push([name, out]);
+        return out;
+      };
+    });
+    eq([t.bot.ev('RESULTS_RUN_'), made(t)], [null, false]);
+    t.poll();
+    eq(order, [['maybeRefreshSpeed_', true], ['maybeRefreshHeadStart_', true]]);
+    eq(t.bot.ev('RESULTS_RUN_.posts.map(p => [p.key, speedImAt_(p)])'), [[postKey(2), T + 27 * HOUR]]);
+    const tab = tabOf(t.sheet());
+    eq(table(tab, 'EVERY STORY').map(x => [x['App alert'], x['Matched on'], x['Burson alerted (ET)'], x['Head start over Burson'], x['IMs emailed (ET)'],
+      x['Head start over the IMs'], x['Head start over the IMs (min)']]),
+    [['QA-903', '', '', '', '', '', ''],
+      ['QA-901', 'same post', B.speedTime_(T + 26 * HOUR), '1 d 2 h', B.speedTime_(T + 27 * HOUR), '1 d 3 h', 27 * 60]]);
+    eq(line(tab, 'This app\'s alert before the IMs\' email (of the stories with an IM email time)'), ['1 of 1 (100%)', '1 of 1 (100%)']);
+    eq(line(tab, 'Median time from this app\'s alert to the IMs\' email (the end-to-end head start)'), ['1 d 3 h', '1 d 3 h']);
+    assert.match(tab.rows.map(x => String(x[0])).find(x => x.indexOf('Matched on:') === 0), /The IMs' time is their email for Burson's post, else their draft, as the Results tab has it \(their email for 0 of 1 in the last 30 days\)/);
+    // the next minute's run leaves the tab as it is (it is rebuilt every 10 minutes at most)
+    const was = JSON.stringify(tab.rows);
+    t.poll();
+    eq([order.slice(2).map(x => x[0] + ' ' + x[1]).filter(x => /HeadStart/.test(x)), JSON.stringify(tab.rows)], [['maybeRefreshHeadStart_ false'], was]);
+    // Due again ten minutes after its rebuild, it waits for a run that rebuilds the Results tab: the Results rebuild of
+    // the run a minute before (an alert had come in) is that run's, not this one's
+    const run = () => { order.length = 0; t.poll(); return order.map(x => `${x[0]} ${x[1]}`); };  // one run: what it rebuilt
+    t.g.clock.now += 7 * MIN;
+    t.chat.say(TEST_FEED, F.P0_OK, ZAPIER);
+    eq(run(), ['maybeRefreshSpeed_ true', 'maybeRefreshHeadStart_ false']);   // nine minutes after: not due yet
+    eq(run(), ['maybeRefreshSpeed_ false', 'maybeRefreshHeadStart_ false']);  // ten minutes after: due, and no Results rebuild in this run
+    eq(JSON.stringify(tab.rows), was);
+    // ... and it is rebuilt in the next run that rebuilds the Results tab, with the IMs' time again
+    t.g.clock.now += 8 * MIN;
+    eq(run(), ['maybeRefreshSpeed_ true', 'maybeRefreshHeadStart_ true']);
+    eq([tab.cell(2, 1).match(/Rebuilt (.*) ET\.$/)[1], table(tab, 'EVERY STORY').map(x => [x['App alert'], x['IMs emailed (ET)']])],
+      [B.speedTime_(t.g.clock.now), [['QA-903', ''], ['QA-901', B.speedTime_(T + 27 * HOUR)]]]);
+  });
+
+  test('head start: poll() gives the rebuild the run\'s own deadline (when the run must be done: RUN_HARD_STOP_MS_ after it began, as the other report tabs get, not the main flow\'s earlier one): with under 30 seconds of the run left the tab is not rebuilt and stays due, with 30 seconds it is rebuilt', () => {
+    const rows = [own('QA-901', NOW - DAY, 1, WATCH), burson('QA-902', NOW - 20 * HOUR, 1)];
+    const t = pollWorld(rows);
+    const HARD = B.ev('RUN_HARD_STOP_MS_');
+    assert.ok(B.ev('RUN_BUDGET_MS_') + 60 * 1000 < HARD, 'the main flow\'s own deadline is long past by then');
+    // The report tabs before it (the last of them the Analysis tab) take the run to `left` ms before it must be done
+    let stop = 0;
+    let left = 0;
+    const analysis = t.bot.maybeRefreshAnalysis_;
+    t.bot.maybeRefreshAnalysis_ = function () {
+      const out = analysis.apply(this, arguments);
+      t.g.clock.now = stop - left;
+      return out;
+    };
+    const poll = ms => {
+      left = ms;
+      stop = t.g.clock.now + 60 * 1000 + HARD;  // t.poll() starts the run a minute on
+      t.poll();
+      return [t.g.clock.now === stop - ms, made(t), t.g.props.has('HEAD_START_AT')];
+    };
+    eq(poll(29999), [true, false, false]);
+    eq(poll(1000), [true, false, false]);
+    eq(poll(30 * 1000), [true, true, true]);
+    eq(table(tabOf(t.sheet()), 'EVERY STORY').map(x => [x['App alert'], x['Matched on'], x['Head start over Burson']]), [['QA-901', 'same post', '4 h']]);
+  });
+
+  test('head start: poll() rebuilds the tab when it rebuilds the other report tabs: in a run that handled an alert, else only while background work may run (an idle run leaves it alone while the API guard is shedding background work)', () => {
+    const rows = [own('QA-901', NOW - DAY, 1, WATCH), burson('QA-902', NOW - 20 * HOUR, 1)];
+    const t = pollWorld(rows);
+    const spike = () => {  // a spike of Gemini calls: background work waits until it has cooled (ApiGuard.gs)
+      t.bot.apiGuardNote_('gemini', 30);
+      return t.bot.apiGuardAllowBackground_('any', false);
+    };
+    eq(spike(), false);
+    t.poll();  // an idle run
+    eq([t.bot.apiGuardAllowBackground_('any', false), made(t), t.g.props.has('HEAD_START_AT')], [false, false, false]);
+    // a run that handled one of Burson's alerts, the spike still on: rebuilt, with the other report tabs
+    t.chat.say(TEST_FEED, F.P0_OK, ZAPIER);
+    t.poll();
+    eq([t.bot.apiGuardAllowBackground_('any', false), t.sheet().getSheetByName('Alert log').rows.length - 1 - rows.length, made(t)], [false, 1, true]);
+    // and an idle run once the spike has cooled: rebuilt as soon as it is due
+    const u = pollWorld(rows);
+    eq(spike(), false);
+    u.poll();
+    eq([u.bot.apiGuardAllowBackground_('any', false), made(u)], [true, true]);
   });
 };
