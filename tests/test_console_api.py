@@ -99,7 +99,8 @@ def console_ctx(seeded, tmp_path) -> AgentContext:
 
 @pytest.fixture
 def api(console_ctx, monkeypatch) -> Api:
-    for var in ("TRIAGE_IAP_AUDIENCE", "TRIAGE_DEV_USER", "TRIAGE_OAUTH_CLIENT", "TRIAGE_CONSOLE_BASE_URL", "TRIAGE_GMAIL"):
+    for var in ("TRIAGE_IAP_AUDIENCE", "TRIAGE_DEV_USER", "TRIAGE_OAUTH_CLIENT", "TRIAGE_CONSOLE_BASE_URL", "TRIAGE_GMAIL",
+                "K_SERVICE"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("TRIAGE_BACKEND", "local")
     with TestClient(create_app(ctx=console_ctx)) as client:
@@ -784,6 +785,18 @@ def test_im_mailbox_connect_uses_im_scopes(api, fake_oauth):
     assert r.status_code == 200 and r.json()["connected"] is False and IM not in fake_oauth.vault
 
 
+def test_gmail_callback_keeps_no_token_when_the_authorized_mailbox_is_unknown(api, fake_oauth, monkeypatch):
+    from console.backend import gmail_oauth
+
+    api.get("/api/gmail/connect", user=IM, format="json")
+    fake_oauth.authorize_as = IM
+    monkeypatch.setattr(gmail_oauth, "_profile_email", lambda creds: None)  # Google's profile names no mailbox
+    query = _callback(api, IM, fake_oauth.flows[-1].state, "code-9")
+    assert query["gmail"] == ["error"] and "confirm which Google account" in query["reason"][0]
+    assert IM not in fake_oauth.vault
+    assert api.get("/api/gmail/status", user=IM).json()["connected"] is False
+
+
 def test_gmail_callback_refuses_partial_consent(api, fake_oauth):
     from console.backend.gmail_oauth import scope_name
 
@@ -894,6 +907,22 @@ def test_unsigned_iap_header_is_refused_on_gcp(api, monkeypatch):
     assert api.get("/api/me", user=ADMIN).status_code == 200
 
 
+def test_unsigned_identity_is_refused_on_cloud_run_whatever_the_backend(api, monkeypatch):
+    """A deploy that forgot TRIAGE_BACKEND=gcp: on Cloud Run (K_SERVICE set) the header anyone can send is still refused."""
+    monkeypatch.setenv("TRIAGE_BACKEND", "local")
+    monkeypatch.setenv("K_SERVICE", "triage-console")
+    r = api.get("/api/me", user=ADMIN)
+    assert r.status_code == 401 and "TRIAGE_IAP_AUDIENCE" in r.json()["error"]
+    r = api.client.get("/api/me")  # and no dev user is assumed
+    assert r.status_code == 401 and r.json()["code"] == "unauthenticated"
+    assert api.client.get("/api/review-queue").status_code == 401  # nothing is readable either
+    monkeypatch.setenv("TRIAGE_DEV_USER", VIEWER)  # set on purpose: still honoured, as with the gcp backend
+    assert api.client.get("/api/me").json()["role"] == "viewer"
+    monkeypatch.delenv("TRIAGE_DEV_USER")
+    monkeypatch.delenv("K_SERVICE")
+    assert api.get("/api/me", user=ADMIN).status_code == 200
+
+
 def test_chat_app_endpoint_is_disabled_until_configured(api, monkeypatch):
     monkeypatch.delenv("TRIAGE_CHAT_APP_AUDIENCE", raising=False)
     event = {"type": "MESSAGE", "message": {"name": "spaces/x/messages/1", "text": "status TRG-1"},
@@ -948,6 +977,22 @@ def test_test_channel_is_admin_only_in_prod_and_uses_config_spaces(api, stub_op)
         assert api.post("/api/test/push", body, user=ADMIN).status_code == 200
     finally:
         api.ctx.config.env = "dev"
+
+
+def test_test_channel_sends_as_someone_else_only_for_an_admin(api, stub_op):
+    """The agent trusts the sender's email for what they may do, so an analyst can't push a message as an admin."""
+    calls = stub_op("converse", ChatOutputs(summary="stub"))
+    as_admin = {"channel": "clean_chat", "text": "approve PROP-1", "sender_email": ADMIN}
+    r = api.post("/api/test/push", as_admin, user=IM)
+    assert r.status_code == 403 and r.json()["required_role"] == "admin"
+    assert api.post("/api/test/push", dict(as_admin, channel="test_burson"), user=IM).status_code == 403
+    assert calls == []  # nothing reached the agent
+    assert api.post("/api/test/push", dict(as_admin, sender_email=IM.upper()), user=IM).status_code == 200  # as themselves
+    assert calls[-1]["payload"]["message"]["sender"]["email"] == IM.upper()
+    assert api.post("/api/test/push", {"channel": "clean_chat", "text": "status"}, user=IM).status_code == 200
+    assert calls[-1]["payload"]["message"]["sender"]["email"] == IM
+    assert api.post("/api/test/push", dict(as_admin, sender_email=LEAD), user=ADMIN).status_code == 200  # an admin may
+    assert calls[-1]["payload"]["message"]["sender"]["email"] == LEAD
 
 
 def test_test_react_acts_as_the_signed_in_user_not_the_im_on_shift(api, stub_op):

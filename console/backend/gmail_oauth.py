@@ -330,7 +330,9 @@ def gmail_callback(
         if not getattr(creds, "refresh_token", None):
             return _back_to_console("error", "Google didn't return a refresh token. Remove the app at myaccount.google.com/permissions and connect again.")
         authorized = _authorized_email(creds)
-        if authorized and authorized != user.email:
+        if not authorized:  # fail closed: a token for a mailbox that can't be named is never kept
+            return _back_to_console("error", "Couldn't confirm which Google account you authorized. Click Connect Gmail again.")
+        if authorized != user.email:
             return _back_to_console("error", f"You authorized {authorized}, but you're signed in to the Console as {user.email}.")
         mod.store_credentials(_token_vault(mod), user.email, creds)
     except Exception as exc:  # noqa: BLE001 - surface any OAuth / vault failure to the user

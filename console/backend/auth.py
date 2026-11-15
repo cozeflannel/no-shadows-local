@@ -4,11 +4,12 @@ Identity:
   * Behind IAP: `X-Goog-Authenticated-User-Email` (the `accounts.google.com:` prefix is
     stripped). If TRIAGE_IAP_AUDIENCE is set, the signed `X-Goog-IAP-JWT-Assertion` is
     verified instead (recommended in production: headers can't be spoofed around IAP).
-  * With TRIAGE_BACKEND=gcp the plain email header is **not** trusted unless
-    TRIAGE_IAP_AUDIENCE is set (fail closed: without the signed assertion the header is
-    just a string any caller can send).
+  * With TRIAGE_BACKEND=gcp, or anywhere on Cloud Run (K_SERVICE is set there), the plain
+    email header is **not** trusted unless TRIAGE_IAP_AUDIENCE is set (fail closed: without
+    the signed assertion the header is just a string any caller can send).
   * Locally (no IAP header): TRIAGE_DEV_USER (default dev@local.invalid). With
-    TRIAGE_BACKEND=gcp the dev fallback only applies when TRIAGE_DEV_USER is set explicitly.
+    TRIAGE_BACKEND=gcp or on Cloud Run the dev fallback only applies when TRIAGE_DEV_USER is
+    set explicitly.
 
 Roles:
   * `config.analysts` -> admin | lead | analyst | im (an IM ranks as an analyst)
@@ -104,7 +105,9 @@ def request_identity(request: Request) -> tuple[str | None, str]:
             raise HTTPException(401, {"error": f"Invalid IAP assertion: {exc}", "code": "unauthenticated"}) from exc
         email = str(claims.get("email") or "").strip().lower()
         return (email or None), "iap_jwt"
-    gcp = os.environ.get("TRIAGE_BACKEND", "local") == "gcp"
+    # A deployed service: the gcp backend, or any Cloud Run service (it sets K_SERVICE), so a deploy that forgot
+    # TRIAGE_BACKEND=gcp still can't be told who is calling by a header anyone can send
+    gcp = os.environ.get("TRIAGE_BACKEND", "local") == "gcp" or bool(os.environ.get("K_SERVICE", "").strip())
     raw = request.headers.get(IAP_EMAIL_HEADER)
     if raw:
         if gcp:  # without the signed assertion this header is just a string any caller can send

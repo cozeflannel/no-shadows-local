@@ -554,6 +554,15 @@ def post_test_push(
 
     from triage_agent.operations import handle
 
+    # The agent trusts the sender's email for what that person may do (an admin's "approve PROP-n", for one), so only
+    # an admin may push a test message as someone else.
+    as_other = (body.sender_email or "").strip().lower()
+    if as_other and as_other != user.email.strip().lower() and not user.has("admin"):
+        raise HTTPException(
+            403,
+            {"error": "Only an admin may send a test message as someone else.", "code": "forbidden",
+             "required_role": "admin"},
+        )
     msg_id = f"test-{uuid4().hex[:10]}"
     if body.channel == "test_burson":
         op, space = "triage_message", _space_fields(ctx, "burson")

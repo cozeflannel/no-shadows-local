@@ -1509,12 +1509,17 @@ function pwRequeue_(sh, block, held, list, now) {
   return n;
 }
 
-/** Keeps the newest PW_DET_MAX_ROWS_ data rows (their ratings with them) once PW_DET_TRIM_SLACK_ more have built up. */
+/**
+ * Keeps the newest PW_DET_MAX_ROWS_ data rows (their ratings with them) once PW_DET_TRIM_SLACK_ more have built up.
+ * Sheets drops a text cell's leading escape apostrophe when it is read back (getValues), so each kept text cell that
+ * starts like a formula gets it again before the rows are rewritten: a post's text is never read as a formula.
+ */
 function pwTrim_(sh) {
   const count = sh.getLastRow() - PW_DET_HEAD_ROW_;
   if (count <= PW_DET_MAX_ROWS_ + PW_DET_TRIM_SLACK_) return;
   const all = sh.getRange(PW_DET_HEAD_ROW_ + 1, 1, count, PW_DET_HEADER_.length).getValues();
-  const keep = all.slice(count - PW_DET_MAX_ROWS_);
+  const keep = all.slice(count - PW_DET_MAX_ROWS_)
+    .map(row => row.map(v => (typeof v === 'string' && /^[=+\-@]/.test(v) ? '\'' + v : v)));
   sh.getRange(PW_DET_HEAD_ROW_ + 1, 1, keep.length, PW_DET_HEADER_.length).setValues(keep);
   sh.getRange(PW_DET_HEAD_ROW_ + 1 + keep.length, 1, count - keep.length, PW_DET_HEADER_.length).clearContent();
 }
