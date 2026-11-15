@@ -147,7 +147,7 @@ module.exports = H => {
   // The row
   // ===========================================================================================================
 
-  test('BigQuery lookback row: a tab from before it gets row 31 with strict 15 / 30 / 45 / 60 minutes dropdown (allowInvalid === false), upgrades an older 3-item / allowInvalid dropdown in place once, and moves "How it works" to row 48 (below the row-32 switch, row 33, the Other alerts space, the row-34 switch, row 35, Watch alerts, the row-36..40 switches, the row-41..45 bars, and the row-46 switch)', () => {
+  test('BigQuery lookback row: a tab from before it gets row 31 with strict 15 / 30 / 45 / 60 minutes dropdown (allowInvalid === false), upgrades an older 3-item / allowInvalid dropdown in place once, and moves "How it works" to row 49 (below the row-32 switch, row 33, the Other alerts space, the row-34 switch, row 35, Watch alerts, the row-36..40 switches, the row-41..45 bars, the row-46 switch, and the row-47 bar)', () => {
     const { t, sh } = olderTab();
     t.bot.ensureSwitchRows_(sh);  // as every run does first (poll(), setup()): rows 32, 34, 36-40 and 46's switches go where the old help was
     const before = JSON.stringify(sh.rows.slice(0, 30));
@@ -156,7 +156,7 @@ module.exports = H => {
     t.bot.ensureBqLookbackRow_(sh);
     t.bot.ensureOtherSpaceRow_(sh);  // as every run does next: row 33 goes where the old help was
     t.bot.ensureWatchAlertsRow_(sh);  // and row 35 (Watch alerts, OFF)
-    t.bot.ensureFtBarRows_(sh);  // and rows 41-45 (the fast-triage and early-watch bars)
+    t.bot.ensureFtBarRows_(sh);  // and rows 41-45 and 47 (the fast-triage and early-watch bars)
     eq(row(sh, 31), ['BigQuery lookback', '60 minutes', OK_60]);
     eq([sh.validations['31,2'].values, sh.validations['31,2'].allowInvalid], [CHOICES, false]);
     eq(lists(sh), Object.assign({}, lists0, { '31,2': CHOICES, '35,2': B.ev('PW_ALERTS_CHOICES_') }, BAR_VALS));
@@ -164,14 +164,14 @@ module.exports = H => {
     assert.ok(writes.some(w => w[0] === 'setBackground' && w[1] === 31 && w[2] === 2 && w[5] === '#fff8e1'), 'B31 colored');
     const help = B.ev('CONTROL_HELP_');
     eq([row(sh, 32), row(sh, 33), row(sh, 34), row(sh, 35), row(sh, 36), row(sh, 37), row(sh, 38), row(sh, 39), row(sh, 40),
-      row(sh, 41), row(sh, 42), row(sh, 43), row(sh, 44), row(sh, 45), row(sh, 46), row(sh, 47), sh.cell(48, 1)],
+      row(sh, 41), row(sh, 42), row(sh, 43), row(sh, 44), row(sh, 45), row(sh, 46), row(sh, 47), row(sh, 48), sh.cell(49, 1)],
       [SW32(), OS33(), SW34(), WA35(), TC36(), GT37(), FT(38), FT(39), FT(40),
-        BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), ['', '', ''], 'How it works']);
-    eq(help.map((_, i) => sh.cell(49 + i, 1)), help);
-    for (let r = 49 + help.length; r <= Math.max(sh.rows.length, 83); r++) eq(row(sh, r), ['', '', ''], `row ${r}`);
+        BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), BAR(47), ['', '', ''], 'How it works']);
+    eq(help.map((_, i) => sh.cell(50 + i, 1)), help);
+    for (let r = 50 + help.length; r <= Math.max(sh.rows.length, 83); r++) eq(row(sh, r), ['', '', ''], `row ${r}`);
     assert.ok(!sh.rows.some(r => /An old help line/.test(String(r[0]))));
     assert.ok(help.some(l => /^• BigQuery lookback \(B31\): how far back Direct BigQuery alerts and Early detection look: 15, 30, 45 or 60 minutes \(blank: 60; never more than an hour\)\./.test(l)));
-    assert.ok(writes.some(w => w[0] === 'setFontWeight' && w[1] === 48 && w[5] === 'bold'), 'the help\'s title bold');
+    assert.ok(writes.some(w => w[0] === 'setFontWeight' && w[1] === 49 && w[5] === 'bold'), 'the help\'s title bold');
     eq([JSON.stringify(sh.rows.slice(0, 30)) === before, writes.filter(w => w[1] < 31)], [true, []]);
     eq(t.bot.readControl_(sh).bqLookback, '60 minutes');
 
@@ -193,13 +193,13 @@ module.exports = H => {
     eq([row(other.sh, 31), row(other.sh, 32), row(other.sh, 33), row(other.sh, 34), row(other.sh, 35), row(other.sh, 36),
       row(other.sh, 37), row(other.sh, 38), row(other.sh, 39), row(other.sh, 40),
       row(other.sh, 41), row(other.sh, 42), row(other.sh, 43), row(other.sh, 44), row(other.sh, 45), row(other.sh, 46),
-      row(other.sh, 47), other.sh.cell(48, 1), other.sh.validations['31,2'].values,
+      row(other.sh, 47), row(other.sh, 48), other.sh.cell(49, 1), other.sh.validations['31,2'].values,
       other.sh.validations['31,2'].allowInvalid,
       other.t.bot.readControl_(other.sh).bqLookback],
     [['BigQuery lookback', '60 minutes', OK_60], SW32(), OS33(), SW34(), WA35(), TC36(), GT37(), FT(38), FT(39), FT(40),
-      BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), ['', '', ''], 'How it works', CHOICES, false,
+      BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), BAR(47), ['', '', ''], 'How it works', CHOICES, false,
       '60 minutes']);
-    eq(help.map((_, i) => other.sh.cell(49 + i, 1)), help);
+    eq(help.map((_, i) => other.sh.cell(50 + i, 1)), help);
   });
 
   test('BigQuery lookback row: running it again changes nothing (not one write), nor do setup() and later runs: row 31, its strict dropdown and C31 stay as they are', () => {
@@ -214,9 +214,9 @@ module.exports = H => {
     t.poll();
     eq([row(sh, 31), sh.validations['31,2'].values, sh.validations['31,2'].allowInvalid, row(sh, 32), row(sh, 33), row(sh, 34), row(sh, 35),
       row(sh, 36), row(sh, 37), row(sh, 38), row(sh, 39), row(sh, 40),
-      row(sh, 41), row(sh, 42), row(sh, 43), row(sh, 44), row(sh, 45), row(sh, 46), row(sh, 47), sh.cell(48, 1)],
+      row(sh, 41), row(sh, 42), row(sh, 43), row(sh, 44), row(sh, 45), row(sh, 46), row(sh, 47), row(sh, 48), sh.cell(49, 1)],
       [['BigQuery lookback', '60 minutes', OK_60], CHOICES, false, SW32(), OS33(), SW34(), WA35(), TC36(), GT37(), FT(38), FT(39), FT(40),
-        BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), ['', '', ''], 'How it works']);
+        BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), BAR(47), ['', '', ''], 'How it works']);
     eq(writes.filter(w => w[1] <= 31 && w[1] + w[3] - 1 >= 31), []);
   });
 
@@ -252,9 +252,9 @@ module.exports = H => {
     sh.getRange(31, 1, 1, 3).setValues([['', '', '']]);
     t.poll();
     eq([row(sh, 31), row(sh, 32), row(sh, 33), row(sh, 34), row(sh, 35), row(sh, 36), row(sh, 37), row(sh, 38), row(sh, 39), row(sh, 40),
-      row(sh, 41), row(sh, 42), row(sh, 43), row(sh, 44), row(sh, 45), row(sh, 46), row(sh, 47), sh.cell(48, 1)],
+      row(sh, 41), row(sh, 42), row(sh, 43), row(sh, 44), row(sh, 45), row(sh, 46), row(sh, 47), row(sh, 48), sh.cell(49, 1)],
       [['BigQuery lookback', '60 minutes', OK_60], SW32(), OS33(), SW34(), WA35(), TC36(), GT37(), FT(38), FT(39), FT(40),
-        BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), ['', '', ''], 'How it works']);
+        BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), BAR(47), ['', '', ''], 'How it works']);
   });
 
   test('BigQuery lookback: readControl_ reads B31 only on the BigQuery lookback row itself (trimmed; a time cell as it is): \'\' when A31 is blank or something else, as on a tab from before the row', () => {

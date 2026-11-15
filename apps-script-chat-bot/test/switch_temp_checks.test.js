@@ -262,12 +262,12 @@ module.exports = H => {
       ['Temp checks', 'OFF', 'OFF (temp checks are done by hand)', ['ON', 'OFF']]);
     eq([t.control().cell(37, 1), t.control().cell(37, 2), t.control().cell(38, 1), t.control().cell(39, 1), t.control().cell(40, 1),
       t.control().cell(41, 1), t.control().cell(42, 1), t.control().cell(43, 1), t.control().cell(44, 1), t.control().cell(45, 1),
-      t.control().cell(46, 1), t.control().cell(47, 1), t.control().cell(48, 1)],
+      t.control().cell(46, 1), t.control().cell(47, 1), t.control().cell(48, 1), t.control().cell(49, 1)],
     ['Group test emails', 'OFF', 'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise',
       'Hold-back: about_google at or below', 'Hold-back: routine_noise at or above', 'Hold-back and early watch: answer confidence at or above',
-      'Early watch: about_google, brand_risk and independent_reports, each at or above', 'Early watch: distinct accounts, at least',
-      'Write early-wave records to BigQuery', '', 'How it works']);
-    const help = t.control().rows.slice(48).map(r => String(r[0] || ''));
+      'Early watch: about_google and brand_risk, each at or above', 'Early watch: distinct accounts, at least',
+      'Write early-wave records to BigQuery', 'Early watch: independent_reports at or above', '', 'How it works']);
+    const help = t.control().rows.slice(49).map(r => String(r[0] || ''));
     assert.ok(help.some(l => /^• Temp checks: row 36, OFF until you turn it ON\. In a thread in the Mirror space or the Other alerts space \(B33\)/.test(l)));
     assert.ok(help.some(l => /^• Rows 11-24, 27-29, 32, 34, 36-40 and 46 are switches/.test(l)));
     eq([SWITCHES.length, SWITCHES[SWITCHES.length - 6].key, SWITCHES[SWITCHES.length - 5].key, B.switchRows_().slice(-6)],
@@ -278,8 +278,8 @@ module.exports = H => {
     t.control().getRange(35, 2).setValue('Mirror space (B9)');  // a choice a person made in B35: kept
     t.poll();
     eq([t.control().cell(35, 2), t.control().cell(36, 1), t.control().cell(36, 2), t.control().cell(37, 1), t.control().cell(37, 2), t.control().cell(38, 1),
-      t.control().cell(39, 1), t.control().cell(40, 1), t.control().cell(46, 1), t.control().cell(47, 1), t.control().cell(48, 1)],
-    ['Mirror space (B9)', 'Temp checks', 'OFF', 'Group test emails', 'OFF', 'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise', 'Write early-wave records to BigQuery', '', 'How it works']);
+      t.control().cell(39, 1), t.control().cell(40, 1), t.control().cell(46, 1), t.control().cell(47, 1), t.control().cell(48, 1), t.control().cell(49, 1)],
+    ['Mirror space (B9)', 'Temp checks', 'OFF', 'Group test emails', 'OFF', 'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise', 'Write early-wave records to BigQuery', 'Early watch: independent_reports at or above', '', 'How it works']);
     t.control().getRange(36, 2).setValue('ON');
     t.poll();
     t.poll();

@@ -315,7 +315,7 @@ function poll() {
   let rtc = null;  // this run's Burson test copy (Control tab B26): TestCopy.gs testCopyFor_
   let testers = null;  // this run's testers (Control tab B30): testersFor_
   let lookback = null;  // this run's BigQuery lookback (Control tab B31): bqLookbackFor_
-  let ftBars = null;  // this run's fast-triage bars (Control tab B41:B45): ftBarsFor_
+  let ftBars = null;  // this run's fast-triage bars (Control tab B41:B45 and B47): ftBarsFor_
   let mode = null;  // this run's mode (runMode_): {live, why}, once the spaces are known
   let mainCtx = null;
   let acStandalone = false;
@@ -341,11 +341,11 @@ function poll() {
     ensureBqLookbackRow_(control);  // row 31 (BigQuery lookback, 60 minutes) on a tab from before it
     ensureOtherSpaceRow_(control);  // row 33 (Other alerts space, blank) on a tab from before it
     ensureWatchAlertsRow_(control);  // row 35 (Watch alerts, OFF) on a tab from before it
-    ensureFtBarRows_(control);    // rows 41-45 (fast-triage bars, seeds) on a tab from before them; the help is at row 48
+    ensureFtBarRows_(control);    // rows 41-45 and 47 (fast-triage bars, seeds) on a tab from before them; the help is at row 49
     wanted = readControl_(control);
     testers = testersFor_(wanted.testers, control);  // C30 is kept current even while the bot is paused
     lookback = bqLookbackFor_(wanted.bqLookback, control);  // and C31
-    ftBars = ftBarsFor_(wanted.ftBars, control);  // and C41:C45
+    ftBars = ftBarsFor_(wanted.ftBars, control);  // and C41:C45, C47
     if (!wanted.on) {  // paused: skip the Burson space; when it's back ON it starts from that moment
       relaySeen_(false);  // Relay.gs: OFF or paused is noted before anything that can fail
       props.setProperty('PAUSED', 'true');

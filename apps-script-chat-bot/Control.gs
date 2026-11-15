@@ -45,11 +45,12 @@
  *   B38:B40            Fast triage: three more switches (FastTriage.gs, Decisions.gs) on the Early wave check's signals
  *                      (row 19): 38 enables 39 and 40, 39 ranks the queue by the answers and runs the early-watch tier,
  *                      40 holds back noise; 39 and 40 wait for 38; C38:C40 what each is doing
- *   B41:B45            Fast triage bars (FastTriage.gs): the five bars for rows 39 and 40 (each with its seed and
- *                      dropdown; blank or invalid uses its seed); C41:C45 what the bot is using
+ *   B41:B45            Fast triage bars (FastTriage.gs): five of the six bars for rows 39 and 40 (each with its seed
+ *                      and dropdown; blank or invalid uses its seed); C41:C45 what the bot is using
  *   B46                Write early-wave records to BigQuery: one more switch (FastTriage.gs): ON writes each check's
  *                      records to brand-social-central-data.early_wave; C46 what it is doing
- *   A48...             How it works (CONTROL_HELP_ROW_, below the blank row 47)
+ *   B47                Fast triage bars, the sixth: the early watch's independent_reports bar; C47 what the bot is using
+ *   A49...             How it works (CONTROL_HELP_ROW_, below the blank row 48)
  *
  * Plus the Resources tab: the bot's knowledge base (Knowledge.gs). Name · Link · What it covers · Burson can see it? ·
  * Bot status. Gemini reads every document listed there to triage and action each alert and to answer questions; only
@@ -265,7 +266,7 @@ const CONTROL_HELP_ = [
     'the bot stops asking for 15 minutes and signals go on as before; C38 says so.',
   '• Fast triage: rank and early watch: row 39, OFF until you turn it ON; it needs row 38. The most severe signals are ' +
     'queued and reviewed first (P0 risk groups first, then severity, then brand_risk, then the order before), and a story ' +
-    'below the promotion bar that passes the watch bars in B43:B45 is emitted as an early signal and takes the normal ' +
+    'below the promotion bar that passes the watch bars in B43:B45 and B47 is emitted as an early signal and takes the normal ' +
     'route: queued, deduplicated, fully reviewed, and posted as an Early Detection Alert card that says it is an early ' +
     'signal and how many accounts it rests on (when the story reaches the usual size, that goes in the same thread, never ' +
     'as a second alert).',
@@ -273,10 +274,10 @@ const CONTROL_HELP_ = [
     'taxonomy hint, and severity in the two lowest levels is dropped without a review when about_google is at or below B41 ' +
     'or routine_noise is at or above B42, with answer confidence at or above B43; C19 counts them as filtered by fast ' +
     'triage and the log records one line with the signal\'s ID, the reason and the probabilities.',
-  '• Fast triage bars (B41:B45): the thresholds for row 40 (hold-back: about_google at or below B41, seed 0.10; ' +
-    'routine_noise at or above B42, seed 0.90) and row 39 (early watch: about_google, brand_risk and independent_reports ' +
-    'each at or above B44, seed 0.80; distinct accounts at least B45, seed 3), and the shared answer confidence bar in ' +
-    'B43 (seed 0.80). A blank or invalid cell uses its seed and C41:C45 says so.',
+  '• Fast triage bars (B41:B45 and B47): the thresholds for row 40 (hold-back: about_google at or below B41, seed 0.10; ' +
+    'routine_noise at or above B42, seed 0.90) and row 39 (early watch: about_google and brand_risk each at or above ' +
+    'B44, seed 0.80; independent_reports at or above B47, seed 0.30; distinct accounts at least B45, seed 3), and the ' +
+    'shared answer confidence bar in B43 (seed 0.55). A blank or invalid cell uses its seed and column C says so.',
   '• Write early-wave records to BigQuery: row 46, OFF until you turn it ON. Writes each early-wave check\'s ' +
     'story_snapshots, story_posts, signals, signal_events and triage_verdicts to brand-social-central-data.early_wave ' +
     '(batched, at most one insert request per table per check, skipped while SLA triage is busy). An error is logged, ' +
@@ -285,9 +286,9 @@ const CONTROL_HELP_ = [
 // "How it works" starts here (rows 11-24 the switches, 25 S-F Burson space, 26 Burson test copy, 27-29 three more
 // switches, 30 Testing: send to, 31 BigQuery lookback, 32 one more switch (Work directly in B25), 33 Other alerts space,
 // 34 one more switch (Proactive watch), 35 Watch alerts, 36-37 two more switches (Temp checks, Group test emails), 38-40
-// three more switches (Fast triage), 41-45 the five fast-triage bars, 46 one more switch (Write early-wave records to
-// BigQuery), 47 blank)
-const CONTROL_HELP_ROW_ = 48;
+// three more switches (Fast triage), 41-45 five fast-triage bars, 46 one more switch (Write early-wave records to
+// BigQuery), 47 the sixth fast-triage bar, 48 blank)
+const CONTROL_HELP_ROW_ = 49;
 const CONTROL_HELP_ROWS_ = 45;  // rows kept for the help text (blank ones clear older, longer text)
 
 // Row 30: Testing: send to (B30). Up to 5 email addresses; blank holds test emails until filled in.
@@ -321,7 +322,7 @@ function ensureControlTab_(ss, owner) {
     ensureBqLookbackRow_(sh);  // row 31: how far back BigQuery looks (a value a person chose there is kept)
     ensureOtherSpaceRow_(sh);  // row 33 (OtherSpace.gs): a value a person pasted there is kept
     ensureWatchAlertsRow_(sh);  // row 35 (WatchAlerts.gs): OFF on a tab from before it; a choice a person made is kept
-    ensureFtBarRows_(sh);    // rows 41-45 (FastTriage.gs): seeds on a tab from before them; values people set are kept
+    ensureFtBarRows_(sh);    // rows 41-45 and 47 (FastTriage.gs): seeds on a tab from before them; values people set are kept
     writeControlHelp_(sh);
     return sh;
   }
@@ -344,7 +345,7 @@ function ensureControlTab_(ss, owner) {
   ensureBqLookbackRow_(sh);  // 60 minutes, the longest allowed
   ensureOtherSpaceRow_(sh);  // blank: only a person pastes an Other alerts space there
   ensureWatchAlertsRow_(sh);  // OFF: only a person chooses where the watch's alerts go
-  ensureFtBarRows_(sh);    // rows 41-45: the fast-triage bars, pre-filled with their seeds
+  ensureFtBarRows_(sh);    // rows 41-45 and 47: the fast-triage bars, pre-filled with their seeds
   writeControlHelp_(sh);
   sh.getRange(1, 1, RTC_ROW_, 1).setFontWeight('bold');
   sh.getRange(1, 1).setFontSize(14);
@@ -356,7 +357,7 @@ function ensureControlTab_(ss, owner) {
   return sh;
 }
 
-/** "How it works" from row 48 (CONTROL_HELP_ROW_), under a blank row (rewritten by setup(), so it stays current; nobody edits it). */
+/** "How it works" from row 49 (CONTROL_HELP_ROW_), under a blank row (rewritten by setup(), so it stays current; nobody edits it). */
 function writeControlHelp_(sh) {
   const lines = [['How it works']].concat(CONTROL_HELP_.map(line => [line]));
   while (lines.length < CONTROL_HELP_ROWS_) lines.push(['']);
@@ -531,7 +532,7 @@ const CONTROL_SWITCHES_ = [
     } },
   // Rows 38-40, below Group test emails (37): the fast triage on the Early wave check's signals (FastTriage.gs; Decisions.gs
   // asks). Row 38 only enables rows 39 and 40 (while both are OFF it makes no Decisions call and writes nothing); rows 39
-  // and 40 use the answers and the bars in rows 41-45, and row 46 writes the early-wave records to BigQuery
+  // and 40 use the answers and the bars in rows 41-45 and 47, and row 46 writes the early-wave records to BigQuery
   { key: 'fastTriage', label: 'Fast triage (Gemini Decisions)', row: 38,
     off: 'OFF (only enables rows 39 and 40; each early-wave signal goes to its full review as it comes)',
     on: (standIn, live, sw) => (!(sw && sw.earlyWave)
@@ -543,7 +544,7 @@ const CONTROL_SWITCHES_ = [
     off: 'OFF (signals are queued and reviewed in the usual order; a story is flagged only at the usual bar)',
     on: (standIn, live, sw) => (!(sw && sw.fastTriage)
       ? '✓ ON, but waiting: it needs Fast triage (row 38) ON, whose answers it uses'
-      : '✓ ON: the most severe signals are queued and reviewed first; a story below the promotion bar that passes the watch bars in B43:B45 goes out as an early signal') },
+      : '✓ ON: the most severe signals are queued and reviewed first; a story below the promotion bar that passes the watch bars in B43:B45 and B47 goes out as an early signal') },
   { key: 'fastTriageHold', label: 'Fast triage: hold back noise', row: 40,
     off: 'OFF (every queued signal gets its full review)',
     on: (standIn, live, sw) => (!(sw && sw.fastTriage)
@@ -652,7 +653,7 @@ function ensureSwitchRows_(sh) {
  * Row 25: S-F Burson space. A tab from before it (help text was here, or the blank row above "How it works") gets it on
  * its next run, without setup(), blank: only a person pastes S-F Burson there. Rows 1-24 never move; "How it works"
  * is written again below every row (the Burson test copy in row 26, TestCopy.gs ensureTestCopyRow_, and the rows after
- * it), at CONTROL_HELP_ROW_ (row 42).
+ * it), at CONTROL_HELP_ROW_ (row 49).
  * A value already in B25 is kept (a label someone cleared is put back).
  */
 function ensureSfBursonRow_(sh) {
@@ -761,7 +762,7 @@ function testersFrom_(raw) {
 
 /**
  * Row 30: Testing: send to. A tab from before it gets it on its next run, without setup(); a value already in B30 is
- * kept (a cleared label is put back), and "How it works" is written again below every row (CONTROL_HELP_ROW_, row 42).
+ * kept (a cleared label is put back), and "How it works" is written again below every row (CONTROL_HELP_ROW_, row 49).
  */
 function ensureTestersRow_(sh) {
   if (!sh) return;
@@ -1128,7 +1129,7 @@ function readControl_(sh) {
   const wa = sh.getRange(PW_ALERTS_ROW_, 1, 1, 2).getValues()[0];
   const waValue = String(wa[1] === undefined || wa[1] === null ? '' : wa[1]).trim();
   out.watchAlerts = String(wa[0] || '').trim() === PW_ALERTS_LABEL_ ? waValue : '';
-  // B41:B45, the fast-triage bars (FastTriage.gs): blank on a tab from before them (each uses its seed)
+  // B41:B45 and B47, the fast-triage bars (FastTriage.gs): blank on a tab from before them (each uses its seed)
   out.ftBars = readFtBars_(sh);
   return out;
 }

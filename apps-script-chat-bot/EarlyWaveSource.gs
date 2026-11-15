@@ -46,9 +46,10 @@
  *      risk-term group, an official Exposure Tag within EWS_TAG_RAISE_SIM_, or no older stored story within
  *      EWS_STORY_SIM_. Once the check's state is saved, the caller's fast triage is asked about each
  *      (EWS_WATCH_MAX_PER_CHECK_ a check, EWS_WATCH_MAX_PER_DAY_ a day, each story once at a given size), and a story
- *      is raised (ewsWatchRaise_) when about_google, brand_risk and independent_reports are each at or above the watch
- *      bar (Control row 44, seed 0.80), the answer's confidence is at or above the confidence bar (Control row 43,
- *      seed 0.80), and its most probable severity level is EWS_WATCH_MIN_LEVEL_ or higher: it goes into the buffer as
+ *      is raised (ewsWatchRaise_) when about_google and brand_risk are each at or above the watch bar (Control row 44,
+ *      seed 0.80), independent_reports is at or above its own bar (Control row 47, seed 0.30), the answer's confidence
+ *      is at or above the confidence bar (Control row 43, seed 0.55; an answer without a confidence raises nothing),
+ *      and its most probable severity level is EWS_WATCH_MIN_LEVEL_ or higher: it goes into the buffer as
  *      an EARLY_WATCH signal with its answers, to be queued, deduplicated and fully reviewed like any other. Raising
  *      it marks nothing as alerted here, so the story still makes its usual signal at the promotion bar (which the
  *      same-story dedup puts in the early card's thread). With the fast triage running, the caller also gets each
@@ -74,14 +75,17 @@
  *     0.719, account lockouts 0.732, scams 0.786), while wrong P0 nearest tags stayed at 0.67 or less (GIF campaign
  *     0.670, Initia 0.634, ads surcharges 0.649), so a hint never makes a P0 by itself.
  *
- * Early-watch bars (Control rows 43-45, FastTriage.gs FT_BAR_SPECS_):
+ * Early-watch bars (Control rows 43-45 and 47, FastTriage.gs FT_BAR_SPECS_):
  *   - Distinct accounts (Control row 45, seed EWS_WATCH_MIN_AUTHORS_ = 3): in the old pipeline's clusters (Nov 6-11,
  *     2026, six days) 25 to 64 stories a day reached 3 accounts within 180 minutes and 90 to 161 reached 2; 44% of
  *     those at 3 went on to 5, against 15% of those at 2; going from 3 to 5 took 76 to 105 minutes (median) on 4 of
  *     the 6 days.
  *   - EWS_WATCH_MIN_LEVEL_ 2 (medium and up): the upper three of ED_SEVERITIES_' five levels.
- *   - Probability bars (Control rows 43-44, seed 0.80): about_google, brand_risk, independent_reports and answer
- *     confidence each at or above its Control tab bar.
+ *   - Probability bars: about_google and brand_risk at or above row 44 (seed 0.80), independent_reports at or above
+ *     row 47 (seed 0.30), answer confidence at or above row 43 (seed 0.55). On the three real risk signals of
+ *     Nov 6-12, 2026 (test/decisions_fixtures.json) about_google and brand_risk were 0.94 or more, while
+ *     independent_reports was 0.62, 0.31 and 0.13 and confidence 0.78, 0.56 and 0.80: one bar of 0.80 for all of them
+ *     raised none. At these seeds two of the three are raised, and none of the five noise signals.
  *
  * State: script properties EWS_STATE (cursors, a job left running, today's counts, the last check's numbers) and
  * EWS_ROLLUP (velocity: same-hour means and the last 6 hours per topic / risk group, cooldowns), each under 9 KB; the
@@ -174,7 +178,7 @@ const EWS_BUFFER_MS_ = 180 * 60 * 1000;
 const EWS_BUFFER_MAX_ = 30;
 const EWS_TAG_RAISE_SIM_ = 0.70;
 
-// The early watch (stories below the promotion bar, raised on the fast triage's answers; bars: Control rows 43-45)
+// The early watch (stories below the promotion bar, raised on the fast triage's answers; bars: Control rows 43-45, 47)
 const EWS_WATCH_SIGNAL_ = 'EARLY_WATCH';
 const EWS_WATCH_MIN_AUTHORS_ = 3;
 const EWS_WATCH_MIN_LEVEL_ = 2;            // the most probable severity level is medium (2) or higher
@@ -1496,31 +1500,37 @@ function ewsVelocityRow_(v, reps, now, tag, facts) {
 // The early watch: stories still below the promotion bar, raised on the fast triage's answers
 // ---------------------------------------------------------------------------------------------------------------
 
-/** The early watch's bars ({about, risk, independent, conf, accounts}): resolved from `bars` or ftBars_(). Pure. */
+/**
+ * The early watch's bars ({about, risk, independent, conf, accounts}), from `bars` or ftBars_(): FastTriage.gs' bars
+ * ({watch: the about_google and brand_risk bar, independent, conf, accounts}; their `about` is the hold-back's bar and
+ * is not read here), or the five by name. A bar that isn't given is its seed. Pure with `bars`.
+ */
 function ewsWatchBars_(bars) {
   const b = (bars && typeof bars === 'object' ? bars : null) || (typeof ftBars_ === 'function' ? ftBars_() : {});
-  const w = isFinite(Number(b.watch)) && Number(b.watch) > 0 ? Number(b.watch) : 0.80;
-  const hasWatch = isFinite(Number(b.watch)) && Number(b.watch) > 0;
+  const seeds = typeof FT_BAR_SEEDS_ !== 'undefined' ? FT_BAR_SEEDS_ : { conf: 0.55, watch: 0.80, independent: 0.30 };
+  const num = (v, d) => (isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
+  const hasWatch = num(b.watch, 0) > 0;
+  const w = num(b.watch, seeds.watch);
   return {
-    about: !hasWatch && isFinite(Number(b.about)) && Number(b.about) > 0 ? Number(b.about) : w,
-    risk: isFinite(Number(b.risk)) && Number(b.risk) > 0 ? Number(b.risk) : w,
-    independent: isFinite(Number(b.independent)) && Number(b.independent) > 0 ? Number(b.independent) : w,
-    conf: isFinite(Number(b.conf)) && Number(b.conf) > 0 ? Number(b.conf) : 0.80,
+    about: hasWatch ? w : num(b.about, w),
+    risk: num(b.risk, w),
+    independent: num(b.independent, seeds.independent),
+    conf: num(b.conf, seeds.conf),
     accounts: isFinite(Number(b.accounts)) && Number(b.accounts) >= 2 ? Math.round(Number(b.accounts)) : EWS_WATCH_MIN_AUTHORS_,
   };
 }
 
 /**
- * True when the fast triage's answers (`dec`: Decisions.gs decCompact_) raise an early-watch story: about_google,
- * brand_risk and independent_reports each at or above its bar, the answer's confidence at or above the confidence bar,
- * and the most probable severity level at EWS_WATCH_MIN_LEVEL_ or higher. Pure.
+ * True when the fast triage's answers (`dec`: Decisions.gs decCompact_) raise an early-watch story: about_google and
+ * brand_risk each at or above the watch bar, independent_reports at or above its own bar, the answer's confidence at
+ * or above the confidence bar (an answer without one raises nothing), and the most probable severity level at
+ * EWS_WATCH_MIN_LEVEL_ or higher. Pure.
  */
 function ewsWatchRaise_(dec, bars) {
   if (!dec) return false;
   const b = ewsWatchBars_(bars);
-  const confOk = dec.sc === undefined ? true : Number(dec.sc) >= b.conf;
   return Number(dec.g) >= b.about && Number(dec.r) >= b.risk && Number(dec.i) >= b.independent &&
-    confOk && Number(dec.l) >= EWS_WATCH_MIN_LEVEL_;
+    Number(dec.sc) >= b.conf && Number(dec.l) >= EWS_WATCH_MIN_LEVEL_;
 }
 
 /** The stories asked about lately (cache 'wt'): {cluster id: [when, accounts then, 1 when it was raised]}. Never throws. */

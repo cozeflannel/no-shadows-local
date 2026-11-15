@@ -1057,7 +1057,7 @@ test('setup(): one run creates the control sheet (ready for testing), starts the
   // shared with the bot's account), and the summary and each row's Bot status say so
   assert.strictEqual(s.knowledge, 'Read 0 of 2 documents (0 characters). 2 couldn\'t be read: see the Bot status column on the Resources tab.');
   eq(Object.keys(leftovers).filter(k => g.props.has(k)), []);
-  eq(Array.from(g.props.keys()).sort(), ['BOT_USER', 'GUIDANCE_TAB_MADE', 'KNOWLEDGE_STATE', 'LAST_ANALYST_NAME', 'LAST_ANALYST_SPACE', 'RESOURCES_TAB_MADE',
+  eq(Array.from(g.props.keys()).sort(), ['BOT_USER', 'FT_BAR_SEED_VERSION', 'GUIDANCE_TAB_MADE', 'KNOWLEDGE_STATE', 'LAST_ANALYST_NAME', 'LAST_ANALYST_SPACE', 'RESOURCES_TAB_MADE',
     'SOMEONE_ELSES_SETTING', 'SPACE_ID:SLRR Test Feed (Burson Sim)', 'STORE_SHEET_ID']);
   assert.strictEqual(s.control_sheet, 'https://docs.google.com/spreadsheets/d/sheet1');
   eq(t.sheet().sheets.map(sh => sh.name), ['Control', 'Resources', 'Guidance', 'Alert log', 'Message log', 'Knowledge cache (bot)']);
@@ -1075,15 +1075,16 @@ test('setup(): one run creates the control sheet (ready for testing), starts the
   eq(['B2', 'B3', 'B4', 'C3', 'C4', 'B5', 'B8'].map(t.get),
     ['ON', 'SLRR Test Feed (Burson Sim)', TRIAGED, '\u2713 SLRR Test Feed (Burson Sim)', `\u2713 ${ANALYST_NAME}`, '\u2705 Working', 'bot@runner.test']);
   eq(t.control().validations['2,2'].values, ['ON', 'OFF']);
-  eq([9, 10, 11, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48].map(r => t.control().cell(r, 1)), ['Mirror space', 'Auto-correct space',
+  eq([9, 10, 11, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49].map(r => t.control().cell(r, 1)), ['Mirror space', 'Auto-correct space',
     'Auto-send Social Alerts', 'Track post-alert outcomes', 'Relay with S-F Burson', 'Never wait on Burson', 'Post in S-F Burson',
     'S-F Burson space', 'Burson test copy', 'Draft follow-ups', 'Draft answers to questions', 'Safety valve', 'Testing: send to',
     'BigQuery lookback', 'Work directly in B25 (Google-only)', 'Other alerts space', 'Proactive watch', 'Watch alerts', 'Temp checks', 'Group test emails',
     'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise',
     'Hold-back: about_google at or below', 'Hold-back: routine_noise at or above',
     'Hold-back and early watch: answer confidence at or above',
-    'Early watch: about_google, brand_risk and independent_reports, each at or above',
-    'Early watch: distinct accounts, at least', 'Write early-wave records to BigQuery', '', 'How it works']);
+    'Early watch: about_google and brand_risk, each at or above',
+    'Early watch: distinct accounts, at least', 'Write early-wave records to BigQuery',
+    'Early watch: independent_reports at or above', '', 'How it works']);
   eq([t.get('B29'), t.control().validations['29,2'].values], ['OFF', ['ON', 'OFF']]);  // starts OFF, like every switch
   eq([t.control().cell(32, 2), t.control().validations['32,2'].values], ['OFF', ['ON', 'OFF']]);  // row 32 too: a person turns it ON
   eq([t.control().cell(34, 2), t.control().validations['34,2'].values], ['OFF', ['ON', 'OFF']]);  // and row 34 (Proactive watch)
@@ -1101,9 +1102,9 @@ test('setup(): one run creates the control sheet (ready for testing), starts the
   eq([t.get('B25'), t.get('C25')], ['', t.bot.ev('SFB_BLANK_NOTE_')]);  // S-F Burson is only ever pasted there by a person
   assert.match(t.get('C25'), /^⚠️ Not set: paste S-F Burson's link \(the real Burson space\)\. Until then the Mirror, Auto-correct and Relay are paused, and the bot posts nothing in any space people outside Google can join\.$/);
   eq([t.control().cell(26, 2), t.control().cell(26, 3)], ['', t.bot.ev('RTC_BLANK_NOTE_')]);
-  assert.match(t.control().cell(49, 1), /^• Every minute the bot reads the Burson space/);
-  assert.match(t.control().cell(52, 1), /^• S-F Burson space \(B25\): which space is the real Burson space/);
-  assert.match(t.control().cell(54, 1), /^• The Resources tab is the bot's knowledge base\. Gemini reads every document listed there/);
+  assert.match(t.control().cell(50, 1), /^• Every minute the bot reads the Burson space/);
+  assert.match(t.control().cell(53, 1), /^• S-F Burson space \(B25\): which space is the real Burson space/);
+  assert.match(t.control().cell(55, 1), /^• The Resources tab is the bot's knowledge base\. Gemini reads every document listed there/);
   assert.ok(t.sheet().getSheetByName('Alert log').protections[0].warningOnly);
   eq(g.triggers, [{ handler: 'poll', minutes: 1 }]);
   assert.strictEqual(g.props.get('BOT_USER'), 'users/bot');
@@ -1176,6 +1177,21 @@ test('the retired dry-run mode never comes back: its name is in no file git trac
   });
   assert.ok(files.length > 300, `${files.length} files read`);
   eq(hits, []);
+});
+
+test('no real email address, key, token or personal path is in any file git tracks (scripts/repo_safety_scan.js, also the pre-commit hook): recipients live on the Control sheet, keys in Secret Manager', () => {
+  const scan = require('../../scripts/repo_safety_scan.js');
+  eq(scan.scanRepo(false), []);
+  // What the scanner catches and what it lets through (the samples are built in pieces so this file stays clean)
+  const at = '@';
+  const what = text => scan.scanText(text).map(h => h.what);
+  eq(what(`send it to someone${at}corp-domain.com please`), ['an email address at corp-domain.com']);
+  eq(what(`tester${at}testing.test, nobody${at}testing.invalid, chat${at}system.gserviceaccount.com`), []);
+  eq(what('npx @google/clasp push; react@18.3.1; @types/node'), []);
+  eq(what('key = ' + 'AI' + 'za' + 'B'.repeat(35)), ['a Google API key']);
+  eq(what('-----BEGIN ' + 'PRIVATE ' + 'KEY-----'), ['a private key']);
+  eq(what('cd ' + '/Us' + 'ers/' + 'someone/Desktop/project'), ['a personal home directory path']);
+  eq(what('cd /home/user/project && ls'), []);
 });
 
 test('setup() with a space it can\'t find still installs the bot and explains the problem on the Control tab', () => {
@@ -1902,14 +1918,15 @@ test('auto-correct space (B10) beside the Mirror space: each live Zapier alert i
     t.control().cell(31, 1), t.control().cell(32, 1), t.control().cell(33, 1), t.control().cell(34, 1), t.control().cell(35, 1),
     t.control().cell(36, 1), t.control().cell(37, 1), t.control().cell(38, 1), t.control().cell(39, 1), t.control().cell(40, 1),
     t.control().cell(41, 1), t.control().cell(42, 1), t.control().cell(43, 1), t.control().cell(44, 1), t.control().cell(45, 1),
-    t.control().cell(46, 1), t.control().cell(47, 1), t.control().cell(48, 1)],
+    t.control().cell(46, 1), t.control().cell(47, 1), t.control().cell(48, 1), t.control().cell(49, 1)],
   [AC, 'Auto-correct space', 'SLRR Auto-correct Test', 'Auto-send Social Alerts', 'BigQuery lookback',
     'Work directly in B25 (Google-only)', 'Other alerts space', 'Proactive watch', 'Watch alerts', 'Temp checks', 'Group test emails',
     'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise',
     'Hold-back: about_google at or below', 'Hold-back: routine_noise at or above',
     'Hold-back and early watch: answer confidence at or above',
-    'Early watch: about_google, brand_risk and independent_reports, each at or above',
-    'Early watch: distinct accounts, at least', 'Write early-wave records to BigQuery', '', 'How it works']);
+    'Early watch: about_google and brand_risk, each at or above',
+    'Early watch: distinct accounts, at least', 'Write early-wave records to BigQuery',
+    'Early watch: independent_reports at or above', '', 'How it works']);
   eq([t.chat.botPosts(AC), t.control().cell(10, 3)], [[], '✓ SLRR Auto-correct Test · no alerts yet today']);
 
   // Live activity in the real Burson space: chatter, an alert a person pasted, a Zapier alert with mistakes, an IM's

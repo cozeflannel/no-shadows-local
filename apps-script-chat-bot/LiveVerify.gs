@@ -9,6 +9,10 @@
  * verifyFastTriageLive() does the same for the fast triage (Decisions.gs, FastTriage.gs): real Gemini Decisions calls
  * about the real early-wave signals the bot holds right now, through the client the checks use. It writes to no sheet
  * cell and posts nowhere; its output is one LIVE_VERIFY_FAST_TRIAGE line in the log.
+ *
+ * verifyEarlyWaveBqLive() reads the live schema of the five brand-social-central-data.early_wave tables and holds the
+ * early-wave writer's rows against them (FastTriage.gs EW_BQ_COLUMNS_). Run it before row 46 is turned ON: it reads
+ * only, writes no row, and its output is one LIVE_VERIFY_EARLY_WAVE_BQ line in the log.
  */
 
 const LIVE_VERIFY_FT_MAX_ = 5;  // signals asked about by verifyFastTriageLive (a look, not a load test)
@@ -190,5 +194,53 @@ function verifyFastTriageLive() {
     results,
   };
   console.log('LIVE_VERIFY_FAST_TRIAGE ' + JSON.stringify(summary, null, 2));
+  return summary;
+}
+
+/**
+ * Live check of the early-wave BigQuery writer (Control row 46, FastTriage.gs) before it is turned ON: reads each of
+ * the five early_wave tables' schema (BigQuery tables.get: one read a table, no row written, nothing queried) and says
+ * what would stop the writer's rows from landing (ewBqSchemaProblems_: a column the table doesn't have, another type,
+ * a REQUIRED column the rows never fill), and whether the triage_verdicts table's description names every value the
+ * writer puts in `action` (EW_BQ_ACTIONS_; infra/early_wave_descriptions.sql sets it). `ready` is true only when every
+ * table was read and has no problem. Run it from the editor.
+ */
+function verifyEarlyWaveBqLive() {
+  const token = ScriptApp.getOAuthToken();
+  const tables = EW_BQ_TABLES_.map(table => {
+    const url = `${BQ_API_BASE_}${GCP_PROJECT}/datasets/${EW_BQ_DATASET_}/tables/${table}`;
+    let code = 0;
+    let body = null;
+    let text = '';
+    try {
+      const resp = UrlFetchApp.fetch(url, { method: 'get', muteHttpExceptions: true, headers: { Authorization: 'Bearer ' + token } });
+      code = resp.getResponseCode();
+      text = resp.getContentText() || '';
+      try { body = JSON.parse(text); } catch (e) { body = null; }
+    } catch (e) {
+      text = String((e && e.message) || e);
+    }
+    if (code !== 200 || !body || !body.schema || !Array.isArray(body.schema.fields)) {
+      return { table, read: false, why: `HTTP ${code}: ${truncate_(text.replace(/\s+/g, ' '), 200)}`, problems: [] };
+    }
+    const fields = body.schema.fields;
+    const out = {
+      table,
+      read: true,
+      problems: ewBqSchemaProblems_(table, fields),
+      not_written: fields.map(f => f.name).filter(n => !EW_BQ_COLUMNS_[table][n]),  // nullable columns the writer leaves empty
+    };
+    if (table === 'triage_verdicts') {
+      const said = [String(body.description || '')].concat(fields.filter(f => f.name === 'action').map(f => String(f.description || ''))).join(' ');
+      out.action_values_not_described = Object.keys(EW_BQ_ACTIONS_).filter(a => !new RegExp(`\\b${a}\\b`).test(said));
+    }
+    return out;
+  });
+  const summary = {
+    dataset: `${GCP_PROJECT}.${EW_BQ_DATASET_}`,
+    ready: tables.every(t => t.read && !t.problems.length),
+    tables,
+  };
+  console.log('LIVE_VERIFY_EARLY_WAVE_BQ ' + JSON.stringify(summary, null, 2));
   return summary;
 }

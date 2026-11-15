@@ -565,7 +565,7 @@ module.exports = function (H) {
       eq([sh.cell(39, 1), sh.cell(39, 2), sh.validations['39,2'].values], ['Fast triage: rank and early watch', 'OFF', ['ON', 'OFF']]);
       eq([sh.cell(40, 1), sh.cell(40, 2), sh.validations['40,2'].values], ['Fast triage: hold back noise', 'OFF', ['ON', 'OFF']]);
       eq([sh.cell(46, 1), sh.cell(46, 2), sh.validations['46,2'].values], ['Write early-wave records to BigQuery', 'OFF', ['ON', 'OFF']]);
-      eq([sh.cell(47, 1), sh.cell(48, 1)], ['', 'How it works']);
+      eq([sh.cell(47, 1), sh.cell(48, 1), sh.cell(49, 1)], ['Early watch: independent_reports at or above', '', 'How it works']);
 
       if (disableFastTriageHooks) {
         t.bot.ftStart_ = () => null;
@@ -690,13 +690,16 @@ module.exports = function (H) {
     eq([factRows.length, factRows[0].risk_groups, typeof factRows[0].tag_raised], [1, 'privacy_data_leak', 'boolean']);
     eq([bot.ftP0Group_(factRows[0]), bot.ftProtected_(factRows[0])], [true, true]);
 
-    // Pure protection & hold-back rules (Section 3 & Section 4 seed bars: about <= 0.10, noise >= 0.90, conf >= 0.80)
+    // Pure protection & hold-back rules (Section 3 & Section 4 seed bars: about <= 0.10, noise >= 0.90, conf >= 0.55)
     const baseRow = { priority_hint: 'P1', risk_groups: '', tag_raised: false };
     const lowNotGoogle = { g: 0.10, r: 0.02, i: 0.1, n: 0.4, s: 0.12, l: 0, sc: 0.80 };
     const lowNoise = { g: 0.96, r: 0.04, i: 0.2, n: 0.90, s: 0.65, l: 1, sc: 0.80 };
-    eq(bot.ftBars_(), { about: 0.10, noise: 0.90, conf: 0.80, watch: 0.80, accounts: 3 });
+    eq(bot.ftBars_(), { about: 0.10, noise: 0.90, conf: 0.55, watch: 0.80, accounts: 3, independent: 0.30 });
     eq(bot.ftHoldWhy_(baseRow, lowNotGoogle), 'not about Google (about Google 0.1, severity none 0.8)');
     eq(bot.ftHoldWhy_(baseRow, lowNoise), 'routine noise (routine noise 0.9, severity low 0.8)');
+    // the confidence seed is 0.55: held at it, not below it
+    eq(bot.ftHoldWhy_(baseRow, Object.assign({}, lowNoise, { sc: 0.55 })), 'routine noise (routine noise 0.9, severity low 0.55)');
+    eq(bot.ftHoldWhy_(baseRow, Object.assign({}, lowNoise, { sc: 0.54 })), '');
 
     const bars = { about: 0.15, noise: 0.85, conf: 0.8 };
     eq(bot.ftHoldWhy_(baseRow, null, bars), ''); // no answer -> fail open
@@ -774,12 +777,12 @@ module.exports = function (H) {
     ranked.t.poll();
     eq(ranked.decCalls(), 6);
 
-    // 3. Hold-back (Rows 38 + 40 ON): acts immediately on the Control tab seed bars (B41=0.10, B42=0.90, B43=0.80) and updates when B41:B43 are edited
+    // 3. Hold-back (Rows 38 + 40 ON): acts immediately on the Control tab seed bars (B41=0.10, B42=0.90, B43=0.55) and updates when B41:B43 are edited
     const holdSignals = [
       FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-dc5a8afd13da-202611061731'), // P0 group -> protected
       FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-abe6decf9a2a-202611121446'), // n=0.89, l=0, sc=0.86 -> NOT held at seed 0.90, held when B42='0.85'
-      FX.signals.find(s => s.alert_id === 'ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402'), // g=0.07 <= 0.10, l=0, sc=0.84 >= 0.80 -> held back at seed!
-      FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-3aa05dedf0a7-202611072231'), // n=0.95, l=1, sc=0.60 < 0.80 -> NOT held back
+      FX.signals.find(s => s.alert_id === 'ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402'), // g=0.07 <= 0.10, l=0, sc=0.84 >= 0.55 -> held back at seed!
+      FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-3aa05dedf0a7-202611072231'), // n=0.95 >= 0.90, l=1, sc=0.60 >= 0.55 -> held back at seed (not with B43 at 0.65)
     ];
     const holdSeed = makeFastTriageE2e(() => holdSignals, (payload) => matchRecordedResponse(holdSeed.t.bot, payload));
     holdSeed.t.control().getRange(19, 2).setValue('ON');
@@ -787,10 +790,13 @@ module.exports = function (H) {
     holdSeed.t.control().getRange(40, 2).setValue('ON');
     holdSeed.t.poll();
     assert.match(holdSeed.t.control().cell(40, 3), /^✓ ON: a low-severity signal that meets the hold-back bars in B41:B43 is dropped without a review/);
-    assert.match(holdSeed.t.control().cell(19, 3), / · 1 filtered by fast triage$/); // ED-VEL-CLUSTER (g=0.07 <= 0.10) held back at seed!
+    assert.match(holdSeed.t.control().cell(19, 3), / · 2 filtered by fast triage$/); // ED-VEL-CLUSTER (g=0.07) and the Chrome gripe (n=0.95, sc=0.60) held back at seed
     assert.match(holdSeed.t.g.logs.join('\n'), /early detection: fast triage held back ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402: not about Google/);
+    assert.match(holdSeed.t.g.logs.join('\n'), /early detection: fast triage held back ED-CLU-CLU-3aa05dedf0a7-202611072231: routine noise/);
+    eq(edCardsOf(holdSeed.t).map(m => /ED-CLU-CLU-(?:dc5a8afd13da|abe6decf9a2a)/.test(m.text)), [true, true]);  // the P0-group signal and the one below the noise bar: reviewed
 
-    // Editing Control B42 ('Hold-back: routine_noise at or above') from '0.90' to '0.85' also holds back abe6decf9a2a (n=0.89), while P0-group signal stays protected
+    // Editing Control B42 ('Hold-back: routine_noise at or above') from '0.90' to '0.85' also holds back abe6decf9a2a (n=0.89), and B43 (confidence)
+    // from '0.55' to '0.65' lets the Chrome gripe (sc=0.60) through to its review, while the P0-group signal stays protected
     const holdEdited = makeFastTriageE2e(() => holdSignals, (payload) => {
       // Force low/noise answers even for the P0-group signal to prove P0 protection holds under worst-case model output
       const p0Row = FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-dc5a8afd13da-202611061731');
@@ -803,6 +809,7 @@ module.exports = function (H) {
     holdEdited.t.control().getRange(38, 2).setValue('ON');
     holdEdited.t.control().getRange(40, 2).setValue('ON');
     holdEdited.t.control().getRange(42, 2).setValue('0.85');
+    holdEdited.t.control().getRange(43, 2).setValue('0.65');
     holdEdited.t.poll();
 
     assert.match(holdEdited.t.control().cell(19, 3), / · 2 filtered by fast triage$/);
@@ -872,12 +879,33 @@ module.exports = function (H) {
     const g = makeGoogle(NOW);
     const bot = loadBot(g.services, g.clock);
 
-    // 1. Seed bars are live (watch=0.80, conf=0.80, accounts=3) -> ewsWatchRaise_ checks about_google, brand_risk, independent_reports >= watch, l >= 2, and sc >= conf
+    // 1. Seed bars are live (watch=0.80, independent=0.30, conf=0.55, accounts=3) -> ewsWatchRaise_ checks about_google and brand_risk >= watch,
+    //    independent_reports >= its own bar, l >= 2, and sc >= conf
     eq([bot.ev('EWS_WATCH_MIN_AUTHORS_'), bot.ev('EWS_WATCH_MIN_LEVEL_'), bot.ev('EW_WATCH_QUEUE_PER_DAY_')], [3, 2, 8]);
-    eq(bot.ewsWatchBars_(), { about: 0.80, risk: 0.80, independent: 0.80, conf: 0.80, accounts: 3 });
+    eq(bot.ewsWatchBars_(), { about: 0.80, risk: 0.80, independent: 0.30, conf: 0.55, accounts: 3 });
+    // FastTriage.gs' bars: `watch` is the about_google and brand_risk bar; their `about` (the hold-back's) is never the watch's
+    eq(bot.ewsWatchBars_({ about: 0.10, noise: 0.90, conf: 0.55, watch: 0.80, accounts: 3, independent: 0.30 }),
+      { about: 0.80, risk: 0.80, independent: 0.30, conf: 0.55, accounts: 3 });
     eq(bot.ewsWatchRaise_({ g: 0.99, r: 0.99, i: 0.99, l: 4, sc: 0.95 }), true);
-    eq(bot.ewsWatchRaise_({ g: 0.99, r: 0.99, i: 0.62, l: 4, sc: 0.95 }), false); // i < 0.80 seed
-    eq(bot.ewsWatchRaise_({ g: 0.99, r: 0.99, i: 0.99, l: 4, sc: 0.79 }), false); // sc < 0.80 seed
+    eq(bot.ewsWatchRaise_({ g: 0.99, r: 0.99, i: 0.62, l: 4, sc: 0.95 }), true);   // i >= 0.30 seed: its own bar, below the 0.80 of the other two
+    eq(bot.ewsWatchRaise_({ g: 0.99, r: 0.99, i: 0.29, l: 4, sc: 0.95 }), false);  // i < 0.30 seed
+    eq(bot.ewsWatchRaise_({ g: 0.79, r: 0.99, i: 0.99, l: 4, sc: 0.95 }), false);  // about_google < 0.80 seed
+    eq(bot.ewsWatchRaise_({ g: 0.99, r: 0.79, i: 0.99, l: 4, sc: 0.95 }), false);  // brand_risk < 0.80 seed
+    eq(bot.ewsWatchRaise_({ g: 0.99, r: 0.99, i: 0.99, l: 4, sc: 0.55 }), true);   // sc at the 0.55 seed
+    eq(bot.ewsWatchRaise_({ g: 0.99, r: 0.99, i: 0.99, l: 4, sc: 0.54 }), false);  // sc < 0.55 seed
+    eq(bot.ewsWatchRaise_({ g: 0.99, r: 0.99, i: 0.99, l: 4 }), false);            // an answer without a confidence raises nothing
+    // The eight real signals of Nov 6-12, 2026 at the seeds: the early watch raises 2 of the 3 risks and none of the 5 noise
+    // signals; the hold-back drops 3 of the 5 noise signals and none of the risks (what the seeds were chosen for)
+    const seedBars = bot.ftBars_();
+    const real = Object.keys(FX.signal_responses).map(id => {
+      const read = bot.decRead_(200, JSON.stringify(FX.signal_responses[id]), bot.decSignalQuestions_(), 100);
+      const dec = bot.decCompact_(read.answers);
+      const row = Object.assign({}, FX.signals.find(x => x.alert_id === id), { risk_groups: '', tag_raised: false, priority_hint: 'P2' });
+      return { id, risk: dec.l >= 2, raised: bot.ewsWatchRaise_(dec, seedBars), held: !!bot.ftHoldWhy_(row, dec, seedBars) };
+    });
+    eq([real.length, real.filter(x => x.risk).length, real.filter(x => x.risk && x.raised).length, real.filter(x => !x.risk && x.raised).length,
+      real.filter(x => !x.risk && x.held).length, real.filter(x => x.risk && x.held).length], [8, 3, 2, 0, 3, 0]);
+    eq(real.filter(x => x.raised).map(x => x.id), ['ED-CLU-CLU-dc5a8afd13da-202611061731', 'ED-CLU-CLU-e9dddc0be913-202611071746']);
 
     const wBars = { about: 0.8, risk: 0.7, independent: 0.5, conf: 0.8 };
     eq(bot.ewsWatchRaise_({ g: 0.98, r: 0.94, i: 0.62, l: 3, sc: 0.85 }, wBars), true);
@@ -972,7 +1000,7 @@ module.exports = function (H) {
     eq(Array.from(bot.relayGuardHits_(cardText)), []);
   });
 
-  test('early watch (5C): 3-account producer watch at Control bars (B43:B45) -> card -> 5-account promotion updates in the first card\'s thread (never a second card), failed-review retry/drop, and 8-of-40 daily cap share', () => {
+  test('early watch (5C): 3-account producer watch at the seed Control bars (B43:B45, B47) -> card -> 5-account promotion updates in the first card\'s thread (never a second card), failed-review retry/drop, and 8-of-40 daily cap share', () => {
     const EWS_COLS = [
       ['kind'], ['lane'], ['mid'], ['url'], ['platform'], ['author'],
       ['audience', 'INTEGER'], ['eng', 'INTEGER'], ['posted_ms', 'INTEGER'], ['seen_ms', 'INTEGER'],
@@ -1083,24 +1111,25 @@ module.exports = function (H) {
       return { t, setPosts: list => { currentPosts = list; }, decCalls: () => decCalls };
     }
 
-    // 1. At seed bar B44='0.80': recorded response has independent_reports=0.62 < 0.80 -> asks 1 story, does not raise
+    // 1. With B47 (independent_reports) raised to '0.65': the recorded response has independent_reports=0.62 < 0.65 -> asks 1 story, does not raise
     const belowBar = makeProducerWatchEnv();
     belowBar.t.control().getRange(19, 2).setValue('ON');
     belowBar.t.control().getRange(38, 2).setValue('ON');
     belowBar.t.control().getRange(39, 2).setValue('ON');
+    belowBar.t.control().getRange(47, 2).setValue('0.65');
     belowBar.setPosts([1, 2, 3].map(i => makePost(i, belowBar.t.g.clock.now)));
     belowBar.t.poll();
     eq([belowBar.decCalls(), edCardsOf(belowBar.t).length], [1, 0]);
     assert.match(belowBar.t.control().cell(38, 3), /1 early story asked about/);
     eq(belowBar.t.sheet().getSheetByName('Fast triage'), null);
 
-    // 2. With B43 set to '0.75' and B44 set to '0.60' on Control tab: 3 accounts -> EARLY_WATCH card -> 5 accounts -> thread update in first card's thread (NEVER a second card!)
+    // 2. At the seed bars, nothing edited (B43 '0.55', B44 '0.80', B47 '0.30'; the recorded response: about_google 0.98, brand_risk 0.97,
+    //    independent_reports 0.62, critical at 0.78): 3 accounts -> EARLY_WATCH card -> 5 accounts -> thread update in first card's thread (NEVER a second card!)
     const cal = makeProducerWatchEnv();
     cal.t.control().getRange(19, 2).setValue('ON');
     cal.t.control().getRange(38, 2).setValue('ON');
     cal.t.control().getRange(39, 2).setValue('ON');
-    cal.t.control().getRange(43, 2).setValue('0.75');
-    cal.t.control().getRange(44, 2).setValue('0.60');
+    eq([43, 44, 45, 47].map(r => cal.t.control().cell(r, 2)), ['0.55', '0.80', '3', '0.30']);
     cal.setPosts([1, 2, 3].map(i => makePost(i, cal.t.g.clock.now)));
     cal.t.poll();
 
@@ -1316,6 +1345,15 @@ module.exports = function (H) {
       store: { alerts: [] },
       log: m => capT.g.logs.push(String(m)),
     };
+    // Row 38 ON by itself at the cap (rows 39 and 40 OFF: nothing uses the check's stories): exactly as with row 38 OFF, the
+    // check returns early without one BigQuery read. With row 39 (or 40) as well it reads on (below)
+    const at = capT.bot.ev('ED_AT_PROP_');
+    const alone = capT.bot.earlyWaveCheck_(Object.assign({}, ctxCap1, { switches: { earlyWave: true, fastTriage: true, fastTriageRank: false, fastTriageHold: false } }));
+    eq([alone, bqReads, decCount], [{ queued: 0, failed: 0, capped: true }, 0, 0]);
+    capProps.deleteProperty(at);
+    const off = capT.bot.earlyWaveCheck_(Object.assign({}, ctxCap1, { switches: { earlyWave: true, fastTriage: false, fastTriageRank: true, fastTriageHold: true } }));
+    eq([off, bqReads, decCount], [{ queued: 0, failed: 0, capped: true }, 0, 0]);  // rows 39 and 40 without row 38: OFF
+    capProps.deleteProperty(at);
     const resEmptyAtCap = capT.bot.earlyWaveCheck_(ctxCap1);
     eq([resEmptyAtCap.capped, resEmptyAtCap.queued, bqReads, decCount], [true, 0, 1, 0]);
     assert.ok(capT.g.logs.some(l => l.startsWith('early wave check: producer ')), 'ewLogCheck_ logged on capped check');
@@ -1359,10 +1397,10 @@ module.exports = function (H) {
   });
 
   // =============================================================================================================
-  // Section 4, 5 & 6.4 — Control tab bar cells (rows 41-45), early_wave BigQuery writer (row 46), and record-only guard
+  // Section 4, 5 & 6.4 — Control tab bar cells (rows 41-45 and 47), early_wave BigQuery writer (row 46), and record-only guard
   // =============================================================================================================
 
-  test('fast triage (Section 4): Control tab bar cells (rows 41-45) have strict dropdowns, read on each run, fall back to seed on blank or invalid with C41:C45 note, and never turn a feature off', () => {
+  test('fast triage (Section 4): Control tab bar cells (rows 41-45 and 47) have strict dropdowns, read on each run, fall back to seed on blank or invalid with a column C note, and never turn a feature off; a confidence cell still at the first build seed moves to the new one once', () => {
     const t = e2e();
     t.bot.setup();
     const sh = t.control();
@@ -1370,10 +1408,14 @@ module.exports = function (H) {
     eq(specs.map(s => [s.row, s.key, s.label, s.seedText, s.seed]), [
       [41, 'about', 'Hold-back: about_google at or below', '0.10', 0.10],
       [42, 'noise', 'Hold-back: routine_noise at or above', '0.90', 0.90],
-      [43, 'conf', 'Hold-back and early watch: answer confidence at or above', '0.80', 0.80],
-      [44, 'watch', 'Early watch: about_google, brand_risk and independent_reports, each at or above', '0.80', 0.80],
+      [43, 'conf', 'Hold-back and early watch: answer confidence at or above', '0.55', 0.55],
+      [44, 'watch', 'Early watch: about_google and brand_risk, each at or above', '0.80', 0.80],
       [45, 'accounts', 'Early watch: distinct accounts, at least', '3', 3],
+      [47, 'independent', 'Early watch: independent_reports at or above', '0.30', 0.30],  // below the BigQuery switch (46): rows 41-46 never move
     ]);
+    const PROBS = ['0.05', '0.10', '0.15', '0.20', '0.25', '0.30', '0.35', '0.40', '0.45', '0.50', '0.55', '0.60', '0.65', '0.70', '0.75', '0.80', '0.85', '0.90', '0.95'];
+    eq(specs.map(s => s.choices), [PROBS, PROBS, PROBS, PROBS, ['2', '3', '4'], PROBS]);
+    eq([sh.cell(46, 1), sh.cell(48, 1), sh.cell(49, 1)], ['Write early-wave records to BigQuery', '', 'How it works']);
 
     // 1. Every bar row has strict dropdown validation (allowInvalid === false) and seed value on setup()
     for (const s of specs) {
@@ -1381,16 +1423,19 @@ module.exports = function (H) {
         [s.label, s.seedText, s.choices, false], `row ${s.row}`);
       assert.match(sh.cell(s.row, 3), /^✓ /, `C${s.row} seed note`);
     }
-    eq(t.bot.ftBarsFor_(t.bot.readControl_(sh).ftBars).values, { about: 0.10, noise: 0.90, conf: 0.80, watch: 0.80, accounts: 3 });
+    eq(t.bot.ftBarsFor_(t.bot.readControl_(sh).ftBars).values, { about: 0.10, noise: 0.90, conf: 0.55, watch: 0.80, accounts: 3, independent: 0.30 });
 
-    // 2. Editing each bar cell updates ftBars on the next run and updates C41:C45
+    // 2. Editing each bar cell updates ftBars on the next run and updates column C
     sh.getRange(41, 2).setValue('0.15');
     sh.getRange(42, 2).setValue('0.85');
     sh.getRange(43, 2).setValue('0.75');
     sh.getRange(44, 2).setValue('0.70');
     sh.getRange(45, 2).setValue('4');
+    sh.getRange(47, 2).setValue('0.45');
     t.poll();
-    eq(t.bot.ftBarsFor_(t.bot.readControl_(sh).ftBars).values, { about: 0.15, noise: 0.85, conf: 0.75, watch: 0.70, accounts: 4 });
+    eq(t.bot.ftBarsFor_(t.bot.readControl_(sh).ftBars).values, { about: 0.15, noise: 0.85, conf: 0.75, watch: 0.70, accounts: 4, independent: 0.45 });
+    assert.match(sh.cell(44, 3), /^✓ Early watch \(row 39\) requires about_google and brand_risk each at or above 0\.70/);
+    assert.match(sh.cell(47, 3), /^✓ Early watch \(row 39\) requires independent_reports at or above 0\.45/);
     assert.match(sh.cell(41, 3), /^✓ Hold-back \(row 40\) drops a low-severity signal when about_google is at or below 0\.15/);
     assert.match(sh.cell(45, 3), /^✓ Early watch \(row 39\) looks at stories below the promotion bar with at least 4 distinct accounts/);
 
@@ -1400,16 +1445,51 @@ module.exports = function (H) {
     sh.getRange(43, 2).setValue('2.50'); // out of (0, 1) range
     sh.getRange(44, 2).setValue('-0.1');
     sh.getRange(45, 2).setValue('9');    // out of [2, 4] range
+    sh.getRange(47, 2).setValue('lots');
     t.poll();
-    eq(t.bot.ftBarsFor_(t.bot.readControl_(sh).ftBars).values, { about: 0.10, noise: 0.90, conf: 0.80, watch: 0.80, accounts: 3 });
+    eq(t.bot.ftBarsFor_(t.bot.readControl_(sh).ftBars).values, { about: 0.10, noise: 0.90, conf: 0.55, watch: 0.80, accounts: 3, independent: 0.30 });
     assert.match(sh.cell(41, 3), /^Blank: using seed 0\.10 /);
     assert.match(sh.cell(42, 3), /^⚠️ Couldn't use "not-a-number": using seed 0\.90 /);
-    assert.match(sh.cell(43, 3), /^⚠️ Couldn't use "2\.50": using seed 0\.80 /);
+    assert.match(sh.cell(43, 3), /^⚠️ Couldn't use "2\.50": using seed 0\.55 /);
     assert.match(sh.cell(44, 3), /^⚠️ Couldn't use "-0\.1": using seed 0\.80 /);
     assert.match(sh.cell(45, 3), /^⚠️ Couldn't use "9": using seed 3 /);
+    assert.match(sh.cell(47, 3), /^⚠️ Couldn't use "lots": using seed 0\.30 /);
+
+    // 4. A tab the first build made (rows 41-46 as it left them: one bar for the three early-watch answers in row 44, the confidence bar
+    //    seeded 0.80, "How it works" from row 48): on the next run row 44 keeps its value under its new label, row 47 is the
+    //    independent_reports bar at its seed, "How it works" moves to row 49, and the confidence cell still at that build's seed
+    //    (0.80) moves to 0.55, once. Rows 38-46 keep what people set.
+    const older = (conf) => {
+      const o = e2e();
+      o.bot.setup();
+      const tab = o.control();
+      tab.getRange(43, 2).setValue(conf);
+      tab.getRange(44, 1, 1, 2).setValues([['Early watch: about_google, brand_risk and independent_reports, each at or above', '0.70']]);
+      tab.getRange(45, 2).setValue('4');
+      tab.getRange(46, 2).setValue('ON');
+      tab.getRange(47, 1, 1, 3).setValues([['', '', '']]);
+      tab.getRange(48, 1).setValue('How it works');
+      o.g.props.delete('FT_BAR_SEED_VERSION');
+      o.poll();
+      return { o, tab };
+    };
+    const first = older('0.80');
+    eq([41, 42, 43, 44, 45, 46, 47, 48, 49].map(r => [first.tab.cell(r, 1), first.tab.cell(r, 2)]), [
+      ['Hold-back: about_google at or below', '0.10'], ['Hold-back: routine_noise at or above', '0.90'],
+      ['Hold-back and early watch: answer confidence at or above', '0.55'],
+      ['Early watch: about_google and brand_risk, each at or above', '0.70'], ['Early watch: distinct accounts, at least', '4'],
+      ['Write early-wave records to BigQuery', 'ON'], ['Early watch: independent_reports at or above', '0.30'], ['', ''], ['How it works', '']]);
+    assert.match(first.tab.cell(43, 3), /^✓ Hold-back \(row 40\) and early watch \(row 39\) require answer confidence at or above 0\.55/);
+    eq(first.tab.rows.filter(r => String(r[0]).trim() === 'How it works').length, 1);
+    eq(first.o.bot.ftBarsFor_(first.o.bot.readControl_(first.tab).ftBars).values, { about: 0.10, noise: 0.90, conf: 0.55, watch: 0.70, accounts: 4, independent: 0.30 });
+    first.tab.getRange(43, 2).setValue('0.80');  // a person puts 0.80 back afterwards: it stays
+    first.o.poll();
+    first.o.poll();
+    eq(first.tab.cell(43, 2), '0.80');
+    eq(older('0.70').tab.cell(43, 2), '0.70');  // any other value was a person's: kept
   });
 
-  test('early_wave BigQuery writer (Section 5 & 6.4): row 46 defaults OFF (0 writes), batches <=1 insertAll per table per check with deterministic insertIds and zero PII, fails open with 15m cooldown, and codebase has zero record-only paths', () => {
+  test('early_wave BigQuery writer (Section 5 & 6.4): row 46 defaults OFF (0 writes), batches <=1 insertAll per table per check with deterministic insertIds and zero PII, writes only the columns it declares (EW_BQ_COLUMNS_), one signals row a signal, fails open pausing only the table that failed for 15m, and codebase has zero record-only paths', () => {
     const EWS_COLS = [
       ['kind'], ['lane'], ['mid'], ['url'], ['platform'], ['author'],
       ['audience', 'INTEGER'], ['eng', 'INTEGER'], ['posted_ms', 'INTEGER'], ['seen_ms', 'INTEGER'],
@@ -1579,15 +1659,96 @@ module.exports = function (H) {
     eq(snap1.insertId, snap2.insertId);
     assert.match(onEnv.t.control().cell(46, 3), /rows written today/);
 
-    // 3. Fail-open on BigQuery error: logs table, reason, and dropped row count, sets 15m pause in C46, and cards still post
+    // 2b. Every row the writer sent has exactly the columns it declares for that table (EW_BQ_COLUMNS_: what
+    //     verifyEarlyWaveBqLive holds against the live tables), in the declared shape: a list where the column is REPEATED,
+    //     a value in every REQUIRED column, JSON columns as JSON text, and each representative post its declared struct
+    const COLS = b.ev('EW_BQ_COLUMNS_');
+    const POST_COLS = Object.keys(b.ev('EW_BQ_POST_COLUMNS_')).sort();
+    eq(Object.keys(COLS).sort(), ['signal_events', 'signals', 'story_posts', 'story_snapshots', 'triage_verdicts']);
+    for (const call of onEnv.inserts) {
+      for (const r of call.rows) {
+        eq(Object.keys(r.json).sort(), Object.keys(COLS[call.table]).sort(), `${call.table}: the row's columns`);
+        Object.entries(COLS[call.table]).forEach(([name, spec]) => {
+          const v = r.json[name];
+          if (/\[\]/.test(spec)) assert.ok(Array.isArray(v), `${call.table}.${name} is a list`);
+          else assert.ok(!Array.isArray(v), `${call.table}.${name} is one value`);
+          if (/!/.test(spec)) assert.ok(v !== null && v !== undefined && v !== '', `${call.table}.${name} is required`);
+          if (/^JSON/.test(spec) && v !== null) assert.doesNotThrow(() => JSON.parse(v), `${call.table}.${name} is JSON text`);
+          if (/^TIMESTAMP/.test(spec) && v !== null) assert.match(String(v), /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/, `${call.table}.${name}`);
+        });
+        if (call.table === 'signals') r.json.representative_posts.forEach(post => eq(Object.keys(post).sort(), POST_COLS));
+      }
+    }
+    // The schema check that verifyEarlyWaveBqLive runs on each live table: a table with exactly the declared columns fits;
+    // a missing column, another type or mode, and a REQUIRED column the rows never fill are each named
+    const asFields = cols => Object.entries(cols).map(([name, spec]) => ({
+      name, type: spec.replace(/[!\[\]]/g, ''), mode: /\[\]/.test(spec) ? 'REPEATED' : /!/.test(spec) ? 'REQUIRED' : 'NULLABLE',
+    }));
+    const liveFields = table => asFields(COLS[table]).map(f => (f.name === 'representative_posts' ? Object.assign(f, { fields: asFields(b.ev('EW_BQ_POST_COLUMNS_')) }) : f));
+    Object.keys(COLS).forEach(table => eq(b.ewBqSchemaProblems_(table, liveFields(table)), [], table));
+    // the standard SQL names BigQuery's console shows for the same types fit too
+    eq(b.ewBqSchemaProblems_('signal_events', liveFields('signal_events').concat([{ name: 'note', type: 'STRING', mode: 'NULLABLE' }])), []);
+    eq(b.ewBqSchemaProblems_('story_posts', liveFields('story_posts').map(f => Object.assign({}, f,
+      { type: { INTEGER: 'INT64', FLOAT: 'FLOAT64', BOOLEAN: 'BOOL' }[f.type] || f.type }))), []);
+    eq(b.ewBqSchemaProblems_('signal_events', liveFields('signal_events').filter(f => f.name !== 'reason')
+      .map(f => (f.name === 'detail' ? Object.assign({}, f, { type: 'STRING' }) : f.name === 'cluster_id' ? Object.assign({}, f, { mode: 'REPEATED' }) : f))
+      .concat([{ name: 'run_id', type: 'STRING', mode: 'REQUIRED' }])),
+    ['cluster_id: the table\'s column is a list, the row\'s is one value', 'reason: the table has no such column',
+      'detail: the table\'s type is STRING, the row\'s is JSON', 'run_id: the table requires it and the row never writes it']);
+    eq(b.ewBqSchemaProblems_('signals', liveFields('signals').map(f => (f.name === 'representative_posts'
+      ? Object.assign({}, f, { fields: f.fields.filter(x => x.name !== 'snippet') }) : f))), ['representative_posts.snippet: the table has no such column']);
+    eq(Object.keys(b.ev('EW_BQ_ACTIONS_')), ['ranked', 'kept', 'held_back', 'emitted', 'not_emitted']);
+
+    // 2c. One signals row a signal: the signal that was created, queued and carded in the first check is read again from the
+    //     producer's buffer at a later check (its "seen" mark gone) and held back there as a repeat of its card; its
+    //     signal_events row is written, and no second signals row
+    const sigIds = () => onEnv.inserts.filter(x => x.table === 'signals').flatMap(x => x.rows.map(r => r.json.alert_id));
+    const firstSigIds = sigIds();
+    eq(firstSigIds.length, 1);
+    onEnv.t.g.props.delete('EARLY_DETECTION_SEEN');
+    onEnv.setPosts([]);
+    onEnv.t.g.clock.now += 16 * 60 * 1000;
+    const before2c = onEnv.inserts.length;
+    onEnv.t.poll();
+    const later = onEnv.inserts.slice(before2c);
+    const laterEvents = later.filter(x => x.table === 'signal_events').flatMap(x => x.rows.map(r => [r.json.alert_id, r.json.event]));
+    eq(laterEvents, [[firstSigIds[0], 'held_repeat']]);
+    eq(sigIds(), firstSigIds, 'no second signals row for a signal held in a later check');
+    eq(later.filter(x => x.table === 'signals').length, 0);
+
+    // 3. Fail-open on BigQuery error: logs table, reason, and dropped row count, pauses that table for 15m (C46 names it), and
+    //    cards still post. Only the table that failed is paused: the other four are written in the same check and after it
     const failEnv = makeBqWriterEnv();
     failEnv.setFailTable('signals');
     failEnv.t.control().getRange(19, 2).setValue('ON');
     failEnv.t.control().getRange(46, 2).setValue('ON');
     failEnv.t.poll();
     eq(edCardsOf(failEnv.t).length, 1, 'card still posted when early_wave BigQuery write fails');
-    assert.match(failEnv.t.g.logs.join('\n'), /early wave BigQuery: couldn't write \d+ row\(s\) to early_wave\.signals \(dropped\): .*HTTP 503/);
-    assert.match(failEnv.t.control().cell(46, 3), /paused until .* \(signals: .*HTTP 503/);
+    assert.match(failEnv.t.g.logs.join('\n'), /early wave BigQuery: couldn't write \d+ row\(s\) to early_wave\.signals \(dropped\): .*HTTP 503.*; writes to signals paused for 15 minutes/);
+    assert.match(failEnv.t.control().cell(46, 3), /rows? written today · \d+ dropped · ⚠️ signals paused until .* \(.*HTTP 503/);
+    eq(failEnv.inserts.map(x => x.table).sort(), ['signal_events', 'signals', 'story_posts', 'story_snapshots']);  // no Decisions call here: no verdicts
+    const fb = failEnv.t.bot;
+    const fProps = failEnv.t.g.services.PropertiesService.getScriptProperties();
+    const fCtx = { now: () => failEnv.t.g.clock.now, log() {} };
+    const fState = () => fb.ewBqState_(fProps, failEnv.t.g.clock.now);
+    eq(Object.keys(fState().pauses), ['signals']);
+    const oneRow = [{ insertId: 'ew:test:1', json: { alert_id: 'ED-TEST-1' } }];
+    failEnv.setFailTable('');  // BigQuery is well again, but signals stays paused for its 15 minutes
+    const sent = failEnv.inserts.length;
+    eq([fb.ewBqWriteTable_(fCtx, fProps, () => 60000, 'signals', oneRow), failEnv.inserts.length - sent], [false, 0]);
+    eq([fb.ewBqWriteTable_(fCtx, fProps, () => 60000, 'story_posts', oneRow), failEnv.inserts.length - sent], [true, 1]);
+    failEnv.t.g.clock.now += 16 * 60 * 1000;
+    eq([fb.ewBqWriteTable_(fCtx, fProps, () => 60000, 'signals', oneRow), Object.keys(fState().pauses)], [true, []]);
+    // a pause an earlier build kept for every table at once is the pause of the table it names
+    fProps.setProperty('EW_BQ_STATE', JSON.stringify({ day: fb.dayKey_(), written: 3, dropped: 2, until: failEnv.t.g.clock.now + 60000, why: 'HTTP 503', table: 'story_posts' }));
+    eq(fState(), { day: fb.dayKey_(), written: 3, dropped: 2, pauses: { story_posts: { until: failEnv.t.g.clock.now + 60000, why: 'HTTP 503' } } });
+    // more rows than one request takes: the rest are counted as dropped and logged, never lost silently
+    fProps.deleteProperty('EW_BQ_STATE');
+    const many = Array.from({ length: 503 }, (_, i) => ({ insertId: `ew:test:${i}`, json: { alert_id: `ED-TEST-${i}` } }));
+    const fLogs = [];
+    eq(fb.ewBqWriteTable_(Object.assign({}, fCtx, { log: m => fLogs.push(m) }), fProps, () => 60000, 'signal_events', many), true);
+    eq([failEnv.inserts[failEnv.inserts.length - 1].rows.length, fState().written, fState().dropped], [500, 500, 3]);
+    assert.match(fLogs.join('\n'), /dropped 3 row\(s\) for early_wave\.signal_events \(more than 500 in one check\)/);
 
     // 4. Section 5E rule preserved: edDecide_ and its three 0.8 confidence bars + 0.92 evergreen override are completely unchanged & ignore row.dec
     const sigCard = FX.signals.find(s => s.alert_id === 'ED-CLU-CLU-e9dddc0be913-202611071746');
@@ -1632,6 +1793,62 @@ module.exports = function (H) {
   // =============================================================================================================
   // Section 6 — Live check in LiveVerify.gs (verifyFastTriageLive)
   // =============================================================================================================
+
+  test('live check: verifyEarlyWaveBqLive reads the five early_wave tables\' schemas (reads only: no row written, no sheet cell, no Chat post), says ready only when the writer\'s rows fit every table, names each column that would be refused, and says which action values the triage_verdicts description leaves out', () => {
+    const t = e2e();
+    t.bot.setup();
+    const COLS = t.bot.ev('EW_BQ_COLUMNS_');
+    const asFields = cols => Object.entries(cols).map(([name, spec]) => ({
+      name, type: spec.replace(/[!\[\]]/g, ''), mode: /\[\]/.test(spec) ? 'REPEATED' : /!/.test(spec) ? 'REQUIRED' : 'NULLABLE',
+    }));
+    const live = {};
+    Object.keys(COLS).forEach(table => { live[table] = { description: '', fields: asFields(COLS[table]) }; });
+    live.signals.fields.find(f => f.name === 'representative_posts').fields = asFields(t.bot.ev('EW_BQ_POST_COLUMNS_'));
+    live.triage_verdicts.description = 'subject_type: signal or watch_story. action: ranked, kept, held_back, emitted, not_emitted. raw holds the full response.';
+    const calls = [];
+    const orig = t.g.services.UrlFetchApp.fetch;
+    t.g.services.UrlFetchApp.fetch = (url, params) => {
+      const u = String(url);
+      if (!u.startsWith('https://bigquery.googleapis.com/')) return orig(url, params);
+      const m = u.match(/\/projects\/brand-social-central-data\/datasets\/early_wave\/tables\/([a-z_]+)$/);
+      calls.push({ table: m ? m[1] : u, method: String((params && params.method) || 'get').toLowerCase(), body: !!(params && params.payload) });
+      const tbl = m && live[m[1]];
+      if (!tbl) return { getResponseCode: () => 404, getHeaders: () => ({}), getContentText: () => JSON.stringify({ error: { message: 'Not found: Table' } }) };
+      return { getResponseCode: () => 200, getHeaders: () => ({}), getContentText: () => JSON.stringify({ description: tbl.description, schema: { fields: tbl.fields } }) };
+    };
+    const cells = JSON.stringify(t.control().rows);
+    const posts = t.chat.botPosts ? JSON.stringify(Array.from(t.chat.spaces.keys()).map(id => t.chat.botPosts(id).length)) : '';
+
+    // 1. Every table as the writer declares it: ready, nothing to fix, every action value described
+    const ok = t.bot.verifyEarlyWaveBqLive();
+    eq([ok.dataset, ok.ready, ok.tables.map(x => x.table), ok.tables.map(x => x.read), ok.tables.map(x => x.problems)],
+      ['brand-social-central-data.early_wave', true, ['story_snapshots', 'story_posts', 'signals', 'signal_events', 'triage_verdicts'],
+        [true, true, true, true, true], [[], [], [], [], []]]);
+    eq(ok.tables.find(x => x.table === 'triage_verdicts').action_values_not_described, []);
+    eq(calls, ['story_snapshots', 'story_posts', 'signals', 'signal_events', 'triage_verdicts'].map(table => ({ table, method: 'get', body: false })));
+
+    // 2. A table whose columns differ (the table the notes never quoted, story_snapshots, under other names), one that can't be
+    //    read, a nullable column the writer leaves empty (fine), and a description from before the action values changed
+    live.story_snapshots.fields = live.story_snapshots.fields.map(f => (f.name === 'distinct_accounts' ? Object.assign({}, f, { name: 'authors' })
+      : f.name === 'created_at' ? Object.assign({}, f, { name: 'first_seen_at', mode: 'REQUIRED' }) : f));
+    live.story_posts.fields.push({ name: 'followers', type: 'INTEGER', mode: 'NULLABLE' });
+    delete live.signal_events;
+    live.triage_verdicts.description = 'subject_type: signal or watch_story. action: ranked, held_back, emitted. raw holds the full response.';
+    const bad = t.bot.verifyEarlyWaveBqLive();
+    const by = name => bad.tables.find(x => x.table === name);
+    eq([bad.ready, by('story_snapshots').problems, by('story_posts').problems, by('story_posts').not_written, by('signal_events').read,
+      by('signals').problems, by('triage_verdicts').problems, by('triage_verdicts').action_values_not_described],
+    [false, ['created_at: the table has no such column', 'distinct_accounts: the table has no such column',
+      'first_seen_at: the table requires it and the row never writes it'], [], ['followers'], false, [], [], ['kept', 'not_emitted']]);
+    assert.match(by('signal_events').why, /^HTTP 404: /);
+    // the action column's own description counts as well as the table's
+    live.triage_verdicts.fields.find(f => f.name === 'action').description = 'ranked, kept, held_back, emitted, not_emitted; null when the call failed';
+    eq(t.bot.verifyEarlyWaveBqLive().tables.find(x => x.table === 'triage_verdicts').action_values_not_described, []);
+
+    // Reads only: every request a GET with no body, no cell changed, nothing posted, no writer state
+    eq([calls.every(c => c.method === 'get' && !c.body), JSON.stringify(t.control().rows) === cells, t.g.props.has('EW_BQ_STATE')], [true, true, false]);
+    if (posts) eq(JSON.stringify(Array.from(t.chat.spaces.keys()).map(id => t.chat.botPosts(id).length)), posts);
+  });
 
   test('live check (6): verifyFastTriageLive reads buffer + queue up to LIVE_VERIFY_FT_MAX_ (5), logs LIVE_VERIFY_FAST_TRIAGE, and writes zero Sheet cells or Chat posts', () => {
     // 1. Empty buffer and empty queue: asks 0 signals, makes 0 Secret Manager or Decisions API calls, logs summary cleanly
@@ -1680,7 +1897,7 @@ module.exports = function (H) {
     eq([summary.answered, summary.not_answered, liveEnv.decCalls(), liveEnv.secretCalls()], [5, [], 5, 1]);
     eq(summary.results.map(r => r.alert_id), SIGNAL_IDS_WITH_ANSWERS.slice(0, 4).concat([SIGNAL_IDS_WITH_ANSWERS[5]]));
     eq(summary.latency_ms, { min: 280, median: 280, max: 280 });
-    eq(summary.bars, { about: 0.10, noise: 0.90, conf: 0.80, watch: 0.80, accounts: 3 });
+    eq(summary.bars, { about: 0.10, noise: 0.90, conf: 0.55, watch: 0.80, accounts: 3, independent: 0.30 });
     summary.results.forEach(r => {
       eq([r.ok, r.hold_back, typeof r.raise_early], [true, 'no', 'boolean']);
       assert.ok(r.input_chars > 100 && typeof r.answers.s === 'number');

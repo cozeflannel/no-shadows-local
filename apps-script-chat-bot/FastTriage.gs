@@ -1,7 +1,7 @@
 /**
- * FastTriage.gs — the fast-triage layer on the early-wave path (Control rows 38-45) and the early-wave BigQuery writer
- * (Control row 46): what the bot does with the Gemini Decisions answers about a signal (Decisions.gs asks; the full
- * Gemini review in EarlyDetection.gs still runs before every card, and nothing is posted on these answers).
+ * FastTriage.gs — the fast-triage layer on the early-wave path (Control rows 38-45 and 47) and the early-wave BigQuery
+ * writer (Control row 46): what the bot does with the Gemini Decisions answers about a signal (Decisions.gs asks; the
+ * full Gemini review in EarlyDetection.gs still runs before every card, and nothing is posted on these answers).
  *
  * Switches on the Control tab, each OFF until a person turns it ON; rows 39 and 40 need row 38:
  *   Row 38  Fast triage (Gemini Decisions)       only enables rows 39 and 40. While rows 39 and 40 are OFF, no
@@ -18,12 +18,17 @@
  *   Row 46  Write early-wave records to BigQuery writes each check's stories, story posts, signals, signal events and
  *                                                Decisions verdicts to brand-social-central-data.early_wave.
  *
- * Bars on the Control tab (rows 41-45, read on each run; a blank or invalid cell uses its seed and C41:C45 says so):
- *   Row 41  Hold-back: about_google at or below                                         seed 0.10
- *   Row 42  Hold-back: routine_noise at or above                                        seed 0.90
- *   Row 43  Hold-back and early watch: answer confidence at or above                    seed 0.80
- *   Row 44  Early watch: about_google, brand_risk and independent_reports, each at or above  seed 0.80
- *   Row 45  Early watch: distinct accounts, at least                                    seed 3
+ * Bars on the Control tab (rows 41-45 and 47, read on each run; a blank or invalid cell uses its seed and column C
+ * says so). The seeds come from the eight real signals of Nov 6-12, 2026 in test/decisions_fixtures.json (3 risks,
+ * 5 noise): at them the early watch raises 2 of the 3 risks and the hold-back drops 3 of the 5 noise signals and
+ * none of the risks.
+ *   Row 41  Hold-back: about_google at or below                        seed 0.10
+ *   Row 42  Hold-back: routine_noise at or above                       seed 0.90
+ *   Row 43  Hold-back and early watch: answer confidence at or above   seed 0.55
+ *   Row 44  Early watch: about_google and brand_risk, each at or above seed 0.80
+ *   Row 45  Early watch: distinct accounts, at least                   seed 3
+ *   Row 47  Early watch: independent_reports at or above               seed 0.30 (its own cell: few accounts tell an
+ *                                                                      early story, so this answer runs low on real risks)
  */
 
 const FT_SWITCH_ = 'fastTriage';            // Control row 38: enables rows 39 and 40
@@ -32,9 +37,15 @@ const FT_HOLD_SWITCH_ = 'fastTriageHold';   // Control row 40: hold back noise
 const EW_BQ_SWITCH_ = 'earlyWaveBq';        // Control row 46: write early-wave records to BigQuery
 
 const EW_TRIAGE_HOLD_MAX_LEVEL_ = 1;        // the most probable severity level is none (0) or low (1)
-const FT_BAR_SEEDS_ = { about: 0.10, noise: 0.90, conf: 0.80, watch: 0.80, accounts: 3 };
-const FT_PROB_CHOICES_ = ['0.05', '0.10', '0.15', '0.20', '0.25', '0.30', '0.40', '0.50', '0.60', '0.70', '0.75', '0.80', '0.85', '0.90', '0.95'];
+const FT_BAR_SEEDS_ = { about: 0.10, noise: 0.90, conf: 0.55, watch: 0.80, accounts: 3, independent: 0.30 };
+// 0.05 to 0.95 in steps of 0.05
+const FT_PROB_CHOICES_ = Array.from({ length: 19 }, (_, i) => ((i + 1) * 0.05).toFixed(2));
 const FT_ACCOUNTS_CHOICES_ = ['2', '3', '4'];
+// Seeds that changed after a build wrote them into the cells: a cell still at the old seed moves to the new one, once
+// (FT_BAR_SEED_VERSION_ in script property FT_BAR_SEED_PROP_); any other value is a person's and is kept.
+const FT_BAR_SEED_PROP_ = 'FT_BAR_SEED_VERSION';
+const FT_BAR_SEED_VERSION_ = 2;
+const FT_BAR_RESEEDS_ = [{ key: 'conf', from: 0.80 }];
 
 const FT_BAR_SPECS_ = [
   { key: 'about', row: 41, label: 'Hold-back: about_google at or below', seed: 0.10, start: '0.10', seedText: '0.10', kind: 'prob',
@@ -43,16 +54,22 @@ const FT_BAR_SPECS_ = [
   { key: 'noise', row: 42, label: 'Hold-back: routine_noise at or above', seed: 0.90, start: '0.90', seedText: '0.90', kind: 'prob',
     choices: FT_PROB_CHOICES_,
     using: v => `Hold-back (row 40) drops a low-severity signal when routine_noise is at or above ${v.toFixed(2)}` },
-  { key: 'conf', row: 43, label: 'Hold-back and early watch: answer confidence at or above', seed: 0.80, start: '0.80', seedText: '0.80', kind: 'prob',
+  { key: 'conf', row: 43, label: 'Hold-back and early watch: answer confidence at or above', seed: 0.55, start: '0.55', seedText: '0.55', kind: 'prob',
     choices: FT_PROB_CHOICES_,
     using: v => `Hold-back (row 40) and early watch (row 39) require answer confidence at or above ${v.toFixed(2)}` },
-  { key: 'watch', row: 44, label: 'Early watch: about_google, brand_risk and independent_reports, each at or above', seed: 0.80, start: '0.80', seedText: '0.80', kind: 'prob',
+  { key: 'watch', row: 44, label: 'Early watch: about_google and brand_risk, each at or above', seed: 0.80, start: '0.80', seedText: '0.80', kind: 'prob',
     choices: FT_PROB_CHOICES_,
-    using: v => `Early watch (row 39) requires about_google, brand_risk and independent_reports each at or above ${v.toFixed(2)}` },
+    using: v => `Early watch (row 39) requires about_google and brand_risk each at or above ${v.toFixed(2)}` },
   { key: 'accounts', row: 45, label: 'Early watch: distinct accounts, at least', seed: 3, start: '3', seedText: '3', kind: 'int',
     choices: FT_ACCOUNTS_CHOICES_,
     using: v => `Early watch (row 39) looks at stories below the promotion bar with at least ${v} distinct accounts` },
+  // Row 47, below the BigQuery switch (46): rows 41-46 were on the tab before this bar had a cell of its own
+  { key: 'independent', row: 47, label: 'Early watch: independent_reports at or above', seed: 0.30, start: '0.30', seedText: '0.30', kind: 'prob',
+    choices: FT_PROB_CHOICES_,
+    using: v => `Early watch (row 39) requires independent_reports at or above ${v.toFixed(2)}` },
 ];
+const FT_BAR_FIRST_ROW_ = Math.min.apply(null, FT_BAR_SPECS_.map(s => s.row));
+const FT_BAR_LAST_ROW_ = Math.max.apply(null, FT_BAR_SPECS_.map(s => s.row));
 
 const EW_WATCH_QUEUE_PER_DAY_ = 8;          // early-watch signals queued a day at most, of EW_MAX_PER_DAY_'s 40
 const FT_ANSWER_CACHE_SEC_ = 3 * 3600;      // a signal's answers are kept as long as the producer's buffer keeps the signal
@@ -60,13 +77,65 @@ const FT_ANSWER_CACHE_PREFIX_ = 'ft1:';
 
 const EW_BQ_DATASET_ = 'early_wave';
 const EW_BQ_TABLES_ = ['story_snapshots', 'story_posts', 'signals', 'signal_events', 'triage_verdicts'];
-const EW_BQ_STATE_PROP_ = 'EW_BQ_STATE';    // {day, written, dropped, until, why, table}: today's writes and any cooldown
-const EW_BQ_PAUSE_MS_ = 15 * 60 * 1000;     // after an insert failure, writes pause for 15 minutes
+const EW_BQ_STATE_PROP_ = 'EW_BQ_STATE';    // {day, written, dropped, pauses: {table: {until, why}}}: today's writes and each table's cooldown
+const EW_BQ_PAUSE_MS_ = 15 * 60 * 1000;     // after an insert failure, writes to that table pause for 15 minutes
 const EW_BQ_MIN_LEFT_MS_ = 15 * 1000;       // a write starts only with this much of the run left
 const EW_BQ_BATCH_MAX_ = 500;               // rows per insertAll request at most
+const EW_BQ_SIG_CACHE_PREFIX_ = 'ewbq1:';   // script cache: a signal whose early_wave.signals row BigQuery took
+const EW_BQ_SIG_CACHE_SEC_ = 6 * 3600;      // longer than a signal waits in the producer's buffer (3 hours)
+
+/**
+ * The columns each row builder below writes, as the BigQuery API names their types (tables.get): '!' REQUIRED, '[]'
+ * REPEATED. bqInsertAll_ refuses a whole batch for one column the table doesn't have, so this list is what
+ * LiveVerify.gs verifyEarlyWaveBqLive() holds against the live tables before row 46 is turned ON, and what the tests
+ * hold the row builders to.
+ */
+const EW_BQ_COLUMNS_ = {
+  story_snapshots: {
+    snapshot_at: 'TIMESTAMP!', cluster_id: 'STRING!', created_at: 'TIMESTAMP', last_post_at: 'TIMESTAMP', label: 'STRING',
+    topic_product: 'STRING', risk_groups: 'STRING[]', priority_hint: 'STRING', stage: 'STRING', distinct_accounts: 'INTEGER',
+    post_count: 'INTEGER', platforms: 'STRING[]', distinct_urls: 'INTEGER', audience_reach: 'INTEGER', engagement: 'INTEGER',
+    accounts_last_60m: 'INTEGER', baseline_accounts: 'FLOAT', velocity_ratio: 'FLOAT', taxonomy_hint: 'STRING',
+    centroid: 'FLOAT[]',
+  },
+  story_posts: {
+    joined_at: 'TIMESTAMP!', cluster_id: 'STRING!', post_id: 'STRING!', account_key: 'STRING', platform: 'STRING',
+    url: 'STRING', posted_at: 'TIMESTAMP', snippet: 'STRING', similarity: 'FLOAT', content_hash: 'STRING', topic: 'STRING',
+    audience: 'INTEGER', engagement: 'INTEGER', risk_groups: 'STRING[]', names_google: 'BOOLEAN', slow_lane: 'BOOLEAN',
+  },
+  signals: {
+    created_at: 'TIMESTAMP!', alert_id: 'STRING!', signal_type: 'STRING', velocity_grain: 'STRING', cluster_id: 'STRING',
+    signal_key: 'STRING', headline: 'STRING', topic_product: 'STRING', priority_hint: 'STRING', distinct_accounts: 'INTEGER',
+    mention_count: 'INTEGER', platforms: 'STRING[]', baseline_accounts: 'FLOAT', velocity_ratio: 'FLOAT',
+    account_delta: 'FLOAT', primary_url: 'STRING', window_start: 'TIMESTAMP', window_end: 'TIMESTAMP',
+    representative_posts: 'RECORD[]', update_of_alert_id: 'STRING', update_of_accounts: 'INTEGER', taxonomy_hint: 'STRING',
+  },
+  signal_events: {
+    event_at: 'TIMESTAMP!', alert_id: 'STRING!', cluster_id: 'STRING', event: 'STRING!', reason: 'STRING', detail: 'JSON',
+  },
+  triage_verdicts: {
+    asked_at: 'TIMESTAMP!', subject_type: 'STRING!', alert_id: 'STRING', cluster_id: 'STRING', model: 'STRING',
+    latency_ms: 'INTEGER', input_tokens: 'INTEGER', ok: 'BOOLEAN', failure: 'STRING', about_google: 'FLOAT',
+    brand_risk: 'FLOAT', independent_reports: 'FLOAT', routine_noise: 'FLOAT', category: 'STRING', severity_score: 'FLOAT',
+    severity_level: 'STRING', action: 'STRING', raw: 'JSON',
+  },
+};
+// signals.representative_posts: one struct a post
+const EW_BQ_POST_COLUMNS_ = {
+  post_id: 'STRING', platform: 'STRING', account_key: 'STRING', audience: 'INTEGER', engagement: 'INTEGER',
+  posted_at: 'TIMESTAMP', url: 'STRING', snippet: 'STRING',
+};
+// triage_verdicts.action: what was done with the answers of one Decisions call (null: the call failed)
+const EW_BQ_ACTIONS_ = {
+  ranked: 'a signal\'s answers ordered the queue (row 39 ON)',
+  kept: 'a signal was asked about and went on to its review (row 40 ON, row 39 OFF)',
+  held_back: 'a signal was dropped without a review (row 40)',
+  emitted: 'a story below the promotion bar was raised as an EARLY_WATCH signal (row 39)',
+  not_emitted: 'a story below the promotion bar was asked about and not raised',
+};
 
 // ---------------------------------------------------------------------------------------------------------------
-// The switches and the Control tab bars (rows 41-45)
+// The switches and the Control tab bars (rows 41-45 and 47)
 // ---------------------------------------------------------------------------------------------------------------
 
 /** True when the fast triage is available this run (Control row 38): rows 39 and 40 may use it. Pure. */
@@ -141,7 +210,7 @@ function ftBarFrom_(spec, raw) {
   return { value: v, blank: false, valid: true, note: `\u2713 ${spec.using(v)}` };
 }
 
-/** Parses all five bar cells (`raw`: {about, noise, conf, watch, accounts}) into {bars, values, details}. Pure. */
+/** Parses the six bar cells (`raw`: {about, noise, conf, watch, accounts, independent}) into {bars, values, details}. Pure. */
 function ftBarsFrom_(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
   const bars = {};
@@ -155,16 +224,16 @@ function ftBarsFrom_(raw) {
 }
 
 /**
- * Ensures rows 41-45 (the fast-triage bars) exist on the Control tab with their seeds and strict dropdowns; preserves
- * any value a person set in B41:B45.
+ * Ensures rows 41-45 and 47 (the fast-triage bars) exist on the Control tab with their seeds and strict dropdowns;
+ * preserves any value a person set in column B (a bar whose label changed keeps its value too). "How it works" is
+ * written again below them when a row was added.
  */
 function ensureFtBarRows_(sh) {
   if (!sh) return;
-  const first = FT_BAR_SPECS_[0].row;
-  const grid = sh.getRange(first, 1, FT_BAR_SPECS_.length, 2).getValues();
+  const grid = sh.getRange(FT_BAR_FIRST_ROW_, 1, FT_BAR_LAST_ROW_ - FT_BAR_FIRST_ROW_ + 1, 2).getValues();
   let changed = false;
-  FT_BAR_SPECS_.forEach((spec, idx) => {
-    const rowVals = grid[idx] || [];
+  FT_BAR_SPECS_.forEach(spec => {
+    const rowVals = grid[spec.row - FT_BAR_FIRST_ROW_] || [];
     const label = String(rowVals[0] || '').trim();
     const cell = sh.getRange(spec.row, 2);
     if (label === spec.label) {
@@ -182,19 +251,43 @@ function ensureFtBarRows_(sh) {
     cell.setBackground('#fff8e1').setDataValidation(ftBarRule_(spec));
     changed = true;
   });
+  ftBarReseed_(sh);
   if (changed) writeControlHelp_(sh);
 }
 
-/** Reads B41:B45 from the Control tab as {about, noise, conf, watch, accounts} ('' where a row isn't its bar yet). */
+/**
+ * Once per seed change (FT_BAR_RESEEDS_): a bar cell still holding the seed an earlier build wrote there gets the
+ * seed in use now; a cell with any other value is left as the person set it. Never throws.
+ */
+function ftBarReseed_(sh) {
+  try {
+    if (typeof PropertiesService === 'undefined' || !PropertiesService.getScriptProperties) return;
+    const props = PropertiesService.getScriptProperties();
+    if (Number(props.getProperty(FT_BAR_SEED_PROP_)) >= FT_BAR_SEED_VERSION_) return;
+    FT_BAR_RESEEDS_.forEach(r => {
+      const spec = FT_BAR_SPECS_.filter(x => x.key === r.key)[0];
+      if (!spec) return;
+      const vals = sh.getRange(spec.row, 1, 1, 2).getValues()[0];
+      if (String(vals[0] || '').trim() !== spec.label) return;
+      const text = String(vals[1] === undefined || vals[1] === null ? '' : vals[1]).trim();
+      if (text === '' || Number(text) !== r.from) return;
+      sh.getRange(spec.row, 2, 1, 2).setValues([[spec.start, ftBarFrom_(spec, spec.start).note]]);
+    });
+    props.setProperty(FT_BAR_SEED_PROP_, String(FT_BAR_SEED_VERSION_));
+  } catch (e) {
+    console.error('could not update the fast-triage bar seeds: ' + ((e && e.message) || e));
+  }
+}
+
+/** Reads the bar cells from the Control tab as {about, noise, conf, watch, accounts, independent} ('' where a row isn't its bar yet). */
 function readFtBars_(sh) {
   const out = {};
   FT_BAR_SPECS_.forEach(spec => { out[spec.key] = ''; });
   if (!sh) return out;
   try {
-    const first = FT_BAR_SPECS_[0].row;
-    const grid = sh.getRange(first, 1, FT_BAR_SPECS_.length, 2).getValues();
-    FT_BAR_SPECS_.forEach((spec, idx) => {
-      const r = grid[idx] || [];
+    const grid = sh.getRange(FT_BAR_FIRST_ROW_, 1, FT_BAR_LAST_ROW_ - FT_BAR_FIRST_ROW_ + 1, 2).getValues();
+    FT_BAR_SPECS_.forEach(spec => {
+      const r = grid[spec.row - FT_BAR_FIRST_ROW_] || [];
       if (String(r[0] || '').trim() !== spec.label) return;
       out[spec.key] = Object.prototype.toString.call(r[1]) === '[object Date]' ? r[1]
         : String(r[1] === undefined || r[1] === null ? '' : r[1]).trim();
@@ -203,7 +296,7 @@ function readFtBars_(sh) {
   return out;
 }
 
-/** Resolves B41:B45 (`raw`) for this run and updates C41:C45 when changed. Never throws. */
+/** Resolves the bar cells (`raw`) for this run and updates column C beside each when changed. Never throws. */
 function ftBarsFor_(raw, sh) {
   const out = ftBarsFrom_(raw);
   if (sh) {
@@ -214,16 +307,16 @@ function ftBarsFor_(raw, sh) {
         if (String(cell.getValue() || '') !== String(note || '')) cell.setValue(note || '');
       });
     } catch (e) {
-      console.error('could not write C41:C45 (fast-triage bars): ' + ((e && e.message) || e));
+      console.error('could not write the fast-triage bars\' notes (column C): ' + ((e && e.message) || e));
     }
   }
   return out;
 }
 
 /**
- * The current bars ({about, noise, conf, watch, accounts}): from `ctx.ftBars` when given, else read from the Control
- * tab's B41:B45 (falling back to FT_BAR_SEEDS_ for any blank or invalid cell). Never turns a feature off. Pure when
- * `ctx` carries `ftBars`.
+ * The current bars ({about, noise, conf, watch, accounts, independent}): from `ctx.ftBars` when given, else read from
+ * the Control tab's bar cells (falling back to FT_BAR_SEEDS_ for any blank or invalid cell). Never turns a feature
+ * off. Pure when `ctx` carries `ftBars`.
  */
 function ftBars_(ctx) {
   if (ctx && ctx.ftBars && typeof ctx.ftBars === 'object') {
@@ -722,24 +815,29 @@ function ewBqVerdictRow_(subjectType, row, res, action, now) {
   };
 }
 
-/** Today's early-wave BigQuery writer state ({day, written, dropped, until, why, table}). Never throws. */
+/**
+ * Today's early-wave BigQuery writer state ({day, written, dropped, pauses: {table: {until, why}}}): a table that
+ * refused its rows is paused by itself, the other four go on. Never throws.
+ */
 function ewBqState_(props, now) {
   const day = dayKey_();
+  const t = Number(now) || Date.now();
   let s = null;
   try { s = JSON.parse(props.getProperty(EW_BQ_STATE_PROP_) || 'null'); } catch (e) { s = null; }
   if (!s || typeof s !== 'object' || Array.isArray(s)) s = {};
   const num = v => Math.max(0, Math.floor(Number(v) || 0));
-  const until = num(s.until);
-  const paused = until > (Number(now) || Date.now());
   const same = s.day === day;
-  return {
-    day,
-    written: same ? num(s.written) : 0,
-    dropped: same ? num(s.dropped) : 0,
-    until: paused ? until : 0,
-    why: paused || same ? String(s.why || '') : '',
-    table: paused || same ? String(s.table || '') : '',
-  };
+  const pauses = {};
+  const from = s.pauses && typeof s.pauses === 'object' && !Array.isArray(s.pauses) ? s.pauses : {};
+  Object.keys(from).forEach(table => {
+    const p = from[table] || {};
+    if (EW_BQ_TABLES_.indexOf(table) >= 0 && num(p.until) > t) pauses[table] = { until: num(p.until), why: String(p.why || '') };
+  });
+  // a pause an earlier build kept for every table at once ({until, why, table}): it is that table's
+  if (num(s.until) > t && EW_BQ_TABLES_.indexOf(String(s.table || '')) >= 0 && !pauses[s.table]) {
+    pauses[s.table] = { until: num(s.until), why: String(s.why || '') };
+  }
+  return { day, written: same ? num(s.written) : 0, dropped: same ? num(s.dropped) : 0, pauses };
 }
 
 /** Saves today's early-wave BigQuery writer state. Never throws. */
@@ -751,46 +849,53 @@ function ewBqSaveState_(props, st) {
   }
 }
 
-/** Row 46's Control note text from `st` (ewBqState_). Pure. */
+/** Row 46's Control note text from `st` (ewBqState_): the day's rows, and each table that is paused and why. Pure. */
 function ewBqStatusText_(st, now) {
   const t = Number(now) || Date.now();
   const parts = [];
   if (st.written) parts.push(`${fmtInt_(st.written)} row${st.written === 1 ? '' : 's'} written today`);
   if (st.dropped) parts.push(`${fmtInt_(st.dropped)} dropped`);
-  if (st.until > t) {
-    const tz = (typeof GEN !== 'undefined' && GEN && GEN.timezone) || 'America/New_York';
-    parts.push(`\u26a0\ufe0f paused until ${Utilities.formatDate(new Date(st.until), tz, 'h:mm a')}` +
-      `${st.table ? ` (${st.table}${st.why ? ': ' + st.why : ''})` : st.why ? ` (${st.why})` : ''}`);
-  } else if (st.why) {
-    parts.push(`\u26a0\ufe0f last error${st.table ? ` on ${st.table}` : ''}: ${st.why}`);
-  }
-  return parts.join(' \u00b7 ');
+  const tz = (typeof GEN !== 'undefined' && GEN && GEN.timezone) || 'America/New_York';
+  EW_BQ_TABLES_.filter(table => st.pauses && st.pauses[table] && st.pauses[table].until > t).forEach(table => {
+    const p = st.pauses[table];
+    parts.push(`⚠️ ${table} paused until ${Utilities.formatDate(new Date(p.until), tz, 'h:mm a')}` +
+      `${p.why ? ` (${truncate_(p.why, 60)})` : ''}`);
+  });
+  return parts.join(' · ');
 }
 
 /**
  * Sends at most one batched `bqInsertAll_` request for `early_wave.${table}` with `rows`. Background work: skipped while
- * SLA triage is busy, inside the run deadline, under `ApiGuard.gs` BigQuery ceilings, and paused after an error. Never
- * throws or queues dropped rows in script properties.
+ * SLA triage is busy, inside the run deadline, under `ApiGuard.gs` BigQuery ceilings, and while this table is paused
+ * after it refused its rows (the other tables go on). True when BigQuery took the rows. Never throws or queues dropped
+ * rows in script properties.
  */
 function ewBqWriteTable_(ctx, props, left, table, rows) {
-  const list = (rows || []).filter(r => r && r.insertId && r.json).slice(0, EW_BQ_BATCH_MAX_);
-  if (!list.length) return;
-  if (EW_BQ_TABLES_.indexOf(table) < 0) return;
+  const all = (rows || []).filter(r => r && r.insertId && r.json);
+  if (!all.length) return false;
+  if (EW_BQ_TABLES_.indexOf(table) < 0) return false;
+  const list = all.slice(0, EW_BQ_BATCH_MAX_);
+  const over = all.length - list.length;
   const log = msg => { if (ctx && typeof ctx.log === 'function') ctx.log(msg); };
   const now = ctx && typeof ctx.now === 'function' ? ctx.now() : Date.now();
   const st = ewBqState_(props, now);
+  const paused = st.pauses[table];
   const skip = (ctx && ctx.slaBusy) ? 'SLA triage is busy'
-    : st.until > now ? `paused after an error on ${st.table || 'early_wave'}${st.why ? ` (${st.why})` : ''}`
+    : paused ? `${table} is paused after an error${paused.why ? ` (${paused.why})` : ''}`
       : left() < EW_BQ_MIN_LEFT_MS_ ? 'too little of the run left'
         : typeof apiGuardAllowBackground_ === 'function' && !apiGuardAllowBackground_('bigquery', !!(ctx && ctx.slaBusy))
           ? 'BigQuery background ceiling reached'
           : '';
   if (skip) {
-    st.dropped += list.length;
+    st.dropped += all.length;
     ewBqSaveState_(props, st);
-    log(`early wave BigQuery: dropped ${list.length} row(s) for ${EW_BQ_DATASET_}.${table} (${skip})`);
+    log(`early wave BigQuery: dropped ${all.length} row(s) for ${EW_BQ_DATASET_}.${table} (${skip})`);
     noteSwitch_(EW_BQ_SWITCH_, ewBqStatusText_(st, now));
-    return;
+    return false;
+  }
+  if (over) {
+    st.dropped += over;
+    log(`early wave BigQuery: dropped ${over} row(s) for ${EW_BQ_DATASET_}.${table} (more than ${EW_BQ_BATCH_MAX_} in one check)`);
   }
   if (typeof apiGuardNote_ === 'function') apiGuardNote_('bigquery', 1);
   try {
@@ -798,33 +903,106 @@ function ewBqWriteTable_(ctx, props, left, table, rows) {
     st.written += list.length;
     ewBqSaveState_(props, st);
     noteSwitch_(EW_BQ_SWITCH_, ewBqStatusText_(st, now));
+    return true;
   } catch (e) {
     const why = truncate_(String((e && e.message) || e).replace(/\s+/g, ' ').trim(), 120) || 'insert failed';
     st.dropped += list.length;
-    st.until = now + EW_BQ_PAUSE_MS_;
-    st.table = table;
-    st.why = why;
+    st.pauses[table] = { until: now + EW_BQ_PAUSE_MS_, why };
     ewBqSaveState_(props, st);
-    log(`early wave BigQuery: couldn't write ${list.length} row(s) to ${EW_BQ_DATASET_}.${table} (dropped): ${why}; writes paused for ${Math.round(EW_BQ_PAUSE_MS_ / 60000)} minutes`);
+    log(`early wave BigQuery: couldn't write ${list.length} row(s) to ${EW_BQ_DATASET_}.${table} (dropped): ${why}; ` +
+      `writes to ${table} paused for ${Math.round(EW_BQ_PAUSE_MS_ / 60000)} minutes`);
     noteSwitch_(EW_BQ_SWITCH_, ewBqStatusText_(st, now));
+    return false;
   }
 }
 
 /**
  * Flushes a check's batched rows (`batches`: {story_snapshots, story_posts, signals, signal_events, triage_verdicts}) to
- * `brand-social-central-data.early_wave`: at most one insert request per table. Never throws.
+ * `brand-social-central-data.early_wave`: at most one insert request per table. {table: true} for each table BigQuery
+ * took. Never throws.
  */
 function ewBqFlush_(ctx, props, left, batches) {
-  if (!ewBqOn_(ctx) || !batches) return;
+  const took = {};
+  if (!ewBqOn_(ctx) || !batches) return took;
   try {
     const sent = (ctx._ewBqSentTables = ctx._ewBqSentTables || new Set());
     EW_BQ_TABLES_.forEach(table => {
       const rows = batches[table];
       if (!Array.isArray(rows) || !rows.length || sent.has(table)) return;
       sent.add(table);
-      ewBqWriteTable_(ctx, props, left, table, rows);
+      if (ewBqWriteTable_(ctx, props, left, table, rows)) took[table] = true;
     });
   } catch (e) {
     console.warn('early wave BigQuery: flush failed: ' + ((e && e.message) || e));
   }
+  return took;
+}
+
+/**
+ * The signals among `ids` (alert ids) whose early_wave.signals row BigQuery already took (a Set), so a signal queued
+ * or held in a later check than the one that created it gets no second row. Never throws (an unreadable cache: none).
+ */
+function ewBqSignalsWritten_(ids) {
+  const out = new Set();
+  try {
+    if (typeof CacheService === 'undefined' || !CacheService.getScriptCache) return out;
+    const list = (ids || []).map(id => String(id || '')).filter(Boolean);
+    if (!list.length) return out;
+    const keys = list.map(id => EW_BQ_SIG_CACHE_PREFIX_ + hashText_(id));
+    const got = CacheService.getScriptCache().getAll(keys) || {};
+    list.forEach((id, i) => { if (got[keys[i]]) out.add(id); });
+  } catch (e) {}
+  return out;
+}
+
+/** Remembers that BigQuery took the early_wave.signals rows of `ids` (EW_BQ_SIG_CACHE_SEC_). Never throws. */
+function ewBqNoteSignalsWritten_(ids) {
+  try {
+    if (typeof CacheService === 'undefined' || !CacheService.getScriptCache) return;
+    const items = {};
+    (ids || []).map(id => String(id || '')).filter(Boolean).forEach(id => { items[EW_BQ_SIG_CACHE_PREFIX_ + hashText_(id)] = '1'; });
+    if (Object.keys(items).length) CacheService.getScriptCache().putAll(items, EW_BQ_SIG_CACHE_SEC_);
+  } catch (e) {}
+}
+
+/**
+ * What stops the row builders' rows from landing in live table `table`, given its schema (`fields`: BigQuery
+ * tables.get's schema.fields): a column the table doesn't have, a column of another type or mode, a REQUIRED column
+ * the builder never writes. [] when the rows fit. Pure.
+ */
+function ewBqSchemaProblems_(table, fields) {
+  const want = EW_BQ_COLUMNS_[table];
+  if (!want) return [`${table} isn't an early-wave table`];
+  const norm = t => {
+    const u = String(t || '').trim().toUpperCase();
+    return { INT64: 'INTEGER', FLOAT64: 'FLOAT', BOOL: 'BOOLEAN', STRUCT: 'RECORD' }[u] || u;
+  };
+  const shape = spec => {
+    const text = String(spec);
+    return { type: norm(text.replace(/[!\[\]]/g, '')), repeated: /\[\]/.test(text), required: /!/.test(text) };
+  };
+  const problems = [];
+  const check = (cols, list, prefix) => {
+    const live = {};
+    (list || []).forEach(f => { if (f && f.name) live[String(f.name)] = f; });
+    Object.keys(cols).forEach(name => {
+      const w = shape(cols[name]);
+      const f = live[name];
+      if (!f) { problems.push(`${prefix}${name}: the table has no such column`); return; }
+      const mode = String(f.mode || 'NULLABLE').toUpperCase();
+      if (norm(f.type) !== w.type) problems.push(`${prefix}${name}: the table's type is ${norm(f.type)}, the row's is ${w.type}`);
+      if ((mode === 'REPEATED') !== w.repeated) {
+        problems.push(`${prefix}${name}: the table's column is ${mode === 'REPEATED' ? 'a list' : 'one value'}, the row's is ${w.repeated ? 'a list' : 'one value'}`);
+      }
+    });
+    Object.keys(live).forEach(name => {
+      if (String(live[name].mode || '').toUpperCase() === 'REQUIRED' && !cols[name]) {
+        problems.push(`${prefix}${name}: the table requires it and the row never writes it`);
+      }
+    });
+    return live;
+  };
+  const top = check(want, fields, '');
+  if (table === 'signals' && top.representative_posts) check(EW_BQ_POST_COLUMNS_, top.representative_posts.fields, 'representative_posts.');
+  return problems;
 }
