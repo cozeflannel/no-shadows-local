@@ -25,6 +25,8 @@ const GEN = {
    "blocking",
    "warning"
   ],
+  "autocorrect_min_confidence": 0.6,
+  "autocorrect_writeup": true,
   "check_issue_status": true,
   "pending_fix_hours": 48,
   "start_lookback_minutes": 15,

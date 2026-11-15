@@ -124,3 +124,21 @@ def test_bots_own_cards_are_never_burson_alerts():
         text = f"{not_a_card}\n*Link:* https://x.com/someone/status/1234567890123\n{taxonomy}"
         verdict = detect(CFG, ChatMessage(text=text, sender=ChatUser(name="Zapier")), parse(CFG, text))
         assert verdict != (False, "bot own card"), not_a_card
+
+
+def test_the_apps_script_bots_reviewed_line_is_skipped():
+    """The Apps Script bot's own first line on an alert it corrected in its Auto-correct space (Voice.gs reviewedLine_) is
+    no field and no part of the summary, and its link (to Burson's message) is never taken for the post's link."""
+    link = "<https://chat.google.com/room/AAQAaa_0I9g/Xk2b9zQ1/Xk2b9zQ1|Original alert>"
+    no_link = GOOD_ALERT.replace("View Post: https://x.com/techwatcher/status/1845123456789012345\n", "")
+    for body in (GOOD_ALERT, no_link):
+        before = parse(CFG, body)
+        for line in (
+            "✅ *Reviewed and corrected by the agentic assistant* · " + link,
+            "✅ *Reviewed by the agentic assistant* · " + link,
+            "✅ *Reviewed by the agentic assistant*",
+        ):
+            after = parse(CFG, f"{line}\n{body}")
+            assert after.fields == before.fields, line
+            assert after.missing_labels == before.missing_labels, line
+            assert "chat.google.com" not in str(after.fields.get("post_url") or "")

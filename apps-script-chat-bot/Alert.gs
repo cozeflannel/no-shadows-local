@@ -14,12 +14,15 @@ const RX_URL_IN_TEXT_ = /https?:\/\/[^\s<>|"')\]]+/i;
 const RX_BARE_URL_ = /^https?:\/\/\S+$/i;
 const RX_BANNER_ = /THIS ALERT MEETS\s+(P[012])\s+CRITERIA/i;
 const RX_HEADER_ = /^(?:[^\w\s]\s*)*SOCIAL ALERT(?:\s*[^\w\s])*\s*:\s*(.*)$/iu;
-// Lines of an alert that are no field and no part of its summary: Burson's footers, the bot's own BigQuery lines, and
-// the fixed lines of Burson's live layout (its title, its automated-message note, "Do Not Forward", whether the alert
-// meets the Collection Requirements, the words of its link to the post). They are skipped when the alert is read and
-// stay as they are when it is rebuilt (triage_agent/qa/parser.py _BOILERPLATE has the same list, but for BigQuery)
+// Lines of an alert that are no field and no part of its summary: Burson's footers, the bot's own BigQuery lines, the
+// bot's own first line on an alert it corrected in the Auto-correct space ("✅ *Reviewed and corrected by the agentic
+// assistant* · Original alert": Voice.gs reviewedLine_), and the fixed lines of Burson's live layout (its title, its
+// automated-message note, "Do Not Forward", whether the alert meets the Collection Requirements, the words of its link
+// to the post). They are skipped when the alert is read and stay as they are when it is rebuilt
+// (triage_agent/qa/parser.py _BOILERPLATE has the same list, but for BigQuery)
+const RX_REVIEWED_LINE_SRC_ = '(?:\\u2705\\uFE0F?\\s*)?\\*?Reviewed (?:and corrected )?by the agentic assistant\\b';
 const RX_BOILERPLATE_ = new RegExp('^(?:As a reminder,\\s*all alerts can be found|Note:\\s*Brand-Social-Sends@|' +
-  'Please note:\\s*screenshots are not available|(?:🔷🔍|🔷📊|🔍📊)?\\s*\\[?BigQuery\\b|' +
+  'Please note:\\s*screenshots are not available|(?:🔷🔍|🔷📊|🔍📊)?\\s*\\[?BigQuery\\b|' + RX_REVIEWED_LINE_SRC_ + '|' +
   'Automated Alert via Burson\\b|Note:\\s*This is an automated message\\b|Do Not Forward\\b|' +
   'This alert (?:does not meet|meets) the defined Collection Requirements\\b|Click here for link to post\\b)', 'i');
 // The ones of them that stand below an alert's summary: Burson's footers and the bot's own BigQuery lines, without the
@@ -505,8 +508,10 @@ function parseAlert_(text) {
     if (handle) fields.author = handle;
     else if (parts.length >= 6 && parts[parts.length - 4] && !/^\d+$/.test(parts[parts.length - 4])) fields.author = parts[parts.length - 4];
   }
-  if (!fields.post_url) {
-    const url = extractUrl_(String(text || '').replace(RX_CHAT_LINK_, '$1').replace(new RegExp(SCREENSHOT_LINK_RX_.source, 'gi'), ' '));
+  if (!fields.post_url) {  // never the link on the bot's own first line (to Burson's message, not to the post)
+    const own = new RegExp(`^[ \\t]*${RX_REVIEWED_LINE_SRC_}[^\\r\\n]*`, 'gim');
+    const url = extractUrl_(String(text || '').replace(own, ' ').replace(RX_CHAT_LINK_, '$1')
+      .replace(new RegExp(SCREENSHOT_LINK_RX_.source, 'gi'), ' '));
     if (url) fields.post_url = url;
   }
   if (!fields.author && fields.post_url) {

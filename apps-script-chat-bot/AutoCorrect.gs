@@ -7,11 +7,15 @@
  *      strictly read only: nothing is ever posted, reacted or answered there (guardedChat_ refuses it, and Bot.gs never
  *      tries). While B25 is blank or can't be found it doesn't run (C10 says so); when B25 changes, it starts from the
  *      new space's last 15 minutes;
- *   2. reviews each alert exactly as it does everywhere (the rules, Gemini, the post itself, the listening feeds);
- *   3. posts the corrected alert, in Burson's own format, to the auto-correct space, with a short note in its thread on
- *      what it changed ("Product: Gems to Gemini App"; a rewritten text shows only the new wording) and anything only
- *      Burson can add. It never asks Burson for fixes: it makes them (with "Never wait on Burson" ON, Control row 23, it
- *      doesn't wait on what only Burson can add either: it goes on without it);
+ *   2. reviews each alert as it does everywhere (the rules, Gemini, the post itself, the listening feeds), except that the
+ *      agentic assistant decides: Gemini's value is applied from settings.autocorrect_min_confidence, with nothing left
+ *      for a reader to double-check, and the same review call writes the summary paragraph (Review.gs writeupOf_);
+ *   3. posts the corrected alert, in Burson's own format, to the auto-correct space, under the bot's own first line ("✅
+ *      *Reviewed and corrected by the agentic assistant* · Original alert", linking to Burson's message: Voice.gs
+ *      reviewedLine_), with the write-up in the summary's place and the post's own picture, then a note in its thread on
+ *      who changed what ("- Product: Gems to Gemini App") and anything only Burson can add ("Not fixed: …"). It never
+ *      asks Burson for fixes: it makes them (with "Never wait on Burson" ON, Control row 23, it doesn't wait on what only
+ *      Burson can add either: it goes on without it);
  *   4. works the alert there as an IM would: legend emojis, the Social Alert email (only to the stand-in while testing,
  *      its subject starting "[Auto-correct test]"), the pre-filled T&S test-form link in the alert's thread, the 🧑‍💻 DM
  *      (stand-in), and answers to questions people ask in that space.

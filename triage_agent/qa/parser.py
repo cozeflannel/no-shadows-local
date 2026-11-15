@@ -46,11 +46,16 @@ _PRIORITY_BANNER = re.compile(r"THIS ALERT MEETS\s+(P[012])\s+CRITERIA", re.I)
 _SOCIAL_HEADER = re.compile(
     r"^(?:[^\w\s]\s*)*SOCIAL ALERT(?:\s*[^\w\s])*\s*:\s*(.*)$", re.I
 )
-# Lines that are no field and no part of the summary: Burson's footers, and the fixed lines of its live layout (its
-# title, its automated-message note, "Do Not Forward", whether the alert meets the Collection Requirements, the words of
-# its link to the post). The Apps Script bot's Alert.gs RX_BOILERPLATE_ has these lines too (and the bot's own BigQuery lines).
+# Lines that are no field and no part of the summary: Burson's footers, the Apps Script bot's own first line on an alert
+# it corrected in its Auto-correct space ("✅ *Reviewed and corrected by the agentic assistant* · Original alert"), and the
+# fixed lines of Burson's live layout (its title, its automated-message note, "Do Not Forward", whether the alert meets
+# the Collection Requirements, the words of its link to the post). The Apps Script bot's Alert.gs RX_BOILERPLATE_ has
+# these lines too (and the bot's own BigQuery lines).
+_REVIEWED_LINE = r"(?:\u2705\ufe0f?\s*)?\*?Reviewed (?:and corrected )?by the agentic assistant\b"
+_OWN_FIRST_LINE = re.compile(r"^[ \t]*" + _REVIEWED_LINE + r"[^\r\n]*", re.I | re.M)  # its link is to Burson's message
 _BOILERPLATE = re.compile(
     r"^(?:As a reminder,\s*all alerts can be found|Note:\s*Brand-Social-Sends@|Please note:\s*screenshots are not available|"
+    + _REVIEWED_LINE + r"|"
     r"Automated Alert via Burson\b|Note:\s*This is an automated message\b|Do Not Forward\b|"
     r"This alert (?:does not meet|meets) the defined Collection Requirements\b|Click here for link to post\b)",
     re.I,
@@ -452,8 +457,8 @@ def parse(config: AgentConfig, text: str) -> ParsedAlert:
             if candidate_author and not candidate_author.isdigit():
                 fields["author"] = candidate_author
 
-    if not fields.get("post_url"):  # a bare link anywhere in the message
-        url = extract_url(_SCREENSHOT_LINK.sub(" ", _CHAT_LINK.sub(lambda m: m.group(1), text or "")))
+    if not fields.get("post_url"):  # a bare link anywhere in the message (never on the Apps Script bot's own first line)
+        url = extract_url(_SCREENSHOT_LINK.sub(" ", _CHAT_LINK.sub(lambda m: m.group(1), _OWN_FIRST_LINE.sub(" ", text or ""))))
         if url:
             fields["post_url"] = url
 

@@ -406,6 +406,9 @@ function draftRowFor_(ctx, review, esc, related) {
   input.recommended_groups = review.recommendedGroups || [];
   input.ai_reasons = review.groupReasons || {};
   if (review.screenshot) input.screenshot = review.screenshot;  // the picture of the post, shown in the email (Post.gs)
+  // The auto-correct space: the email's summary is the write-up (Review.gs writeupOf_); fields.summary (the T&S form,
+  // the routing) stays the alert's own
+  if (review.writeup && review.writeup.text) input.writeup = truncate_(String(review.writeup.text), WRITEUP_MAX_CHARS_);
   // Check outage & comms docs (Control tab row 20): Google's status and the holding statement, at the bottom of the email
   if (review.commsContext && switchOn_(ctx, 'outageComms')) input.comms_context = commsEmailInput_(review.commsContext);
   const reply = related && related.email_status === 'sent' && related.email_thread ? related : null;

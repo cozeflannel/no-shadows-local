@@ -1284,8 +1284,9 @@ module.exports = H => {
 
     eq(t.get('B5'), '\u2705 Working');
     const acTop = t.chat.botPosts(AC).filter(m => !m.threadReply);
-    assert.ok(acTop.some(m => m.text === H.F.MISTAKES_FIXED), 'rewritten auto-corrected Burson card in B10 (no raw Zapier card)');
-    assert.ok(!acTop.some(m => m.text === H.F.MISTAKES), 'raw Zapier card is NEVER posted in B10');
+    assert.ok(acTop.some(m => m.text === '\u2705 *Reviewed and corrected by the agentic assistant*\n' + H.F.MISTAKES_FIXED),
+      'rewritten auto-corrected Burson card in B10 (no raw Zapier card)');
+    assert.ok(!acTop.some(m => m.text === H.F.MISTAKES || m.text.endsWith('\n' + H.F.MISTAKES)), 'raw Zapier card is NEVER posted in B10');
     assert.ok(acTop.some(m => /^\ud83d\udea8 \*EARLY DETECTION\* \u00b7 New story\n\*Pixel 9 owners say the overnight update froze the emergency dialer\*/.test(m.text)),
       'Early Detection story card posted in B10 when B9 is blank');
     const edReplies = t.chat.botPosts(AC).filter(m => m.threadReply && /Early Detection Review:/.test(m.text));

@@ -19,6 +19,9 @@
  *                                             review): the email (and the T&S form, TnsForm.gs) gets the video's
  *                                             "Timestamp in the video" line (videoStamp_); every other email is byte for
  *                                             byte as before
+ *                                             The auto-correct space's email_input.writeup (Drafts.gs draftRowFor_: the
+ *                                             write-up, Review.gs writeupOf_) is its summary; every other email is byte
+ *                                             for byte as before
  *   commsEmailInput_ / commsEmailRows_     -> Check outage & comms docs (Control tab row 20): email_input.comms_context
  *                                             (only while it was ON) adds a "Comms / Status Context" section under the
  *                                             Alert Details (Google's status when it was checked, and the approved holding
@@ -136,7 +139,8 @@ function emailValues_(input) {
     tag: f.exposure_tag || '-', risk: asList_(f.risk_tags).join(', ') || '-',
     kof: esc.is_kof ? 'Yes' + (kofLists.length ? ` (${kofLists.join(', ')})` : '') : 'No',
     ts: input.tns_submitted ? 'Yes' : 'No',  // "whether the incident was submitted to T&S" (✍️), never why it was flagged
-    summary: f.summary || '-', link: f.post_url || '', date: f.post_date || '-', code: f.code || '-',
+    // the write-up (the auto-correct space: Drafts.gs draftRowFor_, input.writeup) in the summary's place
+    summary: input.writeup || f.summary || '-', link: f.post_url || '', date: f.post_date || '-', code: f.code || '-',
     owned: f.exposure_tag === 'Content - Negative reaction to owned social post',
     noWait: !!input.no_wait, stamp: input.no_wait ? videoStamp_(f) : '',  // Never wait on Burson only (emailInput_)
   };

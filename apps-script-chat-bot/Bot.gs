@@ -46,9 +46,12 @@
  *                            "Track post-alert outcomes" ON, replies to sent alerts are read for a week (Outcomes.gs)
  *   Auto-correct test space (ctx.sourceReadOnly, AutoCorrect.gs): the live Burson space is only read. Only Zapier's
  *                            top-level alerts are handled; nothing is ever posted or reacted there. The corrected alert
- *                            goes to the test space on its own, with what changed in its thread (ctx.changeNotes), and
- *                            its emojis go on that corrected alert; only what Burson alone can add holds back ❌ / 👍
- *                            (Never wait on Burson ON: nothing waits on Burson there either)
+ *                            goes to the test space on its own, under the bot's "Reviewed (and corrected) by the agentic
+ *                            assistant" line, with Gemini's write-up as its summary and the post's own picture, and what
+ *                            changed in its thread (ctx.changeNotes); its emojis go on that corrected alert; only what
+ *                            Burson alone can add holds back ❌ / 👍 (Never wait on Burson ON: nothing waits on Burson
+ *                            there either). A Direct BigQuery card there, posted before its review, gets the note too
+ *                            (inPlaceNote_)
  *
  * Pure orchestration over an injected ctx (Main.gs buildCtx_() in Apps Script; a fake one in tests):
  *   ctx.settings, ctx.spaces {burson: {id, name}, analyst: {id, name}}, ctx.store (makeStore_),
@@ -685,6 +688,9 @@ function handleAlert_(ctx, m, parsed, report) {
   if (switchOn_(ctx, 'outageComms')) parsed.outageComms = true;
   // Never wait on Burson (Control tab row 23): a long video's missing timestamp is the bot's own correction (Review.gs)
   if (switchOn_(ctx, 'noWait')) parsed.noWait = true;
+  // The Auto-correct space (AutoCorrect.gs): the review call also writes the alert's summary paragraph (Review.gs
+  // writeupPrompt_), unless settings.autocorrect_writeup is false. A sheet-test card gets no Gemini review
+  if (ctx.changeNotes && !isSheetTest && S.autocorrect_writeup !== false) parsed.writeup = true;
   // The knowledge base (Knowledge.gs): the Resources tab's documents, the parts that bear on this alert
   try {
     parsed.knowledge = knowledgeForCtx_(ctx, knowledgeQuery_(parsed), { budget: KNOWLEDGE_REVIEW_CHARS_, pin: true });
@@ -706,7 +712,9 @@ function handleAlert_(ctx, m, parsed, report) {
   const memoryStory = !isSheetTest && typeof amNoveltyFor_ === 'function' ? amNoveltyFor_(ctx, parsed.fields) : null;
   // Gemini's review, with the crash guard and the hold for the next run (guardedAssess_)
   const { llm, llmError, held } = isSheetTest ? { llm: null, llmError: '', held: null } : guardedAssess_(ctx, m, parsed, now);
-  const review = reviewAlert_(parsed, { llm, llmError, now, settings: S, history, mediaHeld: held, memoryStory });
+  // autoCorrect: the agentic assistant decides in the Auto-correct space (Review.gs, autocorrect_min_confidence)
+  const review = reviewAlert_(parsed, { llm, llmError, now, settings: S, history, mediaHeld: held, memoryStory,
+    autoCorrect: !!ctx.changeNotes });
   if (isSheetTest) {
     review.ingested = SHEET_TEST_INGESTED_;
     if (typeof applySheetTestReviewOverrides_ === 'function') applySheetTestReviewOverrides_(parsed, review);
@@ -1053,6 +1061,9 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
     ctx.spaces && ctx.spaces.analyst && String(m.name).indexOf(ctx.spaces.analyst.id + '/messages/') === 0));
   const fwd = inPlace ? { name: m.name, thread: m.thread || '' } : forwardAlert_(ctx, m, parsed, review, '');
   if (fwd && !inPlace) report.forwarded++;
+  // A Direct BigQuery or sheet-test card in the auto-correct space was posted before its review, and the bot never edits
+  // a message: what the review changed, and the write-up the email uses, go in the card's thread (inPlaceNote_)
+  if (inPlace && ctx.changeNotes) inPlaceNote_(ctx, m, review);
   const alertId = ctx.store.nextAlertId();
   const draft = draftPlan_(ctx, review, history);  // escalated: a Social Alert draft is due (made after Burson's side)
   const row = ctx.store.addAlert(Object.assign({
@@ -1082,7 +1093,7 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
     //    was processed (no resend needed); 👍 (receipt) right away here only when people take the action from here (drafts
     //    off). The auto-correct test space never acts in the Burson space: its corrected alert is the alert.
     if (ctx.sourceReadOnly) {
-      if (changedFields_(review).length) report.corrected = (report.corrected || 0) + 1;
+      if (noteChanges_(review).length) report.corrected = (report.corrected || 0) + 1;  // as the space shows it (reviewedLine_)
     } else if (sendAlertActions_(ctx, m, requested, fwd, !draftsOn_(ctx))) report.fix_requests++;
     ctx.store.updateAlert(row, { burson_done: true });
     ctx.store.markDone(m.name, 'alert', alertId);
@@ -1097,7 +1108,7 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
   //    only when people take the action from here (drafts off). The auto-correct test space never acts in the Burson
   //    space: the bot made the fixes itself, and its corrected alert is the alert.
   if (ctx.sourceReadOnly) {
-    if (changedFields_(review).length) report.corrected = (report.corrected || 0) + 1;
+    if (noteChanges_(review).length) report.corrected = (report.corrected || 0) + 1;  // as the space shows it (reviewedLine_)
   } else if (sendAlertActions_(ctx, m, requested, fwd, !draftsOn_(ctx))) report.fix_requests++;
   ctx.store.updateAlert(row, { burson_done: true });
 
@@ -1122,20 +1133,37 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
 
 /**
  * The corrected alert, in Burson's own format, posted to the analyst space with what was corrected underneath. The
- * auto-correct test space (ctx.changeNotes): the corrected alert on its own, exactly as Burson's would look, and a short
- * note in its thread on what changed (none when nothing did). With Never wait on Burson ON, a video timestamp the bot
+ * auto-correct test space (ctx.changeNotes): the corrected alert on its own, in Burson's layout under the bot's own first
+ * line ("✅ *Reviewed and corrected by the agentic assistant* · Original alert", the link to Burson's message: Voice.gs
+ * reviewedLine_), with the write-up in the summary's place (Review.gs writtenFields_) and the post's own picture under
+ * it when the run has time (correctedAlertPicture_), then a note in its thread listing what the agentic assistant
+ * changed (changeNoteText_; none when there's nothing to say). With Never wait on Burson ON, a video timestamp the bot
  * added goes on its own "[Timestamp]" line (withTimestamp_).
  */
 function forwardAlert_(ctx, m, parsed, review, extraNote) {
   const noWait = switchOn_(ctx, 'noWait');
-  const rebuilt = withFoundLink_(rebuildAlert_(m.text, parsed, review.fields, review.changed), parsed.found);
+  const shown = ctx.changeNotes ? writtenFields_(review) : { fields: review.fields, changed: review.changed };
+  const rebuilt = withFoundLink_(rebuildAlert_(m.text, parsed, shown.fields, shown.changed), parsed.found);
   const stamped = noWait ? withTimestamp_(rebuilt, review.fields, review.changed) : rebuilt;
   const body = parsed && parsed.ingested && typeof withBqBadge_ === 'function'
     ? withBqBadge_(stamped, parsed.ingested)
     : stamped;
   if (ctx.changeNotes) {
-    const fwd = postTo_(ctx, ctx.spaces.analyst.id, body, null, 'fwd:' + m.name);
-    const note = [extraNote || '', changeNoteText_(review, noWait)].filter(Boolean).join('\n');
+    const text = `${reviewedLine_(review, m.name)}\n${body}`;
+    const pic = correctedAlertPicture_(ctx, parsed);
+    let fwd = null;
+    if (pic.length) {
+      try {
+        fwd = postTo_(ctx, ctx.spaces.analyst.id, text, null, 'fwd:' + m.name, null, false, pic);
+      } catch (e) {  // the same key: an alert Chat did take is read back, never posted twice
+        ctx.log(`Chat refused the corrected alert with the post's picture, so it goes as text: ` +
+          `${truncate_(String((e && e.message) || e), 200)}`);
+      }
+    }
+    if (!fwd) fwd = postTo_(ctx, ctx.spaces.analyst.id, text, null, 'fwd:' + m.name);
+    logLeftAsIs_(ctx, review);
+    const note = [extraNote || '', changeNoteText_(review, { findLinks: switchOn_(ctx, 'autoFindLinks') })]
+      .filter(Boolean).join('\n');
     if (note && fwd && fwd.name) {
       try {
         postTo_(ctx, ctx.spaces.analyst.id, note, fwd.thread || null, 'chg:' + m.name);
@@ -1147,6 +1175,60 @@ function forwardAlert_(ctx, m, parsed, review, extraNote) {
   }
   const footer = [ctx.settings.corrections_footer ? forwardFooter_(review, noWait) : '', extraNote || ''].filter(Boolean).join('\n');
   return postTo_(ctx, ctx.spaces.analyst.id, joinText_(body, footer), null, 'fwd:' + m.name);
+}
+
+// The corrected alert in the auto-correct space gets the post's own picture (correctedAlertPicture_) only with this much
+// of the run left, as a Direct BigQuery card does (BigQuery.gs BQ_DIRECT_PIC_LEFT_MS_)
+const AC_PIC_LEFT_MS_ = 60 * 1000;
+
+/**
+ * The auto-correct space: the post's own picture for its corrected alert (Post.gs alertPicture_ on the post the review
+ * looked up, parsed.post: its photo, its video's frame, thumbnail or cover, what a quoted post or link card shows; never
+ * the picture its page shows link previews, and never a generated one), uploaded to that space only (Chat.gs
+ * chatUploadImage_ refuses S-F Burson, the test copy and outside spaces). The message's `attachment` list: [] when
+ * there's none, the run has less than AC_PIC_LEFT_MS_ left, or the upload fails (the alert goes as text). Never throws.
+ */
+function correctedAlertPicture_(ctx, parsed) {
+  try {
+    if (!ctx.changeNotes || !parsed || !parsed.post || typeof alertPicture_ !== 'function' ||
+        typeof chatUploadImage_ !== 'function') return [];
+    if (!(Number(ctx.deadline) - ctx.now() >= AC_PIC_LEFT_MS_)) return [];
+    const pic = alertPicture_(String((parsed.fields && parsed.fields.post_url) || ''), parsed.post, false);
+    return pic && pic.img ? [{ attachmentDataRef: chatUploadImage_(ctx.spaces.analyst.id, pic.img) }] : [];
+  } catch (e) {
+    ctx.log(`the corrected alert goes without the post's picture: ${truncate_(String((e && e.message) || e), 200)}`);
+    return [];
+  }
+}
+
+/**
+ * The auto-correct space: what Gemini suggested and the agentic assistant left as Burson wrote it (under
+ * autocorrect_min_confidence: review.unsure), in the run log only; the space is told nothing about it.
+ */
+function logLeftAsIs_(ctx, review) {
+  const left = (review.unsure || []).filter(u => u && u.field);
+  if (!left.length) return;
+  ctx.log('left as Burson wrote it (Gemini wasn\'t sure enough): ' + left.map(u => `${burLabel_(u.field)}` +
+    (u.proposed !== null && u.proposed !== undefined ? ` (maybe ${truncate_(fmtValue_(u.proposed), 60)})` : '') +
+    (u.confidence ? `, ${Math.round(u.confidence * 100)}% sure` : '') +
+    (u.finding ? `: ${truncate_(u.finding, 160)}` : '')).join('; '));
+}
+
+/**
+ * A Direct BigQuery or sheet-test card in the auto-correct space (handleNewAlert_ in place): it was posted before its
+ * review and is never edited, so the thread note under it says what the review changed and the summary the email uses
+ * (changeNoteText_ with inPlace: "The agentic assistant reviewed this alert. The card above was posted before the
+ * review; the email uses these corrections:"). Nothing when there's nothing to say; a note that fails is only logged.
+ */
+function inPlaceNote_(ctx, m, review) {
+  logLeftAsIs_(ctx, review);
+  const note = changeNoteText_(review, { inPlace: true, findLinks: switchOn_(ctx, 'autoFindLinks') });
+  if (!note) return;
+  try {
+    postTo_(ctx, ctx.spaces.analyst.id, note, m.thread || null, 'chg:' + m.name);
+  } catch (e) {
+    ctx.log(`couldn't post what changed under ${m.name}: ${(e && e.message) || e}`);
+  }
 }
 
 /**
@@ -1266,7 +1348,7 @@ function handleResend_(ctx, m, parsed, review, pending, report, history) {
       report.forwarded++;
     }
   } else if (!ctx.outboundBlocked) {
-    const note = fwd ? updateNote_(forwarded, review) : null;
+    const note = fwd ? updateNote_(forwarded, review, !!ctx.changeNotes) : null;
     if (note) postTo_(ctx, ctx.spaces.analyst.id, note, fwd.thread, 'upd:' + m.name);
   }
 
@@ -1350,7 +1432,7 @@ function handleResendNoWait_(ctx, m, parsed, review, pending, report, history) {
       report.forwarded++;
     }
   } else if (!ctx.outboundBlocked) {
-    const note = fwd ? updateNote_(forwarded, review) : null;
+    const note = fwd ? updateNote_(forwarded, review, !!ctx.changeNotes) : null;
     if (note) postTo_(ctx, ctx.spaces.analyst.id, note, fwd.thread, 'upd:' + m.name);
   }
 
@@ -1903,12 +1985,15 @@ function bursonOut_(ctx, fwd, key) {
  * Posts a message. In the Burson space it gets a last check first: anything that would leak is replaced by a
  * generic request (`allow` = values from Burson's own alert shown in the text). Every Burson-space post and every
  * answer (`key` 'ans:' / 'anaans:', in any space) goes in this flow's Message log as the bot's own (own_post), kept for
- * good: whatever else is lost, the bot never takes it for a person's message (isOwnMessage_).
+ * good: whatever else is lost, the bot never takes it for a person's message (isOwnMessage_). `attachments`
+ * (optional): Chat.gs chatUploadImage_'s, uploaded to that space first (forwardAlert_'s picture of the post).
  */
-function postTo_(ctx, space, text, thread, key, allow, skipGuard) {
+function postTo_(ctx, space, text, thread, key, allow, skipGuard, attachments) {
   const burson = space === ctx.spaces.burson.id;
   const body = burson && !skipGuard ? bursonSafeText_(ctx, text, allow) : truncate_(text, MAX_TEXT_);
-  const msg = ctx.chat.post(space, body, { thread: thread || null, key });
+  const opts = { thread: thread || null, key };
+  if (attachments && attachments.length && !burson) opts.attachments = attachments;
+  const msg = ctx.chat.post(space, body, opts);
   if (msg && msg.name) {
     if (burson || /^(?:ans|anaans):/.test(String(key || ''))) ctx.store.recordOwnPost(msg.name);
     ctx.recent.add(msg.name, msg.createTime || ctx.now());

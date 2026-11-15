@@ -97,8 +97,9 @@ module.exports = H => {
     t.poll();
     const top = t.chat.botPosts(AC).filter(m => !m.threadReply);
     const replies = t.chat.botPosts(AC).filter(m => m.threadReply);
-    eq(top.map(m => m.text), [F.MISTAKES_FIXED.replace('[Product]: Gemini App', '[Product(s)]: Gemini App')]);
-    assert.ok(replies.some(m => /^Updates made to this alert:\n- Product updated from Gems to Gemini App\n/.test(m.text)),
+    eq(top.map(m => m.text), ['✅ *Reviewed and corrected by the agentic assistant*\n' +
+      F.MISTAKES_FIXED.replace('[Product]: Gemini App', '[Product(s)]: Gemini App')]);
+    assert.ok(replies.some(m => /^The agentic assistant reviewed this alert and made these changes:\n- Product: Gems to Gemini App\n/.test(m.text)),
       'the thread says what changed');
     eq(t.chat.botPosts(REAL), []);  // the live space is only read
   });
@@ -293,7 +294,7 @@ module.exports = H => {
     eq(lineOf(B.rebuildAlert_(F.MISTAKES, B.parseAlert_(F.MISTAKES), r.fields, r.changed), '[Engagement]'), '[Engagement]: HIGH (29425 engagements)');
   });
 
-  test('standalone Auto-correct space (B10; B9 and B4 blank; B25 the live space, read only; Testing): a live-layout alert with a wrong product, a wrong level and a summary Gemini rewrites is posted corrected in every line the note names (the summary paragraph, "[Product(s)]:", "[Engagement]:" with Burson\'s own "(N engagement)", the "SOCIAL ALERT" and [Code] lines), its fixed lines as Burson wrote them; and the Social Alert email carries the corrected summary and the corrected alert\'s own [Code]', () => {
+  test('standalone Auto-correct space (B10; B9 and B4 blank; B25 the live space, read only; Testing): a live-layout alert with a wrong product, a wrong level and a summary Gemini rewrites is posted corrected under the bot\'s own first line (the summary paragraph, "[Product(s)]:", "[Engagement]:" with Burson\'s own "(N engagement)", the "SOCIAL ALERT" and [Code] lines; the note names each change but the summary), its fixed lines as Burson wrote them; and the Social Alert email carries the corrected summary and the corrected alert\'s own [Code]', () => {
     const t = e2e(null, { noWait: true });
     t.bot.setup();
     t.set('B30', 'tester@testing.test');
@@ -312,19 +313,24 @@ module.exports = H => {
       .replace('| 373 Engagements', '| 29425 Engagements').replace(',373,exampleteacher,Child Safety,Brand,', ',29425,exampleteacher,Child Safety,Gems,');
     t.chat.say(REAL, wrong, { sender: 'users/zapier', type: 'BOT', displayName: 'Zapier' });
     t.poll();
-    const top = t.chat.botPosts(AC).filter(m => !m.threadReply && m.text.indexOf('Automated Alert via Burson') === 0);
+    const top = t.chat.botPosts(AC).filter(m => !m.threadReply && m.text.indexOf('✅ *Reviewed and corrected by the agentic ' +
+      'assistant*\nAutomated Alert via Burson') === 0);
     eq(top.length, 1);
     const CODE = 'Brand - Consumer boycotts & protests,29425,exampleteacher,Child Safety,Gemini App,Ongoing Issue';
     const was = wrong.split('\n');
-    const now = top[0].text.split('\n');
+    const now = top[0].text.split('\n').slice(1);  // under the bot's own first line
     eq(now.length, was.length);
     eq(now.filter((l, i) => l !== was[i]), [
       '🟥SOCIAL ALERT🟥: Gemini App | "No to Big Tech in Our Schools" Protest | Instagram | 29425 Engagements',
       '[Engagement]: HIGH (29425 engagement)', '[Product(s)]: Gemini App', REWRITE, `[Code]: ${CODE}`]);
     FIXED_LINES.forEach(l => assert.ok(now.includes(l), l));
-    const note = t.chat.botPosts(AC).find(m => m.threadReply && m.thread.name === top[0].thread.name && /^Updates made to this alert:/.test(m.text));
+    const note = t.chat.botPosts(AC).find(m => m.threadReply && m.thread.name === top[0].thread.name &&
+      /^The agentic assistant reviewed this alert and made these changes:/.test(m.text));
     assert.ok(note, 'the thread says what changed');
-    ['- Product updated from Gems to Gemini App', `- Summary updated to "${REWRITE}"`].forEach(l => assert.ok(note.text.includes(l), note.text));
+    // the summary isn't listed (the summary paragraph is the agentic assistant's in this space; the original's link
+    // shows Burson's wording)
+    ['- Product: Gems to Gemini App', '- Engagement: LOW to HIGH'].forEach(l => assert.ok(note.text.includes(l), note.text));
+    assert.ok(!/Summary/.test(note.text), note.text);
     // the Social Alert (only to the tester while Testing): the corrected summary first, and the corrected alert's code
     const social = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
     eq(social.length, 1);

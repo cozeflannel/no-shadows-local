@@ -553,6 +553,14 @@ class BursonQAConfig(ConfigModel):
     # Gemini checks that may become fix requests: blocking = exposure tag, product, Sensitive Topics; warning = KOF,
     # issue name, summary wording. Anything below llm_min_confidence is a "double-check" note for analysts instead.
     llm_fix_severities: list[str] = Field(default_factory=lambda: ["blocking", "warning"])
+    # The Apps Script bot's Auto-correct space (B10) only: Gemini's value is applied from this confidence (the agentic
+    # assistant decides instead of leaving a double-check; below it Burson's value stays), never on the summary or on a
+    # field the rules already corrected
+    autocorrect_min_confidence: float = 0.6
+    # The Apps Script bot's Auto-correct space (B10) only: the review call also writes the alert's summary paragraph
+    # (its web background only when the call came back with web sources), for the corrected alert, its thread note and
+    # the Social Alert email
+    autocorrect_writeup: bool = True
     check_issue_status: bool = True  # "New" when the same issue was already alerted in the last 14 days -> fix request
     pending_fix_hours: int = 48  # an alert for the same post within this window of a fix request is Burson's fix
     start_lookback_minutes: int = 15  # a new Burson space (first run or after a switch) is read from N minutes back

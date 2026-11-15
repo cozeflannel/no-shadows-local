@@ -176,8 +176,10 @@ module.exports = H => {
     assert.match(B.safeGenericText_(true), /The alert has been updated, so there is no need to resend it\./);
     eq([B.forwardFooter_(review(F.NO_LINK)), B.forwardFooter_(review(F.NO_LINK), true)],
       ['QA: Link missing (requested from Burson)', 'QA: Link missing (processed without waiting for Burson; Burson was told)']);
-    eq([B.changeNoteText_(review(F.NO_LINK)), B.changeNoteText_(review(F.NO_LINK), true)],
-      ['Still needs Burson: Link missing', 'Processed without waiting for Burson: Link missing']);
+    // the auto-correct note says the same either way: the link isn't fixed, and why (Auto-find missing links, row 14)
+    eq([B.changeNoteText_(review(F.NO_LINK)), B.changeNoteText_(review(F.NO_LINK), { findLinks: true })],
+      ['Not fixed: Burson\'s alert has no link to the post (Auto-find missing links, row 14, is OFF)',
+        'Not fixed: Burson\'s alert has no link to the post, and the listening feeds had no match']);
   });
 
   test('Never wait on Burson: a question in a decided alert\'s thread, end to end: OFF Gemini is told the fixes requested (v1), ON what the bot changed and that it was processed (❌)', () => {

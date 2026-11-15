@@ -1855,17 +1855,35 @@ test('Mirror.gs: copies only top-level Zapier alerts from live Burson into the m
 // The auto-correct test space (AutoCorrect.gs): the bot fixes live alerts itself, beside the unchanged Mirror space
 // =============================================================================================================
 
-test('auto-correct space: the change note is short ("X to Y"; a rewrite shows only its new wording), its emails say which space they came from, and the space must be a Google-only space of its own', () => {
-  eq(B.changeNoteText_(review(F.MISTAKES)), 'Updates made to this alert:\n- Product updated from Gems to Gemini App\n- Social Network updated from Instagram to X\n' +
-    '- Priority banner updated from P2 to P0\n- Engagement updated from LOW to HIGH');
-  assert.ok(!/→|->|\(was /.test(B.changeNoteText_(review(F.MISTAKES))));
-  eq(B.changeNoteText_(review(F.NO_LINK), true), 'Processed without waiting for Burson: Link missing');  // Never wait on Burson ON
+test('auto-correct space: the change note says who changed what ("- Product: Gems to Gemini App"; added / removed values; no arrows), what only Burson can supply and why the bot couldn\'t, never a double-check or the summary; its emails say which space they came from, and the space must be a Google-only space of its own', () => {
+  const head = 'The agentic assistant reviewed this alert and made these changes:';
+  eq(B.changeNoteText_(review(F.MISTAKES)), `${head}\n- Product: Gems to Gemini App\n- Social Network: Instagram to X\n` +
+    '- Priority banner: P2 to P0\n- Engagement: LOW to HIGH');
+  assert.ok(!/→|->|\(was |updated/.test(B.changeNoteText_(review(F.MISTAKES))));
+  // a missing link: why the bot couldn't fix it, whether Never wait on Burson is ON or OFF
+  eq([B.changeNoteText_(review(F.NO_LINK)), B.changeNoteText_(review(F.NO_LINK), { findLinks: true })],
+    ['Not fixed: Burson\'s alert has no link to the post (Auto-find missing links, row 14, is OFF)',
+      'Not fixed: Burson\'s alert has no link to the post, and the listening feeds had no match']);
   eq(B.changeNoteText_(review(F.P0_OK)), '');  // nothing changed: no note at all
-  const rewrite = { fixes: [{ field: 'summary', old: 'A summary Burson wrote that was wrong.', new: 'X user posted a video of AI Overviews.' }],
-    silentFixes: [], missing: [], unsure: [{ field: 'exposure_tag', proposed: 'Product - Perceived bias' }] };
-  eq(B.changeNoteText_(rewrite), 'Updates made to this alert:\n- Summary updated to "X user posted a video of AI Overviews."\n' +
-    'Double-check: Exposure Tag (may be Product - Perceived bias)');
+  // a value the alert didn't have, one taken out, another field Burson only can fix; the summary and a double-check never
+  const mixed = { fixes: [{ field: 'summary', old: 'A summary Burson wrote that was wrong.', new: 'X user posted a video of AI Overviews.' },
+    { field: 'post_url', old: '', new: 'https://x.com/a/status/2109952063492993159' }, { field: 'risk_tags', old: ['Politics'], new: [] }],
+  silentFixes: [{ field: 'other_products', old: [], new: ['Search'] }, { field: 'alert_name', old: 'a', new: 'b' }],
+  missing: [{ field: 'post_date', problem: 'is in the future' }],
+  unsure: [{ field: 'exposure_tag', proposed: 'Product - Perceived bias', confidence: 0.5 }] };
+  eq(B.changeNoteText_(mixed), `${head}\n- Link: added https://x.com/a/status/2109952063492993159\n- Sensitive Topic: removed Politics\n` +
+    '- Other Google Products: added Search\nNot fixed: Time/Date Post Went Live is in the future');
+  eq(B.changeNoteText_({ fixes: mixed.fixes.slice(0, 1), silentFixes: [], missing: [], unsure: mixed.unsure }), '');
   eq(B.changedFields_(review(F.MISTAKES)).map(x => x.field), ['product', 'social_network', 'priority', 'engagement_level']);
+  eq(B.noteChanges_(mixed).map(x => x.field), ['post_url', 'risk_tags', 'other_products']);
+  // every way the note can start is the bot's own, and so are the heads notes had before (they stay in the space)
+  [head, 'Not fixed: Link missing', 'Sources: Reuters', 'Burson resent this alert. These values are not in the alert above:\n- x',
+    'The post\'s own media wasn\'t reviewed: reviewing it crashed the bot', 'Gemini couldn\'t review the post\'s video, so it had only the alert text',
+    'The agentic assistant reviewed this alert. The card above was posted before the review; the email uses these corrections:',
+    'Updates made to this alert:\n- x', 'Still needs Burson: Link missing', 'Processed without waiting for Burson: Link missing',
+    'Double-check: Product', 'Burson resent this alert with updates:\n- x']
+    .forEach(t => assert.ok(B.isBotFormattedText_(t), t));
+  assert.ok(!B.isBotFormattedText_('The agentic assistant is wrong here, the product is Search'));
 
   const reply = { subject: '[Auto-correct test] SOCIAL ALERT: x' };
   eq([B.taggedSubject_('SOCIAL ALERT: x', 'Auto-correct test', null), B.taggedSubject_('Re: ' + reply.subject, 'Auto-correct test', reply),
@@ -1956,12 +1974,13 @@ test('auto-correct space (B10) beside the Mirror space: each live Zapier alert i
   // AlertMemory prevents sending a duplicate second Social Alert to B30 when Mirror already emailed it in the same tier
   const acTop = t.chat.botPosts(AC).filter(m => !m.threadReply);
   const acReplies = t.chat.botPosts(AC).filter(m => m.threadReply);
+  // (its first line is the bot's own: the fake's message ids give no link to Burson's message, so there's none here)
   assert.strictEqual(acTop.length, 1);
-  assert.strictEqual(acTop[0].text, F.MISTAKES_FIXED);
+  assert.strictEqual(acTop[0].text, '✅ *Reviewed and corrected by the agentic assistant*\n' + F.MISTAKES_FIXED);
   eq(t.chat.botReactions(acTop[0].name), ['❌']);
   eq(acReplies.map(m => m.text), [
-    'Updates made to this alert:\n- Product updated from Gems to Gemini App\n- Social Network updated from Instagram to X\n' +
-      '- Priority banner updated from P2 to P0\n- Engagement updated from LOW to HIGH',
+    'The agentic assistant reviewed this alert and made these changes:\n- Product: Gems to Gemini App\n- Social Network: Instagram to X\n' +
+      '- Priority banner: P2 to P0\n- Engagement: LOW to HIGH',
   ]);
   // One Social Alert total (Mirror's), only to the tester — zero duplicate email from B10!
   const sent = t.g.gmail.sentMessages();
@@ -4569,7 +4588,7 @@ test('multi-product alerts: parses compound [Product] lines, enriches via Gemini
   const reparsedPx = parse(rebuiltPx);
   eq(reparsedPx.fields.product, 'Pixel');
   eq(plain(reparsedPx.fields.other_products), [androidCanon]);
-  assert.match(B.changeNoteText_(revPx, true), /- Other Google Products added: Android \(Android OS & Google TV\)/);
+  assert.match(B.changeNoteText_(revPx), /\n- Other Google Products: added Android \(Android OS & Google TV\)/);
 
   // 3. Escalation, recipient routing, Social Alert email, and T&S single-select dropdown compatibility
   const escPx = B.escalation_(revPx.fields, { now: NOW });

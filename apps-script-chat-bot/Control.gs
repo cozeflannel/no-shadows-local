@@ -116,7 +116,9 @@ const CONTROL_HELP_ = [
     'Google-only training space\'s link in Mirror space (B9); it copies them from S-F Burson (B25). Clear B9 to stop ' +
     'mirroring.',
   '• To test the bot fixing alerts itself, paste a Google-only test space\'s link in Auto-correct space (B10). Each ' +
-    'live Burson alert (from S-F Burson, B25) is posted there already corrected, with what changed in its thread, and ' +
+    'live Burson alert (from S-F Burson, B25) is posted there already corrected, marked as reviewed by the agentic ' +
+    'assistant with a link to Burson\'s original, its summary written by Gemini (with web background when the web ' +
+    'search found sources) and the post\'s own picture, with what changed in its thread, and ' +
     'the bot works it there like an IM (emojis, the Social Alert email to the tester, the T&S test-form link, answers). ' +
     'It never posts or reacts in the Burson space. C10 shows how it is doing. Clear B10 to stop.',
   '• Rows 11-24, 27-29, 32, 34, 36-40 and 46 are switches for what the bot may do on its own. Each starts OFF, and OFF keeps the bot ' +

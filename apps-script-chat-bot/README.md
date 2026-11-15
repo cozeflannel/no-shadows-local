@@ -204,16 +204,43 @@ right after the Mirror space's run:
    posts, reacts or answers, and it ignores people's messages and thread replies. Its chat client refuses any write to
    that space.
 2. It reviews each alert as it does everywhere, then posts the **corrected alert** in the test space, in Burson's own
-   format, instead of asking Burson for the fixes.
-3. A short note in the alert's thread says what it changed, for example `Product: Gems to Gemini App`. A rewritten
-   text shows only its new wording. Anything only Burson can add (for example a missing link) is listed as "Still
-   needs Burson". There's no note when nothing changed.
-4. It works the alert there as an IM would: the legend emojis, the Social Alert email (always in Testing, so only to the stand-in; its subject starts with `[Auto-correct test]`, so you can tell it from the Mirror space's), the pre-filled
+   format, instead of asking Burson for the fixes. Its first line is the bot's own: `✅ *Reviewed and corrected by the
+   agentic assistant* · Original alert` when the note below lists a change (`✅ *Reviewed by the agentic assistant*`
+   otherwise), "Original alert" linking to Burson's message in S-F Burson (only its members can open it). Everything
+   that reads the alert back skips that line. The post's own picture (its photo, a frame or the cover of its video, what
+   a quoted post or link card shows; never the picture its page shows in link previews, never a generated one) goes
+   under the alert when the run has a minute left for it.
+3. **The write-up.** The review call the alert already gets (no extra call) also writes the summary paragraph, in
+   English, at most 600 characters, from everything that call has (the post and its media, Burson's text, the Resources
+   documents, the Guidance, earlier alerts, its web search): who posted it and what it says, what Google is said to have
+   done, and who the people named are and what outlets say, but that background only when the call came back with web
+   sources (`autocorrect_writeup` in the YAML turns it off). It takes the place of Burson's summary in the corrected
+   alert and in the Social Alert email (nothing else in the email changes). It's no correction: Burson's summary is what
+   the rules read, the Alert log keeps, and the link to the original shows.
+4. **The note** in the alert's thread says who changed what:
+   ```
+   The agentic assistant reviewed this alert and made these changes:
+   - Product: Gems to Gemini App
+   - Other Google Products: added Search
+   ```
+   then, each on its own line when it applies: what only Burson can supply (`Not fixed: Burson's alert has no link to
+   the post, and the listening feeds had no match`, or `(Auto-find missing links, row 14, is OFF)`), the Comms / Status
+   Context line, that the post's own media wasn't reviewed, and `Sources: …` (the outlets' names, never links) when the
+   write-up has background from the web. The agentic assistant decides: a Gemini value it's at least 60% sure of
+   (`autocorrect_min_confidence`; the main flow keeps 90%) is applied and listed, never on a field the rules already
+   corrected, never to blank a value and never on the summary; below that Burson's value stays (the run log says so),
+   with nothing for the reader to double-check. The summary isn't listed. There's no note when there's nothing to say.
+   A Direct BigQuery card is posted before its review and never edited, so its note starts `The agentic assistant
+   reviewed this alert. The card above was posted before the review; the email uses these corrections:` and lists the
+   write-up as `- Summary: …`.
+5. It works the alert there as an IM would: the legend emojis, the Social Alert email (always in Testing, so only to the stand-in; its subject starts with `[Auto-correct test]`, so you can tell it from the Mirror space's), the pre-filled
    T&S test-form link in the alert's thread, the 🧑‍💻 escalation-protocol ping (to the stand-in), and answers to questions asked there.
-5. When the IMs in the live space ask Burson for fixes and Burson resends, the resend counts as the same alert: nothing
-   new is posted unless the priority or engagement went up.
+6. When the IMs in the live space ask Burson for fixes and Burson resends, the resend counts as the same alert: nothing
+   new is posted unless the priority or engagement went up. A resend with a value the alert lacks gets a note
+   `Burson resent this alert. These values are not in the alert above:` (the bot never edits a message it posted).
 
-C10 shows its status and today's counts (alerts, corrected, Social Alerts sent, questions answered). Its records are
+C10 shows its status and today's counts (alerts, corrected: the alerts whose note lists a change, Social Alerts sent,
+questions answered). Its records are
 kept apart from the Mirror's (its rows in the Alert log end in "(auto-correct)"), so the Results tab can compare the
 two. Clear B10 (or run `stopAutoCorrect()`) to stop it. It refuses S-F Burson (B25), a space people outside Google can
 join, and a space the bot already posts in.
@@ -632,6 +659,10 @@ started today.
   before Burson posted, and its reason). Column C shows `last check … · N posts today`.
 - **Sandbox**: emails, DMs and forms for these alerts follow the same stand-in rules as any alert. Nothing is written to
   BigQuery.
+- **In the Auto-correct space** (B10 standing alone), a card is reviewed after it was posted and is never edited: when
+  the review changes something, or writes the summary, a note in the card's thread lists it, starting `The agentic
+  assistant reviewed this alert. The card above was posted before the review; the email uses these corrections:`, and
+  the Social Alert email uses the corrections and the write-up.
 
 #### Row 16: Write back to SLRR BigQuery
 
@@ -903,7 +934,7 @@ for the next run):
     Alert or T&S form). A resend whose priority or engagement went up is forwarded as a new alert and decided again.
     An alert asked of Burson while the switch was OFF is processed on its resend.
   - Today (B7) counts the alerts corrected (Burson told); the auto-correct space's note lists what was missing as
-    "Processed without waiting for Burson"; the Results tab says the bot fixed the mistakes itself and went on without
+    "Not fixed: …" (with the switch OFF too); the Results tab says the bot fixed the mistakes itself and went on without
     the missing details; answers to Burson say what the bot changed. Auto-send (row 11) still leaves an alert missing
     something only Burson knows a draft for a person, saying why.
 - **Turning it OFF** while an alert decided with it ON could still be resent (48 hours): Burson was told not to resend,
@@ -1240,6 +1271,10 @@ To change this, edit the `burson_qa:` section of `config/default_config.yaml`:
 - `llm_min_confidence: 0.9` is the confidence needed.
 - `llm_fix_severities: [blocking, warning]` covers all six fields. Set it to `[blocking]` to limit Gemini to exposure
   tag, product and Sensitive Topics. KOF, issue name and summary then become double-check notes.
+- In the Auto-correct space (B10) the agentic assistant decides instead: `autocorrect_min_confidence: 0.6` is the
+  confidence there (never on a field the rules already corrected, never to blank a value, never on the summary, and
+  only for the checks `llm_fix_severities` covers); below it Burson's value stays, and there's no double-check note.
+  `autocorrect_writeup: true` has the same review call write the summary paragraph there (see "The auto-correct space").
 
 KOF comes from Burson's own lists: `[KOF]: Viral KOFs (KOFs)` or `[KOF]: CAM Tech/AI (INFs)` means the author is a KOF,
 whatever the engagement, and the Engagement line keeps the level for the count (that's how Burson writes them and how
@@ -1249,7 +1284,8 @@ the SLRR log records them). Gemini can't turn a listed author into "No".
 for Enterprise) for what Burson's write-up doesn't say: news coverage, whether a claim or incident is real, who the
 author is, and whether Google has responded. Answers to Burson never search. `web_grounding: enterprise | google | off`
 switches it; if Vertex AI refuses the tool, the bot retries without it and leaves it off for 6 hours. The searches and
-sources Gemini used are in the run log.
+sources Gemini used are in the run log; in the Auto-correct space, the write-up's background comes only from them and
+the note names them (`Sources: …`).
 
 **Earlier alerts.** Gemini also sees earlier alerts: the bot's own from the last 14 days and the SLRR alert log's, for
 the same author (90 days), for the same post, and for any post this one replies under or quotes (whoever posted it),

@@ -8,7 +8,8 @@
  * escalation, emails, forms, internal teams, tools, ids or people. guardHits_() checks every piece of text that can carry such details
  * (Gemini's answers, its reasons and suggested wording); Bot.gs runs a last check on every Burson-space post.
  * Analysts' text only: the "Comms / Status Context" line (Check outage & comms docs, Control tab row 20) in the
- * auto-correct space's change note and in analyst answers; Burson never hears it.
+ * auto-correct space's change note and in analyst answers; Burson never hears it. The auto-correct space's own words
+ * (reviewedLine_, changeNoteText_, updateNote_'s head there) name "the agentic assistant"; they never go to Burson.
  * Pure functions (Node-testable).
  */
 
@@ -114,14 +115,16 @@ function chatMarkupText_(text) {
 /**
  * True when `text` starts with a bot-generated message header (or legacy `GEN.prefix`), or is the bot's one-line fix
  * request ("Link is missing. Please add it. Then resend the alert here."), used as a fallback to recognize the bot's own
- * messages when neither their message id nor the bot's records say so (Bot.gs isOwnMessage_).
+ * messages when neither their message id nor the bot's records say so (Bot.gs isOwnMessage_). The Auto-correct space's
+ * too: the corrected alert's first line (reviewedLine_) and each way its thread note can start (changeNoteText_,
+ * updateNote_), with the heads those notes had before (notes already posted stay in the space).
  */
 function isBotFormattedText_(text) {
   const t = String(text || '').trim();
   if (!t) return false;
   if (typeof GEN !== 'undefined' && GEN && GEN.prefix && t.indexOf(GEN.prefix) === 0) return true;
   if (/(?:^|[.!?]\s)Then resend the alert here\.$/.test(t) && t.split('\n').length === 1) return true;  // fixRequestText_, one item
-  return /^(?:\uD83C\uDF21\uFE0F? \*Temp check|The alert (?:has been updated|regarding |was already submitted)|Please make the following updates|One more change:|A few changes are still needed|Please check this alert against the alert requirements|Here is what (?:needs to be updated|is left) on this alert:|This alert does not need any updates\.|I can help with questions about this alert|For escalated alerts, review and send the Social Alert draft|The Social Alert email for this alert has already been sent|QA corrected:|QA:|QA check:|Updates made to this alert:|Processed without waiting for Burson:|Still needs Burson:|Double-check:|Comms \/ Status Context:|Burson resent this alert with updates:|Dry run \(Burson space actions\):|Social Alert (?:sent|draft|update draft)|Could not (?:auto-submit the T&S form|check the T&S sheet|create the Social Alert draft)|No Social Alert draft was created|The Social Alert draft's T&S row wasn't updated|(?:(?:<users\/[^>\s]+>|@Incident Manager)\s+)?(?:Social Alert|Please ping the YouTube team|Could not create the Social Alert draft|T&S form needed)|T&S (?:form needed|is in\.|already has this post)|Outcome:|\*?Early Wave \/ Velocity Warning\*?|The bot (?:crashed the last time|was short of time)|The Burson QA bot (?:is set up|has had problems|is running again)|The relay with S-F Burson |An alert from S-F Burson couldn't be brought over|A message from S-F Burson couldn't be brought over|Not sent to |\*Escalation protocol\*)/.test(t);
+  return /^(?:\uD83C\uDF21\uFE0F? \*Temp check|The alert (?:has been updated|regarding |was already submitted)|Please make the following updates|One more change:|A few changes are still needed|Please check this alert against the alert requirements|Here is what (?:needs to be updated|is left) on this alert:|This alert does not need any updates\.|I can help with questions about this alert|For escalated alerts, review and send the Social Alert draft|The Social Alert email for this alert has already been sent|QA corrected:|QA:|QA check:|Updates made to this alert:|Processed without waiting for Burson:|Still needs Burson:|Double-check:|Comms \/ Status Context:|Burson resent this alert(?: with updates:|\.)|Dry run \(Burson space actions\):|✅️? \*Reviewed (?:and corrected )?by the agentic assistant\*|The agentic assistant reviewed this alert|Not fixed:|Sources:|The post's own media wasn't reviewed|Gemini couldn't review|Social Alert (?:sent|draft|update draft)|Could not (?:auto-submit the T&S form|check the T&S sheet|create the Social Alert draft)|No Social Alert draft was created|The Social Alert draft's T&S row wasn't updated|(?:(?:<users\/[^>\s]+>|@Incident Manager)\s+)?(?:Social Alert|Please ping the YouTube team|Could not create the Social Alert draft|T&S form needed)|T&S (?:form needed|is in\.|already has this post)|Outcome:|\*?Early Wave \/ Velocity Warning\*?|The bot (?:crashed the last time|was short of time)|The Burson QA bot (?:is set up|has had problems|is running again)|The relay with S-F Burson |An alert from S-F Burson couldn't be brought over|A message from S-F Burson couldn't be brought over|Not sent to |\*Escalation protocol\*)/.test(t);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -714,41 +717,83 @@ function forwardFooter_(review, noWait) {
   return lines.join('\n');
 }
 
-const CHANGE_SNIPPET_MAX_ = 160;
-
 /** What the bot changed on the alert: Burson's mistakes it fixed, and its own small fixes analysts see (not the name). */
 function changedFields_(review) {
   return review.fixes.concat((review.silentFixes || []).filter(x => !['alert_name', 'code'].includes(x.field)));
 }
 
 /**
- * The auto-correct test space: the thread note under the corrected alert, short enough that people read it. Each change
- * as "- Product updated from Gems to Gemini App" (no arrows); a rewritten text shows only its new wording; then what only Burson can
- * add (e.g. a missing link; noWait, Never wait on Burson ON: which the alert was processed without) and at most two
- * things to double-check; and, with Check outage & comms docs ON, the
- * "Comms / Status Context" line; and, when the post's own media was left out of the review (a review with it crashed the
- * run before, the run was too short for its video, or Gemini couldn't review it), that. '' when there's none of that (no
- * note is posted).
+ * The auto-correct space's changes: changedFields_ without the summary. The summary paragraph there is the write-up
+ * (Review.gs writeupOf_), rewritten on every alert, so a summary correction isn't listed as a change, nor does it make
+ * the alert "corrected" (reviewedLine_; Bot.gs counts these for C10). The Alert log keeps it as before (requestedItems_).
  */
-function changeNoteText_(review, noWait) {
-  const lines = changedFields_(review).map(x => (LONG_TEXT_FIELDS_.includes(x.field)
-    ? `- ${burLabel_(x.field)} updated to "${truncate_(String(x.new || '').trim(), CHANGE_SNIPPET_MAX_)}"`
-    : x.field === 'other_products' && isBlank_(x.old)
-      ? `- ${burLabel_(x.field)} added: ${truncate_(bursonValue_(x.field, x.new), 60)}`
-      : `- ${burLabel_(x.field)} updated from ${truncate_(bursonValue_(x.field, x.old), 60)} to ${truncate_(bursonValue_(x.field, x.new), 60)}`));
-  const out = lines.length ? ['Updates made to this alert:'].concat(lines) : [];
-  const missing = review.missing || [];
-  if (missing.length && noWait) {
-    out.push('Processed without waiting for Burson: ' +
-      missing.map(m => `${burLabel_(m.field)} ${m.problem}`).join(', '));
-  } else if (missing.length) {
-    out.push('Still needs Burson: ' + missing.map(m => `${burLabel_(m.field)} ${m.problem}`).join(', '));
+function noteChanges_(review) {
+  return changedFields_(review).filter(x => x.field !== 'summary');
+}
+
+const NOTE_HEAD_ = 'The agentic assistant reviewed this alert and made these changes:';
+const NOTE_HEAD_IN_PLACE_ = 'The agentic assistant reviewed this alert. The card above was posted before the review; the ' +
+  'email uses these corrections:';
+const NOTE_VALUE_MAX_ = 60;
+const REVIEWED_LINE_ = '✅ *Reviewed by the agentic assistant*';
+const CORRECTED_LINE_ = '✅ *Reviewed and corrected by the agentic assistant*';
+
+/**
+ * One change on the auto-correct space's note: "- Product: Gems to Gemini App"; a value the alert didn't have, "- Other
+ * Google Products: added Search"; one taken out, "- Other Google Products: removed Search". Values cut at 60, no arrows.
+ * Pure.
+ */
+function noteChangeLine_(x) {
+  const v = value => truncate_(bursonValue_(x.field, value), NOTE_VALUE_MAX_);
+  const label = burLabel_(x.field);
+  if (isBlank_(x.old)) return `- ${label}: added ${v(x.new)}`;
+  if (isBlank_(x.new)) return `- ${label}: removed ${v(x.old)}`;
+  return `- ${label}: ${v(x.old)} to ${v(x.new)}`;
+}
+
+/**
+ * Something only Burson can supply, on the auto-correct space's note, one line each: "Not fixed: Link isn't a valid
+ * link". A missing link says why the bot couldn't find it: findLinks, Auto-find missing links (Control row 14) was ON and
+ * the listening feeds had no post that clearly matched; else that switch is OFF. Pure.
+ */
+function notFixedLine_(m, findLinks) {
+  if (m.field === 'post_url' && m.problem === 'missing') {
+    return findLinks ? 'Not fixed: Burson\'s alert has no link to the post, and the listening feeds had no match'
+      : 'Not fixed: Burson\'s alert has no link to the post (Auto-find missing links, row 14, is OFF)';
   }
-  const unsure = (review.unsure || []).slice(0, 2);
-  if (unsure.length) {
-    out.push('Double-check: ' + unsure.map(u => burLabel_(u.field) +
-      (u.proposed !== null && u.proposed !== undefined ? ` (may be ${truncate_(fmtValue_(u.proposed), 60)})` : '')).join(', '));
+  return `Not fixed: ${burLabel_(m.field)} ${m.problem}`;
+}
+
+/** "Sources: Reuters, Folha" when the write-up has background from the web (Review.gs writeupOf_), else ''. Pure. */
+function writeupSourcesLine_(writeup) {
+  const names = writeup && writeup.background && Array.isArray(writeup.sources) ? writeup.sources.filter(Boolean) : [];
+  return names.length ? `Sources: ${names.slice(0, 3).join(', ')}` : '';
+}
+
+/**
+ * The auto-correct test space: the thread note under the corrected alert, saying who changed what. The head and one line
+ * per change (noteChanges_, noteChangeLine_):
+ *   The agentic assistant reviewed this alert and made these changes:
+ *   - Product: Gems to Gemini App
+ * then, each on its own line and only when it applies: what only Burson can supply (notFixedLine_: opts.findLinks is
+ * Auto-find missing links, row 14), the "Comms / Status Context" line (Check outage & comms docs ON), that the post's
+ * own media was left out of the review (a review with it crashed the run before, the run was too short for its video,
+ * or Gemini couldn't review it), and, when the write-up has background from the web, "Sources: …" last. The agentic
+ * assistant decides (Review.gs, autocorrect_min_confidence): there is nothing for the reader to double-check.
+ * opts.inPlace: a Direct BigQuery or sheet-test card, posted before its review and never edited (Bot.gs inPlaceNote_):
+ * NOTE_HEAD_IN_PLACE_, and the summary the email uses (the write-up, else a corrected summary) as "- Summary: …". ''
+ * when there's none of that (no note is posted). Pure.
+ */
+function changeNoteText_(review, opts) {
+  const o = opts && typeof opts === 'object' ? opts : {};
+  const lines = noteChanges_(review).map(noteChangeLine_);
+  if (o.inPlace) {
+    const fixed = (review.fixes || []).find(x => x.field === 'summary');
+    const summary = review.writeup ? review.writeup.text : fixed ? String(fixed.new || '').trim() : '';
+    if (summary) lines.push(`- Summary: ${truncate_(summary.replace(/\s+/g, ' '), WRITEUP_MAX_CHARS_)}`);
   }
+  const out = lines.length ? [o.inPlace ? NOTE_HEAD_IN_PLACE_ : NOTE_HEAD_].concat(lines) : [];
+  (review.missing || []).forEach(m => out.push(notFixedLine_(m, !!o.findLinks)));
   if (review.commsContext) {  // Check outage & comms docs (Control tab row 20), only while it's ON
     out.push(`Comms / Status Context: ${commsLine_(review.commsContext)}`);
   }
@@ -756,7 +801,31 @@ function changeNoteText_(review, noWait) {
   // short for its video or Gemini couldn't review it (Gemini.gs assess)
   const mediaNote = review.mediaHeld || review.mediaMissed;
   if (mediaNote) out.push(mediaNote);
+  const sources = writeupSourcesLine_(review.writeup);
+  if (sources) out.push(sources);
   return out.join('\n');
+}
+
+/**
+ * The link to Burson's own message `name` in S-F Burson (Outbox.gs outboxMessageLink_: https://chat.google.com/room/S/T/M),
+ * or '' when the name gives none (no "T.M" message id). Only members of that space can open it. Pure.
+ */
+function originalAlertLink_(name) {
+  const n = String(name || '');
+  if (!/^spaces\/[^/\s]+\/messages\/[^./\s]+\.[^./\s]+$/.test(n) || typeof outboxMessageLink_ !== 'function') return '';
+  const url = outboxMessageLink_(n);
+  return /^https:\/\/[^\s<>|]+$/.test(url) ? url : '';
+}
+
+/**
+ * The auto-correct space: the corrected alert's first line, the bot's own, above Burson's text. "✅ *Reviewed and
+ * corrected by the agentic assistant*" when the note lists a change (noteChanges_), else "✅ *Reviewed by the agentic
+ * assistant*"; then " · <link|Original alert>", Burson's message `sourceName` (originalAlertLink_), when there's a link.
+ * Everything that reads the alert back skips it (Alert.gs RX_BOILERPLATE_, isBotFormattedText_). Pure.
+ */
+function reviewedLine_(review, sourceName) {
+  const link = originalAlertLink_(sourceName);
+  return `${noteChanges_(review).length ? CORRECTED_LINE_ : REVIEWED_LINE_}${link ? ` · <${link}|Original alert>` : ''}`;
 }
 
 /** Fields whose values analysts work with; a resend that changes one of them gets a note under the forward. */
@@ -772,8 +841,10 @@ function snapshotFields_(fields) {
 }
 
 /** Thread note on the forwarded copy when Burson's resend changes what analysts have (e.g. adds the missing link).
- *  Rewording (issue name) isn't news: analysts already have the corrected wording. */
-function updateNote_(forwarded, review) {
+ *  Rewording (issue name) isn't news: analysts already have the corrected wording. The bot never edits a message it
+ *  posted, so the new values are only here: in the auto-correct space (autoCorrect, Bot.gs ctx.changeNotes) its head
+ *  says so ("Burson resent this alert. These values are not in the alert above:"). */
+function updateNote_(forwarded, review, autoCorrect) {
   const before = forwarded || {};
   const lines = [];
   NOTE_FIELDS_.filter(f => f !== 'issue_name').forEach(f => {
@@ -788,7 +859,9 @@ function updateNote_(forwarded, review) {
     lines.push(isBlank_(before[f]) ? `- ${burLabel_(f)} added: ${truncate_(bursonValue_(f, now), 200)}`
       : `- ${burLabel_(f)} updated to ${truncate_(bursonValue_(f, now), 80)} (was ${truncate_(bursonValue_(f, before[f]), 80)})`);
   });
-  return lines.length ? `Burson resent this alert with updates:\n${lines.join('\n')}` : null;
+  if (!lines.length) return null;
+  return `${autoCorrect ? 'Burson resent this alert. These values are not in the alert above:'
+    : 'Burson resent this alert with updates:'}\n${lines.join('\n')}`;
 }
 
 /** Dry run: what the bot would have done in the Burson space, posted under the forwarded copy instead. */

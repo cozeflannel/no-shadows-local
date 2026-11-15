@@ -27,7 +27,9 @@
  * Google's public statements) with Vertex AI's Web Grounding for Enterprise (`enterpriseWebSearch`, the default) or
  * Grounding with Google Search (`googleSearch`). Gemini 3.x returns the same structured JSON with the tool on. Answers to
  * Burson never search: they stick to the guide and the Resources tab. If Vertex AI refuses the tool (not enabled for the
- * project or model), the call is retried without it and grounding stays off for 6 hours. Searches and sources are logged.
+ * project or model), the call is retried without it and grounding stays off for 6 hours. Searches and sources are logged
+ * (in the Auto-correct space the review's write-up keeps its web background only when sources came back, and its note
+ * names them: Review.gs writeupOf_).
  *
  * Limits on every call: an output cap (generationConfig.maxOutputTokens, thinking included: GEMINI_MAX_TOKENS_) and, on
  * Gemini 3 and later, the thinking level (generationConfig.thinkingConfig.thinkingLevel: GEMINI_THINKING_LEVEL_). An

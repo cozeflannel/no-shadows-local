@@ -103,7 +103,8 @@ module.exports = H => {
     eq(t.get('B5'), '⚠️ S-F Burson space (B25) is blank: paste S-F Burson\'s link there. Until then the Auto-correct space (B10) is paused.');
     t.set('B25', REAL);
     t.poll();
-    eq([tops(t, AC).map(m => m.text), t.get('B5'), t.chat.botPosts(REAL)], [[F.MISTAKES_FIXED], '✅ Working', []]);
+    eq([tops(t, AC).map(m => m.text), t.get('B5'), t.chat.botPosts(REAL)],
+      [['✅ *Reviewed and corrected by the agentic assistant*\n' + F.MISTAKES_FIXED], '✅ Working', []]);
     assert.match(switchNote(t, 10), /^✓ SLRR Auto-correct Test · today: 1 alert, 1 corrected/);
   });
 
