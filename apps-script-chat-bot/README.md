@@ -430,7 +430,8 @@ lookup gives, for X, Bluesky, TikTok and Instagram; a story card: the signal's o
 post already (a Watch alert whose
 summary is the post's own words, the plain story card from the posts) or it is an update (its first card shows the
 post). A Direct BigQuery card is in Burson's format, so it gets no such line (a `Post:` line there would be read back as
-the post's content in place of its summary); its DSD / Brandwatch and Sprinklr summaries quote the post already.
+the post's content in place of its summary); its DSD / Brandwatch and Sprinklr summaries quote the post already. The
+corrected alert in the Auto-correct space follows the same picture rule (see "The auto-correct space").
 
 The `Building:` line is only on an alert for a build-up of small posts, and `Same story:` only when other posts are
 listed in its thread. The score, the watch's bar and topic and the source that found the post stay off the message; the

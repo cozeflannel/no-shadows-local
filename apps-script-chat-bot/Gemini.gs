@@ -22,8 +22,9 @@
  *                                                      question on a Social Alert thread from what the bot knows about the
  *                                                      alert only (no web search), or that it can't answer it
  *
- * Web grounding (settings.web_grounding: enterprise | google | off): the alert review and analyst answers can search the
- * web for what Burson's write-up doesn't say (news coverage, whether a claim or incident is real, who the author is,
+ * Web grounding (settings.web_grounding: enterprise | google | off): the alert review and analyst answers (and the Early
+ * Detection review and the Watch alerts' pre-read: EarlyDetection.gs, WatchAlerts.gs) can search the web for what
+ * Burson's write-up doesn't say (news coverage, whether a claim or incident is real, who the author is,
  * Google's public statements) with Vertex AI's Web Grounding for Enterprise (`enterpriseWebSearch`, the default) or
  * Grounding with Google Search (`googleSearch`). Gemini 3.x returns the same structured JSON with the tool on. Answers to
  * Burson never search: they stick to the guide and the Resources tab. If Vertex AI refuses the tool (not enabled for the

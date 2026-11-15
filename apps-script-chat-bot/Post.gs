@@ -31,10 +31,11 @@
  *                           lookup gives no picture for (Facebook, Reddit, Threads, LinkedIn, news and other sites;
  *                           Instagram and TikTok when their embed data shows none); never a site's logo, a banner or a
  *                           profile picture (PAGE_PIC_SKIP_RX_), never X's or Bluesky's pages (they show the author).
- *                           Only when alertPicture_ is asked for it (pageOk true): none of the bot's cards asks
+ *                           Only when alertPicture_ is asked for it (pageOk true): none of the bot's alerts asks
  *   alertPicture_(url, post, pageOk) the picture under an alert the bot posts itself (a watch alert, a Direct BigQuery
- *                           card, an Early Detection story card): the post's own imagery only (screenshotFor_'s),
- *                           downloaded by fetchScreenshot_; pagePicture_'s only with pageOk true
+ *                           card, an Early Detection story card, a corrected alert in the Auto-correct space): the
+ *                           post's own imagery only (screenshotFor_'s), downloaded by fetchScreenshot_; pagePicture_'s
+ *                           only with pageOk true
  *
  * Used for: the full video and audio Gemini watches and listens to (Media.gs), the thread that shows a post is a reply
  * under an alerted post or quotes one (Escalate.gs earlierAlerts_, BigQuery.gs related alerts), the post's own words in
@@ -664,7 +665,7 @@ function fetchScreenshot_(shot) {
 
 /**
  * The picture a post's page shows link previews (og:image, twitter:image), for an alert's picture when the post's own
- * lookup gives none and the caller asks for it (alertPicture_ with pageOk true; none of the bot's cards does): Facebook,
+ * lookup gives none and the caller asks for it (alertPicture_ with pageOk true; none of the bot's alerts does): Facebook,
  * Reddit, Threads, LinkedIn, news and other sites, and Instagram or TikTok when their embed data shows none. {url,
  * label, video: true when the page is a video's}, or null. Social sites' pages
  * are read as a link preview reads them (IG_EMBED_UA_: PAGE_PIC_AS_PREVIEW_RX_), other sites as the bot, then as a
@@ -755,10 +756,11 @@ function videoLink_(url) {
 
 /**
  * The picture under an alert the bot posts itself about the post at `url` (WatchAlerts.gs watch alerts, BigQuery.gs
- * Direct BigQuery cards, EarlyDetection.gs story cards): the post's own imagery only, as the Social Alert email picks it
- * (screenshotFor_ on `post`, or on lookupPost_(url) when `post` isn't given: its photo, its video's frame, a video's
- * thumbnail or cover, else its preview: what it shows from a quoted post or its link card); the picture its page shows
- * link previews (pagePicture_) only when `pageOk` is true, which none of the bot's cards asks for (a site's generic
+ * Direct BigQuery cards, EarlyDetection.gs story cards, Bot.gs correctedAlertPicture_: the corrected alert in the
+ * Auto-correct space): the post's own imagery only, as the Social Alert email picks it (screenshotFor_ on `post`, or on
+ * lookupPost_(url) when `post` isn't given: its photo, its video's frame, a video's thumbnail or cover, else its
+ * preview: what it shows from a quoted post or its link card); the picture its page shows link previews (pagePicture_)
+ * only when `pageOk` is true, which none of the bot's alerts asks for (a site's generic
  * image can be unrelated to the post); downloaded by fetchScreenshot_ (a PNG, JPEG, WebP or GIF of 3 MB at most).
  * {img: {cid, mime, name, base64, label}, video: true when it's a video's, or the link is a video's (videoLink_)}, or
  * null (none, or it couldn't be downloaded: the alert goes as text). Never generates one. Never throws.
