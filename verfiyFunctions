@@ -1,0 +1,331 @@
+verifyFastTriageLive
+
+LIVE_VERIFY_FAST_TRIAGE {
+  "endpoint": "https://generativelanguage.googleapis.com/v1beta/decisions",
+  "model": "gemini-decision-1",
+  "signals": {
+    "in_buffer": 17,
+    "in_queue": 0,
+    "asked": 5
+  },
+  "answered": 5,
+  "not_answered": [],
+  "latency_ms": {
+    "min": 276,
+    "median": 397,
+    "max": 645
+  },
+  "calls_today": {
+    "asked": 61,
+    "failed": 0,
+    "refused": 0,
+    "paused_until": "",
+    "why": ""
+  },
+  "bars": {
+    "about": 0.1,
+    "noise": 0.9,
+    "conf": 0.55,
+    "watch": 0.8,
+    "accounts": 3,
+    "independent": 0.3
+  },
+  "results": [
+    {
+      "alert_id": "ED-CLU-CLU-ca805de55d1d-202611151551",
+      "signal_type": "CLUSTER_EMERGENCE",
+      "accounts": 5,
+      "headline": "Low-tier claim cluster (5 accounts): They didn't even invited   😢\nWho wants techno gamerz \n👇",
+      "input_chars": 1070,
+      "ok": true,
+      "why": "",
+      "ms": 276,
+      "tokens": 3318,
+      "answers": {
+        "g": 0.84,
+        "r": 0.09,
+        "i": 0.29,
+        "n": 0.9,
+        "c": "Content - Negative reaction to owned social post",
+        "cp": 0.32,
+        "p0": 0.39,
+        "s": 0.99,
+        "l": 1,
+        "sc": 0.57,
+        "sp": [
+          0.26,
+          0.57,
+          0.11,
+          0.04,
+          0.02
+        ]
+      },
+      "p0_risk_group": false,
+      "never_held_back": false,
+      "hold_back": "routine noise (routine noise 0.9, severity low 0.57)",
+      "raise_early": false
+    },
+    {
+      "alert_id": "ED-CLU-CLU-b37f45c04c20-202611151551",
+      "signal_type": "CLUSTER_EMERGENCE",
+      "accounts": 5,
+      "headline": "Low-tier claim cluster (5 accounts): A screenshot of an e-commerce product page for a 'Gemini Ultra' account service, p…",
+      "input_chars": 1803,
+      "ok": true,
+      "why": "",
+      "ms": 645,
+      "tokens": 3452,
+      "answers": {
+        "g": 0.96,
+        "r": 0.29,
+        "i": 0.18,
+        "n": 0.82,
+        "c": "Product - Scams involving Google products",
+        "cp": 0.46,
+        "p0": 0.01,
+        "s": 1.45,
+        "l": 0,
+        "sc": 0.33,
+        "sp": [
+          0.33,
+          0.2,
+          0.2,
+          0.25,
+          0.03
+        ]
+      },
+      "p0_risk_group": false,
+      "never_held_back": false,
+      "hold_back": "no",
+      "raise_early": false
+    },
+    {
+      "alert_id": "ED-VEL-PRIORITY_TOPIC-9a3cca518b2684a246a42cfe2eedd230-202611151607",
+      "signal_type": "VELOCITY_SPIKE",
+      "accounts": 36,
+      "headline": "Low-tier velocity 1.9x (PRIORITY_TOPIC: Search & Shopping)",
+      "input_chars": 2460,
+      "ok": true,
+      "why": "",
+      "ms": 397,
+      "tokens": 3674,
+      "answers": {
+        "g": 0.52,
+        "r": 0.34,
+        "i": 0.03,
+        "n": 0.96,
+        "c": "none",
+        "cp": 0.86,
+        "p0": 0.05,
+        "s": 0.97,
+        "l": 0,
+        "sc": 0.48,
+        "sp": [
+          0.48,
+          0.25,
+          0.14,
+          0.09,
+          0.04
+        ]
+      },
+      "p0_risk_group": false,
+      "never_held_back": false,
+      "hold_back": "no",
+      "raise_early": false
+    },
+    {
+      "alert_id": "ED-CLU-CLU-4ac52b079302-202611151623",
+      "signal_type": "CLUSTER_EMERGENCE",
+      "accounts": 4,
+      "headline": "Low-tier claim cluster (4 accounts): i can’t even find the site when googling it",
+      "input_chars": 792,
+      "ok": true,
+      "why": "",
+      "ms": 504,
+      "tokens": 3216,
+      "answers": {
+        "g": 0.4,
+        "r": 0.11,
+        "i": 0.12,
+        "n": 0.95,
+        "c": "none",
+        "cp": 0.81,
+        "p0": 0.01,
+        "s": 0.59,
+        "l": 0,
+        "sc": 0.6,
+        "sp": [
+          0.6,
+          0.27,
+          0.1,
+          0.03,
+          0.01
+        ]
+      },
+      "p0_risk_group": false,
+      "never_held_back": true,
+      "hold_back": "no",
+      "raise_early": false
+    },
+    {
+      "alert_id": "ED-CLU-CLU-d9b703e8eea6-202611151623",
+      "signal_type": "CLUSTER_EMERGENCE",
+      "accounts": 5,
+      "headline": "Low-tier claim cluster (5 accounts): A close-up, high-contrast image showing white text on a dark gray background, crit…",
+      "input_chars": 1758,
+      "ok": true,
+      "why": "",
+      "ms": 344,
+      "tokens": 3430,
+      "answers": {
+        "g": 0.94,
+        "r": 0.3,
+        "i": 0.08,
+        "n": 0.89,
+        "c": "Product - Product failures - general software/service issues",
+        "cp": 0.22,
+        "p0": 0.12,
+        "s": 1.46,
+        "l": 1,
+        "sc": 0.4,
+        "sp": [
+          0.2,
+          0.4,
+          0.22,
+          0.1,
+          0.08
+        ]
+      },
+      "p0_risk_group": false,
+      "never_held_back": true,
+      "hold_back": "no",
+      "raise_early": false
+    }
+  ]
+}
+
+==================================================================
+
+verifyEarlyWaveBqLive
+
+LIVE_VERIFY_EARLY_WAVE_BQ {
+  "dataset": "brand-social-central-data.early_wave",
+  "ready": true,
+  "tables": [
+    {
+      "table": "story_snapshots",
+      "read": true,
+      "problems": [],
+      "not_written": []
+    },
+    {
+      "table": "story_posts",
+      "read": true,
+      "problems": [],
+      "not_written": []
+    },
+    {
+      "table": "signals",
+      "read": true,
+      "problems": [],
+      "not_written": []
+    },
+    {
+      "table": "signal_events",
+      "read": true,
+      "problems": [],
+      "not_written": []
+    },
+    {
+      "table": "triage_verdicts",
+      "read": true,
+      "problems": [],
+      "not_written": [],
+      "action_values_not_described": []
+    }
+  ]
+}
+
+====================================================================
+
+verifyLookbackAndPipelineLive
+
+LIVE_VERIFY_RESULT {
+  "sheetId": "1dVGeQjLOfEYoCm_iIOmXd5hLM3rOTY_71IF-J8Hl2AI",
+  "liveRow31": {
+    "a31": "BigQuery lookback",
+    "b31": "15 minutes",
+    "c31": "✓ Direct BigQuery alerts (row 15) and Early detection (row 19) look at posts from the last 15 minutes",
+    "a33": "How it works",
+    "dropdownChoices": [
+      "15 minutes",
+      "30 minutes",
+      "45 minutes",
+      "60 minutes"
+    ],
+    "allowInvalid": false,
+    "resolvedMinutes": 15
+  },
+  "choiceChecks": [
+    {
+      "choice": "15 minutes",
+      "minutes": 15,
+      "clamped": 15,
+      "note": "✓ Direct BigQuery alerts (row 15) and Early detection (row 19) look at posts from the last 15 minutes"
+    },
+    {
+      "choice": "30 minutes",
+      "minutes": 30,
+      "clamped": 30,
+      "note": "✓ Direct BigQuery alerts (row 15) and Early detection (row 19) look at posts from the last 30 minutes"
+    },
+    {
+      "choice": "45 minutes",
+      "minutes": 45,
+      "clamped": 45,
+      "note": "✓ Direct BigQuery alerts (row 15) and Early detection (row 19) look at posts from the last 45 minutes"
+    },
+    {
+      "choice": "60 minutes",
+      "minutes": 60,
+      "clamped": 60,
+      "note": "✓ Direct BigQuery alerts (row 15) and Early detection (row 19) look at posts from the last hour"
+    }
+  ],
+  "zeroCheck": {
+    "minutes": 60,
+    "blank": false,
+    "note": "⚠️ Couldn't read \"0\": Direct BigQuery alerts (row 15) and Early detection (row 19) look at posts from the last hour. Choose 15, 30, 45 or 60 minutes."
+  },
+  "liveBigQuery15Min": {
+    "earlyDetectionPendingReturned": 0,
+    "earlyDetectionError": null
+  },
+  "liveGeminiSoloTrackCheck": {
+    "by": "gemini",
+    "soloAlerts": [
+      {
+        "id": "solo_new_dev",
+        "url": "https://x.com/technews/status/1900000000000000010",
+        "platform": "X",
+        "engagement": 3400,
+        "why_met_guidelines": "Exceeds the 2,000 engagement threshold with 3,400 engagements and presents an official company response and remediation program regarding the previously alerted Pixel 10 battery swelling issue.",
+        "is_new_development": true,
+        "prior_alert_ref": "QA-LIVE-VERIFY-1",
+        "new_development_summary": "Google has officially confirmed a battery replacement program for affected Pixel 10 units."
+      }
+    ],
+    "discardedIds": []
+  },
+  "liveGeminiWaveSuppressionCheck": {
+    "by": "gemini",
+    "groupWavesCount": 0,
+    "discardedIds": [
+      "wave_m1",
+      "wave_m2",
+      "wave_m3",
+      "wave_m4",
+      "wave_m5"
+    ]
+  }
+}
