@@ -377,7 +377,8 @@ function pwTagText_(name) {
 function pwAlertParse_(text) {
   const t = String(text || '');
   if (!t.trim() || t.length > OTHER_TEXT_MAX_CHARS_) return null;
-  const bare = s => String(s || '').replace(/<(https?:\/\/[^|>\s]+)\|[^>]*>/g, '$1').replace(/\*/g, '').trim();
+  // one pass: a Chat link becomes its address, whole (an asterisk in it is part of the address), and Chat's bold marks go
+  const bare = s => String(s || '').replace(/<(https?:\/\/[^|>\s]+)\|[^>]*>|\*/g, (all, u) => u || '').trim();
   const lines = t.split(/\r?\n/).map(bare).filter(Boolean);
   const old = (lines[0] || '').match(/^\ud83d\udd2d\s*Watch alert · (.+)$/);
   const own = old ? null : ownCardHeadParse_(lines[0]);

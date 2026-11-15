@@ -962,7 +962,7 @@ function withFoundLink_(text, found) {
   const lines = String(text).split('\n');
   const line = `[Link]: ${url}`;
   const index = labelIndex_();
-  let at = lines.findIndex(l => RX_BOILERPLATE_.test(cleanLine_(l).trim().replace(RX_MD_, '').trim()));
+  let at = lines.findIndex(l => RX_FOOTER_.test(cleanLine_(l).trim().replace(RX_MD_, '').trim()));
   if (at < 0) {
     at = lines.findIndex(l => { const hit = splitLabel_(cleanLine_(l), index); return !!hit && hit.spec.name === 'code'; });
   }
@@ -992,7 +992,7 @@ function withTimestamp_(text, fields, changed) {
     lines.splice(link, 0, line);
     return lines.join('\n');
   }
-  let at = lines.findIndex(l => RX_BOILERPLATE_.test(cleanLine_(l).trim().replace(RX_MD_, '').trim()));
+  let at = lines.findIndex(l => RX_FOOTER_.test(cleanLine_(l).trim().replace(RX_MD_, '').trim()));
   if (at < 0) at = lines.findIndex(labelled('code'));
   if (at < 0) return `${String(text).replace(/\s+$/, '')}\n${line}`;
   if (at > 0 && !lines[at - 1].trim()) lines.splice(at - 1, 0, line);  // above the blank line before the reminder

@@ -3,8 +3,9 @@
 // (not only the "SOCIAL ALERT" line above it): the corrected alert has to read right on its own, and the note in its
 // thread only says what was changed.
 // The same for the rest of the live layout: its fixed lines are no part of the summary, a corrected summary replaces
-// Burson's paragraph, a corrected level keeps Burson's "(N engagement)", an empty label line gets its space, and the
-// Social Alert email carries the corrected alert's own [Code].
+// Burson's paragraph (and no line elsewhere that the bot doesn't know), a line the bot adds ([Link], [Timestamp]) goes
+// before the reminder at the bottom, a corrected level keeps Burson's "(N engagement)", an empty label line gets its
+// space, and the Social Alert email carries the corrected alert's own [Code].
 'use strict';
 
 module.exports = H => {
@@ -163,6 +164,74 @@ module.exports = H => {
     // found as one piece, it is replaced as it always was (a bullet before it stays)
     const bullet = base.replace(PARA, `- ${PARA}`);
     eq(diff(bullet, rebuilt(bullet)), [[`- ${PARA}`], [`- ${REWRITE}`]]);
+  });
+
+  test('a corrected summary, when Burson\'s paragraph isn\'t found as one piece, replaces the lines in Burson\'s place for the summary (below the "SOCIAL ALERT" line, above the [Link] line, the reminder or the [Code] line) and no others: lines the bot doesn\'t know above the title, among the footers or at the very end stay as Burson wrote them, also when they are longer than the summary; with nothing in the summary\'s place the alert is left as it is', () => {
+    const base = live('Brand', '[Product(s)]: Brand');
+    const rebuilt = text => {
+      const p = B.parseAlert_(text);
+      return B.rebuildAlert_(text, p, Object.assign({}, p.fields, { summary: REWRITE }), ['summary']);
+    };
+    const diff = (a, b) => [a.split('\n').filter(l => !b.split('\n').includes(l)), b.split('\n').filter(l => !a.split('\n').includes(l))];
+    const only = text => [diff(text, rebuilt(text)), rebuilt(text).split('\n').length - text.split('\n').length];
+    // two new fixed lines above the title, together longer than the paragraph: read with the summary (the bot doesn't
+    // know them), and both still there, where they were; the paragraph is what changes
+    const TOP = ['Reviewed by the Burson Brand Safety desk (24/7 coverage)',
+      'Escalation contacts and the alert archive are in the Brand Safety Tracking sheet'];
+    const top = `${TOP.join('\n')}\n${base}`;
+    assert.ok(TOP.join('').length > PARA.length);
+    eq(B.parseAlert_(top).fields.summary, TOP.concat([PARA]).join('\n'));
+    eq([only(top), rebuilt(top).split('\n').slice(0, 3)], [[[[PARA], [REWRITE]], 0], TOP.concat(['Automated Alert via Burson (beta)'])]);
+    // through the review, as a run does it (Gemini's rewrite of the summary), the same
+    const p = B.parseAlert_(top);
+    const r = B.reviewAlert_(p, { now: NOW, history: [], llm: summaryFix });
+    assert.ok(r.fixes.some(x => x.field === 'summary' && x.new === REWRITE), JSON.stringify(r.fixes.map(x => x.field)));
+    eq(diff(top, B.rebuildAlert_(top, p, r.fields, r.changed)), [[PARA], [REWRITE]]);
+    // one line longer than the paragraph: at the very end (under "Click here for link to post"), among the footers
+    // (under the reminder), and between the top lines and the "SOCIAL ALERT" line
+    const LONG = 'Questions about this alert? Reply in this thread and the Burson Brand Safety desk will answer within the hour, day or night.';
+    assert.ok(LONG.length > PARA.length);
+    eq(only(`${base}\n${LONG}`), [[[PARA], [REWRITE]], 0]);
+    eq(only(base.replace('go/SLRR-Database.', `go/SLRR-Database.\n${LONG}`)), [[[PARA], [REWRITE]], 0]);
+    eq(only(base.replace('Collection Requirements\n', `Collection Requirements\n${LONG}\n`)), [[[PARA], [REWRITE]], 0]);
+    // ... and with a hyperlink in the paragraph too, and no [Link] line (the reminder ends the summary's place)
+    const LINKED = 'Instagram user exampleteacher (5.8K followers) criticized Google <https://example.testing.test/a|in this post>.';
+    eq(only(`${TOP.join('\n')}\n${base.replace(PARA, LINKED)}`), [[[LINKED], [REWRITE]], 0]);
+    eq(only(`${base}\n${LONG}`.replace('[Link]: https://www.instagram.com/p/DPq1aBcDeFg/\n\n', '')), [[[PARA], [REWRITE]], 0]);
+    // an alert with no "SOCIAL ALERT" line (the older layout without it: the place starts under its first labelled
+    // line), a hyperlink in its paragraph and a line above it that is longer than the paragraph
+    const WORDY = `${LONG} ${LONG} ${LONG}`;
+    const AIO_PARA = F.AIO.split('\n').find(l => l.indexOf('An X user') === 0);
+    const AIO_LINKED = AIO_PARA.replace('a screenshot', '<https://example.testing.test/a|a screenshot>');
+    const older = `${WORDY}\n${F.AIO.replace('SOCIAL ALERT:\n', '').replace(AIO_PARA, AIO_LINKED)}`;
+    assert.ok(WORDY.length > AIO_PARA.length && B.parseAlert_(older).extra.header_line === undefined);
+    eq(only(older), [[[AIO_LINKED], [REWRITE]], 0]);
+    // nothing in the summary's place (no paragraph; the one line the bot doesn't know stands above the title, with a
+    // hyperlink in it, so it isn't found as one piece): Burson's line is not overwritten, the alert is as it was
+    const none = `Reviewed by <https://example.testing.test/a|the desk> today\n${base.replace(`${PARA}\n\n`, '')}`;
+    eq([B.parseAlert_(none).fields.summary, rebuilt(none) === none], ['Reviewed by https://example.testing.test/a today', true]);
+  });
+
+  test('a line the bot adds to a live-layout alert (the "[Link]" it found: Auto-find missing links; the "[Timestamp]" it added: Never wait on Burson) goes where it goes in every layout, before the reminder at the bottom ("As a reminder, all alerts can be found ..."): never above Burson\'s title, whose fixed lines are no reminder', () => {
+    const URL = 'https://www.instagram.com/p/DPq1aBcDeFg/';
+    const text = live('Brand', '[Product(s)]: Brand');
+    const noLink = text.replace(`[Link]: ${URL}\n\n`, '');
+    eq([noLink.indexOf('[Link]'), noLink.indexOf('Automated Alert via Burson'), noLink.includes(`${PARA}\n\nAs a reminder, `)], [-1, 0, true]);
+    const found = { post_url: { old: '', new: URL } };
+    const stamp = [{ video_timestamp: '03:13' }, ['video_timestamp']];
+    // the link the bot found: on its own line where Burson's would be, so the alert reads as Burson's with a link does
+    eq(B.withFoundLink_(noLink, found), text);
+    // the timestamp alone: right under the summary, above the blank line before the reminder
+    eq(B.withTimestamp_(noLink, stamp[0], stamp[1]), noLink.replace(`${PARA}\n`, `${PARA}\n[Timestamp]: 03:13\n`));
+    // both, as a run adds them (the link, then the timestamp above it)
+    eq(B.withTimestamp_(B.withFoundLink_(noLink, found), stamp[0], stamp[1]), text.replace(`[Link]: ${URL}`, `[Timestamp]: 03:13\n[Link]: ${URL}`));
+    // the first line is Burson's title in each
+    [B.withFoundLink_(noLink, found), B.withTimestamp_(noLink, stamp[0], stamp[1])].forEach(out => eq(out.split('\n')[0], 'Automated Alert via Burson (beta)'));
+    // the older layout is as it was
+    eq(B.withFoundLink_(F.NO_LINK, { post_url: { old: '', new: 'https://x.com/WasSamLowryEsq/status/2109952063492993159' } }), F.P0_OK);
+    // the reminder's lines (RX_FOOTER_) are, word for word, the first of the lines the alert's reading skips
+    // (RX_BOILERPLATE_): a footer added to one list and not to the other would be read into the summary, or not found here
+    eq(B.ev('RX_BOILERPLATE_').source.indexOf(`${B.ev('RX_FOOTER_').source.slice(0, -1)}|`), 0);
   });
 
   test('a line of the summary that starts "Google products:" or "Products:" (a boycott list in the post, say) is words of the summary, never the alert\'s product: the product, its other products and so the routing stay the labelled line\'s, the lines stay in the summary, and the product is still corrected', () => {

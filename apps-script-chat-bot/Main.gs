@@ -675,10 +675,13 @@ function poll() {
         if (ac) activity += activityOf_(ac.report);
         if (ac) followActivity += followupActivityOf_(ac.report);
         // Working alone in the Auto-correct space: Today (B7) says what C10 says, this run's alerts included (it was
-        // written above, before the flow ran). Written only when the flow changed it
+        // written above, before the flow ran). Written only when the flow changed it; a write that fails is logged and
+        // the steps below still run (the next run writes the cell)
         if (acStandalone && acToday !== null) {
           const todayNow = autoCorrectTodayCell_(props, dayKey_()) + amTodayText_();
-          if (todayNow !== acToday) control.getRange(7, 2).setValue(todayNow);
+          if (todayNow !== acToday) {
+            try { control.getRange(7, 2).setValue(todayNow); } catch (e) { console.error('could not update Today (B7): ' + ((e && e.message) || e)); }
+          }
         }
         // Temp checks (Control row 36, TempCheck.gs): what analysts asked for in a thread of the Mirror space or the Other
         // alerts space (queued by their flows above), worked now, after the alerts, in what's left of the run (one that

@@ -161,6 +161,7 @@ const HEAD_START_HEADER_ = ['Type', 'This app alerted (ET)', 'Story', 'Product',
 // `draft`), read back by the next rebuild (readHeadStartState_, which finds the columns by their names)
 const HEAD_START_STATE_COL_ = 19;
 const HEAD_START_TIME_COLS_ = [2, 6, 8, 15];       // a time each: this app's, Burson's, the IMs', Burson's on the post
+const HEAD_START_POST_WORDS_COL_ = 16;             // "Head start on the post": its words can be long (headStartRow_)
 const HEAD_START_WIDTHS_ = [[1, 330], [2, 140], [3, 320], [4, 140], [5, 220], [6, 140], [7, 160], [8, 140], [9, 160], [10, 190],
   [11, 130], [12, 110], [13, 110], [14, 110], [15, 140], [16, 160], [17, 130], [18, 110]];
 const HEAD_START_WIDE_ = 8;                        // the long texts (what's counted, the notes) are merged across A:H
@@ -437,7 +438,10 @@ function readHeadStartState_(sh) {
     const header = sh.getRange(head, 1, 1, Math.max(1, sh.getLastColumn())).getValues()[0].map(headStartText_);
     const col = header.indexOf(HEAD_START_HEADER_[HEAD_START_STATE_COL_ - 1]) + 1;
     if (!col) return out;
-    const state = sh.getRange(head + 1, col, last - head, 3).getValues();
+    // no further than the sheet's last column with anything in it: a person can delete the last state columns, and a
+    // read beyond the sheet's last column fails. A row without its time or its email/draft cell is no state, like any
+    // broken cell
+    const state = sh.getRange(head + 1, col, last - head, Math.min(3, header.length - col + 1)).getValues();
     let inTable = true;
     state.forEach((cells, i) => {
       const label = first[head + i];  // column A of this row
@@ -1084,6 +1088,9 @@ function writeHeadStartTab_(sh, r) {
   // the times of each story (this app's, Burson's, the IMs', Burson's on the post), as the Results tab shows its times
   marks.times.forEach(([first, count]) => HEAD_START_TIME_COLS_.forEach(col => fmt(() => sh.getRange(first, col, count, 1)
     .setNumberFormat('yyyy-mm-dd hh:mm'))));
+  // "Head start on the post" wraps in the stories' rows: with "(from this app's alert on this post, … ET)" it is wider
+  // than its column and has Burson's alert beside it, so unwrapped Sheets cuts it at the cell's edge
+  marks.times.forEach(([first, count]) => fmt(() => sh.getRange(first, HEAD_START_POST_WORDS_COL_, count, 1).setWrap(true)));
   // the state columns: for the next rebuild to read (readHeadStartState_), not for people. On a tab narrower than this
   // layout (a new one, or one from before the post-level columns, whose hidden state columns were where those are
   // now) every column is shown first. At any other rebuild the columns a person hid stay hidden

@@ -189,6 +189,53 @@ module.exports = H => {
     eq(t.chat.botPosts(H.REAL), []);
   });
 
+  test('standalone Auto-correct space: when the write of Today (B7) that follows the flow fails (Sheets, once), the run logs it and skips nothing after it: the Temp checks, the Proactive watch\'s step and the four report tabs (Results, Follow-up, Analysis, Head start) still get their turn in that run, and the next run writes the cell', () => {
+    const t = e2e(null, { noWait: true });
+    t.bot.setup();
+    t.set('B30', 'tester@testing.test');
+    const AC = 'spaces/AAQAautocorrect9';
+    t.chat.addSpace(AC, 'SLRR Unified Auto-correct');
+    t.set('B25', H.REAL);
+    t.set('B3', `https://chat.google.com/app/chat/${AC.replace('spaces/', '')}`);
+    t.set('B4', '');
+    t.set('B9', '');
+    t.set('B10', 'SLRR Unified Auto-correct');
+    t.poll();  // the Auto-correct flow starts reading the live space from here
+    t.g.clock.now += 60 * 1000;
+    t.chat.say(H.REAL, H.F.MISTAKES, { sender: 'users/zapier', type: 'BOT', displayName: 'Zapier' });
+    // Sheets fails once on that write: the one cell B7 (the run's own status write, before the flow, is B5:B7 at once)
+    const control = t.control();
+    const real = control.getRange.bind(control);
+    let failed = 0;
+    control.getRange = (r, c, nr, nc) => {
+      const range = real(r, c, nr, nc);
+      if (r === 7 && c === 2 && !nr && !nc) {
+        range.setValue = () => { failed++; throw new Error('Service Spreadsheets failed while accessing document'); };
+      }
+      return range;
+    };
+    // what comes after that write in the run, counted
+    const STEPS = ['runTempChecks_', 'proactiveWatchOff_', 'maybeRefreshSpeed_', 'maybeRefreshFollowUp_', 'maybeRefreshAnalysis_', 'maybeRefreshHeadStart_'];
+    const ran = {};
+    STEPS.forEach(name => {
+      const step = t.bot[name];
+      t.bot[name] = (...args) => { ran[name] = (ran[name] || 0) + 1; return step(...args); };
+    });
+    const logged = t.g.logs.length;
+    t.poll();
+    control.getRange = real;
+    const logs = t.g.logs.slice(logged);
+    eq([failed, STEPS.map(name => ran[name] || 0), logs.filter(l => /could not update Today \(B7\)|after the run:/.test(l))],
+      [1, [1, 1, 1, 1, 1, 1], ['ERROR could not update Today (B7): Service Spreadsheets failed while accessing document']]);
+    // the alert was handled as ever; only the cell is behind, until the next run
+    const COUNT = '1 alert, 1 corrected, 1 Social Alert sent, 0 questions answered';
+    eq([t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject)).length, t.get('B7'), t.get('C10'), t.get('B5')],
+      [1, 'No alerts yet today', `✓ SLRR Unified Auto-correct · today: ${COUNT}`, '✅ Working']);
+    t.poll();
+    eq([failed, t.get('B7')], [1, `${COUNT} (in the Auto-correct space, B10)`]);
+    eq(t.chat.botPosts(H.REAL), []);
+  });
+
   test('cell cap: no cell the bot writes goes over 49,000 characters; a JSON column stays JSON that parses, keeping its short fields', () => {
     assert.strictEqual(B.ev('SHEET_CELL_MAX_CHARS_'), 49000);
     const huge = 'x'.repeat(120000);

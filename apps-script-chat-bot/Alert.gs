@@ -22,6 +22,10 @@ const RX_BOILERPLATE_ = new RegExp('^(?:As a reminder,\\s*all alerts can be foun
   'Please note:\\s*screenshots are not available|(?:🔷🔍|🔷📊|🔍📊)?\\s*\\[?BigQuery\\b|' +
   'Automated Alert via Burson\\b|Note:\\s*This is an automated message\\b|Do Not Forward\\b|' +
   'This alert (?:does not meet|meets) the defined Collection Requirements\\b|Click here for link to post\\b)', 'i');
+// The ones of them that stand below an alert's summary: Burson's footers and the bot's own BigQuery lines, without the
+// live layout's fixed lines (most of those are the alert's first lines). A line the bot adds goes above the first of
+// these (Bot.gs withFoundLink_, withTimestamp_), and the summary's place ends there (rebuildAlert_)
+const RX_FOOTER_ = /^(?:As a reminder,\s*all alerts can be found|Note:\s*Brand-Social-Sends@|Please note:\s*screenshots are not available|(?:🔷🔍|🔷📊|🔍📊)?\s*\[?BigQuery\b)/i;
 const RX_COMPOUND_ENGAGEMENT_ = /^([A-Za-z ]+?)\s*\(\s*([\d,]+(?:\.\d+)?[km]?)\s*(?:engagements?)?\s*\)$/i;
 const RX_COMPOUND_NAME_ = /^(.+?)\s+\/\s+(Ongoing Issue|New\s*\/\s*not previously reported over the past 14 days|NEW|Recently Reported)\s*$/i;
 const RX_COMPOUND_KOF_ = /^(yes|true|1|no|false|0)\s*\(([^)]+)\)\s*$/i;
@@ -871,7 +875,11 @@ function rebuildAlert_(text, parsed, fin, changed) {
       // Burson's paragraph isn't there as one piece (a hyperlink in it, which the summary reads as its address; blank
       // lines between its lines; a line the bot doesn't know, read with it): its own lines are replaced (parseAlert_'s
       // summary_lines), so a summary the note says was updated is never left as it was. Of several runs of those lines
-      // (only blank lines between a run's), the one that holds most of the text: a line elsewhere stays as Burson wrote it
+      // (only blank lines between a run's), the one in Burson's place for the summary: below the "SOCIAL ALERT" line
+      // (without one, the first labelled line) and above the [Link] line, the first footer or the [Code] line, whichever
+      // comes first; of several there, the one that holds most of the text. A line anywhere else (one the bot doesn't
+      // know, above the title or among the footers) stays as Burson wrote it, however long it is; with no run in that
+      // place, so does the whole text
       const at = (Array.isArray(ex.summary_lines) ? ex.summary_lines : []).filter(i => Number.isInteger(i) && i >= 0 && i < lines.length);
       const runs = [];
       at.forEach(i => {
@@ -879,7 +887,11 @@ function rebuildAlert_(text, parsed, fin, changed) {
         if (run && lines.slice(run[run.length - 1] + 1, i).every(l => !l.trim())) run.push(i); else runs.push([i]);
       });
       const size = run => run.reduce((n, i) => n + lines[i].trim().length, 0);
-      const most = runs.slice().sort((a, b) => size(b) - size(a))[0];
+      const labelOf = l => ((splitLabel_(l, index) || {}).spec || {}).name;
+      const top = ex.header_line !== undefined ? ex.header_line : lines.findIndex(l => !!labelOf(l));
+      const stop = lines.findIndex((l, i) => i > top && (['post_url', 'code'].includes(labelOf(l)) ||
+        RX_FOOTER_.test(cleanLine_(l).trim().replace(RX_MD_, '').trim())));
+      const most = runs.filter(run => run[0] > top && (stop < 0 || run[0] < stop)).sort((a, b) => size(b) - size(a))[0];
       if (most) {
         const lead = (lines[most[0]].match(RX_BULLET_) || lines[most[0]].match(/^\s*/))[0];
         lines.splice(most[0], most[most.length - 1] - most[0] + 1, lead + fin.summary);

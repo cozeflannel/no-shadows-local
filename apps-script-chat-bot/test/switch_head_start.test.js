@@ -1236,6 +1236,74 @@ module.exports = H => {
     eq([[first, 1, count, 3]].map(x => wraps.some(y => y.join() === x.join())), [true]);  // one call, for all the numbers' rows
   });
 
+  test('head start: "Head start on the post" wraps in the stories\' rows of both tables: for a post that a later card or update brought, its words ("behind by 1 h (from this app\'s alert on this post, 2026-10-12 08:00 ET)") are wider than its column and have Burson\'s alert beside them, so unwrapped they would be cut at the cell\'s edge and the "when" the line under the title promises would not show', () => {
+    const w = world();
+    const ss = sheetOf(w);
+    // a card 8 days ago on post 20; its update 2 days ago brings post 21, which Burson had alerted an hour before
+    const rows = [card('QA-1', NOW - 8 * DAY, 20, { post_keys: [key(20)] }), burson('QA-2', NOW - 2 * DAY - HOUR, 21),
+      card('QA-3', NOW - 2 * DAY, 21, { post_keys: [key(21)], update_of: 'QA-1' })];
+    w.bot.refreshHeadStart_(ss, { now: NOW, alerts: rows });
+    const tab = tabOf(ss);
+    // every setWrap(true) of the next rebuild, as [row, column, rows, columns]
+    const wraps = [];
+    const real = tab.getRange.bind(tab);
+    tab.getRange = (row, col, n, m) => {
+      const range = real(row, col, n, m);
+      const setWrap = range.setWrap;
+      range.setWrap = on => { if (on) wraps.push([row, col, n || 1, m || 1]); return setWrap.call(range, on); };
+      return range;
+    };
+    w.bot.refreshHeadStart_(ss, { now: NOW + HOUR, alerts: rows });
+    tab.getRange = real;
+    const COL = HEADER.indexOf('Head start on the post') + 1;
+    const WORDS = 'behind by 1 h (from this app\'s alert on this post, 2026-10-12 08:00 ET)';
+    // the story's row in BIGGEST HEAD STARTS and in EVERY STORY (1-based), Burson's alert in the cell to the right
+    const stories = tab.rows.map((x, i) => (x[COL - 1] === WORDS ? i + 1 : 0)).filter(Boolean);
+    eq([stories.length, stories.map(r => String(tab.cell(r, COL + 1)))], [2, [`=HYPERLINK("${link(21)}","QA-2")`, `=HYPERLINK("${link(21)}","QA-2")`]]);
+    const covers = (r, c) => wraps.some(x => x[0] <= r && r < x[0] + x[2] && x[1] <= c && c < x[1] + x[3]);
+    eq(stories.map(r => covers(r, COL)), [true, true]);
+  });
+
+  test('head start: a tab whose sheet ends at the first or second hidden column (a person deleted the last state columns and all to their right; in Sheets a read beyond a sheet\'s last column fails) is rebuilt like any tab: only the state columns the sheet still has are read, a row without its time or its email/draft cell is no state, and the rebuild writes the whole layout again. It is not taken for a read that failed, which would leave the tab as it is at every rebuild from then on', () => {
+    const w = world();
+    const ss = sheetOf(w);
+    const T = NOW - 9 * DAY;
+    const rows = [own('QA-1', T, 1, WATCH), burson('QA-2', T + 2 * HOUR, 1)];
+    const im = { [postKey(1)]: { at: T + 3 * HOUR, from: 'email' } };
+    w.bot.refreshHeadStart_(ss, { now: NOW, alerts: rows, im });
+    const tab = tabOf(ss);
+    const remembered = () => Array.from(w.bot.readHeadStartState_(tab).keys());
+    eq(remembered(), [postKey(1)]);
+    // Sheets' grid, which the fake sheet doesn't have: a read beyond the sheet's last column fails, a write grows the sheet
+    const real = tab.getRange.bind(tab);
+    let cols = HEADER.length;
+    tab.getRange = (row, col, n, m) => {
+      const range = real(row, col, n, m);
+      const end = col + (m || 1) - 1;
+      const read = range.getValues;
+      const write = range.setValues;
+      range.getValues = () => {
+        if (end > cols) throw new Error('The coordinates of the range are outside the dimensions of the sheet.');
+        return read.call(range);
+      };
+      range.setValues = values => { cols = Math.max(cols, end); return write.call(range, values); };
+      return range;
+    };
+    // the sheet ends at "IM time (ms)" (20 columns), then at "Burson post key" (19 columns)
+    [STATE_COL + 1, STATE_COL].forEach((left, i) => {
+      tab.rows = tab.rows.map(x => x.slice(0, left));
+      cols = left;
+      const state = w.bot.readHeadStartState_(tab);
+      eq([Array.from(state.keys()), state.unread], [[], undefined], `${left} columns: nothing remembered, and read`);
+      const out = w.bot.refreshHeadStart_(ss, { now: NOW + (i + 1) * HOUR, alerts: rows, im });
+      eq([out.written, out.unread, cols, tab.rows[at(tab, 'EVERY STORY') + 1], remembered()], [true, undefined, HEADER.length, HEADER, [postKey(1)]],
+        `${left} columns: rebuilt whole`);
+    });
+    assert.match(tab.cell(2, 1), /Rebuilt 2026-10-14 10:00 ET\.$/);
+    assert.ok(!w.g.logs.some(l => /could not be read/.test(l)), 'no read failed');
+    tab.getRange = real;
+  });
+
   test('head start: a foreign tab\'s cells are never read for the IMs\' times: of a tab named "Head start" that isn\'t the bot\'s (here the bot\'s own, with its title in A1 changed) nothing but A1 is looked at, and the bot\'s new tab takes no time from it', () => {
     const w = world();
     const ss = sheetOf(w);

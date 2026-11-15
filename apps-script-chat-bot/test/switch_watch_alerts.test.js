@@ -369,6 +369,16 @@ module.exports = H => {
       msg.formattedText = msg.formattedText.replace(`<${EVIL}|${EVIL}>`, `<${EVIL}/|${EVIL}>`);
       return msg;
     }), POST);
+    // An asterisk in the post's own address (a news or forum address can have one) is part of the address: it is read
+    // back whole from the card's Posts line, where only Chat's bold marks are dropped
+    const STARS = ['https://news.example.com/2026/11/google-*-midterms.html', 'https://example.com/story/*/123', 'https://www.youtube.com/watch?v=abc*def'];
+    eq(STARS.map(star => B.pwAlertText_(Object.assign({}, base, { url: star, network: 'news' })).split('\n').find(l => l.indexOf('*Posts:*') === 0)),
+      STARS.map(star => `*Posts:* <${star}|View the post>`));
+    eq(STARS.map(star => url({ url: star, network: 'news' })), STARS);
+    // ... also with the same address without its asterisk in the words, which Chat lists as a link before the post's
+    eq(url({ url: STARS[1], network: 'news', summary: 'see https://example.com/story//123 now' }, wraps), STARS[1]);
+    // ... and on a card from before the shared layout (its Link line)
+    eq(t.bot.pwAlertOf_(ctx, met([`🔭 *Watch alert · ${MIDTERMS}*`, `*Link:* <${STARS[0]}|View the post>`, '*Author:* @CorrDove · news'].join('\n'))).url, STARS[0]);
     // The post's own address in the words, and a rich-link chip (to it in another spelling, or to another address)
     eq(url({ summary: `my post ${POST} here` }, null, { annotations: [{ type: 'RICH_LINK', richLinkMetadata: { uri: `${POST}/` } }] }), POST);
     eq(url({ summary: `my post ${POST} and https://docs.google.com/document/d/abc here` }, null,
