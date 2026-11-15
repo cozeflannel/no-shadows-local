@@ -323,7 +323,12 @@ async function handleRunTests(args, deps) {
   if (suite === 'pytest' || suite === 'all') {
     const pytestArgs = ['-m', 'pytest', '-q'];
     if (args.pytest_target) {
-      pytestArgs.push(String(args.pytest_target));
+      // a test file or folder under tests/ (with an optional ::test), never an option or a path outside the repo
+      const target = String(args.pytest_target).trim();
+      if (!/^tests(?:\/[\w.-]+)*(?:::[\w\[\].:,=-]+)*$/.test(target) || target.split('/').includes('..')) {
+        throw new Error(`pytest_target "${target.slice(0, 80)}" isn't a path under tests/ (for example tests/test_triage.py::test_name)`);
+      }
+      pytestArgs.push(target);
     }
     const res = run(PYTHON_BIN, pytestArgs, {
       env: { TRIAGE_LLM: 'fake' },

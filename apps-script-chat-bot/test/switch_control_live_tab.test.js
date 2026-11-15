@@ -54,7 +54,7 @@ module.exports = H => {
    * dropdowns (C29: Testing, and why), row 25 the S-F Burson space, blank (C25: not set, what's paused), row 26 the
    * Burson test copy, blank (C26: what blank means), row 30 Testing: send to, blank (C30: who gets the emails), row 31
    * the BigQuery lookback, 60 minutes, with its dropdown (C31: what the bot uses), row 33 the Other alerts space, blank,
-   * row 35 Watch alerts (OFF), row 36 the Temp checks switch (OFF), row 37 Group test emails (OFF), rows 38-40 the three Fast triage switches (OFF), rows 41-45 the bar cells, row 46 early_wave BigQuery (OFF), row 47 blank and "How it works" from row 48 (none of the old help text left); column C of an OFF switch is the bot's own words
+   * row 35 Watch alerts (OFF), row 36 the Temp checks switch (OFF), row 37 Group test emails (OFF), rows 38-40 the three Fast triage switches (OFF), rows 41-45 and 47 the bar cells, row 46 early_wave BigQuery (OFF), row 48 blank and "How it works" from row 49 (none of the old help text left); column C of an OFF switch is the bot's own words
    * for OFF (this build's: C11 names the testers in B30); the switches read as the LIVE tab had them, and no S-F Burson is known. With `b25` ({value, note}), B25
    * is the link someone pasted there and C25 what the bot found.
    */
@@ -77,13 +77,13 @@ module.exports = H => {
     eq(cells(sh, 25), ['S-F Burson space', b25 ? b25.value : '', b25 ? b25.note : B.ev('SFB_BLANK_NOTE_')], `${when}: row 25`);
     eq(cells(sh, 26), ['Burson test copy', '', B.ev('RTC_BLANK_NOTE_')], `${when}: row 26`);
     eq([cells(sh, 30).slice(0, 2), cells(sh, 31), cells(sh, 33), cells(sh, 35), cells(sh, 36), cells(sh, 37), cells(sh, 38), cells(sh, 39), cells(sh, 40),
-      cells(sh, 41), cells(sh, 42), cells(sh, 43), cells(sh, 44), cells(sh, 45), cells(sh, 46), cells(sh, 47), sh.cell(48, 1)],
+      cells(sh, 41), cells(sh, 42), cells(sh, 43), cells(sh, 44), cells(sh, 45), cells(sh, 46), cells(sh, 47), cells(sh, 48), sh.cell(49, 1)],
     [['Testing: send to', ''], ['BigQuery lookback', '60 minutes', LOOKBACK_60], OS33(), WA35(), TC36(), GT37(), FT(38), FT(39), FT(40),
-      BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), ['', '', ''], 'How it works'], when);
+      BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), BAR(47), ['', '', ''], 'How it works'], when);
     assert.match(sh.cell(30, 3), /^Blank: while Testing, enter up to 5 email addresses \(comma-separated\) to receive test emails and alerts \(nothing is sent while B30 is blank\)$/, when);
     const help = B.ev('CONTROL_HELP_');
-    eq(help.map((_, i) => sh.cell(49 + i, 1)), help, when);
-    for (let r = 49 + help.length; r <= Math.max(sh.rows.length, 83); r++) eq(cells(sh, r), ['', '', ''], `${when}: row ${r}`);
+    eq(help.map((_, i) => sh.cell(50 + i, 1)), help, when);
+    for (let r = 50 + help.length; r <= Math.max(sh.rows.length, 83); r++) eq(cells(sh, r), ['', '', ''], `${when}: row ${r}`);
     eq(lists(sh), Object.assign({}, variant.validations, { '22,2': ON_OFF, '23,2': ON_OFF, '24,2': ON_OFF, '27,2': ON_OFF,
       '28,2': ON_OFF, '29,2': ON_OFF, '31,2': LOOKBACK, '32,2': ON_OFF, '34,2': ON_OFF, '35,2': WA_CHOICES, '36,2': ON_OFF, '37,2': ON_OFF,
       '38,2': ON_OFF, '39,2': ON_OFF, '40,2': ON_OFF }, BAR_VALS, { '46,2': ON_OFF }), when);
@@ -192,11 +192,11 @@ module.exports = H => {
       sh.validations['29,2'].values, sh.validations['31,2'].values, sh.validations['32,2'].values, sh.validations['34,2'].values,
       sh.validations['35,2'].values, sh.validations['36,2'].values, sh.validations['37,2'].values, sh.cell(25, 1), sh.cell(26, 1), sh.cell(30, 1), cells(sh, 31),
       cells(sh, 32), cells(sh, 33), cells(sh, 34), cells(sh, 35), cells(sh, 36), cells(sh, 37), cells(sh, 38), cells(sh, 39), cells(sh, 40),
-      cells(sh, 41), cells(sh, 42), cells(sh, 43), cells(sh, 44), cells(sh, 45), cells(sh, 46),
-      sh.cell(47, 1), sh.cell(48, 1)],
+      cells(sh, 41), cells(sh, 42), cells(sh, 43), cells(sh, 44), cells(sh, 45), cells(sh, 46), cells(sh, 47),
+      sh.cell(48, 1), sh.cell(49, 1)],
     [ON_OFF, ON_OFF, ON_OFF, ON_OFF, ON_OFF, LOOKBACK, ON_OFF, ON_OFF, WA_CHOICES, ON_OFF, ON_OFF, 'S-F Burson space', 'Burson test copy',
       'Testing: send to', ['BigQuery lookback', '60 minutes', LOOKBACK_60], SW32(), OS33(), SW34(), WA35(), TC36(), GT37(), FT(38), FT(39), FT(40),
-      BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46),
+      BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), BAR(47),
       '', 'How it works']);
     eq([38, 39, 40, 46].map(r => sh.validations[`${r},2`].values), [ON_OFF, ON_OFF, ON_OFF, ON_OFF]);
     assert.ok(!sh.rows.some(r => /old help line|Rows 11-22/.test(String(r[0]))));
@@ -222,12 +222,12 @@ module.exports = H => {
     eq(cells(sh, 25), ['S-F Burson space', '', B.ev('SFB_BLANK_NOTE_')]);
     eq([cells(sh, 26), cells(sh, 27), cells(sh, 28), cells(sh, 29), cells(sh, 30).slice(0, 2), cells(sh, 31), cells(sh, 32),
       cells(sh, 33), cells(sh, 34), cells(sh, 35), cells(sh, 36), cells(sh, 37), cells(sh, 38), cells(sh, 39), cells(sh, 40),
-      cells(sh, 41), cells(sh, 42), cells(sh, 43), cells(sh, 44), cells(sh, 45), cells(sh, 46), cells(sh, 47),
-      sh.cell(48, 1), sh.cell(49, 1)],
+      cells(sh, 41), cells(sh, 42), cells(sh, 43), cells(sh, 44), cells(sh, 45), cells(sh, 46), cells(sh, 47), cells(sh, 48),
+      sh.cell(49, 1), sh.cell(50, 1)],
     [['Burson test copy', '', B.ev('RTC_BLANK_NOTE_')], ['Draft follow-ups', 'OFF', B.switchOffText_(at(27))],
       ['Draft answers to questions', 'OFF', B.switchOffText_(at(28))], ['Safety valve', 'OFF', valveC(NO_SFB)],
       ['Testing: send to', ''], ['BigQuery lookback', '60 minutes', LOOKBACK_60], SW32(), OS33(), SW34(), WA35(), TC36(), GT37(), FT(38), FT(39), FT(40),
-      BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46),
+      BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), BAR(47),
       ['', '', ''], 'How it works', B.ev('CONTROL_HELP_')[0]]);
     assert.ok(!sh.rows.some(r => /old help line|Rows 11-24 are switches…/.test(String(r[0]))));
     // no dropdown moved or dropped; only the new switches', the BigQuery lookback's, Watch alerts', and the bar rows' (B25 and B26 have none: a space goes there)
@@ -239,7 +239,7 @@ module.exports = H => {
     t.set('B25', 'https://chat.google.com/room/AAQAaa_0I9g');
     t.bot.setup();
     t.poll();
-    eq([sh.cell(25, 2), sh.cell(25, 3), t.bot.readControl_(sh).sfBurson, sh.cell(48, 1)],
+    eq([sh.cell(25, 2), sh.cell(25, 3), t.bot.readControl_(sh).sfBurson, sh.cell(49, 1)],
       ['https://chat.google.com/room/AAQAaa_0I9g', '✓ [S-F] Burson Automated Alerts V3', 'https://chat.google.com/room/AAQAaa_0I9g', 'How it works']);
   });
 

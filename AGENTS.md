@@ -1,7 +1,7 @@
 # Workspace Rules — SLRR Burson QA Bot & Triage Agent
 
 ## 1. Canonical Identifiers
-- **Workspace Root:** `/Users/lhammonds/Desktop/burson-triage-agent`
+- **Workspace Root:** the folder this repository is checked out in (never write a personal path such as a home directory here or anywhere else in the repo)
 - **Live V1 Apps Script (`scriptId`):** `19HakS6-o8U1qT99Xpnw2TQbJnZMx5FZz_JzVDd93Yd9gopQ9qXaWnGk3`
 - **Cloud Logging `project_key`:** `MT90an4vYnIDfrbDRi1jgSZANzck4hlvJ`
 - **GCP Project:** `brand-social-central-data` (`1028310913761`)
@@ -15,6 +15,8 @@
 4. **Google Sheets 50,000-Char Cell Cap:** Any cell write in `Sheets.gs` (`encodeCell_`) or `Speed.gs` (`speedText_`) must stay `<= 49,000` characters (`KNOWLEDGE_CELL_CHARS_ = 45000`).
 5. **Tab Ownership Safeguard:** Never overwrite or clear a sheet tab the bot did not create (`isOutboxTab_`, `isKnowledgeTab_`, `isAnalysisTab_`). `Brand safety groups` is strictly read-only.
 6. **Local Git Only (Zero GitHub Remotes):** Commit locally on `main` only. Never add a GitHub remote or run `git push` to an external Git host. `clasp push -f` inside `apps-script-chat-bot/` (and `apps-script-sheet-sidepanel/` for the sheet UI) are the sole live deployment targets (protected by `.claspignore`).
+
+7. **No Notes, Transcripts, Keys or Personal Data in the Repo:** Never commit working notes, chat transcripts or tool output dumps (they have leaked a real email address and local paths before); keep them in an ignored folder (`notes/`, `scratch/`, `transcripts/`) or outside the repo. Never commit a key, token, credential file or personal home-directory path. `node scripts/repo_safety_scan.js` checks every tracked file and must print `clean` before any commit or deploy; turn on the commit hook once per clone with `git config core.hooksPath .githooks`.
 
 ## 3. Preferred MCP Tool Routing
 Before writing ad-hoc shell/Node scripts, prefer the project's dedicated MCP servers:

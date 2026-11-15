@@ -30,19 +30,19 @@ module.exports = H => {
     t.poll();  // the first run: C29 says the run's mode (Testing here: no S-F Burson)
     assert.match(rows(t, 3)[VALVE], /^OFF \u00b7 \ud83e\uddea Testing \(S-F Burson, B25, isn't set or found\): nothing goes to S-F Burson, and every email goes only to the stand-in \(B30\)\. With B26 blank and S-F Burson set, the bot is fully LIVE$/);
     assert.match(t.control().cell(16, 3), /writes only to this sheet: nothing goes to the shared SLRR BigQuery tables/);
-    eq([25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48].map(r => t.control().cell(r, 1)), ['S-F Burson space', 'Burson test copy', 'Draft follow-ups',
+    eq([25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49].map(r => t.control().cell(r, 1)), ['S-F Burson space', 'Burson test copy', 'Draft follow-ups',
       'Draft answers to questions', 'Safety valve', 'Testing: send to', 'BigQuery lookback', 'Work directly in B25 (Google-only)',
       'Other alerts space', 'Proactive watch', 'Watch alerts', 'Temp checks', 'Group test emails', 'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise',
       'Hold-back: about_google at or below', 'Hold-back: routine_noise at or above', 'Hold-back and early watch: answer confidence at or above',
-      'Early watch: about_google, brand_risk and independent_reports, each at or above', 'Early watch: distinct accounts, at least',
-      'Write early-wave records to BigQuery', '', 'How it works']);
+      'Early watch: about_google and brand_risk, each at or above', 'Early watch: distinct accounts, at least',
+      'Write early-wave records to BigQuery', 'Early watch: independent_reports at or above', '', 'How it works']);
     eq([t.control().validations['25,2'], t.control().validations['26,2'], t.control().validations['33,2']], [undefined, undefined, undefined]);  // a space goes there
     // B31 is no switch: 60 minutes, with its own 15 / 30 / 45 / 60 minutes dropdown
     eq([t.control().cell(31, 2), t.control().validations['31,2'].values], ['60 minutes', ['15 minutes', '30 minutes', '45 minutes', '60 minutes']]);
     // B35 is no switch either: OFF, with its own OFF / Other alerts space (B33) / Mirror space (B9) dropdown
     eq([t.control().cell(35, 2), t.control().validations['35,2'].values],
       ['OFF', ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)', 'Auto-correct space (B10)']]);
-    const help = Array.from({ length: 45 }, (_, i) => t.control().cell(49 + i, 1)).join('\n');
+    const help = Array.from({ length: 45 }, (_, i) => t.control().cell(50 + i, 1)).join('\n');
     LABELS.forEach(l => assert.ok(help.includes(`• ${l}: `), l));
     eq(t.bot.readControl_(t.control()).switches, allOff());
     eq(B.ev('CONTROL_SWITCHES_').map(s => s.key), KEYS);
@@ -66,12 +66,12 @@ module.exports = H => {
     eq(rows(t, 1), LABELS);
     eq(rows(t, 2), LABELS.map(() => 'OFF'));
     ROWS.forEach(r => eq(sh.validations[`${r},2`].values, ['ON', 'OFF']));
-    eq([25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48].map(r => sh.cell(r, 1)), ['S-F Burson space', 'Burson test copy', 'Draft follow-ups',
+    eq([25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49].map(r => sh.cell(r, 1)), ['S-F Burson space', 'Burson test copy', 'Draft follow-ups',
       'Draft answers to questions', 'Safety valve', 'Testing: send to', 'BigQuery lookback', 'Work directly in B25 (Google-only)',
       'Other alerts space', 'Proactive watch', 'Watch alerts', 'Temp checks', 'Group test emails', 'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise',
       'Hold-back: about_google at or below', 'Hold-back: routine_noise at or above', 'Hold-back and early watch: answer confidence at or above',
-      'Early watch: about_google, brand_risk and independent_reports, each at or above', 'Early watch: distinct accounts, at least',
-      'Write early-wave records to BigQuery', '', 'How it works']);
+      'Early watch: about_google and brand_risk, each at or above', 'Early watch: distinct accounts, at least',
+      'Write early-wave records to BigQuery', 'Early watch: independent_reports at or above', '', 'How it works']);
     // the BigQuery lookback row comes in too: 60 minutes, with its dropdown (the tab had only B2's)
     eq([sh.cell(31, 2), sh.validations['31,2'].values], ['60 minutes', ['15 minutes', '30 minutes', '45 minutes', '60 minutes']]);
     eq([sh.cell(25, 2), t.bot.readControl_(sh).sfBurson, sh.cell(26, 2), t.bot.readControl_(sh).testCopy], ['', '', '', '']);

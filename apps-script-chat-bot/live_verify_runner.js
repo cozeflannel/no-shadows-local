@@ -10,6 +10,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const vm = require('vm');
 const { execFileSync } = require('child_process');
@@ -32,19 +33,21 @@ function realHttpFetch(url, params) {
   if (!headers['x-goog-user-project']) {
     headers['x-goog-user-project'] = GCP_PROJECT;
   }
-  const args = ['-sS', '-i', '-X', method];
-  Object.entries(headers).forEach(([k, v]) => {
-    args.push('-H', `${k}: ${v}`);
-  });
+  // The headers (the access token among them) go to curl on its standard input as a config, never on its command
+  // line, where any process on the machine could read them
+  const args = ['-sS', '-i', '-X', method, '--config', '-'];
+  const curlConfig = Object.entries(headers)
+    .map(([k, v]) => `header = "${String(`${k}: ${v}`).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]+/g, ' ')}"`)
+    .join('\n') + '\n';
   let tmpFile = null;
   try {
     if (opts.payload !== undefined && opts.payload !== null) {
-      tmpFile = path.join('/tmp', `gas_live_payload_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2)}.bin`);
-      fs.writeFileSync(tmpFile, typeof opts.payload === 'string' ? opts.payload : Buffer.from(opts.payload));
+      tmpFile = path.join(os.tmpdir(), `gas_live_payload_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2)}.bin`);
+      fs.writeFileSync(tmpFile, typeof opts.payload === 'string' ? opts.payload : Buffer.from(opts.payload), { mode: 0o600 });
       args.push('--data-binary', `@${tmpFile}`);
     }
     args.push(String(url));
-    const raw = execFileSync('curl', args, { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
+    const raw = execFileSync('curl', args, { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024, input: curlConfig });
     const parts = raw.split(/\r?\n\r?\n/);
     let headerIdx = 0;
     while (headerIdx < parts.length - 1 && /^HTTP\/\d/.test(parts[headerIdx + 1])) {

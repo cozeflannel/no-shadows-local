@@ -33,7 +33,7 @@
  *   platform: then its card goes in the earlier card's thread as `📈 *Early Detection Update: …*` with what's new. A
  *   review that finds an issue already alerted with nothing new posts no card, nor does any other dismissal (filtered
  *   out): Control C19 counts the repeats held back and the dismissals filtered out.
- *   The fast triage (Control rows 38-45, FastTriage.gs; OFF, nothing here differs): Gemini Decisions answers six
+ *   The fast triage (Control rows 38-45 and 47, FastTriage.gs; OFF, nothing here differs): Gemini Decisions answers six
  *   questions about each signal before it is queued; row 38 enables rows 39 and 40, row 39 orders the queue and runs
  *   the early-watch tier, and row 40 holds back a signal that is plainly noise. Under row 39 a story still below the
  *   usual bar that passes the watch bars is raised as an EARLY_WATCH signal: it is queued, deduplicated and reviewed
@@ -1747,7 +1747,7 @@ function edReviewAndPost_(ctx, row, report) {
  * the same-story dedup looks again at the cards posted since it was queued (edStoryVerdict_, the authoritative check):
  * a repeat with nothing new is dropped without a review; one that grew goes in its story's latest card's thread. A
  * review that posts no card (an issue already alerted, nothing new; or a dismissal, filtered out: edDismissed_) counts
- * toward the run's reviews. With the fast triage (Control rows 38-45, FastTriage.gs): the queue is in the answers'
+ * toward the run's reviews. With the fast triage (Control rows 38-45 and 47, FastTriage.gs): the queue is in the answers'
  * order only while row 39 is ON (OFF, the ranking's keys are taken off and an early-watch signal still waiting is
  * dropped unreviewed); an early-watch signal whose review failed stays queued for one more try and the run reviews no
  * more. {posted, dropped, held, dismissed, waiting}, or null when it didn't run.

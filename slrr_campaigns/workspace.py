@@ -38,10 +38,21 @@ class WorkspaceApiError(RuntimeError):
         self.status_code = status_code
 
 
+_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+_PLAIN_NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?")
+
+
 def _sanitize_cell(value: Any) -> str:
+    """Cell text for a USER_ENTERED write: no emojis, capped, and never read as a formula.
+
+    The rows come from alert emails and public posts (author, link, snippet), so text that starts like a
+    formula gets a leading apostrophe, which Sheets keeps as plain text. A plain number stays a number.
+    """
     text = strip_emojis(str(value if value is not None else ""))
     if len(text) > MAX_SHEET_CELL_CHARS:
-        return text[: MAX_SHEET_CELL_CHARS - 15] + " [truncated]"
+        text = text[: MAX_SHEET_CELL_CHARS - 15] + " [truncated]"
+    if text.startswith(_FORMULA_START) and not _PLAIN_NUMBER.fullmatch(text):
+        return "'" + text
     return text
 
 

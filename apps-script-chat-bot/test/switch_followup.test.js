@@ -421,7 +421,7 @@ module.exports = H => {
         [sh.cell(41, 1), sh.cell(41, 2), sh.cell(41, 3)], [sh.cell(42, 1), sh.cell(42, 2), sh.cell(42, 3)],
         [sh.cell(43, 1), sh.cell(43, 2), sh.cell(43, 3)], [sh.cell(44, 1), sh.cell(44, 2), sh.cell(44, 3)],
         [sh.cell(45, 1), sh.cell(45, 2), sh.cell(45, 3)],
-        sh.cell(46, 1), sh.cell(46, 2), sh.cell(46, 3), sh.cell(47, 1), sh.cell(48, 1)],
+        sh.cell(46, 1), sh.cell(46, 2), sh.cell(46, 3), [sh.cell(47, 1), sh.cell(47, 2), sh.cell(47, 3)], sh.cell(48, 1), sh.cell(49, 1)],
         ['Testing: send to', '', 'BigQuery lookback', '60 minutes', 'Work directly in B25 (Google-only)', 'OFF',
           B.switchOffText_(B.ev('CONTROL_SWITCHES_').find(s => s.row === 32)), 'Other alerts space', '', 'Proactive watch', 'OFF',
           B.switchOffText_(B.ev('CONTROL_SWITCHES_').find(s => s.row === 34)), 'Watch alerts', 'OFF', B.pwAlertsOffText_(), 'Temp checks',
@@ -432,7 +432,7 @@ module.exports = H => {
           B.switchOffText_(B.ev('CONTROL_SWITCHES_').find(s => s.row === 40)),
           barRow(41), barRow(42), barRow(43), barRow(44), barRow(45),
           'Write early-wave records to BigQuery', 'OFF',
-          B.switchOffText_(B.ev('CONTROL_SWITCHES_').find(s => s.row === 46)), '', 'How it works']);
+          B.switchOffText_(B.ev('CONTROL_SWITCHES_').find(s => s.row === 46)), barRow(47), '', 'How it works']);
       eq([sh.validations['32,2'].values, sh.validations['33,2'], sh.validations['34,2'].values, sh.validations['36,2'].values, sh.validations['37,2'].values,
         sh.validations['38,2'].values, sh.validations['39,2'].values, sh.validations['40,2'].values, sh.validations['46,2'].values],
       [['ON', 'OFF'], undefined, ['ON', 'OFF'], ['ON', 'OFF'], ['ON', 'OFF'], ['ON', 'OFF'], ['ON', 'OFF'], ['ON', 'OFF'], ['ON', 'OFF']]);  // rows 32, 34, 36-40 and 46 are switches: OFF until a person turns them ON; B33 a space
@@ -441,8 +441,8 @@ module.exports = H => {
       // B31 (a help line's row on the deployed tab) gets its 15 / 30 / 45 / 60 minutes dropdown, and C31 says what the bot uses
       eq([sh.validations['31,2'].values, sh.cell(31, 3)], [['15 minutes', '30 minutes', '45 minutes', '60 minutes'], B.bqLookbackFrom_('60 minutes').note]);
       const help = B.ev('CONTROL_HELP_');
-      eq(help.map((_, i) => sh.cell(49 + i, 1)), help);
-      for (let r = 49 + help.length; r <= sh.rows.length; r++) {
+      eq(help.map((_, i) => sh.cell(50 + i, 1)), help);
+      for (let r = 50 + help.length; r <= sh.rows.length; r++) {
         eq([sh.cell(r, 1), sh.cell(r, 2), sh.cell(r, 3)], ['', '', ''], `leftover row ${r}`);
       }
     });

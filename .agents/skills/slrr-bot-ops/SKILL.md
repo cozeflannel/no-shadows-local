@@ -12,7 +12,7 @@ description: >-
 Use this runbook to inspect the live Burson QA Bot without polluting results with other Apps Script projects in the same GCP project.
 
 ## 1. Key Identifiers (Do Not Guess)
-- **Repository Path:** `/Users/lhammonds/Desktop/burson-triage-agent`
+- **Repository Path:** the folder this repository is checked out in
 - **Apps Script Project (`scriptId`):** `19HakS6-o8U1qT99Xpnw2TQbJnZMx5FZz_JzVDd93Yd9gopQ9qXaWnGk3`
 - **Cloud Logging `project_key`:** `MT90an4vYnIDfrbDRi1jgSZANzck4hlvJ`
 - **GCP Project:** `brand-social-central-data` (`1028310913761`)

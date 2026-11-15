@@ -416,8 +416,9 @@ function bqWriteBackRows_(ctx, row, kind, at, mirrored, isLive) {
 
 /**
  * Streams `rows` ([{insertId, json}]) into `table` ('dataset.table' in GCP_PROJECT) with tabledata.insertAll: the bot's
- * only BigQuery write (Write back to SLRR BigQuery: the callers check the switch). Notes first that the bot may have rows
- * there now (BQ_WRITEBACK_EVER_PROP_). Throws when BigQuery doesn't take them all: an HTTP error, or insertErrors (with
+ * only BigQuery write (Write back to SLRR BigQuery, and the early-wave records of FastTriage.gs: the callers check
+ * their switch). For the write-back it notes first that the bot may have rows there now (BQ_WRITEBACK_EVER_PROP_;
+ * never for the early_wave dataset). Throws when BigQuery doesn't take them all: an HTTP error, or insertErrors (with
  * skipInvalidRows off, one bad row stops them all, under an HTTP 200). The error has `unknown` when BigQuery may have
  * taken them all the same: the connection dropped, an HTTP 5xx, or a 2xx it can't read.
  */
@@ -3381,9 +3382,10 @@ function ewLogCheck_(ctx, props, left) {
  * minutes), runs EarlyWaveSource.gs (`ewsRows_`) over the 6 approved BigQuery tables + Vertex AI embeddings for signals
  * created since just before its last check (edLookbackMinutes_: at least the B31 lookback, `@minutes`): newly emerged
  * low-tier semantic clusters (`CLUSTER_EMERGENCE`) and multi-grain low-tier velocity spikes (`VELOCITY_SPIKE`). Queues
- * up to `EW_MAX_PER_CHECK_` new ones for review, EW_MAX_PER_DAY_ a day: with the fast triage OFF, once that many are
- * queued it returns early without reading BigQuery until tomorrow; with the fast triage ON, the check still reads and
- * clusters (the stories stay up to date for tomorrow's first check) and only queueing stops. Same-story dedup
+ * up to `EW_MAX_PER_CHECK_` new ones for review, EW_MAX_PER_DAY_ a day: once that many are queued it returns early
+ * without reading BigQuery until tomorrow, unless the fast triage is in use (row 38 with row 39 or 40) or row 46
+ * writes the records: then the check still reads and clusters (the stories stay up to date for tomorrow's first
+ * check, and their records are written) and only queueing stops. Row 38 by itself changes nothing here. Same-story dedup
  * (EarlyDetection.gs edStoryVerdict_): a signal on a story already carded in the last 24h (same cluster, the alert the
  * pipeline says it updates, or 2+ of the same posts), or queued with as many accounts, is held back without a review
  * unless the story grew (2x the accounts and 3 more, or a new platform): then it is queued as an update of that card. A
@@ -3392,7 +3394,7 @@ function ewLogCheck_(ctx, props, left) {
  * feed (B3) or the Auto-correct space standing alone (B10); never S-F Burson (B25), the Burson test copy (B26) or
  * external spaces. One log line a check says the producer's time and the rolling API counts (ewLogCheck_).
  *
- * The fast triage (Control rows 38-45, FastTriage.gs; background work like the rest, and with row 38 OFF or rows 39
+ * The fast triage (Control rows 38-45 and 47, FastTriage.gs; background work like the rest, and with row 38 OFF or rows 39
  * and 40 both OFF none of it runs): after the non-English, other-alert and same-story checks and before a signal is
  * queued, Gemini Decisions is asked about it (one call a signal; a failed, refused or skipped call leaves the signal
  * exactly as it was without the fast triage). With row 39 the candidates (as many as there are calls for) are asked
@@ -3422,8 +3424,9 @@ function earlyWaveCheck_(ctx) {
   const room = Math.max(0, EW_MAX_PER_DAY_ - (Number(today.queued) || 0));
   if (!ftRankOn_(ctx)) ftQueueUnrank_(props);  // row 39 OFF: the review order goes back to what it was
   const writeBq = ewBqOn_(ctx);
-  // With the fast-triage and BigQuery switches OFF: at the daily signal cap, return early without reading BigQuery
-  if (!room && !ftOn_(ctx) && !writeBq) {
+  // At the daily signal cap, with nothing ON that uses the check's stories (row 38 alone uses none): return early
+  // without reading BigQuery
+  if (!room && !ftRankOn_(ctx) && !ftHoldOn_(ctx) && !writeBq) {
     noteEarlyWave_(props, 0, 0, '');
     return { queued: 0, failed: 0, capped: true };
   }
@@ -3625,25 +3628,16 @@ function earlyWaveCheck_(ctx) {
       return ewBqSnapshotRow_(Object.assign({}, s, { stage: stg }), rec.at || now);
     });
     const postRows = (rec.posts || []).map(x => ewBqPostRow_(x.cid, x.m, x.now || now));
-    const sigRows = (rec.signals || []).map(r => ewBqSignalRow_(r, rec.at || now));
+    // One row a signal: one queued or held in a later check than the one that created it already has its row
+    const sigDone = ewBqSignalsWritten_((rec.signals || []).map(r => r && r.alert_id));
+    const sigNew = (rec.signals || []).filter(r => r && r.alert_id && !sigDone.has(String(r.alert_id)));
+    const sigRows = sigNew.map(r => ewBqSignalRow_(r, rec.at || now));
     const verdictRows = ft && Array.isArray(ft.verdicts) ? ft.verdicts : [];
-    if (ctx && ctx._ewBqDeferEvents) {
-      ctx._ewBqEvents = (ctx._ewBqEvents || []).concat(rec.events);
-      ewBqFlush_(ctx, props, left, {
-        story_snapshots: snapRows,
-        story_posts: postRows,
-        signals: sigRows,
-        triage_verdicts: verdictRows,
-      });
-    } else {
-      ewBqFlush_(ctx, props, left, {
-        story_snapshots: snapRows,
-        story_posts: postRows,
-        signals: sigRows,
-        signal_events: rec.events,
-        triage_verdicts: verdictRows,
-      });
-    }
+    const batches = { story_snapshots: snapRows, story_posts: postRows, signals: sigRows, triage_verdicts: verdictRows };
+    if (ctx && ctx._ewBqDeferEvents) ctx._ewBqEvents = (ctx._ewBqEvents || []).concat(rec.events);
+    else batches.signal_events = rec.events;
+    const took = ewBqFlush_(ctx, props, left, batches);
+    if (took.signals) ewBqNoteSignalsWritten_(sigNew.map(r => r.alert_id));
   }
   return triaged ? { queued, failed, capped, repeats, triaged } : { queued, failed, capped, repeats };
 }

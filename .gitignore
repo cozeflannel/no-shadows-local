@@ -38,3 +38,27 @@ service-account*.json
 .DS_Store
 .idea/
 .vscode/
+
+# More credential files (keys and tokens live in Secret Manager or the environment, never in the repo)
+token.json
+*token*.json
+application_default_credentials.json
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+.npmrc
+.netrc
+infra/.env
+*.tfstate
+*.tfstate.*
+
+# Working notes, chat transcripts and exports from an assistant session never go in the repo: they have carried
+# real email addresses and local paths before. Keep them in one of these (ignored) or outside the repo.
+notes/
+scratch/
+transcripts/
+*.notes.md
+*.transcript.md

@@ -50,6 +50,15 @@ function filterQuoted(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+const LOG_SEVERITIES = ['DEFAULT', 'DEBUG', 'INFO', 'NOTICE', 'WARNING', 'ERROR', 'CRITICAL', 'ALERT', 'EMERGENCY'];
+
+/** A Cloud Logging severity for a log filter: one of LOG_SEVERITIES, never text that could add to the filter. */
+function logSeverity(value) {
+  const s = String(value || '').trim().toUpperCase();
+  if (!LOG_SEVERITIES.includes(s)) throw new Error(`Unknown severity "${s.slice(0, 40)}": use one of ${LOG_SEVERITIES.join(', ')}`);
+  return s;
+}
+
 /**
  * Row objects keyed by `header`, one per row of `rows` that isn't blank; `_row` is the row's number on the sheet
  * (`firstRow` for rows[0]).
@@ -244,7 +253,7 @@ async function handleReadLogs(args, deps) {
     clauses.push('NOT resource.labels.function_name="checkSourceSpaceForNewMessages"');
   }
   if (args.severity) {
-    clauses.push(`severity >= ${String(args.severity).toUpperCase()}`);
+    clauses.push(`severity >= ${logSeverity(args.severity)}`);
   }
   if (args.process_id) {
     const safePid = filterQuoted(args.process_id);
@@ -1012,7 +1021,7 @@ async function handleReadCloudRunLogs(args, deps) {
     clauses.push(`(resource.labels.service_name="${safeSvc}" OR resource.labels.job_name="${safeSvc}")`);
   }
   if (args.severity) {
-    clauses.push(`severity >= ${String(args.severity).toUpperCase()}`);
+    clauses.push(`severity >= ${logSeverity(args.severity)}`);
   }
   if (args.search) {
     const safeSearch = String(args.search).replace(/\\/g, '\\\\').replace(/"/g, '\\"');

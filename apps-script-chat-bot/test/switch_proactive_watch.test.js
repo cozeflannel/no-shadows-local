@@ -952,6 +952,35 @@ module.exports = H => {
     // a cell the bot writes from a post is one line, capped, and never a formula
     eq([B.pwCell_('=1+1'), B.pwCell_('+x'), B.pwCell_('@me'), B.pwCell_('-5'), B.pwCell_('a\n b'), B.pwCell_('x'.repeat(600), 500).length],
       ['\'=1+1', '\'+x', '\'@me', '\'-5', 'a b', 500]);
+    // ...and stays one when the tab is trimmed: Sheets hands a text cell back without its escape apostrophe (getValues), so
+    // the kept rows get it again before they are rewritten; numbers and other text go back as they were
+    const head = B.ev('PW_DET_HEAD_ROW_');
+    const width = B.ev('PW_DET_HEADER_').length;
+    const total = B.ev('PW_DET_MAX_ROWS_') + B.ev('PW_DET_TRIM_SLACK_') + 1;
+    const data = Array.from({ length: total }, (_, i) => Array.from({ length: width }, (_, j) => (j === 0 ? i : `row ${i}`)));
+    const lastRow = data[total - 1];
+    lastRow[1] = '=IMPORTDATA("https://outside.test/x")';  // as Sheets returns text that was written with its apostrophe
+    lastRow[2] = '+1 for this';
+    lastRow[3] = '@someone said';
+    lastRow[4] = '-- a dash';
+    const written = [];
+    let cleared = 0;
+    const stub = {
+      getLastRow: () => head + total,
+      getRange: (r, c, nr, nc) => ({
+        getValues: () => data.slice(r - head - 1, r - head - 1 + nr).map(row => row.slice(c - 1, c - 1 + nc)),
+        setValues: values => { written.push({ r, values }); },
+        clearContent: () => { cleared += nr; },
+      }),
+    };
+    B.pwTrim_(stub);
+    eq([written.length, written[0].r, written[0].values.length, cleared], [1, head + 1, B.ev('PW_DET_MAX_ROWS_'), total - B.ev('PW_DET_MAX_ROWS_')]);
+    const keptLast = written[0].values[written[0].values.length - 1];
+    eq(keptLast.slice(0, 6), [total - 1, '\'=IMPORTDATA("https://outside.test/x")', '\'+1 for this', '\'@someone said', '\'-- a dash', `row ${total - 1}`]);
+    assert.ok(written[0].values.every(row => row.every(v => typeof v !== 'string' || !/^[=+\-@]/.test(v))), 'no kept cell starts like a formula');
+    written.length = 0;
+    B.pwTrim_({ getLastRow: () => head + total - 1, getRange: () => { throw new Error('not trimmed below the slack'); } });
+    eq(written, []);
   });
 
   test('proactive watch: no cell it writes comes near the 49,000-character cap (each text capped, the Other alerts space\'s alerts too), and a look\'s rows with no post (a source\'s row, or no hit at all) are none', () => {
