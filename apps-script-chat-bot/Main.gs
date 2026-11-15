@@ -315,6 +315,7 @@ function poll() {
   let rtc = null;  // this run's Burson test copy (Control tab B26): TestCopy.gs testCopyFor_
   let testers = null;  // this run's testers (Control tab B30): testersFor_
   let lookback = null;  // this run's BigQuery lookback (Control tab B31): bqLookbackFor_
+  let ftBars = null;  // this run's fast-triage bars (Control tab B41:B45): ftBarsFor_
   let mode = null;  // this run's mode (runMode_): {live, why}, once the spaces are known
   let mainCtx = null;
   let acStandalone = false;
@@ -333,16 +334,18 @@ function poll() {
     alertMemoryStart_(ss, { deadline: runStart + RUN_HARD_STOP_MS_ });
     if (typeof syncBrandSafetyGroups_ === 'function') syncBrandSafetyGroups_(ss);
     control = controlTab_(ss) || ensureControlTab_(ss, Session.getEffectiveUser().getEmail());
-    ensureSwitchRows_(control);  // rows 11-24, 27-29, 32, 34 and 36-40 on a tab from before them (OFF)
+    ensureSwitchRows_(control);  // rows 11-24, 27-29, 32, 34, 36-40 and 46 on a tab from before them (OFF)
     ensureSfBursonRow_(control);  // row 25 (S-F Burson space, blank) on a tab from before it
     ensureTestCopyRow_(control);  // row 26 (Burson test copy, blank) on a tab from before it
     ensureTestersRow_(control);   // row 30 (Testing: send to, blank) on a tab from before it
     ensureBqLookbackRow_(control);  // row 31 (BigQuery lookback, 60 minutes) on a tab from before it
     ensureOtherSpaceRow_(control);  // row 33 (Other alerts space, blank) on a tab from before it
-    ensureWatchAlertsRow_(control);  // row 35 (Watch alerts, OFF) on a tab from before it; the help is at row 42
+    ensureWatchAlertsRow_(control);  // row 35 (Watch alerts, OFF) on a tab from before it
+    ensureFtBarRows_(control);    // rows 41-45 (fast-triage bars, seeds) on a tab from before them; the help is at row 48
     wanted = readControl_(control);
     testers = testersFor_(wanted.testers, control);  // C30 is kept current even while the bot is paused
     lookback = bqLookbackFor_(wanted.bqLookback, control);  // and C31
+    ftBars = ftBarsFor_(wanted.ftBars, control);  // and C41:C45
     if (!wanted.on) {  // paused: skip the Burson space; when it's back ON it starts from that moment
       relaySeen_(false);  // Relay.gs: OFF or paused is noted before anything that can fail
       props.setProperty('PAUSED', 'true');
@@ -456,6 +459,7 @@ function poll() {
     // The BigQuery lookback (B31, held to 15-60 minutes): how far back Direct BigQuery alerts and the Early wave check
     // look this run (BqLookback.gs bqLookbackMinutes_ holds it to that again)
     ctx.settings.bq_lookback_minutes = lookback ? lookback.minutes : BQ_LOOKBACK_DEFAULT_MIN_;
+    ctx.ftBars = ftBars ? ftBars.bars : ftBars_();
     startFrom_(props, cfg, ctx);
     // The Burson test copy (B26): while it's usable the Relay sends the analysts' side there, straight through, and
     // nothing to S-F Burson; set but not usable, the analysts' side waits (nothing queued for S-F Burson either)
@@ -568,6 +572,7 @@ function poll() {
     // 15 minutes into a review queue (BigQuery.gs earlyWaveCheck_), then reviews queued signals and posts each one as a
     // single story card, at most 2 a run (EarlyDetection.gs edDrainQueue_). After the alerts; its failures stay isolated.
     if (switchOn_(ctx, 'earlyWave') && (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', slaBusy))) {
+      ctx._ewBqDeferEvents = true;
       try {
         earlyWaveCheck_(ctx);
       } catch (e) {
@@ -578,6 +583,13 @@ function poll() {
         if (drained && (drained.posted || drained.dropped || drained.dismissed)) console.log(`early detection review: ${JSON.stringify(drained)}`);
       } catch (e) {
         console.error('early detection review: ' + ((e && e.message) || e));
+      } finally {
+        delete ctx._ewBqDeferEvents;
+        if (Array.isArray(ctx._ewBqEvents) && ctx._ewBqEvents.length) {
+          const evs = ctx._ewBqEvents.slice();
+          delete ctx._ewBqEvents;
+          ewBqFlush_(ctx, props, () => (ctx.deadline ? ctx.deadline - ctx.now() : Infinity), { signal_events: evs });
+        }
       }
     }
     ctx.recent.save();

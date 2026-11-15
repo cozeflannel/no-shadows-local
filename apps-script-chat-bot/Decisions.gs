@@ -258,20 +258,24 @@ function decRead_(code, text, questions, ms) {
       .filter(v => v && v !== String(code))[0] || '';
     const label = truncate_(name.replace(/[^A-Za-z0-9_ -]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase(), 40);
     if (code === 400 && DEC_REFUSAL_CODES_.indexOf(label) >= 0) {
-      return { ok: false, refused: true, why: `the safety filter refused the input (${label})` };
+      return { ok: false, refused: true, why: `the safety filter refused the input (${label})`, ms };
     }
-    return { ok: false, why: `HTTP ${code}${label ? `: ${label}` : ''}` };
+    return { ok: false, why: `HTTP ${code}${label ? `: ${label}` : ''}`, ms };
   }
+  const fb = body && typeof body === 'object' && body.prompt_feedback && typeof body.prompt_feedback === 'object' ? body.prompt_feedback : null;
+  const block = fb && fb.block_reason
+    ? truncate_(String(fb.block_reason).replace(/[^A-Za-z0-9_ -]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase(), 40) : '';
+  if (block) return { ok: false, refused: true, why: `the safety filter refused the input (${block})`, ms };
   const got = body && typeof body === 'object' && body.answers && typeof body.answers === 'object' && !Array.isArray(body.answers)
     ? body.answers : null;
-  if (!got) return { ok: false, why: 'an answer that couldn\'t be read' };
+  if (!got) return { ok: false, why: 'an answer that couldn\'t be read', ms };
   const answers = {};
   for (const k of Object.keys(questions)) {
     const a = decAnswer_(got[k], questions[k]);
-    if (!a) return { ok: false, why: `an answer that couldn't be read (${k})` };
+    if (!a) return { ok: false, why: `an answer that couldn't be read (${k})`, ms };
     answers[k] = a;
   }
-  if (ms > DEC_SLOW_MS_) return { ok: false, why: `a slow answer (${Math.round(ms / 1000)} s)` };
+  if (ms > DEC_SLOW_MS_) return { ok: false, why: `a slow answer (${Math.round(ms / 1000)} s)`, ms };
   const tokens = Number(body.usage && body.usage.total_input_tokens);
   return { ok: true, answers, tokens: isFinite(tokens) && tokens > 0 ? Math.round(tokens) : 0, ms };
 }
@@ -581,11 +585,10 @@ function decP0Mass_(answer) {
 }
 
 /**
- * The six answers as the bot keeps them (on a queued signal, in the log, on the Fast triage tab): {g: about Google,
- * r: brand risk, i: independent reports, n: routine noise (each the probability of yes), c: the category, cp: its
- * probability, p0: the probability on P0 tags, s: the severity score (0-4), l: the most probable level, sc: that
- * level's probability (the answer's confidence), sp: the five levels' probabilities}, 2 decimals; null when an answer
- * is missing. Pure.
+ * The six answers as the bot keeps them: {g: about Google, r: brand risk, i: independent reports, n: routine noise
+ * (each the probability of yes), c: the category, cp: its probability, p0: the probability on P0 tags, s: the severity
+ * score (0-4), l: the most probable level, sc: that level's probability (the answer's confidence), sp: the five
+ * levels' probabilities}, 2 decimals; null when an answer is missing. Pure.
  */
 function decCompact_(answers) {
   const a = answers || {};
@@ -606,15 +609,16 @@ function decCompact_(answers) {
 }
 
 /**
- * Asks the six questions about one signal (`row`) within the check's `session`: {ok: true, dec: decCompact_, tokens,
- * ms}, or {ok: false, why, skipped / refused} (decisionsAsk_). Never throws.
+ * Asks the six questions about one signal (`row`) within the check's `session`: {ok: true, dec: decCompact_, answers,
+ * tokens, ms}, or {ok: false, why, skipped / refused, ms} (decisionsAsk_). Never throws.
  */
 function decSignalAsk_(row, session) {
   try {
     const res = decisionsAsk_(decSignalInput_(row), decSignalQuestions_(), session);
     if (!res.ok) return res;
     const dec = decCompact_(res.answers);
-    return dec ? { ok: true, dec, tokens: res.tokens, ms: res.ms } : { ok: false, why: 'an answer that couldn\'t be read' };
+    return dec ? { ok: true, dec, answers: res.answers, tokens: res.tokens, ms: res.ms }
+      : { ok: false, why: 'an answer that couldn\'t be read', ms: res.ms };
   } catch (e) {
     return { ok: false, why: truncate_(String((e && e.message) || e), 120) };
   }

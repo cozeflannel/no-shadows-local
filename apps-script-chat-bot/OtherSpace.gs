@@ -212,9 +212,9 @@ function otherSpaceTodayText_(s) {
 
 /**
  * Row 33 ("Other alerts space") on the Control tab. A tab from before it gets it on its next run, without setup(): blank
- * unless a person pasted a space in B33 (kept); "How it works" moves down to make room (row 42, below the Proactive watch
- * switch in row 34, Watch alerts in row 35, WatchAlerts.gs, and the switches in rows 36-40: Temp checks, Group test
- * emails and the three Fast triage ones).
+ * unless a person pasted a space in B33 (kept); "How it works" moves down to make room (row 48, below the Proactive watch
+ * switch in row 34, Watch alerts in row 35, WatchAlerts.gs, the switches in rows 36-40, the fast-triage bars in rows
+ * 41-45 and the BigQuery switch in row 46).
  */
 function ensureOtherSpaceRow_(sh) {
   if (!sh) return;

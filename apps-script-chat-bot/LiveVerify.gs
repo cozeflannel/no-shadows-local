@@ -141,9 +141,9 @@ function verifyLookbackAndPipelineLive() {
  * (the producer's 3-hour buffer, then the review queue; LIVE_VERIFY_FT_MAX_ at most), through the same client the
  * checks use (the key from Secret Manager, the caps, the pause after a failure). Reads only: nothing is queued,
  * reviewed, posted or written to a sheet (the client counts its own calls in script state, as it always does). Logs,
- * for each signal, what was sent's size, the six answers, the time it took, and what the fast triage would do with
- * them (hold back, raise); then the latencies and the day's call counts. No signal at hand: it says so and asks
- * nothing. Run it from the editor.
+ * for each signal, what was sent's size, the six answers, the time it took, and what the fast triage does with them
+ * (hold back, raise); then the latencies and the day's call counts. No signal at hand: it says so and asks nothing.
+ * Run it from the editor.
  */
 function verifyFastTriageLive() {
   const props = PropertiesService.getScriptProperties();
@@ -155,6 +155,7 @@ function verifyFastTriageLive() {
     ids.add(r.alert_id);
     return true;
   }).slice(0, LIVE_VERIFY_FT_MAX_);
+  const bars = ftBars_();
   const session = decSession_(() => Infinity, false);
   const results = signals.map(r => {
     const res = decSignalAsk_(r, session);
@@ -171,8 +172,8 @@ function verifyFastTriageLive() {
       answers: res.ok ? res.dec : null,
       p0_risk_group: ftP0Group_(r),
       never_held_back: ftProtected_(r),
-      would_hold_back: res.ok ? (ftHoldWhy_(r, res.dec) || 'no') : null,
-      would_raise_early: res.ok ? ewsWatchRaise_(res.dec) : null,
+      hold_back: res.ok ? (ftHoldWhy_(r, res.dec, bars) || 'no') : null,
+      raise_early: res.ok ? ewsWatchRaise_(res.dec, bars) : null,
     };
   });
   const times = results.filter(x => x.ok).map(x => x.ms).sort((a, b) => a - b);
@@ -185,7 +186,7 @@ function verifyFastTriageLive() {
     not_answered: results.filter(x => !x.ok).map(x => `${x.alert_id}: ${x.why}`),
     latency_ms: times.length ? { min: times[0], median: times[Math.floor(times.length / 2)], max: times[times.length - 1] } : null,
     calls_today: { asked: st.asked, failed: st.failed, refused: st.refused, paused_until: st.until ? new Date(st.until).toISOString() : '', why: st.why },
-    bars: { hold_back: ftHoldBars_(), hold_back_ready: ftHoldReady_(), early_watch: ewsWatchBars_(), early_watch_ready: ewsWatchReady_() },
+    bars,
     results,
   };
   console.log('LIVE_VERIFY_FAST_TRIAGE ' + JSON.stringify(summary, null, 2));

@@ -134,6 +134,7 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
     if (bqPolled && bqPolled.bsip) report.bq_bsip = bqPolled.bsip;
     if (ctx.allowEarlyWave && switchOn_(ctx, 'earlyWave') &&
         (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', slaBusy))) {
+      ctx._ewBqDeferEvents = true;
       try {
         earlyWaveCheck_(ctx);
       } catch (e) {
@@ -144,6 +145,13 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
         if (drained && (drained.posted || drained.dropped || drained.dismissed)) console.log(`auto-correct early detection review: ${JSON.stringify(drained)}`);
       } catch (e) {
         console.error('auto-correct early detection review: ' + ((e && e.message) || e));
+      } finally {
+        delete ctx._ewBqDeferEvents;
+        if (Array.isArray(ctx._ewBqEvents) && ctx._ewBqEvents.length) {
+          const evs = ctx._ewBqEvents.slice();
+          delete ctx._ewBqEvents;
+          ewBqFlush_(ctx, props, () => (ctx.deadline ? ctx.deadline - ctx.now() : Infinity), { signal_events: evs });
+        }
       }
     }
     ctx.recent.save();

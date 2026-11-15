@@ -427,7 +427,9 @@ function bqInsertAll_(table, rows) {
   const url = `${BQ_API_BASE_}${GCP_PROJECT}/datasets/${encodeURIComponent(parts[0])}/tables/` +
     `${encodeURIComponent(parts[1])}/insertAll`;
   const props = PropertiesService.getScriptProperties();
-  if (props.getProperty(BQ_WRITEBACK_EVER_PROP_) !== 'true') props.setProperty(BQ_WRITEBACK_EVER_PROP_, 'true');
+  if (parts[0] !== 'early_wave' && props.getProperty(BQ_WRITEBACK_EVER_PROP_) !== 'true') {
+    props.setProperty(BQ_WRITEBACK_EVER_PROP_, 'true');
+  }
   const unsure = message => Object.assign(new Error(message), { unknown: true });
   let resp;
   try {
@@ -3255,8 +3257,7 @@ function edQueueKey_(row) {
  * What the review and the card need from a pending row, as one property can hold it (ED_ROW_MAX_CHARS_): the signal's
  * fields, the earlier card it updates when the story grew (`update_of`, EarlyDetection.gs edUpdateOf_) and up to
  * ED_POSTS_MAX_ representative posts (snippets of 280 characters at most; fewer posts when it would still be too long),
- * or null when even one post doesn't fit. The fast triage's answers (`dec`, Decisions.gs decCompact_: recorded beside
- * the review, never read by it) ride along only when they still fit after that: never at a post's cost. Pure.
+ * or null when even one post doesn't fit. Pure.
  */
 function edQueueCompact_(row) {
   const r = row || {};
@@ -3278,12 +3279,7 @@ function edQueueCompact_(row) {
     keep.posts = keep.posts.slice(0, -1);
     json = JSON.stringify(keep);
   }
-  if (json.length > ED_ROW_MAX_CHARS_) return null;
-  if (r.dec && typeof r.dec === 'object' && !Array.isArray(r.dec)) {
-    const withDec = Object.assign({}, keep, { dec: r.dec });
-    if (JSON.stringify(withDec).length <= ED_ROW_MAX_CHARS_) return withDec;
-  }
-  return keep;
+  return json.length > ED_ROW_MAX_CHARS_ ? null : keep;
 }
 
 /** A queued signal's kind in the index: 'v' a velocity spike, 'w' an early-watch story, 'c' a cluster. Pure. */
@@ -3385,8 +3381,9 @@ function ewLogCheck_(ctx, props, left) {
  * minutes), runs EarlyWaveSource.gs (`ewsRows_`) over the 6 approved BigQuery tables + Vertex AI embeddings for signals
  * created since just before its last check (edLookbackMinutes_: at least the B31 lookback, `@minutes`): newly emerged
  * low-tier semantic clusters (`CLUSTER_EMERGENCE`) and multi-grain low-tier velocity spikes (`VELOCITY_SPIKE`). Queues
- * up to `EW_MAX_PER_CHECK_` new ones for review, EW_MAX_PER_DAY_ a day: once that many are queued the check still reads
- * and clusters (the stories stay up to date for tomorrow's first check) and only queueing stops. Same-story dedup
+ * up to `EW_MAX_PER_CHECK_` new ones for review, EW_MAX_PER_DAY_ a day: with the fast triage OFF, once that many are
+ * queued it returns early without reading BigQuery until tomorrow; with the fast triage ON, the check still reads and
+ * clusters (the stories stay up to date for tomorrow's first check) and only queueing stops. Same-story dedup
  * (EarlyDetection.gs edStoryVerdict_): a signal on a story already carded in the last 24h (same cluster, the alert the
  * pipeline says it updates, or 2+ of the same posts), or queued with as many accounts, is held back without a review
  * unless the story grew (2x the accounts and 3 more, or a new platform): then it is queued as an update of that card. A
@@ -3395,15 +3392,16 @@ function ewLogCheck_(ctx, props, left) {
  * feed (B3) or the Auto-correct space standing alone (B10); never S-F Burson (B25), the Burson test copy (B26) or
  * external spaces. One log line a check says the producer's time and the rolling API counts (ewLogCheck_).
  *
- * The fast triage (Control rows 38-40, FastTriage.gs; background work like the rest, and with row 38 OFF none of it
- * runs): after the non-English, other-alert and same-story checks and before a signal is queued, Gemini Decisions is
- * asked about it (one call a signal; a failed, refused or skipped call leaves the signal exactly as it was without
- * the fast triage) and the answers go with the queued signal. Row 38 alone asks only about the signals this check
- * queues, in the usual order. With row 39 the candidates (as many as there are calls for) are asked about first and
- * queued in FastTriage.gs ftRank_'s order, and early-watch signals (EARLY_WATCH: stories the producer raised below the
- * promotion bar, EW_WATCH_QUEUE_PER_DAY_ a day at most) are queued; such a signal marks only itself as seen, never
- * its story, so the story's usual signal is never held back as its repeat. With row 40 a signal ftHoldWhy_ names is
- * dropped without a review, counted on C19 and logged with its id, the reason and the probabilities.
+ * The fast triage (Control rows 38-45, FastTriage.gs; background work like the rest, and with row 38 OFF or rows 39
+ * and 40 both OFF none of it runs): after the non-English, other-alert and same-story checks and before a signal is
+ * queued, Gemini Decisions is asked about it (one call a signal; a failed, refused or skipped call leaves the signal
+ * exactly as it was without the fast triage). With row 39 the candidates (as many as there are calls for) are asked
+ * about first and queued in FastTriage.gs ftRank_'s order, and early-watch signals (EARLY_WATCH: stories the producer
+ * raised below the promotion bar, EW_WATCH_QUEUE_PER_DAY_ a day at most) are queued; such a signal marks only itself
+ * as seen, never its story, so the story's usual signal is never held back as its repeat. With row 40 a signal
+ * ftHoldWhy_ names is dropped without a review, counted on C19 and logged with its id, the reason and the
+ * probabilities. With row 46 ON (Write early-wave records to BigQuery), the check's story snapshots, story posts,
+ * signals, signal events and Decisions verdicts are written to brand-social-central-data.early_wave.
  * Returns `{queued, failed, capped, repeats}` (and `triaged` when the fast triage held any back) or `null` when skipped.
  */
 function earlyWaveCheck_(ctx) {
@@ -3420,17 +3418,24 @@ function earlyWaveCheck_(ctx) {
   const last = Number(props.getProperty(ED_AT_PROP_)) || 0;
   if (last && now >= last && now - last < EW_EVERY_MS_) return null;
   props.setProperty(ED_AT_PROP_, String(now));
-  // The daily ceiling: once today's signals are all queued, the check still reads and clusters, and only queueing stops
   const today = edDayState_(props);
   const room = Math.max(0, EW_MAX_PER_DAY_ - (Number(today.queued) || 0));
-  const minutes = edLookbackMinutes_(ctx.settings, last, now);
-  // The fast triage (null with row 38 OFF; at the daily ceiling nothing can be queued, so nothing is asked either)
-  const ft = room ? ftStart_(ctx, left) : null;
   if (!ftRankOn_(ctx)) ftQueueUnrank_(props);  // row 39 OFF: the review order goes back to what it was
+  const writeBq = ewBqOn_(ctx);
+  // With the fast-triage and BigQuery switches OFF: at the daily signal cap, return early without reading BigQuery
+  if (!room && !ftOn_(ctx) && !writeBq) {
+    noteEarlyWave_(props, 0, 0, '');
+    return { queued: 0, failed: 0, capped: true };
+  }
+  const minutes = edLookbackMinutes_(ctx.settings, last, now);
+  // The fast triage (null when nothing ON uses the answers, or at the daily ceiling where nothing can be queued)
+  const ft = room ? ftStart_(ctx, left) : null;
+  const rec = writeBq ? { stories: [], posts: [], signals: [], events: [] } : null;
 
   let rows;
   try {
-    rows = ft ? bqEarlyDetectionRows_(minutes, ftProducerOpts_(ft)) : bqEarlyDetectionRows_(minutes);
+    const prodOpts = ft ? ftProducerOpts_(ft, rec) : (rec ? { record: rec } : undefined);
+    rows = prodOpts ? bqEarlyDetectionRows_(minutes, prodOpts) : bqEarlyDetectionRows_(minutes);
   } catch (e) {
     const errMsg = String((e && e.message) || e);
     console.warn('Early detection check skipped: ' + errMsg);
@@ -3471,19 +3476,31 @@ function earlyWaveCheck_(ctx) {
   let updates = 0;
   let triaged = 0;
   let capped = !room;
+  const stageByCid = new Map();
+  const seenSigIds = new Set((rec ? rec.signals : []).map(s => s && s.alert_id).filter(Boolean));
+  const noteRecSignal = r => {
+    if (!rec || !r || !r.alert_id || seenSigIds.has(r.alert_id)) return;
+    seenSigIds.add(r.alert_id);
+    rec.signals.push(r);
+  };
   const isWatch = r => typeof EWS_WATCH_SIGNAL_ !== 'undefined' && String(r.signal_type || '').trim().toUpperCase() === EWS_WATCH_SIGNAL_;
   const watchRoom = Math.max(0, EW_WATCH_QUEUE_PER_DAY_ - (Number(today.watchq) || 0));
-  // Queues one signal (the fast triage's answers with it, when it has them) and marks its keys as seen
+  // Queues one signal and marks its keys as seen
   const put = (r, keys, idKey, verdict, dec) => {
     try {
-      let row = verdict.update ? Object.assign({}, r, { update_of: verdict.update }) : r;
-      if (dec) row = Object.assign({}, row, { dec });
+      const row = verdict.update ? Object.assign({}, r, { update_of: verdict.update }) : r;
       if (edQueuePut_(props, row, now, ft && ft.rank ? ftRankKeys_(r, dec) : null)) {
         queued++;
         if (verdict.update) updates++;
         if (isWatch(r)) kinds.watch++;
         else if (String(r.signal_type || '').trim().toUpperCase() === 'VELOCITY_SPIKE') kinds.velocity++;
         else kinds.cluster++;
+        if (rec) {
+          noteRecSignal(r);
+          if (r.cluster_id) stageByCid.set(String(r.cluster_id), 'queued');
+          rec.events.push(ewBqEventRow_(r.alert_id, r.cluster_id, 'queued',
+            verdict.update ? 'update' : null, verdict.update ? { update_of: verdict.update.id } : null, now));
+        }
       }
       const au = ewCount_(r.unique_low_tier_authors);
       // An early-watch signal marks only itself, never its story: the story's usual signal at the promotion bar must not
@@ -3495,14 +3512,28 @@ function earlyWaveCheck_(ctx) {
       console.warn(`Early detection: couldn't queue a signal for review: ${(e && e.message) || e}`);
     }
   };
-  // The fast triage holds a signal back: no review; it is marked as read, counted (C19), logged in one line and recorded
+  // The fast triage holds a signal back: no review; it is marked as read, counted (C19) and logged in one line
   const holdBack = (r, idKey, dec, why) => {
     if (idKey) seen.add(idKey, now);
     marked++;
     triaged++;
     ft.held++;
+    ftNoteHeldVerdict_(ft, r);
     ctx.log(`early detection: fast triage held back ${r.alert_id || 'a signal'}: ${why} \u00b7 ${ftAnswerWords_(dec)}`);
-    ft.rows.push(ftTabRow_({ row: r, dec, did: `held back: ${why}`, kind: 'h' }));
+    if (rec) {
+      noteRecSignal(r);
+      if (r.cluster_id) stageByCid.set(String(r.cluster_id), 'held');
+      rec.events.push(ewBqEventRow_(r.alert_id, r.cluster_id, 'filtered_fast_triage', why, dec ? {
+        about_google: dec.g,
+        brand_risk: dec.r,
+        independent_reports: dec.i,
+        routine_noise: dec.n,
+        category: dec.c,
+        severity_score: dec.s,
+        severity_level: ED_SEVERITIES_[dec.l] || null,
+        confidence: dec.sc,
+      } : null, now));
+    }
   };
   // With the ranking ON (row 39): the candidates, asked about and put in order before any is queued; as many as this
   // check still has calls for, never fewer than it may queue (the rest are there again at the next check)
@@ -3536,6 +3567,11 @@ function earlyWaveCheck_(ctx) {
       repeats++;
       const title = (verdict.prior && verdict.prior.latest && verdict.prior.latest.title) || ewText_(r.headline || r.signal_key || '');
       ctx.log(`early detection: held back a repeat of "${truncate_(title, 90)}": ${verdict.hold}`);
+      if (rec) {
+        noteRecSignal(r);
+        if (r.cluster_id) stageByCid.set(String(r.cluster_id), 'held');
+        rec.events.push(ewBqEventRow_(r.alert_id, r.cluster_id, 'held_repeat', verdict.hold, null, now));
+      }
       continue;
     }
     if (pickMax) {
@@ -3546,7 +3582,7 @@ function earlyWaveCheck_(ctx) {
     if (queued >= EW_MAX_PER_CHECK_) break;
     if (queued >= room) { capped = true; break; }
     const dec = ft ? ftAsk_(ft, r) : null;
-    const why = ft && ft.hold ? ftHoldWhy_(r, dec) : '';
+    const why = ft && ft.hold ? ftHoldWhy_(r, dec, ft.bars) : '';
     if (why) {
       holdBack(r, idKey, dec, why);
       continue;
@@ -3556,7 +3592,7 @@ function earlyWaveCheck_(ctx) {
   if (picked.length) {
     picked.forEach(c => { c.dec = ftAsk_(ft, c.row); });
     const keep = picked.filter(c => {
-      const why = ft.hold ? ftHoldWhy_(c.row, c.dec) : '';
+      const why = ft.hold ? ftHoldWhy_(c.row, c.dec, ft.bars) : '';
       if (why) holdBack(c.row, c.idKey, c.dec, why);
       return !why;
     }).sort(ftRank_);
@@ -3582,5 +3618,32 @@ function earlyWaveCheck_(ctx) {
   }
   noteEarlyWave_(props, 0, 0, failed ? `${failed} couldn't be queued` : '', { queued, repeats, triaged, watchQueued: kinds.watch });
   ftFinish_(ft, props);
+  if (rec) {
+    const snapRows = (rec.stories || []).map(s => {
+      const cid = String((s && s.c && s.c.id) || '');
+      const stg = stageByCid.get(cid) || (ledger && Array.isArray(ledger.cards) && ledger.cards.some(x => x && x.cid === cid) ? 'carded' : s.stage);
+      return ewBqSnapshotRow_(Object.assign({}, s, { stage: stg }), rec.at || now);
+    });
+    const postRows = (rec.posts || []).map(x => ewBqPostRow_(x.cid, x.m, x.now || now));
+    const sigRows = (rec.signals || []).map(r => ewBqSignalRow_(r, rec.at || now));
+    const verdictRows = ft && Array.isArray(ft.verdicts) ? ft.verdicts : [];
+    if (ctx && ctx._ewBqDeferEvents) {
+      ctx._ewBqEvents = (ctx._ewBqEvents || []).concat(rec.events);
+      ewBqFlush_(ctx, props, left, {
+        story_snapshots: snapRows,
+        story_posts: postRows,
+        signals: sigRows,
+        triage_verdicts: verdictRows,
+      });
+    } else {
+      ewBqFlush_(ctx, props, left, {
+        story_snapshots: snapRows,
+        story_posts: postRows,
+        signals: sigRows,
+        signal_events: rec.events,
+        triage_verdicts: verdictRows,
+      });
+    }
+  }
   return triaged ? { queued, failed, capped, repeats, triaged } : { queued, failed, capped, repeats };
 }

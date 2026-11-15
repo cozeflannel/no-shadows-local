@@ -33,13 +33,13 @@
  *   platform: then its card goes in the earlier card's thread as `📈 *Early Detection Update: …*` with what's new. A
  *   review that finds an issue already alerted with nothing new posts no card, nor does any other dismissal (filtered
  *   out): Control C19 counts the repeats held back and the dismissals filtered out.
- *   The fast triage (Control rows 38-40, FastTriage.gs; OFF, nothing here differs): Gemini Decisions answers six
- *   questions about each signal before it is queued; the answers are recorded beside this review's call on the Fast
- *   triage tab (row 38), order the queue (row 39) and can hold back a signal that is plainly noise (row 40). Row 39 also
- *   lets the producer raise a story still below the usual bar as an EARLY_WATCH signal: it is queued, deduplicated and
- *   reviewed here like any other, its card says it is an early signal and how many accounts it rests on
- *   (edEarlyLine_), a failed review gives it no card (one more try, then it is dropped), and when its story reaches
- *   the usual bar that signal goes in the early card's thread as an update (edWatchNews_), never as a second card.
+ *   The fast triage (Control rows 38-45, FastTriage.gs; OFF, nothing here differs): Gemini Decisions answers six
+ *   questions about each signal before it is queued; row 38 enables rows 39 and 40, row 39 orders the queue and runs
+ *   the early-watch tier, and row 40 holds back a signal that is plainly noise. Under row 39 a story still below the
+ *   usual bar that passes the watch bars is raised as an EARLY_WATCH signal: it is queued, deduplicated and reviewed
+ *   here like any other, its card says it is an early signal and how many accounts it rests on (edEarlyLine_), a
+ *   failed review gives it no card (one more try, then it is dropped), and when its story reaches the usual bar that
+ *   signal goes in the early card's thread as an update (edWatchNews_), never as a second card.
  *   Relay.gs (`RELAY_ID_RX_`) treats `client-zeda-` as the bot's own work, so nothing ever relays to S-F Burson (B25) or
  *   the Burson test copy (B26). Records `ingested: ED_ALERT_INGESTED_` ('Early detection') so Burson parity KPIs
  *   (`Results` tab) and shared SLRR BigQuery write-backs (`bqWriteBack_`) remain isolated.
@@ -1655,8 +1655,8 @@ function edDismissed_(d) {
  * below the usual bar) whose review failed gets no card either: a card must rest on a review, so it is tried once more
  * (`retry`) and then dropped; the usual kinds keep their "needs a human look" card. {card (null when Chat held it
  * back), held (why no card was posted after the review, or ''), dismissed (why it was filtered out as a dismissal, or
- * ''), retry (why it stays queued for another try, or absent), call ({disposition, basis, confidence, severity}: the
- * review's call, for the Fast triage tab), logged (the card's Alert-log id)}.
+ * ''), retry (why it stays queued for another try, or absent), call ({disposition, basis, confidence, severity, why}:
+ * the review's call), logged (the card's Alert-log id), updated (true when posted in an earlier card's thread)}.
  */
 function edReviewAndPost_(ctx, row, report) {
   const now = ctx.now();
@@ -1680,7 +1680,7 @@ function edReviewAndPost_(ctx, row, report) {
   const d = edConclude_(ctx, prep, assessed, now);
   const named = (d.rev && d.rev.story && d.rev.story.title) || ed.headline;
   const call = { disposition: d.disposition, basis: d.basis, confidence: d.rev ? d.rev.confidence : null,
-    severity: d.rev ? d.rev.severity : '' };
+    severity: d.rev ? d.rev.severity : '', why: d.why || '' };
   // An early-watch signal whose review failed: no card (the usual kinds keep their "needs a human look" card); it is
   // tried once more, then dropped (edDrainQueue_, ED_QUEUE_MAX_TRIES_)
   if (d.basis === 'failed' && ed.signalType === EWS_WATCH_SIGNAL_) {
@@ -1735,7 +1735,7 @@ function edReviewAndPost_(ctx, row, report) {
     samples: ed.samples,
   });
   const logged = edAct_(ctx, Object.assign({}, card, { text: card.text || text }), d, report);
-  return { card, held: '', call, logged: (logged && logged.alert_id) || '' };
+  return { card, held: '', call, logged: (logged && logged.alert_id) || '', updated: !!upd, updateOf: (upd && upd.id) || '' };
 }
 
 /**
@@ -1747,25 +1747,37 @@ function edReviewAndPost_(ctx, row, report) {
  * the same-story dedup looks again at the cards posted since it was queued (edStoryVerdict_, the authoritative check):
  * a repeat with nothing new is dropped without a review; one that grew goes in its story's latest card's thread. A
  * review that posts no card (an issue already alerted, nothing new; or a dismissal, filtered out: edDismissed_) counts
- * toward the run's reviews. With the fast triage (Control rows 38-40, FastTriage.gs): each reviewed signal goes on the
- * Fast triage tab, its Gemini Decisions answers beside the review's call, with one log line (row 38); the queue is in
- * the answers' order only while row 39 is ON (OFF, the ranking's keys are taken off and an early-watch signal still
- * waiting is dropped unreviewed); an early-watch signal whose review failed stays queued for one more try and the run
- * reviews no more. {posted, dropped, held, dismissed, waiting}, or null when it didn't run.
+ * toward the run's reviews. With the fast triage (Control rows 38-45, FastTriage.gs): the queue is in the answers'
+ * order only while row 39 is ON (OFF, the ranking's keys are taken off and an early-watch signal still waiting is
+ * dropped unreviewed); an early-watch signal whose review failed stays queued for one more try and the run reviews no
+ * more. {posted, dropped, held, dismissed, waiting}, or null when it didn't run.
  */
 function edDrainQueue_(ctx, report) {
   if (!switchOn_(ctx, 'earlyWave') || earlyWaveRefusal_(ctx)) return null;
   const props = PropertiesService.getScriptProperties();
   const out = { posted: 0, dropped: 0, held: 0, dismissed: 0, waiting: 0 };
-  if (!props.getProperty(ED_QUEUE_PROP_)) return out;
+  const writeBq = ewBqOn_(ctx);
+  const events = Array.isArray(ctx && ctx._ewBqEvents) ? ctx._ewBqEvents.slice() : [];
+  if (ctx) delete ctx._ewBqEvents;
+  const flushEvents = () => {
+    if (writeBq && events.length) {
+      const left = () => (ctx.deadline ? ctx.deadline - ctx.now() : Infinity);
+      ewBqFlush_(ctx, props, left, { signal_events: events });
+    }
+  };
+  if (!props.getProperty(ED_QUEUE_PROP_)) {
+    flushEvents();
+    return out;
+  }
   const ranking = ftRankOn_(ctx);
   if (!ranking) ftQueueUnrank_(props);
-  const recording = ftOn_(ctx);
-  const tabRows = [];  // the Fast triage tab's rows for this run's reviews (row 38 ON)
   const left = () => (ctx.deadline ? ctx.deadline - ctx.now() : Infinity);
   const prune = () => {
     const p = edQueuePrune_(props, ctx.now());
-    p.dropped.forEach(x => ctx.log(`early detection: dropped ${x.id || 'a queued signal'} (${x.why})`));
+    p.dropped.forEach(x => {
+      ctx.log(`early detection: dropped ${x.id || 'a queued signal'} (${x.why})`);
+      if (writeBq && x.id) events.push(ewBqEventRow_(x.id, null, 'dropped_stale', x.why, null, ctx.now()));
+    });
     out.dropped += p.dropped.length;
     return p.list;
   };
@@ -1778,9 +1790,13 @@ function edDrainQueue_(ctx, report) {
     const entry = list[0];
     // An early-watch signal waits for its review only while the ranking that raised it is ON (row 39)
     if (entry.sig === 'w' && !ranking) {
+      const wRow = writeBq ? edQueueRow_(props, entry.k) : null;
       edQueueDrop_(props, entry.k);
       out.dropped++;
       ctx.log(`early detection: dropped ${entry.id || 'a queued early signal'} (the early watch is OFF)`);
+      if (writeBq && entry.id) {
+        events.push(ewBqEventRow_(entry.id, wRow && wRow.cluster_id, 'dropped_stale', 'the early watch is OFF', null, ctx.now()));
+      }
       list = prune();
       continue;
     }
@@ -1792,6 +1808,9 @@ function edDrainQueue_(ctx, report) {
       edQueueDrop_(props, entry.k);
       out.held++;
       ctx.log(`early detection: held back a repeat${entry.id ? ` (${entry.id})` : ''}: ${verdict.hold}`);
+      if (writeBq && (entry.id || (row && row.alert_id))) {
+        events.push(ewBqEventRow_(entry.id || row.alert_id, row && row.cluster_id, 'held_repeat', verdict.hold, null, ctx.now()));
+      }
       list = prune();
       continue;
     }
@@ -1807,19 +1826,14 @@ function edDrainQueue_(ctx, report) {
         break;
       }
     }
-    const dec = row && row.dec && typeof row.dec === 'object' ? row.dec : null;
     if (res && res.retry) {  // an early-watch signal whose review failed: no card; one more try, then it is dropped
       if (tries >= ED_QUEUE_MAX_TRIES_) {
         edQueueDrop_(props, entry.k);
         out.dropped++;
-        ctx.log(`early detection: dropped ${entry.id || 'an early signal'} (${res.retry} ${tries} times: no card without a review)`);
-        if (recording) {
-          try {
-            tabRows.push(ftTabRow_({ row, dec, did: `early watch: raised, but ${res.retry} ${tries} times: no card`,
-              review: res.call || null, kind: 'r' }));
-          } catch (e) {
-            console.warn('fast triage: could not build tab row: ' + ((e && e.message) || e));
-          }
+        const whyDrop = `${res.retry} ${tries} times: no card without a review`;
+        ctx.log(`early detection: dropped ${entry.id || 'an early signal'} (${whyDrop})`);
+        if (writeBq && (entry.id || (row && row.alert_id))) {
+          events.push(ewBqEventRow_(entry.id || row.alert_id, row && row.cluster_id, 'dropped_stale', whyDrop, null, ctx.now()));
         }
       } else {
         ctx.log(`early detection: ${entry.id || 'an early signal'} stays queued for one more try (${res.retry})`);
@@ -1828,19 +1842,23 @@ function edDrainQueue_(ctx, report) {
       break;
     }
     edQueueDrop_(props, entry.k);
-    if (recording && row && res) {
-      try {
-        const did = entry.sig === 'w' ? 'early watch: raised, then reviewed'
-          : !dec ? 'no answer on record' : ranking ? 'answered, and ranked by it' : 'answered (recording only)';
-        tabRows.push(ftTabRow_({ row, dec, did, review: res.call || null, card: res.logged || '', kind: 'r' }));
-        if (dec && res.call) {
-          ctx.log(`fast triage and review: ${entry.id || 'a signal'} \u00b7 ${ftAnswerWords_(dec)} \u00b7 review: ` +
-            `${res.call.disposition} (${res.call.basis}` +
-            `${res.call.confidence === null || res.call.confidence === undefined ? '' : `, ${Math.round(res.call.confidence * 100) / 100} sure`}` +
-            `${res.call.severity ? `, ${res.call.severity}` : ''})`);
-        }
-      } catch (e) {
-        console.warn('fast triage: could not record reviewed signal: ' + ((e && e.message) || e));
+    if (writeBq && row && res) {
+      const aid = row.alert_id || entry.id;
+      const cid = row.cluster_id || null;
+      if (res.call) {
+        events.push(ewBqEventRow_(aid, cid, 'reviewed', res.call.why || res.call.basis || null, {
+          disposition: res.call.disposition || null,
+          basis: res.call.basis || null,
+          confidence: res.call.confidence === undefined ? null : res.call.confidence,
+          severity: res.call.severity || null,
+        }, ctx.now()));
+      }
+      if (res.card) {
+        const evName = res.updated ? 'update_posted' : 'carded';
+        events.push(ewBqEventRow_(aid, cid, evName, null, {
+          card_alert_id: res.logged || null,
+          update_of: res.updateOf || null,
+        }, ctx.now()));
       }
     }
     if (res && res.card) {
@@ -1856,10 +1874,7 @@ function edDrainQueue_(ctx, report) {
     list = prune();
   }
   out.waiting = list.length;
-  if (tabRows.length) {
-    const tabRes = ftTabAppend_(tabRows);
-    if (tabRes && tabRes.problem) ctx.log(`fast triage: ${tabRes.problem}`);
-  }
+  flushEvents();
   if (out.held || out.dismissed) {
     noteEarlyWave_(props, 0, 0, '', { checked: false, repeats: out.held, dismissed: out.dismissed, waiting: out.waiting });
   } else if (out.dropped && !out.posted) {

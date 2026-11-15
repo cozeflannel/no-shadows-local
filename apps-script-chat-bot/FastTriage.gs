@@ -1,101 +1,245 @@
 /**
- * FastTriage.gs — the fast-triage layer on the early-wave path (Control rows 38-40): what the bot does with the Gemini
- * Decisions answers about a signal (Decisions.gs asks; the full Gemini review in EarlyDetection.gs still runs before
- * every card, and nothing is posted on these answers).
+ * FastTriage.gs — the fast-triage layer on the early-wave path (Control rows 38-45) and the early-wave BigQuery writer
+ * (Control row 46): what the bot does with the Gemini Decisions answers about a signal (Decisions.gs asks; the full
+ * Gemini review in EarlyDetection.gs still runs before every card, and nothing is posted on these answers).
  *
- * Three switches, each OFF until a person turns it ON; rows 39 and 40 do nothing without row 38:
- *   Row 38  Fast triage (Gemini Decisions)       asks the six questions about each signal about to be queued and records
- *                                                the answers: on the queued signal, in the log, and on the Fast triage
- *                                                tab beside the full review's call. Nothing else changes: the order,
- *                                                what is queued and what is reviewed are as they were, and the early
- *                                                watch doesn't run.
- *   Row 39  Fast triage: rank and early watch    queues and reviews in the answers' order (ftRank_), and runs the early
- *                                                watch: the producer's stories still below the usual bar
- *                                                (EarlyWaveSource.gs) are asked about and recorded, and one is raised
- *                                                as a signal of its own when the answers say so (ewsWatchRaise_).
- *   Row 40  Fast triage: hold back noise         drops a signal without a review, only as ftHoldWhy_ allows.
+ * Switches on the Control tab, each OFF until a person turns it ON; rows 39 and 40 need row 38:
+ *   Row 38  Fast triage (Gemini Decisions)       only enables rows 39 and 40. While rows 39 and 40 are OFF, no
+ *                                                Decisions call is made and nothing is written.
+ *   Row 39  Fast triage: rank and early watch    orders the queue by the Decisions answers (ftRank_), and runs the
+ *                                                early-watch tier: a story below the promotion bar (EarlyWaveSource.gs)
+ *                                                that passes the watch bars is emitted as an EARLY_WATCH signal
+ *                                                (ewsWatchRaise_) and takes the normal route (queue, same-story dedup,
+ *                                                full review, card that says it is an early signal and how many
+ *                                                accounts it rests on).
+ *   Row 40  Fast triage: hold back noise         drops a signal that meets the hold-back conditions without a review,
+ *                                                counts it on Control C19 as filtered by fast triage, and logs it in
+ *                                                one line with its ID, the reason and the probabilities (ftHoldWhy_).
+ *   Row 46  Write early-wave records to BigQuery writes each check's stories, story posts, signals, signal events and
+ *                                                Decisions verdicts to brand-social-central-data.early_wave.
  *
- * The answers are used for two things only:
- *   Order      P0 risk groups first, then the tier (P0 > P1 > P2); within a tier the severity score, then the
- *              brand-risk probability, then the order there was before. A signal with no answer (the API failed, a cap,
- *              a pause) is never ranked down for it: it goes first in its tier.
- *   Hold back  Only when ALL of these hold: the signal has no P0 risk group; no taxonomy hint raised it; its most
- *              probable severity level is one of the two lowest; that level's probability is above
- *              EW_TRIAGE_CONF_MIN_; and either about_google is below EW_TRIAGE_ABOUT_GOOGLE_MAX_ or routine_noise is
- *              above EW_TRIAGE_NOISE_MIN_. A signal that doesn't say whether it has a risk group or a hint (one made
- *              before the producer told) is never held back. A held-back signal is counted on Control C19 ("filtered by
- *              fast triage", beside the dismissals), logged in one line with its id, the reason and the probabilities,
- *              and written on the Fast triage tab.
- *
- * Bars. Each is a named constant, set only from real signals, with the evidence written here (as the similarity bars'
- * is in EarlyWaveSource.gs):
- *   - EW_TRIAGE_HOLD_MAX_LEVEL_ 1 (none, low): the two lowest of ED_SEVERITIES_' five levels. A definition, not a
- *     measurement.
- *   - EW_TRIAGE_ABOUT_GOOGLE_MAX_, EW_TRIAGE_NOISE_MIN_, EW_TRIAGE_CONF_MIN_: NOT SET (null), so nothing is held back
- *     whatever row 40 says (ftHoldReady_). They are set from the Fast triage tab once row 38 alone (recording only)
- *     has recorded enough reviewed signals, and only if, on every real signal available, no signal with a P0 risk group
- *     and no signal the full review escalated would have been held back.
- *
- * The Fast triage tab (made by the bot, its title in A1 its mark; a tab of that name the bot didn't make is never
- * read or written): one row a reviewed signal (the six answers beside the review's call, confidence and severity, and
- * the card's Alert-log id), one a signal held back, one an early-watch story asked about. The Rating column is the
- * analysts': Useful or Noise on a card's row is how "did an analyst act on it" is measured.
+ * Bars on the Control tab (rows 41-45, read on each run; a blank or invalid cell uses its seed and C41:C45 says so):
+ *   Row 41  Hold-back: about_google at or below                                         seed 0.10
+ *   Row 42  Hold-back: routine_noise at or above                                        seed 0.90
+ *   Row 43  Hold-back and early watch: answer confidence at or above                    seed 0.80
+ *   Row 44  Early watch: about_google, brand_risk and independent_reports, each at or above  seed 0.80
+ *   Row 45  Early watch: distinct accounts, at least                                    seed 3
  */
 
-const FT_SWITCH_ = 'fastTriage';            // Control row 38: ask and record
-const FT_RANK_SWITCH_ = 'fastTriageRank';   // Control row 39: rank by the answers, and the early watch may raise a story
+const FT_SWITCH_ = 'fastTriage';            // Control row 38: enables rows 39 and 40
+const FT_RANK_SWITCH_ = 'fastTriageRank';   // Control row 39: rank by the answers, and the early-watch tier
 const FT_HOLD_SWITCH_ = 'fastTriageHold';   // Control row 40: hold back noise
+const EW_BQ_SWITCH_ = 'earlyWaveBq';        // Control row 46: write early-wave records to BigQuery
 
-// Hold-back bars (see the header). null: not set yet, and nothing is held back until all three are
 const EW_TRIAGE_HOLD_MAX_LEVEL_ = 1;        // the most probable severity level is none (0) or low (1)
-const EW_TRIAGE_ABOUT_GOOGLE_MAX_ = null;   // about_google below this: not about Google
-const EW_TRIAGE_NOISE_MIN_ = null;          // routine_noise above this: routine chatter
-const EW_TRIAGE_CONF_MIN_ = null;           // the severity level's probability above this: the answer is sure of it
+const FT_BAR_SEEDS_ = { about: 0.10, noise: 0.90, conf: 0.80, watch: 0.80, accounts: 3 };
+const FT_PROB_CHOICES_ = ['0.05', '0.10', '0.15', '0.20', '0.25', '0.30', '0.40', '0.50', '0.60', '0.70', '0.75', '0.80', '0.85', '0.90', '0.95'];
+const FT_ACCOUNTS_CHOICES_ = ['2', '3', '4'];
 
-const EW_WATCH_QUEUE_PER_DAY_ = 8;          // early-watch signals queued a day at most, of EW_MAX_PER_DAY_'s 40: the existing
-                                            // signal types reached 40 on 3 of 5 full days (Nov 9-12), so they keep 32
-const FT_ANSWER_CACHE_SEC_ = 3 * 3600;      // a signal's answers are kept as long as the producer's buffer keeps the signal,
-                                            // so one left for the next check (5 a check) isn't asked about twice
+const FT_BAR_SPECS_ = [
+  { key: 'about', row: 41, label: 'Hold-back: about_google at or below', seed: 0.10, start: '0.10', seedText: '0.10', kind: 'prob',
+    choices: FT_PROB_CHOICES_,
+    using: v => `Hold-back (row 40) drops a low-severity signal when about_google is at or below ${v.toFixed(2)}` },
+  { key: 'noise', row: 42, label: 'Hold-back: routine_noise at or above', seed: 0.90, start: '0.90', seedText: '0.90', kind: 'prob',
+    choices: FT_PROB_CHOICES_,
+    using: v => `Hold-back (row 40) drops a low-severity signal when routine_noise is at or above ${v.toFixed(2)}` },
+  { key: 'conf', row: 43, label: 'Hold-back and early watch: answer confidence at or above', seed: 0.80, start: '0.80', seedText: '0.80', kind: 'prob',
+    choices: FT_PROB_CHOICES_,
+    using: v => `Hold-back (row 40) and early watch (row 39) require answer confidence at or above ${v.toFixed(2)}` },
+  { key: 'watch', row: 44, label: 'Early watch: about_google, brand_risk and independent_reports, each at or above', seed: 0.80, start: '0.80', seedText: '0.80', kind: 'prob',
+    choices: FT_PROB_CHOICES_,
+    using: v => `Early watch (row 39) requires about_google, brand_risk and independent_reports each at or above ${v.toFixed(2)}` },
+  { key: 'accounts', row: 45, label: 'Early watch: distinct accounts, at least', seed: 3, start: '3', seedText: '3', kind: 'int',
+    choices: FT_ACCOUNTS_CHOICES_,
+    using: v => `Early watch (row 39) looks at stories below the promotion bar with at least ${v} distinct accounts` },
+];
+
+const EW_WATCH_QUEUE_PER_DAY_ = 8;          // early-watch signals queued a day at most, of EW_MAX_PER_DAY_'s 40
+const FT_ANSWER_CACHE_SEC_ = 3 * 3600;      // a signal's answers are kept as long as the producer's buffer keeps the signal
 const FT_ANSWER_CACHE_PREFIX_ = 'ft1:';
 
-// The Fast triage tab
-const FT_TAB_ = 'Fast triage';
-const FT_TITLE_ = 'Fast triage: what Gemini Decisions said about each early-wave signal, beside its full review';
-const FT_NOTE_ = 'One row a signal the full review looked at, one a signal the fast triage held back, one an early story ' +
-  'it was asked about. The numbers are probabilities (0 to 1); Severity is 0 (none) to 4 (critical). Rating is yours: ' +
-  'mark a card Useful or Noise. Everything else is written by the bot.';
-const FT_HEAD_ROW_ = 4;
-const FT_HEADER_ = ['Seen (ET)', 'Signal', 'Type', 'Accounts', 'Platforms', 'Headline', 'About Google', 'Brand risk',
-  'Independent', 'Routine noise', 'Category', 'Category p', 'P0 tags p', 'Severity', 'Level', 'Level p', 'Fast triage',
-  'Review', 'Review confidence', 'Review severity', 'Card', 'Rating', 'Key'];
-const FT_COL_ = { rating: 22, key: 23 };
-const FT_RATINGS_ = ['Useful', 'Noise'];    // as the Watch detections tab's
-const FT_MAX_ROWS_ = 5000;                  // rows kept (the oldest go first)...
-const FT_TRIM_SLACK_ = 500;                 // ...trimmed once this many more have built up
-const FT_HEADLINE_CHARS_ = 300;             // of a signal's headline on the tab
+const EW_BQ_DATASET_ = 'early_wave';
+const EW_BQ_TABLES_ = ['story_snapshots', 'story_posts', 'signals', 'signal_events', 'triage_verdicts'];
+const EW_BQ_STATE_PROP_ = 'EW_BQ_STATE';    // {day, written, dropped, until, why, table}: today's writes and any cooldown
+const EW_BQ_PAUSE_MS_ = 15 * 60 * 1000;     // after an insert failure, writes pause for 15 minutes
+const EW_BQ_MIN_LEFT_MS_ = 15 * 1000;       // a write starts only with this much of the run left
+const EW_BQ_BATCH_MAX_ = 500;               // rows per insertAll request at most
 
 // ---------------------------------------------------------------------------------------------------------------
-// The switches
+// The switches and the Control tab bars (rows 41-45)
 // ---------------------------------------------------------------------------------------------------------------
 
-/** True when the fast triage asks and records this run (Control row 38). Pure. */
+/** True when the fast triage is available this run (Control row 38): rows 39 and 40 may use it. Pure. */
 function ftOn_(ctx) { return switchOn_(ctx, FT_SWITCH_); }
 
-/** True when the answers order the queue and the early watch may raise a story (row 39, with row 38). Pure. */
+/** True when the answers order the queue and the early watch runs (row 39, with row 38). Pure. */
 function ftRankOn_(ctx) { return ftOn_(ctx) && switchOn_(ctx, FT_RANK_SWITCH_); }
 
 /** True when the fast triage may hold a signal back (row 40, with row 38). Pure. */
 function ftHoldOn_(ctx) { return ftOn_(ctx) && switchOn_(ctx, FT_HOLD_SWITCH_); }
 
-/** The hold-back bars ({about, noise, conf}; each null until it is set). Pure. */
-function ftHoldBars_() {
-  return { about: EW_TRIAGE_ABOUT_GOOGLE_MAX_, noise: EW_TRIAGE_NOISE_MIN_, conf: EW_TRIAGE_CONF_MIN_ };
+/** True when early-wave records are written to BigQuery this run (row 46, with row 19). Pure. */
+function ewBqOn_(ctx) { return switchOn_(ctx, 'earlyWave') && switchOn_(ctx, EW_BQ_SWITCH_); }
+
+/** Strict Google Sheets dropdown rule for bar `spec`. */
+function ftBarRule_(spec) {
+  return SpreadsheetApp.newDataValidation()
+    .requireValueInList(spec.choices, true)
+    .setAllowInvalid(false)
+    .build();
 }
 
-/** True when every hold-back bar in `bars` (default: the constants) is set: until then nothing is held back. Pure. */
-function ftHoldReady_(bars) {
-  const b = bars || ftHoldBars_();
-  return [b.about, b.noise, b.conf].every(v => typeof v === 'number' && isFinite(v));
+/** True when `cell` already carries `spec`'s strict dropdown so steady-state runs make zero writes. */
+function ftBarValidationCurrent_(cell, spec) {
+  if (!cell || typeof cell.getDataValidation !== 'function') return true;
+  const rule = cell.getDataValidation();
+  if (!rule) return false;
+  const allow = typeof rule.getAllowInvalid === 'function' ? rule.getAllowInvalid() : !!rule.allowInvalid;
+  if (allow) return false;
+  const vals = typeof rule.getCriteriaValues === 'function' ? (rule.getCriteriaValues() || [])[0] : rule.values;
+  return Array.isArray(vals) && vals.length === spec.choices.length && spec.choices.every((v, i) => vals[i] === v);
+}
+
+/**
+ * Parses one bar cell (`raw`) for `spec` (FT_BAR_SPECS_): a blank or invalid cell uses `spec.seed` and its note says so.
+ * Returns {value, blank, valid, note}. Pure.
+ */
+function ftBarFrom_(spec, raw) {
+  const isDate = Object.prototype.toString.call(raw) === '[object Date]';
+  const text = isDate ? '' : String(raw === undefined || raw === null ? '' : raw).trim();
+  if (!isDate && !text) {
+    return {
+      value: spec.seed,
+      blank: true,
+      valid: false,
+      note: `Blank: using seed ${spec.start} (${spec.using(spec.seed)})`,
+    };
+  }
+  const numOk = typeof raw === 'number' || (!isDate && /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(text));
+  const n = numOk ? Number(raw) : NaN;
+  if (spec.kind === 'int') {
+    const r = Math.round(n);
+    if (!numOk || !isFinite(n) || Math.floor(n) !== n || r < 2 || r >= EWS_MIN_AUTHORS_) {
+      return {
+        value: spec.seed,
+        blank: false,
+        valid: false,
+        note: `\u26a0\ufe0f Couldn't use "${truncate_(text || String(raw), 40)}": using seed ${spec.start} (${spec.using(spec.seed)}). Choose 2, 3 or 4.`,
+      };
+    }
+    return { value: r, blank: false, valid: true, note: `\u2713 ${spec.using(r)}` };
+  }
+  if (!numOk || !isFinite(n) || n <= 0 || n >= 1) {
+    return {
+      value: spec.seed,
+      blank: false,
+      valid: false,
+      note: `\u26a0\ufe0f Couldn't use "${truncate_(text || String(raw), 40)}": using seed ${spec.start} (${spec.using(spec.seed)}). Enter a probability between 0.01 and 0.99.`,
+    };
+  }
+  const v = Math.round(n * 100) / 100;
+  return { value: v, blank: false, valid: true, note: `\u2713 ${spec.using(v)}` };
+}
+
+/** Parses all five bar cells (`raw`: {about, noise, conf, watch, accounts}) into {bars, values, details}. Pure. */
+function ftBarsFrom_(raw) {
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const bars = {};
+  const details = {};
+  FT_BAR_SPECS_.forEach(spec => {
+    const parsed = ftBarFrom_(spec, r[spec.key]);
+    bars[spec.key] = parsed.value;
+    details[spec.key] = parsed;
+  });
+  return { bars, values: bars, details };
+}
+
+/**
+ * Ensures rows 41-45 (the fast-triage bars) exist on the Control tab with their seeds and strict dropdowns; preserves
+ * any value a person set in B41:B45.
+ */
+function ensureFtBarRows_(sh) {
+  if (!sh) return;
+  const first = FT_BAR_SPECS_[0].row;
+  const grid = sh.getRange(first, 1, FT_BAR_SPECS_.length, 2).getValues();
+  let changed = false;
+  FT_BAR_SPECS_.forEach((spec, idx) => {
+    const rowVals = grid[idx] || [];
+    const label = String(rowVals[0] || '').trim();
+    const cell = sh.getRange(spec.row, 2);
+    if (label === spec.label) {
+      if (!ftBarValidationCurrent_(cell, spec)) {
+        cell.setDataValidation(ftBarRule_(spec));
+        changed = true;
+      }
+      return;
+    }
+    const b = rowVals[1];
+    const had = Object.prototype.toString.call(b) === '[object Date]' ? b : String(b === undefined || b === null ? '' : b).trim();
+    const value = had === '' ? spec.start : had;
+    sh.getRange(spec.row, 1, 1, 3).setValues([[spec.label, value, ftBarFrom_(spec, value).note]]);
+    sh.getRange(spec.row, 1).setFontWeight('bold');
+    cell.setBackground('#fff8e1').setDataValidation(ftBarRule_(spec));
+    changed = true;
+  });
+  if (changed) writeControlHelp_(sh);
+}
+
+/** Reads B41:B45 from the Control tab as {about, noise, conf, watch, accounts} ('' where a row isn't its bar yet). */
+function readFtBars_(sh) {
+  const out = {};
+  FT_BAR_SPECS_.forEach(spec => { out[spec.key] = ''; });
+  if (!sh) return out;
+  try {
+    const first = FT_BAR_SPECS_[0].row;
+    const grid = sh.getRange(first, 1, FT_BAR_SPECS_.length, 2).getValues();
+    FT_BAR_SPECS_.forEach((spec, idx) => {
+      const r = grid[idx] || [];
+      if (String(r[0] || '').trim() !== spec.label) return;
+      out[spec.key] = Object.prototype.toString.call(r[1]) === '[object Date]' ? r[1]
+        : String(r[1] === undefined || r[1] === null ? '' : r[1]).trim();
+    });
+  } catch (e) {}
+  return out;
+}
+
+/** Resolves B41:B45 (`raw`) for this run and updates C41:C45 when changed. Never throws. */
+function ftBarsFor_(raw, sh) {
+  const out = ftBarsFrom_(raw);
+  if (sh) {
+    try {
+      FT_BAR_SPECS_.forEach(spec => {
+        const note = out.details[spec.key].note;
+        const cell = sh.getRange(spec.row, 3);
+        if (String(cell.getValue() || '') !== String(note || '')) cell.setValue(note || '');
+      });
+    } catch (e) {
+      console.error('could not write C41:C45 (fast-triage bars): ' + ((e && e.message) || e));
+    }
+  }
+  return out;
+}
+
+/**
+ * The current bars ({about, noise, conf, watch, accounts}): from `ctx.ftBars` when given, else read from the Control
+ * tab's B41:B45 (falling back to FT_BAR_SEEDS_ for any blank or invalid cell). Never turns a feature off. Pure when
+ * `ctx` carries `ftBars`.
+ */
+function ftBars_(ctx) {
+  if (ctx && ctx.ftBars && typeof ctx.ftBars === 'object') {
+    const out = Object.assign({}, FT_BAR_SEEDS_);
+    Object.keys(FT_BAR_SEEDS_).forEach(k => {
+      const v = Number(ctx.ftBars[k]);
+      if (isFinite(v) && v > 0) out[k] = v;
+    });
+    return out;
+  }
+  try {
+    const ss = openStore_(false);
+    const sh = ss ? controlTab_(ss) : null;
+    if (sh) return ftBarsFrom_(readFtBars_(sh)).bars;
+  } catch (e) {}
+  return Object.assign({}, FT_BAR_SEEDS_);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -167,16 +311,17 @@ function ftQueueUnrank_(props) {
 }
 
 /**
- * Why the fast triage holds signal `row` back without a review on answers `dec` ('' when it doesn't): every condition in
- * the header, against `bars` ({about, noise, conf}; default: the constants, not set yet). Pure.
+ * Why the fast triage holds signal `row` back without a review on answers `dec` ('' when it doesn't): no P0 risk group;
+ * no taxonomy hint raised it; its severity is one of the two lowest levels; answer confidence is at or above `b.conf`;
+ * and `about_google` is at or below `b.about` or `routine_noise` is at or above `b.noise`. Pure.
  */
 function ftHoldWhy_(row, dec, bars) {
-  const b = bars || ftHoldBars_();
-  if (!dec || !ftHoldReady_(b) || ftProtected_(row)) return '';
-  if (!(Number(dec.l) <= EW_TRIAGE_HOLD_MAX_LEVEL_) || !(Number(dec.sc) > b.conf)) return '';
+  const b = Object.assign({}, FT_BAR_SEEDS_, bars || ftBars_());
+  if (!dec || ftProtected_(row)) return '';
+  if (!(Number(dec.l) <= EW_TRIAGE_HOLD_MAX_LEVEL_) || !(Number(dec.sc) >= b.conf)) return '';
   const level = ED_SEVERITIES_[dec.l] || String(dec.l);
-  if (Number(dec.g) < b.about) return `not about Google (about Google ${dec.g}, severity ${level} ${dec.sc})`;
-  if (Number(dec.n) > b.noise) return `routine noise (routine noise ${dec.n}, severity ${level} ${dec.sc})`;
+  if (Number(dec.g) <= b.about) return `not about Google (about Google ${dec.g}, severity ${level} ${dec.sc})`;
+  if (Number(dec.n) >= b.noise) return `routine noise (routine noise ${dec.n}, severity ${level} ${dec.sc})`;
   return '';
 }
 
@@ -192,36 +337,41 @@ function ftAnswerWords_(dec) {
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
- * This check's fast triage, or null when row 38 is OFF: {session (decSession_), rank, hold, log, rows: the Fast triage
- * tab's rows so far, asked, missed: {why: count} of signals that went on without an answer, held, watch: {asked,
- * raised}}. `left`: () => ms of the run left.
+ * This check's fast triage, or null when nothing that is ON uses the answers (row 38 OFF, or rows 39 and 40 both OFF):
+ * {session (decSession_), rank, hold, bars (ftBars_), log, asked, missed: {why: count}, held, watch: {asked, raised},
+ * verdicts: [triage_verdicts rows]}. `left`: () => ms of the run left.
  */
 function ftStart_(ctx, left) {
-  if (!ftOn_(ctx)) return null;
+  const rank = ftRankOn_(ctx);
+  const hold = ftHoldOn_(ctx);
+  if (!rank && !hold) return null;
   return {
     session: decSession_(left, !!(ctx && ctx.slaBusy)),
-    rank: ftRankOn_(ctx),
-    hold: ftHoldOn_(ctx),
+    rank,
+    hold,
+    bars: ftBars_(ctx),
+    now: () => (ctx && typeof ctx.now === 'function' ? ctx.now() : Date.now()),
     log: msg => { if (ctx && typeof ctx.log === 'function') ctx.log(msg); },
-    rows: [],
     asked: 0,
     missed: {},
     held: 0,
     watch: { asked: 0, raised: 0 },
+    verdicts: [],
   };
 }
 
 /**
- * What the producer is asked for with the fast triage ON (EarlyWaveSource.gs ewsRows_'s opts): each new row's risk
- * groups and taxonomy raise (`facts`), and, only with the ranking ON (row 39; with row 38 alone the early watch
- * doesn't run), the early watch: `ask` (the six questions about a story still below the promotion bar, within this
- * check's session) and `done` (each story asked about: one log line, and one Fast triage tab row saying what came
- * of it).
+ * What the producer is asked for with the fast triage running (EarlyWaveSource.gs ewsRows_'s opts): each new row's risk
+ * groups and taxonomy raise (`facts`), and, only with the ranking ON (row 39), the early watch: its `bars`, `ask` (the
+ * six questions about a story still below the promotion bar, within this check's session) and `done` (each story asked
+ * about: one log line, and one verdict for early_wave.triage_verdicts).
  */
-function ftProducerOpts_(ft) {
+function ftProducerOpts_(ft, record) {
   const opts = { facts: true };
-  if (!ft.rank) return opts;
+  if (record) opts.record = record;
+  if (!ft || !ft.rank) return opts;
   opts.watch = {
+    bars: ft.bars,
     ask: row => {
       const res = decSignalAsk_(row, ft.session);
       if (res.ok) ft.asked++;
@@ -231,19 +381,15 @@ function ftProducerOpts_(ft) {
       const n = ewCount_(row.unique_low_tier_authors);
       const at = `${fmtInt_(n)} account${n === 1 ? '' : 's'}`;
       ft.watch.asked++;
+      ft.verdicts.push(ewBqVerdictRow_('watch_story', row, res, raised ? 'emitted' : (res && res.ok ? 'not_emitted' : null), ft.now()));
       if (!res.ok) {
         const why = String(res.why || 'no answer');
         ft.missed[why] = (ft.missed[why] || 0) + 1;
-        ft.rows.push(ftTabRow_({ row, dec: null, did: `early watch: asked at ${at}, no answer (${why})`, kind: 'w' }));
         return;
       }
       if (raised) ft.watch.raised++;
-      const did = raised ? `early watch: raised at ${at}`
-        : !(typeof ewsWatchReady_ === 'function' && ewsWatchReady_()) ? `early watch: asked at ${at} (its bars are not set: nothing is raised)`
-          : `early watch: asked at ${at}, not raised`;
       ft.log(`fast triage: early story ${row.alert_id || ''} (${at}) \u00b7 ${ftAnswerWords_(res.dec)} \u00b7 ` +
         `${raised ? 'raised' : 'not raised'} \u00b7 ${res.ms} ms`);
-      ft.rows.push(ftTabRow_({ row, dec: res.dec, did, kind: 'w' }));
     },
   };
   return opts;
@@ -271,8 +417,8 @@ function ftRemember_(id, dec) {
 /**
  * The fast triage's answers about signal `row` (decCompact_), or null when it goes on without them (the API failed or
  * refused, a cap, a pause: logged once a reason at the check's end, ftFinish_). Answers the signal carries (an
- * early-watch story's, asked when it was raised) or that an earlier check kept are used as they are; a new answer is
- * logged in one line. Never throws.
+ * early-watch story's, asked when it was raised) or that an earlier check kept are used as they are; a new call is
+ * logged in one line and recorded in `ft.verdicts` when a call was attempted. Never throws.
  */
 function ftAsk_(ft, row) {
   try {
@@ -285,8 +431,12 @@ function ftAsk_(ft, row) {
     if (res.ok) {
       ft.asked++;
       ftRemember_(id, res.dec);
+      ft.verdicts.push(ewBqVerdictRow_('signal', r, res, ft.rank ? 'ranked' : 'kept', ft.now()));
       ft.log(`fast triage: ${id || 'a signal'} \u00b7 ${ftAnswerWords_(res.dec)} \u00b7 ${res.ms} ms`);
       return res.dec;
+    }
+    if (!res.skipped) {
+      ft.verdicts.push(ewBqVerdictRow_('signal', r, res, null, ft.now()));
     }
     const why = String(res.why || 'no answer');
     ft.missed[why] = (ft.missed[why] || 0) + 1;
@@ -296,10 +446,22 @@ function ftAsk_(ft, row) {
   }
 }
 
+/** Marks the verdict for `row` in `ft.verdicts` as `'held_back'` when row 40 holds the signal back. Never throws. */
+function ftNoteHeldVerdict_(ft, row) {
+  if (!ft || !Array.isArray(ft.verdicts) || !row) return;
+  const id = String(row.alert_id || '');
+  for (let i = ft.verdicts.length - 1; i >= 0; i--) {
+    const v = ft.verdicts[i];
+    if (v && v.json && v.json.subject_type === 'signal' && v.json.alert_id === id) {
+      v.json.action = 'held_back';
+      return;
+    }
+  }
+}
+
 /**
- * Ends a check's fast triage: one log line for the signals that went on without an answer, the Fast triage tab's rows
- * written, and row 38's Control note (C38): the day's calls, a pause and its reason (decStatusText_), and what the tab
- * couldn't take. Never throws.
+ * Ends a check's fast triage: one log line for the signals that went on without an answer, and row 38's Control note
+ * (C38): the day's calls, and a pause and its reason (decStatusText_). Never throws.
  */
 function ftFinish_(ft, props) {
   if (!ft) return;
@@ -309,10 +471,8 @@ function ftFinish_(ft, props) {
       ft.log(`fast triage: ${missed.map(w => `${ft.missed[w]} signal${ft.missed[w] === 1 ? '' : 's'} without an answer (${w})`).join('; ')}` +
         ': handled as before');
     }
-    const tab = ftTabAppend_(ft.rows);
     const parts = [`last check ${nowLabel_()}`, decStatusText_(props, Date.now())];
     if (ft.watch.asked) parts.push(`${ft.watch.asked} early ${ft.watch.asked === 1 ? 'story' : 'stories'} asked about`);
-    if (tab.problem) parts.push(`\u26a0\ufe0f ${tab.problem}`);
     noteSwitch_(FT_SWITCH_, parts.filter(Boolean).join(' \u00b7 '));
   } catch (e) {
     console.warn('fast triage: could not finish the check: ' + ((e && e.message) || e));
@@ -320,135 +480,351 @@ function ftFinish_(ft, props) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// The Fast triage tab
+// Early-wave BigQuery writer: brand-social-central-data.early_wave (Control row 46)
 // ---------------------------------------------------------------------------------------------------------------
 
-/** The bot's own Fast triage tab: its A1 is the title the bot writes there. */
-function isFtTab_(sh) {
-  try { return String(sh.getRange(1, 1).getDisplayValue()).trim() === FT_TITLE_; } catch (e) { return false; }
+/** Deterministic insertId (<= 128 chars) for `kind` and `key` so a retry never duplicates a row. Pure. */
+function ewBqId_(kind, key) {
+  const clean = String(key || '').replace(/[^A-Za-z0-9_.:|-]+/g, '_');
+  const full = `ew:${kind}:${clean}`;
+  return full.length <= 120 ? full : `ew:${kind}:${hashText_(String(key || ''))}:${clean.slice(0, 64)}`;
 }
 
-/**
- * The Fast triage tab ({sh, foreign}): made when missing and `create` (its title in A1 at once: the bot's mark, then its
- * note and header, protected with a warning but for the Rating column); foreign (sh null) when a tab with its name
- * exists that the bot didn't make: that tab is never read or written.
- */
-function ftTab_(ss, create) {
-  let sh = ss.getSheetByName(FT_TAB_);
-  if (sh) return isFtTab_(sh) ? { sh, foreign: false } : { sh: null, foreign: true };
-  if (!create) return { sh: null, foreign: false };
-  sh = ss.insertSheet(FT_TAB_, ss.getSheets().length);
-  sh.getRange(1, 1).setValue(FT_TITLE_);
-  sh.getRange(2, 1).setValue(FT_NOTE_);
-  sh.getRange(FT_HEAD_ROW_, 1, 1, FT_HEADER_.length).setValues([FT_HEADER_]);
-  try {
-    sh.getRange(1, 1).setFontWeight('bold').setFontSize(12);
-    sh.getRange(FT_HEAD_ROW_, 1, 1, FT_HEADER_.length).setFontWeight('bold');
-    sh.setFrozenRows(FT_HEAD_ROW_);
-    sh.hideColumns(FT_COL_.key);
-    [130, 250, 90, 70, 150, 360, 90, 80, 90, 100, 260, 80, 80, 70, 70, 60, 260, 170, 110, 110, 80, 80, 120]
-      .forEach((w, i) => sh.setColumnWidth(i + 1, w));
-  } catch (e) { /* the tab works unformatted */ }
-  try {
-    sh.protect().setDescription('Written by the Burson QA bot (the Rating column is yours to fill in)').setWarningOnly(true)
-      .setUnprotectedRanges([sh.getRange(FT_HEAD_ROW_ + 1, FT_COL_.rating, FT_MAX_ROWS_ + FT_TRIM_SLACK_ + 200, 1)]);
-  } catch (e) { /* the tab works unprotected */ }
-  return { sh, foreign: false };
+/** Timestamp ms -> RFC 3339 UTC string for BigQuery TIMESTAMP columns, or null when missing/invalid. Pure. */
+function ewBqIso_(ms) {
+  const n = Number(ms);
+  return isFinite(n) && n > 0 ? new Date(n).toISOString() : null;
 }
 
-/** A Fast triage tab text cell: one line, capped, and never read by Sheets as a formula. Pure. */
-function ftCell_(v, max) {
-  const raw = String(v === undefined || v === null ? '' : v);
-  const s = truncate_(raw.replace(/[\x00-\x1f\x7f]+/g, ' ').replace(/\s+/g, ' ').trim(), max || FT_HEADLINE_CHARS_);
-  if (!s) return '';
-  return (/^[=+\-@]/.test(s) || /^[ \u00a0]*[\x00-\x1f\x7f]/.test(raw)) ? '\'' + s : s;
-}
-
-/**
- * A Fast triage tab row. o: {row (the signal), dec (its answers or null), did (what the fast triage did with it),
- * review ({disposition, basis, confidence, severity} or null), card (its Alert-log id), kind ('r' reviewed, 'h' held
- * back, 'w' an early-watch story asked about)}. Every cell is short (the headline FT_HEADLINE_CHARS_ at most) and
- * escaped against formula injection. Pure (but for the clock).
- */
-function ftTabRow_(o) {
-  const r = (o && o.row) || {};
-  const d = o && o.dec && typeof o.dec === 'object' ? o.dec : null;
-  const rev = (o && o.review) || null;
-  const sig = String(r.signal_type || 'CLUSTER_EMERGENCE').trim().toUpperCase();
-  const num = v => (v === null || v === undefined || v === '' || !isFinite(Number(v)) ? '' : Number(v));
-  const clean = (v, n) => truncate_(String(v === undefined || v === null ? '' : v).replace(/[\x00-\x1f\x7f]+/g, ' ').replace(/\s+/g, ' ').trim(), n);
-  const out = new Array(FT_HEADER_.length).fill('');
-  out[0] = Utilities.formatDate(new Date(Date.now()), (typeof GEN !== 'undefined' && GEN && GEN.timezone) || 'America/New_York',
-    'yyyy-MM-dd HH:mm');
-  out[1] = ftCell_(r.alert_id, 120);
-  out[2] = ftCell_(sig === 'VELOCITY_SPIKE' ? 'Velocity' : typeof EWS_WATCH_SIGNAL_ !== 'undefined' && sig === EWS_WATCH_SIGNAL_ ? 'Early watch' : 'Cluster', 20);
-  out[3] = num(r.unique_low_tier_authors);
-  out[4] = ftCell_(r.platforms_csv, 120);
-  out[5] = ftCell_(r.headline, FT_HEADLINE_CHARS_);
-  if (d) {
-    out[6] = num(d.g);
-    out[7] = num(d.r);
-    out[8] = num(d.i);
-    out[9] = num(d.n);
-    out[10] = ftCell_(d.c, 128);
-    out[11] = num(d.cp);
-    out[12] = num(d.p0);
-    out[13] = num(d.s);
-    out[14] = ftCell_(ED_SEVERITIES_[d.l] || '', 20);
-    out[15] = num(d.sc);
+/** Parses a timestamp string ('2026-11-13 15:10:00 UTC' or ISO) or ms into RFC 3339 UTC, or `fallbackMs`. Pure. */
+function ewBqTs_(v, fallbackMs) {
+  if (typeof v === 'number' && isFinite(v) && v > 0) return new Date(v).toISOString();
+  const s = String(v === undefined || v === null ? '' : v).trim();
+  if (s) {
+    const norm = s.replace(/\s+UTC$/i, 'Z').replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}(?::\d{2})?)/, '$1T$2');
+    const ms = Date.parse(norm);
+    if (isFinite(ms) && ms > 0) return new Date(ms).toISOString();
   }
-  out[16] = ftCell_(o && o.did, 300);
-  if (rev) {
-    out[17] = ftCell_(`${rev.disposition || ''}${rev.basis && rev.basis !== 'early_detection' ? ` (${String(rev.basis).replace(/_/g, ' ')})` : ''}`, 80);
-    out[18] = num(rev.confidence);
-    out[19] = ftCell_(rev.severity, 20);
-  }
-  out[20] = ftCell_(o && o.card, 40);
-  out[FT_COL_.key - 1] = JSON.stringify({ id: clean(r.alert_id, 120), cid: clean(r.cluster_id, 64), k: clean((o && o.kind) || 'r', 8) || 'r' });
-  return out.map(v => (typeof v === 'string' && v.length > SHEET_CELL_MAX_CHARS_ ? capCell_(v, SHEET_CELL_MAX_CHARS_) : v));
+  return fallbackMs ? ewBqIso_(fallbackMs) : null;
 }
 
-/**
- * Writes `rows` (ftTabRow_) under the Fast triage tab's last row, with the Rating dropdown, and trims the oldest past
- * FT_MAX_ROWS_ (once FT_TRIM_SLACK_ more have built up). {added, problem}: problem says why nothing was written (a tab
- * of that name the bot didn't make, or the sheet refused). Never throws.
- */
-function ftTabAppend_(rows) {
-  const list = (rows || []).filter(r => Array.isArray(r) && r.length === FT_HEADER_.length);
-  if (!list.length) return { added: 0, problem: '' };
+/** Integer for BigQuery INT64 columns, or null when missing/invalid. Pure. */
+function ewBqInt_(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return isFinite(n) ? Math.round(n) : null;
+}
+
+/** Float for BigQuery FLOAT64 columns, or null when missing/invalid. Pure. */
+function ewBqFloat_(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return isFinite(n) ? n : null;
+}
+
+/** Public post snippet / label / reason with any email address stripped, capped to `max` chars, or null when empty. Pure. */
+function ewBqText_(v, max) {
+  const s = String(v === undefined || v === null ? '' : v)
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g, '[redacted]')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return s ? truncate_(s, max || 500) : null;
+}
+
+/** Canonical URL without tracking query parameters, or null when empty. Pure. */
+function ewBqUrl_(u) {
+  const raw = String(u === undefined || u === null ? '' : u).trim();
+  if (!raw) return null;
+  const canon = typeof ewsCanonUrl_ === 'function' ? ewsCanonUrl_(raw) : raw.replace(/[?#].*$/, '');
+  return canon || raw;
+}
+
+/** Account key with any email address or raw @handle hashed so no display name or @handle is stored, or null when empty. Pure. */
+function ewBqAccountKey_(ak, platform) {
+  const raw = String(ak === undefined || ak === null ? '' : ak).trim();
+  if (!raw) return null;
+  const parts = raw.split(/[|:]/);
+  const plat = String(platform || (parts.length > 1 ? parts[0] : 'acct')).trim().toLowerCase() || 'acct';
+  const idPart = (parts.length > 1 ? parts.slice(1).join(':') : raw).trim().toLowerCase();
+  return `${plat}:${hashText_(idPart || raw.toLowerCase())}`;
+}
+
+/** One row for `early_wave.story_snapshots` from a live story `s` ({c, w, stage, priority, taxonomy_hint, baseline, ratio}) at `now`. Pure. */
+function ewBqSnapshotRow_(s, now) {
+  const c = (s && s.c) || (s && s.cluster_id ? { id: s.cluster_id, t0: s.created_at, t1: s.last_post_at, lab: s.label, m: [] } : {});
+  const w = (s && s.w) || {};
+  const snapAt = ewBqTs_(s && s.snapshot_at, now) || ewBqIso_(now);
+  const cid = String(c.id || (s && s.cluster_id) || '');
+  const members = Array.isArray(c.m) ? c.m : [];
+  const last60m = new Set(members.filter(m => m && now - (Number(m.t) || 0) <= 3600 * 1000 && (Number(m.t) || 0) <= now + 5 * 60000).map(m => m.a)).size;
+  const vec = typeof ewsCentroid_ === 'function' ? ewsCentroid_(c) : null;
+  const centroid = vec && vec.length ? Array.from(vec, x => Math.round((Number(x) || 0) * 1e6) / 1e6) : [];
+  const reach = members.reduce((sum, m) => sum + (isFinite(Number(m && m.f)) && Number(m.f) > 0 ? Math.round(Number(m.f)) : 0), 0);
+  const eng = members.reduce((sum, m) => sum + (isFinite(Number(m && m.e)) && Number(m.e) > 0 ? Math.round(Number(m.e)) : 0), 0);
+  const risk = Array.isArray(w.risk) ? w.risk.filter(Boolean) : [];
+  const platforms = Array.isArray(w.platforms) ? w.platforms.filter(Boolean) : [];
+  return {
+    insertId: ewBqId_('ss', `${cid}:${snapAt}`),
+    json: {
+      snapshot_at: snapAt,
+      cluster_id: cid,
+      created_at: ewBqIso_(c.t0),
+      last_post_at: ewBqIso_(w.end || c.t1),
+      label: ewBqText_(c.lab, 300),
+      topic_product: (typeof ewsStoryTopic_ === 'function' ? ewsStoryTopic_(c) : null) || null,
+      risk_groups: risk,
+      priority_hint: String((s && s.priority) || (risk.length || platforms.length >= 2 ? 'P1' : 'P2')),
+      stage: String((s && s.stage) || 'watching'),
+      distinct_accounts: ewBqInt_(w.authors !== undefined ? w.authors : (s && s.author_count !== undefined ? s.author_count : new Set(members.map(m => m.a)).size)),
+      post_count: members.length,
+      platforms,
+      distinct_urls: ewBqInt_(w.urls !== undefined ? w.urls : new Set(members.map(m => m.u).filter(Boolean)).size),
+      audience_reach: reach,
+      engagement: eng,
+      accounts_last_60m: last60m,
+      baseline_accounts: ewBqFloat_(s && s.baseline),
+      velocity_ratio: ewBqFloat_(s && s.ratio),
+      taxonomy_hint: ewBqText_(s && s.taxonomy_hint, 300),
+      centroid,
+    },
+  };
+}
+
+/** One row for `early_wave.story_posts` when member `m` (ewsMember_) first joins story `cid`. Pure. */
+function ewBqPostRow_(cid, m, now) {
+  const joinedAt = ewBqIso_(m && m.j ? m.j : now);
+  const pid = String((m && m.i) || '');
+  const risk = m && m.r ? String(m.r).split(',').map(s => s.trim()).filter(Boolean) : [];
+  return {
+    insertId: ewBqId_('sp', `${cid}:${pid}`),
+    json: {
+      joined_at: joinedAt,
+      cluster_id: String(cid || ''),
+      post_id: pid,
+      account_key: ewBqAccountKey_(m && m.a),
+      platform: String((m && m.p) || '') || null,
+      url: ewBqUrl_(m && m.u),
+      posted_at: ewBqIso_(m && m.t),
+      snippet: ewBqText_(m && m.s, EWS_KEEP_CHARS_),
+      similarity: ewBqFloat_(m && m.d),
+      content_hash: String((m && m.h) || '') || null,
+      topic: String((m && m.tp) || '') || null,
+      audience: ewBqInt_(m && m.f),
+      engagement: ewBqInt_(m && m.e),
+      risk_groups: risk,
+      names_google: Boolean(m && m.b),
+      slow_lane: Boolean(m && m.sl),
+    },
+  };
+}
+
+/** One row for `early_wave.signals` when signal `r` (EarlyWaveRow) is created. Pure. */
+function ewBqSignalRow_(r, now) {
+  const row = r || {};
+  const id = String(row.alert_id || '');
+  const sig = String(row.signal_type || 'CLUSTER_EMERGENCE').trim().toUpperCase();
+  const isVel = sig === 'VELOCITY_SPIKE';
+  let rawPosts = [];
+  if (Array.isArray(row.posts)) {
+    rawPosts = row.posts;
+  } else {
+    try { rawPosts = JSON.parse(String(row.representative_posts_json || '[]')) || []; } catch (e) { rawPosts = []; }
+  }
+  const repPosts = (Array.isArray(rawPosts) ? rawPosts : []).slice(0, ED_POSTS_MAX_).map(p => ({
+    post_id: String((p && (p.mention_id || p.post_id || p.id)) || '') || null,
+    platform: String((p && p.platform) || '') || null,
+    account_key: ewBqAccountKey_(p && (p.author_id || p.account_key || p.author), p && p.platform),
+    audience: ewBqInt_(p && (p.audience_size !== undefined ? p.audience_size : p.audience)),
+    engagement: ewBqInt_(p && p.engagement),
+    posted_at: ewBqTs_(p && (p.posted_at || p.published_at), null),
+    url: ewBqUrl_(p && p.url),
+    snippet: ewBqText_(p && (p.snippet || p.text), EWS_SNIPPET_CHARS_),
+  }));
+  const platforms = String(row.platforms_csv || '').split(',').map(s => s.trim()).filter(Boolean);
+  const updId = String(row.update_of_alert_id || (row.update_of && row.update_of.id) || '') || null;
+  const updAu = updId ? ewBqInt_(row.update_of_authors || (row.update_of && row.update_of.authors)) : null;
+  return {
+    insertId: ewBqId_('sig', id),
+    json: {
+      created_at: ewBqTs_(row.created_utc, Number(row._at) || now),
+      alert_id: id,
+      signal_type: sig,
+      velocity_grain: String(row.velocity_grain || '') || null,
+      cluster_id: String(row.cluster_id || '') || null,
+      signal_key: String(row.signal_key || '') || null,
+      headline: ewBqText_(row.headline, 300),
+      topic_product: String(row.topic_product || '') || null,
+      priority_hint: String(row.priority_hint || '') || null,
+      distinct_accounts: ewBqInt_(row.unique_low_tier_authors),
+      mention_count: ewBqInt_(row.mention_count),
+      platforms,
+      baseline_accounts: isVel ? ewBqFloat_(row.baseline_authors) : null,
+      velocity_ratio: isVel ? ewBqFloat_(row.velocity_ratio) : null,
+      account_delta: isVel ? ewBqFloat_(row.absolute_author_delta) : null,
+      primary_url: ewBqUrl_(row.primary_url),
+      window_start: ewBqTs_(row.window_start_utc, null),
+      window_end: ewBqTs_(row.window_end_utc, null),
+      representative_posts: repPosts,
+      update_of_alert_id: updId,
+      update_of_accounts: updAu,
+      taxonomy_hint: ewBqText_(row.taxonomy_hint, 300),
+    },
+  };
+}
+
+/** One row for `early_wave.signal_events`: `event` on signal `alertId` (`clusterId`), with optional `reason` and `detail`. Pure. */
+function ewBqEventRow_(alertId, clusterId, event, reason, detail, now, suffix) {
+  const id = String(alertId || '');
+  const ev = String(event || '');
+  return {
+    insertId: ewBqId_('ev', `${id}:${ev}${suffix ? ':' + suffix : ''}`),
+    json: {
+      event_at: ewBqIso_(now),
+      alert_id: id,
+      cluster_id: String(clusterId || '') || null,
+      event: ev,
+      reason: ewBqText_(reason, 300),
+      detail: detail && typeof detail === 'object' ? JSON.stringify(detail) : null,
+    },
+  };
+}
+
+/** One row for `early_wave.triage_verdicts` from one Decisions call (`res` on `row`, `subjectType`: 'signal' | 'watch_story'). Pure. */
+function ewBqVerdictRow_(subjectType, row, res, action, now) {
+  const r = row || {};
+  const ok = !!(res && res.ok && res.dec);
+  const d = ok ? res.dec : null;
+  const id = String(r.alert_id || '');
+  const cid = String(r.cluster_id || '');
+  return {
+    insertId: ewBqId_('tv', `${subjectType}:${id || cid}:${now}`),
+    json: {
+      asked_at: ewBqIso_(now),
+      subject_type: String(subjectType || 'signal'),
+      alert_id: id || null,
+      cluster_id: cid || null,
+      model: DEC_MODEL_,
+      latency_ms: ewBqInt_(res && res.ms),
+      input_tokens: ok && res.tokens ? ewBqInt_(res.tokens) : null,
+      ok,
+      failure: ok ? null : ewBqText_(res && res.why, 240),
+      about_google: d ? ewBqFloat_(d.g) : null,
+      brand_risk: d ? ewBqFloat_(d.r) : null,
+      independent_reports: d ? ewBqFloat_(d.i) : null,
+      routine_noise: d ? ewBqFloat_(d.n) : null,
+      category: d ? (String(d.c || '') || null) : null,
+      severity_score: d ? ewBqFloat_(d.s) : null,
+      severity_level: d ? (ED_SEVERITIES_[d.l] || null) : null,
+      action: action ? String(action) : null,
+      raw: ok && res.answers ? JSON.stringify(res.answers) : null,
+    },
+  };
+}
+
+/** Today's early-wave BigQuery writer state ({day, written, dropped, until, why, table}). Never throws. */
+function ewBqState_(props, now) {
+  const day = dayKey_();
+  let s = null;
+  try { s = JSON.parse(props.getProperty(EW_BQ_STATE_PROP_) || 'null'); } catch (e) { s = null; }
+  if (!s || typeof s !== 'object' || Array.isArray(s)) s = {};
+  const num = v => Math.max(0, Math.floor(Number(v) || 0));
+  const until = num(s.until);
+  const paused = until > (Number(now) || Date.now());
+  const same = s.day === day;
+  return {
+    day,
+    written: same ? num(s.written) : 0,
+    dropped: same ? num(s.dropped) : 0,
+    until: paused ? until : 0,
+    why: paused || same ? String(s.why || '') : '',
+    table: paused || same ? String(s.table || '') : '',
+  };
+}
+
+/** Saves today's early-wave BigQuery writer state. Never throws. */
+function ewBqSaveState_(props, st) {
   try {
-    const tab = ftTab_(openStore_(false), true);
-    if (tab.foreign) {
-      const problem = `not recording: a tab named "${FT_TAB_}" exists that the bot didn't make (rename it and the bot makes its own)`;
-      console.warn('fast triage: ' + problem);
-      return { added: 0, problem };
-    }
-    const sh = tab.sh;
-    const at = Math.max(sh.getLastRow(), FT_HEAD_ROW_) + 1;
-    sh.getRange(at, 1, list.length, FT_HEADER_.length).setValues(list);
-    const ratingRule = () => SpreadsheetApp.newDataValidation().requireValueInList(FT_RATINGS_, true).build();
-    try {
-      sh.getRange(at, FT_COL_.rating, list.length, 1).setDataValidation(ratingRule());
-    } catch (e) { /* the column works without its dropdown */ }
-    const count = sh.getLastRow() - FT_HEAD_ROW_;
-    if (count > FT_MAX_ROWS_ + FT_TRIM_SLACK_) {
-      const all = sh.getRange(FT_HEAD_ROW_ + 1, 1, count, FT_HEADER_.length).getValues();
-      // Sheets strips a leading escape apostrophe on getValues(), so re-apply ftCell_ before rewriting kept rows
-      const keep = all.slice(count - FT_MAX_ROWS_).map(r => r.map((c, j) => (
-        j === FT_COL_.key - 1 || typeof c !== 'string' || !c ? c : capCell_(ftCell_(c, SHEET_CELL_MAX_CHARS_), SHEET_CELL_MAX_CHARS_)
-      )));
-      sh.getRange(FT_HEAD_ROW_ + 1, 1, keep.length, FT_HEADER_.length).setValues(keep);
-      const tail = sh.getRange(FT_HEAD_ROW_ + 1 + keep.length, 1, count - keep.length, FT_HEADER_.length);
-      tail.clearContent();
-      try {
-        sh.getRange(FT_HEAD_ROW_ + 1, FT_COL_.rating, keep.length, 1).setDataValidation(ratingRule());
-        const tailRating = sh.getRange(FT_HEAD_ROW_ + 1 + keep.length, FT_COL_.rating, count - keep.length, 1);
-        if (typeof tailRating.clearDataValidations === 'function') tailRating.clearDataValidations();
-      } catch (e) { /* the column works without its dropdown */ }
-    }
-    return { added: list.length, problem: '' };
+    props.setProperty(EW_BQ_STATE_PROP_, JSON.stringify(st));
   } catch (e) {
-    console.warn('fast triage: could not write the Fast triage tab: ' + ((e && e.message) || e));
-    return { added: 0, problem: 'the Fast triage tab couldn\'t be written' };
+    console.error('early wave BigQuery: could not save state: ' + ((e && e.message) || e));
+  }
+}
+
+/** Row 46's Control note text from `st` (ewBqState_). Pure. */
+function ewBqStatusText_(st, now) {
+  const t = Number(now) || Date.now();
+  const parts = [];
+  if (st.written) parts.push(`${fmtInt_(st.written)} row${st.written === 1 ? '' : 's'} written today`);
+  if (st.dropped) parts.push(`${fmtInt_(st.dropped)} dropped`);
+  if (st.until > t) {
+    const tz = (typeof GEN !== 'undefined' && GEN && GEN.timezone) || 'America/New_York';
+    parts.push(`\u26a0\ufe0f paused until ${Utilities.formatDate(new Date(st.until), tz, 'h:mm a')}` +
+      `${st.table ? ` (${st.table}${st.why ? ': ' + st.why : ''})` : st.why ? ` (${st.why})` : ''}`);
+  } else if (st.why) {
+    parts.push(`\u26a0\ufe0f last error${st.table ? ` on ${st.table}` : ''}: ${st.why}`);
+  }
+  return parts.join(' \u00b7 ');
+}
+
+/**
+ * Sends at most one batched `bqInsertAll_` request for `early_wave.${table}` with `rows`. Background work: skipped while
+ * SLA triage is busy, inside the run deadline, under `ApiGuard.gs` BigQuery ceilings, and paused after an error. Never
+ * throws or queues dropped rows in script properties.
+ */
+function ewBqWriteTable_(ctx, props, left, table, rows) {
+  const list = (rows || []).filter(r => r && r.insertId && r.json).slice(0, EW_BQ_BATCH_MAX_);
+  if (!list.length) return;
+  if (EW_BQ_TABLES_.indexOf(table) < 0) return;
+  const log = msg => { if (ctx && typeof ctx.log === 'function') ctx.log(msg); };
+  const now = ctx && typeof ctx.now === 'function' ? ctx.now() : Date.now();
+  const st = ewBqState_(props, now);
+  const skip = (ctx && ctx.slaBusy) ? 'SLA triage is busy'
+    : st.until > now ? `paused after an error on ${st.table || 'early_wave'}${st.why ? ` (${st.why})` : ''}`
+      : left() < EW_BQ_MIN_LEFT_MS_ ? 'too little of the run left'
+        : typeof apiGuardAllowBackground_ === 'function' && !apiGuardAllowBackground_('bigquery', !!(ctx && ctx.slaBusy))
+          ? 'BigQuery background ceiling reached'
+          : '';
+  if (skip) {
+    st.dropped += list.length;
+    ewBqSaveState_(props, st);
+    log(`early wave BigQuery: dropped ${list.length} row(s) for ${EW_BQ_DATASET_}.${table} (${skip})`);
+    noteSwitch_(EW_BQ_SWITCH_, ewBqStatusText_(st, now));
+    return;
+  }
+  if (typeof apiGuardNote_ === 'function') apiGuardNote_('bigquery', 1);
+  try {
+    bqInsertAll_(`${EW_BQ_DATASET_}.${table}`, list);
+    st.written += list.length;
+    ewBqSaveState_(props, st);
+    noteSwitch_(EW_BQ_SWITCH_, ewBqStatusText_(st, now));
+  } catch (e) {
+    const why = truncate_(String((e && e.message) || e).replace(/\s+/g, ' ').trim(), 120) || 'insert failed';
+    st.dropped += list.length;
+    st.until = now + EW_BQ_PAUSE_MS_;
+    st.table = table;
+    st.why = why;
+    ewBqSaveState_(props, st);
+    log(`early wave BigQuery: couldn't write ${list.length} row(s) to ${EW_BQ_DATASET_}.${table} (dropped): ${why}; writes paused for ${Math.round(EW_BQ_PAUSE_MS_ / 60000)} minutes`);
+    noteSwitch_(EW_BQ_SWITCH_, ewBqStatusText_(st, now));
+  }
+}
+
+/**
+ * Flushes a check's batched rows (`batches`: {story_snapshots, story_posts, signals, signal_events, triage_verdicts}) to
+ * `brand-social-central-data.early_wave`: at most one insert request per table. Never throws.
+ */
+function ewBqFlush_(ctx, props, left, batches) {
+  if (!ewBqOn_(ctx) || !batches) return;
+  try {
+    const sent = (ctx._ewBqSentTables = ctx._ewBqSentTables || new Set());
+    EW_BQ_TABLES_.forEach(table => {
+      const rows = batches[table];
+      if (!Array.isArray(rows) || !rows.length || sent.has(table)) return;
+      sent.add(table);
+      ewBqWriteTable_(ctx, props, left, table, rows);
+    });
+  } catch (e) {
+    console.warn('early wave BigQuery: flush failed: ' + ((e && e.message) || e));
   }
 }
