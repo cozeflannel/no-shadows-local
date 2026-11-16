@@ -114,6 +114,9 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
       bqLookbackFrom_(wanted && wanted.bqLookback).minutes;
     ctx.allowEarlyWave = Boolean(opts && opts.allowEarlyWave);
     ctx.allowDirectBq = Boolean(opts && opts.allowDirectBq);
+    // Where stories go first, a story's card that sent no Social Alert doesn't stand in for its post's own Direct
+    // BigQuery card (BigQuery.gs bqStoryCardRow_): the poll still posts that card, and its review decides the Social Alert
+    ctx.bqPastStoryCards = acStoriesFirst_(ctx, standalone);
     const budgetMs = standalone ? AC_STANDALONE_BUDGET_MS_ : AC_BUDGET_MS_;
     ctx.deadline = Math.min(Date.now() + budgetMs, latest);
     startFromAutoCorrect_(props, cfg, ctx);
@@ -195,16 +198,27 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
 }
 
 /**
+ * Whether stories go first where this flow works: the one-space setup (`standalone`: B10 working alone, runAutoCorrect_'s
+ * opts.standalone) with the setting early_detection_first on (config burson_qa; on unless it is false). Two things hang
+ * on it: the order of a pass (acEarlyDetectionFirst_), and that a story's card which sent no Social Alert doesn't stop
+ * its post's own Direct BigQuery card (ctx.bqPastStoryCards: BigQuery.gs pollBigQuerySources_). Pure; never throws.
+ */
+function acStoriesFirst_(ctx, standalone) {
+  return !!standalone && !!ctx && !!ctx.settings && ctx.settings.early_detection_first !== false;
+}
+
+/**
  * Whether this pass does Early Detection (the 15-minute check, then the reviews) before the Direct BigQuery poll. Only
- * in the one-space setup (`standalone`: B10 working alone, AutoCorrect.gs runAutoCorrect_'s opts.standalone), with the
- * setting early_detection_first on (config burson_qa; on unless it is false), and only while the poll is not overdue:
- * its last check started (BQ_DIRECT_AT) less than AC_POLL_OVERDUE_MS_ ago. Once the last check is that old, or there
- * has been none, the poll goes first in that run, so it still gets its turn however many signals wait for a review.
- * Everywhere else, and with the setting off, the poll goes first as it always did. Never throws.
+ * where stories go first (acStoriesFirst_), and only while the poll is not overdue: its last check started
+ * (BQ_DIRECT_AT) less than AC_POLL_OVERDUE_MS_ ago. Once the last check is that old, or there has been none, the poll
+ * goes first in that run, so it still gets its turn however many signals wait for a review. That is the first run that
+ * STARTS 10 minutes or more after the last check: two checks can be 10 minutes and the run in progress apart (about 10
+ * to 15 minutes while stories wait), and further while Burson's alerts keep the flow busy, as before. Everywhere else,
+ * and with the setting off, the poll goes first as it always did. Never throws.
  */
 function acEarlyDetectionFirst_(ctx, standalone, props) {
   try {
-    if (!standalone || !ctx || !ctx.settings || ctx.settings.early_detection_first === false) return false;
+    if (!acStoriesFirst_(ctx, standalone)) return false;
     const last = Number(props.getProperty(BQ_DIRECT_AT_PROP_)) || 0;
     const now = typeof ctx.now === 'function' ? ctx.now() : Date.now();
     return last > 0 && now >= last && now - last < AC_POLL_OVERDUE_MS_;

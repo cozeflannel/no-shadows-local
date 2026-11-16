@@ -2154,6 +2154,65 @@ function bqDirectBusy_(ctx, msgs) {
   return waiting >= BQ_DIRECT_MAX_WAITING_ ? `${waiting} posts it took are still waiting to be reviewed` : '';
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// A story's card is not the post's own alert (the one-space setup with Early Detection first: ctx.bqPastStoryCards,
+// set by AutoCorrect.gs runAutoCorrect_). A story is reviewed as a build-up among small accounts, and its card sends a
+// Social Alert only on that review's call. Whether its main post meets the alert requirements by itself (a P0 exposure
+// tag, 2,000 engagements) is what the post's own Direct BigQuery card is reviewed for. Where stories go first, their
+// cards come before the poll's; counted as "already alerted", a story card would stop the post's own card and the
+// Social Alert with it. So there, a story card that sent no Social Alert never makes its post already alerted for the
+// poll: not through the alert memory (bqOnlyStoryCards_), not through this flow's Alert log (bqStoryCardRow_), not as a
+// card waiting in the space (bqIsStoryCard_), and not as an earlier alert in Step 1 (BqPipeline.gs bqPriorAlerts_). The
+// post then has two cards, the story's and its own. Everything else stops the poll as before: a Social Alert that went
+// out (the story's too), Burson's alert, a Watch alert, a Direct BigQuery card, a card another flow posted.
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * An Alert-log row of an Early Detection card (a story's, or an update of one) that sent no Social Alert and has none
+ * on its way (Escalate.gs earlierOutcome_). A row that can't be told is none: it counts as an alert, as before. Never
+ * throws.
+ */
+function bqStoryCardRow_(a, now) {
+  try {
+    return !!a && a.ingested === ED_ALERT_INGESTED_ && earlierOutcome_(a, now) !== 'alerted';
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * True when all the alert memory has seen of a post (`seen`: its seenPost answer) is story cards of this flow that sent
+ * no Social Alert (bqStoryCardRow_): every alert that saw it is such a row of this flow's Alert log. Never when a
+ * Social Alert went out for the post, a producer's card was claimed for it (a Watch alert or a Direct BigQuery card
+ * not reviewed yet), an alert that saw it isn't in this flow's Alert log (another flow's), or the memory may have
+ * dropped one (it keeps the latest AM_IDS_KEPT_). Never throws.
+ */
+function bqOnlyStoryCards_(ctx, seen, now) {
+  try {
+    if (!seen || seen.outcome !== 'seen' || seen.claim) return false;
+    const ids = Array.isArray(seen.ids) ? seen.ids : [];
+    const store = ctx && ctx.store;
+    if (!ids.length || ids.length >= AM_IDS_KEPT_ || !store || typeof store.alertById !== 'function') return false;
+    return ids.every(id => bqStoryCardRow_(store.alertById(id), now));
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * A message that is one of the bot's own Early Detection cards: its id says so (Chat's, or the one the bot kept for
+ * it), else the record of the cards it posted (edAlertPosted_). Such a card was reviewed before it was posted: it is
+ * not a post waiting in the space to be reviewed (bqWaitingKeys_). Never throws.
+ */
+function bqIsStoryCard_(m) {
+  try {
+    if (!m || !m.name) return false;
+    return String(m.clientId || '').indexOf(ED_ALERT_ID_PREFIX_) === 0 || edAlertPosted_(m.name);
+  } catch (e) {
+    return false;
+  }
+}
+
 /**
  * Polls BigQuery for new actionable posts and posts each new one into `targetSpaceId` (the space this run reads as
  * Burson's) as a Zapier-format alert, so the bot reviews and actions it like Burson's (with the post's picture under it
@@ -2179,7 +2238,9 @@ function bqDirectBusy_(ctx, msgs) {
  * source; absent: Sprinklr and DSD/Brandwatch on, BSIP off). Main.gs turns them all on while Direct BigQuery alerts
  * (Control row 15) is ON. A post is skipped when this flow's Alert log has it, the poll took it before (BQ_INGESTED_KEYS),
  * or the SLRR alert log has it (7 days, under any link to it), or it's already waiting in the space to be reviewed
- * (bqWaitingKeys_: Burson's alert from this minute). Refused: the live Burson space, a space people outside Google can
+ * (bqWaitingKeys_: Burson's alert from this minute); in the one-space setup with Early Detection first
+ * (ctx.bqPastStoryCards), a story's card that sent no Social Alert is none of these (bqStoryCardRow_ and the lines
+ * above it): the post still gets its own card. Refused: the live Burson space, a space people outside Google can
  * join, a dry run, the auto-correct flow when not standalone (bqDirectRefusal_). At most once every BQ_DIRECT_EVERY_MS_
  * (recorded before querying, so a failing check isn't repeated every minute) and BQ_POLL_MAX_PER_RUN_ posts a check; no
  * check at all while the Burson space's alerts wait (bqDirectBusy_: the last run ran out of time, or posts it took aren't
@@ -2223,7 +2284,10 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
     if (on) noteBqDirect_(props, 0, `not checked: ${busy}`);
     return nothing();
   }
-  const waiting = bqWaitingKeys_(ctx, targetSpaceId, S, now, msgs);
+  // The one-space setup with Early Detection first: a story's card that sent no Social Alert doesn't stand in for the
+  // post's own card (see bqStoryCardRow_ above); everywhere else `past` is false and nothing below changes
+  const past = !!(ctx && ctx.bqPastStoryCards === true);
+  const waiting = bqWaitingKeys_(ctx, targetSpaceId, S, now, past ? msgs.filter(m => !bqIsStoryCard_(m)) : msgs);
 
   const want = k => (S['bq_poll_' + k] === undefined ? k !== 'bsip' : !!S['bq_poll_' + k]);
   const seen = bqSeenKeys_(props);
@@ -2239,10 +2303,17 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
   };
   let storeAlerts = null;  // the log tabs are read only once there's a candidate
   const mem = typeof amOf_ === 'function' ? amOf_(ctx) : null;
+  const alreadySeen = url => {  // the alert memory has the post (`past`: unless all it has is story cards with no Social Alert)
+    const s = mem && mem.active ? mem.seenPost(url) : null;
+    return !!s && !(past && bqOnlyStoryCards_(ctx, s, now));
+  };
   const isNew = url => {
-    if (!storeAlerts) storeAlerts = (ctx && ctx.store && ctx.store.alerts) || [];
+    if (!storeAlerts) {
+      storeAlerts = (ctx && ctx.store && ctx.store.alerts) || [];
+      if (past) storeAlerts = storeAlerts.filter(a => !bqStoryCardRow_(a, now));
+    }
     const key = recordKey_({ post_url: url });
-    if (mem && mem.active && mem.seenPost(url)) return false;
+    if (alreadySeen(url)) return false;
     return shouldIngestBqUrl_(url, storeAlerts, seen) && !waiting.has(key) && !leftOut(key);
   };
   const counts = { SPRINKLR: 0, BMIE: 0, BSIP: 0 };
@@ -2262,7 +2333,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
   };
   const post = (kind, url, text, info) => {
     const key = recordKey_({ post_url: url });
-    if (mem && mem.active && mem.seenPost(url)) { skipped++; return; }
+    if (alreadySeen(url)) { skipped++; return; }
     try {
       const msg = bqPostCard_(targetSpaceId, text, `bq:${kind}:${key}`, url, timeLeft(BQ_DIRECT_PIC_LEFT_MS_),
         !!(ctx && ctx.sourceReadOnly));
@@ -2343,7 +2414,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
   if (candidates.length) {
     try {
       const step = evaluateBqDualTrack_(candidates.map((c, i) => Object.assign({}, c.row, { id: 'c' + i })), ctx, {
-        soloOnly: true, priorAlerts: bqPriorAlerts_(ctx, now), gemini: ctx && ctx.gemini,
+        soloOnly: true, priorAlerts: bqPriorAlerts_(ctx, now, past ? candidates.map(c => c.key) : null), gemini: ctx && ctx.gemini,
         // Gemini only with time for it and for posting after it: no try in the run's last minute
         deadline: ctx && ctx.deadline ? ctx.deadline - 60 * 1000 : 0,
         knowledge: items => knowledgeForCtx_(ctx, knowledgeQueryForRecords_(items),

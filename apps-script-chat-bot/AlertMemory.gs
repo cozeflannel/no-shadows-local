@@ -47,7 +47,9 @@
  *                                knows nothing (every check answers as before)
  *   .seenPost(url, opts)         null when the post wasn't seen; else {why, alert_id, at, outcome ('emailed' | 'seen' |
  *                                'claimed')}: emailed in the last 14 days, or seen in the last 24 hours (opts.hours:
- *                                another window), a card a producer claimed included
+ *                                another window), a card a producer claimed included. A post seen or claimed also has
+ *                                ids (the alerts that saw it, the latest AM_IDS_KEPT_ at most) and claim (the
+ *                                producer whose card was posted for it, '' for none)
  *   .claim(url, flow, info)      a producer ('watch', 'bq', …) is about to post a card for the post: true when it's now
  *                                claimed for it, false when the post was already seen (don't post it). info: {author,
  *                                network, engagement}
@@ -103,6 +105,7 @@ const AM_BOILER_RX_ = /Automated Alert via Burson[\s\S]*?(?:\n|$)|Note: This is 
 const AM_COUNT_RX_ = new RegExp('\\b\\d[\\d,.]*\\s*[kKmM]?\\+?\\s*(?:likes?|views?|engagements?|followers?|comments?|' +
   'shares?|retweets?|reposts?|repl(?:y|ies)|interactions?|impressions?|upvotes?|reactions?|subscribers?|votes?)\\b', 'gi');
 const AM_OUTCOME_RANK_ = { s: 0, f: 1, p: 2, c: 3, e: 4 };  // seen < folded < pending < emailing < emailed
+const AM_IDS_KEPT_ = 6;                           // the alerts kept on a post that saw it (its `ids`): the latest ones
 
 let AM_RUN_ = null;  // this run's memory (alertMemoryStart_), or null
 
@@ -613,7 +616,7 @@ function makeAlertMemory_(ss, opts) {
   const uniqPush = (list, v, max) => {
     const out = (Array.isArray(list) ? list : []).filter(x => x !== v);
     if (v) out.push(v);
-    return out.slice(-(max || 6));
+    return out.slice(-(max || AM_IDS_KEPT_));
   };
   const outcome = (a, b) => ((AM_OUTCOME_RANK_[b] || 0) > (AM_OUTCOME_RANK_[a] || 0) ? b : (a || b || 's'));
 
@@ -1015,8 +1018,10 @@ function makeAlertMemory_(ss, opts) {
       if (seenAt && t - seenAt <= hours * AM_HOUR_MS_) {
         const claimed = !!(p.cl && Number(p.cl.at) >= (Number(p.l) || 0) && !(p.ids || []).length);
         const id = (p.ids || [])[(p.ids || []).length - 1] || '';
+        // ids: the alerts that saw the post (the latest ones it keeps); claim: the producer whose card was posted for it
         return { why: claimed ? `a ${p.cl.by || 'producer'} card was already posted for it` : `already seen${id ? ` (${id})` : ''}`,
-          alert_id: id, at: seenAt, outcome: claimed ? 'claimed' : 'seen' };
+          alert_id: id, at: seenAt, outcome: claimed ? 'claimed' : 'seen', ids: (p.ids || []).map(String),
+          claim: p.cl ? String(p.cl.by || 'producer') : '' };
       }
       return null;
     },

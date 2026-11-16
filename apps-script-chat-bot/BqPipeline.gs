@@ -121,13 +121,20 @@ const BQ_EVAL_RECORDS_CHARS_ = 32000;
 
 /**
  * Alerts from this flow's Alert log in the last BQ_PRIOR_ALERT_DAYS_ days (excluding superseded originals), normalized
- * for Step 1.4 duplicate/new-development checks. Never throws.
+ * for Step 1.4 duplicate/new-development checks. `storyKeys` (the one-space setup with Early Detection first only:
+ * BigQuery.gs pollBigQuerySources_ passes the candidates' record keys): a story's card on one of those very posts that
+ * sent no Social Alert (bqStoryCardRow_) is left out: it is no earlier alert on its own main post, which would
+ * otherwise be dropped as a repeat of it. Never throws.
  */
-function bqPriorAlerts_(ctx, now) {
+function bqPriorAlerts_(ctx, now, storyKeys) {
   let rows = [];
   try { rows = (ctx && ctx.store && ctx.store.alerts) || []; } catch (e) { rows = []; }
-  const since = (Number(now) || Date.now()) - BQ_PRIOR_ALERT_DAYS_ * DAY_MS_;
-  return normalizeBqPriorAlerts_(rows.filter(a => a && a.status !== 'superseded' && Number(a.created_at) >= since).map(a => {
+  const at = Number(now) || Date.now();
+  const since = at - BQ_PRIOR_ALERT_DAYS_ * DAY_MS_;
+  const own = new Set((Array.isArray(storyKeys) ? storyKeys : []).filter(Boolean).map(String));
+  const storyOnOwnPost = a => own.size > 0 && !!a.record_key && own.has(String(a.record_key)) && bqStoryCardRow_(a, at);
+  return normalizeBqPriorAlerts_(rows.filter(a => a && a.status !== 'superseded' && Number(a.created_at) >= since &&
+    !storyOnOwnPost(a)).map(a => {
     const f = a.forwarded_fields || {};
     return {
       alert_id: a.alert_id,

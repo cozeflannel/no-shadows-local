@@ -5,6 +5,11 @@
 // working alone (beside a Mirror space, or beside the main flow on the live Burson space), the order is the one it
 // always was: the poll, then Early Detection.
 //
+// Where stories go first, a story's card comes before the poll gets to the story's main post. Such a card is not the
+// post's own alert: one that sent no Social Alert no longer makes the post "already alerted" for the poll, so the post
+// still gets its Direct BigQuery card, and the Social Alert it earns by itself (BigQuery.gs bqStoryCardRow_). With the
+// setting off, and in every other setup, a story's card counts as an alert on its main post, as it did.
+//
 // Every scenario here turns the fix plan's other settings off (golden.SETTINGS_OFF), so what a later change does by
 // default never moves these tests.
 'use strict';
@@ -242,6 +247,196 @@ module.exports = H => {
     eq([note(now).thread, note(was).thread], [at(now, 'Direct BigQuery card').thread, at(was, 'Direct BigQuery card').thread]);
     eq(sorted(now.reactions.map(r => [r.run, r.emoji])), sorted(was.reactions.map(r => [r.run, r.emoji])));
     eq([now.emails, now.test_copy, now.outbox], [was.emails, was.test_copy, was.outbox]);
+  });
+
+  // -------------------------------------------------------------------------------------------------------------
+  // A story's card is not the post's own alert. Where stories go first, a story's card comes before the Direct
+  // BigQuery poll gets to its main post; taken for "already alerted", it would stop the post's own card, and with it
+  // the Social Alert the post earns by itself (BigQuery.gs bqStoryCardRow_, pollBigQuerySources_)
+  // -------------------------------------------------------------------------------------------------------------
+
+  const MAPS = golden.posts.MAPS;  // Direct BigQuery finds it with a P0 exposure tag and 2,400 engagements: a Social Alert
+  const TESTER = 'tester@testing.test';
+  /** A story whose main post is that post. */
+  const mapsStory = () => {
+    const rep = (url, author, followers, eng, snippet) => ({ platform: 'X', author_handle: author, followers, engagement_total: eng,
+      published_at: '2026-10-14 11:55 UTC', url, snippet });
+    return golden.rows.story({ alert_id: 'ED-CLU-clu_maps_bridge-202610141200', cluster_id: 'clu_maps_bridge', signal_key: 'clu_maps_bridge',
+      headline: 'Low-tier claim cluster (6 accounts): Google Maps sends drivers onto a closed bridge', topic_product: 'Google Maps', primary_url: MAPS,
+      representative_posts_json: JSON.stringify([
+        rep(MAPS, 'roadwatcher', 41000, 2400, 'Google Maps keeps sending drivers onto a closed bridge.'),
+        rep('https://x.com/commuter_k/status/2150000000000000072', 'commuter_k', 900, 31, 'Same here: Maps routed me onto the closed bridge this morning.'),
+        rep('https://x.com/bridge_local/status/2150000000000000073', 'bridge_local', 700, 27, 'Maps still shows the closed bridge as open.')]) });
+  };
+  /** Gemini's review of it: a build-up worth monitoring; with `escalate`, one that gets a Social Alert of its own. */
+  const mapsReview = escalate => () => ({
+    summary: 'Six small accounts on X say Google Maps keeps routing drivers onto a closed bridge.',
+    issue_name: 'Reports that Google Maps routes drivers onto a closed bridge',
+    emerging_narrative: 'Independent drivers describe the same closed-bridge routing.',
+    early_detection_call: { disposition: escalate ? 'escalate' : 'monitor', severity: escalate ? 'high' : 'medium', confidence: 0.9,
+      reason: 'Several independent drivers describe the same routing fault', build_up_signals: '6 accounts on 1 platform',
+      watch_for: 'An official statement or press pickup' },
+    temp_check_draft: { recommended: false, query_suggestion: '', scope_note: '' },
+    slrr: { is_slrr: true, confidence: 0.85, exposure_tag: 'Product - Other/general criticism', product: 'Maps/Geo', other_products: [],
+      sensitive_topics: [], location: 'US' },
+    known_issue: { matches: false, confidence: 0.9 }, tns: { needed: false, reason: '' }, recommended_groups: [],
+    story_title: 'Drivers say Google Maps routes them onto a closed bridge', story: 'Drivers say Maps [sends them onto a closed bridge](P1).',
+    web_context: '', next_steps: ['Keep monitoring for volume growth and re-check in 2 hours.'], driver_post: 'P1',
+  });
+  /**
+   * A world (`w`, three Direct BigQuery checks in) where the story on the Maps post is found `storyFirstBy` minutes
+   * before Direct BigQuery finds the post itself (0: in the same run), then run on until everything is worked. What
+   * came of it: the posts of each run by kind, the emails, the Alert-log rows on the post, and C15's count.
+   */
+  const STORY_RUN = 'the story is found';
+  const POST_RUN = 'Direct BigQuery finds the post';
+  const storyThenPost = (w, opts) => {
+    const { t, rec, feed } = w;
+    w.review = mapsReview(!!(opts && opts.escalate));
+    if (opts && opts.storyFirstBy) rec.step(STORY_RUN, opts.storyFirstBy, () => { feed.stories = [mapsStory()]; });
+    rec.step(POST_RUN, 5, () => { feed.bsip = [golden.rows.mapsRow()]; feed.stories = [mapsStory()]; });
+    [1, 1, 1, 5, 1].forEach(minutes => rec.step('after', minutes));  // its review, and one more Direct BigQuery check
+    const out = rec.out();
+    const key = t.bot.recordKey_({ post_url: MAPS });
+    const posts = label => out.chat.filter(m => m.run === label).map(kind);
+    return {
+      story: posts(STORY_RUN), post: posts(POST_RUN), after: posts('after'),
+      emails: out.emails.map(e => [e.run, e.kind, e.to, e.subject.split(' | ')[0]]),
+      rows: t.bot.sheetBackend_(t.sheet()).loadAlerts().filter(r => r.record_key === key).map(r => [r.ingested, r.email_status || '']).sort(),
+      today: (String(t.control().cell(15, 3)).match(/· (\d+ posts? today)$/) || [])[1],
+      elsewhere: out.chat.filter(m => m.run !== 'setup' && m.space !== (w.space || golden.spaces.AC)).length,
+      out,
+    };
+  };
+  const oneSpace = overrides => threeChecksIn(timed(W.oneSpaceWorld(overrides)));
+  const ALERT = ['after', 'sent', [TESTER], '[Auto-correct test] 🟥SOCIAL ALERT🟥: Google Maps'];  // the post's own Social Alert
+
+  test('early detection first: a post that a story gets to first still gets its own Direct BigQuery card and the Social Alert it earns. Found in the same run as a story\'s main post and as a Direct BigQuery candidate: the story card and its review note, then the post\'s own card; the card\'s review, a run later, sends the Social Alert. With the setting off the two cards come in the order before the change, and the same Social Alert goes out', () => {
+    const on = storyThenPost(oneSpace(ON), { storyFirstBy: 0 });
+    eq([on.post, on.after, on.emails, on.rows, on.today, on.elsewhere],
+      [['story card', 'story review note', 'Direct BigQuery card'], ['card review note'], [ALERT], [['BSIP', 'sent'], ['Early detection', '']], '1 post today', 0]);
+    // both cards are on the one post, the story's first
+    const cards = on.out.chat.filter(m => !m.reply && m.text.includes(MAPS)).map(kind);
+    eq(cards, ['story card', 'Direct BigQuery card']);
+    const off = storyThenPost(oneSpace(OFF), { storyFirstBy: 0 });
+    eq([off.post, off.after, off.emails, off.rows, off.today, off.elsewhere],
+      [['Direct BigQuery card', 'story card', 'story review note'], ['card review note'], [ALERT], [['BSIP', 'sent'], ['Early detection', '']], '1 post today', 0]);
+    // the same posts and the same email, whichever came first
+    const texts = r => r.out.chat.filter(m => m.run !== 'setup').map(m => m.text).sort();
+    eq([texts(on), on.out.emails.map(e => [e.subject, e.text])], [texts(off), off.out.emails.map(e => [e.subject, e.text])]);
+  });
+
+  test('early detection first: the story\'s card came a check earlier (5 minutes before Direct BigQuery finds the post): where stories go first the post still gets its own card at that check, and its Social Alert a run later; with the setting off the bot does what it did before the change: the story card counts as an alert on the post, so no Direct BigQuery card and no Social Alert', () => {
+    const on = storyThenPost(oneSpace(ON), { storyFirstBy: 5 });
+    eq([on.story, on.post, on.after, on.emails, on.rows, on.today],
+      [['story card', 'story review note'], ['Direct BigQuery card'], ['card review note'], [ALERT], [['BSIP', 'sent'], ['Early detection', '']], '1 post today']);
+    const off = storyThenPost(oneSpace(OFF), { storyFirstBy: 5 });
+    eq([off.story, off.post, off.after, off.emails, off.rows, off.today],
+      [['story card', 'story review note'], [], [], [], [['Early detection', '']], '0 posts today']);
+  });
+
+  test('early detection first: a story whose own review sent a Social Alert still counts as the alert on its main post: no Direct BigQuery card for the post and no second email, with the setting on as with it off', () => {
+    [['on', ON], ['off', OFF]].forEach(([name, overrides]) => {
+      const got = storyThenPost(oneSpace(overrides), { storyFirstBy: 5, escalate: true });
+      eq([name, got.story.slice(0, 2), got.post.concat(got.after).filter(k => k === 'Direct BigQuery card' || k === 'card review note'),
+        got.emails.map(e => e.slice(0, 3)), got.rows, got.today],
+      [name, ['story card', 'story review note'], [], [[STORY_RUN, 'sent', [TESTER]]], [['Early detection', 'sent']], '0 posts today']);
+    });
+  });
+
+  test('early detection first: only where stories go first. Beside the main flow on the live Burson space and beside a Mirror space (the setting on), a story\'s card still counts as the alert on its main post, as before the change: no Direct BigQuery card and no Social Alert for it; the flow\'s mark for the poll (ctx.bqPastStoryCards) is set only in the one-space setup with the setting on', () => {
+    const marks = t => {  // every flow pass of the world: [the Auto-correct flow?, its mark]
+      t.bot.__marks = [];
+      t.bot.ev('runOnce_ = (orig => function (ctx) { __marks.push([ctx.sourceReadOnly === true, ctx.bqPastStoryCards]); return orig(ctx); })(runOnce_)');
+      return t.bot.__marks;
+    };
+    const uniq = list => Array.from(new Set(list.map(x => JSON.stringify(x)))).sort().map(x => JSON.parse(x));
+    const SETUPS = {
+      'beside the main flow on the live Burson space': { set: t => { t.set('B3', REAL); t.control().getRange(10, 2).setValue(W.names.AC); }, space: golden.spaces.AC,
+        marks: [[false, null], [true, false]] },
+      'beside a Mirror space': { set: t => { t.control().getRange(9, 2).setValue(W.names.MIRROR); t.control().getRange(10, 2).setValue(W.names.AC); }, space: golden.spaces.MIRROR,
+        marks: [[false, null], [true, false]] },
+    };
+    Object.keys(SETUPS).forEach(name => {
+      const setup = SETUPS[name];
+      const t = W.start(ON, [[golden.spaces.AC, W.names.AC], [golden.spaces.MIRROR, W.names.MIRROR]]);
+      setup.set(t);
+      [15, 19].forEach(r => t.control().getRange(r, 2).setValue('ON'));
+      const feed = W.feedsOf(t);
+      W.scriptGemini(t);
+      const seen = marks(t);
+      const got = storyThenPost(threeChecksIn(timed({ t, feed, rec: W.recorder(t, ''), space: setup.space })), { storyFirstBy: 5 });
+      eq([name, got.story, got.post, got.after, got.emails, got.rows, got.elsewhere],
+        [name, ['story card', 'story review note'], [], [], [], [['Early detection', '']], 0]);
+      eq([name, uniq(seen.map(([ac, mark]) => [ac, mark === undefined ? null : mark]))], [name, setup.marks]);
+    });
+    const flagged = overrides => {
+      const w = W.oneSpaceWorld(overrides);
+      const seen = marks(w.t);
+      threeChecksIn(timed(w));
+      return uniq(seen);
+    };
+    eq([flagged(ON), flagged(OFF), flagged(undefined)], [[[true, true]], [[true, false]], [[true, true]]]);  // (undefined: the default settings)
+  });
+
+  test('early detection first: what the poll takes for "only a story\'s card" (bqStoryCardRow_, bqOnlyStoryCards_, bqIsStoryCard_, bqPriorAlerts_): an Early Detection row with no Social Alert sent or on its way; a post the alert memory has only such rows of this flow for. Never a post a Social Alert went out for, one a Watch alert or a Direct BigQuery card was posted for, one Burson alerted, one another flow saw, or one whose alerts the memory may no longer all have', () => {
+    const B = H.B;
+    const NOW = 1791980000000;
+    const HOUR = 60 * MIN;
+    const row = patch => Object.assign({ alert_id: 'QA-1', ingested: 'Early detection', email_status: '', mirrored: '', created_at: NOW - HOUR,
+      record_key: 'x.com/roadwatcher/status/2150000000000000002' }, patch || {});
+    // 1. a story's card that sent no Social Alert
+    eq([row(), row({ email_status: 'failed' }), row({ email_status: 'deleted' }), row({ email_status: 'discarded' }), row({ mirrored: '👍' }),
+      row({ mirrored: '❌' }), row({ email_status: 'pending', created_at: NOW - 25 * HOUR })].map(r => B.bqStoryCardRow_(r, NOW)), Array(7).fill(true));
+    // ...and never: one whose Social Alert went out, is drafted or on its way, one a team's emoji is on; any other kind of alert
+    eq([row({ email_status: 'sent' }), row({ email_status: 'drafted' }), row({ email_status: 'pending' }), row({ mirrored: '👍 📰' }),
+      row({ ingested: 'BSIP' }), row({ ingested: 'Watch alert' }), row({ ingested: 'Sprinklr' }), row({ ingested: '' }), row({ ingested: undefined }),
+      null, undefined].map(r => B.bqStoryCardRow_(r, NOW)), Array(11).fill(false));
+    eq(B.ev('[ED_ALERT_INGESTED_, AM_IDS_KEPT_]'), ['Early detection', 6]);
+    // 2. what the alert memory says of a post
+    const rows = { E1: row({ alert_id: 'E1' }), E2: row({ alert_id: 'E2', mirrored: '👍' }), SENT: row({ alert_id: 'SENT', email_status: 'sent' }),
+      BQ: row({ alert_id: 'BQ', ingested: 'BSIP' }), BURSON: row({ alert_id: 'BURSON', ingested: '' }) };
+    const ctx = { store: { alertById: id => rows[id] || null } };
+    const seen = patch => Object.assign({ why: 'already seen (E1)', alert_id: 'E1', at: NOW - HOUR, outcome: 'seen', ids: ['E1'], claim: '' }, patch || {});
+    const only = (s, c) => B.bqOnlyStoryCards_(c === undefined ? ctx : c, s, NOW);
+    eq([only(seen()), only(seen({ ids: ['E1', 'E2'] })), only(seen({ ids: ['E2', 'E1', 'E2', 'E1', 'E2'] }))], [true, true, true]);
+    eq([
+      only(null),                                             // not seen at all
+      only(seen({ outcome: 'emailed' })),                     // a Social Alert went out for the post
+      only(seen({ outcome: 'claimed', ids: [], claim: 'watch' })),  // a Watch alert's card was just posted for it
+      only(seen({ claim: 'bq' })),                            // a producer's card was claimed, and a story saw it too
+      only(seen({ ids: ['E1', 'SENT'] })),                    // one of the stories sent a Social Alert
+      only(seen({ ids: ['BQ', 'E1'] })),                      // a Direct BigQuery card is among them
+      only(seen({ ids: ['E1', 'BURSON'] })),                  // Burson alerted the post
+      only(seen({ ids: ['E1', 'QA-9'] })),                    // an alert that isn't in this flow's Alert log (another flow's)
+      only(seen({ ids: [] })), only(seen({ ids: undefined })),
+      only(seen({ ids: ['E1', 'E2', 'E1', 'E2', 'E1', 'E2'] })),  // six: the memory keeps no more, an older one may be gone
+      only(seen(), {}), only(seen(), null), only(seen(), { store: {} }),
+      only(seen(), { store: { alertById: () => { throw new Error('the Alert log can\'t be read'); } } }),
+    ], Array(15).fill(false));
+    // 3. Step 1's earlier alerts: with the candidates' keys, a story's card on one of those very posts is left out; every
+    // other row stays (a story on another post, a story that sent a Social Alert, any other alert on the post)
+    const KEY = 'x.com/roadwatcher/status/2150000000000000002';
+    const OTHER = 'x.com/pixelcritic/status/2150000000000000001';
+    const log = [row({ alert_id: 'E1', record_key: KEY }), row({ alert_id: 'E3', record_key: OTHER }), row({ alert_id: 'SENT', record_key: KEY, email_status: 'sent' }),
+      row({ alert_id: 'BQ', record_key: KEY, ingested: 'BSIP' }), row({ alert_id: 'OLD', record_key: KEY, created_at: NOW - 72 * HOUR }),
+      row({ alert_id: 'GONE', record_key: KEY, status: 'superseded' })];
+    const priors = keys => B.bqPriorAlerts_({ store: { alerts: log } }, NOW, keys).map(p => p.alert_id);
+    eq([priors(undefined), priors(null), priors([]), priors([KEY]), priors([OTHER]), priors([KEY, OTHER, ''])],
+      [['E1', 'E3', 'SENT', 'BQ'], ['E1', 'E3', 'SENT', 'BQ'], ['E1', 'E3', 'SENT', 'BQ'], ['E3', 'SENT', 'BQ'], ['E1', 'SENT', 'BQ'], ['SENT', 'BQ']]);
+    // 4. the bot's own story card among a space's messages: by its id, else by the record of the cards it posted
+    const w = oneSpace(ON);
+    w.review = mapsReview(false);
+    w.rec.step('a story', 5, () => { w.feed.stories = [mapsStory()]; w.feed.bsip = [golden.rows.mapsRow()]; });
+    const read = () => w.t.bot.chatListMessages_(golden.spaces.AC, new Date(w.t.g.clock.now - 10 * MIN).toISOString(), 100).filter(m => !m.threadReply);
+    const kinds = () => read().map(m => [/^🚨 \*EARLY DETECTION\*/.test(m.text) ? 'story card' : 'Direct BigQuery card', (m.clientId || '').slice(0, 12),
+      w.t.bot.bqIsStoryCard_(m)]);
+    eq(kinds(), [['story card', 'client-zeda-', true], ['Direct BigQuery card', 'client-zmir-', false]]);
+    w.t.chat.spaces.get(golden.spaces.AC).messages.forEach(m => { delete m.clientAssignedMessageId; });
+    ['bot_posts', 'bot_post_ids'].forEach(k => w.t.g.cache.delete(k));
+    w.t.bot.ev('BOT_MARKS_ = null');
+    eq(kinds(), [['story card', '', true], ['Direct BigQuery card', '', false]]);
+    eq([w.t.bot.bqIsStoryCard_(null), w.t.bot.bqIsStoryCard_({}), w.t.bot.bqIsStoryCard_({ name: 'spaces/X/messages/m1', clientId: 'client-bqa-abc' })], [false, false, false]);
   });
 
   test('early detection first: the rule itself (acEarlyDetectionFirst_): only when the flow works alone, the setting is not false, and the poll\'s last check started less than 10 minutes ago; never checked, a last check 10 minutes old or more, a clock that went back, a setting or a property that can\'t be read: the poll first, as before', () => {
