@@ -415,12 +415,13 @@ function poll() {
       const memNote = amControlNote_();  // AlertMemory.gs: its memory couldn't be read lately ('' when it could)
       const resultsNote = resultsBlockedNote_();  // Speed.gs: a "Results" tab the bot didn't make is in the way ('' when not)
       const headStartNote = headStartBlockedNote_();  // HeadStart.gs: the same for a "Head start" tab ('' when not)
+      const edTabNote = edTabBlockedNote_();  // EarlyDetectionTab.gs: the same for an "Early Detection" tab ('' when not)
       writeControlStatus_(control, {
         bursonNote: '\u2014 not used (working in Auto-correct space, B10)',
         analystNote: '',
         status: needs.length ? `\u26a0\ufe0f ${sfbProblemText_(sfb, needs)}`
           : (memNote ? `\u26a0\ufe0f ${memNote}` : resultsNote ? `\u26a0\ufe0f ${resultsNote}`
-            : headStartNote ? `\u26a0\ufe0f ${headStartNote}` : okStatusText_()),
+            : headStartNote ? `\u26a0\ufe0f ${headStartNote}` : edTabNote ? `\u26a0\ufe0f ${edTabNote}` : okStatusText_()),
         lastCheck: nowLabel_(),
         // Today (B7): the Auto-correct flow's own count, the one C10 shows (the main flow's counters never move
         // here). The flow runs below, in this run's finally, which brings B7 up to date with what it handled
@@ -628,9 +629,11 @@ function poll() {
     const resultsNote = resultsBlockedNote_();
     // HeadStart.gs: the same for a tab named Head start that the bot didn't make ('' when its last rebuild found none)
     const headStartNote = headStartBlockedNote_();
+    // EarlyDetectionTab.gs: the same for a tab named Early Detection ('' when the last write found none)
+    const edTabNote = edTabBlockedNote_();
     const status = sfbStatus || (issues.length ? `⚠️ Something needs another try: ${truncate_(issues[0], 240)} The bot keeps retrying.`
       : (notice ? `⚠️ ${notice}` : memNote ? `⚠️ ${memNote}` : resultsNote ? `⚠️ ${resultsNote}`
-        : headStartNote ? `⚠️ ${headStartNote}`
+        : headStartNote ? `⚠️ ${headStartNote}` : edTabNote ? `⚠️ ${edTabNote}`
           : direct.space ? directB25StatusText_(cfg.burson) : okStatusText_()));
     writeControlStatus_(control, Object.assign(statusNotes, {
       status: mode && mode.live ? `${LIVE_STATUS_PREFIX_}${status}` : status,
@@ -745,6 +748,10 @@ function poll() {
           if (activity > 0 || bgIdleOk) {
             maybeRefreshHeadStart_(ss, any, { deadline: runStart + RUN_HARD_STOP_MS_, runStart, flows: [mainCtx, ac, os] });
           }
+          // The Early Detection tab (EarlyDetectionTab.gs, setting early_detection_tab): this run's record of what became
+          // of each story signal, written with 30 seconds of the run left and never in a run still catching up on alerts;
+          // else its rows wait for the next run. A run without a row makes no Sheets call. Never throws
+          maybeWriteEdTab_(ss, any, { deadline: runStart + RUN_HARD_STOP_MS_, flows: [mainCtx, ac, os] });
         }
       }
     } catch (e) {
