@@ -280,10 +280,12 @@ function pwAlertsNoteFit_(lead, counts, tail) {
 /**
  * C35 for this run: `dest` (pwAlertsDest_), `res` (pwPostAlerts_, or null when nothing was tried), `watchOn` (row 34),
  * `today` (watch alerts posted today), `grouped` (same-story posts added to an alert's thread today), `more` (today's
- * other counts: pwAlertDayMore_). The day's counts stand before the fixed explanation, and whatever the day held, every
- * count is there whole (pwAlertsNoteFit_). Pure.
+ * other counts: pwAlertDayMore_), `noWatch` (no watch is ON on the Watches tab: the look has nothing to look for). The
+ * day's counts stand before the fixed explanation, and whatever the day held, every count is there whole
+ * (pwAlertsNoteFit_). With no watch ON the explanation gives way to saying so: nothing new can be flagged (flags from
+ * before still go out, so "nothing to post" is said only when none of them is waiting). Pure.
  */
-function pwAlertsNoteText_(dest, res, watchOn, today, grouped, more) {
+function pwAlertsNoteText_(dest, res, watchOn, today, grouped, more, noWatch) {
   const choice = dest && dest.choice;
   if (!choice) return pwAlertsOffText_();
   const where = pwAlertsWhere_(choice);
@@ -291,6 +293,10 @@ function pwAlertsNoteText_(dest, res, watchOn, today, grouped, more) {
   const counts = pwAlertCountsText_(today, grouped, more, res && res.waiting);
   const problem = (dest && dest.problem) || (res && res.problem) || (!dest.space ? 'no space to post in this run' : '');
   if (problem) return pwAlertsNoteFit_(`\u26a0\ufe0f waiting: ${problem} (a flag waits up to 3 hours)`, counts, '');
+  if (noWatch) {
+    return pwAlertsNoteFit_(`${res && res.waiting ? '' : 'nothing to post: '}no watch is ON (set one to ON on the ` +
+      `${PW_WATCHES_TAB_} tab)`, counts, '');
+  }
   const cellTag = choice === 'mirror' ? 'B9' : choice === 'autocorrect' ? 'B10' : 'B33';
   const modeNote = choice === 'mirror' ? ' (only the testers while Testing)' : ' (always Testing there)';
   return pwAlertsNoteFit_(`\u2713 ${dest.space.name} (${cellTag})`, counts, 'a flag that matters by itself (a KOF author, ' +

@@ -1994,7 +1994,7 @@ function runProactiveWatch_(ss, runStart, opts) {
     if (opts && opts.control) {
       try {
         writeWatchAlertsNote_(opts.control, pwAlertsNoteText_(dest || { choice: '' }, out.alerts, true, pwAlertDay_(0),
-          pwAlertDayGrouped_(), pwAlertDayMore_()));
+          pwAlertDayGrouped_(), pwAlertDayMore_(), !active.length));
       } catch (e) {
         console.error('could not write C35 (Watch alerts): ' + ((e && e.message) || e));
       }

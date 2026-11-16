@@ -1,6 +1,7 @@
 // What the Control tab says about the Proactive watch (row 34, ProactiveWatch.gs) and its Watch alerts (row 35,
 // WatchAlerts.gs), in the one-space setup (everything in the Auto-correct space, B10; B35 = B10):
-//   - C35 counts how every flag of the day ended, the counts before its explanation, and never cuts a count.
+//   - C35 counts how every flag of the day ended, the counts before its explanation, and never cuts a count;
+//   - with no watch ON on the Watches tab, C35 says so in place of its healthy sentence.
 // Nothing here changes what is posted in Chat, emailed or queued: only notes on the Control tab.
 //   node apps-script-chat-bot/test/run_tests.js "watch notes:"
 'use strict';
@@ -33,18 +34,19 @@ module.exports = H => {
 
   /**
    * The one-space setup (golden_flows.js: B3, B4 and B9 blank; B10; B25 read only; rows 15, 19, 34, 38, 39 and 40 ON)
-   * after its first run, the brand-safety watch ON (`o.midterms`: the Midterms watch too) and B35 as `o.b35` says (the
-   * Auto-correct space when left out). The pre-read answers each post from `w.say(post, recent, posts)`, else as a
-   * meaningful post about Pixel with its issue as its story.
+   * after its first run, the brand-safety watch ON (`o.midterms`: the Midterms watch too; `o.watch` false: none) and
+   * B35 as `o.b35` says (the Auto-correct space when left out). The pre-read answers each post from
+   * `w.say(post, recent, posts)`, else as a meaningful post about Pixel with its issue as its story.
    */
   function oneSpace(o) {
     const opt = Object.assign({ b35: TO_AC }, o || {});
     const w = golden.world.oneSpaceWorld();
     const { t } = w;
     t.poll();  // the watch's tabs
-    golden.world.watchOn(t);
     const watches = t.sheet().getSheetByName('Watches');
-    if (opt.midterms) watches.getRange(watches.rows.findIndex(r => r[0] === MIDTERMS) + 1, 2).setValue('ON');
+    w.watch = (name, on) => watches.getRange(watches.rows.findIndex(r => r[0] === name) + 1, 2).setValue(on ? 'ON' : 'OFF');
+    if (opt.watch !== false) w.watch(BRAND, true);
+    if (opt.midterms) w.watch(MIDTERMS, true);
     if (opt.b35) w.sh.getRange(35, 2).setValue(opt.b35);
     w.say = null;
     t.g.vertex.watchPreRead = payload => {
@@ -258,5 +260,44 @@ module.exports = H => {
     look(w, [flag(21, { impact: 9 }), flag(22, { impact: 8 })]);
     eq([letter(t, 21), letter(t, 22), cards(t).length], ['p', 'd', 1]);
     counts(t, { posted: 1, already: 1 });
+  });
+
+  // -----------------------------------------------------------------------------------------------------------
+  // C35 with no watch ON
+  // -----------------------------------------------------------------------------------------------------------
+
+  test('watch notes: with no watch ON on the Watches tab C35 does not show its healthy sentence: it says "nothing to post: no watch is ON (set one to ON on the Watches tab)" in its place, before the day\'s counts; a watch turned ON brings the usual text back; flags raised before the last watch was turned OFF still go out, and while one of them waits C35 says "no watch is ON" without "nothing to post"; the warnings for row 34 OFF and for flags that can\'t go out read as before', () => {
+    const NO_WATCH = 'no watch is ON (set one to ON on the Watches tab)';
+    const w = oneSpace({ watch: false });
+    const { t } = w;
+    t.poll();
+    eq(c35(t), `nothing to post: ${NO_WATCH} · today: 0 posted`);
+    assert.match(c34(t), / · waiting: no watch is ON \(set a watch's On to ON on the Watches tab\)$/);  // C34, as before
+    // a watch ON: the usual text
+    w.watch(BRAND, true);
+    t.poll();
+    eq(c35(t), `✓ ${AC_NAME} (B10) · today: 0 posted · ${HOW}`);
+    // five flags at once go out two a run. The watch is turned OFF after the first two: the rest still go out
+    look(w, [1, 2, 3, 4, 5].map(n => flag(n, { impact: 9.5 - n / 10 })));
+    eq(c35(t), `✓ ${AC_NAME} (B10) · today: 2 posted, 3 waiting · ${HOW}`);
+    w.watch(BRAND, false);
+    t.poll();
+    eq(c35(t), `${NO_WATCH} · today: 4 posted, 1 waiting`);
+    t.poll();
+    eq([c35(t), cards(t).length], [`nothing to post: ${NO_WATCH} · today: 5 posted`, 5]);
+    // row 34 OFF: its own warning, as it was
+    w.sh.getRange(34, 2).setValue('OFF');
+    t.poll();
+    eq(c35(t), '⚠️ Auto-correct space (B10) chosen, but the Proactive watch (row 34) is OFF: nothing to post');
+    // the text by itself: a reason flags can't go out comes first; B35 OFF and row 34 OFF say what they said
+    const dest = { choice: 'autocorrect', space: { id: AC, name: AC_NAME }, problem: '' };
+    const text = (d, res, watchOn) => B.pwAlertsNoteText_(d, res, watchOn, 3, 0, { already: 2 }, true);
+    eq(text(dest, null, true), `nothing to post: ${NO_WATCH} · today: 3 posted, 2 on a post that already had an alert`);
+    eq(text(dest, { waiting: 2 }, true), `${NO_WATCH} · today: 3 posted, 2 on a post that already had an alert, 2 waiting`);
+    eq(text(dest, { waiting: 1, problem: 'the Auto-correct space\'s flow ran out of time on this run (Burson\'s alerts come first)' }, true),
+      '⚠️ waiting: the Auto-correct space\'s flow ran out of time on this run (Burson\'s alerts come first) (a flag waits up to 3 ' +
+      'hours) · today: 3 posted, 2 on a post that already had an alert, 1 waiting');
+    eq([text({ choice: '' }, null, true), text(dest, null, false)], [B.pwAlertsOffText_(),
+      '⚠️ Auto-correct space (B10) chosen, but the Proactive watch (row 34) is OFF: nothing to post']);
   });
 };
