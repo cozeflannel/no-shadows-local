@@ -7,8 +7,10 @@
 //
 // Where stories go first, a story's card comes before the poll gets to the story's main post. Such a card is not the
 // post's own alert: one that sent no Social Alert no longer makes the post "already alerted" for the poll, so the post
-// still gets its Direct BigQuery card, and the Social Alert it earns by itself (BigQuery.gs bqStoryCardRow_). With the
-// setting off, and in every other setup, a story's card counts as an alert on its main post, as it did.
+// still gets its Direct BigQuery card, and the Social Alert it earns by itself (BigQuery.gs bqStoryCardRow_). Nor is it
+// an earlier alert on the post when that card is reviewed (bqStoryOnOwnPost_): the post is not taken for an ongoing
+// issue because of the story, so its Social Alert is the one it would get with no story at all. With the setting off,
+// and in every other setup, a story's card counts as an alert on its main post, as it did.
 //
 // Every scenario here turns the fix plan's other settings off (golden.SETTINGS_OFF), so what a later change does by
 // default never moves these tests.
@@ -257,14 +259,14 @@ module.exports = H => {
 
   const MAPS = golden.posts.MAPS;  // Direct BigQuery finds it with a P0 exposure tag and 2,400 engagements: a Social Alert
   const TESTER = 'tester@testing.test';
-  /** A story whose main post is that post. */
-  const mapsStory = () => {
+  /** A story whose main post is that post (`engagements`: the post's, 2,400 when not given). */
+  const mapsStory = engagements => {
     const rep = (url, author, followers, eng, snippet) => ({ platform: 'X', author_handle: author, followers, engagement_total: eng,
       published_at: '2026-10-14 11:55 UTC', url, snippet });
     return golden.rows.story({ alert_id: 'ED-CLU-clu_maps_bridge-202610141200', cluster_id: 'clu_maps_bridge', signal_key: 'clu_maps_bridge',
       headline: 'Low-tier claim cluster (6 accounts): Google Maps sends drivers onto a closed bridge', topic_product: 'Google Maps', primary_url: MAPS,
       representative_posts_json: JSON.stringify([
-        rep(MAPS, 'roadwatcher', 41000, 2400, 'Google Maps keeps sending drivers onto a closed bridge.'),
+        rep(MAPS, 'roadwatcher', 41000, engagements || 2400, 'Google Maps keeps sending drivers onto a closed bridge.'),
         rep('https://x.com/commuter_k/status/2150000000000000072', 'commuter_k', 900, 31, 'Same here: Maps routed me onto the closed bridge this morning.'),
         rep('https://x.com/bridge_local/status/2150000000000000073', 'bridge_local', 700, 27, 'Maps still shows the closed bridge as open.')]) });
   };
@@ -285,24 +287,37 @@ module.exports = H => {
   });
   /**
    * A world (`w`, three Direct BigQuery checks in) where the story on the Maps post is found `storyFirstBy` minutes
-   * before Direct BigQuery finds the post itself (0: in the same run), then run on until everything is worked. What
-   * came of it: the posts of each run by kind, the emails, the Alert-log rows on the post, and C15's count.
+   * before Direct BigQuery finds the post itself (0: in the same run; `noStory`: there is no story at all), then run on
+   * until everything is worked. `engagements`: the post's (2,400 when not given). What came of it: the posts of each run
+   * by kind, the emails, the Alert-log rows on the post, and C15's count.
    */
   const STORY_RUN = 'the story is found';
   const POST_RUN = 'Direct BigQuery finds the post';
   const storyThenPost = (w, opts) => {
     const { t, rec, feed } = w;
-    w.review = mapsReview(!!(opts && opts.escalate));
-    if (opts && opts.storyFirstBy) rec.step(STORY_RUN, opts.storyFirstBy, () => { feed.stories = [mapsStory()]; });
-    rec.step(POST_RUN, 5, () => { feed.bsip = [golden.rows.mapsRow()]; feed.stories = [mapsStory()]; });
+    const o = opts || {};
+    w.review = mapsReview(!!o.escalate);
+    const stories = () => (o.noStory ? [] : [mapsStory(o.engagements)]);
+    if (o.storyFirstBy) rec.step(STORY_RUN, o.storyFirstBy, () => { feed.stories = stories(); });
+    rec.step(POST_RUN, 5, () => {
+      feed.bsip = [Object.assign(golden.rows.mapsRow(), o.engagements ? { total: o.engagements } : {})];
+      feed.stories = stories();
+    });
     [1, 1, 1, 5, 1].forEach(minutes => rec.step('after', minutes));  // its review, and one more Direct BigQuery check
     const out = rec.out();
     const key = t.bot.recordKey_({ post_url: MAPS });
     const posts = label => out.chat.filter(m => m.run === label).map(kind);
+    const logRows = t.bot.sheetBackend_(t.sheet()).loadAlerts().filter(r => r.record_key === key);
     return {
       story: posts(STORY_RUN), post: posts(POST_RUN), after: posts('after'),
       emails: out.emails.map(e => [e.run, e.kind, e.to, e.subject.split(' | ')[0]]),
-      rows: t.bot.sheetBackend_(t.sheet()).loadAlerts().filter(r => r.record_key === key).map(r => [r.ingested, r.email_status || '']).sort(),
+      // each email whole (but for the number of the alert in its feedback links: a story's card before it takes one),
+      // the line of it that names the issue and says whether it is new, and what the Alert log says was decided for
+      // the post's own card
+      mail: out.emails.map(e => [e.kind, e.to, e.subject, e.text, e.html].map(v => (typeof v === 'string' ? v.replace(/\bQA-\d+\b/g, 'QA-N') : v))),
+      names: out.emails.map(e => (String(e.text).match(/^Name: .*$/m) || [''])[0]),
+      decided: logRows.filter(r => r.ingested === 'BSIP').map(r => String(r.decision || '')),
+      rows: logRows.map(r => [r.ingested, r.email_status || '']).sort(),
       storyId: (t.bot.sheetBackend_(t.sheet()).loadAlerts().find(r => r.record_key === key && r.ingested === 'Early detection') || {}).alert_id,
       today: (String(t.control().cell(15, 3)).match(/· (\d+ posts? today)$/) || [])[1],
       // what the run log says of a post the poll looks at although a story's card has it
@@ -327,18 +342,57 @@ module.exports = H => {
     const off = storyThenPost(oneSpace(OFF), { storyFirstBy: 0 });
     eq([off.post, off.after, off.emails, off.rows, off.today, off.elsewhere, off.said],
       [['Direct BigQuery card', 'story card', 'story review note'], ['card review note'], [ALERT], [['BSIP', 'sent'], ['Early detection', '']], '1 post today', 0, []]);
-    // the same posts and the same email, whichever came first
+    // the same posts, whichever came first
     const texts = r => r.out.chat.filter(m => m.run !== 'setup').map(m => m.text).sort();
-    eq([texts(on), on.out.emails.map(e => [e.subject, e.text])], [texts(off), off.out.emails.map(e => [e.subject, e.text])]);
+    eq(texts(on), texts(off));
+    // Where stories go first, the email is the one the post gets with no story at all: a new issue. With the setting off
+    // it is what it was before the change: the story's card counts as an earlier alert on the post, so the same Social
+    // Alert goes out as an ongoing issue
+    const alone = storyThenPost(oneSpace(ON), { noStory: true });
+    eq([alone.post, alone.after, alone.emails, alone.rows, alone.said], [['Direct BigQuery card'], ['card review note'], [ALERT], [['BSIP', 'sent']], []]);
+    eq([on.mail, on.names], [alone.mail, ['Name: Maps routing onto a closed bridge / New']]);
+    eq(off.names, ['Name: Maps routing onto a closed bridge / Ongoing Issue']);
+    eq(off.mail.map(m => [m[0], m[1], m[2]]), on.mail.map(m => [m[0], m[1], m[2]]));  // (sent to the same tester, under the same subject)
   });
 
   test('early detection first: the story\'s card came a check earlier (5 minutes before Direct BigQuery finds the post): where stories go first the post still gets its own card at that check, and its Social Alert a run later; with the setting off the bot does what it did before the change: the story card counts as an alert on the post, so no Direct BigQuery card and no Social Alert', () => {
     const on = storyThenPost(oneSpace(ON), { storyFirstBy: 5 });
     eq([on.story, on.post, on.after, on.emails, on.rows, on.today, on.said.length],
       [['story card', 'story review note'], ['Direct BigQuery card'], ['card review note'], [ALERT], [['BSIP', 'sent'], ['Early detection', '']], '1 post today', 1]);
+    // ...and that Social Alert is the one the post gets with no story at all (a new issue, not an ongoing one)
+    eq([on.mail, on.names], [storyThenPost(oneSpace(ON), { noStory: true }).mail, ['Name: Maps routing onto a closed bridge / New']]);
     const off = storyThenPost(oneSpace(OFF), { storyFirstBy: 5 });
     eq([off.story, off.post, off.after, off.emails, off.rows, off.today, off.said],
       [['story card', 'story review note'], [], [], [], [['Early detection', '']], '0 posts today', []]);
+  });
+
+  // The post under the 2,000 bar: a P0 exposure tag (Product - Perceived bias) earns its Social Alert at any count, but
+  // only as a new issue. An ongoing one needs a KOF author or 2,000 engagements (Escalate.gs escalation_)
+  const LOW = 800;
+  const LOW_ALERT = ['after', 'sent', [TESTER], '[Auto-correct test] 🟧SOCIAL ALERT🟧: Google Maps'];
+  const ONGOING = '❌ ongoing issue, no KOF author and under 2K engagements';
+
+  test('early detection first: a post under 2,000 engagements that earns its Social Alert by a P0 exposure tag keeps it when a story gets to it first. The story\'s card, which sent no Social Alert, is no earlier alert on the post when the post\'s own card is reviewed, so the post is not taken for an ongoing issue: found in the same run as the story or a check after it, its Social Alert is sent, and it is the very email the post gets with no story at all. With the setting off the bot does what it did before the change: the card is reviewed as an ongoing issue and gets no Social Alert (the same run), or there is no card (the story a check ahead)', () => {
+    const alone = storyThenPost(oneSpace(ON), { noStory: true, engagements: LOW });
+    eq([alone.post, alone.after, alone.emails, alone.rows, alone.decided, alone.names],
+      [['Direct BigQuery card'], ['card review note'], [LOW_ALERT], [['BSIP', 'sent']], [''], ['Name: Maps routing onto a closed bridge / New']]);
+    assert.ok(/\| 800 Engagements$/.test(alone.mail[0][2]), alone.mail[0][2]);
+    [0, 5].forEach(by => {
+      const on = storyThenPost(oneSpace(ON), { storyFirstBy: by, engagements: LOW });
+      eq([by, on.story, on.post, on.after, on.emails, on.rows, on.decided, on.said.length, on.elsewhere],
+        [by, by ? ['story card', 'story review note'] : [], by ? ['Direct BigQuery card'] : ['story card', 'story review note', 'Direct BigQuery card'],
+          ['card review note'], [LOW_ALERT], [['BSIP', 'sent'], ['Early detection', '']], [''], 1, 0]);
+      eq([by, on.mail], [by, alone.mail]);
+    });
+    // the setting off, as before the change
+    const sameRun = storyThenPost(oneSpace(OFF), { storyFirstBy: 0, engagements: LOW });
+    eq([sameRun.post, sameRun.after, sameRun.emails, sameRun.rows, sameRun.decided, sameRun.said],
+      [['Direct BigQuery card', 'story card', 'story review note'], ['card review note'], [], [['BSIP', ''], ['Early detection', '']], [ONGOING], []]);
+    const ahead = storyThenPost(oneSpace(OFF), { storyFirstBy: 5, engagements: LOW });
+    eq([ahead.story, ahead.post, ahead.after, ahead.emails, ahead.rows, ahead.said],
+      [['story card', 'story review note'], [], [], [], [['Early detection', '']], []]);
+    // and with no story the setting changes nothing
+    eq(storyThenPost(oneSpace(OFF), { noStory: true, engagements: LOW }).mail, alone.mail);
   });
 
   test('early detection first: a story whose own review sent a Social Alert still counts as the alert on its main post: no Direct BigQuery card for the post and no second email, with the setting on as with it off', () => {
@@ -443,6 +497,58 @@ module.exports = H => {
     w.t.bot.ev('BOT_MARKS_ = null');
     eq(kinds(), [['story card', '', true], ['Direct BigQuery card', '', false]]);
     eq([w.t.bot.bqIsStoryCard_(null), w.t.bot.bqIsStoryCard_({}), w.t.bot.bqIsStoryCard_({ name: 'spaces/X/messages/m1', clientId: 'client-bqa-abc' })], [false, false, false]);
+  });
+
+  test('early detection first: a story\'s card is left out of the earlier alerts only for the review of the post\'s own Direct BigQuery card, and only where stories go first (bqStoryOnOwnPost_): never in a flow without that mark, for an alert that is no Direct BigQuery card, for a row on another post, for a story whose Social Alert went out or is on its way, or for any other kind of row. An alert of Burson\'s on a story\'s main post is reviewed as it was before the change, with the setting on as with it off: the story\'s card is an earlier alert on the post, so the issue is an ongoing one', () => {
+    const B = H.B;
+    const NOW = 1791980000000;
+    const HOUR = 60 * MIN;
+    const KEY = 'x.com/roadwatcher/status/2150000000000000002';
+    const row = patch => Object.assign({ alert_id: 'QA-1', ingested: 'Early detection', email_status: '', mirrored: '', created_at: NOW - HOUR,
+      record_key: KEY }, patch || {});
+    const first = { bqPastStoryCards: true };  // the flow's mark (the one-space setup with the setting on)
+    const is = (ctx, ingested, key, h) => B.bqStoryOnOwnPost_(ctx, ingested, key, h, NOW);
+    eq([is(first, 'BSIP', KEY, row()), is(first, 'Sprinklr', KEY, row({ mirrored: '👍' })), is(first, 'BMIE', KEY, row({ email_status: 'failed' })),
+      is(first, 'BSIP', KEY, row({ email_status: 'pending', created_at: NOW - 25 * HOUR }))], [true, true, true, true]);
+    eq([
+      is({ bqPastStoryCards: false }, 'BSIP', KEY, row()), is({}, 'BSIP', KEY, row()), is(null, 'BSIP', KEY, row()),  // no mark: every other flow, the setting off
+      is({ bqPastStoryCards: 'true' }, 'BSIP', KEY, row()), is({ bqPastStoryCards: 1 }, 'BSIP', KEY, row()),
+      is(first, '', KEY, row()), is(first, undefined, KEY, row()), is(first, null, KEY, row()),     // an alert that is no Direct BigQuery card
+      is(first, 'BSIP', 'x.com/pixelcritic/status/2150000000000000001', row()),                     // a story on another post
+      is(first, 'BSIP', '', row({ record_key: '' })), is(first, 'BSIP', undefined, row({ record_key: undefined })),
+      is(first, 'BSIP', KEY, row({ email_status: 'sent' })), is(first, 'BSIP', KEY, row({ email_status: 'drafted' })),
+      is(first, 'BSIP', KEY, row({ email_status: 'pending' })), is(first, 'BSIP', KEY, row({ mirrored: '👍 📰' })),  // its Social Alert went out, or will
+      is(first, 'BSIP', KEY, row({ ingested: 'BSIP' })), is(first, 'BSIP', KEY, row({ ingested: 'Watch alert' })), is(first, 'BSIP', KEY, row({ ingested: '' })),
+      is(first, 'BSIP', KEY, null), is(first, 'BSIP', KEY, undefined),
+    ], Array(20).fill(false));
+
+    // Burson's own alert (a P0 exposure tag, 1 engagement) on a post that is a story's main post, a check after the story
+    const POST = 'https://x.com/WasSamLowryEsq/status/2109952063492993159';  // the post of F.P0_OK
+    const rep = (url, author, eng, snippet) => ({ platform: 'X', author_handle: author, followers: 650, engagement_total: eng,
+      published_at: '2026-10-14 11:55 UTC', url, snippet });
+    const parisStory = () => golden.rows.story({ alert_id: 'ED-CLU-clu_paris_results-202610141200', cluster_id: 'clu_paris_results', signal_key: 'clu_paris_results',
+      headline: 'Low-tier claim cluster (6 accounts): Search shows a curated selection for the Paris riots', topic_product: 'Search', primary_url: POST,
+      representative_posts_json: JSON.stringify([
+        rep(POST, 'WasSamLowryEsq', 1, 'Search shows mainly white protesters for "Paris riots 2026".'),
+        rep('https://x.com/quai_notes/status/2150000000000000082', 'quai_notes', 31, 'Same here: the Search results for the Paris riots look curated.'),
+        rep('https://x.com/rive_gauche_k/status/2150000000000000083', 'rive_gauche_k', 27, 'Search is not showing who is rioting in Paris.')]) });
+    const bursonAlert = (overrides, withStory) => {
+      const w = oneSpace(overrides);
+      if (withStory) w.rec.step('the story is found', 5, () => { w.feed.stories = [parisStory()]; });
+      w.rec.step('Burson alerts', 5, () => { w.t.chat.say(REAL, H.F.P0_OK, { sender: 'users/zapier', type: 'BOT', displayName: 'Zapier' }); });
+      w.rec.step('after', 1);
+      const out = w.rec.out();
+      const rows = w.t.bot.sheetBackend_(w.t.sheet()).loadAlerts().filter(r => r.record_key === w.t.bot.recordKey_({ post_url: POST }));
+      return { rows: rows.map(r => [r.ingested || 'Burson', r.email_status || '', String(r.decision || '').replace(/^👍 Monitor build-up: .*$/, '👍 Monitor build-up')]),
+        emails: out.emails.map(e => [e.kind, e.to, e.subject]), posts: out.chat.filter(m => m.run === 'Burson alerts' || m.run === 'after').map(m => m.text) };
+    };
+    const on = bursonAlert(ON, true);
+    eq(on.rows, [['Early detection', '', '👍 Monitor build-up'], ['Burson', '', ONGOING]]);
+    eq(on.emails, []);
+    eq(bursonAlert(OFF, true), on);
+    // (with no story the same alert is a new issue, and its Social Alert goes out)
+    const alone = bursonAlert(ON, false);
+    eq([alone.rows, alone.emails.map(e => [e[0], e[1]])], [[['Burson', 'sent', '']], [['sent', [TESTER]]]]);
   });
 
   test('early detection first: the rule itself (acEarlyDetectionFirst_): only when the flow works alone, the setting is not false, and the poll\'s last check started less than 10 minutes ago; never checked, a last check 10 minutes old or more, a clock that went back, a setting or a property that can\'t be read: the poll first, as before', () => {

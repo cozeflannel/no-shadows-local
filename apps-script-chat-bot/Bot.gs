@@ -672,6 +672,9 @@ function handleAlert_(ctx, m, parsed, report) {
   }
   // "Already reported" history: every forwarded alert except the one this message resends.
   const history = ctx.store.recentForwarded(now - GEN.novelty_days * DAY_MS_)
+    // (where stories go first, a story's card that sent no Social Alert is no earlier alert for the Direct BigQuery
+    // card of its own main post: BigQuery.gs bqStoryOnOwnPost_; everywhere else it leaves every row in)
+    .filter(h => !bqStoryOnOwnPost_(ctx, isSheetTest ? '' : ingested, key, h, now))
     .filter(h => !pending || h.forward_message !== pending.forward_message);
   // Earlier alerts this one may repeat or follow up on (same post, same author, or a post it replies under or quotes):
   // Gemini sees them too

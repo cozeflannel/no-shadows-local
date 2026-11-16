@@ -2165,6 +2165,8 @@ function bqDirectBusy_(ctx, msgs) {
 // card waiting in the space (bqIsStoryCard_), and not as an earlier alert in Step 1 (BqPipeline.gs bqPriorAlerts_). The
 // post then has two cards, the story's and its own. Everything else stops the poll as before: a Social Alert that went
 // out (the story's too), Burson's alert, a Watch alert, a Direct BigQuery card, a card another flow posted.
+// The same holds when the post's own card is reviewed (Bot.gs handleAlert_, bqStoryOnOwnPost_): that story card is no
+// earlier alert on the post, so the post is not taken for an ongoing issue because of it.
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
@@ -2208,6 +2210,25 @@ function bqIsStoryCard_(m) {
   try {
     if (!m || !m.name) return false;
     return String(m.clientId || '').indexOf(ED_ALERT_ID_PREFIX_) === 0 || edAlertPosted_(m.name);
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * For the review of a post's own Direct BigQuery card where stories go first (Bot.gs handleAlert_; `ingested`: where
+ * the card came from, '' for every other alert; `key`: the record key of the card's post): whether Alert-log row `h`
+ * is a story's card on that very post that sent no Social Alert (bqStoryCardRow_). Such a row is no earlier alert on
+ * the post. Left among the card's earlier alerts it would be "the same post, alerted before" (Escalate.gs
+ * followUpOf_), and a row on the same post makes the issue an ongoing one whatever came of it (Drafts.gs
+ * escalationFor_): a post with a P0 exposure tag or a Sensitive Topic under 2,000 engagements would then get no Social
+ * Alert (ongoing, and no KOF author), and a bigger one would go out as "Ongoing Issue". False everywhere else
+ * (ctx.bqPastStoryCards is set only in the one-space setup with Early Detection first), for a row on another post, for
+ * a story whose Social Alert went out, and for every alert that is no Direct BigQuery card. Never throws.
+ */
+function bqStoryOnOwnPost_(ctx, ingested, key, h, now) {
+  try {
+    return !!(ctx && ctx.bqPastStoryCards === true) && !!ingested && !!key && !!h && h.record_key === key && bqStoryCardRow_(h, now);
   } catch (e) {
     return false;
   }
