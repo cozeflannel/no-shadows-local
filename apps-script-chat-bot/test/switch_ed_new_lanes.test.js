@@ -415,4 +415,145 @@ module.exports = H => {
     eq(B.ewsDedupSigsSplit_(posts.map(p => Object.assign({}, p)), sigsA, {}, NOW), B.ewsDedupSigs_(posts.map(p => Object.assign({}, p)), sigsB, NOW));
     eq(sigsA, sigsB);
   });
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 6. Stitching: one post, one alert
+  // ---------------------------------------------------------------------------------------------------------------
+
+  const STORY = 'Pixel 9 emergency dialer screen freezes completely right after installing the overnight Android update patch';
+  const DAY = new Date(NOW).toISOString().slice(0, 10);
+
+  // Checks in a row with the fake lane ON (source bwl), `batches[i]` the rows of check i by job; `gap` minutes apart
+  function stitchEnv(batches, o) {
+    let i = 0;
+    const env = makeEnv(job => (batches[i] && batches[i][job]) || []);
+    addFakeLane(env.b, { src: (o && o.src) || 'bwl' });
+    env.b.ewsRunSwitches_(Object.assign({ edFake: true }, (o && o.sw) || {}));
+    env.run = () => {
+      for (i = 0; i < batches.length; i++) {
+        if (o && o.before) o.before(i, env);
+        env.b.bqEarlyDetectionRows_(30);
+        if (i < batches.length - 1) env.g.clock.now += ((o && o.gap) || 15) * MIN;
+      }
+      return env;
+    };
+    env.items = prefix => {
+      const out = [];
+      for (const [k, v] of env.g.cache.entries()) if (k.startsWith(`ews1:${prefix}`)) JSON.parse(v).forEach(x => out.push(x));
+      return out;
+    };
+    env.members = () => [].concat(...env.items('cl:').map(c => c.m || []));
+    env.ids = () => env.members().map(m => m.i).concat(env.items('pv:').map(p => p.i)).sort();
+    env.day = src => ((JSON.parse(env.g.props.get('EWS_SRC_DAY') || '{}').d || {})[DAY] || {})[src] || {};
+    return env;
+  }
+
+  test('new lanes (stitching, Q8): the same X post from Sonar (x.com/newsdesk/status/N) and from the AMIE table (twitter.com/newsdesk/statuses/N) in one check is one post, Sonar\'s; the copy is counted "same post as another source"', () => {
+    const env = stitchEnv([{
+      c1: [row({ mid: 'SONAR|nd', url: 'https://x.com/newsdesk/status/2116390716536770729', author: 'newsdesk', chash: 'nd1', txt: STORY })],
+      fk: [row({ lane: 'ami', mid: 'AMI|nd', url: 'https://twitter.com/newsdesk/statuses/2116390716536770729', author: 'newsdesk', chash: 'nd2', txt: STORY })],
+    }], { src: 'ami' }).run();
+    eq(env.ids(), ['SONAR|nd']);
+    eq([env.day('ami').same, env.day('ami').sl, env.day('ami').used], [1, 1, undefined]);
+  });
+
+  test('new lanes (stitching, E6 and Q8): a Brandwatch-live Reddit post at 10:15 joins a story; Sonar\'s copy at 10:45 takes its place (one member, not two), keeps its velocity row (the accounts kept are those of the run with the lane OFF), and "seen first" counts 30 minutes for the new source', () => {
+    const t0 = NOW;
+    const sonar = (i, o) => row(Object.assign({ mid: `SONAR|st${i}`, author: `st${i}`, url: `https://x.com/st${i}/status/21800000000000${i}`,
+      txt: `${STORY} ${['today', 'again', 'still'][i]}`, chash: `st${i}`, posted_ms: t0 - (10 + i) * MIN, seen_ms: t0 - 2 * MIN }, o || {}));
+    const reddit = 'https://www.reddit.com/r/GooglePixel/comments/1zalice/dialer_freezes/';
+    const bw = row({ lane: 'bwl', mid: 'BWL|alice', author: 'alice', platform: 'reddit', url: reddit, txt: `${STORY} reddit`,
+      chash: 'alice1', posted_ms: t0 - 20 * MIN, seen_ms: t0 - 2 * MIN });
+    const copy = row({ mid: 'SONAR|alice', author: reddit.toLowerCase(), platform: 'reddit', url: reddit, txt: `${STORY} reddit`,
+      chash: 'alice1', posted_ms: t0 - 20 * MIN, seen_ms: t0 + 28 * MIN });
+    const batches = withLane => [{ c1: [sonar(0), sonar(1), sonar(2)], fk: withLane ? [bw] : [] }, { c1: [copy] }];
+    const on = stitchEnv(batches(true), { gap: 30 }).run();
+    const off = stitchEnv(batches(false), { gap: 30 });
+    off.b.ewsRunSwitches_({});
+    off.run();
+    const story = on.items('cl:').find(c => (c.m || []).some(m => m.i === 'SONAR|alice'));
+    assert.ok(story, 'the copy is in the story');
+    eq([story.m.length, new Set(story.m.map(m => m.a)).size, story.m.some(m => m.i === 'BWL|alice'), story.m.some(m => m.nl)], [4, 4, false, false]);
+    const member = story.m.find(m => m.i === 'SONAR|alice');
+    eq([member.a, member.p, member.u], [`Reddit:${reddit.toLowerCase()}`, 'Reddit', reddit]);
+    eq(JSON.parse(on.g.cache.get('ews1:acc')).rows.length, JSON.parse(off.g.cache.get('ews1:acc')).rows.length);
+    const accRow = JSON.parse(on.g.cache.get('ews1:acc'));
+    const row4 = accRow.rows.find(r => r[4] === on.b.ewsFnv_('SONAR|alice'));
+    assert.ok(row4 && row4[3].map(k => accRow.keys[k]).includes(`C|${story.id}`), 'its velocity row is in the story');
+    eq([on.day('bwl').rp, on.day('bwl').sf, on.day('bwl').sfb], [1, 1, [0, 1, 0, 0, 0]]);
+  });
+
+  test('new lanes (stitching, Q8): Instagram /p/C1abc/ from Brandwatch live and /reel/C1abc/ from Sonar are one post (ig:C1abc); within one check Brandwatch live is kept before the AMIE table', () => {
+    let env = stitchEnv([{
+      c1: [row({ mid: 'SONAR|ig', platform: 'instagram', url: 'https://www.instagram.com/reel/C1abc/', author: 'maker', chash: 'ig', txt: STORY })],
+      fk: [row({ lane: 'bwl', mid: 'BWL|ig', platform: 'instagram', url: 'https://www.instagram.com/p/C1abc/', author: 'maker', chash: 'ig', txt: STORY })],
+    }]).run();
+    eq(env.ids(), ['SONAR|ig']);
+    env = stitchEnv([{ fk: [
+      row({ lane: 'ami', mid: 'AMI|two', platform: 'instagram', url: 'https://www.instagram.com/p/C2two/', author: 'maker', chash: 'two', posted_ms: NOW - 40 * MIN, txt: STORY }),
+      row({ lane: 'bwl', mid: 'BWL|two', platform: 'instagram', url: 'https://www.instagram.com/reel/C2two/', author: 'maker', chash: 'two', posted_ms: NOW - 30 * MIN, txt: STORY }),
+    ] }]).run();
+    eq([env.ids(), env.day('ami').same], [['BWL|two'], 1]);
+  });
+
+  test('new lanes (stitching, Q8): two Reddit comments sharing the thread link, by different authors with different words, are two posts ("same link, different post"); the same author on that link is one post', () => {
+    const thread = 'https://www.reddit.com/r/google/comments/1thr/a_thread/';
+    let env = stitchEnv([{ fk: [
+      row({ lane: 'bwl', mid: 'BWL|c1', platform: 'reddit', url: thread, author: 'bob', chash: 'cbob', txt: lone('cb', 1) }),
+      row({ lane: 'bwl', mid: 'BWL|c2', platform: 'reddit', url: thread, author: 'carol', chash: 'ccar', txt: lone('cc', 1) }),
+    ] }]).run();
+    eq(env.ids(), ['BWL|c1', 'BWL|c2']);
+    env = stitchEnv([{ fk: [
+      row({ lane: 'bwl', mid: 'BWL|c1', platform: 'reddit', url: thread, author: 'bob', chash: 'cbob', txt: lone('cb', 1) }),
+      row({ lane: 'bwl', mid: 'BWL|c3', platform: 'reddit', url: thread, author: 'bob', chash: 'cbo2', txt: lone('cb', 2), posted_ms: NOW - 10 * MIN }),
+    ] }]).run();
+    eq(env.ids(), ['BWL|c1']);
+    // pure: authors or texts equal -> one post; both different -> two
+    eq([B.ewsSameWho_(B.ewsWho_('bob', 'aaaa1'), B.ewsWho_('bob', 'bbbb1')), B.ewsSameWho_(B.ewsWho_('bob', 'aaaa1'), B.ewsWho_('carol', 'aaaa1')),
+      B.ewsSameWho_(B.ewsWho_('bob', 'aaaa1'), B.ewsWho_('carol', 'bbbb1'))], [true, true, false]);
+  });
+
+  test('new lanes (stitching, Q8): a TikTok post Sonar knew as big (the xbig list) and then from Brandwatch live with followers unknown is left out; so is a post by an excluded author, and one the alert memory has seen (a Watch alert claimed it an hour ago, then the AMIE table); today\'s lanes are not filtered by these lists', () => {
+    const tiktok = 'https://www.tiktok.com/@bigmaker/video/7301234567890123456';
+    const seenUrl = 'https://www.reddit.com/r/google/comments/1seen/t/';
+    const env = stitchEnv([{
+      c1: [row({ mid: 'SONAR|kofpost', author: 'kofperson', url: 'https://x.com/kofperson/status/2190000000000000001', chash: 'k1', txt: lone('kf', 1) })],
+      fk: [
+        row({ lane: 'bwl', mid: 'BWL|tt', platform: 'tiktok', url: tiktok, author: 'bigmaker', audience: null, chash: 'tt', txt: lone('tt', 1) }),
+        row({ lane: 'bwl', mid: 'BWL|kof', platform: 'reddit', url: 'https://www.reddit.com/r/google/comments/1kof/t/', author: 'kofperson', chash: 'k2', txt: lone('kf', 2) }),
+        row({ lane: 'ami', mid: 'AMI|seen', platform: 'reddit', url: seenUrl, author: 'someone', chash: 'sn', txt: lone('sn', 1) }),
+        row({ lane: 'ami', mid: 'AMI|fine', platform: 'reddit', url: 'https://www.reddit.com/r/google/comments/1fine/t/', author: 'fine', chash: 'fn', txt: lone('fn', 1) }),
+      ],
+    }], { before: (i, e) => {
+      const key = e.b.ewsKeyHash_(e.b.amPostKey_(tiktok));
+      e.g.cache.set('ews1:xb', JSON.stringify([[key, NOW - HOUR]]));
+      e.g.cache.set('ews1:ak', JSON.stringify([['kofperson', NOW - 2 * 24 * HOUR]]));
+      e.b.__seenUrl = seenUrl;
+      e.b.ev('AM_RUN_ = { seenPost: url => (url === __seenUrl ? { why: "claimed", at: Date.now() - 3600000 } : null) }');
+    } }).run();
+    eq(env.ids(), ['AMI|fine', 'SONAR|kofpost']);
+    eq([env.day('bwl').big, env.day('bwl').ex, env.day('ami').al, env.day('ami').used, env.day('bwl').used], [1, 1, 1, 1, undefined]);
+  });
+
+  test('new lanes (stitching): the post-key index keeps a new lane\'s posts (and today\'s, while a new source is ON) for 72 hours, so a copy from another new source hours later is dropped once its first copy has left the pool; it is hashed (16 hex characters and 8 of who wrote what) and stays under the cache item limit', () => {
+    const url = 'https://www.reddit.com/r/google/comments/1late/t/';
+    const env = stitchEnv([
+      { fk: [row({ lane: 'bwl', mid: 'BWL|late', platform: 'reddit', url, author: 'dana', chash: 'late', txt: lone('lt', 1) })] },
+      { fk: [row({ lane: 'amis', mid: 'AMI|late', platform: 'reddit', url, author: 'dana', chash: 'late', txt: lone('lt', 1), posted_ms: NOW - 20 * MIN })] },
+    ], { gap: 180 }).run();
+    eq([env.ids().includes('AMI|late'), env.day('bwl').used, env.day('ami').same], [false, 1, 1]);
+    const st = JSON.parse(env.g.props.get('EWS_STATE'));
+    const nk = env.items('nk:');
+    const entries = [].concat(...nk.map(r => r[1]));
+    const key = env.b.ewsKeyHash_(env.b.amPostKey_(url));
+    eq([st.nk, key.length, entries.filter(e => e.startsWith(key)).length, entries.every(e => /^[0-9a-f]{20}\w{4}$/.test(e))], [1, 16, 1, true]);
+    assert.ok(!JSON.stringify(nk).includes('1late'), 'no link in the index');
+    // worst case: 72 hours at the ceiling, each item under the limit
+    const index = {};
+    const h0 = Math.floor(NOW / HOUR);
+    for (let h = 0; h < 72; h++) index[String(h0 - h)] = Array.from({ length: 400 }, (_, j) => (h * 1000 + j).toString(16).padStart(24, 'f'));
+    const chunks = B.ewsChunks_(B.ewsSigRecords_(index, B.ev('EWS_NK_MAX_'), B.ev('EWS_NK_RECORD_')));
+    eq([chunks.length <= 4, chunks.every(ch => JSON.stringify(ch).length <= B.ev('EWS_CACHE_ITEM_CHARS_'))], [true, true]);
+    eq(chunks.reduce((s, ch) => s + ch.reduce((t, r) => t + r[1].length, 0), 0), 12000);
+  });
 };
