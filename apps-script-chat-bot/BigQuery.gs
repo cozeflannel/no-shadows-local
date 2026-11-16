@@ -3781,7 +3781,9 @@ function ewLogCheck_(ctx, props, left) {
  * (EarlyDetection.gs edStoryVerdict_): a signal on a story already carded in the last 24h (same cluster, the alert the
  * pipeline says it updates, or 2+ of the same posts), or queued with as many accounts, is held back without a review
  * unless the story grew (2x the accounts and 3 more, or a new platform): then it is queued as an update of that card. A
- * signal on a post another alert covered in the last 24h is skipped. Nothing is posted here: EarlyDetection.gs
+ * signal on a post another alert covered in the last 24h is skipped (in the Auto-correct flow with the setting
+ * cross_alert_notes, it goes under that alert's card or on to its review instead: EarlyDetectionCross.gs). Nothing else
+ * is posted here: EarlyDetection.gs
  * edDrainQueue_ reviews each signal and only then posts its story card in the Mirror space (B9), a Google-only test
  * feed (B3) or the Auto-correct space standing alone (B10); never S-F Burson (B25), the Burson test copy (B26) or
  * external spaces. One log line a check says the producer's time and the rolling API counts (ewLogCheck_).
@@ -3996,8 +3998,19 @@ function earlyWaveCheck_(ctx) {
     readStore();
     const recKey = r.primary_url ? recordKey_({ post_url: String(r.primary_url).trim() }) : '';
     const other = recKey ? others.get(recKey) : null;
-    if (other) {  // another alert on the same post in the last 24h
-      edNote_(ctx, r, ED_OUT_.covered, edAlertWords_(other, now), { once: true, card: edAlertCard_(other) });
+    // another alert on the same post in the last 24h: in the Auto-correct flow with the setting cross_alert_notes, a note
+    // under its card or a review (EarlyDetectionCross.gs edCrossOf_); else skipped, its id marked
+    const cross = other ? edCrossOf_(ctx, r, other, now) : '';
+    if (cross === 'note' && !edStoryVerdict_(r, ledger, seen.authors(keys.filter(k => k !== idKey)), now).hold) {
+      const au = ewCount_(r.unique_low_tier_authors);
+      (edCrossNote_(ctx, r, other, now) ? keys : keys.filter(k => k === idKey)).forEach(k => seen.add(k, now, k === idKey ? 0 : au));
+      marked++;
+      continue;
+    }
+    if (other && !cross) {
+      if (idKey) seen.add(idKey, now);
+      marked++;
+      edNote_(ctx, r, ED_OUT_.covered, edAlertWords_(other, now), { card: edAlertCard_(other) });
       continue;
     }
     // Same-story dedup: a repeat of a story already carded (or queued) with nothing new is held back without a review;
@@ -4096,7 +4109,15 @@ function earlyWaveCheck_(ctx) {
       readStore();
       const recKey = r.primary_url ? recordKey_({ post_url: String(r.primary_url).trim() }) : '';
       const other = recKey ? others.get(recKey) : null;
-      if (other) {  // another alert on the same post in the last 24h
+      // another alert on the same post in the last 24h: as in the loop above (EarlyDetectionCross.gs edCrossOf_)
+      const cross = other ? edCrossOf_(ctx, r, other, now) : '';
+      if (cross === 'note' && !edStoryVerdict_(r, ledger, seen.authors(keys.filter(k => k !== idKey)), now).hold) {
+        const au = ewCount_(r.unique_low_tier_authors);
+        (edCrossNote_(ctx, r, other, now) ? keys : keys.filter(k => k === idKey)).forEach(k => seen.add(k, now, k === idKey ? 0 : au));
+        marked++;
+        continue;
+      }
+      if (other && !cross) {
         finish();
         edNote_(ctx, r, ED_OUT_.covered, edAlertWords_(other, now), { card: edAlertCard_(other) });
         continue;

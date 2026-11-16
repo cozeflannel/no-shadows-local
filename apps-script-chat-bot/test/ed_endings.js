@@ -178,8 +178,11 @@ module.exports = H => {
     // without settings of its own a world keeps the old rule of the review queue (40 queued a day; topic counts
     // reviewed), which every flow but the Auto-correct one keeps whatever the settings: the long mixed day was written
     // for it. The Auto-correct flow's allowance is tested with settings that turn it on (OLD_RULE's keys at their
-    // defaults: switch_ed_allowance.test.js).
-    const t = golden.world.start(x.settings === undefined ? OLD_RULE : x.settings, [mirror ? [MIRROR, MIRROR_NAME] : [AC, AC_NAME]]);
+    // defaults: switch_ed_allowance.test.js). The notes under another alert's card (setting cross_alert_notes) are off
+    // unless the settings name them: the long mixed day was written for a story skipped when another alert covers its
+    // main post, the same in both flows (EarlyDetectionCross.gs is tested in switch_ed_cross_alerts.test.js)
+    const t = golden.world.start(Object.assign({ cross_alert_notes: false }, x.settings === undefined ? OLD_RULE : x.settings),
+      [mirror ? [MIRROR, MIRROR_NAME] : [AC, AC_NAME]]);
     const sh = t.control();
     const w = { t, sh, flow: mirror ? 'mirror' : 'one-space', space: mirror ? MIRROR : AC, rows: [], fail: '', writes: [],
       busy: false, partition: '', seen: { logs: 0, posts: new Set(), writes: 0 } };
