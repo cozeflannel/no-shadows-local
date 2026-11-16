@@ -46,9 +46,14 @@
  * The queue is the Watch detections tab itself: a flag recorded while B35 isn't OFF waits there (its hidden key, a: 'q')
  * until it's posted (a: 'p', with the message, its thread and when) or listed in its story's alert's thread (a: 'g'),
  * PW_ALERTS_MAX_OTHER_ / PW_ALERTS_MAX_MIRROR_ alerts a run, the highest scores first; one that couldn't go out within
- * PW_ALERT_MAX_AGE_MS_ of being seen is dropped (a: 'x'). None
+ * PW_ALERT_MAX_AGE_MS_ of being seen is dropped (a: 'x'); one on a post that already had an alert isn't posted (a: 'd';
+ * a: 'u' when a note naming its watch went under that alert's card in the Auto-correct space: pwPostAlerts_). None
  * goes to the Mirror space while its flow ran out of time on the last run (Burson's alerts come first). Never into S-F
  * Burson (B25), the Burson test copy (B26) or a space people outside Google can join (Chat.gs refuses them too).
+ * C35 says where they go and, for the day, how every queued flag ended: each flag in one count, on the day it ends, the
+ * counts before the explanation and never cut (pwAlertsNoteText_, pwAlertDay_). A small flag that waits is in the "held"
+ * count only while it waits: when it goes out with its story, or is queued again, it leaves that count for the one of
+ * how it ended.
  */
 
 const PW_ALERTS_ROW_ = 35;
@@ -72,8 +77,19 @@ const PW_ALERT_PIC_LEFT_MS_ = 30 * 1000;          // the post's picture is attac
 const PW_ALERT_PAGE_PIC_LEFT_MS_ = 45 * 1000;     // ...and its page read for one (Post.gs pagePicture_) only with this much
 // The networks a link label names ("View the post on X"); anything else is just "View the post"
 const PW_ALERT_NETS_ = ['X', 'Instagram', 'TikTok', 'YouTube', 'Reddit', 'Bluesky', 'Facebook', 'Threads', 'LinkedIn'];
-const PW_ALERT_DAY_PROP_ = 'PW_ALERT_TODAY';      // {day, n}: today's watch alerts
+// Today's watch alerts and how today's other flags ended: {day, n: posted, b: of those a build-up, g: added to a story's
+// thread, h: small held today and still held, r: repeats, o: off-topic, d: on a post that already had an alert, dn: of
+// those noted under that alert's card, t: a second watch's flag on the same post, l: not in English, x: dropped after 3
+// hours, e: nothing to show} (pwAlertDay_; a count that is zero has no key)
+const PW_ALERT_DAY_PROP_ = 'PW_ALERT_TODAY';
+const PW_ALERTS_NOTE_CHARS_ = 480;                // C35 at most: what stands beside the day's counts is cut, never a count
+const PW_ALERTS_NOTE_TAIL_MIN_ = 40;              // ...its explanation left out when fewer characters of it than this would fit
 const PW_ALERT_PENDING_PROP_ = 'PW_ALERT_PENDING';  // set while flags may wait on the Watch detections tab (else it isn't read)
+// Why flags were left waiting on the last run that left any: {at, why}, in the script cache for 6 hours (a flag waits 3
+// at most). Only for the log line of a flag that is dropped later (pwPostAlerts_): nothing is decided by it
+const PW_ALERT_WAIT_CACHE_ = 'pw_alert_wait';
+const PW_ALERT_WAIT_CACHE_SEC_ = 6 * 60 * 60;
+const PW_ALERT_WAIT_CHARS_ = 300;                 // of the reason kept there
 const PW_ALERT_TEXT_CHARS_ = 600;                 // of the post's words in an alert
 const PW_ALERT_HEAD_ = '\ud83d\udd2d';
 const PW_ALERT_PENDING_WORDS_ = 'pending (see the triage in the thread)';  // a card line nothing classified yet
@@ -90,6 +106,13 @@ const PW_STORY_RECENT_MAX_ = 10;                  // the alerts posted lately th
 const PW_STORY_POOL_MAX_ = 60;                    // ...of this many at most: the closest in meaning to the run's flags (pwStoriesShown_)
 const PW_STORY_REPLIES_MAX_ = 6;                  // same-story replies posted in alerts' threads a run, at most
 const PW_STORY_LIST_MAX_ = 15;                    // posts listed in one same-story reply
+// P4b (setting cross_alert_notes, only for the Auto-correct space): a flag on a post that already has a card there gets
+// no card of its own, and one note goes under that card (ThreadNotes.gs acThreadNote_), naming up to this many watches;
+// the flag's key then says a: 'u' ("listed under another alert"), else a: 'd' ("already alerted") as before
+const PW_COVER_NAMES_MAX_ = 3;
+// ...a flag whose post was carded this recently (the alert memory's claim) and whose card isn't in the Alert log yet
+// waits on the tab for the next run, so its note can go under that card
+const PW_COVER_WAIT_MS_ = 10 * 60 * 1000;
 // An alert of its own only for a flag that matters by itself (pwSolo_): SLRR's own collection thresholds (a KOF author,
 // 100+ engagements, a P0 tag). The small ones wait and go out together, as ONE alert, once enough accounts tell the same
 // story (pwBrewing_): the build-up is the news, not each small post.
@@ -230,32 +253,81 @@ function pwAlertsWhere_(choice) {
 }
 
 /**
+ * Today's counts as C35 writes them ("today: 3 posted (1 a build-up of small posts), +2 in their story's thread", and
+ * so on): `today` (watch alerts posted), `grouped` (same-story posts added to an alert's thread), `more`
+ * (pwAlertDayMore_: {builds: alerts that are a build-up of small posts, held: small flags held today that still wait to
+ * be grouped, repeats: flags on a story already alerted, offTopic: flags not about Google, already: flags on a post, or
+ * in a thread, that already had an alert, noted: how many of those were noted under that alert's card, twin: a second
+ * watch's flags on a post another watch flagged too, notEnglish, dropped: flags dropped after waiting
+ * PW_ALERT_MAX_AGE_MS_, empty: flags with nothing to show}) and `waiting` (flags this run left waiting). Every count but
+ * the first only when above zero. Pure.
+ */
+function pwAlertCountsText_(today, grouped, more, waiting) {
+  const m = more || {};
+  const n = k => Number(m[k]) || 0;
+  const part = (k, words) => (n(k) ? `, ${fmtInt_(n(k))} ${words}` : '');
+  const noted = Math.min(n('noted'), n('already'));
+  return `today: ${fmtInt_(today || 0)} posted${n('builds') ? ` (${fmtInt_(n('builds'))} a build-up of small posts)` : ''}` +
+    `${grouped ? `, +${fmtInt_(grouped)} in their story's thread` : ''}` +
+    part('held', 'small held to be grouped') +
+    part('repeats', 'repeats of an alerted story held back') +
+    part('offTopic', 'off-topic not posted') +
+    part('already', 'on a post that already had an alert' +
+      (!noted ? '' : noted < n('already') ? ` (${fmtInt_(noted)} noted in its thread)` : ' (noted in its thread)')) +
+    part('twin', 'on a post another watch flagged too') +
+    part('notEnglish', 'not in English') +
+    part('dropped', `dropped after waiting ${Math.round(PW_ALERT_MAX_AGE_MS_ / (60 * 60 * 1000))} hours`) +
+    part('empty', 'with nothing to show') +
+    `${waiting ? `, ${fmtInt_(waiting)} waiting` : ''}`;
+}
+
+/**
+ * `s` within `n` characters, cut as truncate_ cuts it but never through a character: a cut that falls inside an emoji
+ * (one character, written as two) leaves none of it, where truncate_ would leave its first half before the ellipsis.
+ * Pure.
+ */
+function pwCut_(s, n) {
+  return truncate_(s, n).replace(/\s*[\ud800-\udbff]\u2026$/, '\u2026');
+}
+
+/**
+ * C35's text within PW_ALERTS_NOTE_CHARS_: `lead`, the day's `counts` (pwAlertCountsText_), then `tail` (the fixed
+ * explanation, or none). Never a count is cut: the tail is, or left out when under PW_ALERTS_NOTE_TAIL_MIN_ characters
+ * of it would fit, and then the lead; neither is cut through a character (pwCut_: the explanation has an emoji). Pure.
+ */
+function pwAlertsNoteFit_(lead, counts, tail) {
+  const sep = ' \u00b7 ';
+  const base = `${pwCut_(lead, Math.max(1, PW_ALERTS_NOTE_CHARS_ - sep.length - counts.length))}${sep}${counts}`;
+  const room = PW_ALERTS_NOTE_CHARS_ - base.length - sep.length;
+  return tail && room >= PW_ALERTS_NOTE_TAIL_MIN_ ? `${base}${sep}${pwCut_(tail, room)}` : base;
+}
+
+/**
  * C35 for this run: `dest` (pwAlertsDest_), `res` (pwPostAlerts_, or null when nothing was tried), `watchOn` (row 34),
  * `today` (watch alerts posted today), `grouped` (same-story posts added to an alert's thread today), `more` (today's
- * {builds: alerts that are a build-up of small posts, held: small flags held to be grouped, repeats: flags on a story
- * already alerted, offTopic: flags not about Google}: pwAlertDayMore_). Under 480 characters. Pure.
+ * other counts: pwAlertDayMore_), `noWatch` (no watch is ON on the Watches tab: the look has nothing to look for). The
+ * day's counts stand before the fixed explanation, and whatever the day held, every count is there whole
+ * (pwAlertsNoteFit_). With no watch ON the explanation gives way to saying so: nothing new can be flagged (flags from
+ * before still go out, so "nothing to post" is said only when none of them is waiting). Pure.
  */
-function pwAlertsNoteText_(dest, res, watchOn, today, grouped, more) {
+function pwAlertsNoteText_(dest, res, watchOn, today, grouped, more, noWatch) {
   const choice = dest && dest.choice;
   if (!choice) return pwAlertsOffText_();
   const where = pwAlertsWhere_(choice);
   if (!watchOn) return `\u26a0\ufe0f ${where} chosen, but the Proactive watch (row 34) is OFF: nothing to post`;
-  const m = more || {};
-  const n = k => Number(m[k]) || 0;
-  const counts = ` \u00b7 today: ${fmtInt_(today || 0)} posted${n('builds') ? ` (${fmtInt_(n('builds'))} a build-up of small posts)` : ''}` +
-    `${grouped ? `, +${fmtInt_(grouped)} in their story's thread` : ''}` +
-    `${n('held') ? `, ${fmtInt_(n('held'))} small held to be grouped` : ''}` +
-    `${n('repeats') ? `, ${fmtInt_(n('repeats'))} repeats of an alerted story held back` : ''}` +
-    `${n('offTopic') ? `, ${fmtInt_(n('offTopic'))} off-topic not posted` : ''}` +
-    `${res && res.waiting ? `, ${fmtInt_(res.waiting)} waiting` : ''}`;
+  const counts = pwAlertCountsText_(today, grouped, more, res && res.waiting);
   const problem = (dest && dest.problem) || (res && res.problem) || (!dest.space ? 'no space to post in this run' : '');
-  if (problem) return truncate_(`\u26a0\ufe0f waiting: ${problem} (a flag waits up to 3 hours)${counts}`, 480);
+  if (problem) return pwAlertsNoteFit_(`\u26a0\ufe0f waiting: ${problem} (a flag waits up to 3 hours)`, counts, '');
+  if (noWatch) {
+    return pwAlertsNoteFit_(`${res && res.waiting ? '' : 'nothing to post: '}no watch is ON (set one to ON on the ` +
+      `${PW_WATCHES_TAB_} tab)`, counts, '');
+  }
   const cellTag = choice === 'mirror' ? 'B9' : choice === 'autocorrect' ? 'B10' : 'B33';
   const modeNote = choice === 'mirror' ? ' (only the testers while Testing)' : ' (always Testing there)';
-  return truncate_(`\u2713 ${dest.space.name} (${cellTag}): a flag that matters by itself (a KOF author, ` +
+  return pwAlertsNoteFit_(`\u2713 ${dest.space.name} (${cellTag})`, counts, 'a flag that matters by itself (a KOF author, ' +
     `${fmtInt_(PW_SOLO_MIN_ENG_)}+ engagements or a P0 tag) is posted there as a ${PW_ALERT_HEAD_} Watch alert for full triage` +
     `${modeNote}; small ones wait and go out as one alert once ${PW_BREW_MIN_ACCOUNTS_} accounts tell the same story; ` +
-    `a story already alerted isn't posted again${counts}`, 480);
+    'a story already alerted isn\'t posted again');
 }
 
 // --------------------------------------------------------------------------------------------------------------
@@ -643,9 +715,16 @@ function pwAlertPosted_(name) {
   }
 }
 
+// Today's other counts (pwAlertDayMore_'s names), each with its key on PW_ALERT_TODAY
+const PW_ALERT_DAY_KEYS_ = [['builds', 'b'], ['held', 'h'], ['repeats', 'r'], ['offTopic', 'o'], ['already', 'd'], ['noted', 'dn'],
+  ['twin', 't'], ['notEnglish', 'l'], ['dropped', 'x'], ['empty', 'e']];
+
 /**
- * Today's watch alerts so far, with `add` more (and `addGrouped` more same-story posts in their threads; `more`:
- * {builds, held, repeats, offTopic} more of each: pwAlertDayMore_). Never throws.
+ * Today's watch alerts so far, with `add` more (and `addGrouped` more same-story posts in their threads; `more`: so
+ * many more of each of today's other counts, by pwAlertDayMore_'s names). A flag is counted on the day it ends (the day
+ * this is called), once. Only `more.held` may be negative: so many small flags held earlier today are no longer held
+ * (they went out with their story, or were queued again: pwPostAlerts_, ProactiveWatch.gs pwRequeue_) and are counted
+ * where they ended; that count never goes below zero. Never throws.
  */
 function pwAlertDay_(add, addGrouped, more) {
   try {
@@ -655,11 +734,14 @@ function pwAlertDay_(add, addGrouped, more) {
     const day = dayKey_();
     if (!s || s.day !== day) s = { day, n: 0 };
     const m = more || {};
-    const extra = [['b', m.builds], ['h', m.held], ['r', m.repeats], ['o', m.offTopic]].filter(x => Number(x[1]) > 0);
+    const extra = PW_ALERT_DAY_KEYS_.map(([name, k]) => [k, Number(m[name]) || 0]).filter(x => x[1] > 0 || (x[1] < 0 && x[0] === 'h'));
     if (add || addGrouped || extra.length) {
       s.n = (Number(s.n) || 0) + (Number(add) || 0);
       if (addGrouped) s.g = (Number(s.g) || 0) + Number(addGrouped);
-      extra.forEach(([k, v]) => { s[k] = (Number(s[k]) || 0) + Number(v); });
+      extra.forEach(([k, v]) => {
+        s[k] = Math.max(0, (Number(s[k]) || 0) + v);
+        if (!s[k]) delete s[k];
+      });
       props.setProperty(PW_ALERT_DAY_PROP_, JSON.stringify(s));
     }
     return Number(s.n) || 0;
@@ -668,19 +750,31 @@ function pwAlertDay_(add, addGrouped, more) {
   }
 }
 
+/** True when `at` (ms) is on today's Eastern day: the day today's counts are of (pwAlertDay_). Never throws. */
+function pwOnToday_(at) {
+  try {
+    const ms = Number(at);
+    return ms > 0 && isFinite(ms) && Utilities.formatDate(new Date(ms), GEN.timezone, 'yyyy-MM-dd') === dayKey_();
+  } catch (e) {
+    return false;
+  }
+}
+
 /**
- * Today's other counts (pwAlertDay_): {builds: alerts that are a build-up of small posts, held: small flags that waited
- * for company, repeats: flags on a story already alerted, offTopic: flags not about Google}. Never throws.
+ * Today's other counts (pwAlertDay_): {builds: alerts that are a build-up of small posts, held: small flags held today
+ * that still wait for company, repeats: flags on a story already alerted, offTopic: flags not about Google, already:
+ * flags on a post, or in a thread, that already had an alert, noted: how many of those were noted under that alert's
+ * card, twin: a second watch's flags on a post another watch flagged too, notEnglish: flags on a post not in English,
+ * dropped: flags dropped after waiting PW_ALERT_MAX_AGE_MS_, empty: flags with nothing to show}. Never throws.
  */
 function pwAlertDayMore_() {
+  const out = {};
+  PW_ALERT_DAY_KEYS_.forEach(([name]) => { out[name] = 0; });
   try {
     const s = JSON.parse(PropertiesService.getScriptProperties().getProperty(PW_ALERT_DAY_PROP_) || 'null');
-    const on = s && s.day === dayKey_();
-    const n = k => (on ? Number(s[k]) || 0 : 0);
-    return { builds: n('b'), held: n('h'), repeats: n('r'), offTopic: n('o') };
-  } catch (e) {
-    return { builds: 0, held: 0, repeats: 0, offTopic: 0 };
-  }
+    if (s && s.day === dayKey_()) PW_ALERT_DAY_KEYS_.forEach(([name, k]) => { out[name] = Number(s[k]) || 0; });
+  } catch (e) { /* nothing counted */ }
+  return out;
 }
 
 /** Today's same-story posts added to an alert's thread instead of the main space (pwAlertDay_). Never throws. */
@@ -694,45 +788,176 @@ function pwAlertDayGrouped_() {
 }
 
 /**
+ * A Watch alert a post already has, in words, from the key of the post's row (a: 'p': posted for it by watch `w`, on
+ * the story `st`; a: 'g': listed in the thread of a Watch alert, on the story `st`): for the log line of a flag that
+ * isn't posted again (pwPostAlerts_). The alert's Chat message is not named: its name holds the space's id. Pure.
+ */
+function pwAlertWords_(k) {
+  const story = k.st ? ` on "${truncate_(String(k.st), 80)}"` : '';
+  return k.a === 'g' ? `a Watch alert whose thread lists it${story}` : `the Watch alert of "${k.w}"${story}`;
+}
+
+/**
+ * `text` for the log with no Chat id in it: a space's id, or a message's or thread's name, is replaced by the name of
+ * `space` ({id, name}: this run's destination) when it is that space's, else by "a Chat space". Pure.
+ */
+function pwNoChatIds_(text, space) {
+  return String(text === undefined || text === null ? '' : text).replace(
+    /\bspaces\/[A-Za-z0-9_-]+(?:\/(?:messages|threads)\/[A-Za-z0-9_.-]+)?/g,
+    m => (space && space.id && space.name && (m === space.id || m.indexOf(`${space.id}/`) === 0) ? space.name : 'a Chat space'));
+}
+
+/**
  * Posts and conversation thread IDs already alerted across Watch detections (`block`) and the non-autocorrect Alert log
- * (`ss`): {done (Set of record keys), doneThreadIds (Set of platform post/thread IDs)}. Never throws.
+ * (`ss`): {done (Map: record key -> the alert it had), doneThreadIds (Map: platform post/thread ID -> the same)}. The
+ * alert is in words, for the log line of a flag that isn't posted again (pwPostAlerts_): a Watch alert (pwAlertWords_),
+ * Burson's alert and when, or the Alert log's alert by its id; the first one found for a key stays. Also `rows`: the
+ * Alert log's rows as read ([] when it wasn't), for the cards that cover a post (pwCoverCards_). Never throws.
  */
 function pwAlertedState_(ss, block, choice) {
-  const done = new Set();
-  const doneThreadIds = new Set();
-  const markUrl = raw => {
+  const done = new Map();
+  const doneThreadIds = new Map();
+  let rows = [];
+  const add = (map, key, what) => { if (key && !map.has(key)) map.set(key, what); };
+  const markUrl = (raw, what) => {
     const u = String(raw || '').replace(/^'/, '').trim();
     if (!u) return;
-    done.add(recordKey_({ post_url: u }) || u);
-    const pid = postIdOf_(u);
-    if (pid) doneThreadIds.add(pid);
+    add(done, recordKey_({ post_url: u }) || u, what);
+    add(doneThreadIds, postIdOf_(u), what);
   };
   ((block && block.values) || []).forEach(v => {
     const k = pwKeyOf_(v[PW_COL_.key - 1]);
     const bursonAt = String(v[PW_COL_.bursonAt - 1] || '').trim();
     if ((k && (k.a === 'p' || k.a === 'g')) || bursonAt) {
-      if (k && k.k) done.add(String(k.k));
-      markUrl(v[PW_COL_.post - 1]);
-      if (k && Array.isArray(k.th)) k.th.forEach(id => { if (id) doneThreadIds.add(String(id)); });
+      const what = k && (k.a === 'p' || k.a === 'g') ? pwAlertWords_(k) : `Burson's alert (${bursonAt} ET)`;
+      if (k && k.k) add(done, String(k.k), what);
+      markUrl(v[PW_COL_.post - 1], what);
+      if (k && Array.isArray(k.th)) k.th.forEach(id => { if (id) add(doneThreadIds, String(id), what); });
     }
   });
   if (ss) {
     try {
       const osSuffix = typeof OS_PARTITION_SUFFIX_ === 'string' ? OS_PARTITION_SUFFIX_ : ' (other alerts)';
       const alerts = sheetBackend_(ss).loadAlerts() || [];
+      rows = alerts;
       alerts.forEach(r => {
         const sp = String((r && r.space) || '');
         if (!r || (choice !== 'autocorrect' && sp.endsWith(AC_PARTITION_SUFFIX_)) ||
             (choice !== 'other' && sp.endsWith(osSuffix))) return;
         if (earlierOutcome_(r) !== 'alerted') return;
-        if (r.record_key) done.add(String(r.record_key));
-        markUrl((r.forwarded_fields || {}).post_url);
+        const what = `${r.alert_id || 'an alert'} in the Alert log`;
+        if (r.record_key) add(done, String(r.record_key), what);
+        markUrl((r.forwarded_fields || {}).post_url, what);
       });
     } catch (e) {
       console.warn('Watch alerts: could not read Alert log for pre-post dedup: ' + ((e && e.message) || e));
     }
   }
-  return { done, doneThreadIds };
+  return { done, doneThreadIds, rows: Array.isArray(rows) ? rows : [] };
+}
+
+/**
+ * The note under another alert's card (P4b, setting cross_alert_notes) is for this run: the watch's alerts go to the
+ * Auto-correct space (B10) and the setting is on. Never throws.
+ */
+function pwCrossNotesOn_(dest) {
+  try {
+    return !!(dest && dest.choice === 'autocorrect' && dest.space && dest.space.id) &&
+      !!(GEN && GEN.settings && GEN.settings.cross_alert_notes !== false);
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * The cards already in the Auto-correct space (`space`: this run's destination, {id, name}), for the note under the card
+ * that covers a flagged post: {byKey: Map(record key -> card), byId: Map(alert id -> card)}. A card is what
+ * ThreadNotes.gs acThreadNote_ takes: {forward_thread, forward_message} and, when known, how old it is (created_at,
+ * source_at). From the Alert log's rows of the Auto-correct flow (`rows`: pwAlertedState_'s; the newest row for a post
+ * wins), else from this tab (`block`): a Watch alert posted in that space (a: 'p': its message and thread, posted at
+ * `at`) or the Watch alert whose thread lists the post (a: 'g': its message is `pm`; no age is given, so the helper
+ * counts the card's notes in its thread). Pure.
+ */
+function pwCoverCards_(rows, block, space) {
+  const byKey = new Map();
+  const byId = new Map();
+  const id = String((space && space.id) || '');
+  if (!id) return { byKey, byId };
+  const inSpace = (thread, message) => String(thread || '').indexOf(`${id}/threads/`) === 0 &&
+    String(message || '').indexOf(`${id}/messages/`) === 0;
+  const suffix = typeof AC_PARTITION_SUFFIX_ === 'string' ? AC_PARTITION_SUFFIX_ : ' (auto-correct)';
+  (rows || []).forEach(r => {
+    if (!r || !String(r.space || '').endsWith(suffix) || !inSpace(r.forward_thread, r.forward_message)) return;
+    const card = { forward_thread: String(r.forward_thread), forward_message: String(r.forward_message),
+      created_at: Number(r.created_at) || 0, source_at: Number(r.source_at) || 0 };
+    if (r.alert_id) byId.set(String(r.alert_id), card);
+    const key = String(r.record_key || '');
+    const had = key ? byKey.get(key) : null;
+    if (key && (!had || card.created_at >= had.created_at)) byKey.set(key, card);
+  });
+  ((block && block.values) || []).forEach(v => {
+    const k = pwKeyOf_(v[PW_COL_.key - 1]);
+    if (!k || !k.k || byKey.has(String(k.k)) || k.sp !== id) return;
+    if (k.a === 'p' && inSpace(k.t, k.m)) {
+      byKey.set(String(k.k), { forward_thread: String(k.t), forward_message: String(k.m), created_at: Number(k.at) || 0 });
+    } else if (k.a === 'g' && inSpace(k.t, k.pm)) {
+      byKey.set(String(k.k), { forward_thread: String(k.t), forward_message: String(k.pm) });
+    }
+  });
+  return { byKey, byId };
+}
+
+/**
+ * The card in the Auto-correct space that covers the post of flag `q` (its key's record key `k`), or null: the post's
+ * own card (pwCoverCards_'s byKey), else the newest alert the alert memory says saw the post (`memSeen`: its seenPost
+ * answer; its ids, the latest last) that has a card there. Pure.
+ */
+function pwCoverCardOf_(cards, q, memSeen) {
+  if (!cards || !q || !q.k) return null;
+  const own = cards.byKey.get(String(q.k.k || ''));
+  if (own) return own;
+  const ids = memSeen ? [memSeen.alert_id].concat(memSeen.ids || []).map(x => String(x || '')).filter(Boolean) : [];
+  for (let i = ids.length - 1; i >= 0; i--) {
+    if (cards.byId.has(ids[i])) return cards.byId.get(ids[i]);
+  }
+  return null;
+}
+
+/**
+ * The note under the card that covers a post the watch flagged (P4b), for the watches that flagged it in this run
+ * (`names`, at most PW_COVER_NAMES_MAX_): "🔭 *Also flagged by the watch “Midterms 2026 × Google”.* No separate Watch
+ * alert: this card already covers the post." (two or three: "… the watch “A” and the watch “B” …"). Its first words are
+ * registered (Voice.gs THREAD_NOTE_HEADS_). Pure.
+ */
+function pwAlsoFlaggedText_(names) {
+  const list = (names || []).map(n => truncate_(String(n === undefined || n === null ? '' : n)
+    .replace(/[<>|*“”\r\n]+/g, ' ').replace(/\s+/g, ' ').trim(), 80)).filter(Boolean).slice(0, PW_COVER_NAMES_MAX_);
+  const named = (list.length ? list : ['Proactive watch']).map(n => `the watch “${n}”`);
+  const said = named.length > 1 ? `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}` : named[0];
+  return `${PW_ALERT_HEAD_} *Also flagged by ${said}.* No separate Watch alert: this card already covers the post.`;
+}
+
+/**
+ * The watch's note under a card in the Auto-correct space (P4b), through the one helper (ThreadNotes.gs acThreadNote_,
+ * with `dest`, `card`, `text` and `key` as it takes them), and what came of it: {ok: the note is in the card's thread,
+ * posted: it was posted by this call (not one already there under that key), full: it wasn't posted because the card
+ * already has its AC_NOTE_PER_CARD_ notes, the one refusal that never lifts}. The helper's log line is written as it
+ * would be (console.log) and read for that reason; whether this call posted is read from the run's count of notes
+ * (acNoteRun_), which only a note posted now moves. Never throws.
+ */
+function pwThreadNote_(dest, card, text, key) {
+  let why = '';
+  try {
+    const from = Object.assign({}, dest, { log: msg => { why = String(msg); console.log(msg); } });
+    const run = acNoteRun_(null);
+    const before = run.n;
+    const ok = acThreadNote_(from, card, text, key) === true;
+    const after = acNoteRun_(null);
+    return { ok, posted: ok && after === run && after.n > before,
+      full: !ok && /^thread note not posted: its card already has \d+ notes$/.test(why) };
+  } catch (e) {
+    return { ok: false, posted: false, full: false };
+  }
 }
 
 // --------------------------------------------------------------------------------------------------------------
@@ -1394,7 +1619,9 @@ function pwPostStoryReply_(space, thread, text, key) {
  * One alert a story (pwPostAlerts_). `items` ([{q, a}]: the flags, the highest scores first), `pre` (pwPreRead_, or
  * null), `recent` (the stories the pre-read's R refs point into: the alerts posted lately, pwRecentStories_; the
  * build-ups still waiting, pwBrewing_; the stories already alerted, pwKnownStories_), `c` {dest, now, max, timeLeft,
- * done, doneThreadIds, mark, same}. For each story, in this order:
+ * done, doneThreadIds (pwAlertedState_'s, added to as this run posts), mark, same (same(q, kind, why): the flag isn't
+ * posted, a: 'd'; `kind` says which of the day's counts it is, `why` its log line's reason: pwPostAlerts_)}. For each
+ * story, in this order:
  *   - one with an alert posted lately in this space goes in that alert's thread (but a flag that raises the stakes:
  *     pwStakesRose_);
  *   - one already alerted (any flow, PW_REPEAT_MS_ back) is not posted again (a: 'r', rf: the alert it repeats), unless
@@ -1408,7 +1635,9 @@ function pwPostStoryReply_(space, thread, text, key) {
  * {posted, grouped, dup, empty, held, repeats, offTopic, builds, problem}. Throws only what the caller catches.
  */
 function pwPostStories_(items, pre, recent, c) {
-  const res = { posted: 0, grouped: 0, dup: 0, empty: 0, held: 0, repeats: 0, offTopic: 0, builds: 0, problem: '' };
+  const res = { posted: 0, grouped: 0, dup: 0, empty: 0, held: 0, repeats: 0, offTopic: 0, builds: 0, problem: '',
+    stopped: '' };  // stopped: why stories were left for the next run ('time': the run ran short; 'capped': a run's most;
+                    // 'note': the same-story note the helper didn't post, in the Auto-correct space)
   const space = c.dest.space;
   // the Auto-correct space (B10): the post's own picture only, else its words on the card (C1, C2)
   const ownPic = c.dest.choice === 'autocorrect';
@@ -1421,15 +1650,42 @@ function pwPostStories_(items, pre, recent, c) {
   // a flag of this run, or a small one held on an earlier run, as the thread reply and the marks take it
   const entry = i => ({ q: items[i].q, a: items[i].a, p: pr(i) });
   const heldEntry = h => ({ q: h, a: pwAlertOfRow_(h.v, h.k), p: null });
-  const join = (entries, thread, alertName, later) => {
-    const reply = pwPostStoryReply_(space, thread, pwStoryReplyText_(entries.map(e => pwStoryView_(e, e.p)), later),
-      `pwg:${alertName}|${entries.map(e => e.q.k.k).sort().join(',')}`);
+  // P4b (setting cross_alert_notes, the Auto-correct space only: pwCrossNotesOn_): the same-story reply is a note under
+  // its alert's card, posted through the one helper (ThreadNotes.gs acThreadNote_) as the bot's own message, so the
+  // bot's flow never answers it; false when the helper posted nothing for a reason that can pass (the run's 6 notes, its
+  // checks, the thread unread, Chat): the flags wait. 'full' when the card already has its 3 notes, which never lifts:
+  // the flags are closed then as repeats of the story that alert covers (a: 'r'), not left to be read again each run.
+  // Everywhere else it is posted as before. `born`: when the alert's card was posted (ms), when this run posted it
+  const asNote = pwCrossNotesOn_(c.dest);
+  const full = (entries, story) => {
+    entries.forEach(e => c.mark(e.q, Object.assign({ a: 'r' }, at, { rf: 'its story\'s Watch alert (its thread is full)' })));
+    res.repeats += entries.length;
+    console.log(`Watch alerts: ${entries.length} flag${entries.length === 1 ? '' : 's'} not listed in their story's Watch alert's ` +
+      `thread${story ? ` ("${truncate_(String(story), 80)}")` : ''}: its card already has ${AC_NOTE_PER_CARD_} notes, the most ` +
+      'it takes; that alert covers the story');
+  };
+  const join = (entries, thread, alertName, later, story, born) => {
+    const text = pwStoryReplyText_(entries.map(e => pwStoryView_(e, e.p)), later);
+    const key = `pwg:${alertName}|${entries.map(e => e.q.k.k).sort().join(',')}`;
+    let reply = null;
+    if (asNote) {
+      const note = pwThreadNote_(c.dest, Object.assign({ thread, message: alertName }, Number(born) > 0 ? { createTime: Number(born) } : {}),
+        text, key);
+      if (note.full) {
+        full(entries, story);
+        return 'full';
+      }
+      if (!note.ok) return false;
+    } else {
+      reply = pwPostStoryReply_(space, thread, text, key);
+    }
     entries.forEach(e => {
       c.mark(e.q, Object.assign({ a: 'g', t: thread, pm: alertName, m: (reply && reply.name) || '' }, at));
-      c.done.add(e.q.k.k);
+      c.done.set(e.q.k.k, pwAlertWords_({ a: 'g', st: story }));
     });
     res.grouped += entries.length;
     replies++;
+    return true;
   };
   const failed = e => {
     res.problem = `couldn't post in ${space.name}: ${truncate_(String((e && e.message) || e), 120)}`;
@@ -1443,15 +1699,22 @@ function pwPostStories_(items, pre, recent, c) {
       `${entries.length === 1 ? 'it' : 'them'}`);
   };
   for (const g of groups) {
-    if (c.timeLeft() < PW_MIN_LEFT_MS_) break;
+    if (c.timeLeft() < PW_MIN_LEFT_MS_) {
+      res.stopped = 'time';
+      break;
+    }
     let members = g.members.slice();
     const R = g.r !== null ? stories[g.r] || null : null;
     if (R && R.thread) {  // the story of an alert posted lately: into its thread, unless the stakes rose
       const joining = members.filter(i => !pwStakesRose_(items[i], R));
       if (joining.length) {
-        if (replies >= PW_STORY_REPLIES_MAX_) continue;  // they wait for the next run
+        if (replies >= PW_STORY_REPLIES_MAX_) {  // they wait for the next run
+          res.stopped = res.stopped || 'capped';
+          continue;
+        }
         try {
-          join(joining.map(entry), R.thread, R.m, true);
+          // as a note, one the helper didn't post leaves these flags waiting for the next run
+          if (!join(joining.map(entry), R.thread, R.m, true, R.story)) res.stopped = res.stopped || 'note';
         } catch (e) {
           failed(e);
           break;
@@ -1493,7 +1756,10 @@ function pwPostStories_(items, pre, recent, c) {
       }
       build = { accounts: accounts.size };
     }
-    if (res.posted >= c.max) continue;  // waits for the next run (a later story joining a posted alert's thread still goes)
+    if (res.posted >= c.max) {  // waits for the next run (a later story joining a posted alert's thread still goes)
+      res.stopped = res.stopped || 'capped';
+      continue;
+    }
     // the alert: the story's best post that's new, in English and has something to show (one that matters by itself first)
     members = members.filter(alone).concat(members.filter(i => !alone(i)));
     let pick = null;
@@ -1501,19 +1767,36 @@ function pwPostStories_(items, pre, recent, c) {
       const { q, a } = items[i];
       const drop = () => { members = members.filter(x => x !== i); };
       const pid = postIdOf_(a.url);
-      if (c.done.has(q.k.k) || (pid && c.doneThreadIds.has(pid))) { c.same(q); res.dup++; drop(); continue; }
+      if (c.done.has(q.k.k) || (pid && c.doneThreadIds.has(pid))) {
+        c.same(q, 'already', c.done.has(q.k.k) ? `it already had an alert: ${c.done.get(q.k.k)}`
+          : `a post of its thread already had an alert: ${c.doneThreadIds.get(pid)}`);
+        res.dup++;
+        drop();
+        continue;
+      }
       const canFetch = c.timeLeft() >= PW_MIN_LEFT_MS_ + PW_ALERT_PIC_LEFT_MS_;
       let post = null;
       if (canFetch) {
         try { post = lookupPost_(a.url); } catch (e) { post = null; }
       }
-      if (post && isNonEnglishPost_(post.text || '', post.lang || '')) { c.same(q); res.dup++; drop(); continue; }
+      if (post && isNonEnglishPost_(post.text || '', post.lang || '')) {
+        c.same(q, 'notEnglish', 'the post is not in English');
+        res.dup++;
+        drop();
+        continue;
+      }
       const parentIds = Array.from(new Set(
         [post && post.parent && post.parent.id, post && post.reply_to && post.reply_to.id]
           .concat((post && post.thread_ids) || [])
           .map(v => String(v || '')).filter(Boolean)
       ));
-      if (parentIds.some(id => c.doneThreadIds.has(id))) { c.same(q); res.dup++; drop(); continue; }
+      const inThread = parentIds.find(id => c.doneThreadIds.has(id));
+      if (inThread) {
+        c.same(q, 'already', `a post of its thread already had an alert: ${c.doneThreadIds.get(inThread)}`);
+        res.dup++;
+        drop();
+        continue;
+      }
       // reuse the looked-up post for its picture so lookupPost_ runs once per candidate; its page is read for one (a post
       // the lookup gives none for) only with time for it, and never for the Auto-correct space (the post's own imagery only)
       const pageOk = !ownPic && c.timeLeft() >= PW_MIN_LEFT_MS_ + PW_ALERT_PAGE_PIC_LEFT_MS_;
@@ -1533,8 +1816,9 @@ function pwPostStories_(items, pre, recent, c) {
     if (!pick) continue;
     const it = items[pick.i];
     const mem = typeof alertMemory_ === 'function' ? alertMemory_() : null;
-    if (mem && mem.active && mem.seenPost(it.a.url)) {
-      c.same(it.q);
+    const seen = mem && mem.active ? mem.seenPost(it.a.url) : null;
+    if (seen) {
+      c.same(it.q, 'already', `it already had an alert: ${seen.why || 'the alert memory has it'}`);
       res.dup++;
       continue;
     }
@@ -1575,8 +1859,9 @@ function pwPostStories_(items, pre, recent, c) {
     c.mark(it.q, Object.assign({ a: 'p', m: (msg && msg.name) || '' }, at, msg && msg.thread ? { t: msg.thread } : {},
       story ? { st: story } : {}, pick.ids.length ? { th: pick.ids.slice(0, 6) } : {}, build ? { bu: build.accounts } : {}));
     pwRememberPosted_(msg && msg.name, { sc: it.a.score, br: it.a.bar, tp: it.a.topic, src: it.a.source });
-    c.done.add(it.q.k.k);
-    pick.ids.forEach(id => c.doneThreadIds.add(id));
+    const posted = pwAlertWords_({ a: 'p', w: it.q.k.w, st: story });
+    c.done.set(it.q.k.k, posted);
+    pick.ids.forEach(id => c.doneThreadIds.set(id, posted));
     res.posted++;
     if (build) res.builds++;
     // the story's other posts: one reply in the alert's thread (Chat refusing it leaves this run's flags waiting: the
@@ -1584,19 +1869,39 @@ function pwPostStories_(items, pre, recent, c) {
     let joined = false;
     if (listed.length && msg && msg.thread) {
       try {
-        join(listed, msg.thread, msg.name, false);
-        joined = true;
+        joined = join(listed, msg.thread, msg.name, false, story, msg.createTime);
+        if (!joined) console.warn('Watch alerts: couldn\'t add the story\'s other posts to its alert\'s thread: the note wasn\'t posted');
       } catch (e) {
         console.warn(`Watch alerts: couldn't add the story's other posts to its alert's thread: ${truncate_(String((e && e.message) || e), 160)}`);
       }
     }
     // a build-up's held posts went out with this alert whether or not its thread took their list: never counted towards
-    // another build-up (this run's own flags still wait, and join the alert's thread on the next run)
+    // another build-up (this run's own flags still wait, and join the alert's thread on the next run), and counted with
+    // the posts that went into their story's thread, which is where their key now says they are
     if (build && !joined) {
       waiting.forEach(h => c.mark(h, Object.assign({ a: 'g', t: (msg && msg.thread) || '', pm: (msg && msg.name) || '' }, at)));
+      res.grouped += waiting.length;
     }
   }
   return res;
+}
+
+/** Keeps why flags were left waiting on this run (`why`, at `at` ms: PW_ALERT_WAIT_CACHE_). Never throws. */
+function pwWaitWhyKeep_(why, at) {
+  try {
+    CacheService.getScriptCache().put(PW_ALERT_WAIT_CACHE_,
+      JSON.stringify({ at, why: truncate_(String(why), PW_ALERT_WAIT_CHARS_) }), PW_ALERT_WAIT_CACHE_SEC_);
+  } catch (e) { /* the log line of a flag dropped later then gives this run's reason, or says none was kept */ }
+}
+
+/** Why flags were last left waiting ({at, why}: pwWaitWhyKeep_), or null when nothing is kept. Never throws. */
+function pwWaitWhy_() {
+  try {
+    const v = JSON.parse(CacheService.getScriptCache().get(PW_ALERT_WAIT_CACHE_) || 'null');
+    return v && Number(v.at) > 0 && v.why ? { at: Number(v.at), why: String(v.why) } : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 /**
@@ -1619,10 +1924,30 @@ function pwPostStories_(items, pre, recent, c) {
  * the Alert log) isn't posted again (a: 'd'); one with nothing to show (no summary, text or picture) is never posted as
  * a bare link (a: 'n'). Nothing goes out while B35 is OFF or the destination can't take them (they wait), nor while the
  * destination space's flow ran out of time. `left`: ms of the run left; `opts`: {ss, otherBusy, acBusy}. {posted,
- * grouped, held, repeats, offTopic, builds, waiting, dropped, problem, error}. Never throws.
+ * grouped, held, repeats, offTopic, builds, waiting, problem, error, and how the flags that ended a: 'd', 'x' or 'n'
+ * did: already (on a post, or in a thread, that already had an alert), noted (how many of those were noted under that
+ * alert's card: P4b below), twin (a second watch's flag on a post another watch's flag carries
+ * in this run), notEnglish, dropped (after PW_ALERT_MAX_AGE_MS_), empty (nothing to show), and unheld (the small flags
+ * held earlier today that this run took out of that state, into their story's alert's thread or as a repeat)}: each flag
+ * that ends is in exactly one of today's counts (pwAlertDay_), which C35 shows (pwAlertCountsText_); `held` counts a
+ * small flag only while it waits (the `unheld` ones leave it, as one queued again does: ProactiveWatch.gs pwRequeue_),
+ * so a flag that waited and then went out is counted once, where it ended. Each flag that ends without a card
+ * leaves one log line with its link: one not posted again (a: 'd') says which alert it matched, or that another watch's
+ * flag carries the post, or that it is not in English; one dropped (a: 'x') says why flags were waiting (pwWaitWhy_: the
+ * last run that left any waiting, else this run's reason).
+ * P4b (setting cross_alert_notes, only when the alerts go to the Auto-correct space: pwCrossNotesOn_): a flag on a post
+ * that already has a card in that space (pwCoverCards_: the Alert log's row of the card, or this tab's Watch alert) gets
+ * no card of its own, as before, and one note goes under that card (ThreadNotes.gs acThreadNote_: pwAlsoFlaggedText_,
+ * one a card, up to PW_COVER_NAMES_MAX_ watches that flagged it in the run); its key then says a: 'u' ("listed under
+ * another alert"; the code that reads the letters reads only q, b, p and g, so 'u' is closed as 'd' is), and stays a: 'd'
+ * when the note wasn't posted by this run (pwThreadNote_: refused, or the card's one note from an earlier run, which
+ * doesn't name this run's watches). A flag on a post a producer claimed (posted a card for) whose latest sighting is
+ * within PW_COVER_WAIT_MS_ and whose card has no Alert-log row yet stays queued for the next run (and is dropped after
+ * its 3 hours like any waiting flag). Never throws.
  */
 function pwPostAlerts_(sh, dest, now, left, opts) {
-  const out = { posted: 0, grouped: 0, held: 0, repeats: 0, offTopic: 0, builds: 0, waiting: 0, dropped: 0, problem: '', error: false };
+  const out = { posted: 0, grouped: 0, held: 0, repeats: 0, offTopic: 0, builds: 0, waiting: 0, already: 0, noted: 0, twin: 0,
+    notEnglish: 0, dropped: 0, empty: 0, unheld: 0, problem: '', error: false };
   try {
     const block = pwDetRows_(sh, PW_DET_READ_ROWS_);
     const queued = [];
@@ -1631,27 +1956,105 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       if (k && k.a === 'q') queued.push({ i, k, v });
     });
     if (!queued.length) return out;
-    const { done, doneThreadIds } = pwAlertedState_(opts && opts.ss, block, dest && dest.choice);
+    const { done, doneThreadIds, rows } = pwAlertedState_(opts && opts.ss, block, dest && dest.choice);
+    // P4b: the cards in the Auto-correct space that can take a note for a flag on their post (null: no notes this run)
+    const cover = pwCrossNotesOn_(dest) ? pwCoverCards_(rows, block, dest.space) : null;
+    const covered = [];   // [{q, card, why}]: flags on a post that has a card there, for the notes (below the filter)
+    const coverWait = new Set();  // flags whose post was carded so lately that its card isn't in the Alert log yet: they wait
     const writes = [];  // [index in the block, the key to write]
-    const mark = (q, patch) => writes.push([q.i, Object.assign({}, q.k, patch)]);
-    // another watch, Burson, or an earlier post in the same thread already alerted: this flag isn't posted again
-    const same = q => mark(q, { a: 'd' });
+    // The small flags held on an earlier run (a: 'b') that this run takes out of that state, whatever it makes of them:
+    // row -> when it was held. Those held today leave today's count of held flags (below)
+    const heldLeft = new Map();
+    const mark = (q, patch) => {
+      if (q.k.a === 'b' && patch.a !== 'b') heldLeft.set(q.i, Number(q.k.at) || 0);
+      writes.push([q.i, Object.assign({}, q.k, patch)]);
+    };
+    const linkOf = q => String(q.v[PW_COL_.post - 1] || '').replace(/^'/, '').trim();
+    // The flags this run ends with no card and no log line of their own get one each, once their keys are written:
+    // `ended` (a: 'd': the line), `late` (a: 'x': the flags; their line says why flags were waiting)
+    const ended = [];
+    const late = [];
+    // another watch, Burson, or an earlier post in the same thread already alerted: this flag isn't posted again. `kind`:
+    // which of the day's counts it is: 'already' (when left out), 'twin' or 'notEnglish'; `why`: for its log line
+    const same = (q, kind, why) => {
+      mark(q, { a: 'd' });
+      out[kind || 'already']++;
+      ended.push(`not posting ${linkOf(q)}: ${why || 'it already had an alert'}`);
+    };
     const fresh = queued.filter(q => {
-      const qUrl = String(q.v[PW_COL_.post - 1] || '').replace(/^'/, '').trim();
+      const qUrl = linkOf(q);
       const qPid = postIdOf_(qUrl);
       const qSum = String(q.v[PW_COL_.summary - 1] || '').replace(/^'/, '').trim();
       const memSeen = typeof alertMemory_ === 'function' ? alertMemory_().seenPost(qUrl) : null;
-      if (done.has(q.k.k) || memSeen || String(q.v[PW_COL_.bursonAt - 1] || '').trim() || (qPid && doneThreadIds.has(qPid)) ||
-          isNonEnglishPost_(qSum, '')) {
-        same(q);
+      const bursonAt = String(q.v[PW_COL_.bursonAt - 1] || '').trim();
+      const alerted = done.has(q.k.k) || memSeen || bursonAt || (qPid && doneThreadIds.has(qPid));
+      if (alerted) {
+        // the alert it matched: this tab's or the Alert log's, else the alert memory's, else Burson's, else its thread's
+        const why = done.has(q.k.k) ? `it already had an alert: ${done.get(q.k.k)}`
+          : memSeen ? `it already had an alert: ${memSeen.why || 'the alert memory has it'}`
+            : bursonAt ? `it already had an alert: Burson's alert (${bursonAt} ET)`
+              : `a post of its thread already had an alert: ${doneThreadIds.get(qPid)}`;
+        // P4b: its post's card in the Auto-correct space gets a note (below); a post carded in the last minutes whose
+        // card isn't in the Alert log yet waits for it (but no longer than any flag waits)
+        const card = cover ? pwCoverCardOf_(cover, q, memSeen) : null;
+        const young = now - Math.max(Number(q.k.s) || 0, Number(q.k.rq) || 0) <= PW_ALERT_MAX_AGE_MS_;
+        if (card) {
+          covered.push({ q, card, why });
+        } else if (cover && memSeen && memSeen.claim && now - (Number(memSeen.at) || 0) <= PW_COVER_WAIT_MS_) {
+          if (!young) {  // it waited its 3 hours: dropped like any waiting flag
+            mark(q, { a: 'x' });
+            out.dropped++;
+            late.push(q);
+            return false;
+          }
+          coverWait.add(q.i);
+          console.log(`Watch alerts: ${pwNoChatIds_(`${linkOf(q)} waits for the next run: its post's card ` +
+            `(${memSeen.why || 'just posted'}) isn't in the Alert log yet, and the note goes under it`, dest.space)}`);
+          return true;
+        } else {
+          same(q, 'already', why);
+        }
+        return false;
+      }
+      if (isNonEnglishPost_(qSum, '')) {
+        same(q, 'notEnglish', 'its summary is not in English');
         return false;
       }
       if (now - Math.max(Number(q.k.s) || 0, Number(q.k.rq) || 0) <= PW_ALERT_MAX_AGE_MS_) return true;
       mark(q, { a: 'x' });
       out.dropped++;
+      late.push(q);
       return false;
     });
+    // P4b: one note under each covering card, naming the watches that flagged its post in this run (up to
+    // PW_COVER_NAMES_MAX_). A flag the note names is "listed under another alert" (a: 'u'); any other, or one whose note
+    // wasn't posted (the helper refused it, the caps, Chat, too little of the run left), "already alerted" as before
+    // (a: 'd'). Either way it is counted as on a post that already had an alert; the noted ones also as noted
+    const byCard = new Map();
+    covered.forEach(c => {
+      const key = c.card.forward_message;
+      if (!byCard.has(key)) byCard.set(key, []);
+      byCard.get(key).push(c);
+    });
+    byCard.forEach((list, message) => {
+      const names = Array.from(new Set(list.map(c => String(c.q.k.w || '')))).slice(0, PW_COVER_NAMES_MAX_);
+      const timeOk = (typeof left === 'function' ? left() : Infinity) >= PW_MIN_LEFT_MS_;
+      // only a note this run posted names this run's watches: one an earlier run put there (the same key: one a card)
+      // names that run's, so these flags stay "already alerted"
+      const noted = timeOk && pwThreadNote_(dest, list[0].card, pwAlsoFlaggedText_(names), `watch:${message}`).posted;
+      list.forEach(c => {
+        if (!noted || names.indexOf(String(c.q.k.w || '')) < 0) {
+          same(c.q, 'already', c.why);
+          return;
+        }
+        mark(c.q, { a: 'u' });
+        out.already++;
+        out.noted++;
+        ended.push(`not posting ${linkOf(c.q)}: ${c.why}; noted under that alert's card`);
+      });
+    });
     let problem = !dest || !dest.choice ? 'Watch alerts (row 35) is OFF' : dest.problem || '';
+    let stopped = '';  // with no problem, why flags were left for the next run: 'time' or 'capped' (pwPostStories_)
     if (!problem && dest.choice === 'mirror' && pwMirrorBusy_()) {
       problem = 'the Mirror space\'s flow ran out of time on its last run (Burson\'s alerts come first)';
     } else if (!problem && dest.choice === 'other' && opts && opts.otherBusy) {
@@ -1667,12 +2070,19 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       fresh.sort((a, b) => big(b) - big(a) || (Number(b.k.sc) || 0) - (Number(a.k.sc) || 0) || (Number(a.k.s) || 0) - (Number(b.k.s) || 0));
       const timeLeft = () => (typeof left === 'function' ? left() : Infinity);
       // a post two watches flagged is one flag: the highest-scored one's (the other's says a: 'd')
-      const keys = new Set();
+      const keys = new Map();  // record key -> the watch whose flag carries the post
       const items = [];
       for (const q of fresh) {
-        if (items.length >= PW_PREREAD_MAX_) break;
-        if (keys.has(q.k.k)) { same(q); continue; }
-        keys.add(q.k.k);
+        if (coverWait.has(q.i)) continue;  // waits for its post's card (P4b): counted with the flags waiting
+        if (items.length >= PW_PREREAD_MAX_) {
+          stopped = 'capped';
+          break;
+        }
+        if (keys.has(q.k.k)) {
+          same(q, 'twin', `the watch "${q.k.w}" flagged it too: the flag of "${keys.get(q.k.k)}" on the same post is the one that goes on`);
+          continue;
+        }
+        keys.set(q.k.k, q.k.w);
         items.push({ q, a: pwAlertOfRow_(q.v, q.k) });
       }
       const recent = pwRecentStories_(block, dest, now, PW_STORY_POOL_MAX_).concat(pwBrewing_(block, now, PW_BREW_POOL_MAX_));
@@ -1689,8 +2099,9 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
         out.repeats = res.repeats;
         out.offTopic = res.offTopic;
         out.builds = res.builds;
-        out.dropped += res.empty;
+        out.empty = res.empty;
         if (res.problem) problem = res.problem;
+        stopped = res.stopped || stopped;
       }
     }
     // still waiting: the fresh flags this run decided nothing about (their key wasn't written)
@@ -1698,13 +2109,38 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     out.waiting = fresh.filter(q => !decided.has(q.i)).length;
     out.problem = problem;
     writes.forEach(([i, k]) => sh.getRange(block.first + i, PW_COL_.key).setValue(JSON.stringify(k)));
+    // (no Chat id in a log line: a space's, message's or thread's id is said as the space's name)
+    const space = dest && dest.space;
+    ended.forEach(line => console.log(`Watch alerts: ${pwNoChatIds_(line, space)}`));
+    if (late.length) {
+      const waited = pwWaitWhy_();  // why flags were left waiting on the last run that left any (else this run's reason)
+      late.forEach(q => {
+        const from = Math.max(Number(q.k.s) || 0, Number(q.k.rq) || 0);
+        const why = pwNoChatIds_(waited && waited.at >= from ? waited.why : problem, space);
+        console.log(`Watch alerts: dropped ${linkOf(q)}: not posted within ${Math.round(PW_ALERT_MAX_AGE_MS_ / PW_HOUR_MS_)} hours of ` +
+          `being ${q.k.rq ? 'queued again' : 'seen'} (${pwTime_(from)} ET)${why ? `: ${why}` : '; why it waited was not kept'}`);
+      });
+    }
+    if (out.waiting) {
+      pwWaitWhyKeep_(pwNoChatIds_(problem || (stopped === 'time' ? 'the run ran short of time before it reached them'
+        : stopped === 'capped' ? 'more flags were waiting than one run reads and posts'
+          : stopped === 'note' ? 'their story\'s alert took no more notes in its thread this run' : 'they were not reached this run'), space), now);
+      if (coverWait.size && out.waiting === coverWait.size) {
+        pwWaitWhyKeep_('the card of their post was not in the Alert log yet, to put the note under it', now);
+      }
+    }
     if (out.held || out.repeats || out.offTopic) {
       console.log(`Watch alerts: not posted on their own: ${out.held} small (waiting for ${PW_BREW_MIN_ACCOUNTS_} accounts on one ` +
         `story), ${out.repeats} on a story already alerted, ${out.offTopic} not about Google`);
     }
-    if (out.posted || out.grouped || out.held || out.repeats || out.offTopic) {
-      pwAlertDay_(out.posted, out.grouped, { builds: out.builds, held: out.held, repeats: out.repeats, offTopic: out.offTopic });
-    }
+    // today's counts (C35): every flag this run ended, each in one of them. A small flag held earlier today that this
+    // run took out of that state is counted where it ended, and no longer as held; one held in this run is held on the
+    // day its key says (the run's `now`), so not on today's count when midnight passed during the run
+    out.unheld = Array.from(heldLeft.values()).filter(pwOnToday_).length;
+    const more = {};
+    PW_ALERT_DAY_KEYS_.forEach(([name]) => { more[name] = out[name]; });
+    more.held = (pwOnToday_(now) ? out.held : 0) - out.unheld;
+    if (out.posted || out.grouped || Object.keys(more).some(name => more[name])) pwAlertDay_(out.posted, out.grouped, more);
     if (out.posted || out.grouped) {
       console.log(`Watch alerts: ${out.posted} posted${out.grouped ? `, ${out.grouped} added to their story's thread` : ''} ` +
         `in ${dest.space.name}${out.waiting ? `, ${out.waiting} waiting` : ''}`);
