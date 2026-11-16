@@ -482,8 +482,9 @@ function bqEngagementBar_() {
  *     alert by the issue;
  *   - the record has the engagement bar or more (bqEngagementBar_);
  *   - none of the earlier alerts on its issue had that many. `priors`: the earlier alerts Step 1 weighed it against
- *     (bqPriorAlerts_). Every one the code's own rule (matchBqPriorAlert_) matches to the record counts, not only the
- *     first one, which is the oldest; one whose count isn't known had none.
+ *     (bqPriorAlerts_), to which the poll adds the posts that go on at the same check (those Step 1 passed itself and
+ *     those let through before this one). Every one the code's own rule (matchBqPriorAlert_) matches to the record
+ *     counts, not only the first one, which is the oldest; one whose count isn't known had none.
  * Nothing else passes: not a record left out for any other reason (not about Google, the post itself already alerted,
  * Gemini's own call with no earlier alert on the issue, no wave), not a post under the bar whoever wrote it, and no
  * record at all while the config gives no bar. Pure.

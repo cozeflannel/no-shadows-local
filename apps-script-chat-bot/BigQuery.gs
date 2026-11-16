@@ -2463,7 +2463,8 @@ function bqStoryNotes_(ctx, cards, now, hasTime) {
  * card is posted, a new card whose post is in an Early Detection card of the last 24 hours gets one note in its thread
  * that says so and links that card (bqStoryNotes_); and a record Step 1 leaves out as on an issue already alerted still
  * gets its own card when it is a bigger post on that issue (BqPipeline.gs bqBiggerPost_: the alert requirements'
- * engagement bar or more, where no earlier alert on the issue had that many), and is then not counted as not posted.
+ * engagement bar or more, where no earlier alert on the issue had that many, nor a post that goes on at the same check:
+ * one Step 1 passed itself, or one let through before it), and is then not counted as not posted.
  * {sprinklr, bmie, bsip, skipped_duplicates, skipped_step1, skipped_no_count}.
  */
 function pollBigQuerySources_(ctx, targetSpaceId) {
@@ -2701,15 +2702,29 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
   }
   // The Auto-correct flow only (setting cross_alert_notes): a bigger post on an issue that already has an alert goes
   // through as its own card. Step 1 left it out as on that issue, it has the alert requirements' engagement bar or
-  // more, and no earlier alert on the issue had that many (BqPipeline.gs bqBiggerPost_), nor a post let through at this
-  // check. Its card is reviewed like any other. In every other flow, and with the setting off, nothing is let through
+  // more, and no earlier alert on the issue had that many (BqPipeline.gs bqBiggerPost_), nor a post that goes on at this
+  // check: one Step 1 passed itself (a new development on the issue), or one let through before it. Its card is
+  // reviewed like any other. In every other flow, and with the setting off, nothing is let through
   const biggerOn = !!(ctx && ctx.sourceReadOnly === true && S.cross_alert_notes !== false);
-  const letThrough = [];  // the records let through at this check, as earlier alerts for the next ones on their issue
+  // The records that go on at this check, as earlier alerts for the others on their issue: those Step 1 passed
+  // (whichever comes first in the feed), then each one let through
+  const goingOn = [];
+  const goesOn = c => {
+    const v = bqRecordView_(c.row, 0);
+    goingOn.push({ url: v.url, issue_name: v.issue, engagement: v.engagement });
+    return v;
+  };
+  if (biggerOn && passed) {
+    candidates.forEach((c, i) => {
+      try {
+        if (passed.has('c' + i)) goesOn(c);
+      } catch (e) { /* the earlier alerts alone are asked about its issue */ }
+    });
+  }
   const bigger = (c, x) => {
     try {
-      if (!biggerOn || !bqBiggerPost_(c.row, x, priors.concat(letThrough))) return false;
-      const v = bqRecordView_(c.row, 0);
-      letThrough.push({ url: v.url, issue_name: v.issue, engagement: v.engagement });
+      if (!biggerOn || !bqBiggerPost_(c.row, x, priors.concat(goingOn))) return false;
+      const v = goesOn(c);
       console.log(`BigQuery direct poll: let through, a bigger post on an issue already alerted: ${c.row.url} · ` +
         `${fmtInt_(v.engagement)} engagements, and no earlier alert on the issue had ${fmtInt_(bqEngagementBar_())} · ` +
         `${alertWords(x.alert_id, rowOf(x.alert_id))} · Step 1 had left it out, ${x.why === BQ_LEFT_OUT_.GEMINI ? 'by Gemini' : 'by the rules'}`);

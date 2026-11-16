@@ -317,6 +317,48 @@ module.exports = H => {
     eq(t.bot.ev('BQ_POLL_MAX_PER_RUN_'), 2);
   });
 
+  test('bigger post: a post Step 1 lets through itself counts as an alert on its issue at the same check. One check reads a new development on an alerted issue that has the bar (4,000 engagements: Step 1 passes it) and a plain bigger post on that issue (2,500: Step 1 leaves it out). Only the new development gets a card, whichever of the two the feed gives first: the plain post is left out as on a story already alerted, counted and logged as such, and stays out when Step 1 weighs it again an hour on (the issue then has an alert with the bar). A new development under the bar is no such alert: the plain bigger post gets its card beside it. With the setting off Step 1 decides alone, as before', () => {
+    const NEWS = 'https://x.com/pixelnews/status/2150000000000000091';
+    const news = total => onIssue(NEWS, total, { summary: 'Breaking update: Google responded with an official statement about Pixel 10 batteries swelling after the update.' });
+    const plain = () => onIssue(BIG, 2500);
+    /** The Pixel card reviewed, then one check that reads `rows`, their reviews, and a check an hour on (Step 1 weighs again). */
+    const run = (overrides, rows) => {
+      const { t, rec, feed } = withPixelCard(overrides);
+      const first = alertRows(t)[0].alert_id;
+      rec.step('one check reads both posts', 5, () => { feed.bsip = rows; });
+      const atCheck = { cards: cards(t).slice(1), today: today(t), logs: logs(t) };
+      rec.step('the cards are reviewed', 1);
+      Array.from(t.g.cache.keys()).filter(k => /^bqstep1:/.test(k)).forEach(k => t.g.cache.delete(k));  // (an hour on)
+      rec.step('an hour on', 5);
+      rec.step('quiet run', 1);
+      return { first, atCheck, later: { cards: cards(t).slice(1), today: today(t), logs: logs(t) }, mails: mails(t).map(m => m[1].split(' | ').pop()) };
+    };
+    // Step 1 passes the new development by the rules (its words say what is new), and leaves the plain post out
+    const step = B.evaluateBqDualTrack_([Object.assign(news(4000), { id: 'news' }), Object.assign(plain(), { id: 'plain' })], null, { soloOnly: true,
+      priorAlerts: [{ alert_id: 'QA-1', url: PIXEL_POST, issue_name: PIXEL_ISSUE, engagement: 800, summary: 'A Pixel 10 battery swelled up.' }] });
+    eq([step.solo_alerts.map(s => [s.id, s.is_new_development]), step.left_out], [[['news', true]], [{ id: 'plain', why: 'same_issue', alert_id: 'QA-1', match: 'issue' }]]);
+
+    [[news(4000), plain()], [plain(), news(4000)]].forEach(rows => {
+      const got = run(ON, rows);
+      const order = rows.map(r => r.url).join(' then ');
+      eq([order, got.atCheck], [order, { cards: [NEWS], today: [2, 0, 1, 0, 1], logs: [NOT_POSTED(BIG, got.first)] }]);
+      // an hour on the plain post is weighed again and left out again: no card, and nothing said or counted twice
+      eq([order, got.later, got.mails], [order, { cards: [NEWS], today: [2, 1, 1, 0, 1], logs: [NOT_POSTED(BIG, got.first)] }, ['4000 Engagements']]);
+    });
+    // a new development under the bar: the issue still has no alert with the bar, so the plain bigger post goes through
+    [[news(900), plain()], [plain(), news(900)]].forEach(rows => {
+      const got = run(ON, rows);
+      const order = rows.map(r => r.url).join(' then ');
+      eq([order, got.atCheck], [order, { cards: rows.map(r => r.url), today: [3, 0, 1, 0, 0], logs: [LET_THROUGH(BIG, '2,500', got.first)] }]);
+      eq([order, got.later, got.mails], [order, { cards: rows.map(r => r.url), today: [3, 1, 2, 0, 0], logs: [LET_THROUGH(BIG, '2,500', got.first)] }, ['2500 Engagements']]);
+    });
+    // the setting off: what Step 1 passes is carded and what it leaves out is not, whatever their sizes
+    [4000, 900].forEach(total => {
+      const got = run(OFF, [plain(), news(total)]);
+      eq([total, got.atCheck], [total, { cards: [NEWS], today: [2, 0, 1, 0, 1], logs: [NOT_POSTED(BIG, got.first)] }]);
+    });
+  });
+
   // -----------------------------------------------------------------------------------------------------------
   // The flows that are not the Auto-correct flow
   // -----------------------------------------------------------------------------------------------------------
