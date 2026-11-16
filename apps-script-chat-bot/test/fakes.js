@@ -356,6 +356,54 @@ class FakeSheet {
     return p;
   }
   appendRow(values) { this.rows.push(values.map(store)); return this; }
+  /**
+   * Inserts `howMany` blank rows before row `beforePosition` (1-based), as Sheets does: that row and every row below it
+   * move down, and what the fake keeps for a row or a cell moves with them (values, formulas as the text they are, data
+   * validations, link chips, row heights, merges; a merge the new rows land inside grows, and so do the frozen rows when
+   * they land among them). The new rows are blank, with none of that. Returns the sheet. Not modelled: the sheet's
+   * size (a row below the last one with content is there, blank) and the references inside formulas.
+   */
+  insertRowsBefore(beforePosition, howMany) {
+    const [at, n] = rowSpan_(beforePosition, howMany);
+    if (at <= this.rows.length) this.rows.splice(at - 1, 0, ...Array.from({ length: n }, () => []));
+    this._moveRows(r => (r >= at ? r + n : r));
+    this.merges = (this.merges || []).map(m => {
+      const [r, c, nr, nc] = m.split(',').map(Number);
+      return r >= at ? `${r + n},${c},${nr},${nc}` : r + nr > at ? `${r},${c},${nr + n},${nc}` : m;
+    });
+    if (this.frozenRows && at <= this.frozenRows) this.frozenRows += n;
+    return this;
+  }
+  /**
+   * Deletes `howMany` rows from row `rowPosition` (1-based) down, as Sheets does: the rows below move up, with what the
+   * fake keeps for a row or a cell; what the deleted rows had is gone (a merge loses the rows it had there, and goes
+   * when none is left; frozen rows among them no longer count). Returns nothing, as in Sheets.
+   */
+  deleteRows(rowPosition, howMany) {
+    const [at, n] = rowSpan_(rowPosition, howMany);
+    this.rows.splice(at - 1, n);
+    while (this.rows.length && !(this.rows[this.rows.length - 1] || []).some(v => v !== '' && v !== undefined && v !== null)) this.rows.pop();
+    this._moveRows(r => (r < at ? r : r < at + n ? 0 : r - n));
+    this.merges = (this.merges || []).map(m => {
+      const [r, c, nr, nc] = m.split(',').map(Number);
+      const gone = Math.max(0, Math.min(r + nr, at + n) - Math.max(r, at));  // its rows among the deleted ones
+      const top = r >= at + n ? r - n : Math.min(r, at);
+      return nr - gone > 0 ? `${top},${c},${nr - gone},${nc}` : '';
+    }).filter(Boolean);
+    if (this.frozenRows) this.frozenRows -= Math.max(0, Math.min(this.frozenRows, at + n - 1) - at + 1);
+  }
+  /** What the fake keeps by row ("row,col" keys, row heights) moved to `to(row)`; dropped when that is 0. */
+  _moveRows(to) {
+    const cells = map => Object.fromEntries(Object.entries(map || {}).map(([k, v]) => {
+      const [r, c] = k.split(',').map(Number);
+      return [to(r) ? `${to(r)},${c}` : '', v];
+    }).filter(([k]) => k));
+    this.validations = cells(this.validations);
+    this.links = cells(this.links);
+    if (this.heights) {
+      this.heights = Object.fromEntries(Object.entries(this.heights).map(([r, h]) => [to(Number(r)), h]).filter(([r]) => r));
+    }
+  }
   /** Test helper: the value at row r, column c (1-based). */
   cell(r, c) { const row = this.rows[r - 1] || []; return row[c - 1] === undefined ? '' : row[c - 1]; }
   getRange(r, c, nr, nc) {
@@ -442,6 +490,16 @@ class FakeSheet {
 
 /** Sheets keeps a leading-apostrophe value as plain text without the apostrophe. */
 function store(v) { return typeof v === 'string' && v.startsWith("'") ? v.slice(1) : v; }
+
+/** A row position and a row count for insertRowsBefore / deleteRows: whole numbers from 1 up, as Sheets asks; else it throws. */
+function rowSpan_(position, howMany) {
+  if (!Number.isInteger(position) || !Number.isInteger(howMany)) {
+    throw new Error(`The parameters (${typeof position},${typeof howMany}) don't match the method signature.`);
+  }
+  if (position < 1) throw new Error('The starting row of the range is too small.');
+  if (howMany < 1) throw new Error('The number of rows in the range must be at least 1.');
+  return [position, howMany];
+}
 
 class FakeSpreadsheet {
   constructor(id, name) { this.id = id; this.name = name; this.sheets = [new FakeSheet('Sheet1')]; this.sheets[0].parent = this; }
