@@ -135,4 +135,38 @@ module.exports = H => {
     eq(notes(w), [[next.alert_id, HELD, 'First seen 10:01 AM ET with 12 accounts; 13 now, nothing new.']]);
     eq([look.waiting, adds(look)], [12, true]);
   });
+
+  test('early detection seen marks: a story cannot loop: a dropped signal whose own mark was gone (the seen map turned over while it waited) is marked by its id when it leaves the queue, so handed over again it is neither queued nor noted', () => {
+    const w = ends.world({ flow: 'one-space', row46: false });
+    const first = ends.signal(90, { au: 5, at: '09:16', words: 'Pixel owners say the keyboard lags CARDFAIL, story 90' });
+    w.run('09:16', [first]);
+    w.run('09:17');
+    w.t.g.props.delete('EARLY_DETECTION_SEEN');  // every mark is gone, its own too
+    let look = w.run('09:18', []);
+    eq([notes(w), look.waiting], [[[first.alert_id, NEVER, 'Its review failed twice.']], 0]);
+    for (const at of ['09:31', '09:46']) {
+      look = w.run(at, [first]);
+      eq([notes(w), look.waiting, waitingIds(w), adds(look)], [[], 0, [], true], at);
+    }
+    eq([look.day.found, look.day.never], [1, 1]);
+  });
+
+  test('early detection seen marks: an early signal never marked its story, so when it leaves the queue unreviewed it takes no story mark out: the mark another signal on the same story put there (with as many accounts) stays', () => {
+    const W = ends.signal(90, { au: 4, type: 'EARLY_WATCH', pri: 'P2', at: '09:32', words: say('the torch flickers', 90) });
+    const V = ends.signal(90, { au: 4, type: 'VELOCITY_SPIKE', grain: 'CLUSTER', pri: 'P1', at: '09:31', words: say('the torch flickers', 90) });
+    // the stored map: the pace jump on the same story marked it with its 4 accounts when it was queued
+    const g = H.makeGoogle(H.NOW);
+    const bot = H.loadBot(g.services, g.clock);
+    const p = g.services.PropertiesService.getScriptProperties();
+    const seen = bot.earlyWaveSeen_(p, g.clock.now);
+    seen.add('cl:clu_ends090', g.clock.now, 4);
+    seen.save();
+    eq(bot.edSeenForget_(p, bot.edQueueCompact_(W), g.clock.now), false);
+    const after = bot.earlyWaveSeen_(p, g.clock.now);
+    eq([after.authors(['cl:clu_ends090']), after.has(`id:${W.alert_id}`)], [4, true]);
+    // (the early signal's drop leaves the story's mark; its own id is marked afresh); a story signal's drop still takes
+    // its own mark out
+    eq(bot.edSeenForget_(p, bot.edQueueCompact_(V), g.clock.now), true);
+    eq(bot.earlyWaveSeen_(p, g.clock.now).authors(['cl:clu_ends090']), null);
+  });
 };

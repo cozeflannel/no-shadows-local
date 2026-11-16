@@ -3236,8 +3236,8 @@ function earlyWaveSeen_(props, now) {
  * A queued signal left the queue without a review (pushed out of the full queue, dropped after ED_QUEUE_MAX_AGE_MS_, or
  * after ED_QUEUE_MAX_TRIES_ tries that didn't finish): its story must not stay marked as seen, or the story's next
  * signal would be held back as a repeat of a signal nobody reviewed. Takes the story keys it marked out of the seen map
- * (recomputed from its stored row `row`: each key only while it still holds this signal's accounts) and marks its own
- * id afresh, so the same signal is never queued again. `seen`: the check's own map (the check saves it); without it
+ * (recomputed from its stored row `row`: each key only while it still holds this signal's accounts; none for an early
+ * signal, which never marked its story) and marks its own id afresh, so the same signal is never queued again. `seen`: the check's own map (the check saves it); without it
  * the stored map is changed and saved here. True when a story key was taken out. Never throws.
  */
 function edSeenForget_(props, row, now, seen) {
@@ -3246,10 +3246,12 @@ function edSeenForget_(props, row, now, seen) {
     if (!keys.length) return false;
     const map = seen || earlyWaveSeen_(props, now);
     const au = ewCount_(row.unique_low_tier_authors);
+    // an early signal never marked its story (earlyWaveCheck_): a mark on its story is another signal's, and stays
+    const watch = typeof EWS_WATCH_SIGNAL_ !== 'undefined' && String(row.signal_type || '').trim().toUpperCase() === EWS_WATCH_SIGNAL_;
     let gone = 0;
     keys.forEach(k => {
       if (k.indexOf('id:') === 0) map.add(k, now);
-      else if (map.forget(k, au)) gone++;
+      else if (!watch && map.forget(k, au)) gone++;
     });
     if (!seen) map.save();
     return gone > 0;
