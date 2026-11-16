@@ -15,10 +15,11 @@
  *   row 4   the column names (EDT_HEADER_), frozen
  *   row 5+  one row per ending, newest first: new rows go in under row 4 in one write and are never changed after; past
  *           EDT_KEEP_ data rows the bottom rows are deleted (the header and at least one data row always stay)
- * Every cell goes through the capped-text helper (Speed.gs speedText_: at most 49,000 characters, and a text that starts
- * with = + - @ is never read as a formula). The only formulas are the quoted links (Speed.gs resultsLink_ through
- * HeadStart.gs headStartLink_): the Story to the main post, the Card to the card's message. A written row's cells don't
- * count on a format they inherit from a neighbour row: its time is text, and its formats are set with it.
+ * Every text cell goes through the capped-text helper (Speed.gs speedText_: at most 49,000 characters) with a leading
+ * apostrophe (edTabText_), so Sheets keeps it as the text it is: never read as a formula, a number or a date. The only
+ * formulas are the quoted links (Speed.gs resultsLink_ through HeadStart.gs headStartLink_): the Story to the main post,
+ * the Card to the card's message. A written row's cells don't count on a format they inherit from a neighbour row: its
+ * texts are text, and its formats are set with it.
  *
  * When: poll() calls maybeWriteEdTab_ in its last block, beside the Head start tab, with the run's own deadline. It
  * writes only with EDT_MIN_LEFT_MS_ (30 seconds) of the run left and never in a run that is still catching up on alerts
@@ -26,8 +27,13 @@
  * didn't make is in the way) wait in ONE script-cache value (EDT_WAIT_KEY_, 6 hours) for the next run that can: at most
  * EDT_WAIT_ROWS_ rows and EDT_WAIT_CHARS_ characters (and as many bytes), the newest kept; the ones that had to go are
  * counted, and the next write adds one row "N outcomes were not recorded (the runs were full)". A run without a row to
- * write makes no Sheets call at all. The tab is made the first time there is a row to write, after the last of the
- * report tabs, so no tab moves. Never throws.
+ * write makes no Sheets call at all, except while Status says a tab is in the way (EDT_BLOCKED_PROP_): then a run with
+ * time looks at the tab of that name once (edTabRecheck_), so the sentence goes as soon as that tab is renamed. The tab is
+ * made the first time there is a row to write, after the last of the report tabs, so no tab moves. Never throws.
+ *
+ * Row 3 is as of the last write (its date and time say when): a run that writes no row doesn't touch it, so on a quiet
+ * day it can be behind Control C19. Rows that wait live only in the cache value: if the cache drops it, they are gone
+ * without a "not recorded" row.
  */
 
 const EDT_NAME_ = 'Early Detection';
@@ -73,10 +79,14 @@ function maybeWriteEdTab_(ss, ctx, opts) {
     const now = ctx && typeof ctx.now === 'function' ? ctx.now() : Date.now();
     const kept = edTabWaiting_();
     const all = edTabMerge_(kept.rows, edNotesOfRun_());
-    if (!all.length && !kept.lost) return out;  // nothing to write: no Sheets call
     const deadline = Number(o.deadline) || Number(ctx && ctx.deadline) || 0;
-    const noTime = !ss || headStartRunBusy_(ctx, o.flows) || (deadline && deadline - now < EDT_MIN_LEFT_MS_);
-    if (!noTime) {
+    const noTime = () => !ss || headStartRunBusy_(ctx, o.flows) || (deadline && deadline - now < EDT_MIN_LEFT_MS_);
+    if (!all.length && !kept.lost) {
+      // nothing to write: no Sheets call, unless Status says a tab is in the way and this run has time to look again
+      if (edTabBlocked_() && !noTime()) edTabRecheck_(ss);
+      return out;
+    }
+    if (!noTime()) {
       try {
         const done = writeEdTab_(ss, all, kept, now);
         if (done.written) {
@@ -106,7 +116,10 @@ function maybeWriteEdTab_(ss, ctx, opts) {
  */
 function writeEdTab_(ss, rows, lost, now) {
   const found = ss.getSheetByName(EDT_NAME_);
-  const blocked = !!found && !isEdTab_(found);
+  const owner = found ? edTabOwner_(found) : 'bot';
+  // Sheets didn't answer: not known to be in the way, so Status isn't told; the rows wait (the caller catches this)
+  if (owner === 'unknown') throw new Error(`the "${EDT_NAME_}" tab could not be checked`);
+  const blocked = owner === 'other';
   noteEdTabBlocked_(blocked);
   if (blocked) {
     console.warn(`Early Detection tab not written: a "${EDT_NAME_}" tab the bot didn't make is there (left as it is)`);
@@ -150,7 +163,7 @@ function edTabSorted_(rows) {
 /** One record row (EarlyDetectionNotes.gs ED_NOTE_FIELDS_) as the tab's cells (EDT_HEADER_). Pure but for the time zone. */
 function edTabRow_(row) {
   const r = edNoteObj_(row);
-  const text = v => speedText_(String(v === undefined || v === null ? '' : v));
+  const text = edTabText_;
   const at = Number(r.at) || 0;
   const story = String(r.story || '');
   const link = String(r.link || '');
@@ -175,8 +188,18 @@ function edTabLostRow_(n, at) {
   const k = Math.max(1, Math.round(Number(n) || 0));
   const row = new Array(EDT_HEADER_.length).fill('');
   row[0] = Number(at) > 0 ? `'${speedTime_(Number(at))}` : '';
-  row[1] = `${k} outcome${k === 1 ? ' was' : 's were'} not recorded (the runs were full)`;
+  row[1] = edTabText_(`${k} outcome${k === 1 ? ' was' : 's were'} not recorded (the runs were full)`);
   return row;
+}
+
+/**
+ * A text cell: the capped-text helper (speedText_: 49,000 characters at most, the apostrophe included) with a leading
+ * apostrophe, so Sheets keeps the text as it is (never a formula, a number or a date; the apostrophe isn't shown).
+ * '' stays ''. Pure.
+ */
+function edTabText_(v) {
+  const s = String(v === undefined || v === null ? '' : v);
+  return s ? speedText_("'" + s) : '';
 }
 
 /**
@@ -193,18 +216,27 @@ function edTabTodayText_(now) {
 }
 
 /**
- * Is this the Early Detection tab the bot made? A1 is exactly its title and row 4 exactly its column names (one read of
- * the first four rows). An empty tab, one people made, or the bot's own with its title or a column name changed is not:
- * such a tab is never read further, cleared, written or protected. False when Sheets doesn't answer.
+ * Is this the Early Detection tab the bot made? A1 is exactly its title and row 4 exactly its column names. An empty tab,
+ * one people made, or the bot's own with its title or a column name changed is not: such a tab is never read further,
+ * cleared, written or protected. False when Sheets doesn't answer.
  */
 function isEdTab_(sh) {
+  return edTabOwner_(sh) === 'bot';
+}
+
+/**
+ * Whose is this tab: 'bot' (A1 is exactly EDT_TITLE_ and row 4 exactly EDT_HEADER_), 'other' (anything else), or
+ * 'unknown' (Sheets threw while it was checked: not taken for a tab in the way). Reads only what it must: its row count,
+ * then A1, then (only when A1 is the bot's title) row 4. Never rows 2 and 3, never past row 4. Never throws.
+ */
+function edTabOwner_(sh) {
   try {
-    if (!sh || sh.getLastRow() < EDT_HEAD_ROW_) return false;
-    const top = sh.getRange(1, 1, EDT_HEAD_ROW_, EDT_HEADER_.length).getDisplayValues();
-    const head = top[EDT_HEAD_ROW_ - 1].map(v => String(v).trim());
-    return String(top[0][0]).trim() === EDT_TITLE_ && EDT_HEADER_.every((name, i) => head[i] === name);
+    if (!sh || sh.getLastRow() < EDT_HEAD_ROW_) return 'other';
+    if (String(sh.getRange(1, 1).getDisplayValue()).trim() !== EDT_TITLE_) return 'other';
+    const head = (sh.getRange(EDT_HEAD_ROW_, 1, 1, EDT_HEADER_.length).getDisplayValues()[0] || []).map(v => String(v).trim());
+    return EDT_HEADER_.every((name, i) => head[i] === name) ? 'bot' : 'other';
   } catch (e) {
-    return false;
+    return 'unknown';
   }
 }
 
@@ -314,6 +346,29 @@ function edTabBytes_(s) {
 function edTabOff_() {
   try { CacheService.getScriptCache().remove(EDT_WAIT_KEY_); } catch (e) { /* nothing to keep */ }
   noteEdTabBlocked_(false);
+}
+
+/** Does Status say a tab named "Early Detection" that the bot didn't make is in the way (EDT_BLOCKED_PROP_)? Never throws. */
+function edTabBlocked_() {
+  try {
+    return PropertiesService.getScriptProperties().getProperty(EDT_BLOCKED_PROP_) === 'true';
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * While Status says a tab is in the way and no row is to be written: one look at the tab of that name (getSheetByName,
+ * then edTabOwner_'s checks). When the name is free or the tab is the bot's again, Status no longer says so. A tab that
+ * is still in the way, or that Sheets couldn't check, leaves the note as it is. Nothing is written. Never throws.
+ */
+function edTabRecheck_(ss) {
+  try {
+    const found = ss.getSheetByName(EDT_NAME_);
+    if ((found ? edTabOwner_(found) : 'bot') === 'bot') noteEdTabBlocked_(false);
+  } catch (e) {
+    console.error('Early Detection tab: could not look at it again: ' + ((e && e.message) || e));
+  }
 }
 
 /** Remembers whether a tab named "Early Detection" that the bot didn't make is in the way (EDT_BLOCKED_PROP_). Never throws. */

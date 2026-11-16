@@ -121,7 +121,7 @@ module.exports = H => {
     note(w, NOW + MIN, sig(2), 'Reviewed and dismissed', 'Nothing for Google to act on');
     note(w, NOW + MIN, sig(3), 'Reviewed and dismissed', 'Nothing for Google to act on');
     eq(w.bot.maybeWriteEdTab_(ss, ctxAt(w, NOW + MIN), { deadline: NOW + 4 * MIN }).written, 2);
-    eq(log.splice(0), ['getSheetByName', 'getLastRow', 'getRange', 'getDisplayValues', 'insertRowsBefore', 'getRange', 'setValues',
+    eq(log.splice(0), ['getSheetByName', 'getLastRow', 'getRange', 'getDisplayValue', 'getRange', 'getDisplayValues', 'insertRowsBefore', 'getRange', 'setValues',
       'getRange', 'setValue', 'getRange', 'setFontWeight', 'setFontStyle', 'setBackground', 'setFontColor', 'setWrap', 'setVerticalAlignment',
       'getRange', 'setNumberFormat', 'getLastRow']);
     // and once more without a row: none
@@ -385,7 +385,7 @@ module.exports = H => {
     const tab = tabOf(ss);
     eq([tab.cell(5, 10), tab.cell(204, 10), tab.rows[204], waiting(w)],
       [sig(200).alert_id, sig(1).alert_id, ['2026-10-14 08:00', '1 outcome was not recorded (the runs were full)', '', '', '', '', '', '', '', ''], null]);
-    eq(w.bot.edTabLostRow_(12, NOW)[1], '12 outcomes were not recorded (the runs were full)');
+    eq(w.bot.edTabLostRow_(12, NOW)[1], '\'12 outcomes were not recorded (the runs were full)');  // written as text
   });
 
   // ---------------------------------------------------------------------------------------------------------------
