@@ -20,7 +20,7 @@
     "space": "spaces/AAQAonespace01",
     "thread": "spaces/AAQAonespace01/threads/t3",
     "reply": true,
-    "text": "The agentic assistant reviewed this alert and made these changes:\n- Product: Gems to Gemini App\n- Social Network: Instagram to X\n- Priority banner: P2 to P0\n- Engagement: LOW to HIGH"
+    "text": "The agentic assistant reviewed this alert and made these changes:\n- Product: Gems to Gemini App\n- Social Network: Instagram to X\n- Priority banner: P2 to P0\n- Engagement: LOW to HIGH\n*Alert requirements:* met for a Social Alert: 29,425 engagements (2,000+ needed)."
    },
    {
     "run": "04 Direct BigQuery finds the Pixel post",
@@ -34,7 +34,7 @@
     "space": "spaces/AAQAonespace01",
     "thread": "spaces/AAQAonespace01/threads/t5",
     "reply": true,
-    "text": "The agentic assistant reviewed this alert. The card above was posted before the review; the email uses these corrections:\n- Summary: X user @pixelcritic (3,200 followers) says their Pixel 10 battery swelled up after the latest update and that the back cover is lifting. The post does not say which update."
+    "text": "The agentic assistant reviewed this alert. The card above was posted before the review; the email uses these corrections:\n- Summary: X user @pixelcritic (3,200 followers) says their Pixel 10 battery swelled up after the latest update and that the back cover is lifting. The post does not say which update.\n*Alert requirements:* not met for a Social Alert (a P2 tag needs 2,000+ engagements, a KOF author or a Sensitive Topic; this post: 800 engagements, no KOF author). Monitoring only."
    },
    {
     "run": "06 the watch flags the Gemini post",
@@ -48,7 +48,7 @@
     "space": "spaces/AAQAonespace01",
     "thread": "spaces/AAQAonespace01/threads/t7",
     "reply": true,
-    "text": "🤖 *Triage: 👍 Worth a look · ✍️ T&S intake* · medium (80% sure)\nAn X user (@promptwatch, 18K followers) says the Gemini app invented a court ruling and cited it as real — A made-up legal citation from a Google AI product. (<https://x.com/promptwatch/status/2150000000000000003|@promptwatch on X>)\n• *SLRR:* Product - Factual inaccuracies (not dangerous/offensive) (P1), Gemini App — Below SLRR email bar (P1 needs 2,000+ engagements, a KOF author or a Sensitive Topic; this one: 520 engagements (the alert), not a KOF).\n• *T&S:* Gemini hallucination — <https://docs.google.com/forms/d/e/pub-form1/viewform?usp=pp_url&entry.880042=Marketing&entry.880007=Gemini&entry.880014=Information%20Quality&entry.880021=https%3A%2F%2Fx.com%2Fpromptwatch%2Fstatus%2F2150000000000000003&entry.880028=An%20X%20user%20%28%40promptwatch%2C%2018K%20followers%29%20says%20the%20Gemini%20app%20invented%20a%20court%20ruling%20and%20cited%20it%20as%20real.%20520%20engagements%20on%20X.|Open the test copy of the T&S Intake Form, pre-filled> (Gemini / Information Quality).\n• *Escalate if:* A KOF or 2,000+ engagements amplifying it."
+    "text": "🤖 *Triage: 👍 Worth a look · ✍️ T&S intake* · medium (80% sure)\nAn X user (@promptwatch, 18K followers) says the Gemini app invented a court ruling and cited it as real — A made-up legal citation from a Google AI product. (<https://x.com/promptwatch/status/2150000000000000003|@promptwatch on X>)\n• *Alert requirements:* not met for a Social Alert (a P1 tag needs 2,000+ engagements, a KOF author or a Sensitive Topic; this post: 520 engagements, no KOF author). No Social Alert; a T&S form is asked for below.\n• *T&S:* Gemini hallucination — <https://docs.google.com/forms/d/e/pub-form1/viewform?usp=pp_url&entry.880042=Marketing&entry.880007=Gemini&entry.880014=Information%20Quality&entry.880021=https%3A%2F%2Fx.com%2Fpromptwatch%2Fstatus%2F2150000000000000003&entry.880028=An%20X%20user%20%28%40promptwatch%2C%2018K%20followers%29%20says%20the%20Gemini%20app%20invented%20a%20court%20ruling%20and%20cited%20it%20as%20real.%20520%20engagements%20on%20X.|Open the test copy of the T&S Intake Form, pre-filled> (Gemini / Information Quality).\n• *Escalate if:* A KOF or 2,000+ engagements amplifying it."
    },
    {
     "run": "09 Direct BigQuery finds the Maps post and a story is found",
@@ -62,7 +62,7 @@
     "space": "spaces/AAQAonespace01",
     "thread": "spaces/AAQAonespace01/threads/t9",
     "reply": true,
-    "text": "🤖 *Early Detection Review: 👍 Monitor build-up* · medium (86% sure)\n*Why:* Several independent users describe the same data loss after one update.\n• *SLRR:* Product - Other/general criticism (P2) · Chrome.\n• *Draft Temp Check query:* `Chrome AND (tabs OR \"session restore\") AND update` (Last 6 hours across X and Reddit)\n• *Escalate if:* An official statement or press pickup."
+    "text": "🤖 *Early Detection Review: 👍 Monitor build-up* · medium (86% sure)\n*Why:* Several independent users describe the same data loss after one update.\n• *Alert requirements:* not met yet (small accounts, no KOF author, no P0 tag). Posted early because 6 accounts tell the same story.\n• *Draft Temp Check query:* `Chrome AND (tabs OR \"session restore\") AND update` (Last 6 hours across X and Reddit)\n• *Escalate if:* An official statement or press pickup."
    },
    {
     "run": "09 Direct BigQuery finds the Maps post and a story is found",
@@ -76,21 +76,28 @@
     "space": "spaces/AAQAonespace01",
     "thread": "spaces/AAQAonespace01/threads/t11",
     "reply": true,
-    "text": "The agentic assistant reviewed this alert. The card above was posted before the review; the email uses these corrections:\n- Summary: X user @roadwatcher (41,000 followers) says Google Maps keeps sending drivers onto a closed bridge and calls the routing biased toward toll roads. The post does not name the bridge."
+    "text": "The agentic assistant reviewed this alert. The card above was posted before the review; the email uses these corrections:\n- Summary: X user @roadwatcher (41,000 followers) says Google Maps keeps sending drivers onto a closed bridge and calls the routing biased toward toll roads. The post does not name the bridge.\n*Alert requirements:* met for a Social Alert: P0 exposure tag (Product - Perceived bias) · 2,400 engagements (2,000+ needed)."
+   },
+   {
+    "run": "10 the Maps card is reviewed and the watch flags the Maps post too",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t11",
+    "reply": true,
+    "text": "🔭 *Also flagged by the watch “Google brand safety (all)”.* No separate Watch alert: this card already covers the post."
    },
    {
     "run": "12 a story whose main post is the Pixel post",
     "space": "spaces/AAQAonespace01",
-    "thread": "spaces/AAQAonespace01/threads/t13",
+    "thread": "spaces/AAQAonespace01/threads/t14",
     "reply": false,
     "text": "🚨 *EARLY DETECTION* · New story\n*Pixel 10 owners say batteries are swelling after the update*\n*Product:* Pixel\n*Exposure Tag:* Product - Other/general criticism (P2)\n*Sensitive Topic:* None\n*KOF:* No (5 small, non-KOF accounts)\n\n*What's happening:* Owners describe <https://x.com/pixelcritic/status/2150000000000000001|swollen batteries> on X and <https://www.reddit.com/r/GooglePixel/comments/1p9xyz/battery_swelling/|Reddit>.\n*Post:* \"My Pixel 10 battery swelled up after the latest update, the back cover is lifting.\"\n*Call:* 👍 Monitor build-up: Several independent owners describe the same hardware safety symptom\n*Activity:* 5 small accounts on X and Reddit posted about this 6 times at 7:42 AM ET\n*Next steps:*\n1. Keep monitoring for volume growth and re-check in 2 hours.\n*Posts:* <https://x.com/pixelcritic/status/2150000000000000001|@pixelcritic> (X) · <https://x.com/droidfan22/status/2150000000000000022|@droidfan22> (X) · <https://www.reddit.com/r/GooglePixel/comments/1p9xyz/battery_swelling/|@u_pixel_owner> (Reddit)"
    },
    {
     "run": "12 a story whose main post is the Pixel post",
     "space": "spaces/AAQAonespace01",
-    "thread": "spaces/AAQAonespace01/threads/t13",
+    "thread": "spaces/AAQAonespace01/threads/t14",
     "reply": true,
-    "text": "🤖 *Early Detection Review: 👍 Monitor build-up* · medium (86% sure)\n*Why:* Several independent owners describe the same hardware safety symptom.\n• *SLRR:* Product - Other/general criticism (P2) · Pixel.\n• *Draft Temp Check query:* `\"Pixel 10\" AND (battery OR swelling OR swollen)` (Last 6 hours across X and Reddit)\n• *Escalate if:* An official statement or press pickup.\n*Related alert:* its main post already has a card (QA-1002 · BigQuery · BSIP, 8:07 AM ET)"
+    "text": "🤖 *Early Detection Review: 👍 Monitor build-up* · medium (86% sure)\n*Why:* Several independent owners describe the same hardware safety symptom.\n• *Alert requirements:* not met yet (small accounts, no KOF author, no P0 tag). Posted early because 5 accounts tell the same story.\n• *Draft Temp Check query:* `\"Pixel 10\" AND (battery OR swelling OR swollen)` (Last 6 hours across X and Reddit)\n• *Escalate if:* An official statement or press pickup.\n*Related alert:* its main post already has a card (QA-1002 · BigQuery · BSIP, 8:07 AM ET)"
    },
    {
     "run": "12 a story whose main post is the Pixel post",
@@ -139,7 +146,7 @@
    },
    {
     "run": "12 a story whose main post is the Pixel post",
-    "on": "spaces/AAQAonespace01/messages/m13",
+    "on": "spaces/AAQAonespace01/messages/m14",
     "emoji": "👍"
    }
   ],
