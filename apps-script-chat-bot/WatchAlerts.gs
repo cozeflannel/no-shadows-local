@@ -46,7 +46,8 @@
  * The queue is the Watch detections tab itself: a flag recorded while B35 isn't OFF waits there (its hidden key, a: 'q')
  * until it's posted (a: 'p', with the message, its thread and when) or listed in its story's alert's thread (a: 'g'),
  * PW_ALERTS_MAX_OTHER_ / PW_ALERTS_MAX_MIRROR_ alerts a run, the highest scores first; one that couldn't go out within
- * PW_ALERT_MAX_AGE_MS_ of being seen is dropped (a: 'x'). None
+ * PW_ALERT_MAX_AGE_MS_ of being seen is dropped (a: 'x'); one on a post that already had an alert isn't posted (a: 'd';
+ * a: 'u' when a note naming its watch went under that alert's card in the Auto-correct space: pwPostAlerts_). None
  * goes to the Mirror space while its flow ran out of time on the last run (Burson's alerts come first). Never into S-F
  * Burson (B25), the Burson test copy (B26) or a space people outside Google can join (Chat.gs refuses them too).
  * C35 says where they go and, for the day, how every queued flag ended: each flag in one count, on the day it ends, the
@@ -105,6 +106,13 @@ const PW_STORY_RECENT_MAX_ = 10;                  // the alerts posted lately th
 const PW_STORY_POOL_MAX_ = 60;                    // ...of this many at most: the closest in meaning to the run's flags (pwStoriesShown_)
 const PW_STORY_REPLIES_MAX_ = 6;                  // same-story replies posted in alerts' threads a run, at most
 const PW_STORY_LIST_MAX_ = 15;                    // posts listed in one same-story reply
+// P4b (setting cross_alert_notes, only for the Auto-correct space): a flag on a post that already has a card there gets
+// no card of its own, and one note goes under that card (ThreadNotes.gs acThreadNote_), naming up to this many watches;
+// the flag's key then says a: 'u' ("listed under another alert"), else a: 'd' ("already alerted") as before
+const PW_COVER_NAMES_MAX_ = 3;
+// ...a flag whose post was carded this recently (the alert memory's claim) and whose card isn't in the Alert log yet
+// waits on the tab for the next run, so its note can go under that card
+const PW_COVER_WAIT_MS_ = 10 * 60 * 1000;
 // An alert of its own only for a flag that matters by itself (pwSolo_): SLRR's own collection thresholds (a KOF author,
 // 100+ engagements, a P0 tag). The small ones wait and go out together, as ONE alert, once enough accounts tell the same
 // story (pwBrewing_): the build-up is the news, not each small post.
@@ -803,11 +811,13 @@ function pwNoChatIds_(text, space) {
  * Posts and conversation thread IDs already alerted across Watch detections (`block`) and the non-autocorrect Alert log
  * (`ss`): {done (Map: record key -> the alert it had), doneThreadIds (Map: platform post/thread ID -> the same)}. The
  * alert is in words, for the log line of a flag that isn't posted again (pwPostAlerts_): a Watch alert (pwAlertWords_),
- * Burson's alert and when, or the Alert log's alert by its id; the first one found for a key stays. Never throws.
+ * Burson's alert and when, or the Alert log's alert by its id; the first one found for a key stays. Also `rows`: the
+ * Alert log's rows as read ([] when it wasn't), for the cards that cover a post (pwCoverCards_). Never throws.
  */
 function pwAlertedState_(ss, block, choice) {
   const done = new Map();
   const doneThreadIds = new Map();
+  let rows = [];
   const add = (map, key, what) => { if (key && !map.has(key)) map.set(key, what); };
   const markUrl = (raw, what) => {
     const u = String(raw || '').replace(/^'/, '').trim();
@@ -829,6 +839,7 @@ function pwAlertedState_(ss, block, choice) {
     try {
       const osSuffix = typeof OS_PARTITION_SUFFIX_ === 'string' ? OS_PARTITION_SUFFIX_ : ' (other alerts)';
       const alerts = sheetBackend_(ss).loadAlerts() || [];
+      rows = alerts;
       alerts.forEach(r => {
         const sp = String((r && r.space) || '');
         if (!r || (choice !== 'autocorrect' && sp.endsWith(AC_PARTITION_SUFFIX_)) ||
@@ -842,7 +853,88 @@ function pwAlertedState_(ss, block, choice) {
       console.warn('Watch alerts: could not read Alert log for pre-post dedup: ' + ((e && e.message) || e));
     }
   }
-  return { done, doneThreadIds };
+  return { done, doneThreadIds, rows: Array.isArray(rows) ? rows : [] };
+}
+
+/**
+ * The note under another alert's card (P4b, setting cross_alert_notes) is for this run: the watch's alerts go to the
+ * Auto-correct space (B10) and the setting is on. Never throws.
+ */
+function pwCrossNotesOn_(dest) {
+  try {
+    return !!(dest && dest.choice === 'autocorrect' && dest.space && dest.space.id) &&
+      !!(GEN && GEN.settings && GEN.settings.cross_alert_notes !== false);
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * The cards already in the Auto-correct space (`space`: this run's destination, {id, name}), for the note under the card
+ * that covers a flagged post: {byKey: Map(record key -> card), byId: Map(alert id -> card)}. A card is what
+ * ThreadNotes.gs acThreadNote_ takes: {forward_thread, forward_message} and, when known, how old it is (created_at,
+ * source_at). From the Alert log's rows of the Auto-correct flow (`rows`: pwAlertedState_'s; the newest row for a post
+ * wins), else from this tab (`block`): a Watch alert posted in that space (a: 'p': its message and thread, posted at
+ * `at`) or the Watch alert whose thread lists the post (a: 'g': its message is `pm`; no age is given, so the helper
+ * counts the card's notes in its thread). Pure.
+ */
+function pwCoverCards_(rows, block, space) {
+  const byKey = new Map();
+  const byId = new Map();
+  const id = String((space && space.id) || '');
+  if (!id) return { byKey, byId };
+  const inSpace = (thread, message) => String(thread || '').indexOf(`${id}/threads/`) === 0 &&
+    String(message || '').indexOf(`${id}/messages/`) === 0;
+  const suffix = typeof AC_PARTITION_SUFFIX_ === 'string' ? AC_PARTITION_SUFFIX_ : ' (auto-correct)';
+  (rows || []).forEach(r => {
+    if (!r || !String(r.space || '').endsWith(suffix) || !inSpace(r.forward_thread, r.forward_message)) return;
+    const card = { forward_thread: String(r.forward_thread), forward_message: String(r.forward_message),
+      created_at: Number(r.created_at) || 0, source_at: Number(r.source_at) || 0 };
+    if (r.alert_id) byId.set(String(r.alert_id), card);
+    const key = String(r.record_key || '');
+    const had = key ? byKey.get(key) : null;
+    if (key && (!had || card.created_at >= had.created_at)) byKey.set(key, card);
+  });
+  ((block && block.values) || []).forEach(v => {
+    const k = pwKeyOf_(v[PW_COL_.key - 1]);
+    if (!k || !k.k || byKey.has(String(k.k)) || k.sp !== id) return;
+    if (k.a === 'p' && inSpace(k.t, k.m)) {
+      byKey.set(String(k.k), { forward_thread: String(k.t), forward_message: String(k.m), created_at: Number(k.at) || 0 });
+    } else if (k.a === 'g' && inSpace(k.t, k.pm)) {
+      byKey.set(String(k.k), { forward_thread: String(k.t), forward_message: String(k.pm) });
+    }
+  });
+  return { byKey, byId };
+}
+
+/**
+ * The card in the Auto-correct space that covers the post of flag `q` (its key's record key `k`), or null: the post's
+ * own card (pwCoverCards_'s byKey), else the newest alert the alert memory says saw the post (`memSeen`: its seenPost
+ * answer; its ids, the latest last) that has a card there. Pure.
+ */
+function pwCoverCardOf_(cards, q, memSeen) {
+  if (!cards || !q || !q.k) return null;
+  const own = cards.byKey.get(String(q.k.k || ''));
+  if (own) return own;
+  const ids = memSeen ? [memSeen.alert_id].concat(memSeen.ids || []).map(x => String(x || '')).filter(Boolean) : [];
+  for (let i = ids.length - 1; i >= 0; i--) {
+    if (cards.byId.has(ids[i])) return cards.byId.get(ids[i]);
+  }
+  return null;
+}
+
+/**
+ * The note under the card that covers a post the watch flagged (P4b), for the watches that flagged it in this run
+ * (`names`, at most PW_COVER_NAMES_MAX_): "🔭 *Also flagged by the watch “Midterms 2026 × Google”.* No separate Watch
+ * alert: this card already covers the post." (two or three: "… the watch “A” and the watch “B” …"). Its first words are
+ * registered (Voice.gs THREAD_NOTE_HEADS_). Pure.
+ */
+function pwAlsoFlaggedText_(names) {
+  const list = (names || []).map(n => truncate_(String(n === undefined || n === null ? '' : n)
+    .replace(/[<>|*“”\r\n]+/g, ' ').replace(/\s+/g, ' ').trim(), 80)).filter(Boolean).slice(0, PW_COVER_NAMES_MAX_);
+  const named = (list.length ? list : ['Proactive watch']).map(n => `the watch “${n}”`);
+  const said = named.length > 1 ? `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}` : named[0];
+  return `${PW_ALERT_HEAD_} *Also flagged by ${said}.* No separate Watch alert: this card already covers the post.`;
 }
 
 // --------------------------------------------------------------------------------------------------------------
@@ -1782,7 +1874,7 @@ function pwWaitWhy_() {
  * destination space's flow ran out of time. `left`: ms of the run left; `opts`: {ss, otherBusy, acBusy}. {posted,
  * grouped, held, repeats, offTopic, builds, waiting, problem, error, and how the flags that ended a: 'd', 'x' or 'n'
  * did: already (on a post, or in a thread, that already had an alert), noted (how many of those were noted under that
- * alert's card: none yet, nothing posts such a note), twin (a second watch's flag on a post another watch's flag carries
+ * alert's card: P4b below), twin (a second watch's flag on a post another watch's flag carries
  * in this run), notEnglish, dropped (after PW_ALERT_MAX_AGE_MS_), empty (nothing to show), and unheld (the small flags
  * held earlier today that this run took out of that state, into their story's alert's thread or as a repeat)}: each flag
  * that ends is in exactly one of today's counts (pwAlertDay_), which C35 shows (pwAlertCountsText_); `held` counts a
@@ -1790,7 +1882,14 @@ function pwWaitWhy_() {
  * so a flag that waited and then went out is counted once, where it ended. Each flag that ends without a card
  * leaves one log line with its link: one not posted again (a: 'd') says which alert it matched, or that another watch's
  * flag carries the post, or that it is not in English; one dropped (a: 'x') says why flags were waiting (pwWaitWhy_: the
- * last run that left any waiting, else this run's reason). Never throws.
+ * last run that left any waiting, else this run's reason).
+ * P4b (setting cross_alert_notes, only when the alerts go to the Auto-correct space: pwCrossNotesOn_): a flag on a post
+ * that already has a card in that space (pwCoverCards_: the Alert log's row of the card, or this tab's Watch alert) gets
+ * no card of its own, as before, and one note goes under that card (ThreadNotes.gs acThreadNote_: pwAlsoFlaggedText_,
+ * one a card, up to PW_COVER_NAMES_MAX_ watches that flagged it in the run); its key then says a: 'u' ("listed under
+ * another alert"; the code that reads the letters reads only q, b, p and g, so 'u' is closed as 'd' is), and stays a: 'd'
+ * when the note wasn't posted. A flag on a post carded in the last PW_COVER_WAIT_MS_ whose card has no Alert-log row yet
+ * stays queued for the next run (and is dropped after its 3 hours like any waiting flag). Never throws.
  */
 function pwPostAlerts_(sh, dest, now, left, opts) {
   const out = { posted: 0, grouped: 0, held: 0, repeats: 0, offTopic: 0, builds: 0, waiting: 0, already: 0, noted: 0, twin: 0,
@@ -1803,7 +1902,11 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       if (k && k.a === 'q') queued.push({ i, k, v });
     });
     if (!queued.length) return out;
-    const { done, doneThreadIds } = pwAlertedState_(opts && opts.ss, block, dest && dest.choice);
+    const { done, doneThreadIds, rows } = pwAlertedState_(opts && opts.ss, block, dest && dest.choice);
+    // P4b: the cards in the Auto-correct space that can take a note for a flag on their post (null: no notes this run)
+    const cover = pwCrossNotesOn_(dest) ? pwCoverCards_(rows, block, dest.space) : null;
+    const covered = [];   // [{q, card, why}]: flags on a post that has a card there, for the notes (below the filter)
+    const coverWait = new Set();  // flags whose post was carded so lately that its card isn't in the Alert log yet: they wait
     const writes = [];  // [index in the block, the key to write]
     // The small flags held on an earlier run (a: 'b') that this run takes out of that state, whatever it makes of them:
     // row -> when it was held. Those held today leave today's count of held flags (below)
@@ -1833,10 +1936,30 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       const alerted = done.has(q.k.k) || memSeen || bursonAt || (qPid && doneThreadIds.has(qPid));
       if (alerted) {
         // the alert it matched: this tab's or the Alert log's, else the alert memory's, else Burson's, else its thread's
-        same(q, 'already', done.has(q.k.k) ? `it already had an alert: ${done.get(q.k.k)}`
+        const why = done.has(q.k.k) ? `it already had an alert: ${done.get(q.k.k)}`
           : memSeen ? `it already had an alert: ${memSeen.why || 'the alert memory has it'}`
             : bursonAt ? `it already had an alert: Burson's alert (${bursonAt} ET)`
-              : `a post of its thread already had an alert: ${doneThreadIds.get(qPid)}`);
+              : `a post of its thread already had an alert: ${doneThreadIds.get(qPid)}`;
+        // P4b: its post's card in the Auto-correct space gets a note (below); a post carded in the last minutes whose
+        // card isn't in the Alert log yet waits for it (but no longer than any flag waits)
+        const card = cover ? pwCoverCardOf_(cover, q, memSeen) : null;
+        const young = now - Math.max(Number(q.k.s) || 0, Number(q.k.rq) || 0) <= PW_ALERT_MAX_AGE_MS_;
+        if (card) {
+          covered.push({ q, card, why });
+        } else if (cover && memSeen && now - (Number(memSeen.at) || 0) <= PW_COVER_WAIT_MS_) {
+          if (!young) {  // it waited its 3 hours: dropped like any waiting flag
+            mark(q, { a: 'x' });
+            out.dropped++;
+            late.push(q);
+            return false;
+          }
+          coverWait.add(q.i);
+          console.log(`Watch alerts: ${pwNoChatIds_(`${linkOf(q)} waits for the next run: its post's card ` +
+            `(${memSeen.why || 'just posted'}) isn't in the Alert log yet, and the note goes under it`, dest.space)}`);
+          return true;
+        } else {
+          same(q, 'already', why);
+        }
         return false;
       }
       if (isNonEnglishPost_(qSum, '')) {
@@ -1848,6 +1971,31 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       out.dropped++;
       late.push(q);
       return false;
+    });
+    // P4b: one note under each covering card, naming the watches that flagged its post in this run (up to
+    // PW_COVER_NAMES_MAX_). A flag the note names is "listed under another alert" (a: 'u'); any other, or one whose note
+    // wasn't posted (the helper refused it, the caps, Chat, too little of the run left), "already alerted" as before
+    // (a: 'd'). Either way it is counted as on a post that already had an alert; the noted ones also as noted
+    const byCard = new Map();
+    covered.forEach(c => {
+      const key = c.card.forward_message;
+      if (!byCard.has(key)) byCard.set(key, []);
+      byCard.get(key).push(c);
+    });
+    byCard.forEach((list, message) => {
+      const names = Array.from(new Set(list.map(c => String(c.q.k.w || '')))).slice(0, PW_COVER_NAMES_MAX_);
+      const timeOk = (typeof left === 'function' ? left() : Infinity) >= PW_MIN_LEFT_MS_;
+      const noted = timeOk && acThreadNote_(dest, list[0].card, pwAlsoFlaggedText_(names), `watch:${message}`);
+      list.forEach(c => {
+        if (!noted || names.indexOf(String(c.q.k.w || '')) < 0) {
+          same(c.q, 'already', c.why);
+          return;
+        }
+        mark(c.q, { a: 'u' });
+        out.already++;
+        out.noted++;
+        ended.push(`not posting ${linkOf(c.q)}: ${c.why}; noted under that alert's card`);
+      });
     });
     let problem = !dest || !dest.choice ? 'Watch alerts (row 35) is OFF' : dest.problem || '';
     let stopped = '';  // with no problem, why flags were left for the next run: 'time' or 'capped' (pwPostStories_)
@@ -1869,6 +2017,7 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       const keys = new Map();  // record key -> the watch whose flag carries the post
       const items = [];
       for (const q of fresh) {
+        if (coverWait.has(q.i)) continue;  // waits for its post's card (P4b): counted with the flags waiting
         if (items.length >= PW_PREREAD_MAX_) {
           stopped = 'capped';
           break;
@@ -1919,6 +2068,9 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     if (out.waiting) {
       pwWaitWhyKeep_(pwNoChatIds_(problem || (stopped === 'time' ? 'the run ran short of time before it reached them'
         : stopped === 'capped' ? 'more flags were waiting than one run reads and posts' : 'they were not reached this run'), space), now);
+      if (coverWait.size && out.waiting === coverWait.size) {
+        pwWaitWhyKeep_('the card of their post was not in the Alert log yet, to put the note under it', now);
+      }
     }
     if (out.held || out.repeats || out.offTopic) {
       console.log(`Watch alerts: not posted on their own: ${out.held} small (waiting for ${PW_BREW_MIN_ACCOUNTS_} accounts on one ` +

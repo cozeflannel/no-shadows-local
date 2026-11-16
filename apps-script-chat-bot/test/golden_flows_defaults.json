@@ -77,6 +77,13 @@
     "thread": "spaces/AAQAonespace01/threads/t11",
     "reply": true,
     "text": "The agentic assistant reviewed this alert. The card above was posted before the review; the email uses these corrections:\n- Summary: X user @roadwatcher (41,000 followers) says Google Maps keeps sending drivers onto a closed bridge and calls the routing biased toward toll roads. The post does not name the bridge."
+   },
+   {
+    "run": "10 the Maps card is reviewed and the watch flags the Maps post too",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t11",
+    "reply": true,
+    "text": "🔭 *Also flagged by the watch “Google brand safety (all)”.* No separate Watch alert: this card already covers the post."
    }
   ],
   "test_copy": [],

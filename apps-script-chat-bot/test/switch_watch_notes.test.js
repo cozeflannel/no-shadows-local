@@ -251,7 +251,8 @@ module.exports = H => {
     eq(bqCards().length, 2);
     look(w, [golden.rows.pixelHit(), golden.rows.mapsHit()]);
     const keys = keysOf(t);
-    eq([keys[`${golden.posts.PIXEL}|${BRAND}`].a, keys[`${golden.posts.MAPS}|${BRAND}`].a], ['d', 'd']);
+    // (cross_alert_notes, on by default: a note went under each card, so each flag is "listed under another alert")
+    eq([keys[`${golden.posts.PIXEL}|${BRAND}`].a, keys[`${golden.posts.MAPS}|${BRAND}`].a], ['u', 'u']);
     counts(t, { posted: 1, grouped: 1, held: 2, empty: 1, offTopic: 1, already: 2 });
     assert.ok(t.g.gmail.sentMessages().some(m => m.subject.includes(MAPS_STORY)), 'the Maps card ended in a Social Alert');
     // 7. another account on the story of that Social Alert: a repeat
@@ -284,9 +285,10 @@ module.exports = H => {
     counts(t, ended);
     const letters = Object.values(keysOf(t)).filter(k => k.b === 1).map(k => k.a || 'none');
     const tally = l => letters.filter(x => x === l).length;
-    eq([tally('p'), tally('g'), tally('b'), tally('r'), tally('o'), tally('d'), tally('x'), tally('n'), tally('q'), tally('none')],
+    eq([tally('p'), tally('g'), tally('b'), tally('r'), tally('o'), tally('d') + tally('u'), tally('x'), tally('n'), tally('q'), tally('none')],
       [ended.posted, ended.grouped, ended.held, ended.repeats, ended.offTopic, ended.already + ended.twin + ended.notEnglish,
         ended.dropped, ended.empty, 0, 1]);
+    eq(tally('u'), 2);
     const counted = Object.keys(ended).reduce((n, k) => n + ended[k], 0);
     // every flag is in one of C35's counts, but the one recorded while B35 was OFF (post 1)
     eq([flagged, counted, flagged - counted], [14, 13, tally('none')]);
@@ -304,8 +306,8 @@ module.exports = H => {
     eq(t.g.logs.filter(l => /^Watch alerts: (?:not posting|dropped) /.test(l)), [
       `Watch alerts: not posting ${P(8)}: no summary, text or picture to show analysts`,
       `Watch alerts: not posting ${P(9)}: the pre-read says it isn't about Google`,
-      `Watch alerts: not posting ${golden.posts.PIXEL}: it already had an alert: already seen (${idOf(golden.posts.PIXEL)})`,
-      `Watch alerts: not posting ${golden.posts.MAPS}: it already had an alert: ${idOf(golden.posts.MAPS)} in the Alert log`,
+      `Watch alerts: not posting ${golden.posts.PIXEL}: it already had an alert: already seen (${idOf(golden.posts.PIXEL)}); noted under that alert's card`,
+      `Watch alerts: not posting ${golden.posts.MAPS}: it already had an alert: ${idOf(golden.posts.MAPS)} in the Alert log; noted under that alert's card`,
       `Watch alerts: not posting ${P(13)}: the watch "${MIDTERMS}" flagged it too: the flag of "${BRAND}" on the same post is the one that goes on`,
       `Watch alerts: not posting ${P(14)}: the post is not in English`,
       `Watch alerts: dropped ${P(15)}: not posted within 3 hours of being seen (${B.pwTime_(keysOf(t)[`${P(15)}|${BRAND}`].s)} ET): ` +
@@ -336,9 +338,12 @@ module.exports = H => {
     // the Midterms watch flags the posted post too, a look later
     w.watch(MIDTERMS, true);
     look(w, [flag(21, { watch: MIDTERMS, idx: 2, impact: 7.5 })]);
-    eq([letter(t, 21, MIDTERMS), cards(t).length], ['d', 1]);
+    // (cross_alert_notes, on by default: its post has that Watch alert's card, so a note goes under it, "listed under
+    // another alert"; the flag on the thread's other post gets none: it is not that card's post)
+    eq([letter(t, 21, MIDTERMS), cards(t).length], ['u', 1]);
     counts(t, { posted: 1, already: 2 });
-    eq(notPosted().slice(1), [`Watch alerts: not posting ${P(21)}: it already had an alert: ${CARD}`]);
+    assert.match(c35(t), /, 2 on a post that already had an alert \(1 noted in its thread\)/);
+    eq(notPosted().slice(1), [`Watch alerts: not posting ${P(21)}: it already had an alert: ${CARD}; noted under that alert's card`]);
   });
 
   // -----------------------------------------------------------------------------------------------------------
