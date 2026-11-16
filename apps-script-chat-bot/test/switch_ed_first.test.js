@@ -499,6 +499,95 @@ module.exports = H => {
     eq([w.t.bot.bqIsStoryCard_(null), w.t.bot.bqIsStoryCard_({}), w.t.bot.bqIsStoryCard_({ name: 'spaces/X/messages/m1', clientId: 'client-bqa-abc' })], [false, false, false]);
   });
 
+  test('early detection first: a post a producer\'s card was claimed for stays stopped when a story\'s card comes on top of it. A Watch alert was posted for the post (the watch claims the post in the alert memory when it posts one; here the claim alone, as for a card in a space this flow doesn\'t read and that isn\'t triaged yet), then a story with that main post is reviewed and posted: the alert memory says a story saw the post and a watch card was claimed for it, and the poll posts no Direct BigQuery card', () => {
+    const w = oneSpace(ON);
+    const { t, rec, feed } = w;
+    w.review = mapsReview(false);
+    t.bot.__afterFlow = null;
+    t.bot.ev('runOnce_ = (orig => function (ctx) { const r = orig(ctx); if (__afterFlow) __afterFlow(ctx); return r; })(runOnce_)');
+    let claimed = null;
+    t.bot.__afterFlow = ctx => { claimed = t.bot.amOf_(ctx).claim(MAPS, 'watch', { author: '@roadwatcher', network: 'X', engagement: 2400 }); };
+    rec.step('a Watch alert is posted for the post', 1);
+    eq(claimed, true);
+    let seen = null;
+    t.bot.__afterFlow = ctx => { seen = t.bot.amOf_(ctx).seenPost(MAPS); };
+    rec.step(STORY_RUN, 4, () => { feed.stories = [mapsStory()]; });
+    eq([seen.outcome, seen.ids, seen.claim], ['claimed', [], 'watch']);  // before the story: a claim and no alert yet
+    rec.step(POST_RUN, 5, () => { feed.bsip = [golden.rows.mapsRow()]; });
+    [1, 5, 1].forEach(minutes => rec.step('after', minutes));
+    const out = rec.out();
+    const kinds = label => out.chat.filter(m => m.run === label).map(kind);
+    const rows = t.bot.sheetBackend_(t.sheet()).loadAlerts().filter(r => r.record_key === t.bot.recordKey_({ post_url: MAPS }));
+    eq([kinds(STORY_RUN), kinds(POST_RUN), kinds('after'), rows.map(r => [r.ingested, r.email_status || '']), out.emails],
+      [['story card', 'story review note'], [], [], [['Early detection', '']], []]);
+    // what the memory says of the post now: a story saw it, and the watch's card was claimed for it
+    eq([seen.outcome, seen.ids, seen.claim, t.bot.bqStoryCardRow_(rows[0], t.g.clock.now)], ['seen', [rows[0].alert_id], 'watch', true]);
+    eq(t.g.logs.filter(l => /is in a story's card/.test(l)), []);
+  });
+
+  test('early detection first: the run log says that a post in a story\'s card is still looked at only at a check where it is: once when its card is posted (the feed handing the post over at every later check adds no line), and once when Step 1 leaves it out, not again at the checks of the next hour that pass it over; with Step 1\'s memory of it gone (the script cache dropped it), the post is weighed again at the next check and the line says so again', () => {
+    const line = t => t.g.logs.filter(l => /^BigQuery direct poll: \S+ is in a story's card/.test(l)).length;
+    const cards = w => w.rec.out().chat.filter(m => kind(m) === 'Direct BigQuery card').length;
+    const start = () => {
+      const w = oneSpace(ON);
+      w.review = mapsReview(false);
+      w.rec.step(STORY_RUN, 5, () => { w.feed.stories = [mapsStory()]; });
+      w.feed.bsip = [golden.rows.mapsRow()];  // from now on the feed has the post at every check
+      return w;
+    };
+    const minutes = (w, n) => { for (let i = 0; i < n; i++) w.rec.step('a minute', 1); };
+    // its card is posted at the first check: one line, and none at the 5 checks after it
+    const posted = start();
+    minutes(posted, 30);
+    eq([posted.polls.length - 3 >= 6, line(posted.t), cards(posted)], [true, 1, 1]);
+    // Step 1 leaves it out: one line, at the check that weighed it
+    const left = start();
+    left.t.g.vertex.bqRecords = () => ({ solo_alerts: [], group_waves: [], discarded_ids: ['c0'] });
+    minutes(left, 30);
+    eq([left.polls.length - 3 >= 6, line(left.t), cards(left)], [true, 1, 0]);
+    // ...and again once it is weighed again
+    const step1Keys = () => Array.from(left.t.g.cache.keys()).filter(k => /^bqstep1:/.test(k));
+    eq(step1Keys().length, 1);
+    step1Keys().forEach(k => left.t.g.cache.delete(k));
+    minutes(left, 10);
+    eq([line(left.t), cards(left)], [2, 0]);
+  });
+
+  test('early detection first: a Direct BigQuery check reads the record of the story cards the bot posted (the script property ED_ALERT_POSTED) once, however many messages wait in the space, replies included; with the setting off it never reads it; and a story card is known by that record as by its own lookup', () => {
+    const reads = overrides => {
+      const w = oneSpace(overrides);
+      const { t, rec, feed } = w;
+      // a card's thread with 40 replies from people, written in the minutes before the check
+      const card = t.chat.say(golden.spaces.AC, 'a card', { sender: 'users/bot' });
+      for (let i = 0; i < 40; i++) t.chat.say(golden.spaces.AC, `a reply ${i}`, { thread: card.thread.name, sender: 'users/analyst9', displayName: 'Dana Lee' });
+      t.bot.__edReads = [];
+      t.bot.ev('PropertiesService = (ps => ({ getScriptProperties: () => { const p = ps.getScriptProperties(); ' +
+        'return Object.assign({}, p, { getProperty: k => { if (k === "ED_ALERT_POSTED") __edReads.push(k); return p.getProperty(k); } }); } }))(PropertiesService)');
+      const checks = w.polls.length;
+      rec.step('a check with a post', 5, () => { feed.bsip = [golden.rows.bsipRow()]; });
+      return { reads: t.bot.__edReads.length, checked: w.polls.length - checks, cards: rec.out().chat.filter(m => kind(m) === 'Direct BigQuery card').length };
+    };
+    eq([reads(ON), reads(OFF)], [{ reads: 1, checked: 1, cards: 1 }, { reads: 0, checked: 1, cards: 1 }]);
+    // the record read once says of each message what the lookup of one message says
+    const w = oneSpace(ON);
+    w.review = mapsReview(false);
+    w.rec.step('a story', 5, () => { w.feed.stories = [mapsStory()]; });
+    const B2 = w.t.bot;
+    const msgs = B2.chatListMessages_(golden.spaces.AC, new Date(w.t.g.clock.now - 60 * MIN).toISOString(), 100);
+    const story = msgs.find(m => !m.threadReply && /^🚨 \*EARLY DETECTION\*/.test(m.text));
+    const plain = m => Object.assign({}, m, { clientId: '' });  // as with Chat's custom ids gone: only the record tells
+    const record = B2.bqStoryCardsPosted_();
+    assert.ok(story && record.size >= 1, 'a story card was posted and recorded');
+    eq(msgs.map(m => B2.bqIsStoryCard_(plain(m), record)), msgs.map(m => B2.bqIsStoryCard_(plain(m))));
+    eq([B2.bqIsStoryCard_(plain(story), record), B2.bqIsStoryCard_(plain(story), new Set()), B2.bqIsStoryCard_(story, new Set()),
+      B2.bqIsStoryCard_(null, record), B2.bqIsStoryCard_({}, record)], [true, false, true, false, false]);
+    // a record that can't be read is an empty one
+    w.t.g.props.set('ED_ALERT_POSTED', 'not json');
+    eq([B2.bqStoryCardsPosted_().size, B2.bqIsStoryCard_(plain(story), B2.bqStoryCardsPosted_())], [0, false]);
+    w.t.g.props.set('ED_ALERT_POSTED', '{"a":1}');
+    eq(B2.bqStoryCardsPosted_().size, 0);
+  });
+
   test('early detection first: a story\'s card is left out of the earlier alerts only for the review of the post\'s own Direct BigQuery card, and only where stories go first (bqStoryOnOwnPost_): never in a flow without that mark, for an alert that is no Direct BigQuery card, for a row on another post, for a story whose Social Alert went out or is on its way, or for any other kind of row. An alert of Burson\'s on a story\'s main post is reviewed as it was before the change, with the setting on as with it off: the story\'s card is an earlier alert on the post, so the issue is an ongoing one', () => {
     const B = H.B;
     const NOW = 1791980000000;

@@ -2203,15 +2203,32 @@ function bqOnlyStoryCards_(ctx, seen, now) {
 
 /**
  * A message that is one of the bot's own Early Detection cards: its id says so (Chat's, or the one the bot kept for
- * it), else the record of the cards it posted (edAlertPosted_). Such a card was reviewed before it was posted: it is
- * not a post waiting in the space to be reviewed (bqWaitingKeys_). Never throws.
+ * it), else the record of the cards it posted (edAlertPosted_; `posted`: that record as bqStoryCardsPosted_ read it,
+ * for a caller that asks about many messages, so the script property is read once and not once a message). Such a
+ * card was reviewed before it was posted: it is not a post waiting in the space to be reviewed (bqWaitingKeys_).
+ * Never throws.
  */
-function bqIsStoryCard_(m) {
+function bqIsStoryCard_(m, posted) {
   try {
     if (!m || !m.name) return false;
-    return String(m.clientId || '').indexOf(ED_ALERT_ID_PREFIX_) === 0 || edAlertPosted_(m.name);
+    if (String(m.clientId || '').indexOf(ED_ALERT_ID_PREFIX_) === 0) return true;
+    return posted ? posted.has(hashText_(String(m.name)).slice(0, 16)) : edAlertPosted_(m.name);
   } catch (e) {
     return false;
+  }
+}
+
+/**
+ * The record of the Early Detection cards the bot posted (ED_ALERT_POSTED: the hashes of their names, as
+ * edRememberPosted_ keeps them and edAlertPosted_ reads them), read once, as a Set. Empty when it can't be read. Never
+ * throws.
+ */
+function bqStoryCardsPosted_() {
+  try {
+    const list = JSON.parse(PropertiesService.getScriptProperties().getProperty(ED_POSTED_PROP_) || '[]') || [];
+    return new Set(Array.isArray(list) ? list.map(String) : []);
+  } catch (e) {
+    return new Set();
   }
 }
 
@@ -2308,7 +2325,11 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
   // The one-space setup with Early Detection first: a story's card that sent no Social Alert doesn't stand in for the
   // post's own card (see bqStoryCardRow_ above); everywhere else `past` is false and nothing below changes
   const past = !!(ctx && ctx.bqPastStoryCards === true);
-  const waiting = bqWaitingKeys_(ctx, targetSpaceId, S, now, past ? msgs.filter(m => !bqIsStoryCard_(m)) : msgs);
+  // (the record of the story cards the bot posted is read once a check, and only top-level messages are asked about:
+  // bqWaitingKeys_ passes over thread replies anyway)
+  const storyCards = past ? bqStoryCardsPosted_() : null;
+  const waiting = bqWaitingKeys_(ctx, targetSpaceId, S, now,
+    past ? msgs.filter(m => !m || m.threadReply || !bqIsStoryCard_(m, storyCards)) : msgs);
 
   const want = k => (S['bq_poll_' + k] === undefined ? k !== 'bsip' : !!S['bq_poll_' + k]);
   const seen = bqSeenKeys_(props);
@@ -2324,16 +2345,12 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
   };
   let storeAlerts = null;  // the log tabs are read only once there's a candidate
   const mem = typeof amOf_ === 'function' ? amOf_(ctx) : null;
-  const pastSaid = new Set();  // the posts the run log was told about, once each
+  const pastOf = new Map();  // the posts only a story's card has: link -> that card's alert (for the run log, below)
   const alreadySeen = url => {  // the alert memory has the post (`past`: unless all it has is story cards with no Social Alert)
     const s = mem && mem.active ? mem.seenPost(url) : null;
     if (!s) return false;
     if (!(past && bqOnlyStoryCards_(ctx, s, now))) return true;
-    if (!pastSaid.has(url)) {
-      pastSaid.add(url);
-      console.log(`BigQuery direct poll: ${url} is in a story's card${s.alert_id ? ` (${s.alert_id})` : ''} that sent no Social Alert: ` +
-        'that card is not the post\'s own alert, so the post is still looked at');
-    }
+    pastOf.set(url, s.alert_id || '');
     return false;
   };
   const isNew = url => {
@@ -2409,6 +2426,12 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
       const key = recordKey_({ post_url: r.url });
       taken.add(key);
       candidates.push({ kind, row: r, key });
+      // The run log says so only for a post that is weighed at this check (new by every other test too: not taken
+      // before, not waiting in the space, not left out by Step 1 within the hour, not in the SLRR alert log), once
+      if (pastOf.has(r.url)) {
+        console.log(`BigQuery direct poll: ${r.url} is in a story's card${pastOf.get(r.url) ? ` (${pastOf.get(r.url)})` : ''} that sent no Social Alert: ` +
+          'that card is not the post\'s own alert, so the post is still looked at');
+      }
     });
   };
   // Sprinklr, then BMIE: one US query each, so one refused never silences the other. A later source isn't read once the
