@@ -107,6 +107,17 @@ const EWS_STORY_TABLE_ = 'brand-social-central-data.DSD.DSD-story-selection';   
 const EWS_TABLES_ = [EWS_SONAR_TABLE_, EWS_TUBULAR_TABLE_, EWS_COMMENTS_TABLE_, EWS_BRANDWATCH_TABLE_,
   EWS_OUTBOUND_TABLE_, EWS_STORY_TABLE_];
 const EWS_LANES_ = [{ key: 'us', location: 'US' }, { key: 'c1', location: 'us-central1' }];
+// New lanes (more sources, each behind its own Control row, OFF by default). A lane name decides how its posts are
+// treated: the slow lanes only ever join a story that already exists (72 hours of age, never in the pool); the new lanes
+// (`ami` the AMIE table, `bwl` Brandwatch live; `amis` / `bwls` their posts first seen more than
+// early_wave_new_late_minutes after posting) are marked `nl` and kept apart where the rules below say.
+const EWS_SLOW_LANES_ = ['bw', 'tub', 'amis', 'bwls'];
+const EWS_NEW_LANES_ = ['ami', 'amis', 'bwl', 'bwls'];
+// The new sources' jobs, one entry each, added by the step that builds the source (none yet): {key (the job's name,
+// as 'us' / 'c1'), location, sw (its Control switch key), ready(st) (optional: false = nothing to read this check),
+// query(st, until, firstMins) -> {sql, params, win, flags} (pure; null = nothing to read), done(st, lane, now)
+// (optional: the job was collected, move its mark)}. ewsLanes_ adds an entry only while its switch is ON.
+const EWS_NEW_LANE_DEFS_ = [];
 
 const EWS_EVERY_MS_ = 10 * 60 * 1000;      // a check at most this often (earlyWaveCheck_ calls every 15 min or more)
 const EWS_BUDGET_MS_ = 40 * 1000;          // a check's whole time: BigQuery, embeddings, clustering, the cache
@@ -367,11 +378,23 @@ function ewsEnglishWordsSql_(expr) {
 }
 
 /**
+ * The slow lanes as an SQL list: 'bw', 'tub' and, for a new source's job, its own slow lane names (`slowLanes`, e.g.
+ * ['amis']). Without `slowLanes` exactly today's text. Pure.
+ */
+function ewsSlowSqlList_(slowLanes) {
+  const extra = (Array.isArray(slowLanes) ? slowLanes : []).map(s => String(s || '').toLowerCase().replace(/[^a-z0-9_]/g, ''))
+    .filter(s => s && s !== 'bw' && s !== 'tub');
+  return ['bw', 'tub'].concat(Array.from(new Set(extra))).map(s => `'${s}'`).join(', ');
+}
+
+/**
  * The gates every lane's posts go through (02's low_tier_filtered, quality_checked and dedup_prepared), as CTEs over
  * `input` (lane, mid, url, platform, author, audience, eng, posted, seen, raw, topic): `gated` has the columns the job
- * returns. Pure.
+ * returns. `slowLanes` (optional): a new source's slow lane names, slow beside 'bw' and 'tub'; without it the text is
+ * exactly today's. Pure.
  */
-function ewsGateCtes_(input) {
+function ewsGateCtes_(input, slowLanes) {
+  const slow = ewsSlowSqlList_(slowLanes);
   return [
     `cleaned AS (`,
     `  SELECT *, TRIM(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(IFNULL(raw, ''), r'^RT\\s+@\\w+:\\s*', ''),`,
@@ -384,7 +407,7 @@ function ewsGateCtes_(input) {
     `    AND NOT REGEXP_CONTAINS(LOWER(IFNULL(raw, '')), r'${EWS_SPAM_RX_}')`,
     `    AND NOT ${nonEnglishScriptSql_("IFNULL(raw, '')")}`,
     `    AND posted <= TIMESTAMP_ADD(TIMESTAMP_MILLIS(@until_ms), INTERVAL 5 MINUTE)`,
-    `    AND posted >= TIMESTAMP_SUB(TIMESTAMP_MILLIS(@until_ms), INTERVAL IF(lane IN ('bw', 'tub'), 72, 24) HOUR)`,
+    `    AND posted >= TIMESTAMP_SUB(TIMESTAMP_MILLIS(@until_ms), INTERVAL IF(lane IN (${slow}), 72, 24) HOUR)`,
     `),`,
     `tokened AS (`,
     `  SELECT *, REGEXP_EXTRACT_ALL(LOWER(clean), r'[a-z0-9]{2,}') AS toks,`,
@@ -402,13 +425,17 @@ function ewsGateCtes_(input) {
     `    REGEXP_CONTAINS(LOWER(clean), r'${EWS_ENTITY_RX_}') AS brand`,
     `  FROM tokened`,
     `  WHERE ARRAY_LENGTH(toks) >= @min_tokens AND (SELECT COUNT(DISTINCT t) FROM UNNEST(toks) t) >= @min_distinct`,
-    `    AND (lane NOT IN ('bw', 'tub') OR REGEXP_CONTAINS(LOWER(clean), r'${EWS_ENTITY_RX_}'))`,
+    `    AND (lane NOT IN (${slow}) OR REGEXP_CONTAINS(LOWER(clean), r'${EWS_ENTITY_RX_}'))`,
     `)`,
   ].join('\n');
 }
 
-/** The posts the job returns: per lane, risk terms first, then the newest, up to its cap. Pure. */
-function ewsPostSelectSql_() {
+/**
+ * The posts the job returns: per lane, risk terms first, then the newest, up to its cap. `slowLanes` as ewsGateCtes_
+ * (without it exactly today's text). Pure.
+ */
+function ewsPostSelectSql_(slowLanes) {
+  const slow = ewsSlowSqlList_(slowLanes);
   return [
     `SELECT * FROM (`,
     `  SELECT 'post' AS kind, lane, mid, url, platform, author, audience, eng, UNIX_MILLIS(posted) AS posted_ms,`,
@@ -416,7 +443,7 @@ function ewsPostSelectSql_() {
     `  FROM gated`,
     `  WHERE TRUE`,
     `  QUALIFY ROW_NUMBER() OVER (PARTITION BY lane ORDER BY risk != '' DESC, posted DESC, mid)`,
-    `    <= IF(lane IN ('bw', 'tub'), @slow_max, @rt_max)`,
+    `    <= IF(lane IN (${slow}), @slow_max, @rt_max)`,
     `)`,
   ].join('\n');
 }
@@ -634,16 +661,41 @@ function ewsCancel_(job) {
 }
 
 /**
- * Reads both lanes for this check: a job a previous check left running is collected (not resubmitted), the others
- * submitted for their next window, all in parallel, then waited for until `deadline`. Returns {lanes: {us, c1}: {state:
- * 'done' | 'pending' | 'failed', rows, why, job, q}}; `st.jobs` keeps the ones still running.
+ * The jobs of this check: today's two (EWS_LANES_), then each new source's (EWS_NEW_LANE_DEFS_) while its Control switch
+ * is ON in `sw` (ewsRunSwitches_) and it has something to read (`ready`), as {key, location, def}. With no new switch ON
+ * exactly today's two entries. Never throws.
  */
-function ewsReadLanes_(st, now, deadline, ownDue, firstMins) {
+function ewsLanes_(sw, st) {
+  const on = sw && typeof sw === 'object' ? sw : {};
+  const out = EWS_LANES_.slice();
+  EWS_NEW_LANE_DEFS_.forEach(d => {
+    if (!d || !d.key || !d.sw || on[d.sw] !== true || out.some(l => l.key === d.key)) return;
+    let ready = true;
+    try { ready = typeof d.ready !== 'function' || !!d.ready(st || {}); } catch (e) { ready = false; }
+    if (ready) out.push({ key: d.key, location: d.location || 'US', def: d });
+  });
+  return out;
+}
+
+/**
+ * Reads the lanes for this check (`lanes`: ewsLanes_, today's two when not given): a job a previous check left running
+ * is collected (not resubmitted), the others submitted for their next window, all in parallel, then waited for until
+ * `deadline`. Returns {lanes: {us, c1, …}: {state: 'done' | 'pending' | 'failed' | 'idle', rows, why, job, q}};
+ * `st.jobs` keeps the ones still running. A new source's job is built by its own `query` (a failure there fails that
+ * lane alone); one left running from a check while its row was ON is given up once the row is OFF.
+ */
+function ewsReadLanes_(st, now, deadline, ownDue, firstMins, lanes) {
+  const list = Array.isArray(lanes) && lanes.length ? lanes : EWS_LANES_;
   const until = now - EWS_SETTLE_MS_;
   const out = {};
   const jobs = Object.assign({}, st.jobs || {});
+  Object.keys(jobs).forEach(k => {
+    if (list.some(l => l.key === k)) return;
+    if (jobs[k] && jobs[k].id) ewsCancel_(jobs[k]);
+    delete jobs[k];
+  });
   const submit = [];
-  EWS_LANES_.forEach(lane => {
+  list.forEach(lane => {
     const job = jobs[lane.key];
     if (job && job.id && now - (Number(job.at) || 0) < EWS_JOB_MAX_MS_) {
       out[lane.key] = { state: 'pending', rows: [], job, q: job.q };
@@ -651,7 +703,16 @@ function ewsReadLanes_(st, now, deadline, ownDue, firstMins) {
     }
     if (job && job.id) ewsCancel_(job);  // given up: its window is read again
     delete jobs[lane.key];
-    const q = ewsLaneQuery_(lane.key, st, until, ownDue, firstMins);
+    let q = null;
+    if (lane.def) {
+      try { q = lane.def.query(st, until, firstMins); } catch (e) {
+        out[lane.key] = { state: 'failed', rows: [], why: String((e && e.message) || e).slice(0, 240) };
+        return;
+      }
+      if (!q || !q.sql) { out[lane.key] = { state: 'idle', rows: [] }; return; }
+    } else {
+      q = ewsLaneQuery_(lane.key, st, until, ownDue, firstMins);
+    }
     submit.push({ lane, q });
     out[lane.key] = { state: 'pending', rows: [], q: { win: q.win, flags: q.flags } };
   });
@@ -675,8 +736,9 @@ function ewsReadLanes_(st, now, deadline, ownDue, firstMins) {
     });
   }
   // wait for the ones still running (a previous check's, or this one's), then read every page
-  EWS_LANES_.forEach(lane => {
+  list.forEach(lane => {
     const o = out[lane.key];
+    if (o.state === 'idle') return;
     while (o.state === 'pending' && o.job && o.job.id && Date.now() < deadline - 2000) {
       const a = ewsFetchResults_(o.job, Math.min(EWS_BQ_WAIT_MS_, deadline - Date.now() - 2000));
       if (!a.ok) { o.state = 'failed'; o.why = a.why; break; }
@@ -712,22 +774,26 @@ function ewsReadLanes_(st, now, deadline, ownDue, firstMins) {
 
 /**
  * A lane's post row as the producer keeps it: {id, lane, slow, url, nurl, platform, author, ak, audience, eng, t, seen,
- * text, topic, chash, sig, risk: [], brand}, or null for an unusable row. Pure (reads GEN).
+ * text, topic, chash, sig, risk: [], brand}, or null for an unusable row; a new lane's post (EWS_NEW_LANES_) also has
+ * `nl: true`. Slow: the lane is one of EWS_SLOW_LANES_. Pure (reads GEN).
  */
 function ewsPostOf_(r) {
   if (!r || r.kind !== 'post' || !r.mid || !r.url) return null;
   const url = String(r.url).trim();
+  const lane = String(r.lane || '');
+  const nl = EWS_NEW_LANES_.indexOf(lane) >= 0;
   const platform = ewsPlatform_(r.platform, url);
   const author = String(r.author || '').trim().toLowerCase().replace(/^@+/, '') || url;
   const num = v => (v === null || v === undefined || v === '' || !isFinite(Number(v)) ? null : Math.max(0, Math.round(Number(v))));
-  const lane = String(r.lane || '');
-  return {
-    id: String(r.mid), lane, slow: lane === 'bw' || lane === 'tub', url,
+  const post = {
+    id: String(r.mid), lane, slow: EWS_SLOW_LANES_.indexOf(lane) >= 0, url,
     nurl: normalizeUrl_(url) || url.toLowerCase(), platform, author, ak: `${platform}:${author}`,
     audience: num(r.audience), eng: num(r.eng), t: Number(r.posted_ms) || 0, seen: Number(r.seen_ms) || 0,
     text: String(r.txt || '').trim(), topic: ewsTopic_(r.topic), chash: String(r.chash || ''), sig: String(r.sig || ''),
     risk: String(r.risk || '').split(',').map(s => s.trim()).filter(Boolean), brand: r.brand === true || r.brand === 'true',
   };
+  if (nl) post.nl = true;
+  return post;
 }
 
 /**
@@ -1003,6 +1069,7 @@ function ewsMember_(p, sim, now) {
   if (p.risk && p.risk.length) m.r = p.risk.join(',');
   if (p.brand) m.b = 1;
   if (p.slow) m.sl = 1;
+  if (p.nl) m.nl = 1;  // a new lane's post (written only for those: today's lanes' records are as before)
   return m;
 }
 
@@ -1011,11 +1078,13 @@ function ewsPoolRecord_(p, now) {
   return Object.assign(ewsMember_(p, 1, now), { v: ewsEnc_(p.vec), g: now });
 }
 
-/** A pool record back as a post (with its vector). Pure. */
+/** A pool record back as a post (with its vector; `nl` only on a new lane's). Pure. */
 function ewsPostOfPool_(r) {
-  return { id: r.i, ak: r.a, platform: r.p, url: r.u, t: Number(r.t) || 0, text: r.s || '', chash: r.h || '', topic: r.tp || 'Unclassified',
+  const p = { id: r.i, ak: r.a, platform: r.p, url: r.u, t: Number(r.t) || 0, text: r.s || '', chash: r.h || '', topic: r.tp || 'Unclassified',
     eng: r.e === undefined ? null : r.e, audience: r.f === undefined ? null : r.f, risk: r.r ? String(r.r).split(',') : [],
     brand: !!r.b, slow: !!r.sl, vec: ewsDec_(r.v), g: Number(r.g) || 0, fromPool: true };
+  if (r.nl) p.nl = true;
+  return p;
 }
 
 /** Adds a post to a story: its vector to the centroid's sum, the post to its members and topics. */
@@ -1699,10 +1768,15 @@ function ewsProduce_(props, st, now, firstMins, opts) {
   try {
     const exCached = ewsCacheGet_(cache, 'x') || {};
     const ownDue = !(Number(exCached.ownAt) > 0) || now - Number(exCached.ownAt) >= EWS_OWN_EVERY_MS_;
-    const read = ewsReadLanes_(st, now, deadline, ownDue, firstMins).lanes;
+    const lanes = ewsLanes_(null, st);
+    const read = ewsReadLanes_(st, now, deadline, ownDue, firstMins, lanes).lanes;
     const usDone = read.us.state === 'done';
     const c1Done = read.c1.state === 'done';
-    const allRows = [].concat(read.us.rows || [], read.c1.rows || []);
+    const newLanes = lanes.filter(l => l.def);
+    // a new source's job: its posts only under a new lane's name (its other rows are its own, for its `done`)
+    const newRows = [].concat.apply([], newLanes.map(l => (read[l.key].state === 'done' ? read[l.key].rows || [] : [])
+      .filter(r => r && (r.kind !== 'post' || EWS_NEW_LANES_.indexOf(String(r.lane || '')) >= 0))));
+    const allRows = [].concat(read.us.rows || [], read.c1.rows || [], newRows);
     const ex = ewsExclusions_(exCached, read.us.rows, usDone, now);
     let posts = allRows.map(ewsPostOf_).filter(Boolean);
     last.read = posts.length;
@@ -1944,6 +2018,10 @@ function ewsProduce_(props, st, now, firstMins, opts) {
       st.marks.spk = read.us.q.win.until;
       if (read.us.q.flags && read.us.q.flags.bw) st.marks.bw = read.us.q.flags.bw;
     }
+    newLanes.forEach(l => {
+      if (read[l.key].state !== 'done' || typeof l.def.done !== 'function') return;
+      try { l.def.done(st, read[l.key], now); } catch (e) { console.warn(`Early wave: ${l.key}: ${(e && e.message) || e}`); }
+    });
     if (c1Done) {
       st.marks.sonar = read.c1.q.win.until;
       if (read.c1.q.flags && read.c1.q.flags.tub) {
@@ -1955,6 +2033,8 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     ewsSaveRollup_(props, roll);
     const problems = EWS_LANES_.filter(l => read[l.key].state === 'failed').map(l => `${l.key}: ${read[l.key].why}`);
     const pending = EWS_LANES_.filter(l => read[l.key].state === 'pending').map(l => l.key);
+    // a new source's failure is named in the log line only: C19 (last.problem, the error) keeps today's lanes
+    const newProblems = newLanes.filter(l => read[l.key].state === 'failed').map(l => `${l.key}: ${read[l.key].why}`);
     last.stories = tidy.length;
     last.pool = Math.min(EWS_POOL_MAX_, total);
     last.problem = problems.join('; ');
@@ -1962,7 +2042,7 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     last.ms = Date.now() - t0;
     st.last = last;
     ewsSaveState_(props, st);
-    if (problems.length) console.warn(`Early wave: ${problems.join('; ')}`);
+    if (problems.length || newProblems.length) console.warn(`Early wave: ${problems.concat(newProblems).join('; ')}`);
     const anyDone = usDone || c1Done;
     const error = anyDone ? ''
       : pending.length && !problems.length ? 'BigQuery: the early-wave query did not finish in time'
