@@ -3,9 +3,10 @@
 //   - C35 counts how every flag of the day ended, the counts before its explanation, and never cuts a count;
 //   - with no watch ON on the Watches tab, C35 says so in place of its healthy sentence;
 //   - a look whose BigQuery job fails as a whole stays visible: C34 says since when and why until that job succeeds
-//     again, and the Watch sources tab shows the job's sources as failing, not as stale.
-// Nothing here changes what is posted in Chat, emailed or queued: only notes on the Control tab and status text on
-// the Watch sources tab.
+//     again, and the Watch sources tab shows the job's sources as failing, not as stale;
+//   - each flag that ends without a card leaves one log line with its link: the alert it matched, or why it waited.
+// Nothing here changes what is posted in Chat, emailed or queued: only notes on the Control tab, status text on the
+// Watch sources tab and log lines.
 //   node apps-script-chat-bot/test/run_tests.js "watch notes:"
 'use strict';
 
@@ -277,9 +278,26 @@ module.exports = H => {
     assert.ok(c35(t).length <= 480 && c35(t).indexOf(`✓ ${AC_NAME} (B10) · today: 2 posted, +1 in their story's thread, `) === 0, c35(t));
     // what was posted: the two Watch alerts, nothing for any other flag
     eq(cards(t).map(m => (m.text.match(/user\d+/) || [])[0]), ['user4', 'user13']);
+    // The log: each flag that ended without a card left one line with its link. The two on a post Direct BigQuery had
+    // carded name that card's alert; the second watch's flag names the watch whose flag carries the post; the one
+    // dropped says why it was waiting
+    const alertLog = t.sheet().getSheetByName('Alert log');
+    const col = name => alertLog.rows[0].indexOf(name);
+    const idOf = url => (alertLog.rows.slice(1).find(r => r[col('record_key')] === B.recordKey_({ post_url: url })) || [])[col('alert_id')];
+    assert.ok(/^QA-\d+$/.test(idOf(golden.posts.PIXEL)) && /^QA-\d+$/.test(idOf(golden.posts.MAPS)), 'both cards are in the Alert log');
+    eq(t.g.logs.filter(l => /^Watch alerts: (?:not posting|dropped) /.test(l)), [
+      `Watch alerts: not posting ${P(8)}: no summary, text or picture to show analysts`,
+      `Watch alerts: not posting ${P(9)}: the pre-read says it isn't about Google`,
+      `Watch alerts: not posting ${golden.posts.PIXEL}: it already had an alert: already seen (${idOf(golden.posts.PIXEL)})`,
+      `Watch alerts: not posting ${golden.posts.MAPS}: it already had an alert: ${idOf(golden.posts.MAPS)} in the Alert log`,
+      `Watch alerts: not posting ${P(13)}: the watch "${MIDTERMS}" flagged it too: the flag of "${BRAND}" on the same post is the one that goes on`,
+      `Watch alerts: not posting ${P(14)}: the post is not in English`,
+      `Watch alerts: dropped ${P(15)}: not posted within 3 hours of being seen (${B.pwTime_(keysOf(t)[`${P(15)}|${BRAND}`].s)} ET): ` +
+        `couldn't post in ${AC_NAME}: Chat API 500 on posting to ${AC}: Internal error encountered`,
+    ]);
   });
 
-  test('watch notes: a flag found to be on an alerted thread only when its post is looked up, just before posting (two replies in one X thread flagged in the same look: the higher-scored one is posted, the other is not), is counted on C35 as on a post that already had an alert', () => {
+  test('watch notes: a flag found to be on an alerted thread only when its post is looked up, just before posting (two replies in one X thread flagged in the same look: the higher-scored one is posted, the other is not), is counted on C35 as on a post that already had an alert, and its log line names the Watch alert that covers its thread; a second watch flagging the posted post later is counted the same way, its line naming that Watch alert too', () => {
     const w = oneSpace();
     const { t } = w;
     const id = n => P(n).split('/').pop();
@@ -292,6 +310,15 @@ module.exports = H => {
     look(w, [flag(21, { impact: 9 }), flag(22, { impact: 8 })]);
     eq([letter(t, 21), letter(t, 22), cards(t).length], ['p', 'd', 1]);
     counts(t, { posted: 1, already: 1 });
+    const notPosted = () => t.g.logs.filter(l => /^Watch alerts: not posting /.test(l));
+    const CARD = `the Watch alert of "${BRAND}" (${cards(t)[0].name})`;
+    eq(notPosted(), [`Watch alerts: not posting ${P(22)}: a post of its thread already had an alert: ${CARD}`]);
+    // the Midterms watch flags the posted post too, a look later
+    w.watch(MIDTERMS, true);
+    look(w, [flag(21, { watch: MIDTERMS, idx: 2, impact: 7.5 })]);
+    eq([letter(t, 21, MIDTERMS), cards(t).length], ['d', 1]);
+    counts(t, { posted: 1, already: 2 });
+    eq(notPosted().slice(1), [`Watch alerts: not posting ${P(21)}: it already had an alert: ${CARD}`]);
   });
 
   // -----------------------------------------------------------------------------------------------------------
@@ -486,5 +513,90 @@ module.exports = H => {
     t.poll();
     eq([noteOf(t), t.g.props.get('PW_LAST')], ['waiting: no watch is ON (set a watch\'s On to ON on the Watches tab)', undefined]);
     eq(Object.values(statuses(t)).slice(0, 2), Array(2).fill('... waiting for its first look'));
+  });
+
+  // -----------------------------------------------------------------------------------------------------------
+  // The log: one line for each flag that ends without a card
+  // -----------------------------------------------------------------------------------------------------------
+
+  test('watch notes: a flag dropped after waiting 3 hours leaves one log line, once, with its link, since when it waited and why flags were waiting: the reason of the last run that left flags waiting, kept in the script cache (also when this run has another reason), else, with that value gone, this run\'s own reason, else that none was kept (a reason from before the flag was seen is not its reason); nothing is posted for any of them', () => {
+    const TO_OTHER = 'Other alerts space (B33)';
+    const B33_BLANK = 'the Other alerts space (B33) is blank or can\'t be used this run (see C33)';
+    const B9_BLANK = 'the Mirror space (B9) isn\'t working this run (see C9)';
+    const w = oneSpace({ b35: TO_OTHER });  // B33 is blank: the flags wait
+    const { t } = w;
+    const kept = () => JSON.parse(t.g.cache.get('pw_alert_wait') || 'null');
+    const seen = n => keysOf(t)[`${P(n)}|${BRAND}`].s;
+    const dropped = () => t.g.logs.filter(l => /^Watch alerts: dropped /.test(l));
+    // three flags, each from a look of its own, so each has waited 3 hours at another minute
+    [1, 2, 3].forEach(n => look(w, [flag(n)]));
+    eq([1, 2, 3].map(n => letter(t, n)), ['q', 'q', 'q']);
+    assert.ok(seen(1) < seen(2) && seen(2) < seen(3), 'seen one after the other');
+    assert.match(c35(t), /^⚠️ waiting: the Other alerts space \(B33\) is blank or can't be used this run \(see C33\) \(a flag waits up to 3 hours\) · today: 0 posted, 3 waiting$/);
+    eq(kept(), { at: t.g.clock.now, why: B33_BLANK });
+    assert.ok(t.g.cache.get('pw_alert_wait').length < 400, 'a small cache value');
+    /** The run in which flag `n` has waited just over 3 hours (`before`: what happens right before it). */
+    const dropRun = (n, before) => {
+      t.g.clock.now = seen(n) + 3 * HOUR;  // the run itself is a minute later
+      if (before) before();
+      t.poll();
+    };
+    const line = (n, why) => `Watch alerts: dropped ${P(n)}: not posted within 3 hours of being seen (${B.pwTime_(seen(n))} ET)${why}`;
+    // 1. the kept reason, though this run would have another one (B35 now points at the Mirror space, B9 blank)
+    dropRun(1, () => w.sh.getRange(35, 2).setValue('Mirror space (B9)'));
+    eq([[1, 2, 3].map(n => letter(t, n)), dropped()], [['x', 'q', 'q'], [line(1, `: ${B33_BLANK}`)]]);
+    eq(kept().why, B9_BLANK);  // what this run kept for the two still waiting
+    // 2. the kept value is gone (the cache keeps nothing for sure): this run's own reason
+    dropRun(2, () => t.g.cache.delete('pw_alert_wait'));
+    eq([[1, 2, 3].map(n => letter(t, n)), dropped().slice(1)], [['x', 'x', 'q'], [line(2, `: ${B9_BLANK}`)]]);
+    // 3. no reason this run (B35 back to the Auto-correct space), and what is kept is from before the flag was seen
+    dropRun(3, () => {
+      w.sh.getRange(35, 2).setValue(TO_AC);
+      t.g.cache.set('pw_alert_wait', JSON.stringify({ at: seen(3) - MIN, why: 'a reason from before it was seen' }));
+    });
+    eq([[1, 2, 3].map(n => letter(t, n)), dropped().slice(2)], [['x', 'x', 'x'], [line(3, '; why it waited was not kept')]]);
+    // once each: later runs add no line; C35 counts the three; nothing was posted
+    for (let i = 0; i < 3; i++) t.poll();
+    eq(dropped().length, 3);
+    counts(t, { dropped: 3 });
+    eq(cards(t), []);
+  });
+
+  test('watch notes: which alert a post already had, as the log words it: the Watch alert by the watch that posted it and its message, a Watch alert whose thread lists the post, Burson\'s alert and when; the same for the posts of its thread; the first one found for a post stays', () => {
+    const k = n => B.recordKey_({ post_url: P(n) });
+    const row = (n, key, bursonAt) => {
+      const r = new Array(19).fill('');
+      r[5] = P(n);
+      r[15] = bursonAt || '';
+      r[18] = JSON.stringify(Object.assign({ k: k(n), w: BRAND, s: 1, b: 1 }, key));
+      return r;
+    };
+    const CARD = 'spaces/AAQAx/messages/m1';
+    const state = B.pwAlertedState_(null, { first: 14, values: [
+      row(1, { a: 'p', m: CARD, th: ['2160000000000000777'] }),
+      row(2, { a: 'g', pm: CARD }),
+      row(3, { a: 'q' }, '2026-10-14 08:43'),
+      row(4, { a: 'q' }),
+      row(1, { a: 'g', pm: 'spaces/AAQAx/messages/m9', w: MIDTERMS }),
+    ] }, 'autocorrect');
+    const POSTED = `the Watch alert of "${BRAND}" (${CARD})`;
+    eq([1, 2, 3, 4].map(n => state.done.get(k(n))),
+      [POSTED, `a Watch alert (${CARD}) whose thread lists it`, 'Burson\'s alert (2026-10-14 08:43 ET)', undefined]);
+    eq([state.doneThreadIds.get('2160000000000000777'), state.doneThreadIds.get(P(1).split('/').pop()), state.doneThreadIds.get(P(4).split('/').pop())],
+      [POSTED, POSTED, undefined]);
+    eq([B.pwAlertWords_({ a: 'p', w: BRAND }), B.pwAlertWords_({ a: 'g' })],
+      [`the Watch alert of "${BRAND}"`, 'a Watch alert whose thread lists it']);
+  });
+
+  test('watch notes: when more flags wait than a run posts (5 at once, 2 a run in the Auto-correct space), what is kept as the reason they waited says so, and no flag is dropped or logged as not posted', () => {
+    const w = oneSpace();
+    const { t } = w;
+    look(w, [1, 2, 3, 4, 5].map(n => flag(n, { impact: 9.5 - n / 10 })));
+    const kept = JSON.parse(t.g.cache.get('pw_alert_wait'));
+    eq([cards(t).length, kept.why], [2, 'more flags were waiting than one run reads and posts']);
+    assert.ok(kept.at <= t.g.clock.now && kept.at > t.g.clock.now - MIN, 'kept in that run');
+    t.poll();
+    t.poll();
+    eq([cards(t).length, t.g.logs.filter(l => /^Watch alerts: (?:not posting|dropped) /.test(l))], [5, []]);
   });
 };

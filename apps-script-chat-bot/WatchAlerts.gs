@@ -82,6 +82,11 @@ const PW_ALERT_DAY_PROP_ = 'PW_ALERT_TODAY';
 const PW_ALERTS_NOTE_CHARS_ = 480;                // C35 at most: what stands beside the day's counts is cut, never a count
 const PW_ALERTS_NOTE_TAIL_MIN_ = 40;              // ...its explanation left out when fewer characters of it than this would fit
 const PW_ALERT_PENDING_PROP_ = 'PW_ALERT_PENDING';  // set while flags may wait on the Watch detections tab (else it isn't read)
+// Why flags were left waiting on the last run that left any: {at, why}, in the script cache for 6 hours (a flag waits 3
+// at most). Only for the log line of a flag that is dropped later (pwPostAlerts_): nothing is decided by it
+const PW_ALERT_WAIT_CACHE_ = 'pw_alert_wait';
+const PW_ALERT_WAIT_CACHE_SEC_ = 6 * 60 * 60;
+const PW_ALERT_WAIT_CHARS_ = 300;                 // of the reason kept there
 const PW_ALERT_TEXT_CHARS_ = 600;                 // of the post's words in an alert
 const PW_ALERT_HEAD_ = '\ud83d\udd2d';
 const PW_ALERT_PENDING_WORDS_ = 'pending (see the triage in the thread)';  // a card line nothing classified yet
@@ -748,26 +753,39 @@ function pwAlertDayGrouped_() {
 }
 
 /**
+ * A Watch alert a post already has, in words, from the key of the post's row (a: 'p': posted for it by watch `w` as
+ * message `m`; a: 'g': listed in the thread of the alert `pm`): for the log line of a flag that isn't posted again
+ * (pwPostAlerts_). Pure.
+ */
+function pwAlertWords_(k) {
+  return k.a === 'g' ? `a Watch alert${k.pm ? ` (${k.pm})` : ''} whose thread lists it`
+    : `the Watch alert of "${k.w}"${k.m ? ` (${k.m})` : ''}`;
+}
+
+/**
  * Posts and conversation thread IDs already alerted across Watch detections (`block`) and the non-autocorrect Alert log
- * (`ss`): {done (Set of record keys), doneThreadIds (Set of platform post/thread IDs)}. Never throws.
+ * (`ss`): {done (Map: record key -> the alert it had), doneThreadIds (Map: platform post/thread ID -> the same)}. The
+ * alert is in words, for the log line of a flag that isn't posted again (pwPostAlerts_): a Watch alert (pwAlertWords_),
+ * Burson's alert and when, or the Alert log's alert by its id; the first one found for a key stays. Never throws.
  */
 function pwAlertedState_(ss, block, choice) {
-  const done = new Set();
-  const doneThreadIds = new Set();
-  const markUrl = raw => {
+  const done = new Map();
+  const doneThreadIds = new Map();
+  const add = (map, key, what) => { if (key && !map.has(key)) map.set(key, what); };
+  const markUrl = (raw, what) => {
     const u = String(raw || '').replace(/^'/, '').trim();
     if (!u) return;
-    done.add(recordKey_({ post_url: u }) || u);
-    const pid = postIdOf_(u);
-    if (pid) doneThreadIds.add(pid);
+    add(done, recordKey_({ post_url: u }) || u, what);
+    add(doneThreadIds, postIdOf_(u), what);
   };
   ((block && block.values) || []).forEach(v => {
     const k = pwKeyOf_(v[PW_COL_.key - 1]);
     const bursonAt = String(v[PW_COL_.bursonAt - 1] || '').trim();
     if ((k && (k.a === 'p' || k.a === 'g')) || bursonAt) {
-      if (k && k.k) done.add(String(k.k));
-      markUrl(v[PW_COL_.post - 1]);
-      if (k && Array.isArray(k.th)) k.th.forEach(id => { if (id) doneThreadIds.add(String(id)); });
+      const what = k && (k.a === 'p' || k.a === 'g') ? pwAlertWords_(k) : `Burson's alert (${bursonAt} ET)`;
+      if (k && k.k) add(done, String(k.k), what);
+      markUrl(v[PW_COL_.post - 1], what);
+      if (k && Array.isArray(k.th)) k.th.forEach(id => { if (id) add(doneThreadIds, String(id), what); });
     }
   });
   if (ss) {
@@ -779,8 +797,9 @@ function pwAlertedState_(ss, block, choice) {
         if (!r || (choice !== 'autocorrect' && sp.endsWith(AC_PARTITION_SUFFIX_)) ||
             (choice !== 'other' && sp.endsWith(osSuffix))) return;
         if (earlierOutcome_(r) !== 'alerted') return;
-        if (r.record_key) done.add(String(r.record_key));
-        markUrl((r.forwarded_fields || {}).post_url);
+        const what = `${r.alert_id || 'an alert'} in the Alert log`;
+        if (r.record_key) add(done, String(r.record_key), what);
+        markUrl((r.forwarded_fields || {}).post_url, what);
       });
     } catch (e) {
       console.warn('Watch alerts: could not read Alert log for pre-post dedup: ' + ((e && e.message) || e));
@@ -1448,8 +1467,9 @@ function pwPostStoryReply_(space, thread, text, key) {
  * One alert a story (pwPostAlerts_). `items` ([{q, a}]: the flags, the highest scores first), `pre` (pwPreRead_, or
  * null), `recent` (the stories the pre-read's R refs point into: the alerts posted lately, pwRecentStories_; the
  * build-ups still waiting, pwBrewing_; the stories already alerted, pwKnownStories_), `c` {dest, now, max, timeLeft,
- * done, doneThreadIds, mark, same (same(q, kind): the flag isn't posted, a: 'd'; `kind` says which of the day's counts
- * it is, 'already' when left out: pwPostAlerts_)}. For each story, in this order:
+ * done, doneThreadIds (pwAlertedState_'s, added to as this run posts), mark, same (same(q, kind, why): the flag isn't
+ * posted, a: 'd'; `kind` says which of the day's counts it is, `why` its log line's reason: pwPostAlerts_)}. For each
+ * story, in this order:
  *   - one with an alert posted lately in this space goes in that alert's thread (but a flag that raises the stakes:
  *     pwStakesRose_);
  *   - one already alerted (any flow, PW_REPEAT_MS_ back) is not posted again (a: 'r', rf: the alert it repeats), unless
@@ -1481,7 +1501,7 @@ function pwPostStories_(items, pre, recent, c) {
       `pwg:${alertName}|${entries.map(e => e.q.k.k).sort().join(',')}`);
     entries.forEach(e => {
       c.mark(e.q, Object.assign({ a: 'g', t: thread, pm: alertName, m: (reply && reply.name) || '' }, at));
-      c.done.add(e.q.k.k);
+      c.done.set(e.q.k.k, pwAlertWords_({ a: 'g', pm: alertName }));
     });
     res.grouped += entries.length;
     replies++;
@@ -1556,19 +1576,36 @@ function pwPostStories_(items, pre, recent, c) {
       const { q, a } = items[i];
       const drop = () => { members = members.filter(x => x !== i); };
       const pid = postIdOf_(a.url);
-      if (c.done.has(q.k.k) || (pid && c.doneThreadIds.has(pid))) { c.same(q); res.dup++; drop(); continue; }
+      if (c.done.has(q.k.k) || (pid && c.doneThreadIds.has(pid))) {
+        c.same(q, 'already', c.done.has(q.k.k) ? `it already had an alert: ${c.done.get(q.k.k)}`
+          : `a post of its thread already had an alert: ${c.doneThreadIds.get(pid)}`);
+        res.dup++;
+        drop();
+        continue;
+      }
       const canFetch = c.timeLeft() >= PW_MIN_LEFT_MS_ + PW_ALERT_PIC_LEFT_MS_;
       let post = null;
       if (canFetch) {
         try { post = lookupPost_(a.url); } catch (e) { post = null; }
       }
-      if (post && isNonEnglishPost_(post.text || '', post.lang || '')) { c.same(q, 'notEnglish'); res.dup++; drop(); continue; }
+      if (post && isNonEnglishPost_(post.text || '', post.lang || '')) {
+        c.same(q, 'notEnglish', 'the post is not in English');
+        res.dup++;
+        drop();
+        continue;
+      }
       const parentIds = Array.from(new Set(
         [post && post.parent && post.parent.id, post && post.reply_to && post.reply_to.id]
           .concat((post && post.thread_ids) || [])
           .map(v => String(v || '')).filter(Boolean)
       ));
-      if (parentIds.some(id => c.doneThreadIds.has(id))) { c.same(q); res.dup++; drop(); continue; }
+      const inThread = parentIds.find(id => c.doneThreadIds.has(id));
+      if (inThread) {
+        c.same(q, 'already', `a post of its thread already had an alert: ${c.doneThreadIds.get(inThread)}`);
+        res.dup++;
+        drop();
+        continue;
+      }
       // reuse the looked-up post for its picture so lookupPost_ runs once per candidate; its page is read for one (a post
       // the lookup gives none for) only with time for it, and never for the Auto-correct space (the post's own imagery only)
       const pageOk = !ownPic && c.timeLeft() >= PW_MIN_LEFT_MS_ + PW_ALERT_PAGE_PIC_LEFT_MS_;
@@ -1588,8 +1625,9 @@ function pwPostStories_(items, pre, recent, c) {
     if (!pick) continue;
     const it = items[pick.i];
     const mem = typeof alertMemory_ === 'function' ? alertMemory_() : null;
-    if (mem && mem.active && mem.seenPost(it.a.url)) {
-      c.same(it.q);
+    const seen = mem && mem.active ? mem.seenPost(it.a.url) : null;
+    if (seen) {
+      c.same(it.q, 'already', `it already had an alert: ${seen.why || 'the alert memory has it'}`);
       res.dup++;
       continue;
     }
@@ -1630,8 +1668,9 @@ function pwPostStories_(items, pre, recent, c) {
     c.mark(it.q, Object.assign({ a: 'p', m: (msg && msg.name) || '' }, at, msg && msg.thread ? { t: msg.thread } : {},
       story ? { st: story } : {}, pick.ids.length ? { th: pick.ids.slice(0, 6) } : {}, build ? { bu: build.accounts } : {}));
     pwRememberPosted_(msg && msg.name, { sc: it.a.score, br: it.a.bar, tp: it.a.topic, src: it.a.source });
-    c.done.add(it.q.k.k);
-    pick.ids.forEach(id => c.doneThreadIds.add(id));
+    const posted = pwAlertWords_({ a: 'p', w: it.q.k.w, m: msg && msg.name });
+    c.done.set(it.q.k.k, posted);
+    pick.ids.forEach(id => c.doneThreadIds.set(id, posted));
     res.posted++;
     if (build) res.builds++;
     // the story's other posts: one reply in the alert's thread (Chat refusing it leaves this run's flags waiting: the
@@ -1652,6 +1691,24 @@ function pwPostStories_(items, pre, recent, c) {
     }
   }
   return res;
+}
+
+/** Keeps why flags were left waiting on this run (`why`, at `at` ms: PW_ALERT_WAIT_CACHE_). Never throws. */
+function pwWaitWhyKeep_(why, at) {
+  try {
+    CacheService.getScriptCache().put(PW_ALERT_WAIT_CACHE_,
+      JSON.stringify({ at, why: truncate_(String(why), PW_ALERT_WAIT_CHARS_) }), PW_ALERT_WAIT_CACHE_SEC_);
+  } catch (e) { /* the log line of a flag dropped later then gives this run's reason, or says none was kept */ }
+}
+
+/** Why flags were last left waiting ({at, why}: pwWaitWhyKeep_), or null when nothing is kept. Never throws. */
+function pwWaitWhy_() {
+  try {
+    const v = JSON.parse(CacheService.getScriptCache().get(PW_ALERT_WAIT_CACHE_) || 'null');
+    return v && Number(v.at) > 0 && v.why ? { at: Number(v.at), why: String(v.why) } : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 /**
@@ -1678,7 +1735,10 @@ function pwPostStories_(items, pre, recent, c) {
  * did: already (on a post, or in a thread, that already had an alert), noted (how many of those were noted under that
  * alert's card: none yet, nothing posts such a note), twin (a second watch's flag on a post another watch's flag carries
  * in this run), notEnglish, dropped (after PW_ALERT_MAX_AGE_MS_), empty (nothing to show)}: each flag that ends is in
- * exactly one of today's counts (pwAlertDay_), which C35 shows (pwAlertCountsText_). Never throws.
+ * exactly one of today's counts (pwAlertDay_), which C35 shows (pwAlertCountsText_). Each flag that ends without a card
+ * leaves one log line with its link: one not posted again (a: 'd') says which alert it matched, or that another watch's
+ * flag carries the post, or that it is not in English; one dropped (a: 'x') says why flags were waiting (pwWaitWhy_: the
+ * last run that left any waiting, else this run's reason). Never throws.
  */
 function pwPostAlerts_(sh, dest, now, left, opts) {
   const out = { posted: 0, grouped: 0, held: 0, repeats: 0, offTopic: 0, builds: 0, waiting: 0, already: 0, noted: 0, twin: 0,
@@ -1694,25 +1754,41 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     const { done, doneThreadIds } = pwAlertedState_(opts && opts.ss, block, dest && dest.choice);
     const writes = [];  // [index in the block, the key to write]
     const mark = (q, patch) => writes.push([q.i, Object.assign({}, q.k, patch)]);
+    const linkOf = q => String(q.v[PW_COL_.post - 1] || '').replace(/^'/, '').trim();
+    // The flags this run ends with no card and no log line of their own get one each, once their keys are written:
+    // `ended` (a: 'd': the line), `late` (a: 'x': the flags; their line says why flags were waiting)
+    const ended = [];
+    const late = [];
     // another watch, Burson, or an earlier post in the same thread already alerted: this flag isn't posted again. `kind`:
-    // which of the day's counts it is: 'already' (when left out), 'twin' or 'notEnglish'
-    const same = (q, kind) => {
+    // which of the day's counts it is: 'already' (when left out), 'twin' or 'notEnglish'; `why`: for its log line
+    const same = (q, kind, why) => {
       mark(q, { a: 'd' });
       out[kind || 'already']++;
+      ended.push(`not posting ${linkOf(q)}: ${why || 'it already had an alert'}`);
     };
     const fresh = queued.filter(q => {
-      const qUrl = String(q.v[PW_COL_.post - 1] || '').replace(/^'/, '').trim();
+      const qUrl = linkOf(q);
       const qPid = postIdOf_(qUrl);
       const qSum = String(q.v[PW_COL_.summary - 1] || '').replace(/^'/, '').trim();
       const memSeen = typeof alertMemory_ === 'function' ? alertMemory_().seenPost(qUrl) : null;
-      const alerted = done.has(q.k.k) || memSeen || String(q.v[PW_COL_.bursonAt - 1] || '').trim() || (qPid && doneThreadIds.has(qPid));
-      if (alerted || isNonEnglishPost_(qSum, '')) {
-        same(q, alerted ? 'already' : 'notEnglish');
+      const bursonAt = String(q.v[PW_COL_.bursonAt - 1] || '').trim();
+      const alerted = done.has(q.k.k) || memSeen || bursonAt || (qPid && doneThreadIds.has(qPid));
+      if (alerted) {
+        // the alert it matched: this tab's or the Alert log's, else the alert memory's, else Burson's, else its thread's
+        same(q, 'already', done.has(q.k.k) ? `it already had an alert: ${done.get(q.k.k)}`
+          : memSeen ? `it already had an alert: ${memSeen.why || 'the alert memory has it'}`
+            : bursonAt ? `it already had an alert: Burson's alert (${bursonAt} ET)`
+              : `a post of its thread already had an alert: ${doneThreadIds.get(qPid)}`);
+        return false;
+      }
+      if (isNonEnglishPost_(qSum, '')) {
+        same(q, 'notEnglish', 'its summary is not in English');
         return false;
       }
       if (now - Math.max(Number(q.k.s) || 0, Number(q.k.rq) || 0) <= PW_ALERT_MAX_AGE_MS_) return true;
       mark(q, { a: 'x' });
       out.dropped++;
+      late.push(q);
       return false;
     });
     let problem = !dest || !dest.choice ? 'Watch alerts (row 35) is OFF' : dest.problem || '';
@@ -1731,12 +1807,15 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       fresh.sort((a, b) => big(b) - big(a) || (Number(b.k.sc) || 0) - (Number(a.k.sc) || 0) || (Number(a.k.s) || 0) - (Number(b.k.s) || 0));
       const timeLeft = () => (typeof left === 'function' ? left() : Infinity);
       // a post two watches flagged is one flag: the highest-scored one's (the other's says a: 'd')
-      const keys = new Set();
+      const keys = new Map();  // record key -> the watch whose flag carries the post
       const items = [];
       for (const q of fresh) {
         if (items.length >= PW_PREREAD_MAX_) break;
-        if (keys.has(q.k.k)) { same(q, 'twin'); continue; }
-        keys.add(q.k.k);
+        if (keys.has(q.k.k)) {
+          same(q, 'twin', `the watch "${q.k.w}" flagged it too: the flag of "${keys.get(q.k.k)}" on the same post is the one that goes on`);
+          continue;
+        }
+        keys.set(q.k.k, q.k.w);
         items.push({ q, a: pwAlertOfRow_(q.v, q.k) });
       }
       const recent = pwRecentStories_(block, dest, now, PW_STORY_POOL_MAX_).concat(pwBrewing_(block, now, PW_BREW_POOL_MAX_));
@@ -1762,6 +1841,17 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     out.waiting = fresh.filter(q => !decided.has(q.i)).length;
     out.problem = problem;
     writes.forEach(([i, k]) => sh.getRange(block.first + i, PW_COL_.key).setValue(JSON.stringify(k)));
+    ended.forEach(line => console.log(`Watch alerts: ${line}`));
+    if (late.length) {
+      const waited = pwWaitWhy_();  // why flags were left waiting on the last run that left any (else this run's reason)
+      late.forEach(q => {
+        const from = Math.max(Number(q.k.s) || 0, Number(q.k.rq) || 0);
+        const why = waited && waited.at >= from ? waited.why : problem;
+        console.log(`Watch alerts: dropped ${linkOf(q)}: not posted within ${Math.round(PW_ALERT_MAX_AGE_MS_ / PW_HOUR_MS_)} hours of ` +
+          `being ${q.k.rq ? 'queued again' : 'seen'} (${pwTime_(from)} ET)${why ? `: ${why}` : '; why it waited was not kept'}`);
+      });
+    }
+    if (out.waiting) pwWaitWhyKeep_(problem || 'more flags were waiting than one run reads and posts', now);
     if (out.held || out.repeats || out.offTopic) {
       console.log(`Watch alerts: not posted on their own: ${out.held} small (waiting for ${PW_BREW_MIN_ACCOUNTS_} accounts on one ` +
         `story), ${out.repeats} on a story already alerted, ${out.offTopic} not about Google`);
