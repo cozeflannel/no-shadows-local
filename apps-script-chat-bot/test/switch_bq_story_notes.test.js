@@ -325,7 +325,7 @@ module.exports = H => {
   // The setting off, and the flows that are not the Auto-correct flow
   // -----------------------------------------------------------------------------------------------------------
 
-  test('story notes: with the setting off (cross_alert_notes false) no note is posted, and everything else the one-space setup puts out is what it puts out with the setting on: the same posts but the note, the same emojis and the same email. The note costs no Gemini call, no embedding and no BigQuery request: each is asked as often with the setting on as with it off. In the golden one-space scenario and in the golden Mirror scenario the setting changes nothing at all', () => {
+  test('story notes: with the setting off (cross_alert_notes false) no note is posted, and everything else the one-space setup puts out is what it puts out with the setting on: the same posts but the note, the same emojis and the same email. The note costs no Gemini call, no embedding and no BigQuery request: each is asked as often with the setting on as with it off. In the golden one-space scenario and in the golden Mirror scenario the setting changes nothing of this lane (only the Watch\'s and the story lane\'s notes it also turns on)', () => {
     const run = overrides => {
       const w = oneSpace(overrides);
       storyThenPost(w, golden.rows.mapsRow(), 0);
@@ -349,7 +349,17 @@ module.exports = H => {
     assert.ok(on.asked.gemini >= 3 && on.asked.bigquery >= 10, JSON.stringify(on.asked));
     // the two golden scenarios hold no card on a post that a story's card has: with the notes alone turned on, each puts
     // out exactly what it did at f93e31a
-    eq(golden.differences(golden.oneSpace(NOTES), golden.recorded.one_space), []);
+    // The same setting also turns on two other lanes' notes, which the golden one-space scenario does show: the Watch's
+    // note under the Maps card (WatchAlerts.gs) and step 12's story card with its review note and its note under the
+    // Pixel card (EarlyDetectionCross.gs). Without exactly those, the scenario is what it was at f93e31a
+    const step12 = x => /^12 /.test(String(x.run || ''));
+    const watchNote = x => /^🔭 \*Also flagged by the watch /.test(String(x.text || ''));
+    const others = out => [out.chat.filter(x => step12(x) || watchNote(x)).length, out.reactions.filter(step12).length];
+    const without = out => Object.assign({}, out, { chat: out.chat.filter(x => !step12(x) && !watchNote(x)),
+      reactions: out.reactions.filter(x => !step12(x)) });
+    const one = golden.oneSpace(NOTES);
+    eq(others(one), [4, 1]);
+    eq(golden.differences(without(one), golden.recorded.one_space), []);
     eq(golden.differences(golden.mirror(NOTES), golden.recorded.mirror), []);
   });
 

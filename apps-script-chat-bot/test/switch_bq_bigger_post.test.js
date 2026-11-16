@@ -200,7 +200,7 @@ module.exports = H => {
     eq(elsewhere.filter(x => !/^spaces\/DM/.test(x[0])), []);
   });
 
-  test('bigger post: with the setting off (cross_alert_notes false) the one-space setup does what it did before: the bigger post is left out as on a story already alerted, counted and logged as such, with no card and no email; and in the golden scenarios the setting changes nothing', () => {
+  test('bigger post: with the setting off (cross_alert_notes false) the one-space setup does what it did before: the bigger post is left out as on a story already alerted, counted and logged as such, with no card and no email; and in the golden scenarios the setting changes nothing of this lane (only the Watch\'s and the story lane\'s notes it also turns on)', () => {
     const w = withPixelCard(OFF);
     const { t, rec, feed } = w;
     const first = alertRows(t)[0].alert_id;
@@ -212,7 +212,17 @@ module.exports = H => {
     eq(alertRows(t).length, 1);
     // the golden scenarios hold no record Step 1 leaves out as the same issue: with this setting alone turned on, each
     // puts out exactly what it did at f93e31a
-    eq(golden.differences(golden.oneSpace(ON), golden.recorded.one_space), []);
+    // The same setting also turns on two other lanes' notes, which the golden one-space scenario does show: the Watch's
+    // note under the Maps card (WatchAlerts.gs) and step 12's story card with its review note and its note under the
+    // Pixel card (EarlyDetectionCross.gs). Without exactly those, the scenario is what it was at f93e31a
+    const step12 = x => /^12 /.test(String(x.run || ''));
+    const watchNote = x => /^🔭 \*Also flagged by the watch /.test(String(x.text || ''));
+    const others = out => [out.chat.filter(x => step12(x) || watchNote(x)).length, out.reactions.filter(step12).length];
+    const without = out => Object.assign({}, out, { chat: out.chat.filter(x => !step12(x) && !watchNote(x)),
+      reactions: out.reactions.filter(x => !step12(x)) });
+    const one = golden.oneSpace(ON);
+    eq(others(one), [4, 1]);
+    eq(golden.differences(without(one), golden.recorded.one_space), []);
     eq(golden.differences(golden.mirror(ON), golden.recorded.mirror), []);
   });
 

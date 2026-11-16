@@ -298,7 +298,7 @@ module.exports = H => {
   // The golden scenarios
   // -----------------------------------------------------------------------------------------------------------
 
-  test('early detection cross alerts: the golden scenarios: with the setting off the one-space setup puts out the default set without its step 12 (a story whose main post is the Pixel post: no card, as before) and without the Watch's note under the Maps card; the Mirror flow with the default settings puts out exactly the f93e31a record', () => {
+  test('early detection cross alerts: the golden scenarios: with the setting off the one-space setup puts out the default set without its step 12 (a story whose main post is the Pixel post: no card, as before) and without the Watch\'s note under the Maps card; the Mirror flow with the default settings puts out exactly the f93e31a record', () => {
     const rec = JSON.parse(fs.readFileSync(path.join(__dirname, 'golden_flows_defaults.json'), 'utf8')).one_space;
     const step12 = x => /^12 /.test(String(x.run || ''));
     eq(['chat', 'reactions', 'emails'].map(k => (rec[k] || []).filter(step12).length), [3, 1, 0]);
