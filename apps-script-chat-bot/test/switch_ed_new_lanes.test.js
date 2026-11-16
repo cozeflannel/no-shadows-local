@@ -157,4 +157,65 @@ module.exports = H => {
     b.bqEarlyDetectionRows_(30);
     eq(env.bq.filter(c => c.job === 'fk').length, 1);
   });
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 3. Velocity and covered hours leave the new lanes out
+  // ---------------------------------------------------------------------------------------------------------------
+
+  // Four simulated days, a check an hour: Sonar brings 12 accounts an hour on the topic Pixel; from the start of day 3
+  // the fake lane adds 20 more an hour (or nothing, when `withNew` is false).
+  function velocityRun(withNew) {
+    let check = 0;
+    const env = makeEnv(job => {
+      const now = env.g.clock.now;
+      const out = [];
+      if (job === 'c1') {
+        for (let i = 0; i < 12; i++) {
+          out.push(row({ lane: 'sonar', mid: `SONAR|v${check}_${i}`, author: `sonar_${(check * 12 + i) % 400}`,
+            url: `https://x.com/sonar_${(check * 12 + i) % 400}/status/2160${String(check).padStart(4, '0')}${String(i).padStart(3, '0')}`,
+            posted_ms: now - (5 + i * 4) * MIN, seen_ms: now - 2 * MIN, chash: `vs${check}_${i}`, sig: `vs${check}_${i}`,
+            txt: `Pixel ${check} battery report ${i}: ${['charging', 'drains', 'overnight', 'percent', 'warm'][i % 5]} words ${check * 100 + i}` }));
+        }
+      }
+      if (job === 'fk' && check >= 48) {
+        for (let i = 0; i < 20; i++) {
+          out.push(row({ lane: 'bwl', mid: `BWL|v${check}_${i}`, author: `bw_${(check * 20 + i) % 700}`, platform: 'reddit',
+            url: `https://www.reddit.com/r/GooglePixel/comments/v${check}x${i}/t/`,
+            posted_ms: now - (3 + i * 2) * MIN, seen_ms: now - 2 * MIN, chash: `vb${check}_${i}`, sig: `vb${check}_${i}`,
+            txt: `Pixel ${check} battery thread ${i}: ${['charging', 'drains', 'overnight', 'percent', 'warm'][i % 5]} note ${check * 100 + i}` }));
+        }
+      }
+      return out;
+    });
+    addFakeLane(env.b);
+    env.b.ewsRunSwitches_({ edFake: withNew });
+    const velocity = new Set();
+    const accRows = [];
+    for (check = 0; check < 96; check++) {
+      env.b.bqEarlyDetectionRows_(60).forEach(r => { if (r.signal_type === 'VELOCITY_SPIKE') velocity.add(r.alert_id); });
+      const acc = JSON.parse(env.g.cache.get('ews1:acc') || '{"rows":[]}');
+      accRows.push(acc.rows.length);
+      env.g.clock.now += HOUR;
+    }
+    return { velocity: Array.from(velocity).sort(), accRows, roll: JSON.parse(env.g.props.get('EWS_ROLLUP')), env };
+  }
+
+  test('new lanes: over four simulated days of steady inflow a new lane\'s posts add no row to the accounts kept for velocity and fire no velocity signal: the accounts and the signals are those of today\'s lanes alone (E5)', () => {
+    const off = velocityRun(false);
+    const on = velocityRun(true);
+    eq(on.accRows, off.accRows);
+    eq(on.velocity, off.velocity);
+    eq(on.roll.k['T|Pixel'], off.roll.k['T|Pixel']);
+    assert.ok(on.accRows.some(n => n > 0), 'Sonar\'s rows are counted');
+  });
+
+  test('new lanes: the hours a new source\'s job read are not covered hours: only today\'s two jobs\' windows count', () => {
+    const env = makeEnv(() => []);
+    addFakeLane(env.b, { query: (st, until) => ({ sql: '-- ews:fk\nSELECT 1', params: [], win: { since: until - 9 * HOUR, until: until - 7 * HOUR }, flags: {} }) });
+    env.b.ewsRunSwitches_({ edFake: true });
+    env.b.bqEarlyDetectionRows_(30);
+    const cov = JSON.parse(env.g.props.get('EWS_ROLLUP')).cov;
+    const h = Math.floor((NOW - MIN) / HOUR);
+    eq([cov.includes(h), cov.includes(h - 8), cov.includes(h - 9)], [true, false, false]);
+  });
 };

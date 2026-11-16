@@ -1828,8 +1828,9 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     last.unembedded = emb.skipped;
     const evergreenGone = new Set(rest.filter(p => emb.posts.indexOf(p) < 0).map(p => p.id));
 
-    // Velocity counts: every real-time post kept (not evergreen noise), with its keys
-    const realTime = posts.filter(p => !p.slow && !evergreenGone.has(p.id));
+    // Velocity counts: every real-time post of today's lanes kept (not evergreen noise), with its keys; a new lane's
+    // posts add no velocity row (velocity from the new sources is not in this round)
+    const realTime = posts.filter(p => !p.slow && !p.nl && !evergreenGone.has(p.id));
     const rowOf = new Map();
     realTime.forEach(p => {
       const row = [Math.floor(p.t / 60000), ewsFnv_(p.ak), p.platform, ewsKeysOf_(p), ewsFnv_(p.id)];
@@ -1837,7 +1838,7 @@ function ewsProduce_(props, st, now, firstMins, opts) {
       rowOf.set(p.id, row);
     });
     const winHours = [];
-    EWS_LANES_.forEach(l => {
+    EWS_LANES_.forEach(l => {  // today's two jobs only: a new source's window covers no hour
       const q = read[l.key];
       if (q.state !== 'done' || !q.q || !q.q.win) return;
       for (let h = Math.floor(q.q.win.since / 3600000); h <= Math.floor(q.q.win.until / 3600000); h++) winHours.push(h);
