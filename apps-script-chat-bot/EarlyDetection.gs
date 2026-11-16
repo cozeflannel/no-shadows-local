@@ -1866,6 +1866,7 @@ function edDrainQueue_(ctx, report) {
     p.dropped.forEach(x => {
       ctx.log(`early detection: dropped ${x.id || 'a queued signal'} (${x.why})`);
       if (writeBq && x.id) events.push(ewBqEventRow_(x.id, null, 'dropped_stale', x.why, null, ctx.now()));
+      edSeenForget_(props, x.row, ctx.now());  // nobody reviewed its story: the story's next signal is no repeat
       edNote_(ctx, x.row || edEntryRow_(x.entry), ED_OUT_.never, edNeverWhy_(x.cause), { waited: true, logged: true });
     });
     out.dropped += p.dropped.length;

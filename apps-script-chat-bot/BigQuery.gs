@@ -3174,7 +3174,7 @@ function edRowKeys_(row) {
 
 /**
  * Recently queued early-detection keys (`EARLY_DETECTION_SEEN`): `{has(key), authors(keys), first(keys), add(key, ms,
- * authors), save()}`.
+ * authors), forget(key, ms, authors), save()}`.
  * A story key keeps how many accounts its signal had when it was queued (`[ms, authors]`); `authors(keys)` is the most
  * of those among the keys seen in the last 24h (Infinity for an entry from before the counts were kept, so its repeat is
  * held back as it always was; null when none of them is seen). `first(keys)` is that same entry with its time: {at (ms),
@@ -3212,8 +3212,45 @@ function earlyWaveSeen_(props, now) {
       const au = Math.round(Number(authors) || 0);
       map[hashText_(key)] = au > 0 ? [ms, au] : ms;
     },
+    // takes a story key out, only while it is still marked with `authors` accounts: the mark of the signal that had
+    // them (a bigger signal queued on the same story has put its own mark there: that one stays); true when taken out
+    forget: (key, authors) => {
+      const h = hashText_(key);
+      const v = map[h];
+      if (v === undefined) return false;
+      if (Array.isArray(v) && Math.round(Number(v[1]) || 0) !== Math.round(Number(authors) || 0)) return false;
+      delete map[h];
+      return true;
+    },
     save: () => props.setProperty(ED_SEEN_PROP_, JSON.stringify(pruneEarlyWaveSeen_(map, now))),
   };
+}
+
+/**
+ * A queued signal left the queue without a review (pushed out of the full queue, dropped after ED_QUEUE_MAX_AGE_MS_, or
+ * after ED_QUEUE_MAX_TRIES_ tries that didn't finish): its story must not stay marked as seen, or the story's next
+ * signal would be held back as a repeat of a signal nobody reviewed. Takes the story keys it marked out of the seen map
+ * (recomputed from its stored row `row`: each key only while it still holds this signal's accounts) and marks its own
+ * id afresh, so the same signal is never queued again. `seen`: the check's own map (the check saves it); without it
+ * the stored map is changed and saved here. True when a story key was taken out. Never throws.
+ */
+function edSeenForget_(props, row, now, seen) {
+  try {
+    const keys = row ? edRowKeys_(row) : [];
+    if (!keys.length) return false;
+    const map = seen || earlyWaveSeen_(props, now);
+    const au = ewCount_(row.unique_low_tier_authors);
+    let gone = 0;
+    keys.forEach(k => {
+      if (k.indexOf('id:') === 0) map.add(k, now);
+      else if (map.forget(k, au)) gone++;
+    });
+    if (!seen) map.save();
+    return gone > 0;
+  } catch (e) {
+    console.warn('Early detection: couldn\'t take a dropped signal\'s story out of the seen map: ' + ((e && e.message) || e));
+    return false;
+  }
 }
 
 /** When a seen entry (`ms` or `[ms, authors]`) was added, in ms; 0 when it can't be read. Pure. */
@@ -3723,7 +3760,10 @@ function earlyWaveCheck_(ctx) {
       const refused = !res.queued && res.why !== 'already there' && !!idKey;
       (isWatch(r) || refused ? keys.filter(k => k === idKey) : keys).forEach(k => seen.add(k, now, k === idKey ? 0 : au));
       marked++;
-      res.pushed.forEach(p => edNote_(ctx, p.row || edEntryRow_(p.entry), ED_OUT_.never, edNeverWhy_('pushed'), { waited: true }));
+      res.pushed.forEach(p => {
+        edSeenForget_(props, p.row, now, seen);  // nobody reviewed its story: the story's next signal is no repeat
+        edNote_(ctx, p.row || edEntryRow_(p.entry), ED_OUT_.never, edNeverWhy_('pushed'), { waited: true });
+      });
       if (!res.queued && res.why !== 'already there') {
         edNote_(ctx, r, ED_OUT_.never, edNeverWhy_(res.why === 'too big' ? 'long' : 'full'), { dec });
       }
