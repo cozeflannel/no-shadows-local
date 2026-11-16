@@ -271,6 +271,22 @@ function ewsRows_(minutes, opts) {
   return ewsBufferRows_(ewsReadBuffer_(ewsCache_()), now, mins);
 }
 
+/**
+ * Which Control switches are ON for this run, as the producer reads them (ewsRows_ is given none): with `switches`
+ * (the run's wanted.switches, Main.gs, right after the Control tab is read) it keeps the ones that are exactly true;
+ * with no argument it returns them. Never set in a run (or set to nothing): every switch reads OFF, so no new source is
+ * read (fail closed). Never throws.
+ */
+let EWS_RUN_SW_ = null;
+function ewsRunSwitches_(switches) {
+  if (arguments.length) {
+    const out = {};
+    if (switches && typeof switches === 'object') Object.keys(switches).forEach(k => { if (switches[k] === true) out[k] = true; });
+    EWS_RUN_SW_ = out;
+  }
+  return Object.assign({}, EWS_RUN_SW_ || {});
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Small helpers (pure)
 // ---------------------------------------------------------------------------------------------------------------
@@ -1768,7 +1784,8 @@ function ewsProduce_(props, st, now, firstMins, opts) {
   try {
     const exCached = ewsCacheGet_(cache, 'x') || {};
     const ownDue = !(Number(exCached.ownAt) > 0) || now - Number(exCached.ownAt) >= EWS_OWN_EVERY_MS_;
-    const lanes = ewsLanes_(null, st);
+    const sw = ewsRunSwitches_();  // the run's Control switches (all OFF unless the run set them)
+    const lanes = ewsLanes_(sw, st);
     const read = ewsReadLanes_(st, now, deadline, ownDue, firstMins, lanes).lanes;
     const usDone = read.us.state === 'done';
     const c1Done = read.c1.state === 'done';

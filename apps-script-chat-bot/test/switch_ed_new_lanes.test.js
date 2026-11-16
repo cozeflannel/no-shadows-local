@@ -133,4 +133,28 @@ module.exports = H => {
     const read = b.ewsReadLanes_(st, NOW, NOW + 40000, false, 30, b.ewsLanes_({ edFake: true }, st));
     eq([fetchAll, Object.keys(read.lanes), read.lanes.fk.state], [[['us', 'c1', 'fk']], ['us', 'c1', 'fk'], 'done']);
   });
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 2. How a run tells the producer which rows are ON
+  // ---------------------------------------------------------------------------------------------------------------
+
+  test('new lanes: ewsRunSwitches_ reads all OFF until a run sets it (fail closed), keeps only switches that are exactly true, and a check reads the fake lane only while its switch is set ON', () => {
+    const env = makeEnv(job => (job === 'fk' ? [row({ lane: 'bwl', mid: 'BWL|a1' })] : []));
+    const b = env.b;
+    addFakeLane(b);
+    eq(b.ewsRunSwitches_(), {});
+    b.bqEarlyDetectionRows_(30);
+    eq(env.bq.filter(c => c.job === 'fk').length, 0);
+    eq(b.ewsRunSwitches_({ edFake: true, edAmie: 'ON', edBwLive: 1, relay: false }), { edFake: true });
+    const copy = b.ewsRunSwitches_();
+    copy.edAmie = true;
+    eq(b.ewsRunSwitches_(), { edFake: true });
+    env.g.clock.now += 15 * MIN;
+    b.bqEarlyDetectionRows_(30);
+    eq(env.bq.filter(c => c.job === 'fk').length, 1);
+    eq(b.ewsRunSwitches_(null), {});
+    env.g.clock.now += 15 * MIN;
+    b.bqEarlyDetectionRows_(30);
+    eq(env.bq.filter(c => c.job === 'fk').length, 1);
+  });
 };
