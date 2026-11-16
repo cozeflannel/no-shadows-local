@@ -1139,12 +1139,12 @@ module.exports = H => {
     bot.edQueuePut_(props, row('C', 'P1', 9), NOW + 2);
     bot.edQueuePut_(props, row('D', 'P0', 2), NOW + 3);
     eq(bot.edQueueList_(props).map(e => e.id), ['D', 'C', 'B', 'A']);
-    eq(bot.edQueuePut_(props, row('C', 'P1', 9), NOW + 4), false);
+    eq(bot.edQueuePut_(props, row('C', 'P1', 9), NOW + 4), { queued: false, why: 'already there', pushed: [] });
     for (let i = 0; i < 10; i++) bot.edQueuePut_(props, row(`E${i}`, 'P1', 3), NOW + 10 + i);
     const ids = bot.edQueueList_(props).map(e => e.id);
     eq([ids.length, ids.includes('A'), ids[0]], [12, false, 'D']);
     eq(Array.from(g.props.keys()).filter(k => /^ED_ALERT_Q_/.test(k)).length, 12);
-    eq(bot.edQueuePut_(props, row('F', 'P2', 1), NOW + 30), false);  // ranked out: never stored
+    eq(bot.edQueuePut_(props, row('F', 'P2', 1), NOW + 30), { queued: false, why: 'ranked out', pushed: [] });  // never stored
 
     const long = clusterRow({ representative_posts_json: JSON.stringify(Array.from({ length: 12 }, (_, i) => ({
       platform: 'Reddit', author_id: 'u' + i, url: `https://www.reddit.com/r/x/comments/${'a'.repeat(900)}${i}/`, snippet: 'y'.repeat(2000) }))) });

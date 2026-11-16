@@ -325,6 +325,7 @@ function poll() {
   let relayRan = false;  // the relay ran this run (when the run fails before it does, it starts afresh: relayFailStop_)
   try {
     outboxRunStart_();  // Outbox.gs: what this run withholds from, or queues for, S-F Burson (counted for the run log)
+    edNotesStart_();    // EarlyDetectionNotes.gs: what became of each Early Detection signal in this run
     setSfBurson_(null);  // Config.gs: no S-F Burson is known until B25 is read below
     setTestCopy_(null);  // Config.gs: no Burson test copy until B26 is read below
     setRunLive_(false);  // Config.gs: Testing until runMode_ says otherwise (fail closed)

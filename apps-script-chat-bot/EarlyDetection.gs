@@ -1520,12 +1520,21 @@ function edTaxonomyLines_(ed, d) {
  */
 function edCallLine_(d) {
   const x = d || {};
-  const rev = x.rev || null;
-  const why = x.basis === 'early_detection' && rev && rev.reason ? rev.reason
-    : x.basis === 'p0_tag' ? 'a P0 exposure tag is escalated at any size' : x.why;
+  const why = edCallWhy_(x);
   const plain = x.disposition === 'dismiss' && x.basis !== 'repeat' && !x.tnsActive && !x.tnsPlanned ? ' (no action needed)' : '';
   const words = truncate_(String(why || '').replace(/\s+/g, ' ').replace(/[.\s]+$/, '').trim(), 220);
   return `*Call:* ${edCallWords_(x)}${plain}${words ? `: ${words}` : ''}`;
+}
+
+/**
+ * Why the call is what it is, in words a reader needs no key for (the card's Call line and the record of what became of
+ * the signal, EarlyDetectionNotes.gs): the review's own reason, or the bot's rule when it changed the call. Pure.
+ */
+function edCallWhy_(d) {
+  const x = d || {};
+  const rev = x.rev || null;
+  return x.basis === 'early_detection' && rev && rev.reason ? rev.reason
+    : x.basis === 'p0_tag' ? 'a P0 exposure tag is escalated at any size' : x.why;
 }
 
 /** When the posts happened, in words: "between 10:39 AM and 12:55 PM ET", "at 7:42 AM ET" (dates when not today), or ''. */
@@ -1720,7 +1729,10 @@ function edDismissed_(d) {
  * (`retry`) and then dropped; the usual kinds keep their "needs a human look" card. {card (null when Chat held it
  * back), held (why no card was posted after the review, or ''), dismissed (why it was filtered out as a dismissal, or
  * ''), retry (why it stays queued for another try, or absent), call ({disposition, basis, confidence, severity, why}:
- * the review's call), logged (the card's Alert-log id), updated (true when posted in an earlier card's thread)}.
+ * the review's call), logged (the card's Alert-log id), updated (true when posted in an earlier card's thread)}. For
+ * the record of what became of the signal (EarlyDetectionNotes.gs), the call also says the review's headline (`title`),
+ * its reason in plain words (`reason`) and the tag its card shows (`tag`), and an update comes with `earlier`: the card
+ * it went under ({id, message}) and what is new (`news`).
  */
 function edReviewAndPost_(ctx, row, report) {
   const now = ctx.now();
@@ -1743,8 +1755,11 @@ function edReviewAndPost_(ctx, row, report) {
   }
   const d = edConclude_(ctx, prep, assessed, now);
   const named = (d.rev && d.rev.story && d.rev.story.title) || ed.headline;
+  // title, reason and tag: for the record of what became of the signal (EarlyDetectionNotes.gs edNoteReviewed_): the
+  // review's headline, its reason in plain words and the tag its card shows
   const call = { disposition: d.disposition, basis: d.basis, confidence: d.rev ? d.rev.confidence : null,
-    severity: d.rev ? d.rev.severity : '', why: d.why || '' };
+    severity: d.rev ? d.rev.severity : '', why: d.why || '',
+    title: (d.rev && d.rev.story && d.rev.story.title) || '', reason: edCallWhy_(d) || '', tag: edCardTag_(d) };
   // An early-watch signal whose review failed: no card (the usual kinds keep their "needs a human look" card); it is
   // tried once more, then dropped (edDrainQueue_, ED_QUEUE_MAX_TRIES_)
   if (d.basis === 'failed' && ed.signalType === EWS_WATCH_SIGNAL_) {
@@ -1805,7 +1820,8 @@ function edReviewAndPost_(ctx, row, report) {
     samples: ed.samples,
   });
   const logged = edAct_(ctx, Object.assign({}, card, { text: card.text || text }), d, report);
-  return { card, held: '', call, logged: (logged && logged.alert_id) || '', updated: !!upd, updateOf: (upd && upd.id) || '' };
+  return { card, held: '', call, logged: (logged && logged.alert_id) || '', updated: !!upd, updateOf: (upd && upd.id) || '',
+    earlier: upd ? { id: upd.row || '', message: upd.msg || '', news: upd.news || '' } : null };
 }
 
 /**
@@ -1820,7 +1836,10 @@ function edReviewAndPost_(ctx, row, report) {
  * toward the run's reviews. With the fast triage (Control rows 38-45 and 47, FastTriage.gs): the queue is in the answers'
  * order only while row 39 is ON (OFF, the ranking's keys are taken off and an early-watch signal still waiting is
  * dropped unreviewed); an early-watch signal whose review failed stays queued for one more try and the run reviews no
- * more. {posted, dropped, held, dismissed, waiting}, or null when it didn't run.
+ * more. Every signal that leaves the queue here is noted (EarlyDetectionNotes.gs edNote_ / edNoteReviewed_): a card, an
+ * update, a dismissal, a repeat, not English, never reviewed (it waited too long, its review didn't finish twice, the
+ * early watch is OFF, its stored row was gone) or a card Chat gave no message for.
+ * {posted, dropped, held, dismissed, waiting}, or null when it didn't run.
  */
 function edDrainQueue_(ctx, report) {
   if (!switchOn_(ctx, 'earlyWave') || earlyWaveRefusal_(ctx)) return null;
@@ -1847,6 +1866,7 @@ function edDrainQueue_(ctx, report) {
     p.dropped.forEach(x => {
       ctx.log(`early detection: dropped ${x.id || 'a queued signal'} (${x.why})`);
       if (writeBq && x.id) events.push(ewBqEventRow_(x.id, null, 'dropped_stale', x.why, null, ctx.now()));
+      edNote_(ctx, x.row || edEntryRow_(x.entry), ED_OUT_.never, edNeverWhy_(x.cause), { waited: true, logged: true });
     });
     out.dropped += p.dropped.length;
     return p.list;
@@ -1860,13 +1880,14 @@ function edDrainQueue_(ctx, report) {
     const entry = list[0];
     // An early-watch signal waits for its review only while the ranking that raised it is ON (row 39)
     if (entry.sig === 'w' && !ranking) {
-      const wRow = writeBq ? edQueueRow_(props, entry.k) : null;
+      const wRow = edQueueRow_(props, entry.k);
       edQueueDrop_(props, entry.k);
       out.dropped++;
       ctx.log(`early detection: dropped ${entry.id || 'a queued early signal'} (the early watch is OFF)`);
       if (writeBq && entry.id) {
         events.push(ewBqEventRow_(entry.id, wRow && wRow.cluster_id, 'dropped_stale', 'the early watch is OFF', null, ctx.now()));
       }
+      edNote_(ctx, wRow || edEntryRow_(entry), ED_OUT_.never, edNeverWhy_('watchOff'), { waited: true, logged: true });
       list = prune();
       continue;
     }
@@ -1881,6 +1902,8 @@ function edDrainQueue_(ctx, report) {
       if (writeBq && (entry.id || (row && row.alert_id))) {
         events.push(ewBqEventRow_(entry.id || row.alert_id, row && row.cluster_id, 'held_repeat', verdict.hold, null, ctx.now()));
       }
+      edNote_(ctx, row, ED_OUT_.repeat, edRepeatWhy_(row, verdict, null, ctx.now()),
+        { waited: true, logged: true, card: edPriorCard_(verdict) });
       list = prune();
       continue;
     }
@@ -1905,6 +1928,7 @@ function edDrainQueue_(ctx, report) {
         if (writeBq && (entry.id || (row && row.alert_id))) {
           events.push(ewBqEventRow_(entry.id || row.alert_id, row && row.cluster_id, 'dropped_stale', whyDrop, null, ctx.now()));
         }
+        edNote_(ctx, row || edEntryRow_(entry), ED_OUT_.never, edNeverWhy_('failed'), { waited: true, logged: true });
       } else {
         ctx.log(`early detection: ${entry.id || 'an early signal'} stays queued for one more try (${res.retry})`);
       }
@@ -1912,6 +1936,7 @@ function edDrainQueue_(ctx, report) {
       break;
     }
     edQueueDrop_(props, entry.k);
+    edNoteReviewed_(ctx, entry, row, res);  // what became of it: a card, an update, a dismissal, a repeat, no card
     if (writeBq && row && res) {
       const aid = row.alert_id || entry.id;
       const cid = row.cluster_id || null;
