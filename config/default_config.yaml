@@ -109,6 +109,17 @@ burson_qa:
   early_detection_tab: true      # the "Early Detection" tab: every story signal and what happened to it (false: no tab is made or written)
   cross_alert_notes: true        # the Auto-correct flow: a note under another alert's card when two alert types meet on one post or story (false: no note)
   requirement_line: true         # the Auto-correct flow: the "Alert requirements" line in the note after each review (false: no such line)
+  # New sources in Early Detection (Control rows 48-49, each OFF until the owner turns it on): how their posts share the
+  # check with today's sources. None of these does anything while those rows are OFF.
+  early_wave_new_embed_per_check: 100   # of the 400 texts embedded a check, the new sources' share (today's sources keep 300; room either side leaves goes to the other)
+  early_wave_new_embed_per_day: 5000    # texts of the new sources embedded a UTC day at most (they also stop once the day's total nears its pace, keeping room for Sonar)
+  early_wave_new_late_minutes: 180      # a new source's post first seen more than this long after it was posted can only join a story, never start one
+  early_wave_new_pool_max: 300          # of the 1,200 unjoined posts kept to start stories, at most this many from the new sources...
+  early_wave_new_pool_minutes: 120      # ...each kept this long at most
+  early_wave_new_carry_max: 100         # new sources' posts not embedded in a check, kept for the next check (2 hours at most)
+  early_wave_new_trial_days: 7          # days after a source's row first goes ON when stories only it lifts over the bar are listed, not sent for review (0: no trial)
+  early_wave_new_lifted_per_hour: 2     # after the trial: stories only the new sources lift over the bar, sent for review in an hour at most...
+  early_wave_new_lifted_per_day: 20     # ...and in a day (the rest are listed, not sent)
   # What the Resources tab of the bot's sheet starts with. After that the tab is what the bot uses: edit it there.
   # The bot links these when Burson asks about the alert requirements, so only list documents Burson can open.
   resources:

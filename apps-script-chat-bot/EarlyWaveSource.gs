@@ -272,6 +272,30 @@ function ewsRows_(minutes, opts) {
 }
 
 /**
+ * The new sources' settings (config/default_config.yaml burson_qa, GEN.settings): {embedPerCheck, embedPerDay,
+ * lateMinutes, poolMax, poolMinutes, carryMax, trialDays, liftedPerHour, liftedPerDay}. A setting missing, negative or
+ * not a number reads as its default (the numbers below); 0 is kept (trialDays 0: no trial). Pure (reads GEN).
+ */
+function ewsNewCfg_() {
+  const s = (typeof GEN !== 'undefined' && GEN && GEN.settings) || {};
+  const n = (name, d) => {
+    const v = s[name];
+    return v === null || v === undefined || v === '' || typeof v === 'boolean' || !isFinite(Number(v)) || Number(v) < 0 ? d : Math.floor(Number(v));
+  };
+  return {
+    embedPerCheck: n('early_wave_new_embed_per_check', 100),
+    embedPerDay: n('early_wave_new_embed_per_day', 5000),
+    lateMinutes: n('early_wave_new_late_minutes', 180),
+    poolMax: n('early_wave_new_pool_max', 300),
+    poolMinutes: n('early_wave_new_pool_minutes', 120),
+    carryMax: n('early_wave_new_carry_max', 100),
+    trialDays: n('early_wave_new_trial_days', 7),
+    liftedPerHour: n('early_wave_new_lifted_per_hour', 2),
+    liftedPerDay: n('early_wave_new_lifted_per_day', 20),
+  };
+}
+
+/**
  * Which Control switches are ON for this run, as the producer reads them (ewsRows_ is given none): with `switches`
  * (the run's wanted.switches, Main.gs, right after the Control tab is read) it keeps the ones that are exactly true;
  * with no argument it returns them. Never set in a run (or set to nothing): every switch reads OFF, so no new source is
