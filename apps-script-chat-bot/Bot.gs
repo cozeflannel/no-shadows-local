@@ -1113,6 +1113,7 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
     source_at: sourceAt_(m), seen_at: parsed.seen_at || '', knowledge_used: review.knowledgeUsed || [],
   }, parsed.ingested ? { ingested: parsed.ingested } : {}, livePairFields_(ctx, m), draft || {}));  // ingested: Direct BigQuery alerts (row 15)
   if (draft) watchDraft_(ctx, alertId);
+  bqDirectReviewed_(row, !!draft);  // C15: a Direct BigQuery card's review ended in a Social Alert, or in none
 
   if (switchOn_(ctx, 'noWait')) {
     // Never wait on Burson ON (Control row 23):

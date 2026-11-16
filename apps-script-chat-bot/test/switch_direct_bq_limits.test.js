@@ -91,7 +91,8 @@ module.exports = H => {
     w.g.props.set('LAST_RUN', JSON.stringify({ at: '2026-10-14T11:58:00.000Z', errors: ['time budget reached; the rest is handled next run'] }));
     eq(w.bot.pollBigQuerySources_(onCtx(w), w.BUR), res({}));
     eq([calls.length, synth(w.chat, w.BUR)], [0, []]);
-    assert.match(note(w), /^last check .* \(not checked: the last run ran out of time; it tries again at the next check\) · 0 posts today$/);
+    // (with a problem to tell, the note has no room for the bracket that splits the posts: BigQuery.gs bqDirectNoteText_)
+    assert.match(note(w), /^last check .* \(not checked: the last run ran out of time; it tries again at the next check\) · 0 posts today · not posted: 0 already had an alert, 0 on a story already alerted$/);
     assert.ok(w.g.logs.includes('BigQuery direct poll skipped: the last run ran out of time (the Burson space\'s alerts come first)'));
     // The next check (5 minutes on), after a run that didn't run out of time
     w.g.props.set('LAST_RUN', JSON.stringify({ at: '2026-10-14T12:03:00.000Z', errors: [] }));
@@ -122,7 +123,8 @@ module.exports = H => {
     const n = calls.length;
     eq(w.bot.pollBigQuerySources_(onCtx(w), w.BUR), res({}));
     eq([calls.length - n, synth(w.chat, w.BUR).length], [0, 4]);
-    assert.match(note(w), /\(not checked: 4 posts it took are still waiting to be reviewed; it tries again at the next check\) · 4 posts today$/);
+    // (a longer problem: "; it tries again at the next check" goes too, so that the problem's own words and every count stay whole)
+    assert.match(note(w), /\(not checked: 4 posts it took are still waiting to be reviewed\) · 4 posts today · not posted: 0 already had an alert, 0 on a story already alerted$/);
     // The run reviews what's waiting: the next check goes ahead
     w.g.clock.now += 1000;
     w.bot.runOnce_(onCtx(w));
@@ -138,7 +140,7 @@ module.exports = H => {
     ctx.chat = Object.assign({}, ctx.chat, { list: () => { throw new Error('Chat 503'); } });
     eq(w.bot.pollBigQuerySources_(ctx, w.BUR), res({}));
     eq(calls.length, 0);
-    assert.match(note(w), /\(couldn't read the space; it tries again at the next check\) · 0 posts today$/);
+    assert.match(note(w), /\(couldn't read the space; it tries again at the next check\) · 0 posts today · not posted: 0 already had an alert, 0 on a story already alerted$/);
   });
 
   test('direct BQ limits, every-minute run: a run that ran out of time makes the next minute\'s poll skip BigQuery; Burson\'s alerts are reviewed first', () => {

@@ -1618,8 +1618,11 @@ const BQ_INGESTED_KEYS_MAX_ = 300;           // ~14 characters each: well under 
 const BQ_INGESTED_MSGS_PROP_ = 'BQ_INGESTED_MSGS';  // the Chat messages it posted, with their source ([hash, source])
 const BQ_INGESTED_MSGS_MAX_ = 200;           // ~26 characters each
 const BQ_DIRECT_AT_PROP_ = 'BQ_DIRECT_AT';   // when the last check started (ms)
-const BQ_DIRECT_DAY_PROP_ = 'BQ_DIRECT_TODAY';  // today's posts, for the Control tab: {day, n}
+const BQ_DIRECT_DAY_PROP_ = 'BQ_DIRECT_TODAY';  // today's counts, for C15: {day, n, s, m, a, b, k} (bqDirectDay_)
 const BQ_SOURCE_LABELS_ = { SPRINKLR: 'Sprinklr', BMIE: 'BMIE', BSIP: 'BSIP' };  // Alert log `ingested` (BMIE = legacy DSD/Brandwatch code)
+const BQ_NOTE_MAX_ = 200;                    // C15's note at most: Control.gs noteSwitch_ cuts every switch's note there
+const BQ_NOT_POSTED_KEPT_ = 300;             // the posts counted as not posted that the day's record keeps (~16 characters each)
+const BQ_NOT_POSTED_CACHE_SEC_ = 6 * 3600;   // and how long the script cache keeps each one's key after the post was last read
 
 /** Pendulum's alert names for a post (`TO_JSON_STRING` of a list, of one name, or of {name}s) -> ['…']. Pure. */
 function bsipAlertNames_(json) {
@@ -2062,24 +2065,117 @@ function bqIngestedSource_(ctx, m) {
   }
 }
 
+/** Is `ingested` (an Alert-log row's) one of the Direct BigQuery poll's own sources (BQ_SOURCE_LABELS_)? Pure. */
+function bqDirectSource_(ingested) {
+  const s = String(ingested === undefined || ingested === null ? '' : ingested);
+  return !!s && Object.keys(BQ_SOURCE_LABELS_).some(k => BQ_SOURCE_LABELS_[k] === s);
+}
+
 /**
- * Direct BigQuery alerts: counts today's posts and puts "last check … · N posts today" in the switch's column C, with
- * what went wrong (`problem`, '' when nothing did). Never throws.
+ * Today's Direct BigQuery counts, read from the BQ_DIRECT_TODAY property's text (`raw`): {day, n, s, m, a, b, k}.
+ *   n     the cards the poll posted today
+ *   s, m  the cards reviewed today that ended in a Social Alert, and in none (bqDirectReviewed_)
+ *   a     posts not posted because they already had an alert (never the poll's own card)
+ *   b     posts not posted because Step 1 left them out as on a story already alerted
+ *   k     the posts counted in a and b: 'a' or 'b' and a short hash of the post's key, the newest BQ_NOT_POSTED_KEPT_
+ * A new day, or a text that can't be read, starts from nothing; a record from before s, m, a, b and k keeps its n.
  */
-function noteBqDirect_(props, posted, problem) {
+function bqDirectDay_(raw) {
+  const day = dayKey_();
+  let s = null;
+  try { s = JSON.parse(raw || 'null'); } catch (e) { s = null; }
+  if (!s || typeof s !== 'object' || s.day !== day) s = {};
+  const count = k => Math.max(0, Math.round(Number(s[k]) || 0));
+  return { day, n: count('n'), s: count('s'), m: count('m'), a: count('a'), b: count('b'),
+    k: (Array.isArray(s.k) ? s.k : []).map(String).slice(-BQ_NOT_POSTED_KEPT_) };
+}
+
+/**
+ * C15's note, BQ_NOTE_MAX_ characters at most, from today's counts `s` (bqDirectDay_), the time of the check (`label`)
+ * and what went wrong (`problem`, '' when nothing did):
+ *   last check <time>[ (<problem>; it tries again at the next check)] · N posts today (S for a Social Alert, M
+ *   monitoring only) · not posted: A already had an alert, B on a story already alerted
+ * Too long (only with a problem to tell): the bracket with S and M goes first, then "; it tries again at the next
+ * check", then the problem's own words are cut. Never a count. Pure.
+ */
+function bqDirectNoteText_(s, label, problem) {
+  const n = k => Number(s && s[k]) || 0;
+  const head = `last check ${label}`;
+  const posts = ` · ${n('n')} post${n('n') === 1 ? '' : 's'} today`;
+  const reviewed = ` (${n('s')} for a Social Alert, ${n('m')} monitoring only)`;
+  const not = ` · not posted: ${n('a')} already had an alert, ${n('b')} on a story already alerted`;
+  const words = String(problem || '');
+  const wrong = (w, again) => (w ? ` (${w}${again ? '; it tries again at the next check' : ''})` : '');
+  const tries = [head + wrong(words, true) + posts + reviewed + not, head + wrong(words, true) + posts + not,
+    head + wrong(words, false) + posts + not];
+  const fits = tries.find(t => t.length <= BQ_NOTE_MAX_);
+  if (fits) return fits;
+  return head + wrong(truncate_(words, Math.max(1, words.length - (tries[2].length - BQ_NOTE_MAX_))), false) + posts + not;
+}
+
+/**
+ * Counts the posts of `list` that were not posted on today's record `s` (bqDirectDay_), each post once a day for each
+ * reason, and writes one log line for each it counts: its link, the reason and the alert it matched. `list`:
+ * [{why: 'a' (it already had an alert) | 'b' (on a story already alerted), key (the post's record key), url, said}].
+ * A post is known as counted two ways: the day's record keeps the newest BQ_NOT_POSTED_KEPT_ it counted (s.k), and the
+ * script cache keeps a key for the post and the reason, BQ_NOT_POSTED_CACHE_SEC_ after the post was last read (it is
+ * set again at every check that reads the post). Either is enough, so with the cache empty (it may drop a key at any
+ * time) nothing is counted twice: only a post both have lost counts a second time that day, which takes more than
+ * BQ_NOT_POSTED_KEPT_ other posts counted after it. Never throws.
+ */
+function bqCountNotPosted_(s, list) {
+  let cache = null;
+  try { cache = CacheService.getScriptCache(); } catch (e) { cache = null; }
+  (list || []).forEach(p => {
+    const id = p.why + hashText_(String(p.key));
+    const cacheKey = `bqnp:${s.day}:${id}`;
+    let known = s.k.indexOf(id) >= 0;
+    try {
+      known = known || !!(cache && cache.get(cacheKey));
+      if (cache) cache.put(cacheKey, '1', BQ_NOT_POSTED_CACHE_SEC_);
+    } catch (e) { /* the day's record still knows what it counted */ }
+    if (known) return;
+    s[p.why]++;
+    s.k = s.k.concat([id]).slice(-BQ_NOT_POSTED_KEPT_);
+    console.log(`BigQuery direct poll: not posted, ${p.why === 'a' ? 'it already had an alert' : 'on a story already alerted'}: ` +
+      `${p.url} · ${p.said}`);
+  });
+}
+
+/**
+ * Direct BigQuery alerts: counts today's posts (`posted`) and the posts that were not posted (`notPosted`:
+ * bqCountNotPosted_), and puts C15's note (bqDirectNoteText_) in the switch's column C, with what went wrong
+ * (`problem`, '' when nothing did). Never throws.
+ */
+function noteBqDirect_(props, posted, problem, notPosted) {
   try {
-    const day = dayKey_();
     const was = props.getProperty(BQ_DIRECT_DAY_PROP_);
-    let s = null;
-    try { s = JSON.parse(was || 'null'); } catch (e) { s = null; }
-    if (!s || s.day !== day) s = { day, n: 0 };
-    s.n = (Number(s.n) || 0) + (posted || 0);
+    const s = bqDirectDay_(was);
+    s.n += posted || 0;
+    bqCountNotPosted_(s, notPosted);
     const next = JSON.stringify(s);
     if (next !== was) props.setProperty(BQ_DIRECT_DAY_PROP_, next);
-    noteSwitch_('directBq', `last check ${nowLabel_()}${problem ? ` (${problem}; it tries again at the next check)` : ''}` +
-      ` · ${s.n} post${s.n === 1 ? '' : 's'} today`);
+    noteSwitch_('directBq', bqDirectNoteText_(s, nowLabel_(), problem));
   } catch (e) {
     console.error('could not count the direct BigQuery posts: ' + ((e && e.message) || e));
+  }
+}
+
+/**
+ * C15's "(S for a Social Alert, M monitoring only)": a Direct BigQuery card is counted where its review ends (Bot.gs
+ * handleNewAlert_, with the Alert-log `row` it has just written for the card: a card gets one row, so it is counted
+ * once). `alerted`: the review called for a Social Alert (Drafts.gs draftPlan_). Any other alert's row is passed over.
+ * Only the count moves here: C15 shows it at the poll's next check. Never throws.
+ */
+function bqDirectReviewed_(row, alerted) {
+  try {
+    if (!row || !bqDirectSource_(row.ingested)) return;
+    const props = PropertiesService.getScriptProperties();
+    const s = bqDirectDay_(props.getProperty(BQ_DIRECT_DAY_PROP_));
+    s[alerted ? 's' : 'm']++;
+    props.setProperty(BQ_DIRECT_DAY_PROP_, JSON.stringify(s));
+  } catch (e) {
+    console.error('could not count the review of a direct BigQuery card: ' + ((e && e.message) || e));
   }
 }
 
@@ -2246,7 +2342,11 @@ function bqIsStoryCard_(m) {
  * check at all while the Burson space's alerts wait (bqDirectBusy_: the last run ran out of time, or posts it took aren't
  * reviewed yet). The messages it posts are remembered (BQ_INGESTED_MSGS) so their Alert-log rows say where they came
  * from. A source or a post that fails is skipped and logged with the source's name (tried again at the next check), and
- * column C says which source's query BigQuery refused or didn't finish.
+ * column C says which source's query BigQuery refused or didn't finish. Column C also counts the posts about Google
+ * that got no card because they already had an alert (never the poll's own card), or because Step 1 left them out as
+ * on a story already alerted: each post once a day for each reason, with one line in the run log that has its link,
+ * the reason and the alert it matched (noteBqDirect_, bqCountNotPosted_); every other candidate Step 1 leaves out gets
+ * a log line with its reason. None of that changes what is posted.
  * {sprinklr, bmie, bsip, skipped_duplicates, skipped_step1, skipped_no_count}.
  */
 function pollBigQuerySources_(ctx, targetSpaceId) {
@@ -2324,6 +2424,43 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
     if (alreadySeen(url)) return false;
     return shouldIngestBqUrl_(url, storeAlerts, seen) && !waiting.has(key) && !leftOut(key);
   };
+  // C15's "not posted", and the run log: the posts about Google that get no card because they already had an alert
+  // ('a'), or because Step 1 left them out as on a story already alerted ('b'). [{why, key, url, said}], counted once a
+  // day each when the check is noted (noteBqDirect_). Never the poll's own card: a post it took itself is not "another
+  // alert". Nothing here decides what is posted.
+  const already = [];
+  const alertWords = (id, row) => `${id} (${row ? row.ingested || 'Burson\'s alert' : 'an alert of another flow'})`;
+  const rowOf = id => (id && ctx && ctx.store && typeof ctx.store.alertById === 'function' ? ctx.store.alertById(id) : null);
+  const ownCard = row => !!row && bqDirectSource_(row.ingested);  // an Alert-log row of a card the poll posted
+  const hadAlert = (url, key) => {  // a post about Google that isn't new (isNew said so): which alert it has
+    try {
+      if (seen.has(key)) return;  // the poll took the post itself
+      const rows = (storeAlerts || []).filter(a => a && a.record_key === key);
+      if (rows.some(ownCard)) return;  // ...as its card's row says, should the poll's memory be lost
+      const s = mem && mem.active ? mem.seenPost(url) : null;
+      if (s && (s.claim === 'bq' || ownCard(rowOf(s.alert_id)))) return;  // ...or as the alert memory knows its card
+      const row = rows[rows.length - 1];
+      const said = s && !(past && bqOnlyStoryCards_(ctx, s, now))
+        ? (s.alert_id ? alertWords(s.alert_id, rowOf(s.alert_id)) : `a ${s.claim || 'producer'} card, not reviewed yet`)
+        : row ? alertWords(row.alert_id, row)
+          : waiting.has(key) ? 'in the space, not reviewed yet' : '';  // '': Step 1 left it out within the hour (said then)
+      if (said) already.push({ why: 'a', key, url, said });
+    } catch (e) { /* a count and a log line only */ }
+  };
+  const step1Left = (c, x) => {  // a candidate Step 1 left out (`x`: its left_out entry, BqPipeline.gs bqLeftOut_)
+    try {
+      const by = x && x.why === BQ_LEFT_OUT_.GEMINI ? 'by Gemini' : 'by the rules';
+      const row = rowOf(x && x.alert_id);
+      if (x && x.match === 'issue') {
+        already.push({ why: 'b', key: c.key, url: c.row.url, said: `${alertWords(x.alert_id, row)} · Step 1, ${by}` });
+      } else if (x && x.match === 'post') {
+        if (!ownCard(row)) already.push({ why: 'a', key: c.key, url: c.row.url, said: `${alertWords(x.alert_id, row)} · Step 1, ${by}` });
+      } else {
+        console.log(`BigQuery direct poll: not posted, left out by Step 1: ${c.row.url} · ` +
+          (x && x.why === BQ_LEFT_OUT_.NOT_GOOGLE ? 'not about Google, by the rules' : `${by} (it matched no earlier alert)`));
+      }
+    } catch (e) { /* a count and a log line only */ }
+  };
   const counts = { SPRINKLR: 0, BMIE: 0, BSIP: 0 };
   const total = () => counts.SPRINKLR + counts.BMIE + counts.BSIP;
   const posted = [];  // [hash of the message name, source]
@@ -2365,11 +2502,13 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
     (rows || []).forEach(r => {
       const key = r && r.url ? recordKey_({ post_url: r.url }) : '';
       const nonEn = r && isNonEnglishPost_(r.snippet || r.summary || r.post_caption || '', r.language || '');
-      if (key && !nonEn && !taken.has(key) && !here.has(key) && isGoogleRelevantBqRow_(r) && isNew(r.url)) {
+      const about = key && !nonEn && !taken.has(key) && !here.has(key) && isGoogleRelevantBqRow_(r);
+      if (about && isNew(r.url)) {
         here.add(key);
         fresh.push(r);
       } else {
         skipped++;
+        if (about) hadAlert(r.url, key);
       }
     });
     if (!fresh.length) return;
@@ -2381,11 +2520,12 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
       return;
     }
     fresh.forEach(r => {
+      const key = recordKey_({ post_url: r.url });
       if (bqAlreadyLogged_(r.url, logged)) {
         skipped++;
+        already.push({ why: 'a', key, url: r.url, said: 'the SLRR alert log has the post' });
         return;
       }
-      const key = recordKey_({ post_url: r.url });
       taken.add(key);
       candidates.push({ kind, row: r, key });
     });
@@ -2419,6 +2559,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
   // Step 1 of the 3-step evaluation, every candidate together (one Gemini call at most): those it leaves out aren't
   // posted, nor weighed again for an hour. The evaluation itself failing (it never should): the rules above decide.
   let passed = null;  // a Set of the candidates' ids ('c' + index); null: every candidate
+  const whyOut = new Map();  // a left-out candidate's id -> why Step 1 left it out, and the earlier alert it matched
   if (candidates.length) {
     try {
       const step = evaluateBqDualTrack_(candidates.map((c, i) => Object.assign({}, c.row, { id: 'c' + i })), ctx, {
@@ -2430,6 +2571,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
         guidance: () => ctx.guidance || [],
       });
       passed = new Set(step.solo_alerts.map(s => String(s.id)));
+      (step.left_out || []).forEach(x => whyOut.set(String(x.id), x));
     } catch (e) {
       console.warn('BigQuery direct poll: the 3-step evaluation failed, so the rules alone decide: ' + ((e && e.message) || e));
       passed = null;
@@ -2438,6 +2580,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
   const keep = candidates.filter((c, i) => {
     if (!passed || passed.has('c' + i)) return true;
     step1Out++;
+    step1Left(c, whyOut.get('c' + i));
     try {
       if (cache) cache.put(step1Key(c.key), '1', BQ_STEP1_NO_CACHE_SEC_);
     } catch (e) { /* weighed again at the next check */ }
@@ -2506,7 +2649,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
     const problem = [refusedFor.length ? `BigQuery refused the query for ${names(refusedFor)}` : '',
       lateFor.length ? `BigQuery didn't finish the query for ${names(lateFor)} in time` : '',
       notPosted ? `${notPosted} couldn't be posted` : ''].filter(Boolean).join(', ');
-    noteBqDirect_(props, total(), problem);
+    noteBqDirect_(props, total(), problem, already);
   }
   return { sprinklr: counts.SPRINKLR, bmie: counts.BMIE, bsip: counts.BSIP, skipped_duplicates: skipped,
     skipped_step1: step1Out, skipped_no_count: noCount };

@@ -304,7 +304,7 @@ module.exports = H => {
       emails: out.emails.map(e => [e.run, e.kind, e.to, e.subject.split(' | ')[0]]),
       rows: t.bot.sheetBackend_(t.sheet()).loadAlerts().filter(r => r.record_key === key).map(r => [r.ingested, r.email_status || '']).sort(),
       storyId: (t.bot.sheetBackend_(t.sheet()).loadAlerts().find(r => r.record_key === key && r.ingested === 'Early detection') || {}).alert_id,
-      today: (String(t.control().cell(15, 3)).match(/· (\d+ posts? today)$/) || [])[1],
+      today: (String(t.control().cell(15, 3)).match(/· (\d+ posts? today) /) || [])[1],  // C15's count of the day's posts (more follows it)
       // what the run log says of a post the poll looks at although a story's card has it
       said: t.g.logs.filter(l => /^BigQuery direct poll: \S+ is in a story's card/.test(l)),
       elsewhere: out.chat.filter(m => m.run !== 'setup' && m.space !== (w.space || golden.spaces.AC)).length,
