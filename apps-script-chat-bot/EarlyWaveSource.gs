@@ -92,6 +92,14 @@
  * script cache (6 h): clusters, the pool, the last hours' accounts, same-author signatures, exclusions, the alerted
  * stories and the 3-hour buffer, all packed under 100 KB an item (about 60 items at most). Losing the cache only costs
  * continuity (stories and the pool start again), never an error. Nothing here writes to BigQuery, a sheet or a space.
+ *
+ * New lanes (more sources, each behind its own Control row, OFF by default; none is read yet): a new source's job is
+ * one more entry of ewsLanes_ in the same fetchAll, its posts come in under the lanes EWS_NEW_LANES_ (marked nl) and,
+ * only while one of their switches is ON (ewsRunSwitches_), follow their own rules: no velocity, a share of the pool
+ * and of embedding with a day bar and a carry ('carry'), their own same-author signatures ('sn:N'), stitching against
+ * every other source by post key (ewsStitch_, index 'nk:N'), their own account names (ewsNewAuthor_), three limits at
+ * promotion and a trial for the stories only they lift (ewsLiftGate_), and a day record (property EWS_SRC_DAY). With
+ * every new switch OFF none of this runs and nothing of it is read or written.
  */
 
 // ---------------------------------------------------------------------------------------------------------------
