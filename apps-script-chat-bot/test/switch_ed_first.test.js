@@ -303,7 +303,10 @@ module.exports = H => {
       story: posts(STORY_RUN), post: posts(POST_RUN), after: posts('after'),
       emails: out.emails.map(e => [e.run, e.kind, e.to, e.subject.split(' | ')[0]]),
       rows: t.bot.sheetBackend_(t.sheet()).loadAlerts().filter(r => r.record_key === key).map(r => [r.ingested, r.email_status || '']).sort(),
+      storyId: (t.bot.sheetBackend_(t.sheet()).loadAlerts().find(r => r.record_key === key && r.ingested === 'Early detection') || {}).alert_id,
       today: (String(t.control().cell(15, 3)).match(/· (\d+ posts? today)$/) || [])[1],
+      // what the run log says of a post the poll looks at although a story's card has it
+      said: t.g.logs.filter(l => /^BigQuery direct poll: \S+ is in a story's card/.test(l)),
       elsewhere: out.chat.filter(m => m.run !== 'setup' && m.space !== (w.space || golden.spaces.AC)).length,
       out,
     };
@@ -315,12 +318,15 @@ module.exports = H => {
     const on = storyThenPost(oneSpace(ON), { storyFirstBy: 0 });
     eq([on.post, on.after, on.emails, on.rows, on.today, on.elsewhere],
       [['story card', 'story review note', 'Direct BigQuery card'], ['card review note'], [ALERT], [['BSIP', 'sent'], ['Early detection', '']], '1 post today', 0]);
-    // both cards are on the one post, the story's first
+    // both cards are on the one post, the story's first; the run log says why the poll still looked at it, once
     const cards = on.out.chat.filter(m => !m.reply && m.text.includes(MAPS)).map(kind);
     eq(cards, ['story card', 'Direct BigQuery card']);
+    eq(on.said, [`BigQuery direct poll: ${MAPS} is in a story's card (${on.storyId}) that sent no Social Alert: that card is not the post's own ` +
+      'alert, so the post is still looked at']);
+    assert.ok(/^QA-\d+$/.test(on.storyId), on.storyId);
     const off = storyThenPost(oneSpace(OFF), { storyFirstBy: 0 });
-    eq([off.post, off.after, off.emails, off.rows, off.today, off.elsewhere],
-      [['Direct BigQuery card', 'story card', 'story review note'], ['card review note'], [ALERT], [['BSIP', 'sent'], ['Early detection', '']], '1 post today', 0]);
+    eq([off.post, off.after, off.emails, off.rows, off.today, off.elsewhere, off.said],
+      [['Direct BigQuery card', 'story card', 'story review note'], ['card review note'], [ALERT], [['BSIP', 'sent'], ['Early detection', '']], '1 post today', 0, []]);
     // the same posts and the same email, whichever came first
     const texts = r => r.out.chat.filter(m => m.run !== 'setup').map(m => m.text).sort();
     eq([texts(on), on.out.emails.map(e => [e.subject, e.text])], [texts(off), off.out.emails.map(e => [e.subject, e.text])]);
@@ -328,19 +334,19 @@ module.exports = H => {
 
   test('early detection first: the story\'s card came a check earlier (5 minutes before Direct BigQuery finds the post): where stories go first the post still gets its own card at that check, and its Social Alert a run later; with the setting off the bot does what it did before the change: the story card counts as an alert on the post, so no Direct BigQuery card and no Social Alert', () => {
     const on = storyThenPost(oneSpace(ON), { storyFirstBy: 5 });
-    eq([on.story, on.post, on.after, on.emails, on.rows, on.today],
-      [['story card', 'story review note'], ['Direct BigQuery card'], ['card review note'], [ALERT], [['BSIP', 'sent'], ['Early detection', '']], '1 post today']);
+    eq([on.story, on.post, on.after, on.emails, on.rows, on.today, on.said.length],
+      [['story card', 'story review note'], ['Direct BigQuery card'], ['card review note'], [ALERT], [['BSIP', 'sent'], ['Early detection', '']], '1 post today', 1]);
     const off = storyThenPost(oneSpace(OFF), { storyFirstBy: 5 });
-    eq([off.story, off.post, off.after, off.emails, off.rows, off.today],
-      [['story card', 'story review note'], [], [], [], [['Early detection', '']], '0 posts today']);
+    eq([off.story, off.post, off.after, off.emails, off.rows, off.today, off.said],
+      [['story card', 'story review note'], [], [], [], [['Early detection', '']], '0 posts today', []]);
   });
 
   test('early detection first: a story whose own review sent a Social Alert still counts as the alert on its main post: no Direct BigQuery card for the post and no second email, with the setting on as with it off', () => {
     [['on', ON], ['off', OFF]].forEach(([name, overrides]) => {
       const got = storyThenPost(oneSpace(overrides), { storyFirstBy: 5, escalate: true });
       eq([name, got.story.slice(0, 2), got.post.concat(got.after).filter(k => k === 'Direct BigQuery card' || k === 'card review note'),
-        got.emails.map(e => e.slice(0, 3)), got.rows, got.today],
-      [name, ['story card', 'story review note'], [], [[STORY_RUN, 'sent', [TESTER]]], [['Early detection', 'sent']], '0 posts today']);
+        got.emails.map(e => e.slice(0, 3)), got.rows, got.today, got.said],
+      [name, ['story card', 'story review note'], [], [[STORY_RUN, 'sent', [TESTER]]], [['Early detection', 'sent']], '0 posts today', []]);
     });
   });
 
@@ -366,8 +372,8 @@ module.exports = H => {
       W.scriptGemini(t);
       const seen = marks(t);
       const got = storyThenPost(threeChecksIn(timed({ t, feed, rec: W.recorder(t, ''), space: setup.space })), { storyFirstBy: 5 });
-      eq([name, got.story, got.post, got.after, got.emails, got.rows, got.elsewhere],
-        [name, ['story card', 'story review note'], [], [], [], [['Early detection', '']], 0]);
+      eq([name, got.story, got.post, got.after, got.emails, got.rows, got.elsewhere, got.said],
+        [name, ['story card', 'story review note'], [], [], [], [['Early detection', '']], 0, []]);
       eq([name, uniq(seen.map(([ac, mark]) => [ac, mark === undefined ? null : mark]))], [name, setup.marks]);
     });
     const flagged = overrides => {

@@ -2303,9 +2303,17 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
   };
   let storeAlerts = null;  // the log tabs are read only once there's a candidate
   const mem = typeof amOf_ === 'function' ? amOf_(ctx) : null;
+  const pastSaid = new Set();  // the posts the run log was told about, once each
   const alreadySeen = url => {  // the alert memory has the post (`past`: unless all it has is story cards with no Social Alert)
     const s = mem && mem.active ? mem.seenPost(url) : null;
-    return !!s && !(past && bqOnlyStoryCards_(ctx, s, now));
+    if (!s) return false;
+    if (!(past && bqOnlyStoryCards_(ctx, s, now))) return true;
+    if (!pastSaid.has(url)) {
+      pastSaid.add(url);
+      console.log(`BigQuery direct poll: ${url} is in a story's card${s.alert_id ? ` (${s.alert_id})` : ''} that sent no Social Alert: ` +
+        'that card is not the post\'s own alert, so the post is still looked at');
+    }
+    return false;
   };
   const isNew = url => {
     if (!storeAlerts) {
