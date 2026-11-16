@@ -25,6 +25,7 @@ module.exports = H => {
   const BELOW = (tag, n) => `a ${tag} tag needs 2,000+ engagements, a KOF author or a Sensitive Topic; this post: ${n} engagements, no KOF author`;
   const EARLY = 'small accounts, no KOF author, no P0 tag';
   const ANYWAY = 'A Social Alert goes out anyway on the review\'s call.';
+  const WATCH_CALL = 'A Social Alert goes out anyway on the watch\'s call.';
   // What stands in the place of "Monitoring only." when an alert that meets no requirement gets a T&S form
   const TNS_ASKED = 'No Social Alert; a T&S form is asked for below.';
   const TNS_HANDLED = 'No Social Alert; the T&S form is handled below.';
@@ -379,7 +380,7 @@ module.exports = H => {
     // Gemini's reason: one line, no Markdown or Chat link (its words stay), nobody mentioned, at most 160 characters
     const reason = 'A routine complaint\nwith no new claim;  see [the thread](https://x.com/a/status/1) and <https://example.com/x|this page>, ' +
       'cc <users/all>. The SLRR rules say so.';
-    eq(B.requirementWords_(reason), 'A routine complaint with no new claim; see the thread and this page, cc users/all . The alert requirements rules say so');
+    eq(B.requirementWords_(reason), 'A routine complaint with no new claim; see the thread and this page, cc users/all . The alert rules say so');
     const long = line({ rules: high, sent: false, review: `${'This is a long reason. '.repeat(20)}[more](https://example.com)` });
     const said = long.slice(long.indexOf('"') + 1, long.lastIndexOf('"'));
     eq([said.length, /\n/.test(long), /\]\(|https?:/.test(long), long.endsWith('…".')], [160, false, false, true]);
@@ -388,7 +389,7 @@ module.exports = H => {
     eq(['not an slrr alert, see go/SLRR-Database', 'Below the bar per SLRR (go/slrr).', 'Per go/slrr-rules, it is routine. See go/x.',
       'It is fine. See go/x. Nothing new', 'A go/no-go call for comms', 'See https://example.com/go/page for the post',
       'An Slrr repeat of Monday\'s alert (go/SLRR-log).', 'see go/x'].map(B.requirementWords_), [
-      'not an alert requirements alert',
+      'not a Social Alert',
       'Below the bar per alert requirements',
       'it is routine',
       'It is fine. Nothing new',
@@ -404,7 +405,7 @@ module.exports = H => {
       line({ rules: rules(kof), kof: kof.kof_lists, sent: true }), line({ rules: mid, sent: false, cause: 'not an SLRR issue' }),
       line({ rules: high, sent: false, review: 'not an slrr alert, see go/SLRR-Database' }), line({ rules: rules(kofLower), kof: kofLower.kof_lists, sent: true }),
       line({ rules: mid, sent: false, cause: 'not a Slrr issue' })];
-    lines.forEach(l => assert.ok(!/slrr|\bgo\//i.test(l) && /alert requirements/.test(l), l));
+    lines.forEach(l => assert.ok(!/slrr|\bgo\//i.test(l) && /alert requirements|the alert rules|a Social Alert"/.test(l), l));
     // never the 500 the BigQuery feed collects from, nor the 100 the Watch triage counts as collected, as a requirement
     const every = [line({ rules: mid, sent: false }), line({ rules: mid, sent: true }), line({ rules: high, sent: true }), line({ rules: high, sent: false, repeat: true }),
       line({ rules: low, sent: false, early: { accounts: 5, pace: 0 } })];
@@ -774,7 +775,7 @@ module.exports = H => {
   };
   const patch = (key, value) => tri => Object.assign(tri, { [key]: Object.assign({}, tri[key], value) });
 
-  test('requirement line: a Watch alert\'s triage note carries the line where it had its "SLRR" line. Below the thresholds: not met, a thumbs-up for a person, no email, and the T&S form the note asks for is named where the line would say "Monitoring only."; the triage escalating it (80% sure): below the thresholds, a Social Alert on the review\'s call, sent; a Sensitive Topic the triage is sure of, or 5,000 engagements: met, sent; 5,000 engagements with the review against it: met, but none sent; no brand-safety issue in the triage\'s view: not met, with that reason', () => {
+  test('requirement line: a Watch alert\'s triage note carries the line where it had its "SLRR" line. Below the thresholds: not met, a thumbs-up for a person, no email, and the T&S form the note asks for is named where the line would say "Monitoring only."; the triage escalating it (80% sure): below the thresholds, a Social Alert on the watch\'s call (as the note\'s head, "Social Alert (the watch)", says), sent; a Sensitive Topic the triage is sure of, or 5,000 engagements: met, sent; 5,000 engagements with the review against it: met, but none sent; no brand-safety issue in the triage\'s view: not met, with that reason', () => {
     const below = watch();
     eq(lineOf(below), [`${HEAD}not met for a Social Alert (${BELOW('P1', '520')}). ${TNS_ASKED}`]);
     did(below, false);
@@ -783,7 +784,8 @@ module.exports = H => {
     const bullets = below.notes[0].split('\n').filter(l => /^• /.test(l));
     eq([bullets.length, bullets[0].indexOf(`• ${HEAD}`), /^• \*T&S:\* Gemini hallucination — <https:\/\/docs\.google\.com\/forms\//.test(bullets[1])], [3, 0, true]);
     const called = watch(null, patch('stream_call', { action: 'escalate', confidence: 0.8 }));
-    eq(lineOf(called), [`${HEAD}below the Social Alert thresholds (${BELOW('P1', '520')}). ${ANYWAY}`]);
+    eq(lineOf(called), [`${HEAD}below the Social Alert thresholds (${BELOW('P1', '520')}). ${WATCH_CALL}`]);
+    assert.ok(/Social Alert \(the watch\)/.test(called.notes[0]), called.notes[0]);
     did(called, true);
     const topic = watch(null, patch('slrr', { sensitive_topics: ['Child Safety'], warranted: true }));
     eq(lineOf(topic), [`${HEAD}met for a Social Alert: Sensitive Topic (Child Safety).`]);
@@ -886,14 +888,18 @@ module.exports = H => {
       `${MET}emails are off in this run (a dry run).`,
     ]);
     // a Social Alert that a Guidance row started on a view the triage is sure of (row 13) is below the thresholds and
-    // goes out on the review's call: the rules' own result is asked again, never the started one
+    // goes out on the review's call (the stream triage's), or on the watch's call when the watch escalated it: the
+    // rules' own result is asked again, never the started one
     const lowFields = Object.assign({}, fields, { risk_tags: [], total_engagement: 300 });
     const lowEsc = B.escalation_(lowFields, { now: NOW });
     const started = Object.assign({}, lowEsc, { escalated: true, track: 'URGENT', action: 'EMAIL_ALERT', suppression: null,
       reasons: lowEsc.reasons.concat(['KB_OR_GUIDANCE']), kb_basis: 'Guidance row 2' });
     eq([lowEsc.escalated, B.otherRequirementLine_(acCtx(), d({ fields: lowFields, slrr: { sure: true, esc: started, veto: '', collected: true },
+      action: 'escalate', basis: 'stream', esc: started, draft: { email_status: 'pending' } }), { unknown: [] }),
+    B.otherRequirementLine_(acCtx(), d({ fields: lowFields, slrr: { sure: true, esc: started, veto: '', collected: true },
       action: 'escalate', basis: 'watch', esc: started, draft: { email_status: 'pending' } }), { unknown: [] })],
-    [false, `${HEAD}below the Social Alert thresholds (${BELOW('P1', '300')}). ${ANYWAY}`]);
+    [false, `${HEAD}below the Social Alert thresholds (${BELOW('P1', '300')}). ${ANYWAY}`,
+      `${HEAD}below the Social Alert thresholds (${BELOW('P1', '300')}). ${WATCH_CALL}`]);
     // A view Gemini isn't sure of never decides, and the triage leaves the alert to a person to check when the rules
     // would escalate it on that view (basis slrr_check). The line then reads the rules as the triage did, on the view
     // it flagged the alert on (d.slrr.esc: a P0 tag here), though the alert's own facts (d.fields: no tag, 520
@@ -1402,13 +1408,17 @@ module.exports = H => {
     eq([answers(), under(w.t, cards[2]).slice(-2).map(m => m.text)], [asked + 2, [owner.text, 'Happy to help with that.']]);
     w.rec.step('quiet run', 1);
     eq(answers(), asked + 2);
-    const acOwn = text => B.isOwnMessage_(Object.assign({ sourceReadOnly: true }, ctx), { senderName: 'users/bot', text });
+    const acOwn = text => B.isOwnMessage_(Object.assign({ sourceReadOnly: true, settings: { requirement_line: true } }, ctx),
+      { senderName: 'users/bot', text });
     eq(['Alert requirements: why was this one not met?', '*Alert requirements:* is this right?', '🔗 Alert requirements, final: why?',
       'Alert requirements: why?\nAnd this', `${HEAD}met for a Social Alert (2,400 engagements), but none was sent: the review says "Is it news?".`,
       `${FINAL}met for a Social Alert (KOF author), but none was sent: why not?.`, 'Part of a story: is it?'].map(acOwn),
     [false, false, false, true, true, true, true]);
     // (only the Auto-correct flow, where the line is: elsewhere such a message stays as it was, the bot's own by its words)
     eq(B.isOwnMessage_(ctx, { senderName: 'users/bot', text: 'Alert requirements: why was this one not met?' }), true);
+    // (nor with the setting requirement_line off, or no settings at all: the bot's own by its words, as before the line)
+    eq([{ requirement_line: false }, undefined].map(settings => B.isOwnMessage_(Object.assign({ sourceReadOnly: true, settings }, ctx),
+      { senderName: 'users/bot', text: 'Alert requirements: why was this one not met?' })), [true, true]);
     eq(B.isRequirementQuestion_(`${HEAD}not met for a Social Alert (${BELOW('P2', '300')}). Monitoring only.`), false);
     // the words alone: each form of the note is the bot's own; a person's two lines that only look alike are theirs
     const own = text => B.isOwnMessage_(ctx, { senderName: 'users/bot', text });
@@ -1559,5 +1569,78 @@ module.exports = H => {
     w.t.bot.ev('BOT_MARKS_ = null');
     const fewer = inRun(ctx => ['a', 'b', 'c'].map((k, i) => w.t.bot.acThreadNote_(ctx, kof, i % 2 ? WATCH : STORY, `${kof.alert_id}:${k}`)));
     eq([fewer, thread(kof).length], [[true, true, false], 3]);
+  });
+
+  /** A Burson alert in the one-space world, then a question from the bot's own account in its card's thread: {w, card, answers(), replies()}. */
+  const ownerAsks = (overrides, question) => {
+    const w = oneSpace(overrides);
+    w.rec.step('Burson alert', 1, () => { w.t.chat.say(REAL, F.P0_OK, ZAPIER); });
+    const card = tops(w.t)[0];
+    const answers = () => w.t.g.vertex.calls.filter(c => c.payload.generationConfig.responseSchema.properties.answer).length;
+    const before = answers();
+    w.t.chat.say(AC, question, { thread: card.thread.name, sender: 'users/bot' });
+    ['bot_posts', 'bot_post_ids', 'bot_reactions', 'recent:AC:' + REAL].forEach(k => w.t.g.cache.delete(k));
+    w.t.bot.ev('BOT_MARKS_ = null');
+    w.rec.step('the owner\'s question', 1);
+    w.rec.step('quiet run', 1);
+    return { w, card, asked: answers() - before, replies: under(w.t, card).map(m => m.text) };
+  };
+
+  test('requirement line: a question from the bot\'s own account that starts "Alert requirements" is answered only where the line is on; with the setting requirement_line off it is taken for the bot\'s own by its words, as before the line: no answer and no Gemini call', () => {
+    const Q = 'Alert requirements: why was this one not met?';
+    const on = ownerAsks(null, Q);
+    eq([on.asked, on.replies.slice(-2)], [1, [Q, 'Happy to help with that.']]);
+    const off = ownerAsks({ requirement_line: false }, Q);
+    eq([off.asked, off.replies.slice(-1)], [0, [Q]]);
+    assert.ok(!off.replies.some(r => r.indexOf(HEAD) >= 0), 'no line with the setting off');
+    const allOff = ownerAsks(golden.SETTINGS_OFF, Q);
+    eq([allOff.asked, allOff.replies.slice(-1)], [0, [Q]]);
+  });
+
+  test('requirement line: the owner\'s question "Alert requirements: …?" under a card is not one of the three notes the card may take from other alerts, also when the card\'s notes are counted in its thread (the counts gone); with the setting requirement_line off it counts as before the line', () => {
+    const STORY = '🔗 *Part of a story:* 5 small accounts on X and Reddit now tell it: Pixel 10 owners say the update is the issue';
+    const take = overrides => {
+      const r = ownerAsks(overrides, 'Alert requirements: was this one met by its tag?');
+      const row = alertRows(r.w.t).find(x => x.forward_message === r.card.name);
+      r.w.t.g.cache.delete('ac_thread_notes');
+      return inFlow(r.w, ctx => ['a', 'b', 'c', 'd'].map(k => r.w.t.bot.acThreadNote_(ctx, row, STORY, `${row.alert_id}:${k}`)));
+    };
+    eq(take(null), [true, true, true, false]);
+    eq(take({ requirement_line: false }), [true, true, false, false]);
+  });
+
+  test('requirement line: a review\'s note too long for one Chat message keeps its line whole: the body above the line is cut, never the line, so the note Chat hands back ends with it and no "final" line repeats it; a note that fits, one without the line and one that does not end with it are left as they are', () => {
+    const LINE = `${HEAD}met for a Social Alert: P0 exposure tag (Product - Perceived bias).`;
+    const MAX = B.ev('MAX_TEXT_');
+    const long = `${IN_PLACE}\n${'- Summary: a very long summary of the post. '.repeat(120)}\n${LINE}`;
+    assert.ok(long.length > MAX);
+    const fit = B.requirementFit_(long, LINE);
+    eq([fit.length <= MAX, fit.endsWith(`…\n${LINE}`), fit.indexOf(IN_PLACE), B.truncate_(fit, MAX) === fit], [true, true, 0, true]);
+    // what the cut did before: the line went, and the note was taken for an earlier attempt's
+    const cut = { line: LINE };
+    B.requirementNoted_(cut, { text: B.truncate_(long, MAX) });
+    const kept = { line: LINE };
+    B.requirementNoted_(kept, { text: B.truncate_(fit, MAX) });
+    eq([cut.stale, kept.stale], [true, undefined]);
+    const short = `${IN_PLACE}\n- Summary: short\n${LINE}`;
+    eq([B.requirementFit_(short, LINE), B.requirementFit_(long, ''), B.requirementFit_(long, null), B.requirementFit_(`${long}\nmore`, LINE)],
+      [short, long, long, `${long}\nmore`]);
+    // ...and as the in-place note is posted in the Auto-correct flow: the note in the card's thread ends with the line
+    const w = oneSpace();
+    w.rec.step('Burson alert', 1, () => { w.t.chat.say(REAL, F.P0_OK, ZAPIER); });
+    const card = tops(w.t)[0];
+    const req = { line: LINE };
+    const held = 'The post\'s own media wasn\'t reviewed: ' + 'it is a very long video. '.repeat(200);
+    inFlow(w, ctx => B.inPlaceNote_(ctx, { name: `${AC}/messages/fit-test`, thread: card.thread.name },
+      { fixes: [], missing: [], mediaHeld: held }, null, req));
+    const posted = under(w.t, card).map(m => m.text).filter(t => t.indexOf(held.slice(0, 40)) >= 0);
+    eq([posted.length, posted[0].length <= MAX, posted[0].endsWith(`\n${LINE}`), req.stale], [1, true, true, undefined]);
+  });
+
+  test('requirement line: Gemini\'s own name for the team\'s rules, in a reason the line quotes, is said in the line\'s words: "an SLRR alert" as "a Social Alert" (in capitals at the start too), "SLRR alerts" as "Social Alerts", "the SLRR rules" as "the alert rules", "the SLRR alert log" as "the team\'s alert log", any other as "alert requirements"', () => {
+    eq(['not an slrr alert', 'An SLRR alert, but an old one', 'Two SLRR alerts already went out', 'The SLRR rules say so',
+      'Already in the SLRR alert log', 'Routine, per SLRR', 'Not SLRR\'s concern', 'A SLRR alert at most'].map(B.requirementWords_), [
+      'not a Social Alert', 'A Social Alert, but an old one', 'Two Social Alerts already went out', 'The alert rules say so',
+      'Already in the team\'s alert log', 'Routine, per alert requirements', 'Not alert requirements concern', 'A Social Alert at most']);
   });
 };

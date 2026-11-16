@@ -591,9 +591,10 @@ function isOwnMessage_(ctx, m) {
       String(m.clientId).indexOf(CAMPAIGN_CLIENT_PREFIX_) === 0;
   }
   if (!ctx.botUser || m.senderName !== ctx.botUser) return false;
-  // (the Auto-correct flow: a question from the bot's account that starts as the line on the alert requirements does is
-  // the person's the bot runs as: RequirementLine.gs isRequirementQuestion_)
-  const asked = ctx.sourceReadOnly === true && typeof isRequirementQuestion_ === 'function' && isRequirementQuestion_(m.text);
+  // (the Auto-correct flow with the line on: a question from the bot's account that starts as the line on the alert
+  // requirements does is the person's the bot runs as: RequirementLine.gs isRequirementQuestion_)
+  const asked = typeof requirementLineOn_ === 'function' && requirementLineOn_(ctx) &&
+    typeof isRequirementQuestion_ === 'function' && isRequirementQuestion_(m.text);
   if (!asked && (typeof isBotFormattedText_ === 'function' ? isBotFormattedText_(m.text) : String(m.text || '').trim().indexOf(GEN.prefix) === 0)) {
     return true;
   }
@@ -1212,8 +1213,8 @@ function forwardAlert_(ctx, m, parsed, review, extraNote, req) {
     }
     if (!fwd) fwd = postTo_(ctx, ctx.spaces.analyst.id, text, null, 'fwd:' + m.name);
     logLeftAsIs_(ctx, review);
-    const note = [extraNote || '', changeNoteText_(review, { findLinks: switchOn_(ctx, 'autoFindLinks'),
-      linkLookup: parsed && parsed.linkLookup, requirement: req && req.line })].filter(Boolean).join('\n');
+    const note = requirementFit_([extraNote || '', changeNoteText_(review, { findLinks: switchOn_(ctx, 'autoFindLinks'),
+      linkLookup: parsed && parsed.linkLookup, requirement: req && req.line })].filter(Boolean).join('\n'), req && req.line);
     if (note && fwd && fwd.name) {
       try {
         // (the note Chat hands back: at a second attempt at the alert it is the first attempt's, requirementNoted_)
@@ -1275,8 +1276,8 @@ function logLeftAsIs_(ctx, review) {
  */
 function inPlaceNote_(ctx, m, review, parsed, req) {
   logLeftAsIs_(ctx, review);
-  const note = changeNoteText_(review, { inPlace: true, findLinks: switchOn_(ctx, 'autoFindLinks'),
-    linkLookup: parsed && parsed.linkLookup, requirement: req && req.line });
+  const note = requirementFit_(changeNoteText_(review, { inPlace: true, findLinks: switchOn_(ctx, 'autoFindLinks'),
+    linkLookup: parsed && parsed.linkLookup, requirement: req && req.line }), req && req.line);
   if (!note) return;
   try {
     // (the note Chat hands back: at a second attempt at the card it is the first attempt's, requirementNoted_)

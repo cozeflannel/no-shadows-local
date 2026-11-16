@@ -247,6 +247,11 @@ function acNoteThread_(check, ownId, reviewIds) {
   try {
     const bot = (check.ctx && check.ctx.botUser) || PropertiesService.getScriptProperties().getProperty('BOT_USER') || '';
     const out = { card: false, notes: 0, own: '' };
+    // (a question the person the bot runs as asks under the card, "Alert requirements: …?", is no note of the bot's:
+    // RequirementLine.gs isRequirementQuestion_, while the line is on)
+    const settings = (check.ctx && check.ctx.settings) || GEN.settings || {};
+    const asked = text => settings.requirement_line !== false && typeof isRequirementQuestion_ === 'function' &&
+      isRequirementQuestion_(text);
     let pageToken = '';
     let read = 0;
     do {
@@ -259,7 +264,7 @@ function acNoteThread_(check, ownId, reviewIds) {
         if (!m.threadReply || m.name === check.message) return;
         if (ownId && m.clientId === ownId) out.own = m.name;
         if (m.clientId && (reviewIds || []).indexOf(m.clientId) >= 0) return;
-        if (isThreadNoteText_(m.text) && (!bot || m.senderName === bot)) out.notes++;
+        if (isThreadNoteText_(m.text) && (!bot || m.senderName === bot) && !asked(m.text)) out.notes++;
       });
       pageToken = r.body.nextPageToken || '';
     } while (pageToken && read < AC_NOTE_THREAD_MAX_);

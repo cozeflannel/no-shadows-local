@@ -40,6 +40,7 @@
  *   not met yet (small accounts, no KOF author, no P0 tag). Posted early because 5 accounts tell the same story.
  *       (a story or build-up card)
  *   below the Social Alert thresholds (…). A Social Alert goes out anyway on the review's call.
+ *       (or "on the watch's call" for a Watch alert the watch itself escalates)
  * It never uses the team's own name for the requirements, never gives a listening feed's own floor (the count a feed
  * collects from) as a requirement, and keeps a reason of Gemini's to one line of REQ_REASON_MAX_ characters without
  * links.
@@ -85,7 +86,8 @@ function requirementLineOn_(ctx) {
  *   repeat  none goes out because it repeats an alert that went out: that alert's id, or true when it has none here
  *   review  none goes out on Gemini's call: its reason, as Gemini wrote it
  *   why     none goes out for another reason, in the bot's own words
- *   call    who sends one although the rules don't: 'review' (the default) or 'test' (a sheet-test alert)
+ *   call    who sends one although the rules don't: 'review' (the default), 'watch' (a Watch alert the watch itself
+ *           escalated) or 'test' (a sheet-test alert)
  *   cause   why it is below the thresholds, when the path knows more than the threshold itself says (a triage that
  *           sees no brand-safety issue in the post)
  *   early   a story or build-up card: {accounts, pace (how many times the usual pace, for a pace jump; else 0)}
@@ -109,7 +111,8 @@ function requirementLine_(d, final) {
     said = `met for a Social Alert: ${met.map(m => m.long).join(' · ')}.${hold}`;
   } else if (x.sent) {
     said = `below the Social Alert thresholds (${cause()}). A Social Alert goes out anyway` +
-      `${x.call === 'test' ? ': a test alert from the Test alert tab always sends one' : ' on the review\'s call'}.${hold}`;
+      `${x.call === 'test' ? ': a test alert from the Test alert tab always sends one'
+        : x.call === 'watch' ? ' on the watch\'s call' : ' on the review\'s call'}.${hold}`;
   } else if (reached) {
     const why = x.repeat ? `a repeat of ${typeof x.repeat === 'string' ? x.repeat : 'an earlier alert'}`
       : youtube ? 'YouTube is the subject'
@@ -246,15 +249,20 @@ function requirementEarly_(e) {
 /**
  * A reason as the line carries it: one line, no link (a Markdown or Chat link keeps its words only, so nothing in it is
  * posted as a hyperlink; an internal short link, "go/…", is left out with the word that leads to it), no trailing
- * period, at most REQ_REASON_MAX_ characters; the team's own name for the requirements, in capitals or not, is said as
- * "alert requirements". Pure.
+ * period, at most REQ_REASON_MAX_ characters; the team's own name for the requirements, in capitals or not, is said in
+ * the line's words ("an SLRR alert" -> "a Social Alert", "the SLRR rules" -> "the alert rules", "the SLRR alert log" ->
+ * "the team's alert log", else "alert requirements"). Pure.
  */
 function requirementWords_(text) {
   const s = String(text === undefined || text === null ? '' : text)
     .replace(/\[([^\[\]\n]*)\]\((?:[^()\s]|\([^()\s]*\))*\)/g, '$1')
     .replace(/<[^<>|\s]+\|([^<>]*)>/g, '$1').replace(/[<>]/g, ' ')
     .replace(/(?:\b(?:see|per|via|at|in|on|from)\s+)?(?<![\w\/.-])go\/(?!no-?go\b)[^\s,;:()]+/gi, ' ').replace(/\(\s*\)/g, ' ')
-    .replace(/\bSLRR\b/gi, 'alert requirements')
+    .replace(/\bSLRR alert log\b/gi, 'team\'s alert log')
+    .replace(/\b(a)n? SLRR alert(s?)\b/gi, (all, a, plural) => (plural ? 'Social Alerts' : `${a} Social Alert`))
+    .replace(/\bSLRR alert(s?)\b/gi, (all, plural) => `Social Alert${plural}`)
+    .replace(/\b(the) SLRR rules\b/gi, (all, the) => `${the} alert rules`)
+    .replace(/\bSLRR(?:'s)?\b/gi, 'alert requirements')
     .replace(/\s+/g, ' ').replace(/([.,;:]) (?=[.,;:])/g, '').trim().replace(/^[.,;:\s]+/, '').replace(/[.,;:\s]+$/, '');
   return truncate_(s, REQ_REASON_MAX_);
 }
@@ -414,6 +422,19 @@ function requirementNoted_(req, msg) {
 }
 
 /**
+ * The review's note (`note`) as it is posted, with the line (`line`: requirementOf_'s, its last line) whole: Bot.gs
+ * postTo_ cuts a text to MAX_TEXT_ characters, which would cut the line away and make requirementNoted_ take the note
+ * for an earlier attempt's. A note that long has its body above the line cut instead. The note as it is when it fits,
+ * when there's no line, or when the note doesn't end with it. Pure.
+ */
+function requirementFit_(note, line) {
+  const s = String(note === undefined || note === null ? '' : note);
+  const l = String(line || '');
+  if (!l || s.length <= MAX_TEXT_ || !s.endsWith('\n' + l) || l.length + 2 >= MAX_TEXT_) return s;
+  return truncate_(s.slice(0, s.length - l.length - 1), MAX_TEXT_ - l.length - 1) + '\n' + l;
+}
+
+/**
  * After the Social Alert was planned (Drafts.gs draftPlan_; `draft`: its row fields, or null for none): one more line
  * goes under the alert, as a note of its own (ThreadNotes.gs acThreadNote_: once, only in the Auto-correct space),
  * "*Alert requirements, final:* …", when what was planned is not what the line in the review's note says (`req`:
@@ -467,6 +488,7 @@ function otherRequirementLine_(ctx, d, other) {
     const x = { rules: requirementRules_(seen ? seen.esc : d.esc, d.fields, ctx.now()), kof: (d.fields || {}).kof_lists,
       tag: seen && !sure && view && view.tag ? view.tag : (d.fields || {}).exposure_tag,
       sent: d.action === 'escalate' && !!d.draft };
+    if (d.basis === 'watch') x.call = 'watch';  // the watch's own score sent it (OtherAlerts.gs otherDecide_)
     if (x.sent && ctx.b30Blank) x.hold = REQ_HOLD_B30_;
     if (!x.sent) Object.assign(x, otherRequirementStop_(d, sure));
     if (d.tnsActive) x.tns = switchOn_(ctx, 'autoTns') ? 'auto' : 'ask';
