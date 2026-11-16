@@ -137,7 +137,7 @@ function isBotFormattedText_(text) {
  * The fixed first words of the notes the bot puts under a card that is already in the Auto-correct space (ThreadNotes.gs
  * acThreadNote_, which posts no note that starts otherwise). A note with new first words is registered in three places:
  * here (so the bot knows the note as its own with no message id, and never answers it), in Outbox.gs
- * OUTBOX_GUARD_PATTERNS_ (it can never go to S-F Burson) and in the leak audit's list (test/run_tests.js LEAK_NOTE_HEADS_).
+ * OUTBOX_NOTE_PATTERNS_ (it can never go to S-F Burson) and in the leak audit's list (test/run_tests.js LEAK_NOTE_HEADS_).
  */
 const THREAD_NOTE_HEADS_ = ['Also flagged by the watch', 'Part of a story', 'Alert requirements'];
 

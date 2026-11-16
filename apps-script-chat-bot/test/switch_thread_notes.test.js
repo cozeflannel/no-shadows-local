@@ -3,13 +3,17 @@
 // Auto-correct space), only under a card whose thread and message are in that space, never in S-F Burson, the Burson test
 // copy or a space people outside Google can join, only a note that starts with one of the fixed first words, once per
 // key, at most 3 under one card and 6 a run. The bot knows such a note as its own and never answers it; the wider guard
-// holds its first words on any way to S-F Burson. Nothing in the bot calls it yet: these tests call it directly.
+// holds its first words on any way to S-F Burson but one: the bot's own answer to a question of Burson's, which is
+// checked as it always was. Nothing in the bot calls the helper yet: these tests call it directly.
 'use strict';
 
 module.exports = H => {
-  const { test, eq, assert, B, F, REAL, TEST_FEED, TRIAGED, leakDenied } = H;
+  const { test, eq, assert, B, F, e2e, REAL, TEST_FEED, TRIAGED, leakDenied } = H;
   const golden = require('./golden_flows')(H);
   const { AC, MIRROR, COPY } = golden.spaces;
+  const ZAPIER = { sender: 'users/zapier', type: 'BOT', displayName: 'Zapier' };
+  const ALICE = { sender: 'users/burson7', displayName: 'Alice Smith' };  // someone at Burson
+  const DANA = { sender: 'users/analyst9', displayName: 'Dana Lee' };     // an analyst
   const MIN = 60 * 1000;
   const HOUR = 60 * MIN;
   const GUARD = { terms: ['SLRR Triaged Alerts', 'AAQAaLn375E'] };
@@ -87,8 +91,10 @@ module.exports = H => {
     heads.concat(NOTES, NOTES.map(plainOf), heads.map(h => `🔗 *${h}:* and more`)).forEach(text => {
       eq([B.isThreadNoteText_(text), B.isBotFormattedText_(text), own(text), held(text), leakDenied(text)], [true, true, true, true, true], text);
     });
-    // every registered head is on all three lists (a note with new first words has to be added to each)
+    // every registered head is on all three lists (a note with new first words has to be added to each); the guard's
+    // own list of them (Outbox.gs OUTBOX_NOTE_PATTERNS_) has one pattern for each
     heads.forEach(h => eq([B.isBotFormattedText_(`${h}: x`), held(`${h}: x`), leakDenied(`${h}: x`)], [true, true, true], h));
+    eq(B.ev('OUTBOX_NOTE_PATTERNS_.length'), heads.length);
     // what the guard says it found is the words, not the line break or the emoji before them
     eq([B.outboxGuardHits_(WATCH_NOTE, GUARD), B.outboxGuardHits_(STORY_NOTE, GUARD), B.outboxGuardHits_(`Thanks!\n${REQ_NOTE}`, GUARD)],
       [['flagged by the watch'], ['Part of a story'], ['Alert requirements']]);
@@ -106,6 +112,158 @@ module.exports = H => {
     assert.ok(!own('Why does this one not meet the Alert requirements?'));
     // the bot's answers to Burson that name the alert requirements pass as before
     eq(B.outboxGuardHits_('Please check this alert against the alert requirements.', GUARD), []);
+  });
+
+  // =============================================================================================================
+  // The bot's own answer to Burson is no note
+  // =============================================================================================================
+
+  // Answers Gemini can well give Burson (the rules it answers from stand under "[Alert requirements]"): each opens, or
+  // has a line that opens, as a note does. They reach a Burson space in the tests below, so the leak audit is told
+  const ANSWERS = [
+    '*Alert requirements:* a P1 exposure tag needs 2,000+ engagements or a KOF author.',
+    'Sure!\nAlert requirements for a P1: 2,000+ engagements or a KOF author.',
+    'Part of a story we already alerted: the same post was escalated on Monday.',
+  ];
+  ANSWERS.forEach(H.ownAnswerInBurson);
+  const outboxTab = t => t.sheet().getSheetByName('Burson outbox');
+  const outboxRows = t => (outboxTab(t) ? outboxTab(t).rows.slice(1) : []);
+  const keyOf = row => JSON.parse(String(row[7]));
+  /** A person sets outbox row i (0: the first under the header) to Send, after typing `text` in its Text cell if given. */
+  const send = (t, i, text) => {
+    if (text !== undefined) outboxTab(t).getRange(i + 2, 4).setValue(text);
+    outboxTab(t).getRange(i + 2, 6).setValue('Send');
+  };
+
+  test('thread notes: the bot\'s own answer to a question of Burson\'s is checked as it always was: the wider guard holds a text for a note\'s first words everywhere but there (outboxGuardHits_ asked for the bot\'s own answer), still holds that answer for every internal word, and knows the answer by its key ("ans:…" as the main flow queues it, "own:ans:…" from the Mirror space), never an analyst\'s answer, a fix request or what the Relay queued', () => {
+    const asAnswer = text => B.outboxGuardHits_(text, GUARD, true);
+    const plainNotes = [WATCH_NOTE, STORY_NOTE, REQ_NOTE];  // (REQ_FINAL names an alert's id, which no reply to Burson may)
+    ANSWERS.concat(plainNotes, plainNotes.map(plainOf)).forEach(text => {
+      eq([B.outboxGuardHits_(text, GUARD).length > 0, asAnswer(text)], [true, []], text);
+    });
+    eq([B.outboxGuardHits_(REQ_FINAL, GUARD), asAnswer(REQ_FINAL)], [['QA-1001', 'Alert requirements'], ['QA-1001']]);
+    // only `true` asks for it: anything else is every other text's check
+    [undefined, null, false, 0, 1, 'true', {}].forEach(v => assert.ok(B.outboxGuardHits_(REQ_NOTE, GUARD, v).length > 0, String(v)));
+    // the answer's check is the wider guard as it was before the notes: the internal setup, the tools and the spaces
+    eq([B.ev('OUTBOX_GUARD_PATTERNS_.length'), B.ev('OUTBOX_GUARD_PATTERNS_.map(String).filter(p => /story|requirements|flagged/i.test(p))')], [15, []]);
+    ['*Alert requirements:* per SLRR, a P1 needs 2,000+ engagements.', 'Alert requirements: the bot checks them.', 'It was autocorrected.',
+      'See the Mirror for that.', 'Zapier copied it.', 'It is on the outbox tab.', 'Ask in SLRR Triaged Alerts.', 'It was forwarded.',
+      'See spaces/AAQAaLn375E for more.'].forEach(text => assert.ok(asAnswer(text).length > 0, text));
+    eq(asAnswer('*Alert requirements:* per SLRR, a P1 needs 2,000+ engagements.'), ['SLRR']);
+    // which rows and replies are the bot's own answer
+    const M = 'spaces/AAQAmirrorgf1/messages/m7';
+    eq([`ans:${M}`, `own:ans:${M}`].map(k => B.outboxOwnAnswerKey_(k)), [true, true]);
+    eq([`anaans:${M}`, `own:anaans:${M}`, `fix:${M}`, `own:fix:${M}`, `human:${M}`, `rel-out:${M}`, `edtri:${M}`, `acnote:ans:${M}`,
+      `own:own:ans:${M}`, ` ans:${M}`, `ANS:${M}`, 'answer', 'own:', '', null, undefined, 7, {}].map(k => B.outboxOwnAnswerKey_(k)),
+    Array(18).fill(false));
+  });
+
+  test('thread notes: in the Mirror flow, an answer of the bot\'s to Burson that opens as a note does reaches Burson as it did before the notes. LIVE (the Relay and Post in S-F Burson ON): it waits on the Burson outbox as written, never the fixed answer in its place, and goes to S-F Burson once a person sets it to Send. An analyst\'s message with the same words is still not relayed, an analyst\'s row a person edited to hold a note is Blocked, and a reply of the bot\'s that is no answer still stays in the Mirror space', () => {
+    const t = hooked(golden.mirrorRun(golden.SETTINGS_OFF).t);  // ends LIVE, with rows 22 and 24 ON
+    const first = outboxRows(t).length;
+    const alert = t.chat.spaces.get(REAL).messages.filter(m => !m.threadReply && /SOCIAL ALERT/.test(m.text)).slice(-1)[0];
+    const copy = t.chat.botPosts(MIRROR).filter(m => !m.threadReply && m.text === alert.text).slice(-1)[0];
+    const QUESTIONS = ['What does a P1 need to be escalated?', 'And what about a P2 like this one?', 'Is this post part of something bigger?'];
+    ANSWERS.forEach((answer, i) => {
+      t.g.vertex.answer = () => answer;
+      t.chat.say(REAL, QUESTIONS[i], Object.assign({ thread: alert.thread.name }, ALICE));
+      t.poll();
+      t.poll();
+      // in the Mirror space, the answer under the alert's copy; on the outbox, the same words, for the alert's own thread
+      eq(inThread(t, copy.thread.name).slice(-1).map(m => m.text), [answer], answer);
+    });
+    const added = outboxRows(t).slice(first);
+    eq(added.map(r => [r[1], r[3], r[4], r[5], keyOf(r).thread, /^own:ans:/.test(keyOf(r).ck), !!keyOf(r).relay]),
+      ANSWERS.map(answer => ['reply', answer, 'bot', 'Pending', alert.thread.name, true, false]));
+    eq(t.chat.botPosts(REAL), []);
+    // a person sets them to Send: each goes to S-F Burson as written, in the alert's thread
+    ANSWERS.forEach((answer, i) => send(t, first + i));
+    t.poll();
+    eq([outboxRows(t).slice(first).map(r => [r[5], /^sent \d{4}-\d\d-\d\d \d\d:\d\d ET: /.test(r[6])]),
+      t.chat.botPosts(REAL).map(m => [m.thread.name, m.threadReply, m.text])],
+    [ANSWERS.map(() => ['Sent', true]), ANSWERS.map(answer => [alert.thread.name, true, answer])]);
+    const sentToBurson = t.chat.botPosts(REAL).length;
+
+    // The same words from an analyst are not relayed, as a line's first words or after the name
+    const before = outboxRows(t).length;
+    const said = ['Two things:\nAlert requirements look fine\nand the link works.', 'Alert requirements: all met.',
+      'It was flagged by the watch team this morning.'];
+    said.forEach(text => t.chat.say(MIRROR, text, Object.assign({ thread: copy.thread.name }, DANA)));
+    t.poll();
+    t.poll();
+    eq([outboxRows(t).length, inThread(t, copy.thread.name).filter(m => m.viaApi).slice(-3).map(m => m.text.replace(/\. Post it again[\s\S]*$/, ''))],
+      [before, ['Not sent to S-F Burson: it mentions "Alert requirements"', 'Not sent to S-F Burson: it mentions "Alert requirements:"',
+        'Not sent to S-F Burson: it mentions "flagged by the watch"']]);
+    // An analyst's row on the outbox that a person edited to hold a note: Blocked at Send, never written
+    const relayed = outboxRows(t).findIndex(r => /^relay: /.test(String(r[4])) && r[5] === 'Pending');
+    assert.ok(relayed >= 0 && keyOf(outboxRows(t)[relayed]).relay, 'an analyst\'s row is waiting');
+    send(t, relayed, `Dana Lee: ${plainOf(REQ_NOTE)}`);
+    t.poll();
+    eq([outboxRows(t)[relayed][5], outboxRows(t)[relayed][6], t.chat.botPosts(REAL).length],
+      ['Blocked', 'not sent: it mentions "Alert requirements:". Edit the text, then set Send again.', sentToBurson]);
+    // A reply of the bot's that is no answer (a fix request, anything bursonOut_ posts under another key) is held for a
+    // note's first words as any text is: it stays in the Mirror space. The same words as its answer are queued
+    const rows = outboxRows(t).length;
+    const got = run(t, ctx => [
+      t.bot.forwardOwnBurson_(ctx, { type: 'post', text: 'Alert requirements: please add the link.', thread: copy.thread.name, key: 'fix:probe1' }),
+      t.bot.forwardOwnBurson_(ctx, { type: 'post', text: plainOf(STORY_NOTE), thread: copy.thread.name, key: 'human:probe2' }),
+      t.bot.forwardOwnBurson_(ctx, { type: 'post', text: ANSWERS[0], thread: copy.thread.name, key: 'ans:probe3' }),
+    ]);
+    eq([got.ctx.outboundBlocked, got.flow, outboxRows(t).slice(rows).map(r => [r[3], keyOf(r).ck])],
+      [true, ['', '', 'queued'], [[ANSWERS[0], 'own:ans:probe3']]]);
+    assert.ok(t.g.logs.some(l => l === 'Post in S-F Burson: the bot\'s reply stays in the Mirror space: it mentions "Alert requirements"'), 'the run log says why');
+  });
+
+  test('thread notes: in the Mirror flow while Testing (a Burson test copy in B26), such an answer goes to the test copy as written, where S-F Burson would get it, never the fixed answer in its place; and where the bot works on S-F Burson itself (B3 = S-F Burson, Post in S-F Burson ON), the answer\'s outbox row is sent as written, while a reply of the bot\'s that is no answer, edited to hold a note, is Blocked, and so is the answer when a person types an internal word into it', () => {
+    // Testing, with the test copy
+    const w = golden.world.mirrorWorld(golden.SETTINGS_OFF);
+    let alert = null;
+    w.rec.step('a Burson alert', 1, () => { alert = w.t.chat.say(REAL, F.MISTAKES, ZAPIER); });
+    w.t.g.vertex.answer = () => ANSWERS[0];
+    w.rec.step('Burson asks', 1, () => { w.t.chat.say(REAL, 'What does a P1 need to be escalated?', Object.assign({ thread: alert.thread.name }, ALICE)); });
+    w.rec.step('a quiet run', 1);
+    const out = w.rec.out();
+    eq(out.test_copy.map(c => [c.reply, c.text.split('\n')[0]]), [
+      [false, F.MISTAKES.split('\n')[0]],
+      [true, 'Please make the following updates and resend the alert here:'],
+      [true, 'Alice Smith: What does a P1 need to be escalated?'],
+      [true, ANSWERS[0]],
+    ]);
+    eq([out.outbox, w.t.chat.botPosts(REAL), out.chat.filter(c => c.reply && c.text === ANSWERS[0]).map(c => c.space)], [[], [], [MIRROR]]);
+
+    // The bot working on S-F Burson itself (no Mirror space): its answer is queued by the main flow, key "ans:…"
+    const ROOM = 'https://chat.google.com/room/AAQAaa_0I9g';
+    const t = e2e();
+    t.bot.setup();
+    t.set('B25', ROOM);
+    t.set('B3', ROOM);
+    [11, 23, 24].forEach(r => t.control().getRange(r, 2).setValue('ON'));  // Auto-send, Never wait on Burson, Post in S-F Burson
+    t.poll();
+    const ok = t.chat.say(REAL, F.P0_OK, ZAPIER);
+    const bad = t.chat.say(REAL, F.MISTAKES, ZAPIER);
+    t.poll();
+    t.g.vertex.answer = () => ANSWERS[1];
+    t.chat.say(REAL, 'Why is this one P0?', Object.assign({ thread: ok.thread.name }, ALICE));
+    t.poll();
+    const rows = () => outboxRows(t);
+    const answerRow = rows().findIndex(r => r[3] === ANSWERS[1]);
+    const noteRow = rows().findIndex(r => r[1] === 'reply' && keyOf(r).thread === bad.thread.name);  // what the bot changed on the alert with mistakes
+    assert.ok(answerRow >= 0 && noteRow >= 0 && /^ans:/.test(keyOf(rows()[answerRow]).ck) && !/^(?:own:)?ans:/.test(keyOf(rows()[noteRow]).ck),
+      JSON.stringify(rows().map(r => [r[1], keyOf(r).ck])));
+    send(t, answerRow);
+    send(t, noteRow, plainOf(STORY_NOTE));
+    t.poll();
+    eq([rows()[answerRow][5], rows()[noteRow][5], rows()[noteRow][6], t.chat.botPosts(REAL).map(m => [m.thread.name, m.text])],
+      ['Sent', 'Blocked', 'not sent: it mentions "Part of a story". Edit the text, then set Send again.', [[ok.thread.name, ANSWERS[1]]]]);
+    // the answer's row is still held for everything it was held for before: a person types an internal word into another one
+    t.g.vertex.answer = () => ANSWERS[0];
+    t.chat.say(REAL, 'And this one?', Object.assign({ thread: ok.thread.name }, ALICE));
+    t.poll();
+    const second = rows().findIndex(r => r[3] === ANSWERS[0]);
+    send(t, second, `${ANSWERS[0]} The bot checks this.`);
+    t.poll();
+    eq([rows()[second][5], rows()[second][6], t.chat.botPosts(REAL).length],
+      ['Blocked', 'not sent: it mentions "The bot". Edit the text, then set Send again.', 1]);
   });
 
   // =============================================================================================================

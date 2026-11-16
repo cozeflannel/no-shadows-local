@@ -4654,10 +4654,17 @@ function markAs(t, user, org, name) {
 const LEAK_DENY_ = /\bforward(?:ed|ing|s)?\b|analyst\s+space|clean(?:\s+data)?\s+space|triage(?:d)?\s+(?:space|alerts)|second\s+space|reduc(?:e|ing)\s+reliance|replace\s+burson|\bgo\/|@\w+\.com|brand-social-sends|AAQAaLn375E|ANALYST|SLRR Triaged Alerts/i;
 const LEAK_NOTE_HEADS_ = /(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?(?:Also flagged by the watch|Part of a story|Alert requirements)\b|[Ff]lagged by the watch\b|Part of a story:|Alert requirements(?:, final)?:/;
 const leakDenied = t => LEAK_DENY_.test(t) || LEAK_NOTE_HEADS_.test(t);
+// The bot's own answer to a question of Burson's is no such note, though it can open with the same words (Gemini writes
+// it from a context whose rules stand under "[Alert requirements]"), and it goes to Burson as it always did (Outbox.gs
+// outboxOwnAnswerKey_). A test that lets such an answer reach a Burson space names its text with
+// H.ownAnswerInBurson(text): the audit takes that very text for the answer it is. Everything else on the lists still
+// counts against it.
+const LEAK_OWN_ANSWERS_ = new Set();
+const ownAnswerInBurson = text => { LEAK_OWN_ANSWERS_.add(String(text)); };
 
 const H = { assert, F, B, NOW, test, eq, plain, parse, review, world, e2e, collectBurson, makeGoogle, loadBot, decodeMime,
   CHAT_POSTS, FakeSpreadsheet, GUARD, ANALYST_NAME, TEST_FEED, TRIAGED, REAL, VENDOR, CELL, RES, KB, driveFile, resultsRow,
-  resultsRows, MAPS_LOW, MISTAKES_NO_LINK, bursonTexts, markAs, leakDenied };
+  resultsRows, MAPS_LOW, MISTAKES_NO_LINK, bursonTexts, markAs, leakDenied, ownAnswerInBurson };
 require('fs').readdirSync(__dirname).filter(f => /^switch_.+\.test\.js$/.test(f)).sort().forEach(f => require('./' + f)(H));
 
 // =============================================================================================================
@@ -4666,7 +4673,7 @@ require('fs').readdirSync(__dirname).filter(f => /^switch_.+\.test\.js$/.test(f)
 
 test('nothing posted in a Burson space mentions the second analyst space, forwarding, reducing reliance on Burson, or internal emails/ids, or starts as a note the bot posts under a card in the Auto-correct space', () => {
   assert.ok(bursonTexts.length >= 8, `only ${bursonTexts.length} Burson texts collected`);
-  for (const t of bursonTexts) assert.ok(!leakDenied(t), t);
+  for (const t of bursonTexts) assert.ok(!LEAK_DENY_.test(t) && (!LEAK_NOTE_HEADS_.test(t) || LEAK_OWN_ANSWERS_.has(t)), t);
   const legend = new Set(B.ev('GEN').legend.map(a => a.emoji));
   for (const e of bursonReactions) {
     assert.ok(legend.has(e) || legend.has(e + '\uFE0F'), `unexpected reaction ${e}`);

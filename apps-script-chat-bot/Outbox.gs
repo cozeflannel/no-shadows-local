@@ -299,16 +299,29 @@ function outboxNotTheBot_(control) {
  * Beyond the bot's own guard (GUARD_PATTERNS_, unchanged): the internal setup, the tools and the people behind it. The
  * bot by the names people give it here ("the bot", "our bot", "my bot", "QA bot", "triage bot"), never the bare word:
  * analysts' messages go through this too, and a robot, a chatbot, bots or "a bot account" in a post are theirs to say.
- * And the notes the bot puts under a card in the Auto-correct space (ThreadNotes.gs; their first words are Voice.gs
- * THREAD_NOTE_HEADS_), which are never for Burson: a text or a line that starts with one (after an emoji and a bold
- * mark, or not), and the words as a note has them anywhere in a text (someone quoting the note). Only in those forms:
- * "the alert requirements" in a sentence, or a story someone is "part of", is theirs to say.
  */
 const OUTBOX_GUARD_PATTERNS_ = [
   /\bauto[\s-]*correct\w*/i, /\bwrite-?backs?\b/i, /\bwritten\s+back\b/i, /\bslrr\b/i, /\bmirror(?:s|ed|ing)?\b/i,
   /\brelay(?:s|ed|ing)?\b/i, /\b(?:the|our|my)\s+bot\b/i, /\b(?:qa|q&a|triage)[\s-]*bot\b/i,
   /\bautomat(?:ion|ions|ed|ically)\b/i, /\bauto[\s-]*(?:sent|submitted)\b/i,
   /\bzapier\b/i, /\bstand-?ins?\b/i, /\boutbox(?:es)?\b/i, /\b(?:control|relay|results)\s+tab\b/i, /\banalyst\s+space\b/i,
+];
+
+/**
+ * The notes the bot puts under a card in the Auto-correct space (ThreadNotes.gs; their first words are Voice.gs
+ * THREAD_NOTE_HEADS_) are never for Burson: a text or a line that starts with one (after an emoji and a bold mark, or
+ * not), and the words as a note has them anywhere in a text (someone quoting the note). Only in those forms: "the alert
+ * requirements" in a sentence, or a story someone is "part of", is theirs to say. A note with new first words gets its
+ * pattern here.
+ *
+ * They hold a text on every way to S-F Burson but one: the bot's own answer to a question of Burson's (its "ans:" post,
+ * outboxOwnAnswerKey_). Gemini writes that answer from a context whose rules stand under "[Alert requirements]" (Voice.gs
+ * answerPrompts_), so an answer may well open with those words, and it is no note: a note is posted only by
+ * ThreadNotes.gs acThreadNote_, in the Auto-correct space, whose flow passes nothing on to S-F Burson. Held for these
+ * words, an answer would reach Burson as the fixed answer in its place (ownAnswerFallback_), which it never did before
+ * the notes existed. An analyst's message and every other reply of the bot's are held as the patterns say.
+ */
+const OUTBOX_NOTE_PATTERNS_ = [
   /\bflagged by the watch\b/i,
   /(?<=(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?)Part of a story\b|\bPart of a story:/,
   /(?<=(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?)Alert requirements\b|\bAlert requirements(?:, final)?:/,
@@ -316,14 +329,29 @@ const OUTBOX_GUARD_PATTERNS_ = [
 
 /**
  * What `text` names that Burson must not see: the bot's own guard (guardHits_, with `guard`.terms: the spaces' names
- * and ids), the relay's (relayGuardHits_: a test space, a space's id), and OUTBOX_GUARD_PATTERNS_. Product, exposure tag
- * and Sensitive Topic names are set aside first. Pure.
+ * and ids), the relay's (relayGuardHits_: a test space, a space's id), OUTBOX_GUARD_PATTERNS_ and the thread notes'
+ * first words (OUTBOX_NOTE_PATTERNS_). `ownAnswer` true (only for the bot's own answer to Burson's question:
+ * outboxOwnAnswerKey_): without the thread notes' first words, so that answer is checked as it always was. Product,
+ * exposure tag and Sensitive Topic names are set aside first. Pure.
  */
-function outboxGuardHits_(text, guard) {
+function outboxGuardHits_(text, guard, ownAnswer) {
   const hits = guardHits_(text, guard).concat(relayGuardHits_(text));
   const t = String(text || '').replace(taxonomyRx_(), ' ');
-  OUTBOX_GUARD_PATTERNS_.forEach(re => { const m = t.match(re); if (m) hits.push(m[0]); });
+  (ownAnswer === true ? OUTBOX_GUARD_PATTERNS_ : OUTBOX_GUARD_PATTERNS_.concat(OUTBOX_NOTE_PATTERNS_)).forEach(re => {
+    const m = t.match(re);
+    if (m) hits.push(m[0]);
+  });
   return hits;
+}
+
+/**
+ * True for the key of the bot's own answer to a question of Burson's (Bot.gs handleHuman_ posts it with "ans:" + the
+ * question's message): as bursonOut_ hands it over ("ans:…"), and as a Burson outbox row keeps it ("ans:…" when the main
+ * flow queued it, "own:ans:…" when it came from the Mirror space: forwardOwnBurson_). Never an analyst's answer
+ * ("anaans:…") nor anything the Relay queued. Pure.
+ */
+function outboxOwnAnswerKey_(key) {
+  return /^(?:own:)?ans:/.test(String(key === undefined || key === null ? '' : key));
 }
 
 /**
@@ -387,7 +415,8 @@ function forwardOwnBurson_(ctx, a) {
     let text = react ? '' : a.text;  // what goes: the reply as it is, or the fixed answer in its place (below)
     if (!react) {
       const guard = ctx.ownGuard || guardFor_(ctx);
-      const hits = outboxGuardHits_(text, guard);
+      // its answer to Burson's question is checked as it always was: never held for a thread note's first words
+      const hits = outboxGuardHits_(text, guard, outboxOwnAnswerKey_(a.key));
       if (hits.length) {
         const fixed = ownAnswerFallback_(ctx, a, guard);
         if (!fixed) {
@@ -437,9 +466,9 @@ function ownAnswerFallback_(ctx, a, guard) {
   const own = guardFor_(ctx);
   const row = a.thread ? ctx.store.alertByThread(a.thread) : null;
   const alert = voiceRow_(mergedAlertRow_(ctx, row), switchOn_(ctx, 'noWait'));
-  const resources = usableResources_(ctx.resources, own).filter(r => !outboxGuardHits_(resourcesLine_([r]), guard).length);
+  const resources = usableResources_(ctx.resources, own).filter(r => !outboxGuardHits_(resourcesLine_([r]), guard, true).length);
   const text = fallbackAnswer_(alert, own, resources);
-  return outboxGuardHits_(text, guard).length ? '' : text;
+  return outboxGuardHits_(text, guard, true).length ? '' : text;
 }
 
 /**
@@ -597,7 +626,8 @@ function outboxSendOne_(ss, sh, x, guard, out, sfb) {
   } else {
     if (key.thread && String(key.thread).indexOf(sfb.id + '/threads/') !== 0) return fail('its thread isn\'t one in S-F Burson');
     if (!cell) return block('the text is empty');
-    const hits = outboxGuardHits_(cell, guard);
+    // the bot's own answer to Burson's question (never a row the Relay queued): checked as it always was
+    const hits = outboxGuardHits_(cell, guard, !key.relay && outboxOwnAnswerKey_(key.ck));
     if (hits.length) return block(`it mentions "${truncate_(hits[0], 60)}". Edit the text, then set Send again.`);
   }
   let thread = key.thread || '';
