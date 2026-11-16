@@ -360,8 +360,16 @@ class FakeSheet {
    * Inserts `howMany` blank rows before row `beforePosition` (1-based), as Sheets does: that row and every row below it
    * move down, and what the fake keeps for a row or a cell moves with them (values, formulas as the text they are, data
    * validations, link chips, row heights, merges; a merge the new rows land inside grows, and so do the frozen rows when
-   * they land among them). The new rows are blank, with none of that. Returns the sheet. Not modelled: the sheet's
-   * size (a row below the last one with content is there, blank) and the references inside formulas.
+   * they land among them). The new rows are blank, with none of that. Returns the sheet.
+   *
+   * Where this fake and Google Sheets part, for code that is tested here and then runs on a live sheet:
+   *   - the sheet's size is not modelled: a row below the last one with content is there, blank, so a position far
+   *     below the content is taken here and refused by Sheets when it is past the grid;
+   *   - a new row is blank here; in Sheets it takes the format and the data validation of the row next to it, so a
+   *     tab's cells must not count on what they inherit (write what a cell needs);
+   *   - references inside formulas are not rewritten (a formula is the text it is);
+   *   - a position or a count that is not a whole number throws here; Apps Script would cut it to one. Hand over
+   *     whole numbers.
    */
   insertRowsBefore(beforePosition, howMany) {
     const [at, n] = rowSpan_(beforePosition, howMany);
@@ -378,6 +386,10 @@ class FakeSheet {
    * Deletes `howMany` rows from row `rowPosition` (1-based) down, as Sheets does: the rows below move up, with what the
    * fake keeps for a row or a cell; what the deleted rows had is gone (a merge loses the rows it had there, and goes
    * when none is left; frozen rows among them no longer count). Returns nothing, as in Sheets.
+   *
+   * Sheets refuses to delete every row that isn't frozen ("it is not possible to delete all non-frozen rows"); this
+   * fake, which doesn't know the sheet's size (see insertRowsBefore), takes it. So a trim must be written to always
+   * leave a data row under the frozen ones: a test here cannot catch one that doesn't.
    */
   deleteRows(rowPosition, howMany) {
     const [at, n] = rowSpan_(rowPosition, howMany);

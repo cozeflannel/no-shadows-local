@@ -6,7 +6,8 @@
 // and never by themselves a reason to drop it. requirementsLines_ (which also feeds the answers to Burson) is as it was.
 'use strict';
 
-const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 module.exports = H => {
   const { test, eq, assert, B, F, parse } = H;
@@ -19,11 +20,33 @@ module.exports = H => {
     'themselves a reason to call a watch flag no action.';
   const GUARDS = [STEP1_GUARD, STORY_GUARD, WATCH_GUARD];
 
-  // requirementsLines_ at f93e31a (before the playbook carried the thresholds): the fingerprint of its lines that are not
-  // taxonomy bullets (the bullets are the config's exposure tags and Sensitive Topics, checked against the config below).
-  // When a requirement's wording is changed on purpose, record the new one here and name the change in the commit.
-  const REQUIREMENT_LINES_SHA256 = '276ec4985e66fe523eb8f652c5b16118873c00a4ebb8b520a2e58da820ae80eb';
-  const sha256 = s => crypto.createHash('sha256').update(s, 'utf8').digest('hex');
+  // requirementsLines_ at f93e31a (before the playbook carried the thresholds): its 16 lines that are not taxonomy
+  // bullets, as text (the bullets are the config's exposure tags and Sensitive Topics, checked against the config
+  // below). The lines are built from the config (product names, platform domains, the always-alert tags, the briefed
+  // topics that are on), so a config change moves them too: a difference names the line and shows where it differs.
+  // When a line is meant to change, record the lines again and name the change in the commit:
+  //   REQUIREMENT_LINES_UPDATE=1 node apps-script-chat-bot/test/run_tests.js "playbook thresholds: requirementsLines_"
+  // The record guards this round's promise that the fix plan leaves these lines alone; once the round is merged and
+  // released it can go, with the comparison below.
+  const REQUIREMENT_LINES_FILE = path.join(__dirname, 'requirement_lines_f93e31a.json');
+  /** Where two lists of lines differ: [] when they are the same, else one sentence a line, with the words around the place. */
+  const lineDifferences = (actual, expected) => {
+    const out = [];
+    const head = l => String(l).split(/[:(,]/)[0].trim();
+    for (let i = 0; i < Math.max(actual.length, expected.length); i++) {
+      const a = actual[i];
+      const e = expected[i];
+      if (a === e) continue;
+      if (a === undefined) { out.push(`line ${i + 1} ("${head(e)}") is missing`); continue; }
+      if (e === undefined) { out.push(`line ${i + 1} ("${head(a)}") is new: ${JSON.stringify(a.slice(0, 160))}`); continue; }
+      let at = 0;
+      while (at < a.length && a[at] === e[at]) at++;
+      const from = Math.max(0, at - 40);
+      out.push(`line ${i + 1} ("${head(e)}") differs at character ${at + 1}: now ${JSON.stringify(a.slice(from, at + 80))}, ` +
+        `recorded ${JSON.stringify(e.slice(from, at + 80))}`);
+    }
+    return out;
+  };
 
   /** The four prompts that carry the playbook (their system text), and the evaluation's prompt when both tracks are asked for. */
   const prompts = () => {
@@ -80,7 +103,16 @@ module.exports = H => {
     eq(own.map(l => l.split(/[:(,]/)[0].trim()), ['Exposure tags', 'Renamed exposure tags', 'Sensitive Topics', 'Product names',
       'Products no longer used', 'Engagement levels', 'KOF', 'Social Network must match the link', 'Issue status', 'Summary & formatting',
       'Escalation thresholds', 'Escalation thresholds', 'Escalation thresholds', 'Escalation thresholds', 'Trust & Safety', 'Emoji reactions on alerts']);
-    eq(sha256(own.join('\n')), REQUIREMENT_LINES_SHA256);
+    if (process.env.REQUIREMENT_LINES_UPDATE === '1') fs.writeFileSync(REQUIREMENT_LINES_FILE, `${JSON.stringify(own, null, 1)}\n`);
+    const recorded = JSON.parse(fs.readFileSync(REQUIREMENT_LINES_FILE, 'utf8'));
+    eq(lineDifferences(own, recorded), []);
+    // ...and a difference says which line and where: a product added to the config, a line gone, a line more
+    const added = own.map(l => (/^Product names: /.test(l) ? l.replace('Product names: ', 'Product names: Pixel Glass, ') : l));
+    const said = lineDifferences(added, recorded);
+    eq([said.length, /^line 4 \("Product names"\) differs at character 16: now "Product names: Pixel Glass, Ads\/Merchant Center, [^"]+", recorded "Product names: Ads\/Merchant Center, [^"]+"$/.test(said[0])],
+      [1, true], said[0]);
+    eq([lineDifferences(own.slice(0, -1), recorded), lineDifferences(own.concat(['Reviews: none']), recorded)],
+      [['line 16 ("Emoji reactions on alerts") is missing'], ['line 17 ("Reviews") is new: "Reviews: none"']]);
     eq(lines.filter(l => /^Escalation thresholds/.test(l)), B.escalationRuleLines_());
     assert.ok(!lines.some(l => /^(?:Collection thresholds|When alerts are escalated)/.test(l)));
     // the taxonomy bullets are the config's: one for each exposure tag and each Sensitive Topic
