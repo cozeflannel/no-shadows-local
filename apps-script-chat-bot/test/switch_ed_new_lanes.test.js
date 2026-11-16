@@ -373,4 +373,46 @@ module.exports = H => {
     pool = poolNow();
     eq([pool.filter(p => !p.nl).length, pool.filter(p => p.nl).length], [6, 0]);
   });
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 5. Split same-author signatures
+  // ---------------------------------------------------------------------------------------------------------------
+
+  test('new lanes: today\'s lanes check and write only their own same-author signatures, exactly as with no new lane; a new lane\'s post is checked against both sets and writes only its own (sn:N)', () => {
+    const batches = [
+      { c1: [row({ mid: 'SONAR|p1', sig: 'sigX', chash: 'p1' })], fk: [row({ lane: 'bwl', mid: 'BWL|q1', sig: 'sigY', chash: 'q1', platform: 'reddit', url: 'https://www.reddit.com/r/google/comments/q1/t/' })] },
+      // Sonar repeats the new lane's signature (kept: today's lanes never check the new set); the new lane repeats
+      // Sonar's (dropped) and its own (dropped); in one batch, a new-lane copy of a Sonar signature posted earlier is dropped
+      { c1: [row({ mid: 'SONAR|p2', sig: 'sigY', chash: 'p2' }), row({ mid: 'SONAR|p3', sig: 'sigZ', chash: 'p3', posted_ms: NOW - 5 * MIN })],
+        fk: [row({ lane: 'bwl', mid: 'BWL|q2', sig: 'sigX', chash: 'q2', url: 'https://www.reddit.com/r/google/comments/q2/t/' }),
+          row({ lane: 'bwl', mid: 'BWL|q3', sig: 'sigY', chash: 'q3', url: 'https://www.reddit.com/r/google/comments/q3/t/' }),
+          row({ lane: 'bwl', mid: 'BWL|q4', sig: 'sigZ', chash: 'q4', posted_ms: NOW - 50 * MIN, url: 'https://www.reddit.com/r/google/comments/q4/t/' })] },
+    ];
+    const run = withLane => {
+      let i = 0;
+      const env = makeEnv(job => (batches[i] && batches[i][job]) || []);
+      addFakeLane(env.b, { src: 'bwl' });
+      env.b.ewsRunSwitches_({ edFake: withLane });
+      const kept = [];
+      for (i = 0; i < batches.length; i++) {
+        env.b.bqEarlyDetectionRows_(30);
+        kept.push(JSON.parse(env.g.props.get('EWS_STATE')).last.kept);
+        env.g.clock.now += 15 * MIN;
+      }
+      return { env, kept, sg: env.g.cache.get('ews1:sg:0'), sn: env.g.cache.get('ews1:sn:0'), st: JSON.parse(env.g.props.get('EWS_STATE')) };
+    };
+    const off = run(false);
+    const on = run(true);
+    eq([off.kept, on.kept], [[1, 2], [2, 2]]);
+    eq(on.sg, off.sg);
+    const fnv = s => on.env.b.ewsFnv_(s);
+    const sn = [].concat(...JSON.parse(on.sn).map(r => r[1]));
+    eq([sn, on.st.sn, off.st.sn, off.sn], [[fnv('sigY')], 1, undefined, undefined]);
+    // pure: with no new-lane post, the split is the old function
+    const sigsA = {};
+    const sigsB = {};
+    const posts = [{ id: 'a', t: 2, sig: 'x' }, { id: 'b', t: 1, sig: 'x' }, { id: 'c', t: 3, sig: 'y' }];
+    eq(B.ewsDedupSigsSplit_(posts.map(p => Object.assign({}, p)), sigsA, {}, NOW), B.ewsDedupSigs_(posts.map(p => Object.assign({}, p)), sigsB, NOW));
+    eq(sigsA, sigsB);
+  });
 };

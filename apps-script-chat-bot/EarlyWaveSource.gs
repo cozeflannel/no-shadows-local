@@ -124,6 +124,7 @@ const EWS_NEW_DAY_CAP_ = 15000;            // new lanes embed only while the day
 const EWS_CARRY_MS_ = 2 * 3600 * 1000;     // a new lane's post not embedded is carried to the next checks this long
 const EWS_SRC_DAY_PROP_ = 'EWS_SRC_DAY';   // the new sources' day record: first ON date, counts per day (7 days), lifted stories
 const EWS_SRC_DAYS_KEPT_ = 7;
+const EWS_SN_MAX_ = 20000;               // the new lanes' same-author signatures kept at most (about 2 cache items)
 
 const EWS_EVERY_MS_ = 10 * 60 * 1000;      // a check at most this often (earlyWaveCheck_ calls every 15 min or more)
 const EWS_BUDGET_MS_ = 40 * 1000;          // a check's whole time: BigQuery, embeddings, clustering, the cache
@@ -894,19 +895,46 @@ function ewsDedupSigs_(posts, sigs, now) {
 }
 
 /**
+ * The same-author near-copies with new lanes' posts among `posts`: today's lanes' posts are checked against, and
+ * written to, their own signatures (`sigs`) exactly as ewsDedupSigs_ does; a new lane's post is checked against both
+ * sets (`sigs`, then `nsigs`, its own) and written only to `nsigs`, so it can never drop a later post of today's
+ * lanes. The posts kept, oldest first. Pure (but for `sigs` and `nsigs`).
+ */
+function ewsDedupSigsSplit_(posts, sigs, nsigs, now) {
+  const kept = ewsDedupSigs_((posts || []).filter(p => !p.nl), sigs, now);
+  const fresh = (posts || []).filter(p => p.nl);
+  if (!fresh.length) return kept;
+  const minHour = Math.floor((now - 24 * 3600 * 1000) / 3600000);
+  Object.keys(nsigs).forEach(h => { if (Number(h) < minHour) delete nsigs[h]; });
+  const seen = new Set();
+  [sigs, nsigs].forEach(set => Object.keys(set).forEach(h => (set[h] || []).forEach(x => seen.add(x))));
+  const hour = String(Math.floor(now / 3600000));
+  fresh.sort((a, b) => a.t - b.t || (a.id < b.id ? -1 : 1)).forEach(p => {
+    const s = p.sig ? ewsFnv_(p.sig) : '';
+    if (s && seen.has(s)) return;
+    if (s) { seen.add(s); (nsigs[hour] = nsigs[hour] || []).push(s); }
+    kept.push(p);
+  });
+  return kept.sort((a, b) => a.t - b.t || (a.id < b.id ? -1 : 1));
+}
+
+/**
  * The same-author signatures of the last 24 hours ({hourIndex: [sig, …]}: ewsDedupSigs_) from the cache: 'sg:N' (N <
  * `count`, st.sg), each a list of [hour, [sig, …]] records; with no count yet, the single 'sig' item they were kept in
- * before (it outgrew a cache item: a day of them is about 96,000 characters). Never throws.
+ * before (it outgrew a cache item: a day of them is about 96,000 characters). `name` (optional, 'sn': the new lanes'
+ * own set, st.sn) reads 'sn:N' items instead, and nothing with no count. Never throws.
  */
-function ewsLoadSigs_(cache, count) {
+function ewsLoadSigs_(cache, count, name) {
   const out = {};
   if (!cache) return out;
+  const item = name || 'sg';
   if (!(count > 0)) {
+    if (item !== 'sg') return out;
     const old = ewsCacheGet_(cache, 'sig');
     return old && typeof old === 'object' && !Array.isArray(old) ? old : out;
   }
   const keys = [];
-  for (let i = 0; i < count; i++) keys.push(`${EWS_CACHE_PREFIX_}sg:${i}`);
+  for (let i = 0; i < count; i++) keys.push(`${EWS_CACHE_PREFIX_}${item}:${i}`);
   let got = {};
   try { got = cache.getAll(keys) || {}; } catch (e) { got = {}; }
   keys.forEach(k => {
@@ -922,16 +950,18 @@ function ewsLoadSigs_(cache, count) {
 }
 
 /**
- * The signatures as records small enough to pack (ewsChunks_): [hour, [sig, …]], EWS_SIG_RECORD_ signatures a record,
- * the newest hours first, EWS_SIGS_MAX_ in all (past it the oldest hours go). Pure.
+ * The signatures as records small enough to pack (ewsChunks_): [hour, [sig, …]], EWS_SIG_RECORD_ signatures a record
+ * (`per`, optional), the newest hours first, EWS_SIGS_MAX_ in all (`max`, optional; past it the oldest hours go). Pure.
  */
-function ewsSigRecords_(sigs) {
+function ewsSigRecords_(sigs, max, per) {
   const out = [];
   let total = 0;
+  const cap = max > 0 ? max : EWS_SIGS_MAX_;
+  const size = per > 0 ? per : EWS_SIG_RECORD_;
   Object.keys(sigs || {}).sort((a, b) => Number(b) - Number(a)).forEach(h => {
     const list = Array.isArray(sigs[h]) ? sigs[h] : [];
-    for (let i = 0; i < list.length && total < EWS_SIGS_MAX_; i += EWS_SIG_RECORD_) {
-      const part = list.slice(i, i + Math.min(EWS_SIG_RECORD_, EWS_SIGS_MAX_ - total));
+    for (let i = 0; i < list.length && total < cap; i += size) {
+      const part = list.slice(i, i + Math.min(size, cap - total));
       out.push([h, part]);
       total += part.length;
     }
@@ -2040,7 +2070,9 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     last.read = posts.length;
     posts = ewsExclude_(posts, ex);
     const sigs = ewsLoadSigs_(cache, Number(st.sg) || 0);
-    posts = ewsDedupSigs_(posts, sigs, now);
+    // with a new source ON, its posts have their own signatures ('sn:N'): they check both sets, write only theirs
+    const nsigs = nx ? ewsLoadSigs_(cache, Number(st.sn) || 0, 'sn') : null;
+    posts = nx ? ewsDedupSigsSplit_(posts, sigs, nsigs, now) : ewsDedupSigs_(posts, sigs, now);
     last.kept = posts.length;
 
     // The stories, the pool and the accounts so far
@@ -2297,6 +2329,14 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     for (let i = sigChunks.length; i < (Number(st.sg) || 0); i++) { try { if (cache) cache.remove(`${EWS_CACHE_PREFIX_}sg:${i}`); } catch (e) { /* expires */ } }
     if (!(Number(st.sg) > 0)) { try { if (cache) cache.remove(`${EWS_CACHE_PREFIX_}sig`); } catch (e) { /* expires */ } }
     st.sg = sigChunks.length;
+    if (nx) {  // the new lanes' own signatures, written after today's (each set packed alike)
+      const snChunks = ewsChunks_(ewsSigRecords_(nsigs, EWS_SN_MAX_));
+      const snItems = {};
+      snChunks.forEach((ch, i) => { snItems[`sn:${i}`] = ch; });
+      ewsCachePut_(cache, snItems);
+      for (let i = snChunks.length; i < (Number(st.sn) || 0); i++) { try { if (cache) cache.remove(`${EWS_CACHE_PREFIX_}sn:${i}`); } catch (e) { /* expires */ } }
+      st.sn = snChunks.length;
+    }
     st.pool = index;
 
     // Cursors move on only for what was read
