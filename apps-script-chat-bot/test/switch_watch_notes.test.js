@@ -539,7 +539,7 @@ module.exports = H => {
   /** The Watch sources tab's Status column, by source. */
   const statuses = t => Object.fromEntries(t.sheet().getSheetByName('Watch sources').rows.slice(3).map(r => [r[0], r[3]]));
 
-  test('watch notes: a look that fails as a whole stays visible (the one-space setup: one good look, then the Sonar and Tubular job failing every time it is collected, for a day, the other job fine): C34 says so from the first failed try until that job succeeds again, after the last look and before today\'s counts ("the look at Sonar and Tubular has failed since <time>: <why>", the reason cut so that the note keeps to its 200 characters with the counts whole); the last look\'s numbers no longer carry the failed job\'s last good look; the Watch sources tab shows that job\'s sources as failing, with the whole error, not as stale, and status() says the same; the window skipped after 3 tries is in the log; when the job succeeds again C34 and the tab read as before; nothing is posted or emailed in all of it', () => {
+  test('watch notes: a look that fails as a whole stays visible (the one-space setup: one good look, then the Sonar and Tubular job failing every time it is collected, for a day, the other job fine): C34 says so from the first failed try until that job succeeds again, after the last look and before today\'s counts, behind a warning sign ("⚠️ the look at Sonar and Tubular has failed since <time>: <why>", the reason cut so that the note keeps to its 200 characters with the counts whole); the last look\'s numbers no longer carry the failed job\'s last good look; the Watch sources tab shows that job\'s sources as failing, with the whole error, not as stale, and status() says the same; the window skipped after 3 tries is in the log; when the job succeeds again C34 and the tab read as before; nothing is posted or emailed in all of it', () => {
     const w = oneSpace();
     const { t } = w;
     const ERR = 'Query error: AI.IF: quota exceeded for the Gemini model in us-central1';
@@ -555,13 +555,16 @@ module.exports = H => {
     eq(noteOf(t), HEALTHY);
     assert.ok(c34(t).endsWith(` · ${HEALTHY}`), c34(t));
     eq(statuses(t).Sonar, '✓ live: 180 new at the last look');
+    const goodAt = JSON.parse(t.g.props.get('PW_LAST')).lanes.c1.at;  // when that good look was collected
+    eq(B.pwWhen_(goodAt), 'Oct 14, 8:03 AM');
     // From now on the Sonar and Tubular job fails every time it is collected. Minute by minute: nothing changes until the
     // next look (sent 5 minutes after the last one) is collected; from then on every minute's C34 says so
     w.answers = bad;
     const minutes = [];
     for (let m = 1; m <= 16; m++) { t.poll(); minutes.push(noteOf(t)); }
-    const failing = at => `last look ${at} EDT: 0 new posts, 0 flagged · the look at Sonar and Tubular has failed since Oct 14, 8:08 AM: ` +
-      'BigQuery HTTP 400: Query error: AI.IF: quota… · today: 0 flagged, 0 near misses';
+    // (the reason has the room the rest leaves: a character less of it beside a time that is a character longer)
+    const failing = (at, cut) => `last look ${at} EDT: 0 new posts, 0 flagged · ⚠️ the look at Sonar and Tubular has failed since Oct 14, 8:08 AM: ` +
+      `BigQuery HTTP 400: Query error: AI.IF: ${cut || 'quo'}… · today: 0 flagged, 0 near misses`;
     eq(minutes, Array(4).fill(HEALTHY).concat(Array(5).fill(failing('Oct 14, 8:08 AM')), Array(5).fill(failing('Oct 14, 8:13 AM')),
       Array(2).fill(failing('Oct 14, 8:18 AM'))));
     minutes.forEach(n => assert.ok(n.length <= 200, n));
@@ -582,10 +585,11 @@ module.exports = H => {
     // ...and for the rest of the day and the night (a look every half hour here, to keep the test short): the next
     // morning C34 and the tab still say since when
     for (let i = 0; i < 52; i++) { t.g.clock.now += 28 * MIN; t.poll(); t.poll(); }
-    eq(noteOf(t), failing('Oct 15, 10:48 AM'));
+    eq(noteOf(t), failing('Oct 15, 10:48 AM', 'qu'));
     eq(noteOf(t).length, 200);
     eq(statuses(t), Object.assign({ Sonar: FAILING, Tubular: FAILING }, others));
-    eq(JSON.parse(t.g.props.get('PW_LAST')).lanes.c1, { fail: { since, why: `BigQuery HTTP 400: ${ERR}` } });
+    // what is kept of the failure: since when, the latest reason, and when the job's last good look was collected
+    eq(JSON.parse(t.g.props.get('PW_LAST')).lanes.c1, { fail: { since, why: `BigQuery HTTP 400: ${ERR}`, ok: goodAt } });
     // the job succeeds again: both read as they did before
     w.answers = good(12);
     look(w);
@@ -609,38 +613,43 @@ module.exports = H => {
     const healthy = `${LOOKED}${COUNTS} · all 8 sources live (Watch sources tab)`;
     eq([text(undefined, { sources: 'all 8 sources live' }), text({}, { sources: 'all 8 sources live' })], [healthy, healthy]);
     eq(B.pwNoteText_({ flagged: 0, near: 1 }, null, '', ''), 'first look on its way · today: 0 flagged, 1 near miss (Watch detections tab)');
-    // every count at three digits: the reason is cut to the room there is, never a count
+    // every count at three digits: the reason is cut to the room there is, never a count. The sentence stands behind a
+    // warning sign: it sits in the middle of a cell that starts with the switch's tick
     const c1 = text({ c1: { since, why: WHY } });
-    eq(c1, `${LOOKED} · the look at Sonar and Tubular has failed since Oct 14, 10:04 AM: BigQuery HTTP 403: Access Denied: P…${COUNTS}`);
+    eq(c1, `${LOOKED} · ⚠️ the look at Sonar and Tubular has failed since Oct 14, 10:04 AM: BigQuery HTTP 403: Access Denied…${COUNTS}`);
     const us = text({ us: { since, why: WHY } });
-    eq(us, `${LOOKED} · the look at Brandwatch mentions and 5 more has failed since Oct 14, 10:04 AM: BigQuery HTTP 403: Acc…${COUNTS}`);
-    eq([c1.length, us.length], [200, 200]);
+    eq(us, `${LOOKED} · ⚠️ the look at Brandwatch mentions and 5 more has failed since Oct 14, 10:04 AM: BigQuery HTTP 403:…${COUNTS}`);
+    eq([c1.length, us.length], [200, 199]);  // (a cut never ends on a space)
     // counts so long that under 16 characters of the reason would be left: the last look's numbers go, then the last look
     const big = text({ us: { since, why: WHY } }, { today: { flagged: 1234567, near: 2345678 } });
-    eq(big, 'last look Oct 14, 10:05 AM EDT · the look at Brandwatch mentions and 5 more has failed since Oct 14, 10:04 AM: ' +
-      'BigQuery HTTP 403: Access Denied: Proj… · today: 1,234,567 flagged, 2,345,678 near misses');
+    eq(big, 'last look Oct 14, 10:05 AM EDT · ⚠️ the look at Brandwatch mentions and 5 more has failed since Oct 14, 10:04 AM: ' +
+      'BigQuery HTTP 403: Access Denied: P… · today: 1,234,567 flagged, 2,345,678 near misses');
     const bigger = text({ us: { since, why: WHY } }, { today: { flagged: 1e15, near: 1e15 } });
-    eq(bigger, 'the look at Brandwatch mentions and 5 more has failed since Oct 14, 10:04 AM: BigQuery HTTP 403: Access Denied: ' +
-      'Project brand… · today: 1,000,000,000,000,000 flagged, 1,000,000,000,000,000 near misses');
+    eq(bigger, '⚠️ the look at Brandwatch mentions and 5 more has failed since Oct 14, 10:04 AM: BigQuery HTTP 403: Access Denied: ' +
+      'Project br… · today: 1,000,000,000,000,000 flagged, 1,000,000,000,000,000 near misses');
     eq([big.length, bigger.length], [200, 200]);
     // a short reason stays whole; the sources follow the counts only when they fit whole
-    eq(text({ c1: { since, why: 'BigQuery took more than 4 minutes' } }),
-      `${LOOKED} · the look at Sonar and Tubular has failed since Oct 14, 10:04 AM: BigQuery took more than 4 minutes${COUNTS}`);
+    const short = text({ c1: { since, why: 'BigQuery took more than 4 minutes' } });
+    eq(short, `${LOOKED} · ⚠️ the look at Sonar and Tubular has failed since Oct 14, 10:04 AM: BigQuery took more than 4 minutes${COUNTS}`);
+    eq(short.length, 200);
     const first = B.pwNoteText_({ flagged: 0, near: 1 }, null, '', 'sources: 6 waiting, 2 failing: Sonar, Tubular',
       { c1: { since, why: 'unknown' } });
-    eq(first, 'first look on its way · the look at Sonar and Tubular has failed since Oct 14, 10:04 AM: unknown · today: 0 flagged, ' +
+    eq(first, 'first look on its way · ⚠️ the look at Sonar and Tubular has failed since Oct 14, 10:04 AM: unknown · today: 0 flagged, ' +
       '1 near miss · sources: 6 waiting, 2 failing: Sonar, Tubular (Watch sources tab)');
     assert.ok(first.length <= 200, String(first.length));
     // every look failing: one sentence, from when the later of them began to fail and with its reason; no last look
     const all = { c1: { since, why: 'BigQuery HTTP 500: Backend error' }, us: { since: since + MIN, why: WHY } };
     const both = text(all, { last: { at: 0, checked: 0, flagged: 0 }, label: '' });
-    eq(both, 'the looks at all 8 sources have failed since Oct 14, 10:05 AM: BigQuery HTTP 403: Access Denied: Project ' +
-      `brand-social-central-data: User does not have bigquery.j…${COUNTS}`);
+    eq(both, '⚠️ the looks at all 8 sources have failed since Oct 14, 10:05 AM: BigQuery HTTP 403: Access Denied: Project ' +
+      `brand-social-central-data: User does not have bigquer…${COUNTS}`);
     eq(both.length, 200);
     all.us.since = since;  // both from the same minute: the first job's reason
     eq(text(all, { last: { at: 0, checked: 0, flagged: 0 }, label: '', sources: 'sources: 8 failing' }),
-      `the looks at all 8 sources have failed since Oct 14, 10:04 AM: BigQuery HTTP 500: Backend error${COUNTS} · sources: 8 failing ` +
+      `⚠️ the looks at all 8 sources have failed since Oct 14, 10:04 AM: BigQuery HTTP 500: Backend error${COUNTS} · sources: 8 failing ` +
       '(Watch sources tab)');
+    // a reason with an emoji where the cut falls: none of it is left, never its first half
+    const emoji = text({ c1: { since, why: `BigQuery HTTP 400: ${'x'.repeat(12)}🔭 and more words that do not fit in the note` } });
+    eq(emoji, `${LOOKED} · ⚠️ the look at Sonar and Tubular has failed since Oct 14, 10:04 AM: BigQuery HTTP 400: ${'x'.repeat(12)}…${COUNTS}`);
   });
 
   test('watch notes: every look failing (BigQuery refuses both jobs when they are sent, from the first look on): C34 says "the looks at all 8 sources have failed since <time>: <why>" and every row of the Watch sources tab says failing; what is kept of it (the script property PW_LAST) stays small whatever the error is (160 characters of a job\'s reason: far under the 9 KB a property holds); one job succeeding leaves the other\'s failure standing; with the last watch turned OFF nothing is looked at and the failure is forgotten', () => {
@@ -650,8 +659,8 @@ module.exports = H => {
     w.refuse = () => ({ code: 403, message: MSG });
     t.poll();  // the first looks: both refused
     const TODAY = ' · today: 0 flagged, 0 near misses';
-    eq(noteOf(t), 'the looks at all 8 sources have failed since Oct 14, 8:02 AM: BigQuery HTTP 403: Access Denied: Project ' +
-      `brand-social-central-data: User does not have bigquery.jobs.c…${TODAY}`);
+    eq(noteOf(t), '⚠️ the looks at all 8 sources have failed since Oct 14, 8:02 AM: BigQuery HTTP 403: Access Denied: Project ' +
+      `brand-social-central-data: User does not have bigquery.job…${TODAY}`);
     assert.ok(noteOf(t).length === 200 && c34(t).endsWith(` · ${noteOf(t)}`), c34(t));
     const failing = names => `⚠️ failing: the look at ${names} has failed since 2026-10-14 08:02 ET: BigQuery HTTP 403: ${MSG} ` +
       '(tried again at the next look)';
@@ -668,21 +677,82 @@ module.exports = H => {
     eq([lanes.us.fail.why.length, lanes.c1.fail.why, lanes.c1.fail.since, lanes.us.fail.since], [160, lanes.us.fail.why, failedAt, failedAt]);
     assert.ok(kept.length <= 8800 && kept.length < 2000, `${kept.length} characters`);
     assert.ok(noteOf(t).length <= 200 && noteOf(t).endsWith(TODAY), noteOf(t));
+    // an error whose 160th character falls inside an emoji: what is kept, and the tab, hold none of it, never its first
+    // half ("BigQuery HTTP 403: " is 19 characters; the cut keeps 159 of them before its ellipsis)
+    w.refuse = () => ({ code: 403, message: `${'y'.repeat(139)}🔭 and the rest of a long error` });
+    t.g.clock.now += 4 * MIN;
+    t.poll();
+    const HALF = /[\ud800-\udbff](?![\udc00-\udfff])|(?:^|[^\ud800-\udbff])[\udc00-\udfff]/;
+    const halfKept = JSON.parse(t.g.props.get('PW_LAST')).lanes.us.fail.why;
+    eq(halfKept, `BigQuery HTTP 403: ${'y'.repeat(139)}…`);
+    assert.ok(Object.values(statuses(t)).concat([noteOf(t)]).every(s => !HALF.test(s)), 'no half emoji on the tab or C34');
     // the US job is no longer refused: its look is collected, and C34 keeps saying that the other one fails
     w.refuse = location => (location === C1 ? { code: 403, message: MSG } : null);
     w.answers = { [US]: { rows: srcs(US_SOURCES) } };
     t.g.clock.now += 4 * MIN;
     t.poll();
     t.poll();
-    eq(noteOf(t), 'last look Oct 14, 8:13 AM EDT: 0 new posts, 0 flagged · the look at Sonar and Tubular has failed since Oct 14, 8:02 AM: ' +
-      `BigQuery HTTP 403: Access Denied: Project bra…${TODAY}`);
-    eq(noteOf(t).length, 200);
+    eq(noteOf(t), 'last look Oct 14, 8:18 AM EDT: 0 new posts, 0 flagged · ⚠️ the look at Sonar and Tubular has failed since Oct 14, 8:02 AM: ' +
+      `BigQuery HTTP 403: Access Denied: Project…${TODAY}`);
+    eq(noteOf(t).length, 199);  // (a cut never ends on a space)
     eq(Object.values(statuses(t)), Array(2).fill(failing('Sonar and Tubular')).concat(Array(6).fill('✓ live: nothing new at the last look')));
     // no watch ON: nothing is looked at, and the failure is forgotten with the last looks
     w.watch(BRAND, false);
     t.poll();
     eq([noteOf(t), t.g.props.get('PW_LAST')], ['waiting: no watch is ON (set a watch\'s On to ON on the Watches tab)', undefined]);
     eq(Object.values(statuses(t)).slice(0, 2), Array(2).fill('... waiting for its first look'));
+  });
+
+  test('watch notes: while every look fails (one good look, then both jobs failing every time they are collected) each watch\'s row on the Watches tab still says when the last look that worked was ("last look 8:03 AM", as it did before a failed look was kept), while C34 and the Watch sources tab say that the looks fail; what is kept of each failure carries that time; when one job works again the row says its time', () => {
+    const w = oneSpace();
+    const { t } = w;
+    const watched = () => t.sheet().getSheetByName('Watches').rows.find(r => r[0] === BRAND)[7];
+    const fine = { [C1]: { rows: srcs(C1_SOURCES) }, [US]: { rows: srcs(US_SOURCES) } };
+    const fail = { fail: { code: 400, message: 'Query error: the table was not found' } };
+    w.answers = fine;
+    look(w);
+    const GOOD = '✓ watched · today: 0 flagged, 0 near misses · last look 8:03 AM';
+    eq(watched(), GOOD);
+    const goodAt = t.g.clock.now;
+    // both jobs fail when they are collected, look after look
+    w.answers = { [C1]: fail, [US]: fail };
+    const rows = [];
+    for (let m = 1; m <= 16; m++) { t.poll(); rows.push(watched()); }
+    eq(rows, Array(16).fill(GOOD));
+    eq(noteOf(t), '⚠️ the looks at all 8 sources have failed since Oct 14, 8:08 AM: BigQuery HTTP 400: Query error: the table was not found · ' +
+      'today: 0 flagged, 0 near misses');
+    assert.ok(Object.values(statuses(t)).every(s => /^⚠️ failing: the look at .* has failed since 2026-10-14 08:08 ET: /.test(s)), 'every source says failing');
+    const kept = JSON.parse(t.g.props.get('PW_LAST'));
+    eq([kept.at, kept.lanes.c1.fail.ok, kept.lanes.us.fail.ok, t.bot.pwLastGoodAt_(kept)], [0, goodAt, goodAt, goodAt]);
+    eq([t.bot.pwLastGoodAt_(null), t.bot.pwLastGoodAt_({ at: 5, lanes: { c1: { at: 5 }, us: { fail: { since: 9, why: 'x' } } } }),
+      t.bot.pwLastGoodAt_({ at: 5, lanes: { c1: { at: 5 }, us: { fail: { since: 9, why: 'x', ok: 7 } } } })], [0, 5, 7]);
+    // the other job works again: the row says when its look was collected
+    w.answers = { [C1]: fail, [US]: fine[US] };
+    look(w);
+    eq([watched(), B.pwWhen_(JSON.parse(t.g.props.get('PW_LAST')).at)],
+      ['✓ watched · today: 0 flagged, 0 near misses · last look 8:23 AM', 'Oct 14, 8:23 AM']);
+    assert.match(noteOf(t), /^last look Oct 14, 8:23 AM EDT: 0 new posts, 0 flagged · ⚠️ the look at Sonar and Tubular has failed since Oct 14, 8:08 AM: /);
+  });
+
+  test('watch notes: the last looks (the script property PW_LAST) are read once in a run that neither collects nor sends a look, for the Watch sources tab and the Watches tab together', () => {
+    const w = oneSpace();
+    const { t } = w;
+    look(w);
+    const service = t.g.services.PropertiesService;
+    const real = service.getScriptProperties;
+    let reads = 0;
+    service.getScriptProperties = () => {
+      const p = real();
+      const counted = Object.create(p);
+      counted.getProperty = k => { if (k === 'PW_LAST') reads++; return p.getProperty(k); };
+      return counted;
+    };
+    try {
+      t.poll();
+    } finally {
+      service.getScriptProperties = real;
+    }
+    eq(reads, 1);
   });
 
   // -----------------------------------------------------------------------------------------------------------

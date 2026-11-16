@@ -371,9 +371,10 @@ module.exports = H => {
     const start = c1()[0].params.since_ms;
     eq([t.g.props.get('PW_TRIES'), t.g.props.get('PW_SINCE'), t.g.props.get('PW_JOB'), t.g.props.get('PW_US_TRIES'), lanes(bq).us.length],
       ['1', start, undefined, undefined, 1]);
-    // C34 says so from the first failed try on, in one form: since when, and why (no look has been collected yet)
+    // C34 says so from the first failed try on, in one form, behind a warning sign: since when, and why (no look has
+    // been collected yet)
     const failedAt = t.g.clock.now;
-    const SINCE = ` · the look at Sonar and Tubular has failed since ${B.pwWhen_(failedAt)}: `;
+    const SINCE = ` · ⚠️ the look at Sonar and Tubular has failed since ${B.pwWhen_(failedAt)}: `;
     const TODAY = ' · today: 0 flagged, 0 near misses';
     eq(note(t), `${ON_TEXT} · first look on its way${SINCE}BigQuery HTTP 500: Backend error${TODAY}`);
     for (let i = 0; i < 4; i++) t.poll();

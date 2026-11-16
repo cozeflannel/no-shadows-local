@@ -147,8 +147,8 @@ const PW_PAUSED_PROP_ = 'PW_PAUSED';         // set while the bot is paused: the
 const PW_SCORE_AT_PROP_ = 'PW_SCORE_AT';     // when the scorecard was last written (ms)
 // The last looks collected: {at, checked, flagged, near, lanes: {c1|us: {at, checked, flagged, near}}}: each lane's
 // latest, and their sum. A lane whose look failed as a whole has {fail: {since (ms: its first failed try), why (its
-// latest try's, 160 characters at most)}} as its entry instead, with no numbers, until a look of it succeeds again
-// (pwFailed_, pwDone_, pwLastWith_)
+// latest try's, 160 characters at most), ok (ms: when its last good look was collected; left out when it had none)}}
+// as its entry instead, with no numbers, until a look of it succeeds again (pwFailed_, pwDone_, pwLastWith_)
 const PW_LAST_PROP_ = 'PW_LAST';
 const PW_MARKS_PROP_ = 'PW_MARKS';           // each source's place (ms): the newest item it handed over; <source>_mod: when its
                                              // table was read; <source>_snap: a batch it is still handing over (pwSnap_)
@@ -1702,15 +1702,25 @@ function pwLast_(props) {
 
 /**
  * The lanes whose look has failed as a whole and not succeeded since (`last`: PW_LAST), by lane key: {since (ms: the
- * first failed try), why (the latest try's)}; {} when none has. Pure.
+ * first failed try), why (the latest try's), ok (ms: when the lane's last good look was collected; 0 for none)}; {}
+ * when none has. Pure.
  */
 function pwLaneFails_(last) {
   const out = {};
   PW_LANES_.forEach(l => {
     const f = last && last.lanes && last.lanes[l.key] && last.lanes[l.key].fail;
-    if (f && Number(f.since) > 0) out[l.key] = { since: Number(f.since), why: String(f.why || 'unknown') };
+    if (f && Number(f.since) > 0) out[l.key] = { since: Number(f.since), why: String(f.why || 'unknown'), ok: Number(f.ok) || 0 };
   });
   return out;
+}
+
+/**
+ * When the latest look that worked was collected (ms; 0 for none), from the last looks (`last`: PW_LAST): the latest
+ * of the lanes' looks, and of the last good look of a lane whose look fails now. The Watches tab's "last look". Pure.
+ */
+function pwLastGoodAt_(last) {
+  const fails = pwLaneFails_(last);
+  return Object.keys(fails).reduce((at, k) => Math.max(at, fails[k].ok), Number(last && last.at) || 0);
 }
 
 /**
@@ -1768,11 +1778,13 @@ function pwSourceRows_(all, today, now, fails) {
 /**
  * Rewrites the Watch sources tab's rows when something changed, and clears the rows below them that a tab made when
  * the watch read more sources still holds (the tab is the bot's own: pwSourcesTab_). The sources of a look that is
- * failing as a whole (pwLaneFails_) say so. Never throws.
+ * failing as a whole (pwLaneFails_) say so: `last` is the last looks (pwLast_) when the caller has read them, so they
+ * are read once a run. Never throws.
  */
-function pwWriteSources_(sh, props, now) {
+function pwWriteSources_(sh, props, now, last) {
   try {
-    const rows = pwSourceRows_(pwSourceStats_(props), pwToday_(props, dayKey_()), now, pwLaneFails_(pwLast_(props)));
+    const rows = pwSourceRows_(pwSourceStats_(props), pwToday_(props, dayKey_()), now,
+      pwLaneFails_(last === undefined ? pwLast_(props) : last));
     const range = sh.getRange(PW_SRC_HEAD_ROW_ + 1, 1, rows.length, PW_SRC_HEADER_.length);
     const current = range.getValues();
     if (rows.some((r, i) => r.some((c, j) => !pwSame_(c, (current[i] || [])[j])))) range.setValues(rows);
@@ -1800,12 +1812,13 @@ function pwToday_(props, day) {
 /**
  * Column C of the switch, from today's numbers, the last looks (`last`: {at, checked, flagged, near}; `timeLabel`: when
  * the latest of them was collected) and the sources (`sources`: pwSourcesSummary_). While a look fails as a whole
- * (`fails`: pwLaneFails_) the note says so between the last look and today's counts: "the look at Sonar and Tubular has
- * failed since Oct 14, 8:04 AM: <why>" (every look failing: "the looks at all 8 sources have failed since", from when
- * the later of them began to, with its reason, and no last look). It then stays within PW_NOTE_CHARS_, where a note is
- * cut: the reason is shortened to the room there is, and when under PW_FAIL_WHY_MIN_ characters of it would be left the
- * last look's numbers go, then the last look; today's counts are never cut, and the sources follow only when they fit
- * whole. Pure.
+ * (`fails`: pwLaneFails_) the note says so between the last look and today's counts, behind a warning sign (the cell
+ * starts with the switch's tick): "⚠️ the look at Sonar and Tubular has failed since Oct 14, 8:04 AM: <why>" (every
+ * look failing: "⚠️ the looks at all 8 sources have failed since", from when the later of them began to, with its
+ * reason, and no last look). It then stays within PW_NOTE_CHARS_, where a note is cut: the reason is shortened to the
+ * room there is (never through a character: WatchAlerts.gs pwCut_), and when under PW_FAIL_WHY_MIN_ characters of it
+ * would be left the last look's numbers go, then the last look; today's counts are never cut, and the sources follow
+ * only when they fit whole. Pure.
  */
 function pwNoteText_(today, last, timeLabel, sources, fails) {
   const at = last && last.at ? `last look ${timeLabel}` : '';
@@ -1817,25 +1830,31 @@ function pwNoteText_(today, last, timeLabel, sources, fails) {
   const failing = PW_LANES_.map(l => l.key).filter(k => (fails || {})[k]);
   if (!failing.length) return `${looked} · ${counts}${tail}`;
   const f = failing.map(k => fails[k]).reduce((a, b) => (b.since > a.since ? b : a));
-  const said = `${pwFailWords_(failing)} ${pwWhen_(f.since)}: `;
+  const said = `⚠️ ${pwFailWords_(failing)} ${pwWhen_(f.since)}: `;
   const leads = failing.length >= PW_LANES_.length ? [''] : [`${looked} · `].concat(at ? [`${at} · `] : [], ['']);
   const room = lead => PW_NOTE_CHARS_ - lead.length - said.length - ' · '.length - counts.length;
   const lead = leads.find(l => !l || room(l) >= PW_FAIL_WHY_MIN_);
-  const note = `${lead}${said}${truncate_(f.why, Math.max(1, room(lead)))} · ${counts}`;
+  const note = `${lead}${said}${pwCut_(f.why, Math.max(1, room(lead)))} · ${counts}`;
   return note.length + tail.length <= PW_NOTE_CHARS_ ? note + tail : note;
 }
 
 /**
  * The last looks with the lane's latest (`entry`), kept (PW_LAST): each lane's latest, and their sum. A look that failed
  * as a whole (`entry`: {fail: {since, why}}) leaves no numbers of the lane's last good look in the sum, and has failed
- * since the first try that did: an entry that already says so keeps its `since` and takes the new `why`.
+ * since the first try that did: an entry that already says so keeps its `since` and takes the new `why`. It keeps when
+ * the lane's last good look was collected (`ok`, when it had one), for the Watches tab's "last look" (pwLastGoodAt_).
  */
 function pwLastWith_(props, lane, entry) {
   let last = null;
   try { last = JSON.parse(props.getProperty(PW_LAST_PROP_) || 'null'); } catch (e) { last = null; }
   const lanes = Object.assign({}, (last && last.lanes) || {});
-  const was = entry.fail ? pwLaneFails_(last)[lane.key] : null;
-  lanes[lane.key] = was ? { fail: { since: was.since, why: entry.fail.why } } : entry;
+  if (entry.fail) {
+    const was = pwLaneFails_(last)[lane.key] || null;
+    const ok = was ? was.ok : Number((lanes[lane.key] || {}).at) || 0;
+    lanes[lane.key] = { fail: Object.assign({ since: was ? was.since : entry.fail.since, why: entry.fail.why }, ok ? { ok } : {}) };
+  } else {
+    lanes[lane.key] = entry;
+  }
   const sum = { at: 0, checked: 0, flagged: 0, near: 0, lanes };
   Object.keys(lanes).forEach(k => {
     const l = lanes[k] || {};
@@ -1899,7 +1918,7 @@ function pwDone_(props, sh, lane, job, results, now, queue) {
  */
 function pwFailed_(props, lane, job, why) {
   const tries = (Number(job.tries) || 0) + 1;
-  const what = truncate_(String((why && why.message) || why || 'unknown'), 160);
+  const what = pwCut_(String((why && why.message) || why || 'unknown'), 160);  // never through a character (WatchAlerts.gs)
   const names = pwLaneNames_(lane.key);
   console.warn(`Proactive watch: the look at ${names} for ${pwTime_(job.since)}-${pwTime_(job.until)} failed (try ${tries}): ${what}`);
   if (tries >= PW_MAX_TRIES_) {
@@ -2091,10 +2110,11 @@ function runProactiveWatch_(ss, runStart, opts) {
       (out.added || !scoredAt || Date.now() - scoredAt >= PW_SCORE_EVERY_MS_)) {
       pwRefreshScorecard_(ss, dt.sh, Date.now());
     }
-    if (st.sh) pwWriteSources_(st.sh, props, Date.now());
-    let last = null;
-    try { last = JSON.parse(props.getProperty(PW_LAST_PROP_) || 'null'); } catch (e) { last = null; }
-    const lastAt = last && last.at ? Utilities.formatDate(new Date(Number(last.at)), GEN.timezone, 'h:mm a') : '';
+    const last = pwLast_(props);  // read once, for the Watch sources tab and the watches' status
+    if (st.sh) pwWriteSources_(st.sh, props, Date.now(), last);
+    // the latest look that worked, also while every look fails (C34 and the Watch sources tab say that they do)
+    const goodAt = pwLastGoodAt_(last);
+    const lastAt = goodAt ? Utilities.formatDate(new Date(goodAt), GEN.timezone, 'h:mm a') : '';
     pwWriteStatuses_(wt.sh, watches, pwToday_(props, dayKey_()), lastAt);
     return out;
   } catch (e) {
