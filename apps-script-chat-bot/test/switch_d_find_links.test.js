@@ -226,13 +226,16 @@ module.exports = H => {
     const off = world({ noWait: true });
     off.paste(F.NO_LINK);
     runWith(off, { sourceReadOnly: true, changeNotes: true });
+    // (each note's last line says which alert requirement the alert met, and that this world makes no emails:
+    // RequirementLine.gs)
+    const REQ = '*Alert requirements:* met for a Social Alert (P0 exposure tag), but none was sent: emails are off in this run (a dry run).';
     eq(off.analystPosts().map(m => m.text), [`${REVIEWED_BY}\n${F.NO_LINK}`,
-      'Not fixed: Burson\'s alert has no link to the post (Auto-find missing links, row 14, is OFF)']);
+      `Not fixed: Burson's alert has no link to the post (Auto-find missing links, row 14, is OFF)\n${REQ}`]);
     const w = world({ noWait: true });
     w.paste(F.NO_LINK);
     runWith(w, { sourceReadOnly: true, changeNotes: true, switches: switchesNoWait(w, true), findLink: spy(FOUND) });
     eq(w.analystPosts().map(m => m.text), [`${CORRECTED_BY}\n${F.P0_OK}`,
-      `The agentic assistant reviewed this alert and made these changes:\n- Link: added ${SAM}`]);
+      `The agentic assistant reviewed this alert and made these changes:\n- Link: added ${SAM}\n${REQ}`]);
     eq(w.bursonPosts(), []);
   });
 

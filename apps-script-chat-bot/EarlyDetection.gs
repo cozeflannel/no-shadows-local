@@ -333,7 +333,9 @@ function edAct_(ctx, m, d, report) {
   report.early_detection_alerts = (report.early_detection_alerts || 0) + 1;
 
   if (d.disposition !== 'escalate') edNoEmail_(ctx, row, d, report);
-  const note = edNoteText_(d);
+  // The auto-correct space (settings.requirement_line): the note says which alert requirement the story meets, where
+  // it has its "SLRR" line everywhere else (RequirementLine.gs edRequirementLine_: '' in every other flow)
+  const note = edNoteText_(d, edRequirementLine_(ctx, d));
   try {
     const ff = Object.assign({}, row.forwarded_fields || {}, { early_detection: edSnap_(d, note) });
     ctx.store.updateAlert(row, { forwarded_fields: ff });
@@ -947,8 +949,13 @@ function edCallWords_(d) {
   return hasTns ? '\ud83d\udc4d Monitor build-up \u00b7 \u270d\ufe0f T&S intake' : '\ud83d\udc4d Monitor build-up';
 }
 
-/** Concise thread note (max 3-5 sentences) under an Early Detection card: leads with call + why, followed by 1-3 bullets. Pure. */
-function edNoteText_(d) {
+/**
+ * Concise thread note (max 3-5 sentences) under an Early Detection card: leads with call + why, followed by 1-3 bullets.
+ * `requirement` (the auto-correct space only, RequirementLine.gs: "*Alert requirements:* …"): that line is the first
+ * bullet, in the SLRR line's place (one bullet more where the note has no SLRR line); without it the note is as it
+ * always was. Pure.
+ */
+function edNoteText_(d, requirement) {
   const rev = d.rev;
   const sev = rev && rev.severity && rev.severity !== 'none' ? ` \u00b7 ${rev.severity}` : '';
   const conf = rev && d.disposition !== 'dismiss' ? ` (${Math.round(rev.confidence * 100)}% sure)` : '';
@@ -962,7 +969,9 @@ function edNoteText_(d) {
   }
   const whyText = truncate_(String(d.why || rev.narrative || rev.summary || 'reviewed').replace(/\.$/, '').trim(), 220);
   const bullets = [];
-  if (rev.slrr && rev.slrr.is) {
+  if (requirement && rev.slrr && rev.slrr.is) {
+    bullets.push(`\u2022 ${requirement}`);
+  } else if (rev.slrr && rev.slrr.is) {
     const edProds = allProductsList_({ product: rev.slrr.product, other_products: rev.slrr.others || [] });
     const tax = [`${rev.slrr.tag} (${rev.slrr.priority})`, edProds.join(', '),
       rev.slrr.topics.length ? `Sensitive: ${rev.slrr.topics.join(', ')}` : ''].filter(Boolean).join(' \u00b7 ');
@@ -984,7 +993,9 @@ function edNoteText_(d) {
   if (rev.watchFor && d.disposition !== 'escalate' && bullets.length < 3) {
     bullets.push(`\u2022 *Escalate if:* ${truncate_(rev.watchFor.replace(/\.$/, ''), 140)}.`);
   }
-  const lines = [head, `*Why:* ${whyText}.`].concat(bullets.slice(0, 3));
+  // (a note with no SLRR line gets the line on the alert requirements as one bullet more: no other bullet goes for it)
+  const first = requirement && !(rev.slrr && rev.slrr.is) ? [`\u2022 ${requirement}`] : [];
+  const lines = [head, `*Why:* ${whyText}.`].concat(first, bullets.slice(0, 3));
   if (d.media) lines.push(`_${d.media}_`);
   return truncate_(lines.filter(Boolean).join('\n'), 1800);
 }

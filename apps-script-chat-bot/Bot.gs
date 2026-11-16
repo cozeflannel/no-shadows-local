@@ -1094,11 +1094,14 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
   //    work in-place without forwarding to any other space.
   const inPlace = Boolean(ctx.outboundBlocked || (ctx.sourceReadOnly && parsed && parsed.ingested && m.name &&
     ctx.spaces && ctx.spaces.analyst && String(m.name).indexOf(ctx.spaces.analyst.id + '/messages/') === 0));
-  const fwd = inPlace ? { name: m.name, thread: m.thread || '' } : forwardAlert_(ctx, m, parsed, review, '');
+  // The auto-correct space (settings.requirement_line): which alert requirement the alert meets, worked out before the
+  // review's note is posted, for that note's last line (RequirementLine.gs requirementOf_; null in every other flow)
+  const req = requirementOf_(ctx, review, history);
+  const fwd = inPlace ? { name: m.name, thread: m.thread || '' } : forwardAlert_(ctx, m, parsed, review, '', req);
   if (fwd && !inPlace) report.forwarded++;
   // A Direct BigQuery or sheet-test card in the auto-correct space was posted before its review, and the bot never edits
   // a message: what the review changed, and the write-up the email uses, go in the card's thread (inPlaceNote_)
-  if (inPlace && ctx.changeNotes) inPlaceNote_(ctx, m, review, parsed);
+  if (inPlace && ctx.changeNotes) inPlaceNote_(ctx, m, review, parsed, req);
   // C10's "corrected" in the auto-correct space: the changes as the space shows them (reviewedLine_, or the in-place
   // note: only those the email uses), counted here, before the Social Alert draft can take an existing issue's name
   const corrected = !!ctx.sourceReadOnly && noteChanges_(review, inPlace).length > 0;
@@ -1113,6 +1116,8 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
     source_at: sourceAt_(m), seen_at: parsed.seen_at || '', knowledge_used: review.knowledgeUsed || [],
   }, parsed.ingested ? { ingested: parsed.ingested } : {}, livePairFields_(ctx, m), draft || {}));  // ingested: Direct BigQuery alerts (row 15)
   if (draft) watchDraft_(ctx, alertId);
+  // ...and when the Social Alert then goes another way than that line says, one more line under the alert
+  requirementFinal_(ctx, req, inPlace ? m : fwd, m.name, draft, '');
 
   if (switchOn_(ctx, 'noWait')) {
     // Never wait on Burson ON (Control row 23):
@@ -1177,8 +1182,10 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
  * has no summary paragraph) and the post's own picture under it when the run has time (correctedAlertPicture_), then a
  * note in its thread listing what the agentic assistant changed (changeNoteText_; none when there's nothing to say).
  * With Never wait on Burson ON, a video timestamp the bot added goes on its own "[Timestamp]" line (withTimestamp_).
+ * `req` (the auto-correct space only: RequirementLine.gs requirementOf_, or null): its line, which alert requirement the
+ * alert meets, is that note's last line, and the whole note when there's nothing else to say.
  */
-function forwardAlert_(ctx, m, parsed, review, extraNote) {
+function forwardAlert_(ctx, m, parsed, review, extraNote, req) {
   const noWait = switchOn_(ctx, 'noWait');
   const shown = ctx.changeNotes ? writtenFields_(review) : { fields: review.fields, changed: review.changed };
   const remade = rebuildAlert_(m.text, parsed, shown.fields, shown.changed);
@@ -1202,7 +1209,7 @@ function forwardAlert_(ctx, m, parsed, review, extraNote) {
     if (!fwd) fwd = postTo_(ctx, ctx.spaces.analyst.id, text, null, 'fwd:' + m.name);
     logLeftAsIs_(ctx, review);
     const note = [extraNote || '', changeNoteText_(review, { findLinks: switchOn_(ctx, 'autoFindLinks'),
-      linkLookup: parsed && parsed.linkLookup })].filter(Boolean).join('\n');
+      linkLookup: parsed && parsed.linkLookup, requirement: req && req.line })].filter(Boolean).join('\n');
     if (note && fwd && fwd.name) {
       try {
         postTo_(ctx, ctx.spaces.analyst.id, note, fwd.thread || null, 'chg:' + m.name);
@@ -1257,12 +1264,14 @@ function logLeftAsIs_(ctx, review) {
  * A Direct BigQuery or sheet-test card in the auto-correct space (handleNewAlert_ in place): it was posted before its
  * review and is never edited, so the thread note under it says what the review changed and the summary the email uses
  * (changeNoteText_ with inPlace: "The agentic assistant reviewed this alert. The card above was posted before the
- * review; the email uses these corrections:"). Nothing when there's nothing to say; a note that fails is only logged.
+ * review; the email uses these corrections:"), and last, which alert requirement the alert meets (`req`:
+ * RequirementLine.gs requirementOf_, or null with settings.requirement_line off). Nothing when there's nothing to say;
+ * a note that fails is only logged.
  */
-function inPlaceNote_(ctx, m, review, parsed) {
+function inPlaceNote_(ctx, m, review, parsed, req) {
   logLeftAsIs_(ctx, review);
   const note = changeNoteText_(review, { inPlace: true, findLinks: switchOn_(ctx, 'autoFindLinks'),
-    linkLookup: parsed && parsed.linkLookup });
+    linkLookup: parsed && parsed.linkLookup, requirement: req && req.line });
   if (!note) return;
   try {
     postTo_(ctx, ctx.spaces.analyst.id, note, m.thread || null, 'chg:' + m.name);
@@ -1380,11 +1389,13 @@ function handleResend_(ctx, m, parsed, review, pending, report, history) {
   const forwarded = pending.forwarded_fields || {};
   const raised = raisedBy_(forwarded, review.fields);
   let fresh = null;
+  // (the auto-correct space: which alert requirement the resend meets, for its note's last line; RequirementLine.gs)
+  const req = raised.length ? requirementOf_(ctx, review, history) : null;
   if (raised.length) {
     if (ctx.outboundBlocked) {
       fresh = { name: m.name, thread: m.thread || '' };
     } else {
-      fresh = forwardAlert_(ctx, m, parsed, review, `QA: updated alert (${raised.join(', ')})`);
+      fresh = forwardAlert_(ctx, m, parsed, review, `QA: updated alert (${raised.join(', ')})`, req);
       report.forwarded++;
     }
   } else if (!ctx.outboundBlocked) {
@@ -1397,6 +1408,7 @@ function handleResend_(ctx, m, parsed, review, pending, report, history) {
   const alertId = ctx.store.nextAlertId();
   const hadEmail = !!(pending.email_status || (pending.forward_message && ctx.store.emailRowByForward(pending.forward_message)));
   const draft = fresh && !hadEmail ? draftPlan_(ctx, review, history) : null;
+  requirementFinal_(ctx, req, fresh, m.name, draft, hadEmail ? `a resend of ${pending.alert_id}, whose Social Alert was already decided` : '');
 
   // 1. Burson: ⬇️ on the original ("addressed on updated post below"); on the resend ⬇️ again if it still needs changes
   //    (they're in its thread), else 👍 right away only when people take the action from here (drafts off)
@@ -1464,11 +1476,13 @@ function handleResendNoWait_(ctx, m, parsed, review, pending, report, history) {
   // 1. Analysts already have the corrected alert. If the priority or engagement level went up, the resend goes to
   //    them as a new alert; otherwise they only get a thread note about values that changed (e.g. the link).
   let fresh = null;
+  // (the auto-correct space: which alert requirement the resend meets, for its note's last line; RequirementLine.gs)
+  const req = raised.length ? requirementOf_(ctx, review, history) : null;
   if (raised.length) {
     if (ctx.outboundBlocked) {
       fresh = { name: m.name, thread: m.thread || '' };
     } else {
-      fresh = forwardAlert_(ctx, m, parsed, review, `QA: updated alert (${raised.join(', ')})`);
+      fresh = forwardAlert_(ctx, m, parsed, review, `QA: updated alert (${raised.join(', ')})`, req);
       report.forwarded++;
     }
   } else if (!ctx.outboundBlocked) {
@@ -1483,6 +1497,7 @@ function handleResendNoWait_(ctx, m, parsed, review, pending, report, history) {
   const alertId = ctx.store.nextAlertId();
   const hadEmail = !!(pending.email_status || (pending.forward_message && ctx.store.emailRowByForward(pending.forward_message)));
   const draft = fresh && !hadEmail ? draftPlan_(ctx, review, history) : null;
+  requirementFinal_(ctx, req, fresh, m.name, draft, hadEmail ? `a resend of ${pending.alert_id}, whose Social Alert was already decided` : '');
   const decide = !draft && !hadEmail && (fresh || !done);
   // Auto-find missing links: the found link stays marked until Burson's own link takes its place
   const values = fresh ? snapshotFields_(review.fields) : Object.assign({}, forwarded, snapshotFields_(review.fields));

@@ -26,7 +26,8 @@
  * (the cache keeps a value 6 hours at most), with `s`: since when it has known every note. A card it has no count for
  * has no note only if the card is younger than that and than 25 hours (an Alert-log row's created_at and source_at, or
  * the createTime of a card just posted, say how old it is). Any other card's notes are counted in its thread, once (the
- * count is then kept): a card from before the value began, one whose age isn't given, one older than 25 hours. So the
+ * count is then kept; the review's own note is never one of them: acNoteReviewIds_): a card from before the value
+ * began, one whose age isn't given, one older than 25 hours. So the
  * cap of 3 holds for a card's life with the cache value gone, too. A key posted again after the value forgot it makes
  * no second message (Chat keeps the message's id, and hands the first one back) and is not counted again; under a full
  * card, Chat is asked whether that key's note is there before the note is refused. The run's count lives in the run
@@ -140,7 +141,7 @@ function acThreadNote_(from, card, text, key) {
       if (born > state.s && born >= now - AC_NOTE_KEEP_MS_) {
         had = 0;
       } else {
-        const there = acNoteThread_(check, acNoteId_(check.space, k));
+        const there = acNoteThread_(check, acNoteId_(check.space, k), acNoteReviewIds_(check, card));
         if (!there || !there.card) {
           say('thread note not posted: ' + (there ? 'its card is no longer in the space'
             : 'its card\'s thread couldn\'t be read to count the notes it has'));
@@ -204,6 +205,17 @@ function acNoteId_(space, key) {
   return CLIENT_ID_PREFIX_ + sha256Hex_(`${space}|${AC_NOTE_KEY_PREFIX_}${key}`).slice(0, 40);
 }
 
+/**
+ * The ids of the review's own note under a card (Bot.gs: posted with the key 'chg:' + the message it reviewed, which is
+ * the card itself for one reviewed in place and Burson's own message, the row's source_message, for a corrected copy).
+ * That note can be just its last line, "*Alert requirements:* …" (RequirementLine.gs), which starts as a note of this
+ * helper does; it is the review's, not one of the notes under another alert's card, so counting a thread leaves it out.
+ */
+function acNoteReviewIds_(check, card) {
+  return [check.message, card && card.source_message].filter(Boolean)
+    .map(name => CLIENT_ID_PREFIX_ + sha256Hex_(`${check.space}|chg:${name}`).slice(0, 40));
+}
+
 /** True when the note with `key` is in `space` already: Chat has a message under the id that note was given. Never throws. */
 function acNoteThere_(space, key) {
   try {
@@ -226,11 +238,12 @@ function acNoteCardBorn_(card) {
 
 /**
  * What the thread of a card holds (`check`: acThreadNoteCheck_'s): {card: its message is there, notes: the bot's notes
- * under it (replies that start as a note does, from the bot's account when it is known), own: the message with id
- * `ownId` ('' when there's none)}. null when Chat can't be read, or the thread is longer than AC_NOTE_THREAD_MAX_
- * messages (its notes can't all be counted). Never throws.
+ * under it (replies that start as a note does, from the bot's account when it is known; never the review's own note,
+ * known by its id: `reviewIds`, acNoteReviewIds_), own: the message with id `ownId` ('' when there's none)}. null when
+ * Chat can't be read, or the thread is longer than AC_NOTE_THREAD_MAX_ messages (its notes can't all be counted). Never
+ * throws.
  */
-function acNoteThread_(check, ownId) {
+function acNoteThread_(check, ownId, reviewIds) {
   try {
     const bot = (check.ctx && check.ctx.botUser) || PropertiesService.getScriptProperties().getProperty('BOT_USER') || '';
     const out = { card: false, notes: 0, own: '' };
@@ -245,6 +258,7 @@ function acNoteThread_(check, ownId) {
         if (m.name === check.message) out.card = true;
         if (!m.threadReply || m.name === check.message) return;
         if (ownId && m.clientId === ownId) out.own = m.name;
+        if (m.clientId && (reviewIds || []).indexOf(m.clientId) >= 0) return;
         if (isThreadNoteText_(m.text) && (!bot || m.senderName === bot)) out.notes++;
       });
       pageToken = r.body.nextPageToken || '';

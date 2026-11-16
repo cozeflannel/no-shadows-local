@@ -1978,9 +1978,12 @@ test('auto-correct space (B10) beside the Mirror space: each live Zapier alert i
   assert.strictEqual(acTop.length, 1);
   assert.strictEqual(acTop[0].text, '✅ *Reviewed and corrected by the agentic assistant*\n' + F.MISTAKES_FIXED);
   eq(t.chat.botReactions(acTop[0].name), ['❌']);
+  // (the note's last line says which alert requirement the alert met, and why no Social Alert went out from here: the
+  // Mirror flow's alert for the same post, QA-1001, already has it)
   eq(acReplies.map(m => m.text), [
     'The agentic assistant reviewed this alert and made these changes:\n- Product: Gems to Gemini App\n- Social Network: Instagram to X\n' +
-      '- Priority banner: P2 to P0\n- Engagement: LOW to HIGH',
+      '- Priority banner: P2 to P0\n- Engagement: LOW to HIGH\n' +
+      '*Alert requirements:* met for a Social Alert (P0 exposure tag, 29,425 engagements), but none was sent: a repeat of QA-1001.',
   ]);
   // One Social Alert total (Mirror's), only to the tester — zero duplicate email from B10!
   const sent = t.g.gmail.sentMessages();
