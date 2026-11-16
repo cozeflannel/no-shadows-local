@@ -3554,7 +3554,8 @@ function edQueueKey_(row) {
  * What the review and the card need from a pending row, as one property can hold it (ED_ROW_MAX_CHARS_): the signal's
  * fields, the earlier card it updates when the story grew (`update_of`, EarlyDetection.gs edUpdateOf_) and up to
  * ED_POSTS_MAX_ representative posts (snippets of 280 characters at most; fewer posts when it would still be too long),
- * or null when even one post doesn't fit. Pure.
+ * or null when even one post doesn't fit; and, when it still fits, the Exposure Tag as a first guess (`tag_guess`: for
+ * the record of what became of the signal only; nothing the review reads). Pure.
  */
 function edQueueCompact_(row) {
   const r = row || {};
@@ -3576,7 +3577,12 @@ function edQueueCompact_(row) {
     keep.posts = keep.posts.slice(0, -1);
     json = JSON.stringify(keep);
   }
-  return json.length > ED_ROW_MAX_CHARS_ ? null : keep;
+  if (json.length > ED_ROW_MAX_CHARS_) return null;
+  // the Exposure Tag as a first guess, for the record only (EarlyDetectionNotes.gs edNoteTag_): kept when it fits
+  // beside what the review reads, never in place of a post
+  const guess = typeof r.tag_guess === 'string' ? truncate_(r.tag_guess.replace(/\s+/g, ' ').trim(), 120) : '';
+  if (guess && JSON.stringify(Object.assign({}, keep, { tag_guess: guess })).length <= ED_ROW_MAX_CHARS_) keep.tag_guess = guess;
+  return keep;
 }
 
 /** A queued signal's kind in the index: 'v' a velocity spike, 'w' an early-watch story, 'c' a cluster. Pure. */
@@ -3809,12 +3815,14 @@ function earlyWaveCheck_(ctx) {
   // were never reviewed: each is noted (EarlyDetectionNotes.gs edNote_)
   const put = (r, keys, idKey, verdict, dec) => {
     try {
-      const row = verdict.update ? Object.assign({}, r, { update_of: verdict.update }) : r;
+      // the Exposure Tag as a first guess goes with it, for the record of what becomes of it (the answers it rests on
+      // are kept 3 hours only)
+      const guess = edNoteTag_(r, dec, '');
+      const row = Object.assign({}, r, verdict.update ? { update_of: verdict.update } : {}, guess !== '-' ? { tag_guess: guess } : {});
       const res = edQueuePut_(props, row, now, ft && ft.rank ? ftRankKeys_(r, dec) : null);
       if (res.queued) {
         queued++;
         if (verdict.update) updates++;
-        if (isWatch(r)) ftRemember_(r.alert_id, dec);  // the answers it was raised on, for the record of what becomes of it
         if (isWatch(r)) kinds.watch++;
         else if (String(r.signal_type || '').trim().toUpperCase() === 'VELOCITY_SPIKE') kinds.velocity++;
         else kinds.cluster++;

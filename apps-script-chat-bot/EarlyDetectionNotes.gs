@@ -76,6 +76,7 @@ const ED_NOTE_ROW_MAX_ = 448;      // a row's JSON: 200 rows, with the commas an
 const ED_NOTE_WHY_MAX_ = 180;      // a row's reason and title before the row is made to fit
 const ED_NOTE_STORY_MAX_ = 100;
 const ED_NOTE_LINK_MAX_ = 150;     // a longer link is left out: a link is kept whole or not at all
+const ED_NOTE_TAG_MAX_ = 100;      // a tag gives up the end of its category, never its sureness or severity
 const ED_NOTES_RUN_MAX_ = 200;     // rows kept for one run (the newest)
 let ED_NOTES_RUN_ = [];            // this run's record rows, in the order they were noted
 
@@ -197,7 +198,10 @@ function edNoteReviewed_(ctx, entry, row, res) {
     const lang = (/^non-English signal \(([^)]+)\)/.exec(String(res.held)) || [])[1] || '';
     return edNote_(ctx, row, ED_OUT_.notEnglish, `The posts are not in English${lang ? ` (${lang})` : ''}`, x);
   }
-  if (res.held) return edNote_(ctx, row, ED_OUT_.repeat, res.held, x);
+  if (res.held) {
+    return edNote_(ctx, row, ED_OUT_.repeat,
+      String(res.held).replace(/,\s*SLRR alert log/gi, '').replace(/\bSLRR alert log\b/gi, 'the alert log'), x);
+  }
   if (res.dismissed) {
     const topic = call.basis === 'evergreen' ? (/"([^"]+)"/.exec(String(res.dismissed)) || [])[1] || '' : '';
     return edNote_(ctx, row, ED_OUT_.dismissed,
@@ -225,7 +229,7 @@ function edEntryRow_(entry) {
 function edNoteRow_(row, outcome, why, extra, now) {
   const r = row || {};
   const x = extra || {};
-  const one = (v, n) => truncate_(String(v === undefined || v === null ? '' : v).replace(/[\u0000-\u001f\u007f\s]+/g, ' ').trim(), n);
+  const one = (v, n) => edCut_(edWhole_(v).replace(/[\u0000-\u001f\u007f\s]+/g, ' ').trim(), n);
   const bare = (v, n) => one(String(v === undefined || v === null ? '' : v).replace(/["\\]/g, ''), n);
   const card = x.card && typeof x.card === 'object' ? x.card : {};
   const link = String(r.primary_url || '').trim();
@@ -240,7 +244,7 @@ function edNoteRow_(row, outcome, why, extra, now) {
     edNoteKind_(r),
     Math.min(999999, Math.max(0, ewCount_(r.unique_low_tier_authors))),
     bare(r.platforms_csv || (Array.isArray(r.platforms) ? r.platforms.join(', ') : ''), 40),
-    one(edNoteTag_(r, x.dec, x.tag), 90),
+    one(edNoteTag_(r, x.dec, x.tag), ED_NOTE_TAG_MAX_),
     bare(card.id, 12),
     /^spaces\/[^\s"\\]+$/.test(message) && message.length <= 100 ? message : '',
   ]);
@@ -257,7 +261,7 @@ function edNoteFit_(row) {
   const over = () => JSON.stringify(r).length - ED_NOTE_ROW_MAX_;
   const cut = (name, least) => {
     const i = ED_NOTE_FIELDS_.indexOf(name);
-    while (over() > 0 && r[i].length > least) r[i] = truncate_(r[i], Math.max(least, r[i].length - over()));
+    while (over() > 0 && r[i].length > least) r[i] = edCut_(r[i], Math.max(least, r[i].length - over()));
   };
   const drop = (name, to) => { if (over() > 0) r[ED_NOTE_FIELDS_.indexOf(name)] = to; };
   cut('why', 80);
@@ -268,6 +272,17 @@ function edNoteFit_(row) {
   cut('why', 30);
   cut('story', 20);
   return r;
+}
+
+/** Text without half characters (a lone surrogate, which JSON would write as six): '' for none. Pure. */
+function edWhole_(v) {
+  return String(v === undefined || v === null ? '' : v)
+    .replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, '');
+}
+
+/** Text cut to `n` characters (Voice.gs truncate_), never through the middle of a character. Pure. */
+function edCut_(text, n) {
+  return truncate_(text, n).replace(/[\ud800-\udbff]\u2026$/, '\u2026');
 }
 
 /** A reason as one sentence: on one line, its first letter a capital, a full stop at its end. Pure. */
@@ -306,7 +321,8 @@ function edNoteStory_(row, title) {
     return `Topic: ${ewText_(r.signal_key || r.topic_product || 'not named')}, ${fmtInt_(n)} account${n === 1 ? '' : 's'} in an hour` +
       `${ratio > 0 ? ` (${ratio.toFixed(1)}x the usual)` : ''}`;
   }
-  const posts = edRepPosts_(Array.isArray(r.posts) ? r.posts : r.representative_posts_json);
+  const all = edRepPosts_(Array.isArray(r.posts) ? r.posts : r.representative_posts_json);
+  const posts = all.filter(p => p.snippet).concat(all.filter(p => !p.snippet));  // the first post that has words
   // a pace jump's label names its grain, and a risk group by its key: its title is made from its first post's words
   const label = sig === 'VELOCITY_SPIKE' ? '' : String(r.headline || '').replace(/^Early story\s*\([^)]*\):?\s*/i, '');
   if (!label.trim() && !posts.some(p => p.snippet)) return 'A story whose details are gone';
@@ -315,18 +331,22 @@ function edNoteStory_(row, title) {
 
 /**
  * The Exposure Tag for the record, as a first guess: `cardTag` after a card (the card's own); else the fast triage's
- * answer about the signal (`dec`, the answers the signal carries, or the ones kept from an earlier check: FastTriage.gs
- * ftRecall_): its category with how sure it is and the severity; else the signal's risk words in plain words; else "-".
- * Never the producer's P0 / P1 / P2 hint. Never throws.
+ * answer about the signal (`dec`, or the answers the signal carries): its category with how sure it is and the
+ * severity; else the guess a queued signal keeps (`tag_guess`: made from those answers when it was queued, so it
+ * outlives them); else the answers kept from an earlier check (FastTriage.gs ftRecall_, 3 hours); else the signal's risk
+ * words in plain words; else "-". At most ED_NOTE_TAG_MAX_ characters: a long category is cut, never how sure it is or
+ * the severity. Never the producer's P0 / P1 / P2 hint. Never throws.
  */
 function edNoteTag_(row, dec, cardTag) {
   if (cardTag) return String(cardTag);
   const r = row || {};
   let d = dec && typeof dec === 'object' ? dec : r.dec && typeof r.dec === 'object' ? r.dec : null;
+  if (!d && typeof r.tag_guess === 'string' && r.tag_guess.trim()) return r.tag_guess.trim();
   if (!d) { try { d = ftRecall_(r.alert_id); } catch (e) { d = null; } }
   if (d && d.c) {
-    const what = d.c === DEC_NO_CATEGORY_ ? 'None: not a brand-safety issue' : d.c === DEC_OTHER_RISK_ ? 'A risk no Exposure Tag names' : d.c;
-    return `${what} (${Math.round((Number(d.cp) || 0) * 100)}% sure) \u00b7 severity ${ED_SEVERITIES_[d.l] || 'not known'}`;
+    const what = d.c === DEC_NO_CATEGORY_ ? 'None: not a brand-safety issue' : d.c === DEC_OTHER_RISK_ ? 'A risk no Exposure Tag names' : String(d.c);
+    const tail = ` (${Math.round((Number(d.cp) || 0) * 100)}% sure) \u00b7 severity ${ED_SEVERITIES_[d.l] || 'not known'}`;
+    return `${edCut_(edWhole_(what).replace(/\s+/g, ' ').trim(), Math.max(20, ED_NOTE_TAG_MAX_ - tail.length))}${tail}`;
   }
   const risks = edRiskWords_(r);
   return risks ? `Risk words: ${risks}` : '-';
@@ -416,6 +436,25 @@ function edAlertWords_(alert, now) {
   const direct = Object.keys(BQ_SOURCE_LABELS_).some(k => BQ_SOURCE_LABELS_[k] === ing);
   const path = !ing ? 'Burson alert' : direct ? `BigQuery \u00b7 ${ing}` : ing;
   return `${a.alert_id || 'An alert'} (${[path, edCardTime_(a.created_at, now)].filter(Boolean).join(', ')})`;
+}
+
+/**
+ * The reason a review gave for its call, for the record (EarlyDetection.gs edReviewAndPost_ puts it in its call as
+ * `reason`): the review's own words; for a call the bot's rule made, that rule in plain words; when the review gave no
+ * reason, a plain sentence for its call, never the bot's own basis ("Low-tier semantic cluster (5 distinct authors)").
+ * Pure.
+ */
+function edRecordWhy_(d) {
+  const x = d || {};
+  const said = x.rev && x.rev.reason ? String(x.rev.reason).trim() : '';
+  const plain = {
+    escalate: 'The review called for a Social Alert',
+    monitor: 'The review found an early build-up worth watching',
+    dismiss: 'The review found nothing for Google to act on',
+  };
+  if (x.basis === 'early_detection') return said || plain[x.disposition] || '';
+  if (x.basis === 'p0_tag') return 'Its Exposure Tag is escalated at any size';
+  return String(x.why || '').trim() || plain[x.disposition] || '';
 }
 
 /**

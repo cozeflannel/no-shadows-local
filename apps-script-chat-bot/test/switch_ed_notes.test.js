@@ -239,12 +239,15 @@ module.exports = H => {
       runDay({ flow: 'one-space', row46: false }, (run, look, recs) => {
         const s = sums(look);
         eq(s.found, s.sum, `${cacheGone ? 'cache emptied' : 'cache kept'}, the run at ${run.at}`);
-        recs.forEach(r => out.push([run.at, r.id, r.outcome, r.why]));
+        recs.forEach(r => out.push([run.at, r.id, r.outcome, r.why, r.tag]));
       }, cacheGone ? w => w.t.g.cache.clear() : null);
       return out;
     };
     const kept = outcomes(false);
-    eq(outcomes(true), kept);
+    // the tags too: a queued signal keeps its first guess with it, so only the signal whose stored row was lost has
+    // nothing but the 3-hour cache to give it one
+    eq(kept.filter(x => x[0] === 'D2 00:07').map(x => x[4]), ['A risk no Exposure Tag names (60% sure) · severity medium']);
+    eq(outcomes(true), kept.map(x => (x[0] === 'D2 00:07' ? x.slice(0, 4).concat(['-']) : x)));
     // the signals of those endings were handed over at two or three checks each
     const times = id => kept.filter(x => x[1] === id).map(x => x[0]);
     const G = ends.dayPlan().signals;

@@ -1759,7 +1759,7 @@ function edReviewAndPost_(ctx, row, report) {
   // review's headline, its reason in plain words and the tag its card shows
   const call = { disposition: d.disposition, basis: d.basis, confidence: d.rev ? d.rev.confidence : null,
     severity: d.rev ? d.rev.severity : '', why: d.why || '',
-    title: (d.rev && d.rev.story && d.rev.story.title) || '', reason: edCallWhy_(d) || '', tag: edCardTag_(d) };
+    title: (d.rev && d.rev.story && d.rev.story.title) || '', reason: edRecordWhy_(d), tag: edCardTag_(d) };
   // An early-watch signal whose review failed: no card (the usual kinds keep their "needs a human look" card); it is
   // tried once more, then dropped (edDrainQueue_, ED_QUEUE_MAX_TRIES_)
   if (d.basis === 'failed' && ed.signalType === EWS_WATCH_SIGNAL_) {
