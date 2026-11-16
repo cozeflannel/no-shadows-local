@@ -130,6 +130,7 @@ const EWS_NK_MAX_ = 12000;                 // ...this many keys at most, the new
 const EWS_NK_RECORD_ = 1000;               // keys a record (three records to a cache item)
 const EWS_XB_MS_ = 24 * 3600 * 1000;       // the keys of big posts Sonar knew (cache 'xb') count this long
 const EWS_XA_MS_ = 7 * 24 * 3600 * 1000;   // the new lanes' excluded authors (cache 'ak') count this long
+const EWS_LIFTED_KEPT_ = 20;               // stories only the new sources lifted, listed for the New sources tab
 
 const EWS_EVERY_MS_ = 10 * 60 * 1000;      // a check at most this often (earlyWaveCheck_ calls every 15 min or more)
 const EWS_BUDGET_MS_ = 40 * 1000;          // a check's whole time: BigQuery, embeddings, clustering, the cache
@@ -1354,16 +1355,28 @@ function ewsRepsJson_(reps) {
   })));
 }
 
+/** True when a new lane's member is left out of the bar: its author is excluded, or its post was big for Sonar. Pure. */
+function ewsNewLeftOut_(m, lim) {
+  if (!m || !m.nl || !lim) return false;
+  return !!((lim.authors && lim.authors.has(String(m.a || '').replace(/^[^:]*:/, '').toLowerCase())) || (lim.big && m.k && lim.big.has(m.k)));
+}
+
 /**
  * A story's numbers over the last 180 minutes (03's eval_window): {members, authors, platforms (sorted), urls, texts,
- * risk, brand, start, end, reps}, or null when nothing in it is that recent. Pure.
+ * risk, brand, start, end, reps}, or null when nothing in it is that recent. With new lanes' members (nl): `lim`
+ * ({authors, big}: ewsNewLeaveOut_) leaves out the ones ewsNewLeftOut_ names; `platforms` counts only platforms with a
+ * member from today's lanes, `allPlatforms` has them all, and `todayAuthors` counts today's lanes' accounts alone.
+ * With none, exactly as before. Pure.
  */
-function ewsStoryWindow_(c, now) {
-  const win = (c.m || []).filter(m => (Number(m.t) || 0) >= now - EWS_EVAL_MS_ && (Number(m.t) || 0) <= now + 5 * 60000);
+function ewsStoryWindow_(c, now, lim) {
+  let win = (c.m || []).filter(m => (Number(m.t) || 0) >= now - EWS_EVAL_MS_ && (Number(m.t) || 0) <= now + 5 * 60000);
+  const nl = win.some(m => m.nl);
+  if (nl && lim) win = win.filter(m => !ewsNewLeftOut_(m, lim));
   if (!win.length) return null;
-  const platforms = Array.from(new Set(win.map(m => m.p).filter(Boolean))).sort();
+  const counted = nl ? win.filter(m => !m.nl) : win;
+  const platforms = Array.from(new Set(counted.map(m => m.p).filter(Boolean))).sort();
   const order = (x, y) => (Number(y.d) || 0) - (Number(x.d) || 0) || (Number(y.e) || 0) - (Number(x.e) || 0) || (Number(y.t) || 0) - (Number(x.t) || 0);
-  return {
+  const w = {
     members: win.length,
     authors: new Set(win.map(m => m.a)).size,
     platforms,
@@ -1375,6 +1388,11 @@ function ewsStoryWindow_(c, now) {
     end: Math.max.apply(null, win.map(m => Number(m.t) || now)),
     reps: ewsRepsOf_(win, order),
   };
+  if (nl) {
+    w.allPlatforms = Array.from(new Set(win.map(m => m.p).filter(Boolean))).sort();
+    w.todayAuthors = new Set(counted.map(m => m.a)).size;
+  }
+  return w;
 }
 
 /** A story's topic: its most frequent source topic ('Brand' when none). Pure. */
@@ -1403,19 +1421,23 @@ function ewsStoryCheck_(cand, priors, now) {
  * The stories worth a signal this check (03's tmp_cluster_candidates and story check): 5+ distinct accounts (4 on
  * 2+ platforms), 2+ links, not a copy-paste ring that never names Google, out of its cooldown (or 2x the accounts of its
  * last signal), and not a story already told (unless it grew: then an update); of two candidates telling one story the
- * one with more accounts; at most EWS_MAX_ALERTS_ (P0 > P1 > P2, then accounts, platforms, the latest). Pure.
+ * one with more accounts; at most EWS_MAX_ALERTS_ (P0 > P1 > P2, then accounts, platforms, the latest). With new
+ * lanes' members, `lim` and the platforms rule of ewsStoryWindow_ apply, and a story today's lanes' accounts alone
+ * would leave under the bar is marked `lifted` (ewsLiftGate_ decides whether it goes for review). Pure.
  */
-function ewsPromote_(clusters, priors, now) {
+function ewsPromote_(clusters, priors, now, lim) {
   const cands = [];
   clusters.forEach(c => {
-    const w = ewsStoryWindow_(c, now);
+    const w = ewsStoryWindow_(c, now, lim);
     if (!w) return;
     const minAuthors = Math.max(2, EWS_MIN_AUTHORS_ - (w.platforms.length >= 2 ? EWS_PLATFORM_DISCOUNT_ : 0));
-    if (w.platforms.length < 1 || w.urls < EWS_MIN_URLS_ || w.authors < minAuthors) return;
+    if ((w.allPlatforms || w.platforms).length < 1 || w.urls < EWS_MIN_URLS_ || w.authors < minAuthors) return;
     const al = c.al;
     if (al && now - (Number(al.at) || 0) < EWS_CLUSTER_COOLDOWN_MS_ && w.authors < (Number(al.au) || 0) * 2) return;
     if (w.texts * 3 <= w.authors && !w.brand) return;  // a copy-paste ring that never names Google
-    cands.push(Object.assign({ c, id: c.id, vec: ewsCentroid_(c), priority: w.risk.length || w.platforms.length >= 2 ? 'P1' : 'P2' }, w));
+    const x = Object.assign({ c, id: c.id, vec: ewsCentroid_(c), priority: w.risk.length || w.platforms.length >= 2 ? 'P1' : 'P2' }, w);
+    if (w.allPlatforms && w.todayAuthors < minAuthors) x.lifted = true;
+    cands.push(x);
   });
   const allowed = [];
   cands.forEach(x => {
@@ -1608,8 +1630,8 @@ function ewsClusterRow_(x, now, tag, facts) {
     priority_hint: priority,
     unique_low_tier_authors: x.authors,
     mention_count: Math.max(x.authors, x.members),
-    platform_count: x.platforms.length,
-    platforms_csv: x.platforms.join(', '),
+    platform_count: (x.allPlatforms || x.platforms).length,  // every platform shown; the bar counts x.platforms
+    platforms_csv: (x.allPlatforms || x.platforms).join(', '),
     baseline_authors: 0,
     velocity_ratio: 0,
     absolute_author_delta: 0,
@@ -2165,6 +2187,79 @@ function ewsStitch_(posts, ctx) {
   return out;
 }
 
+/** Whole days from UTC day `from` to UTC day `to` ('YYYY-MM-DD'). Pure. */
+function ewsDaysBetween_(from, to) {
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  return isFinite(a) && isFinite(b) ? Math.round((b - a) / 86400000) : 0;
+}
+
+/**
+ * The lifted stories of this check (ewsPromote_'s `lifted`: over the bar only with the new lanes' accounts): while a
+ * source that lifts it is in its trial (early_wave_new_trial_days from the day its row first went ON; 0: no trial) the
+ * story is not signalled but noted; after the trial at most early_wave_new_lifted_per_hour and _per_day are signalled
+ * (UTC hour and day), the rest noted. A noted story is taken out of `promoted`. Each lifted story is listed in
+ * `nx.rec.ls` (the newest EWS_LIFTED_KEPT_, for the New sources tab: ewsLiftedStories_) and counted once a story and
+ * size (lf, and lfs sent or lfn noted). Stories over the bar with today's lanes alone are never held back.
+ */
+function ewsLiftGate_(promoted, nx, now, props) {
+  const rec = nx.rec = nx.rec || ewsSrcDay_(props);
+  (nx.sources || []).forEach(s => { if (!rec.on[s]) rec.on[s] = nx.day; });
+  const hour = Math.floor(now / 3600000);
+  if (Number(rec.lh[0]) !== hour) rec.lh = [hour, 0];
+  if (rec.ld[0] !== nx.day) rec.ld = [nx.day, 0];
+  const cfg = nx.cfg;
+  promoted.slice().forEach(x => {
+    if (!x.lifted) return;
+    const win = (x.c.m || []).filter(m => m.nl && (Number(m.t) || 0) >= now - EWS_EVAL_MS_ && (Number(m.t) || 0) <= now + 5 * 60000);
+    const srcs = Array.from(new Set(win.map(m => ewsSrcOfId_(m.i)))).sort();
+    const trial = cfg.trialDays > 0 && srcs.some(s => !rec.on[s] || ewsDaysBetween_(rec.on[s], nx.day) < cfg.trialDays);
+    const send = !trial && Number(rec.lh[1]) < cfg.liftedPerHour && Number(rec.ld[1]) < cfg.liftedPerDay;
+    const before = rec.ls.find(e => e[1] === x.id);
+    const isNew = !before || Number(before[2]) < x.authors || (send && !before[5]);
+    if (send) { rec.lh[1] = Number(rec.lh[1]) + 1; rec.ld[1] = Number(rec.ld[1]) + 1; }
+    else promoted.splice(promoted.indexOf(x), 1);
+    if (isNew) srcs.forEach(s => { ewsNewCount_(nx, s, 'lf'); ewsNewCount_(nx, s, send ? 'lfs' : 'lfn'); });
+    const entry = [now, x.id, x.authors, x.urls, truncate_(String(x.c.lab || ''), 100), send ? 1 : 0, srcs.join(','), trial ? 1 : 0];
+    if (before) rec.ls.splice(rec.ls.indexOf(before), 1);
+    rec.ls.push(entry);
+  });
+  rec.ls = rec.ls.slice(-EWS_LIFTED_KEPT_);
+}
+
+/**
+ * The stories only the new sources lifted over the bar, the newest last (EWS_SRC_DAY, at most EWS_LIFTED_KEPT_), for the
+ * New sources tab: [{at (ms), story (cluster id), accounts, links, headline, sent (true: went for review; false: noted),
+ * sources: ['ami' | 'bwl'], trial (true: noted because of the trial)}]. Never throws.
+ */
+function ewsLiftedStories_() {
+  try {
+    const rec = ewsSrcDay_(PropertiesService.getScriptProperties());
+    return rec.ls.filter(Array.isArray).map(e => ({ at: Number(e[0]) || 0, story: String(e[1] || ''), accounts: Number(e[2]) || 0,
+      links: Number(e[3]) || 0, headline: String(e[4] || ''), sent: !!e[5], sources: String(e[6] || '').split(',').filter(Boolean), trial: !!e[7] }));
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * The stories the new sources' posts reached this check: `st` (a story has a post of the source for the first time)
+ * and `sb` (a new story whose first post is the source's), counted in `nx`. Pure (but for `nx`).
+ */
+function ewsNewStoryCounts_(nx, stories, startedBy, now) {
+  (stories || []).forEach(c => {
+    const had = new Set();
+    const got = new Set();
+    (c.m || []).forEach(m => {
+      if (!m.nl) return;
+      const s = ewsSrcOfId_(m.i);
+      if (Number(m.j) === now) got.add(s); else had.add(s);
+    });
+    got.forEach(s => { if (!had.has(s)) ewsNewCount_(nx, s, 'st'); });
+  });
+  (startedBy || []).forEach(s => ewsNewCount_(nx, s, 'sb'));
+}
+
 /**
  * A check's end for the new sources: the date each source ON now first went ON (kept for good: turning a row OFF
  * never clears it), the check's counts and day flags, and `nx.rec` (the record, when the check already read it), saved
@@ -2259,6 +2354,7 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     const ex = ewsExclusions_(exCached, read.us.rows, usDone, now);
     let posts = allRows.map(ewsPostOf_).filter(Boolean);
     last.read = posts.length;
+    if (nx) posts.forEach(p => { if (p.nl) ewsNewCount_(nx, ewsSrcOfLane_(p.lane), 'in'); });
     posts = ewsExclude_(posts, ex);
     const sigs = ewsLoadSigs_(cache, Number(st.sg) || 0);
     // with a new source ON, its posts have their own signatures ('sn:N'): they check both sets, write only theirs
@@ -2373,9 +2469,11 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     const universe = pool.concat(fresh);
     const found = fresh.length ? ewsDiscover_(universe, pool.length) : [];
     const leftPool = new Set();
+    const startedBy = [];
     found.forEach(g => {
       const anchor = universe[g.anchor];
       const id = ewsClusterId_(anchor.id);
+      if (nx && anchor.nl) startedBy.push(ewsSrcOfId_(anchor.id));
       let c = clusters.find(x => x.id === id);
       if (!c) { c = { id, s: '', n: 0, t0: now, ts: now, m: [], tp: {} }; clusters.push(c); }
       g.members.forEach(([idx, sim]) => {
@@ -2405,7 +2503,11 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     // Signals
     const tidy = ewsTidyStories_(clusters, now);
     ewsCloseHours_(acc, roll, tidy, now);
-    const promoted = ewsPromote_(tidy, priors, now);
+    const promoted = ewsPromote_(tidy, priors, now, nx ? nx.leave : undefined);
+    if (nx) {
+      ewsLiftGate_(promoted, nx, now, props);  // stories only the new sources lift: the trial, then the two caps
+      ewsNewStoryCounts_(nx, tidy, startedBy, now);
+    }
     const spikes = ewsVelocity_(acc, roll, tidy, priors, now);
     const facts = !!(opts && opts.facts);
     const watchMinAu = opts && opts.watch && opts.watch.bars ? opts.watch.bars.accounts : undefined;

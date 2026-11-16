@@ -600,4 +600,185 @@ module.exports = H => {
     assert.ok(!/example\.test/i.test(stored), 'no address stored');
     assert.ok(env.ids().includes('BWL|mail'));
   });
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 8. The three limits at promotion, the trial, the day record
+  // ---------------------------------------------------------------------------------------------------------------
+
+  const TOPICS = [
+    'Gmail inbox keeps deleting archived messages without warning since yesterday morning sync',
+    'Chromebook keyboard backlight flickers constantly after enabling the newest battery saver mode',
+    'Waymo robotaxi stopped dead in the intersection blocking an ambulance during rush hour traffic',
+  ];
+  const WORDS = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf'];
+  // `n` new-lane posts of topic `t` by `n` accounts, each on its own link, posted in the last hour
+  const liftRows = (t, n, o) => Array.from({ length: n }, (_, i) => row(Object.assign({ lane: 'bwl', mid: `BWL|t${t}p${i}`,
+    platform: 'reddit', author: `t${t}author${i}`, url: `https://www.reddit.com/r/google/comments/t${t}p${i}/x/`,
+    txt: `${TOPICS[t]} ${WORDS[i]}`, chash: `t${t}c${i}`, sig: `t${t}s${i}`, posted_ms: NOW - (5 + i * 3) * MIN }, o || {})));
+  const signals = rows => rows.filter(r => r.signal_type === 'CLUSTER_EMERGENCE');
+
+  function liftRun(fkRows, o) {
+    const env = makeEnv(job => (job === 'fk' ? fkRows : job === 'c1' ? (o && o.c1) || [] : []));
+    if (o && o.settings) Object.assign(env.b.ev('GEN').settings, o.settings);
+    if (o && o.srcDay) env.g.props.set('EWS_SRC_DAY', JSON.stringify(o.srcDay));
+    addFakeLane(env.b, { src: 'bwl' });
+    env.b.ewsRunSwitches_({ edFake: true });
+    env.rows = env.b.bqEarlyDetectionRows_(30);
+    env.rec = JSON.parse(env.g.props.get('EWS_SRC_DAY'));
+    env.lifted = env.b.ewsLiftedStories_();
+    return env;
+  }
+
+  test('new lanes (promotion, E4): a story started by new-lane posts alone (5 accounts in the last hour) is noted, not signalled, during the trial; with the trial over, or early_wave_new_trial_days at 0, it is signalled; the trial date is the day the source\'s row first went ON', () => {
+    let env = liftRun(liftRows(0, 5));
+    eq([signals(env.rows).length, env.rec.on.bwl, env.lifted.length, env.lifted[0].sent, env.lifted[0].trial, env.lifted[0].accounts],
+      [0, DAY, 1, false, true, 5]);
+    eq([env.rec.d[DAY].bwl.lf, env.rec.d[DAY].bwl.lfn, env.rec.d[DAY].bwl.sb, env.rec.d[DAY].bwl.st, env.rec.d[DAY].bwl.in],
+      [1, 1, 1, 1, 5]);
+    // the same story at the next check is listed once, not counted again
+    env.g.clock.now += 15 * MIN;
+    env.b.bqEarlyDetectionRows_(30);
+    eq([JSON.parse(env.g.props.get('EWS_SRC_DAY')).d[DAY].bwl.lf, env.b.ewsLiftedStories_().length], [1, 1]);
+    // trial over: the source first went ON 8 days ago (7-day trial)
+    const old = new Date(NOW - 8 * 24 * HOUR).toISOString().slice(0, 10);
+    env = liftRun(liftRows(0, 5), { srcDay: { v: 1, on: { bwl: old }, d: {} } });
+    eq([signals(env.rows).length, env.lifted[0].sent, env.rec.on.bwl], [1, true, old]);
+    // 6 days ago: still in the trial
+    env = liftRun(liftRows(0, 5), { srcDay: { v: 1, on: { bwl: new Date(NOW - 6 * 24 * HOUR).toISOString().slice(0, 10) }, d: {} } });
+    eq(signals(env.rows).length, 0);
+    // no trial
+    env = liftRun(liftRows(0, 5), { settings: { early_wave_new_trial_days: 0 } });
+    eq([signals(env.rows).length, env.lifted[0].sent, env.lifted[0].trial, env.rec.d[DAY].bwl.lfs], [1, true, false, 1]);
+    eq(JSON.parse(signals(env.rows)[0].representative_posts_json).length, 5);
+  });
+
+  test('new lanes (promotion, E4): after the trial at most 2 lifted stories an hour and 20 a day go for review, the rest are noted; a story over the bar with today\'s lanes alone is never held back, even in the trial', () => {
+    let env = liftRun([].concat(liftRows(0, 5), liftRows(1, 5), liftRows(2, 5)), { settings: { early_wave_new_trial_days: 0 } });
+    eq([signals(env.rows).length, env.lifted.filter(s => s.sent).length, env.lifted.filter(s => !s.sent).length], [2, 2, 1]);
+    eq([env.rec.lh[1], env.rec.ld[1]], [2, 2]);
+    env = liftRun(liftRows(0, 5), { settings: { early_wave_new_trial_days: 0 }, srcDay: { v: 1, on: {}, d: {}, ld: [DAY, 20] } });
+    eq([signals(env.rows).length, env.lifted[0].sent], [0, false]);
+    // five Sonar accounts and two new-lane ones, in the trial: over the bar with today's lanes alone
+    const sonar = Array.from({ length: 5 }, (_, i) => row({ mid: `SONAR|t0q${i}`, author: `sonar${i}`, url: `https://x.com/sonar${i}/status/2190000000000000${i}`,
+      txt: `${TOPICS[0]} ${WORDS[i]} plus`, chash: `t0q${i}`, posted_ms: NOW - (6 + i * 3) * MIN }));
+    env = liftRun(liftRows(0, 2), { c1: sonar });
+    eq([signals(env.rows).length, env.lifted.length], [1, 0]);
+    eq(signals(env.rows)[0].unique_low_tier_authors, 7);
+  });
+
+  test('new lanes (promotion, E13): five Reddit comments in one thread by five accounts do not promote: their links fold to one thread, under the 2 links needed', () => {
+    const env = liftRun(Array.from({ length: 5 }, (_, i) => row({ lane: 'bwl', mid: `BWL|cm${i}`, platform: 'reddit', author: `commenter${i}`,
+      url: `https://www.reddit.com/r/google/comments/1thr/a_thread/c${i}x/`, txt: `${TOPICS[1]} ${WORDS[i]}`, chash: `cm${i}`,
+      posted_ms: NOW - (5 + i) * MIN })), { settings: { early_wave_new_trial_days: 0 } });
+    eq(signals(env.rows).length, 0);
+    const story = (() => { for (const [k, v] of env.g.cache.entries()) if (k.startsWith('ews1:cl:')) return JSON.parse(v)[0]; return null; })();
+    eq([story && story.m.length, story && new Set(story.m.map(m => m.a)).size], [5, 5]);
+  });
+
+  test('new lanes (promotion, E14 and limit 1): a new lane\'s Forum beside Sonar\'s Forums adds no platform (the bar stays 5, the priority P2), a member by an excluded author or of a big post is not counted, and the card still shows every platform', () => {
+    const m = (i, o) => Object.assign({ i: `SONAR|f${i}`, a: `Forums:person${i}`, p: 'Forums', u: `https://forum.example.test/t/${i}`, t: NOW - 10 * MIN,
+      s: 'Pixel update broke the dialer for everyone on the forum', d: 0.9, h: `h${i}`, b: 1 }, o || {});
+    const story = members => ({ id: 'CLU-test', s: '', n: members.length, t0: NOW - HOUR, ts: NOW, m: members, tp: { Pixel: members.length } });
+    const four = [m(1), m(2), m(3), m(4, { i: 'BWL|f4', a: 'Web:person4', p: 'Forum', nl: 1, k: 'bigkey0000000000' })];
+    eq(B.ewsPromote_([story(four)], [], NOW).length, 0);
+    const w = B.ewsStoryWindow_(story(four), NOW);
+    eq([w.platforms, w.allPlatforms, w.authors, w.todayAuthors], [['Forums'], ['Forum', 'Forums'], 4, 3]);
+    // without the rule a second platform would lower the bar to 4: the same story with Sonar's own Forum post is promoted
+    const sonarOnly = [m(1), m(2), m(3), m(4, { p: 'Forum', a: 'Forum:person4' })];
+    eq(B.ewsPromote_([story(sonarOnly)], [], NOW).map(x => [x.authors, x.priority, x.lifted]), [[4, 'P1', undefined]]);
+    // five accounts with one new-lane member: promoted, lifted (four from today's lanes), shown on both platforms
+    const five = [m(1), m(2), m(3), m(5), m(4, { i: 'BWL|f4', a: 'Web:person4', p: 'Forum', nl: 1, k: 'bigkey0000000000' })];
+    const got = B.ewsPromote_([story(five)], [], NOW);
+    eq(got.map(x => [x.authors, x.priority, x.lifted, x.platforms]), [[5, 'P2', true, ['Forums']]]);
+    const card = B.ewsClusterRow_(got[0], NOW, null, false);
+    eq([card.platform_count, card.platforms_csv], [2, 'Forum, Forums']);
+    // limit 1: the same member left out by the excluded authors or the big posts list
+    const lim = (authors, big) => ({ authors: new Set(authors), big: new Set(big) });
+    eq(B.ewsPromote_([story(five)], [], NOW, lim(['person4'], [])).length, 0);
+    eq(B.ewsPromote_([story(five)], [], NOW, lim([], ['bigkey0000000000'])).length, 0);
+    eq(B.ewsPromote_([story(five)], [], NOW, lim(['person1'], [])).length, 1);
+    // with no new-lane member the window is what it was
+    eq(Object.keys(B.ewsStoryWindow_(story([m(1), m(2)]), NOW)).sort(), ['authors', 'brand', 'end', 'members', 'platforms', 'reps', 'risk', 'start', 'texts', 'urls']);
+  });
+
+  test('new lanes: the day record EWS_SRC_DAY stays under 8,800 characters in its worst case (7 days, both sources, every count large, 20 lifted stories with long headlines), keeps the date a source first went ON, and drops days older than 7', () => {
+    const big = { in: 999999, used: 999999, same: 999999, sl: 999999, big: 999999, ex: 999999, al: 999999, rp: 999999, sf: 999999,
+      sfb: [99999, 99999, 99999, 99999, 99999], dl: [99999, 99999, 99999, 99999, 99999], ne: 999999, emb: 999999, st: 999999, sb: 999999,
+      lf: 999999, lfs: 999999, lfn: 999999 };
+    const rec = B.ewsSrcDay_({ getProperty: () => null });
+    rec.on = { ami: '2026-10-01', bwl: '2026-10-02' };
+    for (let d = 0; d < 9; d++) rec.d[new Date(NOW - d * 24 * HOUR).toISOString().slice(0, 10)] = { ami: Object.assign({}, big), bwl: Object.assign({}, big), bar: 1 };
+    for (let i = 0; i < 20; i++) rec.ls.push([NOW, `CLU-${'a'.repeat(12)}`, 99, 99, 'h'.repeat(100), 1, 'ami,bwl', 1]);
+    rec.lh = [999999, 99];
+    rec.ld = [DAY, 99];
+    const store = {};
+    B.ewsSaveSrcDay_({ setProperty: (k, v) => { store[k] = v; } }, rec, NOW);
+    const saved = JSON.parse(store.EWS_SRC_DAY);
+    assert.ok(store.EWS_SRC_DAY.length <= 8800, String(store.EWS_SRC_DAY.length));
+    eq([saved.on, Object.keys(saved.d).length <= 7, Object.keys(saved.d).includes(DAY)], [rec.on, true, true]);
+    const lifted = B.ewsLiftedStories_.call(null);
+    eq(Array.isArray(lifted), true);
+  });
+
+  test('new lanes (E10): a new source\'s post first seen long after it was posted comes as amis / bwls: it joins a story that exists, cannot start one, is not pooled and adds no velocity row', () => {
+    const late = (t, n) => liftRows(t, n, {}).map((r, i) => Object.assign(r, { lane: 'bwls', mid: `BWL|late${t}_${i}`,
+      posted_ms: NOW - 5 * HOUR - i * MIN, seen_ms: NOW - MIN }));
+    let env = liftRun(late(0, 5), { settings: { early_wave_new_trial_days: 0 } });
+    let st = JSON.parse(env.g.props.get('EWS_STATE'));
+    eq([signals(env.rows).length, st.last.formed, st.last.pool, JSON.parse(env.g.cache.get('ews1:acc')).rows.length], [0, 0, 0, 0]);
+    // a story of three Sonar accounts exists: the late posts join it
+    const sonar = Array.from({ length: 3 }, (_, i) => row({ mid: `SONAR|j${i}`, author: `sj${i}`, url: `https://x.com/sj${i}/status/2191000000000000${i}`,
+      txt: `${TOPICS[0]} ${WORDS[i]} sonar`, chash: `j${i}`, posted_ms: NOW - (20 + i) * MIN }));
+    let check = 1;
+    env = makeEnv(job => (check === 1 ? (job === 'c1' ? sonar : []) : (job === 'fk' ? late(0, 3) : [])));
+    addFakeLane(env.b, { src: 'bwl' });
+    env.b.ewsRunSwitches_({ edFake: true });
+    env.b.bqEarlyDetectionRows_(30);
+    check = 2;
+    env.g.clock.now += 15 * MIN;
+    env.b.bqEarlyDetectionRows_(30);
+    st = JSON.parse(env.g.props.get('EWS_STATE'));
+    const members = [];
+    for (const [k, v] of env.g.cache.entries()) if (k.startsWith('ews1:cl:')) JSON.parse(v).forEach(c => (c.m || []).forEach(m => members.push(m)));
+    eq([members.filter(m => /^BWL\|late/.test(m.i)).length, members.filter(m => m.sl && m.nl).length, st.last.joined], [3, 3, 3]);
+  });
+
+  test('new lanes (E1): with the new rows OFF a fake lane changes nothing: six checks send two jobs each with the bodies of the base, read no other service, and leave every property and cache item exactly as with no new lane at all (no EWS_SRC_DAY, no carry, no index, no new signatures)', () => {
+    const batch = i => ({
+      c1: sonarN(6, `e${i}`).concat([row({ mid: `SONAR|e${i}st`, txt: `${TOPICS[2]} ${WORDS[i % 7]}`, chash: `e${i}st`, sig: `e${i}st`, author: `es${i}`,
+        url: `https://x.com/es${i}/status/2192000000000000${i}` })]),
+      us: [row({ lane: 'spk', mid: `SPK|e${i}`, platform: 'instagram', url: `https://www.instagram.com/p/E${i}x/`, author: `ek${i}`,
+        txt: `${TOPICS[2]} ${WORDS[(i + 3) % 7]} comment`, chash: `ek${i}`, sig: `ek${i}` })],
+      fk: [row({ lane: 'bwl', mid: `BWL|e${i}`, platform: 'reddit', url: `https://www.reddit.com/r/google/comments/e${i}/t/`, author: `eb${i}`,
+        txt: `${TOPICS[2]} ${WORDS[(i + 5) % 7]} thread`, chash: `eb${i}`, sig: `eb${i}` })],
+    });
+    const run = variant => {
+      let i = 0;
+      const env = makeEnv(job => batch(i)[job] || []);
+      const others = [];
+      const orig = env.g.services.UrlFetchApp.fetch;
+      env.g.services.UrlFetchApp.fetch = (url, params) => {
+        if (!String(url).startsWith('https://bigquery.googleapis.com/') && !/aiplatform|vertex/.test(String(url))) others.push(String(url));
+        return orig(url, params);
+      };
+      if (variant !== 'none') addFakeLane(env.b, { src: 'bwl' });
+      if (variant === 'off') env.b.ewsRunSwitches_({ edFake: false, edAmie: false, edBwLive: false, relay: true });
+      for (i = 0; i < 6; i++) { env.b.bqEarlyDetectionRows_(30); env.g.clock.now += 15 * MIN; }
+      return { env, others, posts: env.bq.filter(c => c.method === 'post' && /\/queries$/.test(c.url)), state: snapshotOf(env) };
+    };
+    const none = run('none');
+    for (const variant of ['registered', 'off']) {
+      const got = run(variant);
+      eq([variant, got.posts.length, got.posts.map(c => c.job).filter(j => j !== 'us' && j !== 'c1')], [variant, 12, []]);
+      got.posts.forEach((c, k) => assert.strictEqual(c.payload, none.posts[k].payload));
+      eq(got.state, none.state);
+      eq(got.others, none.others);
+    }
+    eq(none.posts.slice(0, 4).map(c => c.payload), BASE.bodies.map(b => b.payload));
+    const names = Object.keys(none.state.cache).concat(Object.keys(none.state.props));
+    eq(names.filter(n => /EWS_SRC_DAY|ews1:(carry|nk:|sn:|xb|ak)/.test(n)), []);
+    const st = JSON.parse(none.state.props.EWS_STATE);
+    eq(['nk', 'sn'].filter(k => k in st).concat('nl' in (st.day || {}) ? ['day.nl'] : []), []);
+    assert.ok(none.state.cache['ews1:cl:0'], 'the run made stories');
+  });
 };
