@@ -45,11 +45,16 @@ module.exports = H => {
     const bad = [];
     const tableRx = /\b(?:brand-social-central-data|bsip-s-bsip-gg-26-2cf3)\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
     const ewShortRx = /\bearly_wave\.[A-Za-z0-9_-]+/g;
+    // The one exception: the hand-run, read-only live check of the new sources (LiveVerify.gs verifyNewSourcesLive) looks
+    // at the AMIE table the owner approved on 16 November; until its readers are built (step 1c adds it to `approved`),
+    // no other file may name it
+    const liveCheckOnly = { 'LiveVerify.gs': "'brand-social-central-data.social_alerts_dataset.all_sundar_mentions'" };
     for (const file of gsFiles) {
       const src = fs.readFileSync(path.join(dir, file), 'utf8')
         // Strip // line comments and /* ... */ block comments so doc comments about retired tables don't mask code checks
         .replace(/\/\*[\s\S]*?\*\//g, '')
-        .replace(/\/\/[^\n]*/g, '');
+        .replace(/\/\/[^\n]*/g, '')
+        .split(liveCheckOnly[file] || '\u0000').join("''");
       let m;
       while ((m = tableRx.exec(src)) !== null) {
         const ref = m[0];
