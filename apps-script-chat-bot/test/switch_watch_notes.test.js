@@ -309,8 +309,11 @@ module.exports = H => {
       `Watch alerts: not posting ${P(13)}: the watch "${MIDTERMS}" flagged it too: the flag of "${BRAND}" on the same post is the one that goes on`,
       `Watch alerts: not posting ${P(14)}: the post is not in English`,
       `Watch alerts: dropped ${P(15)}: not posted within 3 hours of being seen (${B.pwTime_(keysOf(t)[`${P(15)}|${BRAND}`].s)} ET): ` +
-        `couldn't post in ${AC_NAME}: Chat API 500 on posting to ${AC}: Internal error encountered`,
+        `couldn't post in ${AC_NAME}: Chat API 500 on posting to ${AC_NAME}: Internal error encountered`,
     ]);
+    // no Chat id in any of them, nor in the reason kept for a later drop (the space is said by its name)
+    assert.ok(AC.startsWith('spaces/'), AC);
+    eq(t.g.logs.filter(l => /^Watch alerts: (?:not posting|dropped) /.test(l) && l.includes('spaces/')), []);
   });
 
   test('watch notes: a flag found to be on an alerted thread only when its post is looked up, just before posting (two replies in one X thread flagged in the same look: the higher-scored one is posted, the other is not), is counted on C35 as on a post that already had an alert, and its log line names the Watch alert that covers its thread; a second watch flagging the posted post later is counted the same way, its line naming that Watch alert too', () => {
@@ -327,7 +330,8 @@ module.exports = H => {
     eq([letter(t, 21), letter(t, 22), cards(t).length], ['p', 'd', 1]);
     counts(t, { posted: 1, already: 1 });
     const notPosted = () => t.g.logs.filter(l => /^Watch alerts: not posting /.test(l));
-    const CARD = `the Watch alert of "${BRAND}" (${cards(t)[0].name})`;
+    // the Watch alert by its watch and its story, never by its Chat message (whose name holds the space's id)
+    const CARD = `the Watch alert of "${BRAND}" on "Story number 21"`;
     eq(notPosted(), [`Watch alerts: not posting ${P(22)}: a post of its thread already had an alert: ${CARD}`]);
     // the Midterms watch flags the posted post too, a look later
     w.watch(MIDTERMS, true);
@@ -802,7 +806,7 @@ module.exports = H => {
     eq(cards(t), []);
   });
 
-  test('watch notes: which alert a post already had, as the log words it: the Watch alert by the watch that posted it and its message, a Watch alert whose thread lists the post, Burson\'s alert and when; the same for the posts of its thread; the first one found for a post stays', () => {
+  test('watch notes: which alert a post already had, as the log words it: the Watch alert by the watch that posted it and its story (never its Chat message, whose name holds the space\'s id), a Watch alert whose thread lists the post, Burson\'s alert and when; the same for the posts of its thread; the first one found for a post stays', () => {
     const k = n => B.recordKey_({ post_url: P(n) });
     const row = (n, key, bursonAt) => {
       const r = new Array(19).fill('');
@@ -812,16 +816,17 @@ module.exports = H => {
       return r;
     };
     const CARD = 'spaces/AAQAx/messages/m1';
+    const STORY = 'Pixel 10 battery swells after an update';
     const state = B.pwAlertedState_(null, { first: 14, values: [
-      row(1, { a: 'p', m: CARD, th: ['2160000000000000777'] }),
+      row(1, { a: 'p', m: CARD, th: ['2160000000000000777'], st: STORY }),
       row(2, { a: 'g', pm: CARD }),
       row(3, { a: 'q' }, '2026-10-14 08:43'),
       row(4, { a: 'q' }),
       row(1, { a: 'g', pm: 'spaces/AAQAx/messages/m9', w: MIDTERMS }),
     ] }, 'autocorrect');
-    const POSTED = `the Watch alert of "${BRAND}" (${CARD})`;
+    const POSTED = `the Watch alert of "${BRAND}" on "${STORY}"`;
     eq([1, 2, 3, 4].map(n => state.done.get(k(n))),
-      [POSTED, `a Watch alert (${CARD}) whose thread lists it`, 'Burson\'s alert (2026-10-14 08:43 ET)', undefined]);
+      [POSTED, 'a Watch alert whose thread lists it', 'Burson\'s alert (2026-10-14 08:43 ET)', undefined]);
     eq([state.doneThreadIds.get('2160000000000000777'), state.doneThreadIds.get(P(1).split('/').pop()), state.doneThreadIds.get(P(4).split('/').pop())],
       [POSTED, POSTED, undefined]);
     eq([B.pwAlertWords_({ a: 'p', w: BRAND }), B.pwAlertWords_({ a: 'g' })],
@@ -838,5 +843,24 @@ module.exports = H => {
     t.poll();
     t.poll();
     eq([cards(t).length, t.g.logs.filter(l => /^Watch alerts: (?:not posting|dropped) /.test(l))], [5, []]);
+  });
+
+  test('watch notes: the reason kept for flags left waiting says what left them: a run that ran short of time before it reached them says so (not that more flags waited than a run posts); what is kept and logged names a Chat space by its name, never by its id; a Watch alert is named by its watch and its story', () => {
+    const w = oneSpace();
+    const { t } = w;
+    // the pre-read takes so long that the run has no time left to post: both flags wait
+    let SLOW = 10 * MIN;
+    w.say = () => { t.g.clock.now += SLOW; return {}; };
+    look(w, [flag(1), flag(2)]);
+    SLOW = 0;
+    eq([letter(t, 1), letter(t, 2), cards(t).length], ['q', 'q', 0]);
+    eq(JSON.parse(t.g.cache.get('pw_alert_wait')).why, 'the run ran short of time before it reached them');
+    // the words of each reason, and no Chat id in what is kept or logged
+    eq([B.pwNoChatIds_(`posting to ${AC}: x`, { id: AC, name: AC_NAME }), B.pwNoChatIds_(`see ${AC}/messages/m1.a and ${AC}/threads/t9`,
+      { id: AC, name: AC_NAME }), B.pwNoChatIds_('posting to spaces/AAQAother: x', { id: AC, name: AC_NAME }),
+    B.pwNoChatIds_('posting to spaces/AAQAother: x', null), B.pwNoChatIds_(undefined), B.pwNoChatIds_('no id here')], [
+      `posting to ${AC_NAME}: x`, `see ${AC_NAME} and ${AC_NAME}`, 'posting to a Chat space: x', 'posting to a Chat space: x', '', 'no id here']);
+    eq([B.pwAlertWords_({ a: 'g', st: 'A story' }), B.pwAlertWords_({ a: 'p', w: BRAND, m: `${AC}/messages/m1`, st: 'A story' })],
+      ['a Watch alert whose thread lists it on "A story"', `the Watch alert of "${BRAND}" on "A story"`]);
   });
 };

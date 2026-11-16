@@ -780,13 +780,23 @@ function pwAlertDayGrouped_() {
 }
 
 /**
- * A Watch alert a post already has, in words, from the key of the post's row (a: 'p': posted for it by watch `w` as
- * message `m`; a: 'g': listed in the thread of the alert `pm`): for the log line of a flag that isn't posted again
- * (pwPostAlerts_). Pure.
+ * A Watch alert a post already has, in words, from the key of the post's row (a: 'p': posted for it by watch `w`, on
+ * the story `st`; a: 'g': listed in the thread of a Watch alert, on the story `st`): for the log line of a flag that
+ * isn't posted again (pwPostAlerts_). The alert's Chat message is not named: its name holds the space's id. Pure.
  */
 function pwAlertWords_(k) {
-  return k.a === 'g' ? `a Watch alert${k.pm ? ` (${k.pm})` : ''} whose thread lists it`
-    : `the Watch alert of "${k.w}"${k.m ? ` (${k.m})` : ''}`;
+  const story = k.st ? ` on "${truncate_(String(k.st), 80)}"` : '';
+  return k.a === 'g' ? `a Watch alert whose thread lists it${story}` : `the Watch alert of "${k.w}"${story}`;
+}
+
+/**
+ * `text` for the log with no Chat id in it: a space's id, or a message's or thread's name, is replaced by the name of
+ * `space` ({id, name}: this run's destination) when it is that space's, else by "a Chat space". Pure.
+ */
+function pwNoChatIds_(text, space) {
+  return String(text === undefined || text === null ? '' : text).replace(
+    /\bspaces\/[A-Za-z0-9_-]+(?:\/(?:messages|threads)\/[A-Za-z0-9_.-]+)?/g,
+    m => (space && space.id && space.name && (m === space.id || m.indexOf(`${space.id}/`) === 0) ? space.name : 'a Chat space'));
 }
 
 /**
@@ -1510,7 +1520,8 @@ function pwPostStoryReply_(space, thread, text, key) {
  * {posted, grouped, dup, empty, held, repeats, offTopic, builds, problem}. Throws only what the caller catches.
  */
 function pwPostStories_(items, pre, recent, c) {
-  const res = { posted: 0, grouped: 0, dup: 0, empty: 0, held: 0, repeats: 0, offTopic: 0, builds: 0, problem: '' };
+  const res = { posted: 0, grouped: 0, dup: 0, empty: 0, held: 0, repeats: 0, offTopic: 0, builds: 0, problem: '',
+    stopped: '' };  // stopped: why stories were left for the next run ('time': the run ran short; 'capped': a run's most)
   const space = c.dest.space;
   // the Auto-correct space (B10): the post's own picture only, else its words on the card (C1, C2)
   const ownPic = c.dest.choice === 'autocorrect';
@@ -1523,12 +1534,12 @@ function pwPostStories_(items, pre, recent, c) {
   // a flag of this run, or a small one held on an earlier run, as the thread reply and the marks take it
   const entry = i => ({ q: items[i].q, a: items[i].a, p: pr(i) });
   const heldEntry = h => ({ q: h, a: pwAlertOfRow_(h.v, h.k), p: null });
-  const join = (entries, thread, alertName, later) => {
+  const join = (entries, thread, alertName, later, story) => {
     const reply = pwPostStoryReply_(space, thread, pwStoryReplyText_(entries.map(e => pwStoryView_(e, e.p)), later),
       `pwg:${alertName}|${entries.map(e => e.q.k.k).sort().join(',')}`);
     entries.forEach(e => {
       c.mark(e.q, Object.assign({ a: 'g', t: thread, pm: alertName, m: (reply && reply.name) || '' }, at));
-      c.done.set(e.q.k.k, pwAlertWords_({ a: 'g', pm: alertName }));
+      c.done.set(e.q.k.k, pwAlertWords_({ a: 'g', st: story }));
     });
     res.grouped += entries.length;
     replies++;
@@ -1545,15 +1556,21 @@ function pwPostStories_(items, pre, recent, c) {
       `${entries.length === 1 ? 'it' : 'them'}`);
   };
   for (const g of groups) {
-    if (c.timeLeft() < PW_MIN_LEFT_MS_) break;
+    if (c.timeLeft() < PW_MIN_LEFT_MS_) {
+      res.stopped = 'time';
+      break;
+    }
     let members = g.members.slice();
     const R = g.r !== null ? stories[g.r] || null : null;
     if (R && R.thread) {  // the story of an alert posted lately: into its thread, unless the stakes rose
       const joining = members.filter(i => !pwStakesRose_(items[i], R));
       if (joining.length) {
-        if (replies >= PW_STORY_REPLIES_MAX_) continue;  // they wait for the next run
+        if (replies >= PW_STORY_REPLIES_MAX_) {  // they wait for the next run
+          res.stopped = res.stopped || 'capped';
+          continue;
+        }
         try {
-          join(joining.map(entry), R.thread, R.m, true);
+          join(joining.map(entry), R.thread, R.m, true, R.story);
         } catch (e) {
           failed(e);
           break;
@@ -1595,7 +1612,10 @@ function pwPostStories_(items, pre, recent, c) {
       }
       build = { accounts: accounts.size };
     }
-    if (res.posted >= c.max) continue;  // waits for the next run (a later story joining a posted alert's thread still goes)
+    if (res.posted >= c.max) {  // waits for the next run (a later story joining a posted alert's thread still goes)
+      res.stopped = res.stopped || 'capped';
+      continue;
+    }
     // the alert: the story's best post that's new, in English and has something to show (one that matters by itself first)
     members = members.filter(alone).concat(members.filter(i => !alone(i)));
     let pick = null;
@@ -1695,7 +1715,7 @@ function pwPostStories_(items, pre, recent, c) {
     c.mark(it.q, Object.assign({ a: 'p', m: (msg && msg.name) || '' }, at, msg && msg.thread ? { t: msg.thread } : {},
       story ? { st: story } : {}, pick.ids.length ? { th: pick.ids.slice(0, 6) } : {}, build ? { bu: build.accounts } : {}));
     pwRememberPosted_(msg && msg.name, { sc: it.a.score, br: it.a.bar, tp: it.a.topic, src: it.a.source });
-    const posted = pwAlertWords_({ a: 'p', w: it.q.k.w, m: msg && msg.name });
+    const posted = pwAlertWords_({ a: 'p', w: it.q.k.w, st: story });
     c.done.set(it.q.k.k, posted);
     pick.ids.forEach(id => c.doneThreadIds.set(id, posted));
     res.posted++;
@@ -1705,7 +1725,7 @@ function pwPostStories_(items, pre, recent, c) {
     let joined = false;
     if (listed.length && msg && msg.thread) {
       try {
-        join(listed, msg.thread, msg.name, false);
+        join(listed, msg.thread, msg.name, false, story);
         joined = true;
       } catch (e) {
         console.warn(`Watch alerts: couldn't add the story's other posts to its alert's thread: ${truncate_(String((e && e.message) || e), 160)}`);
@@ -1830,6 +1850,7 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       return false;
     });
     let problem = !dest || !dest.choice ? 'Watch alerts (row 35) is OFF' : dest.problem || '';
+    let stopped = '';  // with no problem, why flags were left for the next run: 'time' or 'capped' (pwPostStories_)
     if (!problem && dest.choice === 'mirror' && pwMirrorBusy_()) {
       problem = 'the Mirror space\'s flow ran out of time on its last run (Burson\'s alerts come first)';
     } else if (!problem && dest.choice === 'other' && opts && opts.otherBusy) {
@@ -1848,7 +1869,10 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       const keys = new Map();  // record key -> the watch whose flag carries the post
       const items = [];
       for (const q of fresh) {
-        if (items.length >= PW_PREREAD_MAX_) break;
+        if (items.length >= PW_PREREAD_MAX_) {
+          stopped = 'capped';
+          break;
+        }
         if (keys.has(q.k.k)) {
           same(q, 'twin', `the watch "${q.k.w}" flagged it too: the flag of "${keys.get(q.k.k)}" on the same post is the one that goes on`);
           continue;
@@ -1872,6 +1896,7 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
         out.builds = res.builds;
         out.empty = res.empty;
         if (res.problem) problem = res.problem;
+        stopped = res.stopped || stopped;
       }
     }
     // still waiting: the fresh flags this run decided nothing about (their key wasn't written)
@@ -1879,17 +1904,22 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     out.waiting = fresh.filter(q => !decided.has(q.i)).length;
     out.problem = problem;
     writes.forEach(([i, k]) => sh.getRange(block.first + i, PW_COL_.key).setValue(JSON.stringify(k)));
-    ended.forEach(line => console.log(`Watch alerts: ${line}`));
+    // (no Chat id in a log line: a space's, message's or thread's id is said as the space's name)
+    const space = dest && dest.space;
+    ended.forEach(line => console.log(`Watch alerts: ${pwNoChatIds_(line, space)}`));
     if (late.length) {
       const waited = pwWaitWhy_();  // why flags were left waiting on the last run that left any (else this run's reason)
       late.forEach(q => {
         const from = Math.max(Number(q.k.s) || 0, Number(q.k.rq) || 0);
-        const why = waited && waited.at >= from ? waited.why : problem;
+        const why = pwNoChatIds_(waited && waited.at >= from ? waited.why : problem, space);
         console.log(`Watch alerts: dropped ${linkOf(q)}: not posted within ${Math.round(PW_ALERT_MAX_AGE_MS_ / PW_HOUR_MS_)} hours of ` +
           `being ${q.k.rq ? 'queued again' : 'seen'} (${pwTime_(from)} ET)${why ? `: ${why}` : '; why it waited was not kept'}`);
       });
     }
-    if (out.waiting) pwWaitWhyKeep_(problem || 'more flags were waiting than one run reads and posts', now);
+    if (out.waiting) {
+      pwWaitWhyKeep_(pwNoChatIds_(problem || (stopped === 'time' ? 'the run ran short of time before it reached them'
+        : stopped === 'capped' ? 'more flags were waiting than one run reads and posts' : 'they were not reached this run'), space), now);
+    }
     if (out.held || out.repeats || out.offTopic) {
       console.log(`Watch alerts: not posted on their own: ${out.held} small (waiting for ${PW_BREW_MIN_ACCOUNTS_} accounts on one ` +
         `story), ${out.repeats} on a story already alerted, ${out.offTopic} not about Google`);
