@@ -66,7 +66,8 @@ const DEC_MIN_LEFT_MS_ = 20 * 1000;          // a call starts only with this muc
 const DEC_SLOW_MS_ = 10 * 1000;              // a call that took longer counts as failed: the fast triage must stay fast
 const DEC_PAUSE_MS_ = 15 * 60 * 1000;        // after a failure no call is made for this long (one early-wave check interval)
 const DEC_MAX_PER_CHECK_ = 15;               // calls an early-wave check (queue candidates and early-watch stories together)
-const DEC_MAX_PER_DAY_ = 150;                // calls a day: about 72 queue candidates a day (Nov 11-13) plus the early watch
+const DEC_MAX_PER_DAY_ = 300;                // calls a day: every candidate of the Auto-correct flow's allowance (BigQuery.gs
+                                             // edAllowance_: ~136 signals a day on Nov 15) plus the early watch
 const DEC_INPUT_MAX_CHARS_ = 4000;           // the input's JSON: a headline, the counts and 8 snippets of 280 characters
 const DEC_HEADLINE_CHARS_ = 200;             // of the signal's headline
 const DEC_ID_DIGITS_ = 8;                    // a run of this many digits is taken for an id and cut (a CVE number has 4-7)

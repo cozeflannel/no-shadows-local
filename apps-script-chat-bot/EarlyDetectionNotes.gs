@@ -116,11 +116,27 @@ function edOutcomeGroup_(outcome) {
  * Why a signal was never reviewed, in the words the record shows, for the causes today's rules have: 'day' (the old
  * rule's daily limit), 'watchDay' (the early watch's share of the day), 'watchOff' (rows 38 and 39), 'full' and
  * 'pushed' (the review queue), 'stale' (it waited too long), 'failed' (its review didn't finish, twice), 'lost' (its
- * stored row was gone), 'long' (its row was too big to store). '' for any other. Pure.
+ * stored row was gone), 'long' (its row was too big to store); and the allowance's (BigQuery.gs edAllowance_): 'check'
+ * (more than EW_MAX_PER_CHECK_ in one check), 'hour' (the clock hour's EW_MAX_PER_HOUR_), 'hourOrdinary' (the hour's
+ * reviews for ordinary stories) and 'dayReviews' (the day's reviews), each with the limit in force (`n`; without it, the
+ * one the settings give). '' for any other. Pure but for the settings.
  */
-function edNeverWhy_(cause) {
+function edNeverWhy_(cause, n) {
   const hours = Math.round(ED_QUEUE_MAX_AGE_MS_ / 3600000);
+  const S = (typeof GEN !== 'undefined' && GEN.settings) || {};
+  const limit = (fallback, dflt) => {
+    const v = Number(n !== undefined && n !== null ? n : fallback);
+    return isFinite(v) && v >= 0 ? Math.round(v) : dflt;
+  };
+  const reviews = (k, ordinary) => `review${k === 1 ? '' : 's'}${ordinary ? ' for ordinary stories' : ''} ${k === 1 ? 'was' : 'were'} used`;
+  const perHour = limit(S.early_wave_reviews_per_hour, 6);
+  const hourAll = limit(EW_MAX_PER_HOUR_, EW_MAX_PER_HOUR_);
+  const perDay = limit(S.early_wave_reviews_per_day, EW_ALLOW_PER_DAY_);
   const why = {
+    check: `more than ${EW_MAX_PER_CHECK_} stories arrived in 15 minutes; higher-ranked ones went first`,
+    hour: `this hour's ${hourAll} ${reviews(hourAll)}`,
+    hourOrdinary: `this hour's ${perHour} ${reviews(perHour, true)}`,
+    dayReviews: `today's limit of ${perDay} review${perDay === 1 ? '' : 's'} was reached`,
     day: `today's limit of ${EW_MAX_PER_DAY_} was reached`,
     watchDay: `today's ${EW_WATCH_QUEUE_PER_DAY_} early signals were used`,
     watchOff: 'early signals are switched OFF (row 39)',
