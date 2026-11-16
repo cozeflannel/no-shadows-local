@@ -88,13 +88,20 @@ module.exports = H => {
     const ctx = { botUser: 'users/bot', store: { isOwnPost: () => false } };
     const own = text => B.isOwnMessage_(ctx, { senderName: 'users/bot', text });
     const held = text => B.outboxGuardHits_(text, GUARD).length > 0;
-    // each head by itself, and each real note: the bot's own, held by the wider guard, denied by the leak audit
-    heads.concat(NOTES, NOTES.map(plainOf), heads.map(h => `🔗 *${h}:* and more`)).forEach(text => {
+    // each head by itself, and each real note: the bot's own, held by the wider guard, denied by the leak audit. "Same
+    // story" (the watch's reply under its own alert) is held and denied only in its own shape, "Same story: N more
+    // posts": "Same story:" by itself is an analyst's wording too, and reaches S-F Burson as it always did
+    const SAME = 'Same story';
+    const shaped = h => (h === SAME ? `${SAME}: 2 more posts` : h);
+    heads.map(shaped).concat(NOTES, NOTES.map(plainOf), heads.map(h => (h === SAME ? `🔗 *${SAME}: 1 more post*` : `🔗 *${h}:* and more`))).forEach(text => {
       eq([B.isThreadNoteText_(text), B.isBotFormattedText_(text), own(text), held(text), leakDenied(text)], [true, true, true, true, true], text);
     });
     // every registered head is on all three lists (a note with new first words has to be added to each); the guard's
     // own list of them (Outbox.gs OUTBOX_NOTE_PATTERNS_) has one pattern for each
-    heads.forEach(h => eq([B.isBotFormattedText_(`${h}: x`), held(`${h}: x`), leakDenied(`${h}: x`)], [true, true, true], h));
+    heads.forEach(h => eq([B.isBotFormattedText_(`${shaped(h)}: x`), held(`${shaped(h)}: x`), leakDenied(`${shaped(h)}: x`)], [true, true, true], h));
+    ['Same story', 'Same story: x', '🔗 *Same story:* and more'].forEach(text => {
+      eq([B.isBotFormattedText_(text), held(text), leakDenied(text)], [true, false, false], text);
+    });
     eq(B.ev('OUTBOX_NOTE_PATTERNS_.length'), heads.length);
     // what the guard says it found is the words, not the line break or the emoji before them
     eq([B.outboxGuardHits_(WATCH_NOTE, GUARD), B.outboxGuardHits_(STORY_NOTE, GUARD), B.outboxGuardHits_(`Thanks!\n${REQ_NOTE}`, GUARD)],

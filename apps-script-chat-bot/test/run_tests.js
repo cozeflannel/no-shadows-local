@@ -4652,7 +4652,7 @@ function markAs(t, user, org, name) {
 // are on it: at the start of a text or of a line, after an emoji and a bold mark or not, and as a note has them anywhere
 // (never "the alert requirements" in a sentence: the bot's answers to Burson say that). H.leakDenied: for the test files.
 const LEAK_DENY_ = /\bforward(?:ed|ing|s)?\b|analyst\s+space|clean(?:\s+data)?\s+space|triage(?:d)?\s+(?:space|alerts)|second\s+space|reduc(?:e|ing)\s+reliance|replace\s+burson|\bgo\/|@\w+\.com|brand-social-sends|AAQAaLn375E|ANALYST|SLRR Triaged Alerts/i;
-const LEAK_NOTE_HEADS_ = /(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?(?:Also flagged by the watch|Part of a story|Alert requirements|Same story)\b|[Ff]lagged by the watch\b|Part of a story:|Alert requirements(?:, final)?:|Same story:/;
+const LEAK_NOTE_HEADS_ = /(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?(?:Also flagged by the watch|Part of a story|Alert requirements)\b|[Ff]lagged by the watch\b|Part of a story:|Alert requirements(?:, final)?:|\bSame story: \d[\d,]* more posts?\b/;
 const leakDenied = t => LEAK_DENY_.test(t) || LEAK_NOTE_HEADS_.test(t);
 // The bot's own answer to a question of Burson's is no such note, though it can open with the same words (Gemini writes
 // it from a context whose rules stand under "[Alert requirements]"), and it goes to Burson as it always did (Outbox.gs

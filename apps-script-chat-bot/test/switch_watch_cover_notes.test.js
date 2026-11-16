@@ -286,17 +286,105 @@ module.exports = H => {
     eq(on.out.chat.filter(c => NOTE_RX.test(c.text)), []);
   });
 
-  test('watch cover notes: the "Same story" reply\'s first words are registered as a note\'s: the bot knows a message from its account that starts so as its own, and on a way to S-F Burson an analyst\'s message that starts so (or says "Same story:") is held, while the bot\'s own answer to a question of Burson\'s is checked as before; "the same story" in a sentence is anyone\'s to say', () => {
+  test('watch cover notes: in the one-space setup a Watch alert whose story keeps growing takes 3 notes in its thread (its "Same story" replies, the helper\'s cap); later flags on that story are closed at once as repeats of the alerted story (a: \'r\', C35 "repeats of an alerted story held back"), never left waiting: no pre-read reads them again, none is dropped after 3 hours, nothing more is posted', () => {
+    const w = oneSpace();
+    const { t } = w;
+    sameStory(t);
+    let reads = 0;
+    const preRead = t.g.vertex.watchPreRead;
+    t.g.vertex.watchPreRead = payload => { reads++; return preRead(payload); };
+    look(w, [storyFlag(2), storyFlag(1)]);
+    const card = watchCard(t);
+    [3, 4, 5, 6].forEach(n => look(w, [storyFlag(n)]));
+    const keys = keysOf(t);
+    eq([1, 3, 4, 5, 6].map(n => keys[`${P(n)}|${BRAND}`].a), ['g', 'g', 'g', 'r', 'r']);
+    const replies = threadOf(t, card).filter(([, text]) => /^🔗 \*Same story: /.test(text));
+    eq(replies.map(([id]) => id), ['client-bqa-', 'client-bqa-', 'client-bqa-']);
+    assert.match(c35(t), /, \+3 in their story's thread, 2 repeats of an alerted story held back/);
+    assert.ok(!/waiting/.test(c35(t)), c35(t));
+    assert.ok(t.g.logs.some(l => l === 'Watch alerts: 1 flag not listed in their story\'s Watch alert\'s thread ("' + STORY + '"): its card ' +
+      'already has 3 notes, the most it takes; that alert covers the story'), 'its log line');
+    // the runs after (three hours and more): no pre-read, no flag dropped, nothing posted
+    const before = [reads, t.chat.botPosts(AC).length];
+    for (let i = 0; i < 10; i++) {
+      t.g.clock.now += 20 * MIN;
+      t.poll();
+    }
+    eq([reads, t.chat.botPosts(AC).length], before);
+    eq([5, 6].map(n => keysOf(t)[`${P(n)}|${BRAND}`].a), ['r', 'r']);
+    assert.ok(!/dropped/.test(c35(t)), c35(t));
+  });
+
+  test('watch cover notes: a card takes one "Also flagged" note in its life: a later run\'s flag on its post (another watch) finds that note already there, so nothing is posted, the flag stays "already alerted" (a: \'d\': the note doesn\'t name its watch) and C35 counts only the first as noted', () => {
+    const w = oneSpace(undefined, { midterms: true });
+    const { t } = w;
+    cardAndFlagInOneRun(w, [golden.rows.mapsRow()], [golden.rows.mapsHit()]);
+    t.poll();
+    eq(keysOf(t)[`${MAPS}|${BRAND}`].a, 'u');
+    look(w, [Object.assign(golden.rows.mapsHit(), { watch: MIDTERMS, idx: 2, impact: 7.5 })]);
+    eq([keysOf(t)[`${MAPS}|${BRAND}`].a, keysOf(t)[`${MAPS}|${MIDTERMS}`].a], ['u', 'd']);
+    eq(notes(t).map(m => m.text), [note([BRAND])]);
+    assert.match(c35(t), / · today: 0 posted, 2 on a post that already had an alert \(1 noted in its thread\) · /);
+  });
+
+  test('watch cover notes: a flag waits for its post\'s card only when a producer claimed the post (a card was posted for it); a post the alert memory has only seen, with no card in the Auto-correct space, is closed at once as "already alerted", as with the setting off', () => {
+    const w = oneSpace();
+    const { t } = w;
+    t.bot.__fakeSeen = null;
+    t.bot.ev('alertMemory_ = (orig => function () { const m = orig.apply(this, arguments); if (!m || m.__fake) return m; ' +
+      'const f = Object.create(m); f.__fake = true; f.seenPost = function (url, o) { return __fakeSeen && url === __fakeSeen.url ' +
+      '? { why: "already seen (QA-9001)", alert_id: "QA-9001", at: Date.now(), outcome: "seen", ids: ["QA-9001"], claim: "" } ' +
+      ': m.seenPost(url, o); }; return f; })(alertMemory_)');
+    t.bot.__fakeSeen = { url: MAPS };
+    look(w, [golden.rows.mapsHit()]);
+    eq(keysOf(t)[`${MAPS}|${BRAND}`].a, 'd');
+    eq(notes(t), []);
+    assert.ok(!t.g.logs.some(l => /waits for the next run: its post's card/.test(l)), 'no wait');
+    assert.match(c35(t), / · today: 0 posted, 1 on a post that already had an alert · /);
+  });
+
+  test('watch cover notes: in the Mirror flow (LIVE, with the Relay; the default settings and every setting off) an analyst\'s reply with "Same story" in their own words goes to S-F Burson as before; only the watch\'s reply in its own shape ("Same story: N more posts"), quoted, is held', () => {
+    const run = settings => {
+      const t = golden.mirrorRun(settings).t;
+      const copy = t.chat.botPosts(golden.spaces.MIRROR).filter(m => !m.threadReply && /SOCIAL ALERT/.test(m.text)).slice(-1)[0];
+      assert.ok(copy, 'a Social Alert\'s copy in the Mirror space');
+      const outbox = () => t.sheet().getSheetByName('Burson outbox').rows.slice(1).map(r => String(r[3]));
+      const said = ['We saw the Same story: battery swelling', 'Same story as the one this morning', '🔗 *Same story: 2 more posts*'];
+      const before = outbox().length;
+      said.forEach(text => {
+        t.chat.say(golden.spaces.MIRROR, text, { thread: copy.thread.name, sender: 'users/analyst9', displayName: 'Dana Lee' });
+        t.poll();
+      });
+      return outbox().slice(before);
+    };
+    [undefined, golden.SETTINGS_OFF].forEach(settings => {
+      const queued = run(settings);
+      assert.ok(queued.some(x => x.includes('We saw the Same story: battery swelling')), JSON.stringify(queued));
+      assert.ok(queued.some(x => x.includes('Same story as the one this morning')), JSON.stringify(queued));
+      assert.ok(!queued.some(x => /Same story: 2 more posts/.test(x)), JSON.stringify(queued));
+    });
+  });
+
+  test('watch cover notes: the "Same story" reply\'s first words are registered as a note\'s: the bot knows a message from its account that starts so as its own; on a way to S-F Burson only the reply\'s own shape ("Same story: N more posts") is held, wherever it stands, and an analyst\'s "Same story" in other words is not; the bot\'s own answer to a question of Burson\'s is checked as before; "the same story" in a sentence is anyone\'s to say', () => {
     const B = H.B;
     const GUARD = { terms: ['SLRR Triaged Alerts', 'AAQAaLn375E'] };
     const ctx = { botUser: 'users/bot', store: { isOwnPost: () => false } };
     const reply = '🔗 *Same story: 2 more posts*\n• <https://x.com/a/status/1|@a> · X';
     eq([B.isThreadNoteText_(reply), B.isOwnMessage_(ctx, { senderName: 'users/bot', text: reply }),
       B.isOwnMessage_(ctx, { senderName: 'users/someone', text: reply })], [true, true, false]);
-    eq(B.outboxGuardHits_('Same story: we saw this yesterday', GUARD), ['Same story']);
-    eq(B.outboxGuardHits_('Dana Lee: see the Same story: line', GUARD), ['Same story:']);
-    eq(B.outboxGuardHits_('Same story: we saw this yesterday', GUARD, true), []);
-    eq(B.outboxGuardHits_('This is the same story as yesterday.', GUARD), []);
-    assert.ok(H.leakDenied(reply) && !H.leakDenied('This is the same story as yesterday.'));
+    // the reply's shape is held: alone, quoted by an analyst after their name, without its bold marks, on a later line
+    [reply, 'Dana Lee: 🔗 *Same story: 2 more posts*', 'Dana Lee: Same story: 1 more post (seen since this alert was posted)',
+      'Dana Lee: see below\nSame story: 12 more posts'].forEach(text => {
+      eq([B.outboxGuardHits_(text, GUARD).length > 0, H.leakDenied(text)], [true, true], text);
+    });
+    eq(B.outboxGuardHits_('Dana Lee: 🔗 *Same story: 2 more posts*', GUARD), ['Same story: 2 more posts']);
+    // an analyst's own words with "Same story" are not held (as before the reply was registered)
+    ['Same story: we saw this yesterday', 'Dana Lee: We saw the Same story: battery swelling', 'Dana Lee: see the Same story: line',
+      'Dana Lee: Same story as the one this morning', 'Dana Lee: *Same story* on Reddit too', 'This is the same story as yesterday.',
+      'Same story: 2 more posters said so'].forEach(text => {
+      eq([B.outboxGuardHits_(text, GUARD), H.leakDenied(text)], [[], false], text);
+    });
+    // the bot's own answer to a question of Burson's is checked as before
+    eq(B.outboxGuardHits_('Same story: 2 more posts', GUARD, true), []);
   });
 };

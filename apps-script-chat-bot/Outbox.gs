@@ -325,7 +325,7 @@ const OUTBOX_NOTE_PATTERNS_ = [
   /\bflagged by the watch\b/i,
   /(?<=(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?)Part of a story\b|\bPart of a story:/,
   /(?<=(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?)Alert requirements\b|\bAlert requirements(?:, final)?:/,
-  /(?<=(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?)Same story\b|\bSame story:/,
+  /\bSame story: \d[\d,]* more posts?\b/,  // the watch's reply only in its own shape: "Same story:" is analysts' wording too
 ];
 
 /**

@@ -937,6 +937,29 @@ function pwAlsoFlaggedText_(names) {
   return `${PW_ALERT_HEAD_} *Also flagged by ${said}.* No separate Watch alert: this card already covers the post.`;
 }
 
+/**
+ * The watch's note under a card in the Auto-correct space (P4b), through the one helper (ThreadNotes.gs acThreadNote_,
+ * with `dest`, `card`, `text` and `key` as it takes them), and what came of it: {ok: the note is in the card's thread,
+ * posted: it was posted by this call (not one already there under that key), full: it wasn't posted because the card
+ * already has its AC_NOTE_PER_CARD_ notes, the one refusal that never lifts}. The helper's log line is written as it
+ * would be (console.log) and read for that reason; whether this call posted is read from the run's count of notes
+ * (acNoteRun_), which only a note posted now moves. Never throws.
+ */
+function pwThreadNote_(dest, card, text, key) {
+  let why = '';
+  try {
+    const from = Object.assign({}, dest, { log: msg => { why = String(msg); console.log(msg); } });
+    const run = acNoteRun_(null);
+    const before = run.n;
+    const ok = acThreadNote_(from, card, text, key) === true;
+    const after = acNoteRun_(null);
+    return { ok, posted: ok && after === run && after.n > before,
+      full: !ok && /^thread note not posted: its card already has \d+ notes$/.test(why) };
+  } catch (e) {
+    return { ok: false, posted: false, full: false };
+  }
+}
+
 // --------------------------------------------------------------------------------------------------------------
 // The card's content: the listening tool's own classification, and one AI pre-read of the waiting flags
 // --------------------------------------------------------------------------------------------------------------
@@ -1629,16 +1652,30 @@ function pwPostStories_(items, pre, recent, c) {
   const heldEntry = h => ({ q: h, a: pwAlertOfRow_(h.v, h.k), p: null });
   // P4b (setting cross_alert_notes, the Auto-correct space only: pwCrossNotesOn_): the same-story reply is a note under
   // its alert's card, posted through the one helper (ThreadNotes.gs acThreadNote_) as the bot's own message, so the
-  // bot's flow never answers it; false when the helper posted nothing (its caps, its checks, Chat): the flags wait.
+  // bot's flow never answers it; false when the helper posted nothing for a reason that can pass (the run's 6 notes, its
+  // checks, the thread unread, Chat): the flags wait. 'full' when the card already has its 3 notes, which never lifts:
+  // the flags are closed then as repeats of the story that alert covers (a: 'r'), not left to be read again each run.
   // Everywhere else it is posted as before. `born`: when the alert's card was posted (ms), when this run posted it
   const asNote = pwCrossNotesOn_(c.dest);
+  const full = (entries, story) => {
+    entries.forEach(e => c.mark(e.q, Object.assign({ a: 'r' }, at, { rf: 'its story\'s Watch alert (its thread is full)' })));
+    res.repeats += entries.length;
+    console.log(`Watch alerts: ${entries.length} flag${entries.length === 1 ? '' : 's'} not listed in their story's Watch alert's ` +
+      `thread${story ? ` ("${truncate_(String(story), 80)}")` : ''}: its card already has ${AC_NOTE_PER_CARD_} notes, the most ` +
+      'it takes; that alert covers the story');
+  };
   const join = (entries, thread, alertName, later, story, born) => {
     const text = pwStoryReplyText_(entries.map(e => pwStoryView_(e, e.p)), later);
     const key = `pwg:${alertName}|${entries.map(e => e.q.k.k).sort().join(',')}`;
     let reply = null;
     if (asNote) {
-      if (!acThreadNote_(c.dest, Object.assign({ thread, message: alertName }, Number(born) > 0 ? { createTime: Number(born) } : {}),
-        text, key)) return false;
+      const note = pwThreadNote_(c.dest, Object.assign({ thread, message: alertName }, Number(born) > 0 ? { createTime: Number(born) } : {}),
+        text, key);
+      if (note.full) {
+        full(entries, story);
+        return 'full';
+      }
+      if (!note.ok) return false;
     } else {
       reply = pwPostStoryReply_(space, thread, text, key);
     }
@@ -1903,8 +1940,10 @@ function pwWaitWhy_() {
  * no card of its own, as before, and one note goes under that card (ThreadNotes.gs acThreadNote_: pwAlsoFlaggedText_,
  * one a card, up to PW_COVER_NAMES_MAX_ watches that flagged it in the run); its key then says a: 'u' ("listed under
  * another alert"; the code that reads the letters reads only q, b, p and g, so 'u' is closed as 'd' is), and stays a: 'd'
- * when the note wasn't posted. A flag on a post carded in the last PW_COVER_WAIT_MS_ whose card has no Alert-log row yet
- * stays queued for the next run (and is dropped after its 3 hours like any waiting flag). Never throws.
+ * when the note wasn't posted by this run (pwThreadNote_: refused, or the card's one note from an earlier run, which
+ * doesn't name this run's watches). A flag on a post a producer claimed (posted a card for) whose latest sighting is
+ * within PW_COVER_WAIT_MS_ and whose card has no Alert-log row yet stays queued for the next run (and is dropped after
+ * its 3 hours like any waiting flag). Never throws.
  */
 function pwPostAlerts_(sh, dest, now, left, opts) {
   const out = { posted: 0, grouped: 0, held: 0, repeats: 0, offTopic: 0, builds: 0, waiting: 0, already: 0, noted: 0, twin: 0,
@@ -1961,7 +2000,7 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
         const young = now - Math.max(Number(q.k.s) || 0, Number(q.k.rq) || 0) <= PW_ALERT_MAX_AGE_MS_;
         if (card) {
           covered.push({ q, card, why });
-        } else if (cover && memSeen && now - (Number(memSeen.at) || 0) <= PW_COVER_WAIT_MS_) {
+        } else if (cover && memSeen && memSeen.claim && now - (Number(memSeen.at) || 0) <= PW_COVER_WAIT_MS_) {
           if (!young) {  // it waited its 3 hours: dropped like any waiting flag
             mark(q, { a: 'x' });
             out.dropped++;
@@ -2000,7 +2039,9 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     byCard.forEach((list, message) => {
       const names = Array.from(new Set(list.map(c => String(c.q.k.w || '')))).slice(0, PW_COVER_NAMES_MAX_);
       const timeOk = (typeof left === 'function' ? left() : Infinity) >= PW_MIN_LEFT_MS_;
-      const noted = timeOk && acThreadNote_(dest, list[0].card, pwAlsoFlaggedText_(names), `watch:${message}`);
+      // only a note this run posted names this run's watches: one an earlier run put there (the same key: one a card)
+      // names that run's, so these flags stay "already alerted"
+      const noted = timeOk && pwThreadNote_(dest, list[0].card, pwAlsoFlaggedText_(names), `watch:${message}`).posted;
       list.forEach(c => {
         if (!noted || names.indexOf(String(c.q.k.w || '')) < 0) {
           same(c.q, 'already', c.why);
