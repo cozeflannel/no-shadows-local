@@ -403,6 +403,32 @@ function ewsPlatform_(raw, url) {
   return r ? r.charAt(0).toUpperCase() + r.slice(1) : 'Web';
 }
 
+/**
+ * A new lane's account name (its account key is 'Platform:name'), for new-lane rows only (today's lanes keep theirs):
+ * for X, Bluesky, TikTok and Threads the handle in the link, the way Sonar's lane takes it, but never 'i', 'intent',
+ * 'home', 'search' or 'web'; else the source's author, lowercased, without a leading '@', 'u/' or '/u/'; never a
+ * subreddit ('r/…'); a value shaped like an email address is replaced by the link (and never logged); blank: the link,
+ * lowercased. Pure.
+ */
+function ewsNewAuthor_(platform, author, url) {
+  const u = String(url || '').trim();
+  const pick = rx => {
+    const m = u.match(rx);
+    return m && m[1] && !/^(?:i|intent|home|search|web)$/i.test(m[1]) ? m[1] : '';
+  };
+  let a = pick(/(?:twitter|x)\.com\/([A-Za-z0-9_]{1,30})\/status/i) || pick(/bsky\.app\/profile\/([^/?#]+)/i) ||
+    pick(/tiktok\.com\/@([^/?#]+)/i) || pick(/threads\.(?:net|com)\/@([^/?#]+)/i);
+  if (!a) a = String(author || '').trim();
+  a = a.toLowerCase().replace(/^@+/, '').replace(/^\/?u\//, '').trim();
+  if (/^\/?r\//.test(a) || /[^\s@]+@[^\s@]+\.[^\s@]+/.test(a)) a = '';
+  return a || u.toLowerCase();
+}
+
+/** A new lane's platform: the network of the link's domain (GEN.platform_domains), else 'Web'. Pure (reads GEN). */
+function ewsNewPlatform_(url) {
+  return (url ? networkForDomain_(domainOf_(url)) : null) || 'Web';
+}
+
 /** A source's topic without its language suffix ("Gemini App - English" -> "Gemini App"). Pure. */
 function ewsTopic_(raw) {
   const t = String(raw || '').replace(/\s+-\s+[A-Za-z]+$/, '').trim();
@@ -827,15 +853,16 @@ function ewsReadLanes_(st, now, deadline, ownDue, firstMins, lanes) {
 /**
  * A lane's post row as the producer keeps it: {id, lane, slow, url, nurl, platform, author, ak, audience, eng, t, seen,
  * text, topic, chash, sig, risk: [], brand}, or null for an unusable row; a new lane's post (EWS_NEW_LANES_) also has
- * `nl: true`. Slow: the lane is one of EWS_SLOW_LANES_. Pure (reads GEN).
+ * `nl: true`, its account from ewsNewAuthor_ and its platform from its link (ewsNewPlatform_). Slow: the lane is one
+ * of EWS_SLOW_LANES_. Pure (reads GEN).
  */
 function ewsPostOf_(r) {
   if (!r || r.kind !== 'post' || !r.mid || !r.url) return null;
   const url = String(r.url).trim();
   const lane = String(r.lane || '');
   const nl = EWS_NEW_LANES_.indexOf(lane) >= 0;
-  const platform = ewsPlatform_(r.platform, url);
-  const author = String(r.author || '').trim().toLowerCase().replace(/^@+/, '') || url;
+  const platform = nl ? ewsNewPlatform_(url) : ewsPlatform_(r.platform, url);
+  const author = nl ? ewsNewAuthor_(platform, r.author, url) : String(r.author || '').trim().toLowerCase().replace(/^@+/, '') || url;
   const num = v => (v === null || v === undefined || v === '' || !isFinite(Number(v)) ? null : Math.max(0, Math.round(Number(v))));
   const post = {
     id: String(r.mid), lane, slow: EWS_SLOW_LANES_.indexOf(lane) >= 0, url,

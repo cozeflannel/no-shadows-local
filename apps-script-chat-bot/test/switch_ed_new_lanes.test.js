@@ -556,4 +556,48 @@ module.exports = H => {
     eq([chunks.length <= 4, chunks.every(ch => JSON.stringify(ch).length <= B.ev('EWS_CACHE_ITEM_CHARS_'))], [true, true]);
     eq(chunks.reduce((s, ch) => s + ch.reduce((t, r) => t + r[1].length, 0), 0), 12000);
   });
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 7. One person: ewsNewAuthor_
+  // ---------------------------------------------------------------------------------------------------------------
+
+  test('new lanes (one person): ewsNewAuthor_ takes the handle from an X, Bluesky, TikTok or Threads link as Sonar\'s lane does but never "i", "intent", "home", "search" or "web"; strips @, u/ and /u/; never a subreddit; an author shaped like an email address, or a blank one, becomes the link; the platform comes from the link, an unknown site is Web', () => {
+    const reddit = 'https://www.reddit.com/r/GooglePixel/comments/1zabc/t/';
+    const cases = [
+      ['twitter', 'NewsDesk', 'https://twitter.com/NewsDesk/statuses/2116390716536770729', 'newsdesk'],
+      ['twitter', 'NewsDesk', 'https://x.com/i/status/2116390716536770729', 'newsdesk'],
+      ['twitter', 'Handle', 'https://twitter.com/i/web/status/2116390716536770729', 'handle'],
+      ['twitter', '', 'https://x.com/intent/status/2116390716536770729', 'https://x.com/intent/status/2116390716536770729'],
+      ['twitter', '@Web', 'https://x.com/web/status/1', 'web'],
+      ['bluesky', 'Someone', 'https://bsky.app/profile/did:plc:abc/post/K2', 'did:plc:abc'],
+      ['tiktok', '', 'https://www.tiktok.com/@Maker/video/7301234567890123456', 'maker'],
+      ['threads', '', 'https://www.threads.net/@Writer/post/C9', 'writer'],
+      ['reddit', 'u/Alice', reddit, 'alice'],
+      ['reddit', '/u/alice', reddit, 'alice'],
+      ['reddit', '@Alice', reddit, 'alice'],
+      ['reddit', 'r/GooglePixel', reddit, reddit.toLowerCase()],
+      ['reddit', 'Someone@Example.test', reddit, reddit.toLowerCase()],
+      ['forum', '', 'https://Example-Forum.test/T/9', 'https://example-forum.test/t/9'],
+    ];
+    eq(cases.map(c => B.ewsNewAuthor_(c[0], c[1], c[2])), cases.map(c => c[3]));
+    eq([B.ewsNewPlatform_(reddit), B.ewsNewPlatform_('https://example-forum.test/t/9'), B.ewsNewPlatform_('')], ['Reddit', 'Web', 'Web']);
+    // Q8: Brandwatch live's "u/alice" and Sonar's "alice" on two different posts are one account; today's lanes keep theirs
+    const of = o => B.ewsPostOf_(Object.assign({ kind: 'post', mid: 'X|1', url: reddit, platform: 'reddit', posted_ms: NOW, txt: 'w' }, o));
+    eq([of({ lane: 'bwl', author: 'u/alice' }).ak, of({ lane: 'sonar', author: 'alice' }).ak, of({ lane: 'sonar', author: 'u/alice' }).ak,
+      of({ lane: 'ami', author: '', platform: 'forum', url: 'https://example-forum.test/t/9' }).ak],
+    ['Reddit:alice', 'Reddit:alice', 'Reddit:u/alice', 'Web:https://example-forum.test/t/9']);
+  });
+
+  test('new lanes (one person, Q8): five AMIE X posts written x.com/i/status/<n> by five handles are five accounts (never X:i); an author shaped like an email address is kept nowhere', () => {
+    const env = stitchEnv([{ fk: [1, 2, 3, 4, 5].map(i => row({ lane: 'ami', mid: `AMI|i${i}`, author: `handle${i}`,
+      url: `https://x.com/i/status/21163907165367707${i}0`, chash: `xi${i}`, txt: `${STORY} ${['one', 'two', 'three', 'four', 'five'][i - 1]}`,
+      posted_ms: NOW - (10 + i) * MIN }))
+      .concat([row({ lane: 'bwl', mid: 'BWL|mail', platform: 'reddit', author: 'Someone@Example.test', chash: 'ml',
+        url: 'https://www.reddit.com/r/google/comments/1mail/t/', txt: lone('ml', 1) })]) }], { src: 'ami' }).run();
+    const accounts = env.members().filter(m => /^AMI\|i/.test(m.i)).map(m => m.a).sort();
+    eq(accounts, ['X:handle1', 'X:handle2', 'X:handle3', 'X:handle4', 'X:handle5']);
+    const stored = [...env.g.cache.values(), ...env.g.props.values()].join('\n');
+    assert.ok(!/example\.test/i.test(stored), 'no address stored');
+    assert.ok(env.ids().includes('BWL|mail'));
+  });
 };
