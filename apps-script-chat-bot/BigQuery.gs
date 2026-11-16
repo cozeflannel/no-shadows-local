@@ -1662,12 +1662,29 @@ function bsipProduct_(names) {
 }
 
 /**
+ * A BSIP card's [KOF] value from the feed's KOF column (`kof`: the influencer lists Pendulum has the author on, as
+ * bqBsipCandidates_ reads them): "Yes (<the lists>)" when it names a list that Alert.gs RX_NOT_KOF_LIST_ does not
+ * exclude (a Google-owned channel or a Google rep is no KOF), else "No". A list's name goes without its own brackets
+ * and commas ("Viral KOFs (KOFs)" -> "Viral KOFs KOFs"): inside "Yes (...)" a bracket would end the list early for
+ * both parsers (Alert.gs RX_COMPOUND_KOF_, triage_agent/qa/parser.py) and the name would be lost. Pure.
+ */
+function bsipKofValue_(kof) {
+  const none = s => FALSE_.indexOf(s.toLowerCase()) >= 0 || NULL_.indexOf(s.toLowerCase()) >= 0;  // "No", "-", "n/a": no list
+  const lists = splitTopLevel_(String(kof === null || kof === undefined ? '' : kof), true)
+    .map(s => s.replace(/[(),\r]/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(s => s && !none(s) && !RX_NOT_KOF_LIST_.test(s));
+  return lists.length ? `Yes (${lists.join(', ')})` : 'No';
+}
+
+/**
  * Builds a standard SLRR Zapier-format alert card from a BSIP Pendulum post row (`sonar_raw`:
  * {url, handle, network, alert_names_json, tags, criticality, followers, total, summary, issue_name, post_time}), ready
  * to be reviewed like Burson's: Pendulum's issue name and summary, the network from the link, the product from its alert
- * names, the first of its smart tags that is an exposure tag (else the general criticism tag). Pure.
+ * names, the first of its smart tags that is an exposure tag (else the general criticism tag). Its [KOF] line is "No"
+ * whatever the row's `kof` says, as it always was, unless `opts.kof` is true (the Auto-correct flow only:
+ * pollBigQuerySources_): then it says what the feed says (bsipKofValue_). Pure.
  */
-function formatBsipSonarAlertText_(row) {
+function formatBsipSonarAlertText_(row, opts) {
   const one = s => String(s === null || s === undefined ? '' : s).replace(/[|\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
   const bp = bsipProducts_(bsipAlertNames_(row.alert_names_json));
   const product = bp.product;
@@ -1701,7 +1718,7 @@ function formatBsipSonarAlertText_(row) {
     `[Social Network]: ${network}`,
     `[Exposure Tag]: ${tag}`,
     `[Sensitive Topic]: -`,
-    `[KOF]: No`,
+    `[KOF]: ${opts && opts.kof === true ? bsipKofValue_(row.kof) : 'No'}`,
     '',
     summary,
     '',
@@ -2346,7 +2363,10 @@ function bqIsStoryCard_(m) {
  * that got no card because they already had an alert (never the poll's own card), or because Step 1 left them out as
  * on a story already alerted: each post once a day for each reason, with one line in the run log that has its link,
  * the reason and the alert it matched (noteBqDirect_, bqCountNotPosted_); every other candidate Step 1 leaves out gets
- * a log line with its reason. None of that changes what is posted.
+ * a log line with its reason. None of that changes what is posted. In the Auto-correct flow (ctx.sourceReadOnly, and
+ * unless settings.requirement_line is false) a BSIP card's [KOF] line says what the feed's KOF column says
+ * (bsipKofValue_): a KOF's post then gets its Social Alert at any size, as Burson's alerts do. In every other flow the
+ * line is "No", as before.
  * {sprinklr, bmie, bsip, skipped_duplicates, skipped_step1, skipped_no_count}.
  */
 function pollBigQuerySources_(ctx, targetSpaceId) {
@@ -2616,7 +2636,9 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
         followers: r.followers,
       });
     } else {
-      text = formatBsipSonarAlertText_(r);
+      // The Auto-correct flow only (setting requirement_line): the card's [KOF] line says what the feed's KOF column
+      // says. In every other flow, and with the setting off, the card is what it always was ("[KOF]: No")
+      text = formatBsipSonarAlertText_(r, { kof: !!(ctx && ctx.sourceReadOnly === true && S.requirement_line !== false) });
     }
     if (!text) {
       noCount++;
