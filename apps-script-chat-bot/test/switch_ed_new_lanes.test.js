@@ -236,4 +236,141 @@ module.exports = H => {
     const h = Math.floor((NOW - MIN) / HOUR);
     eq([cov.includes(h), cov.includes(h - 8), cov.includes(h - 9)], [true, false, false]);
   });
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 4. The pool share, the embedding split, the day bar, the carry
+  // ---------------------------------------------------------------------------------------------------------------
+
+  // A text that shares no word with any other (so it joins nothing and stays in the pool)
+  const lone = (tag, n) => Array.from({ length: 9 }, (_, j) => `${tag}${n}q${j}z`).join(' ');
+  const sonarN = (k, tag, o) => Array.from({ length: k }, (_, i) => row(Object.assign({ lane: 'sonar', mid: `SONAR|${tag}${i}`,
+    author: `${tag}a${i}`, url: `https://x.com/${tag}a${i}/status/${2170000000000000 + i}`, txt: lone(`${tag}s`, i),
+    chash: `${tag}s${i}`, sig: `${tag}s${i}`, posted_ms: NOW - (2 + (i % 50)) * MIN }, o || {})));
+  const newN = (k, tag, o) => Array.from({ length: k }, (_, i) => row(Object.assign({ lane: 'bwl', mid: `BWL|${tag}${i}`,
+    platform: 'reddit', author: `${tag}r${i}`, url: `https://www.reddit.com/r/google/comments/${tag}${i}/t/`, txt: lone(`${tag}n`, i),
+    chash: `${tag}n${i}`, sig: `${tag}n${i}`, posted_ms: NOW - (1 + (i % 50)) * MIN }, o || {})));
+
+  // A world whose embedding calls are recorded (`embedded`: the texts of every call)
+  function embedEnv(rowsOf) {
+    const env = makeEnv((job, body) => rowsOf(job, env.g.clock.now, body));
+    env.embedded = [];
+    env.b.__emb = env.embedded;
+    env.b.ev('embedTexts_ = (orig => (texts, o) => { __emb.push(...texts); return orig(texts, o); })(embedTexts_)');
+    addFakeLane(env.b, { src: 'bwl' });
+    env.b.ewsRunSwitches_({ edFake: true });
+    return env;
+  }
+  const kinds = (texts, a, b2) => [a, b2].map(x => texts.filter(t => new RegExp(`^${x}\\d+q0z `).test(t)).length);
+
+  test('new lanes: embedding a check gives today\'s lanes 300 of the 400 and the new lanes 100 (500 + 200 texts), room one side leaves goes to the other (50 + 500: 50 and 350), and with no new-lane post today\'s lanes get all 400 as before (E9)', () => {
+    let env = embedEnv((job) => (job === 'c1' ? sonarN(500, 'a') : job === 'fk' ? newN(200, 'a') : []));
+    env.b.bqEarlyDetectionRows_(30);
+    eq(kinds(env.embedded, 'as', 'an'), [300, 100]);
+    env = embedEnv((job) => (job === 'c1' ? sonarN(50, 'b') : job === 'fk' ? newN(500, 'b') : []));
+    env.b.bqEarlyDetectionRows_(30);
+    eq(kinds(env.embedded, 'bs', 'bn'), [50, 350]);
+    env = embedEnv((job) => (job === 'c1' ? sonarN(500, 'c') : []));
+    env.b.bqEarlyDetectionRows_(30);
+    eq(kinds(env.embedded, 'cs', 'cn'), [400, 0]);
+    // the order itself (pure): today's lanes first, carried posts first among the new lanes'
+    const need = [{ chash: 't1' }, { chash: 'n1', nl: true }, { chash: 't2' }, { chash: 'n2', nl: true, _carry: true }, { chash: 't1' }];
+    const cfg = Object.assign(B.ewsNewCfg_(), { embedPerCheck: 1 });
+    const sp = B.ewsEmbedSplit_(need, 3, 0, 0, NOW, cfg);
+    eq([sp.order.map(p => p.chash), sp.today, sp.fresh, sp.barred], [['t1', 't2', 'n2'], 2, 1, false]);
+    eq(B.ewsEmbedSplit_(need, 2, 0, 0, NOW, cfg).order.map(p => p.chash), ['t1', 'n2']);
+  });
+
+  test('new lanes: the day bar stops the new lanes\' embedding (the day\'s total at its pace, or their own 5,000) and the day record says so; the room they leave goes to today\'s lanes (E9)', () => {
+    const pace = Math.floor(20000 * (new Date(NOW).getUTCHours() + 1) / 24);
+    for (const [embedded, nl, sonar, want] of [[pace, 0, 50, [50, 0]], [0, 5000, 50, [50, 0]], [pace, 0, 500, [400, 0]]]) {
+      const env = embedEnv((job) => (job === 'c1' ? sonarN(sonar, 'd') : job === 'fk' ? newN(200, 'd') : []));
+      env.g.props.set('EWS_STATE', JSON.stringify({ v: 1, marks: {}, jobs: {}, day: { key: new Date(NOW).toISOString().slice(0, 10), embedded, nl } }));
+      env.b.bqEarlyDetectionRows_(30);
+      eq([embedded, nl, kinds(env.embedded, 'ds', 'dn')], [embedded, nl, want]);
+      const rec = JSON.parse(env.g.props.get('EWS_SRC_DAY'));
+      eq(rec.d[new Date(NOW).toISOString().slice(0, 10)].bar, 1);
+    }
+    // under the bar: the new lanes' own count for the day is kept
+    const env = embedEnv((job) => (job === 'fk' ? newN(20, 'e') : []));
+    env.b.bqEarlyDetectionRows_(30);
+    const st = JSON.parse(env.g.props.get('EWS_STATE'));
+    eq([st.day.embedded, st.day.nl], [20, 20]);
+    eq(B.ewsEmbedSplit_([{ chash: 'n', nl: true }], 400, pace - 1, 0, NOW, B.ewsNewCfg_()).fresh, 1);
+  });
+
+  test('new lanes: new-lane posts left without a vector are carried (the newest 100) and embedded first at the next check; the rest, and carried posts older than 2 hours, are counted "not embedded" (E9)', () => {
+    let check = 1;
+    const env = embedEnv((job) => {
+      if (check === 1) return job === 'c1' ? sonarN(50, 'f') : job === 'fk' ? newN(500, 'f') : [];
+      return job === 'c1' ? sonarN(300, 'g') : job === 'fk' ? newN(50, 'g') : [];
+    });
+    env.b.bqEarlyDetectionRows_(30);
+    const day = new Date(NOW).toISOString().slice(0, 10);
+    const carry = JSON.parse(env.g.cache.get('ews1:carry'));
+    eq(carry.length, 100);
+    let rec = JSON.parse(env.g.props.get('EWS_SRC_DAY'));
+    eq([rec.d[day].bwl.ne, rec.d[day].bwl.emb, rec.on.bwl], [50, 350, day]);
+    // the carried are the newest of the 150 left
+    const carriedIds = carry.map(r => r[0]);
+    const left = newN(500, 'f').map(r => r.mid);
+    assert.ok(carriedIds.every(id => left.includes(id)));
+    const before = env.embedded.length;
+    check = 2;
+    env.g.clock.now += 15 * MIN;
+    env.b.bqEarlyDetectionRows_(30);
+    const second = env.embedded.slice(before);
+    eq(kinds(second, 'gs', 'gn').concat([kinds(second, 'fn', 'zz')[0]]), [300, 0, 100]);
+    eq(JSON.parse(env.g.cache.get('ews1:carry')).length, 50);
+    // two hours on, what is still carried is counted as never embedded
+    check = 3;
+    env.g.clock.now += 2 * HOUR + MIN;
+    env.b.ev('embedTexts_ = () => []');
+    env.b.bqEarlyDetectionRows_(30);
+    rec = JSON.parse(env.g.props.get('EWS_SRC_DAY'));
+    eq(rec.d[day].bwl.ne, 100);
+    // the carry item stays under the cache item limit with 100 posts of the longest texts and links
+    const big = Array.from({ length: 100 }, (_, i) => ({ id: `BWL|${i}`, lane: 'bwl', url: 'https://www.reddit.com/' + 'x'.repeat(600),
+      platform: 'Reddit', author: 'a'.repeat(200), audience: 5000, eng: 499, t: NOW - i, seen: NOW, text: 'w'.repeat(600), topic: 't'.repeat(80),
+      chash: 'c'.repeat(16), risk: ['privacy_data_leak', 'safety_csam_selfharm'], brand: true, k: 'k'.repeat(16) }));
+    const out = B.ewsCarryOut_(big, NOW, 100);
+    assert.ok(JSON.stringify(out.records).length <= B.ev('EWS_CACHE_ITEM_CHARS_'));
+    eq(out.records.length + (out.dropped.bwl || 0), 100);
+  });
+
+  test('new lanes: the pool keeps at most early_wave_new_pool_max new-lane posts (the newest) and none older than early_wave_new_pool_minutes; today\'s lanes\' posts are untouched (E8)', () => {
+    // pure: 1,000 Sonar and 600 new-lane records
+    const recs = [];
+    for (let i = 0; i < 1000; i++) recs.push({ i: `S${i}`, t: NOW - i * 1000 });
+    for (let i = 0; i < 600; i++) recs.push({ i: `N${i}`, t: NOW - i * 1000, nl: 1 });
+    const kept = B.ewsNewPoolShare_(recs, 0, 300);
+    eq([kept.filter(r => !r.nl).length, kept.filter(r => r.nl).length, kept.filter(r => r.nl).every(r => Number(r.i.slice(1)) < 300)], [1000, 300, true]);
+    eq(B.ewsNewPoolShare_(recs, 250, 300).filter(r => r.nl).length, 50);
+    eq(B.ewsNewPoolShare_(recs.slice(0, 1000), 999, 300), recs.slice(0, 1000));
+    // in a check: a pool of 3 new-lane posts at most, for 120 minutes
+    let check = 1;
+    const env = makeEnv(job => {
+      if (check !== 1) return [];
+      if (job === 'c1') return sonarN(6, 'h');
+      if (job === 'fk') return newN(8, 'h');
+      return [];
+    });
+    env.b.ev('GEN').settings.early_wave_new_pool_max = 3;
+    addFakeLane(env.b, { src: 'bwl' });
+    env.b.ewsRunSwitches_({ edFake: true });
+    const poolNow = () => {
+      const st = JSON.parse(env.g.props.get('EWS_STATE'));
+      const out = [];
+      (st.pool || []).forEach(([stamp, n]) => { for (let j = 0; j < n; j++) JSON.parse(env.g.cache.get(`ews1:pv:${stamp}:${j}`) || '[]').forEach(p => out.push(p)); });
+      return out;
+    };
+    env.b.bqEarlyDetectionRows_(30);
+    let pool = poolNow();
+    eq([pool.filter(p => !p.nl).length, pool.filter(p => p.nl).length], [6, 3]);
+    eq(pool.filter(p => p.nl).map(p => p.i).sort(), ['BWL|h0', 'BWL|h1', 'BWL|h2']);
+    check = 2;
+    env.g.clock.now += 121 * MIN;
+    env.b.bqEarlyDetectionRows_(30);
+    pool = poolNow();
+    eq([pool.filter(p => !p.nl).length, pool.filter(p => p.nl).length], [6, 0]);
+  });
 };

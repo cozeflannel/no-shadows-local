@@ -116,8 +116,14 @@ const EWS_NEW_LANES_ = ['ami', 'amis', 'bwl', 'bwls'];
 // The new sources' jobs, one entry each, added by the step that builds the source (none yet): {key (the job's name,
 // as 'us' / 'c1'), location, sw (its Control switch key), ready(st) (optional: false = nothing to read this check),
 // query(st, until, firstMins) -> {sql, params, win, flags} (pure; null = nothing to read), done(st, lane, now)
-// (optional: the job was collected, move its mark)}. ewsLanes_ adds an entry only while its switch is ON.
+// (optional: the job was collected, move its mark), src ('ami' | 'bwl': whose trial and day counts)}. ewsLanes_ adds
+// an entry only while its switch is ON. A new lane's post ids start with its source and a pipe ('AMI|…', 'BWL|…').
 const EWS_NEW_LANE_DEFS_ = [];
+const EWS_NEW_SWITCHES_ = { edAmie: 'ami', edBwLive: 'bwl' };  // a new source's Control switch -> the source
+const EWS_NEW_DAY_CAP_ = 15000;            // new lanes embed only while the day's total is under min(this, the day's pace)
+const EWS_CARRY_MS_ = 2 * 3600 * 1000;     // a new lane's post not embedded is carried to the next checks this long
+const EWS_SRC_DAY_PROP_ = 'EWS_SRC_DAY';   // the new sources' day record: first ON date, counts per day (7 days), lifted stories
+const EWS_SRC_DAYS_KEPT_ = 7;
 
 const EWS_EVERY_MS_ = 10 * 60 * 1000;      // a check at most this often (earlyWaveCheck_ calls every 15 min or more)
 const EWS_BUDGET_MS_ = 40 * 1000;          // a check's whole time: BigQuery, embeddings, clustering, the cache
@@ -1756,15 +1762,216 @@ function ewsWatchAsk_(cache, props, st, now, cands, watch, record) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// The new sources inside the check (none is read while its Control row is OFF)
+// ---------------------------------------------------------------------------------------------------------------
+
+/** The new sources whose Control switch is ON in `sw` ('ami', 'bwl', or a lane def's own `src`), in order. Pure. */
+function ewsNewSources_(sw) {
+  const on = sw && typeof sw === 'object' ? sw : {};
+  const out = [];
+  Object.keys(EWS_NEW_SWITCHES_).forEach(k => { if (on[k] === true && out.indexOf(EWS_NEW_SWITCHES_[k]) < 0) out.push(EWS_NEW_SWITCHES_[k]); });
+  EWS_NEW_LANE_DEFS_.forEach(d => {
+    if (d && d.sw && on[d.sw] === true) { const src = d.src || 'new'; if (out.indexOf(src) < 0) out.push(src); }
+  });
+  return out;
+}
+
+/** The source of a new lane ('ami' for ami / amis, 'bwl' for bwl / bwls, else the lane itself). Pure. */
+function ewsSrcOfLane_(lane) {
+  const l = String(lane || '');
+  return l === 'amis' ? 'ami' : l === 'bwls' ? 'bwl' : l;
+}
+
+/** The source of a new lane's member, from its id ('AMI|…' -> 'ami'). Pure. */
+function ewsSrcOfId_(id) {
+  const m = String(id || '').match(/^([A-Za-z]+)\|/);
+  return m ? m[1].toLowerCase() : 'new';
+}
+
+/** Adds `n` (1 when not given) to the check's count `key` of new source `src` (`nx.n`, saved in EWS_SRC_DAY). */
+function ewsNewCount_(nx, src, key, n) {
+  if (!nx || !src) return;
+  const c = nx.n[src] = nx.n[src] || {};
+  c[key] = (Number(c[key]) || 0) + (n === undefined ? 1 : Number(n) || 0);
+}
+
+/**
+ * The embedding order with new lanes' posts among `need` (sorted as ewsEmbed_ sorts them): today's lanes' texts first,
+ * up to `room` less the new lanes' share (early_wave_new_embed_per_check), the new lanes' texts after them (carried
+ * posts first) up to what is left; room one side leaves goes to the other. The new lanes embed only while the day's
+ * total (`dayDone`) is under min(EWS_NEW_DAY_CAP_, EWS_EMBED_PER_DAY_ x (UTC hours elapsed + 1) / 24) and their own
+ * (`newDone`) under early_wave_new_embed_per_day. {order: one post a text, in order; today, fresh: how many of `order`
+ * are today's lanes' and the new lanes'; barred: the day bar held some back}. Pure.
+ */
+function ewsEmbedSplit_(need, room, dayDone, newDone, now, cfg) {
+  const c = cfg || ewsNewCfg_();
+  const uniq = list => {
+    const seen = new Set();
+    return list.filter(p => { if (seen.has(p.chash)) return false; seen.add(p.chash); return true; });
+  };
+  const today = uniq(need.filter(p => !p.nl));
+  const newSide = need.filter(p => p.nl).map((p, i) => [p, i])
+    .sort((a, b) => (b[0]._carry ? 1 : 0) - (a[0]._carry ? 1 : 0) || a[1] - b[1]).map(x => x[0]);
+  const pace = Math.min(EWS_NEW_DAY_CAP_, Math.floor(EWS_EMBED_PER_DAY_ * (new Date(now).getUTCHours() + 1) / 24));
+  const dayRoom = Math.max(0, Math.min(c.embedPerDay - newDone, pace - dayDone));
+  const todayHashes = new Set(today.map(p => p.chash));
+  const newUsable = Math.min(uniq(newSide.filter(p => !todayHashes.has(p.chash))).length, dayRoom);
+  const todayN = Math.min(today.length, Math.max(0, room - Math.min(newUsable, c.embedPerCheck)));
+  const chosen = today.slice(0, todayN);
+  const chosenHashes = new Set(chosen.map(p => p.chash));
+  const newU = uniq(newSide.filter(p => !chosenHashes.has(p.chash)));
+  const newN = Math.max(0, Math.min(newU.length, dayRoom, room - todayN));
+  return { order: chosen.concat(newU.slice(0, newN)), today: todayN, fresh: newN, barred: newU.length > newN && newN === dayRoom };
+}
+
+/** A new lane's post as carried to the next check (compact). Pure. */
+function ewsCarryRecord_(p, now) {
+  return [p.id, p.lane, truncate_(p.url, 500), p.platform, truncate_(p.author, 120), p.audience, p.eng, p.t, p.seen, p.text, p.topic,
+    p.chash, (p.risk || []).join(','), p.brand ? 1 : 0, p.k || '', Number(p._carryAt) || now];
+}
+
+/** A carried record back as a post (marked _carry). Pure (reads GEN). */
+function ewsPostOfCarry_(r) {
+  if (!Array.isArray(r) || r.length < 16 || !r[0] || !r[2]) return null;
+  const lane = String(r[1] || '');
+  const url = String(r[2]);
+  const platform = String(r[3] || 'Web');
+  const author = String(r[4] || url);
+  const p = { id: String(r[0]), lane, slow: EWS_SLOW_LANES_.indexOf(lane) >= 0, url, nurl: normalizeUrl_(url) || url.toLowerCase(),
+    platform, author, ak: `${platform}:${author}`,
+    audience: r[5] === null || r[5] === undefined ? null : Number(r[5]), eng: r[6] === null || r[6] === undefined ? null : Number(r[6]),
+    t: Number(r[7]) || 0, seen: Number(r[8]) || 0, text: String(r[9] || ''), topic: String(r[10] || 'Unclassified'),
+    chash: String(r[11] || ''), sig: '', risk: String(r[12] || '').split(',').filter(Boolean), brand: !!r[13], nl: true,
+    _carry: true, _carryAt: Number(r[15]) || 0 };
+  if (r[14]) p.k = String(r[14]);
+  return p;
+}
+
+/**
+ * The new lanes' posts carried from the last checks (cache 'carry'), younger than EWS_CARRY_MS_: {posts, expired:
+ * {source: n}} (the expired ones were never embedded). Never throws.
+ */
+function ewsLoadCarry_(cache, now) {
+  const out = { posts: [], expired: {} };
+  const raw = ewsCacheGet_(cache, 'carry');
+  (Array.isArray(raw) ? raw : []).forEach(r => {
+    const p = ewsPostOfCarry_(r);
+    if (!p) return;
+    if (now - p._carryAt >= EWS_CARRY_MS_) { const s = ewsSrcOfLane_(p.lane); out.expired[s] = (out.expired[s] || 0) + 1; return; }
+    out.posts.push(p);
+  });
+  return out;
+}
+
+/**
+ * What is carried to the next check: the newest `max` (early_wave_new_carry_max) of the new lanes' posts left without
+ * a vector, fewer when one cache item would not hold them (the oldest go first): {records, dropped: {source: n}}. Pure.
+ */
+function ewsCarryOut_(posts, now, max) {
+  const list = (posts || []).slice().sort((a, b) => b.t - a.t || (a.id < b.id ? -1 : 1));
+  let keep = list.slice(0, Math.max(0, max)).map(p => ewsCarryRecord_(p, now));
+  while (keep.length && JSON.stringify(keep).length > EWS_CACHE_ITEM_CHARS_) keep = keep.slice(0, -1);
+  const kept = new Set(keep.map(r => r[0]));
+  const dropped = {};
+  list.forEach(p => { if (!kept.has(p.id)) { const s = ewsSrcOfLane_(p.lane); dropped[s] = (dropped[s] || 0) + 1; } });
+  return { records: keep, dropped };
+}
+
+/**
+ * The new pool records with the new lanes' share applied: at most `poolMax` (early_wave_new_pool_max) new lanes' posts
+ * in the pool, `inPool` of them already there; the newest new ones are kept, today's lanes' records all. Pure.
+ */
+function ewsNewPoolShare_(records, inPool, poolMax) {
+  const nl = records.filter(r => r.nl);
+  if (!nl.length) return records;
+  const room = Math.max(0, poolMax - Math.max(0, inPool));
+  const keep = new Set(nl.slice().sort((a, b) => (Number(b.t) || 0) - (Number(a.t) || 0) || (a.i < b.i ? -1 : 1)).slice(0, room).map(r => r.i));
+  return records.filter(r => !r.nl || keep.has(r.i));
+}
+
+/**
+ * EWS_SRC_DAY: {v, on: {source: 'YYYY-MM-DD' (UTC) its row first went ON; never cleared}, d: {day: {source: {count:
+ * n}, bar: 1}}, lh: [hour, n], ld: [day, n] (lifted stories sent for review), ls: [lifted stories, newest last]}.
+ * Never throws.
+ */
+function ewsSrcDay_(props) {
+  let r = null;
+  try { r = JSON.parse(props.getProperty(EWS_SRC_DAY_PROP_) || 'null'); } catch (e) { r = null; }
+  if (!r || typeof r !== 'object' || Array.isArray(r)) r = {};
+  r.v = 1;
+  r.on = r.on && typeof r.on === 'object' ? r.on : {};
+  r.d = r.d && typeof r.d === 'object' ? r.d : {};
+  r.ls = Array.isArray(r.ls) ? r.ls : [];
+  r.lh = Array.isArray(r.lh) ? r.lh : [0, 0];
+  r.ld = Array.isArray(r.ld) ? r.ld : ['', 0];
+  return r;
+}
+
+/** Adds a check's counts (`n`: {source: {key: n or [buckets]}}) and day flags to the record. Pure (but for `rec`). */
+function ewsSrcDayAdd_(rec, day, n, flags) {
+  const d = rec.d[day] = rec.d[day] || {};
+  Object.keys(n || {}).forEach(src => {
+    const to = d[src] = d[src] || {};
+    Object.keys(n[src]).forEach(k => {
+      const v = n[src][k];
+      if (Array.isArray(v)) {
+        const cur = Array.isArray(to[k]) ? to[k] : [];
+        to[k] = v.map((x, i) => (Number(cur[i]) || 0) + (Number(x) || 0));
+      } else to[k] = (Number(to[k]) || 0) + (Number(v) || 0);
+    });
+  });
+  Object.keys(flags || {}).forEach(k => { if (flags[k]) d[k] = 1; });
+  return rec;
+}
+
+/**
+ * Saves EWS_SRC_DAY under EWS_PROP_MAX_CHARS_: days older than EWS_SRC_DAYS_KEPT_ go; if still too long, the oldest
+ * lifted stories, then the oldest days. Never throws.
+ */
+function ewsSaveSrcDay_(props, rec, now) {
+  try {
+    const oldest = ewsUtcDay_(now - (EWS_SRC_DAYS_KEPT_ - 1) * 24 * 3600 * 1000);
+    Object.keys(rec.d).forEach(k => { if (k < oldest) delete rec.d[k]; });
+    let json = JSON.stringify(rec);
+    while (json.length > EWS_PROP_MAX_CHARS_ && rec.ls.length) { rec.ls.shift(); json = JSON.stringify(rec); }
+    while (json.length > EWS_PROP_MAX_CHARS_ && Object.keys(rec.d).length > 1) {
+      delete rec.d[Object.keys(rec.d).sort()[0]];
+      json = JSON.stringify(rec);
+    }
+    if (json.length <= EWS_PROP_MAX_CHARS_) props.setProperty(EWS_SRC_DAY_PROP_, json);
+  } catch (e) {
+    console.warn(`Early wave: couldn't save the new sources' day record: ${(e && e.message) || e}`);
+  }
+}
+
+/**
+ * A check's end for the new sources: the date each source ON now first went ON (kept for good: turning a row OFF
+ * never clears it), the check's counts and day flags, and `nx.rec` (the record, when the check already read it), saved
+ * in EWS_SRC_DAY. Never throws.
+ */
+function ewsNewDayClose_(props, nx, now) {
+  try {
+    const rec = nx.rec || ewsSrcDay_(props);
+    (nx.sources || []).forEach(s => { if (!rec.on[s]) rec.on[s] = nx.day; });
+    ewsSrcDayAdd_(rec, nx.day, nx.n, nx.flags);
+    ewsSaveSrcDay_(props, rec, now);
+  } catch (e) {
+    console.warn(`Early wave: the new sources' day record: ${(e && e.message) || e}`);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // The check
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
  * Embeds the posts that need a vector (a text not seen before), EWS_EMBED_PER_CHECK_ a check and what's left of
  * EWS_EMBED_PER_DAY_ (risk terms first, then the texts most accounts share, then the newest; slow lanes last), and
- * drops evergreen noise. Returns the posts with `vec` (the others are left without one). Never throws.
+ * drops evergreen noise. Returns the posts with `vec` (the others are left without one). With `nlCfg` (ewsNewCfg_, a
+ * new source ON) and new lanes' posts among them, the room is split as ewsEmbedSplit_ says and the new lanes' own count
+ * for the day is kept in st.day.nl; without either, exactly as before. Never throws.
  */
-function ewsEmbed_(posts, known, st, now, deadline) {
+function ewsEmbed_(posts, known, st, now, deadline, nlCfg) {
   const day = ewsUtcDay_(now);
   if (st.day.key !== day) st.day = { key: day, embedded: 0 };
   const room = Math.max(0, Math.min(EWS_EMBED_PER_CHECK_, EWS_EMBED_PER_DAY_ - (Number(st.day.embedded) || 0)));
@@ -1776,19 +1983,25 @@ function ewsEmbed_(posts, known, st, now, deadline) {
       (shared[b.chash] || 0) - (shared[a.chash] || 0) || b.t - a.t);
   const texts = [];
   const byText = new Map();
-  need.forEach(p => { if (!byText.has(p.chash)) { if (texts.length >= room) return; byText.set(p.chash, texts.length); texts.push(p.text); } });
+  const split = nlCfg && need.some(p => p.nl)
+    ? ewsEmbedSplit_(need, room, Number(st.day.embedded) || 0, Number(st.day.nl) || 0, now, nlCfg) : null;
+  if (split) split.order.forEach(p => { byText.set(p.chash, texts.length); texts.push(p.text); });
+  else need.forEach(p => { if (!byText.has(p.chash)) { if (texts.length >= room) return; byText.set(p.chash, texts.length); texts.push(p.text); } });
   let vecs = [];
   try { vecs = texts.length ? embedTexts_(texts, { deadline }) : []; } catch (e) { vecs = []; }
   const fresh = vecs.map(ewsUnit_);
   st.day.embedded = (Number(st.day.embedded) || 0) + fresh.filter(Boolean).length;
+  if (split && split.fresh) st.day.nl = (Number(st.day.nl) || 0) + fresh.slice(split.today).filter(Boolean).length;
   need.forEach(p => { const i = byText.get(p.chash); if (i !== undefined && fresh[i]) p.vec = fresh[i]; });
   const withVec = posts.filter(p => p.vec);
   let ever = [];
   try { ever = withVec.length ? vecEvergreenOfVecs_(withVec.map(p => p.vec), { deadline }) : []; } catch (e) { ever = []; }
   const noise = new Set();
   withVec.forEach((p, i) => { if (typeof vecIsEvergreenNoise_ === 'function' && vecIsEvergreenNoise_(ever[i])) noise.add(p); });
-  return { posts: posts.filter(p => !noise.has(p)), evergreen: noise.size, embedded: fresh.filter(Boolean).length,
+  const out = { posts: posts.filter(p => !noise.has(p)), evergreen: noise.size, embedded: fresh.filter(Boolean).length,
     skipped: need.filter(p => !p.vec).length };
+  if (split) { out.nlEmbedded = fresh.slice(split.today).filter(Boolean).length; out.barred = split.barred; }
+  return out;
 }
 
 /**
@@ -1810,6 +2023,10 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     const ownDue = !(Number(exCached.ownAt) > 0) || now - Number(exCached.ownAt) >= EWS_OWN_EVERY_MS_;
     const sw = ewsRunSwitches_();  // the run's Control switches (all OFF unless the run set them)
     const lanes = ewsLanes_(sw, st);
+    // the new sources' rules apply only while one of their switches is ON: with none ON, `nx` is null and the check is
+    // exactly what it was before them (no new state is read or written)
+    const nxSources = ewsNewSources_(sw);
+    const nx = nxSources.length ? { cfg: ewsNewCfg_(), day: ewsUtcDay_(now), sources: nxSources, n: {}, flags: {} } : null;
     const read = ewsReadLanes_(st, now, deadline, ownDue, firstMins, lanes).lanes;
     const usDone = read.us.state === 'done';
     const c1Done = read.c1.state === 'done';
@@ -1829,10 +2046,24 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     // The stories, the pool and the accounts so far
     const clusters = ewsLoadClusters_(cache, Number(st.cl) || 0);
     const pool = ewsLoadPool_(cache, st.pool, now).map(r => Object.assign(ewsPostOfPool_(r), { _key: r._key })).filter(p => p.vec);
+    // a new lane's post waits in the pool early_wave_new_pool_minutes at most (its chunk is written again without it)
+    const poolGone = new Set();
+    if (nx) {
+      for (let i = pool.length - 1; i >= 0; i--) {
+        if (pool[i].nl && now - (Number(pool[i].g) || 0) >= nx.cfg.poolMinutes * 60000) { poolGone.add(pool[i]._key); pool.splice(i, 1); }
+      }
+    }
     const known = new Set();
     clusters.forEach(c => (c.m || []).forEach(m => known.add(m.i)));
     pool.forEach(p => known.add(p.id));
     posts = posts.filter(p => !known.has(p.id));  // a window read again (a run that died) adds nothing twice
+    // the new lanes' posts not embedded at the last checks come back (embedded first among the new lanes')
+    if (nx) {
+      const carried = ewsLoadCarry_(cache, now);
+      Object.keys(carried.expired).forEach(s => ewsNewCount_(nx, s, 'ne', carried.expired[s]));
+      const ids = new Set(posts.map(p => p.id));
+      posts = posts.concat(carried.posts.filter(p => !known.has(p.id) && !ids.has(p.id)));
+    }
     const vecByHash = new Map();
     pool.forEach(p => { if (p.chash && !vecByHash.has(p.chash)) vecByHash.set(p.chash, p.vec); });
     const memberHash = new Map();
@@ -1846,11 +2077,17 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     const direct = [];
     const rest = [];
     posts.forEach(p => { const hit = memberHash.get(p.chash); if (hit) direct.push({ post: p, cluster: hit.c, sim: hit.d }); else rest.push(p); });
-    const emb = ewsEmbed_(rest, vecByHash, st, now, deadline);
+    const emb = ewsEmbed_(rest, vecByHash, st, now, deadline, nx && nx.cfg);
     last.embedded = emb.embedded;
     last.evergreen = emb.evergreen;
     last.unembedded = emb.skipped;
     const evergreenGone = new Set(rest.filter(p => emb.posts.indexOf(p) < 0).map(p => p.id));
+    if (nx) {
+      if (emb.barred) nx.flags.bar = 1;  // "new sources stopped embedding for today to keep room for Sonar"
+      rest.forEach(p => { if (p.nl && p.vec) ewsNewCount_(nx, ewsSrcOfLane_(p.lane), 'emb'); });
+      nx.carry = ewsCarryOut_(rest.filter(p => p.nl && !p.vec), now, nx.cfg.carryMax);
+      Object.keys(nx.carry.dropped).forEach(s => ewsNewCount_(nx, s, 'ne', nx.carry.dropped[s]));
+    }
 
     // Velocity counts: every real-time post of today's lanes kept (not evergreen noise), with its keys; a new lane's
     // posts add no velocity row (velocity from the new sources is not in this round)
@@ -1911,7 +2148,10 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     // The pool: what's left of it, plus the new real-time posts no story took (the newest EWS_POOL_MAX_)
     const changedChunks = new Set();
     pool.forEach(p => { if (leftPool.has(p.id)) changedChunks.add(p._key); });
-    const newPool = fresh.filter(p => !joined.has(p.id)).map(p => ewsPoolRecord_(p, now));
+    poolGone.forEach(k => changedChunks.add(k));
+    const unjoined = fresh.filter(p => !joined.has(p.id)).map(p => ewsPoolRecord_(p, now));
+    // the new lanes' share: early_wave_new_pool_max of the pool at most (today's lanes keep the rest)
+    const newPool = nx ? ewsNewPoolShare_(unjoined, pool.filter(p => p.nl && !leftPool.has(p.id)).length, nx.cfg.poolMax) : unjoined;
 
     // Signals
     const tidy = ewsTidyStories_(clusters, now);
@@ -2045,6 +2285,10 @@ function ewsProduce_(props, st, now, firstMins, opts) {
       total -= pool.filter(p => String(p._key).indexOf(`pv:${stamp}:`) >= 0 && !leftPool.has(p.id)).length;
       for (let j = 0; j < n; j++) { try { if (cache) cache.remove(`${EWS_CACHE_PREFIX_}pv:${stamp}:${j}`); } catch (e) { /* expires */ } }
     }
+    if (nx) {  // the new lanes' posts left without a vector, for the next check
+      if (nx.carry.records.length) items.carry = nx.carry.records;
+      else { try { if (cache) cache.remove(`${EWS_CACHE_PREFIX_}carry`); } catch (e) { /* expires */ } }
+    }
     ewsCachePut_(cache, items);
     // clusters chunks no longer used
     for (let i = storeChunks.length; i < (Number(st.cl) || 0); i++) { try { if (cache) cache.remove(`${EWS_CACHE_PREFIX_}cl:${i}`); } catch (e) { /* expires */ } }
@@ -2073,6 +2317,7 @@ function ewsProduce_(props, st, now, firstMins, opts) {
       }
     }
     ewsSaveRollup_(props, roll);
+    if (nx) ewsNewDayClose_(props, nx, now);
     const problems = EWS_LANES_.filter(l => read[l.key].state === 'failed').map(l => `${l.key}: ${read[l.key].why}`);
     const pending = EWS_LANES_.filter(l => read[l.key].state === 'pending').map(l => l.key);
     // a new source's failure is named in the log line only: C19 (last.problem, the error) keeps today's lanes
