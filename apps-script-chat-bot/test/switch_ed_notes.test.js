@@ -225,6 +225,8 @@ module.exports = H => {
         // the run log: one line for each ending that had none, and the lines it had are as they were
         eq(logs.filter(l => OUTCOMES.some(o => l.indexOf(`early detection: ${o} · `) === 0)), NEW_LINES, name);
         OLD_LINES.forEach(l => assert.ok(logs.includes(l), `${name}: ${l}`));
+        // the numbers added up on their own: C19's writer never had to put found right
+        eq(logs.filter(l => /did not add up/.test(l)), [], name);
         seen[name] = rows.length;
       }
     }
@@ -388,31 +390,32 @@ module.exports = H => {
     eq([s4.link, s4.message, s4.card], ['', '', 'QA-1']);
   });
 
-  test('early detection notes: the day\'s counts stay far under a script property\'s 9 KB in the worst case: every count at six digits, the longest problem text, and the newest 80 signals noted without a mark', () => {
+  test('early detection notes: the day\'s counts stay far under a script property\'s 9 KB in the worst case: every count at six digits, the longest problem text, and the newest 120 signals counted', () => {
     const g = makeGoogle(NOW);
     const bot = loadBot(g.services, g.clock);
     const props = g.services.PropertiesService.getScriptProperties();
-    eq(bot.ev('ED_ONCE_MAX_'), 80);
-    // the keys kept cover every signal a check can still be handed: the producer's buffer holds 30, so between a
-    // signal's note and its last read fewer than twice that many others can be noted
-    assert.ok(bot.ev('ED_ONCE_MAX_') > 2 * bot.ev('EWS_BUFFER_MAX_'), String(bot.ev('EWS_BUFFER_MAX_')));
+    eq(bot.ev('ED_NOTED_MAX_'), 120);
+    // the keys kept cover every signal a check can still be handed: the producer's buffer holds 30 and lets the oldest
+    // go first, so between a signal's note and its last read fewer than twice that many others can be counted
+    assert.ok(bot.ev('ED_NOTED_MAX_') > 2 * bot.ev('EWS_BUFFER_MAX_'), String(bot.ev('EWS_BUFFER_MAX_')));
     const full = { day: '2026-10-14', clusters: 999999, velocity: 999999, queued: 999999, repeats: 999999, dismissed: 999999, triaged: 999999,
       watch: 999999, watchq: 999999, at: 'Sep 30, 12:59 PM EDT', problem: 'a BigQuery source table was not found',
-      found: 999999, cards: 999999, under: 999999, letgo: 999999, never: 999999 };
+      found: 999999, cards: 249999, under: 250000, letgo: 250000, never: 250000 };  // six digits that add up
     g.props.set('EARLY_DETECTION_TODAY', JSON.stringify(full));
-    const ids = Array.from({ length: 120 }, (_, i) => `ED-VEL-RISK_TERM_GROUP-${String(i).padStart(32, '0')}-202610141246`);
+    const ids = Array.from({ length: 160 }, (_, i) => `ED-VEL-RISK_TERM_GROUP-${String(i).padStart(32, '0')}-202610141246`);
     eq(ids.map(id => bot.edCount_(props, 'never', false, id)), ids.map(() => true));
     const stored = g.props.get('EARLY_DETECTION_TODAY');
     const day = JSON.parse(stored);
-    eq([day.once.length, day.never, day.found], [80, 999999 + 120, 999999 + 120]);
-    assert.ok(stored.length <= 8800 && stored.length < 1700, String(stored.length));
-    // the newest 80 are remembered: one of them is not counted again, an older one would be
-    eq([bot.edCount_(props, 'never', false, ids[119]), bot.edCount_(props, 'never', false, ids[40]), bot.edCount_(props, 'never', false, ids[0])],
+    eq([day.noted.length, day.never, day.found], [120, 250000 + 160, 999999 + 160]);
+    assert.ok(stored.length <= 8800 && stored.length < 2600, String(stored.length));
+    // the newest 120 are remembered: one of them is not counted again, an older one would be
+    eq([bot.edCount_(props, 'never', false, ids[159]), bot.edCount_(props, 'never', false, ids[40]), bot.edCount_(props, 'never', false, ids[0])],
       [false, false, true]);
-    // the check's own writing of the counts keeps them (noteEarlyWave_ copies what is there)
+    // the check's own writing of the counts keeps them (noteEarlyWave_ copies what is there; the queue is empty, so the
+    // numbers add up as they are)
     bot.noteEarlyWave_(props, 1, 0, 'a BigQuery source table was not found', { queued: 1, repeats: 1, triaged: 1, watch: 1, watchQueued: 1 });
     const after = JSON.parse(g.props.get('EARLY_DETECTION_TODAY'));
-    eq([after.once.length, after.found, after.never, after.clusters], [80, day.found + 1, day.never + 1, 1000000]);
+    eq([after.noted.length, after.found, after.never, after.clusters], [120, day.found + 1, day.never + 1, 1000000]);
     assert.ok(g.props.get('EARLY_DETECTION_TODAY').length <= 8800);
   });
 

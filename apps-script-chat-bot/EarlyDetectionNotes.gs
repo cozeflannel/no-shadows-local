@@ -16,12 +16,13 @@
  * It posts nothing, sends nothing to BigQuery (what Control row 46 writes is made elsewhere and stays as it is) and
  * never throws.
  *
- * Counted once. An ending that marks its signal as seen (most do) can't come twice. The few that leave it unmarked (the
- * day's limit of the old rule, the early watch's share of the day, an early signal read while row 39 is OFF, a main post
- * another alert covers) meet the same signal again at every check while the producer's buffer holds it: edNote_ is told
- * so (`once`), and the signal's key is kept with the day's counts, so it is noted the first time only, with the script
- * cache gone too. A signal noted that way and queued later on (the next day, or when what covered it has aged out) is a
- * new arrival: it is counted as found again, and the numbers still add up.
+ * Counted once. Every signal counted is remembered with the day's counts (BigQuery.gs edCount_: the newest
+ * ED_NOTED_MAX_, by key, with the group it was counted in), not in the script cache. A signal whose ending leaves it
+ * unmarked (the day's limit of the old rule, the early watch's share of the day, an early signal read while row 39 is
+ * OFF, a main post another alert covers), or that a check noted before it died without saving its marks, meets the
+ * next check again: it is noted the first time only. When such a signal is queued later the same day it moves from the
+ * group it was counted in to the queue (found stays); queued on a later day it is found again on that day. So a signal
+ * can have two rows over time (an ending, and what became of it after it was queued), never two counts in one day.
  *
  * A record row is a list, in the order of ED_NOTE_FIELDS_ (edNoteObj_ gives it its names):
  *   at         when the ending was noted (ms)
@@ -138,14 +139,14 @@ function edNeverWhy_(cause) {
  * refused (an error in the log, nothing counted or recorded). `why`: the reason, in plain words (made one sentence).
  * `extra`:
  *   waited   true when the signal was in the review queue: it was counted as found when it was queued
- *   once     true for an ending that leaves the signal unmarked, so that the next check reads it again: it is noted
- *            the first time only (a signal with no id of its own, which can't be marked, is always noted that way)
+ *   once     (older callers) no longer needed: a signal that did not wait is noted the first time only in any case
  *   logged   true when the run log already has a line for this ending; without it one line is written here
  *   title    the review's headline, when the signal was reviewed
  *   tag      the card's own Exposure Tag, after a card
  *   dec      the fast triage's answers about the signal, when the caller has them (else the ones kept are used)
  *   card     {id, message}: the Alert-log id and Chat message name of the card this ending is about
- * Returns the record row, or null when nothing was noted (not an outcome; a `once` signal noted before). Never throws.
+ * Returns the record row, or null when nothing was noted (not an outcome; a signal counted before: edCount_). Never
+ * throws.
  */
 function edNote_(ctx, row, outcome, why, extra) {
   try {
@@ -156,9 +157,7 @@ function edNote_(ctx, row, outcome, why, extra) {
       return null;
     }
     const r = row && typeof row === 'object' ? row : {};
-    const id = String(r.alert_id || '').trim();
-    const once = x.once || (!id && !x.waited) ? id || edRowKeys_(r)[0] || 'a signal without an id' : '';
-    if (!edCount_(PropertiesService.getScriptProperties(), group, !!x.waited, once)) return null;
+    if (!edCount_(PropertiesService.getScriptProperties(), group, !!x.waited, edNoteKey_(r))) return null;
     const rec = edNoteRow_(r, outcome, why, x, ctx && typeof ctx.now === 'function' ? ctx.now() : Date.now());
     ED_NOTES_RUN_.push(rec);
     if (ED_NOTES_RUN_.length > ED_NOTES_RUN_MAX_) ED_NOTES_RUN_ = ED_NOTES_RUN_.slice(-ED_NOTES_RUN_MAX_);
@@ -417,4 +416,82 @@ function edAlertWords_(alert, now) {
   const direct = Object.keys(BQ_SOURCE_LABELS_).some(k => BQ_SOURCE_LABELS_[k] === ing);
   const path = !ing ? 'Burson alert' : direct ? `BigQuery \u00b7 ${ing}` : ing;
   return `${a.alert_id || 'An alert'} (${[path, edCardTime_(a.created_at, now)].filter(Boolean).join(', ')})`;
+}
+
+/**
+ * The card a signal already has in the space, as the record notes it, or null: from the Alert log (`ctx.store.alerts`)
+ * when the card was logged ({outcome: the card's call, why, title, tag, card: {id, message}}: an update names the earlier
+ * card it went under); else, when the card was posted but never logged (ED_ALERT_INFO remembers a card for the signal's
+ * id: the run failed after the post), "Card posted: Needs a human look" without a card id. `alertRow`: the Alert-log id
+ * of its card when the caller knows it (the same-story dedup's newest card); else it is looked for by the signal's id.
+ * Never throws.
+ */
+function edCardOfSignal_(ctx, id, alertRow) {
+  const sid = String(id || '').trim();
+  if (!sid) return null;
+  try {
+    const alerts = ((ctx && ctx.store && ctx.store.alerts) || []).filter(a => a && a.ingested === ED_ALERT_INGESTED_);
+    const snapOf = a => ((a.forwarded_fields && a.forwarded_fields.early_detection) || {});
+    const a = alertRow ? alerts.find(x => String(x.alert_id || '') === String(alertRow))
+      : alerts.filter(x => String(snapOf(x).ed_alert_id || '') === sid)
+        .sort((p, q) => (Number(q.created_at) || 0) - (Number(p.created_at) || 0))[0];
+    if (a) {
+      const snap = snapOf(a);
+      const was = snap.update_of ? alerts.find(x => String(x.alert_id || '') === String(snap.update_of)) : null;
+      const outcome = snap.update_of ? ED_OUT_.update : snap.disposition === 'escalate' ? ED_OUT_.cardAlert
+        : snap.basis === 'failed' ? ED_OUT_.cardHuman : ED_OUT_.cardMonitor;
+      return { outcome, why: 'Its card was posted on an earlier try', title: String(snap.story_title || ''),
+        tag: String(a.exposure_tag || ''),
+        card: snap.update_of ? { id: String(snap.update_of), message: String((was && was.source_message) || '') }
+          : { id: String(a.alert_id || ''), message: String(a.source_message || '') } };
+    }
+    let infos = [];
+    try { infos = JSON.parse(PropertiesService.getScriptProperties().getProperty(ED_INFO_PROP_) || '[]') || []; } catch (e) { infos = []; }
+    if ((Array.isArray(infos) ? infos : []).some(x => x && String(x.id || '') === sid)) {
+      return { outcome: ED_OUT_.cardHuman, why: 'Its card is in the space, but the bot could not record it, so a person makes the call',
+        title: '', tag: '', card: null };
+    }
+  } catch (e) {}
+  return null;
+}
+
+/**
+ * Notes a queued signal the same-story dedup holds back at its turn (EarlyDetection.gs edDrainQueue_; `verdict`:
+ * edStoryVerdict_'s): a repeat with nothing new; or, when the card that holds it is its own (posted on an earlier try
+ * whose run failed before the signal left the queue), that card: it counts among the cards. Never throws.
+ */
+function edNoteHeld_(ctx, row, verdict, now) {
+  const L = verdict && verdict.prior && verdict.prior.latest;
+  if (row && row.alert_id && L && L.ed === String(row.alert_id)) {
+    const own = edCardOfSignal_(ctx, row.alert_id, L.row);
+    if (own) {
+      return edNote_(ctx, row, own.outcome, own.why,
+        { waited: true, logged: true, title: own.title, tag: own.tag, card: own.card || { id: L.row || '', message: L.msg || '' } });
+    }
+  }
+  return edNote_(ctx, row, ED_OUT_.repeat, edRepeatWhy_(row, verdict, null, now),
+    { waited: true, logged: true, card: edPriorCard_(verdict) });
+}
+
+/**
+ * Notes a signal the review queue gave up on (EarlyDetection.gs edDrainQueue_; `x`: one of BigQuery.gs edQueuePrune_'s
+ * dropped: it waited too long, or two reviews started without finishing). Never reviewed, and its story's marks come
+ * out of the seen map (BigQuery.gs edSeenForget_: the story's next signal is no repeat of it); unless its card is in the
+ * space already (edCardOfSignal_: the run failed after the card was posted): then that card is noted, with a line in the
+ * run log, and its story stays marked, so the story's next signal makes no second card. Never throws.
+ */
+function edNoteDropped_(ctx, props, x, now) {
+  try {
+    const d = x || {};
+    const row = d.row || edEntryRow_(d.entry);
+    const card = edCardOfSignal_(ctx, row.alert_id || d.id);
+    if (card) {
+      return edNote_(ctx, row, card.outcome, card.why, { waited: true, title: card.title, tag: card.tag, card: card.card });
+    }
+    edSeenForget_(props, d.row, now);
+    return edNote_(ctx, row, ED_OUT_.never, edNeverWhy_(d.cause), { waited: true, logged: true });
+  } catch (e) {
+    console.error('early detection: could not note a signal the queue gave up on: ' + ((e && e.message) || e));
+    return null;
+  }
 }

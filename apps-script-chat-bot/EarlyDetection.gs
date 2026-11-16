@@ -1866,8 +1866,7 @@ function edDrainQueue_(ctx, report) {
     p.dropped.forEach(x => {
       ctx.log(`early detection: dropped ${x.id || 'a queued signal'} (${x.why})`);
       if (writeBq && x.id) events.push(ewBqEventRow_(x.id, null, 'dropped_stale', x.why, null, ctx.now()));
-      edSeenForget_(props, x.row, ctx.now());  // nobody reviewed its story: the story's next signal is no repeat
-      edNote_(ctx, x.row || edEntryRow_(x.entry), ED_OUT_.never, edNeverWhy_(x.cause), { waited: true, logged: true });
+      edNoteDropped_(ctx, props, x, ctx.now());  // never reviewed (its story's marks come out), or its card is in the space
     });
     out.dropped += p.dropped.length;
     return p.list;
@@ -1904,8 +1903,7 @@ function edDrainQueue_(ctx, report) {
       if (writeBq && (entry.id || (row && row.alert_id))) {
         events.push(ewBqEventRow_(entry.id || row.alert_id, row && row.cluster_id, 'held_repeat', verdict.hold, null, ctx.now()));
       }
-      edNote_(ctx, row, ED_OUT_.repeat, edRepeatWhy_(row, verdict, null, ctx.now()),
-        { waited: true, logged: true, card: edPriorCard_(verdict) });
+      edNoteHeld_(ctx, row, verdict, ctx.now());  // a repeat, or its own card posted on an earlier try
       list = prune();
       continue;
     }
