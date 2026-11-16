@@ -139,7 +139,7 @@ function isBotFormattedText_(text) {
  * here (so the bot knows the note as its own with no message id, and never answers it), in Outbox.gs
  * OUTBOX_NOTE_PATTERNS_ (it can never go to S-F Burson) and in the leak audit's list (test/run_tests.js LEAK_NOTE_HEADS_).
  */
-const THREAD_NOTE_HEADS_ = ['Also flagged by the watch', 'Part of a story', 'Alert requirements'];
+const THREAD_NOTE_HEADS_ = ['Also flagged by the watch', 'Part of a story', 'Alert requirements', 'Same story'];
 
 /**
  * True when `text` starts as one of those notes does: an emoji and a space first, or not; a bold mark first, or not;

@@ -181,4 +181,122 @@ module.exports = H => {
     eq(keysOf(mOn.t)[`${PIXEL}|${BRAND}`].a, 'd');
     eq(mOn.out.chat.filter(c => NOTE_RX.test(c.text)), []);
   });
+
+  // -----------------------------------------------------------------------------------------------------------
+  // The watch's "Same story: N more posts" reply under its own alert
+  // -----------------------------------------------------------------------------------------------------------
+
+  const STORY = 'Pixel batteries swell after the update';
+  const P = n => `https://x.com/user${n}/status/21700000000000${String(n).padStart(5, '0')}`;
+  /** A flag on the battery story (250+ engagements: each matters by itself; the higher `n`, the more engagements). */
+  const storyFlag = n => golden.rows.hit({ post_url: P(n), author: `@user${n}`, followers: 3200, eng: 250 + n, issue: STORY,
+    summary: `An X user (@user${n}) says their Pixel battery swelled after the update.`, topic: 'Product failure or outage' });
+  /** A pre-read in which every flag on the battery story tells it: an alert posted on it lately, else the run's first flag. */
+  const sameStory = t => {
+    t.g.vertex.watchPreRead = payload => {
+      const prompt = payload.contents[0].parts.map(p => p.text || '').join('');
+      const part = tag => JSON.parse((prompt.match(new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`)) || [])[1] || '[]');
+      const posts = part('watch_posts');
+      const earlier = part('recent_alerts').find(r => r.story === STORY);
+      return { watch_posts: posts.map((p, i) => ({ ref: p.ref, summary: p.text || 'A user says their Pixel battery swelled.',
+        background: '', about_google: true, product: 'Pixel', other_products: [], exposure_tag: 'Product - Other/general criticism',
+        sensitive_topics: [], story: STORY, same_story_as: earlier ? earlier.ref : i ? posts[0].ref : '', meaningful: true })) };
+    };
+  };
+  /** Runs until the watch has sent a look; the next run collects it with `hits`. */
+  function look(w, hits) {
+    const { t, feed } = w;
+    const sent = () => Object.keys(feed.jobs).length;
+    feed.look = [];
+    const before = sent();
+    for (let i = 0; i < 8 && sent() === before; i++) t.poll();
+    assert.ok(sent() > before, 'a look was sent');
+    feed.look = hits;
+    t.poll();
+    feed.look = [];
+  }
+  const watchCard = (t, space) => t.chat.botPosts(space || AC).find(m => !m.threadReply && /^client-zwat-/.test(m.clientAssignedMessageId || ''));
+  /** Every message in the thread of `card`, after it: [id prefix, text]. */
+  const threadOf = (t, card, space) => t.chat.spaces.get(space || AC).messages
+    .filter(m => m.thread.name === card.thread.name && m.name !== card.name)
+    .map(m => [String(m.clientAssignedMessageId || '').replace(/^(client-[a-z]+-).*$/, '$1'), m.text]);
+
+  test('watch cover notes: in the one-space setup the watch\'s "Same story: N more posts" reply under its own alert, posted as it is with cross_alert_notes off, is answered by the bot\'s own flow on the next run (the bot took it for a person\'s follow-up); with the setting on, the same reply, word for word, is a note of the bot\'s own (through the helper) and nothing answers it', () => {
+    const run = settings => {
+      const w = oneSpace(settings);
+      sameStory(w.t);
+      look(w, [storyFlag(2), storyFlag(1)]);
+      for (let i = 0; i < 3; i++) w.t.poll();
+      return threadOf(w.t, watchCard(w.t));
+    };
+    const off = run({ cross_alert_notes: false });
+    const on = run();
+    const reply = off.find(([, text]) => /^🔗 \*Same story: 1 more post\*/.test(text));
+    assert.ok(reply, JSON.stringify(off));
+    // at the base: the reply carries the watch alerts' id, which isn't the bot's own message id, and gets an answer
+    eq(reply[0], 'client-zwat-');
+    assert.ok(off.some(([id, text]) => id === 'client-bqa-' && text === 'Happy to help with that.'), JSON.stringify(off));
+    // with the setting on: the same words, the bot's own id, and no answer
+    eq(on.filter(([, text]) => /Same story/.test(text)), [['client-bqa-', reply[1]]]);
+    eq(on.filter(([, text]) => text === 'Happy to help with that.'), []);
+    eq(on.length, off.length - 1);
+  });
+
+  test('watch cover notes: a later flag on the story of a Watch alert posted lately joins its thread as a note too ("seen since this alert was posted"); when the helper posts nothing (Chat refuses it), the flag waits on the tab (C35: 1 waiting), nothing else is posted for it, and it joins on a later run', () => {
+    const w = oneSpace();
+    const { t } = w;
+    sameStory(t);
+    look(w, [storyFlag(2), storyFlag(1)]);
+    const card = watchCard(t);
+    refuseNotes(t, /Same story/);
+    look(w, [storyFlag(3)]);
+    eq(keysOf(t)[`${P(3)}|${BRAND}`].a, 'q');
+    assert.match(c35(t), /, 1 waiting · /);
+    eq(t.chat.botPosts(AC).filter(m => /user3\b/.test(m.text)), []);
+    t.chat.fail = null;
+    t.poll();
+    eq(keysOf(t)[`${P(3)}|${BRAND}`].a, 'g');
+    const joined = threadOf(t, card).filter(([, text]) => /^🔗 \*Same story: 1 more post\* \(seen since this alert was posted\)/.test(text));
+    eq(joined.map(([id, text]) => [id, /user3\b/.test(text)]), [['client-bqa-', true]]);
+  });
+
+  /** Chat refuses (a 500) what the bot posts when its text matches `rx`. */
+  function refuseNotes(t, rx) {
+    t.chat.fail = (method, path, query, body) => (method === 'post' && body && rx.test(String(body.text || ''))
+      ? { code: 500, body: { error: { code: 500, message: 'Internal error encountered' } } } : null);
+  }
+
+  test('watch cover notes: in the Mirror flow the "Same story" reply is posted as it was, with the watch alerts\' id, and the flow puts out the same with the default settings as with every setting off', () => {
+    const run = settings => {
+      const w = golden.world.mirrorWorld(settings);
+      const { t, rec } = w;
+      sameStory(t);
+      look(w, [storyFlag(2), storyFlag(1)]);
+      for (let i = 0; i < 3; i++) t.poll();
+      rec.collect('the look and three runs');
+      return { t, out: rec.out() };
+    };
+    const on = run();
+    const off = run(golden.SETTINGS_OFF);
+    eq(golden.differences(on.out, off.out), []);
+    const card = watchCard(on.t, golden.spaces.MIRROR);
+    assert.ok(card, 'the Watch alert in the Mirror space');
+    const replies = threadOf(on.t, card, golden.spaces.MIRROR).filter(([, text]) => /Same story/.test(text));
+    eq(replies.map(([id, text]) => [id, text.split('\n')[0]]), [['client-zwat-', '🔗 *Same story: 1 more post*']]);
+    eq(on.out.chat.filter(c => NOTE_RX.test(c.text)), []);
+  });
+
+  test('watch cover notes: the "Same story" reply\'s first words are registered as a note\'s: the bot knows a message from its account that starts so as its own, and on a way to S-F Burson an analyst\'s message that starts so (or says "Same story:") is held, while the bot\'s own answer to a question of Burson\'s is checked as before; "the same story" in a sentence is anyone\'s to say', () => {
+    const B = H.B;
+    const GUARD = { terms: ['SLRR Triaged Alerts', 'AAQAaLn375E'] };
+    const ctx = { botUser: 'users/bot', store: { isOwnPost: () => false } };
+    const reply = '🔗 *Same story: 2 more posts*\n• <https://x.com/a/status/1|@a> · X';
+    eq([B.isThreadNoteText_(reply), B.isOwnMessage_(ctx, { senderName: 'users/bot', text: reply }),
+      B.isOwnMessage_(ctx, { senderName: 'users/someone', text: reply })], [true, true, false]);
+    eq(B.outboxGuardHits_('Same story: we saw this yesterday', GUARD), ['Same story']);
+    eq(B.outboxGuardHits_('Dana Lee: see the Same story: line', GUARD), ['Same story:']);
+    eq(B.outboxGuardHits_('Same story: we saw this yesterday', GUARD, true), []);
+    eq(B.outboxGuardHits_('This is the same story as yesterday.', GUARD), []);
+    assert.ok(H.leakDenied(reply) && !H.leakDenied('This is the same story as yesterday.'));
+  });
 };

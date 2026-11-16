@@ -1613,7 +1613,8 @@ function pwPostStoryReply_(space, thread, text, key) {
  */
 function pwPostStories_(items, pre, recent, c) {
   const res = { posted: 0, grouped: 0, dup: 0, empty: 0, held: 0, repeats: 0, offTopic: 0, builds: 0, problem: '',
-    stopped: '' };  // stopped: why stories were left for the next run ('time': the run ran short; 'capped': a run's most)
+    stopped: '' };  // stopped: why stories were left for the next run ('time': the run ran short; 'capped': a run's most;
+                    // 'note': the same-story note the helper didn't post, in the Auto-correct space)
   const space = c.dest.space;
   // the Auto-correct space (B10): the post's own picture only, else its words on the card (C1, C2)
   const ownPic = c.dest.choice === 'autocorrect';
@@ -1626,15 +1627,28 @@ function pwPostStories_(items, pre, recent, c) {
   // a flag of this run, or a small one held on an earlier run, as the thread reply and the marks take it
   const entry = i => ({ q: items[i].q, a: items[i].a, p: pr(i) });
   const heldEntry = h => ({ q: h, a: pwAlertOfRow_(h.v, h.k), p: null });
-  const join = (entries, thread, alertName, later, story) => {
-    const reply = pwPostStoryReply_(space, thread, pwStoryReplyText_(entries.map(e => pwStoryView_(e, e.p)), later),
-      `pwg:${alertName}|${entries.map(e => e.q.k.k).sort().join(',')}`);
+  // P4b (setting cross_alert_notes, the Auto-correct space only: pwCrossNotesOn_): the same-story reply is a note under
+  // its alert's card, posted through the one helper (ThreadNotes.gs acThreadNote_) as the bot's own message, so the
+  // bot's flow never answers it; false when the helper posted nothing (its caps, its checks, Chat): the flags wait.
+  // Everywhere else it is posted as before. `born`: when the alert's card was posted (ms), when this run posted it
+  const asNote = pwCrossNotesOn_(c.dest);
+  const join = (entries, thread, alertName, later, story, born) => {
+    const text = pwStoryReplyText_(entries.map(e => pwStoryView_(e, e.p)), later);
+    const key = `pwg:${alertName}|${entries.map(e => e.q.k.k).sort().join(',')}`;
+    let reply = null;
+    if (asNote) {
+      if (!acThreadNote_(c.dest, Object.assign({ thread, message: alertName }, Number(born) > 0 ? { createTime: Number(born) } : {}),
+        text, key)) return false;
+    } else {
+      reply = pwPostStoryReply_(space, thread, text, key);
+    }
     entries.forEach(e => {
       c.mark(e.q, Object.assign({ a: 'g', t: thread, pm: alertName, m: (reply && reply.name) || '' }, at));
       c.done.set(e.q.k.k, pwAlertWords_({ a: 'g', st: story }));
     });
     res.grouped += entries.length;
     replies++;
+    return true;
   };
   const failed = e => {
     res.problem = `couldn't post in ${space.name}: ${truncate_(String((e && e.message) || e), 120)}`;
@@ -1662,7 +1676,8 @@ function pwPostStories_(items, pre, recent, c) {
           continue;
         }
         try {
-          join(joining.map(entry), R.thread, R.m, true, R.story);
+          // as a note, one the helper didn't post leaves these flags waiting for the next run
+          if (!join(joining.map(entry), R.thread, R.m, true, R.story)) res.stopped = res.stopped || 'note';
         } catch (e) {
           failed(e);
           break;
@@ -1817,8 +1832,8 @@ function pwPostStories_(items, pre, recent, c) {
     let joined = false;
     if (listed.length && msg && msg.thread) {
       try {
-        join(listed, msg.thread, msg.name, false, story);
-        joined = true;
+        joined = join(listed, msg.thread, msg.name, false, story, msg.createTime);
+        if (!joined) console.warn('Watch alerts: couldn\'t add the story\'s other posts to its alert\'s thread: the note wasn\'t posted');
       } catch (e) {
         console.warn(`Watch alerts: couldn't add the story's other posts to its alert's thread: ${truncate_(String((e && e.message) || e), 160)}`);
       }
@@ -2067,7 +2082,8 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     }
     if (out.waiting) {
       pwWaitWhyKeep_(pwNoChatIds_(problem || (stopped === 'time' ? 'the run ran short of time before it reached them'
-        : stopped === 'capped' ? 'more flags were waiting than one run reads and posts' : 'they were not reached this run'), space), now);
+        : stopped === 'capped' ? 'more flags were waiting than one run reads and posts'
+          : stopped === 'note' ? 'their story\'s alert took no more notes in its thread this run' : 'they were not reached this run'), space), now);
       if (coverWait.size && out.waiting === coverWait.size) {
         pwWaitWhyKeep_('the card of their post was not in the Alert log yet, to put the note under it', now);
       }

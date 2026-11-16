@@ -84,7 +84,7 @@ module.exports = H => {
 
   test('thread notes: the fixed first words ("Also flagged by the watch", "Part of a story", "Alert requirements") are registered three ways: the bot knows a note that starts with one as its own (with its emoji and bold mark, or as Chat gives it back without them), the wider guard holds it on any way to S-F Burson (alone, as a note, quoted by an analyst, on a later line), and the leak audit\'s own list denies it; "the alert requirements" in a sentence, or being part of a story, is still anyone\'s to say', () => {
     const heads = B.ev('THREAD_NOTE_HEADS_');
-    eq(heads, ['Also flagged by the watch', 'Part of a story', 'Alert requirements']);
+    eq(heads, ['Also flagged by the watch', 'Part of a story', 'Alert requirements', 'Same story']);
     const ctx = { botUser: 'users/bot', store: { isOwnPost: () => false } };
     const own = text => B.isOwnMessage_(ctx, { senderName: 'users/bot', text });
     const held = text => B.outboxGuardHits_(text, GUARD).length > 0;
@@ -105,7 +105,8 @@ module.exports = H => {
     // ...but only in those forms: these are neither the bot's own nor held
     ['Please look at the alert requirements for this one.', 'It comes from the alert requirements: https://docs.google.com/document/d/abc/edit.',
       'What are the Alert requirements for a P1?', 'This post is part of a story we alerted yesterday.', 'Part of a storyline about maps',
-      'Alert requirementss', 'Also flagged by the watchdog group', 'The watch company flagged it'].forEach(text => {
+      'Alert requirementss', 'Also flagged by the watchdog group', 'The watch company flagged it', 'This is the same story as yesterday.',
+      'Same storyline about maps'].forEach(text => {
       eq([B.isThreadNoteText_(text), B.outboxGuardHits_(text, GUARD).filter(h => /story|requirements|flagged/i.test(h)), leakDenied(text)],
         [false, [], false], text);
     });
@@ -447,7 +448,7 @@ module.exports = H => {
     refused(null, cards.pixel, STORY_NOTE, 'there is no flow or watch destination');
     refused({}, cards.pixel, STORY_NOTE, 'there is no flow or watch destination');
     const FIRST = 'the note doesn\'t start with one of the fixed first words';
-    ['Another post on this issue: 2,400 engagements', '🔗 *Same story: 2 more posts*', 'FYI: Part of a story: 5 accounts', 'part of a story: 5 accounts']
+    ['Another post on this issue: 2,400 engagements', '🔗 *Same thread: 2 more posts*', 'FYI: Part of a story: 5 accounts', 'part of a story: 5 accounts']
       .forEach(text => refused(ac, cards.pixel, text, FIRST));
     refused(ac, cards.pixel, '  ', 'there is no text');
     refused(ac, cards.pixel, null, 'there is no text');
