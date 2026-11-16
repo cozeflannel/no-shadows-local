@@ -4661,10 +4661,12 @@ const leakDenied = t => LEAK_DENY_.test(t) || LEAK_NOTE_HEADS_.test(t);
 // counts against it.
 const LEAK_OWN_ANSWERS_ = new Set();
 const ownAnswerInBurson = text => { LEAK_OWN_ANSWERS_.add(String(text)); };
+// What the audit below holds against a text posted in a Burson space (H.leakAuditDenied: so its rule is tested too)
+const leakAuditDenied = t => LEAK_DENY_.test(t) || (LEAK_NOTE_HEADS_.test(t) && !LEAK_OWN_ANSWERS_.has(t));
 
 const H = { assert, F, B, NOW, test, eq, plain, parse, review, world, e2e, collectBurson, makeGoogle, loadBot, decodeMime,
   CHAT_POSTS, FakeSpreadsheet, GUARD, ANALYST_NAME, TEST_FEED, TRIAGED, REAL, VENDOR, CELL, RES, KB, driveFile, resultsRow,
-  resultsRows, MAPS_LOW, MISTAKES_NO_LINK, bursonTexts, markAs, leakDenied, ownAnswerInBurson };
+  resultsRows, MAPS_LOW, MISTAKES_NO_LINK, bursonTexts, markAs, leakDenied, ownAnswerInBurson, leakAuditDenied };
 require('fs').readdirSync(__dirname).filter(f => /^switch_.+\.test\.js$/.test(f)).sort().forEach(f => require('./' + f)(H));
 
 // =============================================================================================================
@@ -4673,7 +4675,7 @@ require('fs').readdirSync(__dirname).filter(f => /^switch_.+\.test\.js$/.test(f)
 
 test('nothing posted in a Burson space mentions the second analyst space, forwarding, reducing reliance on Burson, or internal emails/ids, or starts as a note the bot posts under a card in the Auto-correct space', () => {
   assert.ok(bursonTexts.length >= 8, `only ${bursonTexts.length} Burson texts collected`);
-  for (const t of bursonTexts) assert.ok(!LEAK_DENY_.test(t) && (!LEAK_NOTE_HEADS_.test(t) || LEAK_OWN_ANSWERS_.has(t)), t);
+  for (const t of bursonTexts) assert.ok(!leakAuditDenied(t), t);
   const legend = new Set(B.ev('GEN').legend.map(a => a.emoji));
   for (const e of bursonReactions) {
     assert.ok(legend.has(e) || legend.has(e + '\uFE0F'), `unexpected reaction ${e}`);

@@ -151,6 +151,14 @@ module.exports = H => {
       'See the Mirror for that.', 'Zapier copied it.', 'It is on the outbox tab.', 'Ask in SLRR Triaged Alerts.', 'It was forwarded.',
       'See spaces/AAQAaLn375E for more.'].forEach(text => assert.ok(asAnswer(text).length > 0, text));
     eq(asAnswer('*Alert requirements:* per SLRR, a P1 needs 2,000+ engagements.'), ['SLRR']);
+    // the leak audit (run_tests.js) takes only an answer a test named for the answer it is: a note, the same answer
+    // with a word more, and a named answer that holds anything else on its lists are still held against a Burson space
+    const INTERNAL = '*Alert requirements:* ask in the analyst space.';
+    H.ownAnswerInBurson(INTERNAL);
+    eq(ANSWERS.map(H.leakAuditDenied), [false, false, false]);
+    eq([REQ_NOTE, STORY_NOTE, WATCH_NOTE, `${ANSWERS[0]} Thanks!`, ANSWERS[0].replace('P1', 'P2'), INTERNAL, 'It was forwarded.']
+      .map(H.leakAuditDenied), Array(7).fill(true));
+    eq(['Please check this alert against the alert requirements.', 'Happy to help with that.'].map(H.leakAuditDenied), [false, false]);
     // which rows and replies are the bot's own answer
     const M = 'spaces/AAQAmirrorgf1/messages/m7';
     eq([`ans:${M}`, `own:ans:${M}`].map(k => B.outboxOwnAnswerKey_(k)), [true, true]);
