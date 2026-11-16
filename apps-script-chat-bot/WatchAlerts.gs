@@ -49,6 +49,8 @@
  * PW_ALERT_MAX_AGE_MS_ of being seen is dropped (a: 'x'). None
  * goes to the Mirror space while its flow ran out of time on the last run (Burson's alerts come first). Never into S-F
  * Burson (B25), the Burson test copy (B26) or a space people outside Google can join (Chat.gs refuses them too).
+ * C35 says where they go and, for the day, how every queued flag ended: each flag in one count, on the day it ends, the
+ * counts before the explanation and never cut (pwAlertsNoteText_, pwAlertDay_).
  */
 
 const PW_ALERTS_ROW_ = 35;
@@ -72,7 +74,13 @@ const PW_ALERT_PIC_LEFT_MS_ = 30 * 1000;          // the post's picture is attac
 const PW_ALERT_PAGE_PIC_LEFT_MS_ = 45 * 1000;     // ...and its page read for one (Post.gs pagePicture_) only with this much
 // The networks a link label names ("View the post on X"); anything else is just "View the post"
 const PW_ALERT_NETS_ = ['X', 'Instagram', 'TikTok', 'YouTube', 'Reddit', 'Bluesky', 'Facebook', 'Threads', 'LinkedIn'];
-const PW_ALERT_DAY_PROP_ = 'PW_ALERT_TODAY';      // {day, n}: today's watch alerts
+// Today's watch alerts and how today's other flags ended: {day, n: posted, b: of those a build-up, g: added to a story's
+// thread, h: small held, r: repeats, o: off-topic, d: on a post that already had an alert, dn: of those noted under that
+// alert's card, t: a second watch's flag on the same post, l: not in English, x: dropped after 3 hours, e: nothing to
+// show} (pwAlertDay_; a count that is zero has no key)
+const PW_ALERT_DAY_PROP_ = 'PW_ALERT_TODAY';
+const PW_ALERTS_NOTE_CHARS_ = 480;                // C35 at most: what stands beside the day's counts is cut, never a count
+const PW_ALERTS_NOTE_TAIL_MIN_ = 40;              // ...its explanation left out when fewer characters of it than this would fit
 const PW_ALERT_PENDING_PROP_ = 'PW_ALERT_PENDING';  // set while flags may wait on the Watch detections tab (else it isn't read)
 const PW_ALERT_TEXT_CHARS_ = 600;                 // of the post's words in an alert
 const PW_ALERT_HEAD_ = '\ud83d\udd2d';
@@ -230,32 +238,65 @@ function pwAlertsWhere_(choice) {
 }
 
 /**
+ * Today's counts as C35 writes them ("today: 3 posted (1 a build-up of small posts), +2 in their story's thread", and
+ * so on): `today` (watch alerts posted), `grouped` (same-story posts added to an alert's thread), `more` (pwAlertDayMore_: {builds:
+ * alerts that are a build-up of small posts, held: small flags held to be grouped, repeats: flags on a story already
+ * alerted, offTopic: flags not about Google, already: flags on a post, or in a thread, that already had an alert, noted:
+ * how many of those were noted under that alert's card, twin: a second watch's flags on a post another watch flagged
+ * too, notEnglish, dropped: flags dropped after waiting PW_ALERT_MAX_AGE_MS_, empty: flags with nothing to show}) and
+ * `waiting` (flags this run left waiting). Every count but the first only when above zero. Pure.
+ */
+function pwAlertCountsText_(today, grouped, more, waiting) {
+  const m = more || {};
+  const n = k => Number(m[k]) || 0;
+  const part = (k, words) => (n(k) ? `, ${fmtInt_(n(k))} ${words}` : '');
+  const noted = Math.min(n('noted'), n('already'));
+  return `today: ${fmtInt_(today || 0)} posted${n('builds') ? ` (${fmtInt_(n('builds'))} a build-up of small posts)` : ''}` +
+    `${grouped ? `, +${fmtInt_(grouped)} in their story's thread` : ''}` +
+    part('held', 'small held to be grouped') +
+    part('repeats', 'repeats of an alerted story held back') +
+    part('offTopic', 'off-topic not posted') +
+    part('already', 'on a post that already had an alert' +
+      (!noted ? '' : noted < n('already') ? ` (${fmtInt_(noted)} noted in its thread)` : ' (noted in its thread)')) +
+    part('twin', 'on a post another watch flagged too') +
+    part('notEnglish', 'not in English') +
+    part('dropped', `dropped after waiting ${Math.round(PW_ALERT_MAX_AGE_MS_ / (60 * 60 * 1000))} hours`) +
+    part('empty', 'with nothing to show') +
+    `${waiting ? `, ${fmtInt_(waiting)} waiting` : ''}`;
+}
+
+/**
+ * C35's text within PW_ALERTS_NOTE_CHARS_: `lead`, the day's `counts` (pwAlertCountsText_), then `tail` (the fixed
+ * explanation, or none). Never a count is cut: the tail is, or left out when under PW_ALERTS_NOTE_TAIL_MIN_ characters
+ * of it would fit, and then the lead. Pure.
+ */
+function pwAlertsNoteFit_(lead, counts, tail) {
+  const sep = ' \u00b7 ';
+  const base = `${truncate_(lead, Math.max(1, PW_ALERTS_NOTE_CHARS_ - sep.length - counts.length))}${sep}${counts}`;
+  const room = PW_ALERTS_NOTE_CHARS_ - base.length - sep.length;
+  return tail && room >= PW_ALERTS_NOTE_TAIL_MIN_ ? `${base}${sep}${truncate_(tail, room)}` : base;
+}
+
+/**
  * C35 for this run: `dest` (pwAlertsDest_), `res` (pwPostAlerts_, or null when nothing was tried), `watchOn` (row 34),
  * `today` (watch alerts posted today), `grouped` (same-story posts added to an alert's thread today), `more` (today's
- * {builds: alerts that are a build-up of small posts, held: small flags held to be grouped, repeats: flags on a story
- * already alerted, offTopic: flags not about Google}: pwAlertDayMore_). Under 480 characters. Pure.
+ * other counts: pwAlertDayMore_). The day's counts stand before the fixed explanation, and whatever the day held, every
+ * count is there whole (pwAlertsNoteFit_). Pure.
  */
 function pwAlertsNoteText_(dest, res, watchOn, today, grouped, more) {
   const choice = dest && dest.choice;
   if (!choice) return pwAlertsOffText_();
   const where = pwAlertsWhere_(choice);
   if (!watchOn) return `\u26a0\ufe0f ${where} chosen, but the Proactive watch (row 34) is OFF: nothing to post`;
-  const m = more || {};
-  const n = k => Number(m[k]) || 0;
-  const counts = ` \u00b7 today: ${fmtInt_(today || 0)} posted${n('builds') ? ` (${fmtInt_(n('builds'))} a build-up of small posts)` : ''}` +
-    `${grouped ? `, +${fmtInt_(grouped)} in their story's thread` : ''}` +
-    `${n('held') ? `, ${fmtInt_(n('held'))} small held to be grouped` : ''}` +
-    `${n('repeats') ? `, ${fmtInt_(n('repeats'))} repeats of an alerted story held back` : ''}` +
-    `${n('offTopic') ? `, ${fmtInt_(n('offTopic'))} off-topic not posted` : ''}` +
-    `${res && res.waiting ? `, ${fmtInt_(res.waiting)} waiting` : ''}`;
+  const counts = pwAlertCountsText_(today, grouped, more, res && res.waiting);
   const problem = (dest && dest.problem) || (res && res.problem) || (!dest.space ? 'no space to post in this run' : '');
-  if (problem) return truncate_(`\u26a0\ufe0f waiting: ${problem} (a flag waits up to 3 hours)${counts}`, 480);
+  if (problem) return pwAlertsNoteFit_(`\u26a0\ufe0f waiting: ${problem} (a flag waits up to 3 hours)`, counts, '');
   const cellTag = choice === 'mirror' ? 'B9' : choice === 'autocorrect' ? 'B10' : 'B33';
   const modeNote = choice === 'mirror' ? ' (only the testers while Testing)' : ' (always Testing there)';
-  return truncate_(`\u2713 ${dest.space.name} (${cellTag}): a flag that matters by itself (a KOF author, ` +
+  return pwAlertsNoteFit_(`\u2713 ${dest.space.name} (${cellTag})`, counts, 'a flag that matters by itself (a KOF author, ' +
     `${fmtInt_(PW_SOLO_MIN_ENG_)}+ engagements or a P0 tag) is posted there as a ${PW_ALERT_HEAD_} Watch alert for full triage` +
     `${modeNote}; small ones wait and go out as one alert once ${PW_BREW_MIN_ACCOUNTS_} accounts tell the same story; ` +
-    `a story already alerted isn't posted again${counts}`, 480);
+    'a story already alerted isn\'t posted again');
 }
 
 // --------------------------------------------------------------------------------------------------------------
@@ -643,9 +684,14 @@ function pwAlertPosted_(name) {
   }
 }
 
+// Today's other counts (pwAlertDayMore_'s names), each with its key on PW_ALERT_TODAY
+const PW_ALERT_DAY_KEYS_ = [['builds', 'b'], ['held', 'h'], ['repeats', 'r'], ['offTopic', 'o'], ['already', 'd'], ['noted', 'dn'],
+  ['twin', 't'], ['notEnglish', 'l'], ['dropped', 'x'], ['empty', 'e']];
+
 /**
- * Today's watch alerts so far, with `add` more (and `addGrouped` more same-story posts in their threads; `more`:
- * {builds, held, repeats, offTopic} more of each: pwAlertDayMore_). Never throws.
+ * Today's watch alerts so far, with `add` more (and `addGrouped` more same-story posts in their threads; `more`: so
+ * many more of each of today's other counts, by pwAlertDayMore_'s names). A flag is counted on the day it ends (the day
+ * this is called), once. Never throws.
  */
 function pwAlertDay_(add, addGrouped, more) {
   try {
@@ -655,7 +701,7 @@ function pwAlertDay_(add, addGrouped, more) {
     const day = dayKey_();
     if (!s || s.day !== day) s = { day, n: 0 };
     const m = more || {};
-    const extra = [['b', m.builds], ['h', m.held], ['r', m.repeats], ['o', m.offTopic]].filter(x => Number(x[1]) > 0);
+    const extra = PW_ALERT_DAY_KEYS_.map(([name, k]) => [k, m[name]]).filter(x => Number(x[1]) > 0);
     if (add || addGrouped || extra.length) {
       s.n = (Number(s.n) || 0) + (Number(add) || 0);
       if (addGrouped) s.g = (Number(s.g) || 0) + Number(addGrouped);
@@ -670,17 +716,19 @@ function pwAlertDay_(add, addGrouped, more) {
 
 /**
  * Today's other counts (pwAlertDay_): {builds: alerts that are a build-up of small posts, held: small flags that waited
- * for company, repeats: flags on a story already alerted, offTopic: flags not about Google}. Never throws.
+ * for company, repeats: flags on a story already alerted, offTopic: flags not about Google, already: flags on a post, or
+ * in a thread, that already had an alert, noted: how many of those were noted under that alert's card, twin: a second
+ * watch's flags on a post another watch flagged too, notEnglish: flags on a post not in English, dropped: flags dropped
+ * after waiting PW_ALERT_MAX_AGE_MS_, empty: flags with nothing to show}. Never throws.
  */
 function pwAlertDayMore_() {
+  const out = {};
+  PW_ALERT_DAY_KEYS_.forEach(([name]) => { out[name] = 0; });
   try {
     const s = JSON.parse(PropertiesService.getScriptProperties().getProperty(PW_ALERT_DAY_PROP_) || 'null');
-    const on = s && s.day === dayKey_();
-    const n = k => (on ? Number(s[k]) || 0 : 0);
-    return { builds: n('b'), held: n('h'), repeats: n('r'), offTopic: n('o') };
-  } catch (e) {
-    return { builds: 0, held: 0, repeats: 0, offTopic: 0 };
-  }
+    if (s && s.day === dayKey_()) PW_ALERT_DAY_KEYS_.forEach(([name, k]) => { out[name] = Number(s[k]) || 0; });
+  } catch (e) { /* nothing counted */ }
+  return out;
 }
 
 /** Today's same-story posts added to an alert's thread instead of the main space (pwAlertDay_). Never throws. */
@@ -1394,7 +1442,8 @@ function pwPostStoryReply_(space, thread, text, key) {
  * One alert a story (pwPostAlerts_). `items` ([{q, a}]: the flags, the highest scores first), `pre` (pwPreRead_, or
  * null), `recent` (the stories the pre-read's R refs point into: the alerts posted lately, pwRecentStories_; the
  * build-ups still waiting, pwBrewing_; the stories already alerted, pwKnownStories_), `c` {dest, now, max, timeLeft,
- * done, doneThreadIds, mark, same}. For each story, in this order:
+ * done, doneThreadIds, mark, same (same(q, kind): the flag isn't posted, a: 'd'; `kind` says which of the day's counts
+ * it is, 'already' when left out: pwPostAlerts_)}. For each story, in this order:
  *   - one with an alert posted lately in this space goes in that alert's thread (but a flag that raises the stakes:
  *     pwStakesRose_);
  *   - one already alerted (any flow, PW_REPEAT_MS_ back) is not posted again (a: 'r', rf: the alert it repeats), unless
@@ -1507,7 +1556,7 @@ function pwPostStories_(items, pre, recent, c) {
       if (canFetch) {
         try { post = lookupPost_(a.url); } catch (e) { post = null; }
       }
-      if (post && isNonEnglishPost_(post.text || '', post.lang || '')) { c.same(q); res.dup++; drop(); continue; }
+      if (post && isNonEnglishPost_(post.text || '', post.lang || '')) { c.same(q, 'notEnglish'); res.dup++; drop(); continue; }
       const parentIds = Array.from(new Set(
         [post && post.parent && post.parent.id, post && post.reply_to && post.reply_to.id]
           .concat((post && post.thread_ids) || [])
@@ -1619,10 +1668,15 @@ function pwPostStories_(items, pre, recent, c) {
  * the Alert log) isn't posted again (a: 'd'); one with nothing to show (no summary, text or picture) is never posted as
  * a bare link (a: 'n'). Nothing goes out while B35 is OFF or the destination can't take them (they wait), nor while the
  * destination space's flow ran out of time. `left`: ms of the run left; `opts`: {ss, otherBusy, acBusy}. {posted,
- * grouped, held, repeats, offTopic, builds, waiting, dropped, problem, error}. Never throws.
+ * grouped, held, repeats, offTopic, builds, waiting, problem, error, and how the flags that ended a: 'd', 'x' or 'n'
+ * did: already (on a post, or in a thread, that already had an alert), noted (how many of those were noted under that
+ * alert's card: none yet, nothing posts such a note), twin (a second watch's flag on a post another watch's flag carries
+ * in this run), notEnglish, dropped (after PW_ALERT_MAX_AGE_MS_), empty (nothing to show)}: each flag that ends is in
+ * exactly one of today's counts (pwAlertDay_), which C35 shows (pwAlertCountsText_). Never throws.
  */
 function pwPostAlerts_(sh, dest, now, left, opts) {
-  const out = { posted: 0, grouped: 0, held: 0, repeats: 0, offTopic: 0, builds: 0, waiting: 0, dropped: 0, problem: '', error: false };
+  const out = { posted: 0, grouped: 0, held: 0, repeats: 0, offTopic: 0, builds: 0, waiting: 0, already: 0, noted: 0, twin: 0,
+    notEnglish: 0, dropped: 0, empty: 0, problem: '', error: false };
   try {
     const block = pwDetRows_(sh, PW_DET_READ_ROWS_);
     const queued = [];
@@ -1634,16 +1688,20 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     const { done, doneThreadIds } = pwAlertedState_(opts && opts.ss, block, dest && dest.choice);
     const writes = [];  // [index in the block, the key to write]
     const mark = (q, patch) => writes.push([q.i, Object.assign({}, q.k, patch)]);
-    // another watch, Burson, or an earlier post in the same thread already alerted: this flag isn't posted again
-    const same = q => mark(q, { a: 'd' });
+    // another watch, Burson, or an earlier post in the same thread already alerted: this flag isn't posted again. `kind`:
+    // which of the day's counts it is: 'already' (when left out), 'twin' or 'notEnglish'
+    const same = (q, kind) => {
+      mark(q, { a: 'd' });
+      out[kind || 'already']++;
+    };
     const fresh = queued.filter(q => {
       const qUrl = String(q.v[PW_COL_.post - 1] || '').replace(/^'/, '').trim();
       const qPid = postIdOf_(qUrl);
       const qSum = String(q.v[PW_COL_.summary - 1] || '').replace(/^'/, '').trim();
       const memSeen = typeof alertMemory_ === 'function' ? alertMemory_().seenPost(qUrl) : null;
-      if (done.has(q.k.k) || memSeen || String(q.v[PW_COL_.bursonAt - 1] || '').trim() || (qPid && doneThreadIds.has(qPid)) ||
-          isNonEnglishPost_(qSum, '')) {
-        same(q);
+      const alerted = done.has(q.k.k) || memSeen || String(q.v[PW_COL_.bursonAt - 1] || '').trim() || (qPid && doneThreadIds.has(qPid));
+      if (alerted || isNonEnglishPost_(qSum, '')) {
+        same(q, alerted ? 'already' : 'notEnglish');
         return false;
       }
       if (now - Math.max(Number(q.k.s) || 0, Number(q.k.rq) || 0) <= PW_ALERT_MAX_AGE_MS_) return true;
@@ -1671,7 +1729,7 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       const items = [];
       for (const q of fresh) {
         if (items.length >= PW_PREREAD_MAX_) break;
-        if (keys.has(q.k.k)) { same(q); continue; }
+        if (keys.has(q.k.k)) { same(q, 'twin'); continue; }
         keys.add(q.k.k);
         items.push({ q, a: pwAlertOfRow_(q.v, q.k) });
       }
@@ -1689,7 +1747,7 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
         out.repeats = res.repeats;
         out.offTopic = res.offTopic;
         out.builds = res.builds;
-        out.dropped += res.empty;
+        out.empty = res.empty;
         if (res.problem) problem = res.problem;
       }
     }
@@ -1702,9 +1760,10 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       console.log(`Watch alerts: not posted on their own: ${out.held} small (waiting for ${PW_BREW_MIN_ACCOUNTS_} accounts on one ` +
         `story), ${out.repeats} on a story already alerted, ${out.offTopic} not about Google`);
     }
-    if (out.posted || out.grouped || out.held || out.repeats || out.offTopic) {
-      pwAlertDay_(out.posted, out.grouped, { builds: out.builds, held: out.held, repeats: out.repeats, offTopic: out.offTopic });
-    }
+    // today's counts (C35): every flag this run ended, each in one of them
+    const more = {};
+    PW_ALERT_DAY_KEYS_.forEach(([name]) => { more[name] = out[name]; });
+    if (out.posted || out.grouped || Object.keys(more).some(name => more[name])) pwAlertDay_(out.posted, out.grouped, more);
     if (out.posted || out.grouped) {
       console.log(`Watch alerts: ${out.posted} posted${out.grouped ? `, ${out.grouped} added to their story's thread` : ''} ` +
         `in ${dest.space.name}${out.waiting ? `, ${out.waiting} waiting` : ''}`);

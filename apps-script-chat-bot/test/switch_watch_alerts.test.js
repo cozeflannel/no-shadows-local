@@ -503,13 +503,13 @@ module.exports = H => {
     eq(t.bot.pwAlertsNoteText_({ choice: '' }, null, true, 0), B.pwAlertsOffText_());
     eq(t.bot.pwAlertsNoteText_(ok, null, false, 0), '⚠️ Other alerts space (B33) chosen, but the Proactive watch (row 34) is OFF: nothing to post');
     eq(t.bot.pwAlertsNoteText_(ok, { posted: 1, waiting: 2, problem: '' }, true, 3),
-      '✓ Midterms 2026 (B33): a flag that matters by itself (a KOF author, 100+ engagements or a P0 tag) is posted there as a ' +
-      '🔭 Watch alert for full triage (always Testing there); small ones wait and go out as one alert once 3 accounts tell ' +
-      'the same story; a story already alerted isn\'t posted again · today: 3 posted, 2 waiting');
+      '✓ Midterms 2026 (B33) · today: 3 posted, 2 waiting · a flag that matters by itself (a KOF author, 100+ engagements ' +
+      'or a P0 tag) is posted there as a 🔭 Watch alert for full triage (always Testing there); small ones wait and go out ' +
+      'as one alert once 3 accounts tell the same story; a story already alerted isn\'t posted again');
     // today's other counts: the build-ups among the alerts, the posts in their story's thread, and what wasn't posted
     const full = t.bot.pwAlertsNoteText_(ok, { posted: 1, waiting: 2, problem: '' }, true, 31, 44,
       { builds: 6, held: 120, repeats: 55, offTopic: 27 });
-    assert.match(full, / · today: 31 posted \(6 a build-up of small posts\), \+44 in their story's thread, 120 small held to be grouped, 55 repeats of an alerted story held back, 27 off-topic not posted, 2 waiting$/);
+    assert.match(full, /^✓ Midterms 2026 \(B33\) · today: 31 posted \(6 a build-up of small posts\), \+44 in their story's thread, 120 small held to be grouped, 55 repeats of an alerted story held back, 27 off-topic not posted, 2 waiting · a flag that matters by itself /);
     assert.ok(full.length <= 480, String(full.length));
     eq(t.bot.pwAlertsNoteText_(t.bot.pwAlertsDest_(OTHER, null, viaMirror), null, true, 0),
       '⚠️ waiting: the Other alerts space (B33) is blank or can\'t be used this run (see C33) (a flag waits up to 3 hours) · today: 0 posted');
@@ -538,7 +538,7 @@ module.exports = H => {
     t.poll();
     t.poll();
     eq(posted(t, MID), []);  // the flag from before B35 was set never goes out
-    assert.match(c35(t), /^✓ Midterms 2026 \(B33\): a flag that matters by itself \(a KOF author, 100\+ engagements or a P0 tag\) is posted there/);
+    assert.match(c35(t), /^✓ Midterms 2026 \(B33\) · today: 0 posted · a flag that matters by itself \(a KOF author, 100\+ engagements or a P0 tag\) is posted there/);
     assert.match(t.control().cell(34, 3), /^✓ ON \(its flags go out as watch alerts: row 35, Other alerts space \(B33\)\)/);
     eq(t.bot.status().watch_alerts, OTHER);
   });
@@ -563,7 +563,7 @@ module.exports = H => {
     const k = keys(t);
     eq(k.map(x => [x.b, x.a]), [[1, 'p'], [0, undefined]]);
     eq([k[0].m, k[0].d, k[0].br, k[0].sc], [msg.name, 'other', 4, 6]);
-    assert.match(c35(t), /^✓ Midterms 2026 \(B33\): .* · today: 1 posted$/);
+    assert.match(c35(t), /^✓ Midterms 2026 \(B33\) · today: 1 posted · a flag that matters by itself /);
     eq(t.g.props.get('PW_ALERT_PENDING'), undefined);  // nothing waits: the tab isn't read for it again
     // the next run works it, right there
     t.poll();
@@ -911,7 +911,7 @@ module.exports = H => {
     let out = posted(t, MIRROR);
     eq(out.map(m => (m.text.match(/status\/(\d+)\|/) || [])[1]), ['198000000000000012', '198000000000000013']);  // 7, then 6
     eq(posted(t, MID), []);
-    assert.match(c35(t), /^✓ SLRR Zapier Training Mirror \(B9\): .*\(only the testers while Testing\); .* · today: 2 posted, 1 waiting$/);
+    assert.match(c35(t), /^✓ SLRR Zapier Training Mirror \(B9\) · today: 2 posted, 1 waiting · a flag that matters by itself .*\(only the testers while Testing\); /);
     t.poll();  // the third goes out; the first two are worked by the Mirror's flow
     out = posted(t, MIRROR);
     eq(out.length, 3);
@@ -932,7 +932,7 @@ module.exports = H => {
     t.control().getRange(33, 2).setValue(`https://chat.google.com/app/chat/${MID2.replace('spaces/', '')}`);
     look(w, [hit({ post_url: POST2, author: '@someone' })]);
     eq([posted(t, MID).length, posted(t, MID2).length], [1, 1]);
-    assert.match(c35(t), /^✓ Midterms 2026 alerts \(B33\): /);
+    assert.match(c35(t), /^✓ Midterms 2026 alerts \(B33\) · today: /);
     // B33 blank: the next flag waits
     t.control().getRange(33, 2).setValue('');
     look(w, [hit({ post_url: 'https://x.com/later/status/1980000000000000003', author: '@later' })]);
@@ -959,7 +959,7 @@ module.exports = H => {
     look(w, [hit()]);
     const out = posted(t, AC);
     eq(out.length, 1);
-    assert.match(c35(t), /^\u2713 SLRR Auto-correct Unified \(B10\): .* \u00b7 today: 1 posted$/);
+    assert.match(c35(t), /^\u2713 SLRR Auto-correct Unified \(B10\) \u00b7 today: 1 posted \u00b7 a flag that matters by itself /);
     chatShows(out[0]);
     t.poll();
     const notes = inThread(t, AC, out[0]);
@@ -1121,7 +1121,7 @@ module.exports = H => {
       '{"kv":"Brandwatch KOF alert"}'].map(B.pwTaxOf_), [{ p: [], t: '', s: [], k: true, l: 'Viral KOF' },
       { p: [], t: '', s: [], k: true, l: 'but not Viral KOF' }, { p: [], t: '', s: [], k: false, l: '' }, null,
       { p: [], t: '', s: [], k: true, l: 'Brandwatch KOF alert' }]);
-    assert.match(c35(t), / \u00b7 today: 1 posted$/);
+    assert.match(c35(t), / \u00b7 today: 1 posted, 1 with nothing to show \u00b7 a flag that matters by itself /);
     // ONE pre-read for the run, its posts as untrusted data, by ref; nothing posted lately to compare with
     eq(asked.length, 1);
     const sent = preReadOf(asked[0]);
@@ -1335,7 +1335,7 @@ module.exports = H => {
     let k = byKey();
     eq([WSJ, FOX13, FOX29, FOX2, POST].map(u => k[rk(u)].a), ['p', 'g', 'g', 'g', 'p']);
     eq([k[rk(FOX13)].pm, k[rk(FOX13)].t, k[rk(WSJ)].st, k[rk(WSJ)].bu, k[rk(POST)].bu], [story.name, story.thread.name, STORY, 4, undefined]);
-    assert.match(c35(t), / \u00b7 today: 2 posted \(1 a build-up of small posts\), \+3 in their story's thread$/);
+    assert.match(c35(t), / \u00b7 today: 2 posted \(1 a build-up of small posts\), \+3 in their story's thread \u00b7 a flag that matters by itself /);
     // Gemini weighs each post as a whole: whether it's meaningful enough to post about (a missing engagement count is
     // unknown, never held against it); its answer is kept per flag (null when it didn't say)
     assert.ok(asked[0].systemInstruction.parts[0].text.includes('A post without `engagements` has no count from its source (unknown, not zero)'));
@@ -1368,7 +1368,7 @@ module.exports = H => {
     assert.ok(later[1].startsWith(`\u2022 <${ENGADGET}|Engadget> \u00b7 Facebook \u00b7 1,600,000 followers \u00b7 4 engagements \u2014 `), later[1]);
     k = byKey();
     eq([k[rk(ENGADGET)].a, k[rk(ENGADGET)].pm, k[rk(BIG)].a], ['g', story.name, 'p']);
-    assert.match(c35(t), / \u00b7 today: 3 posted \(1 a build-up of small posts\), \+4 in their story's thread$/);
+    assert.match(c35(t), / \u00b7 today: 3 posted \(1 a build-up of small posts\), \+4 in their story's thread \u00b7 a flag that matters by itself /);
     eq([writes(t), outbox(t)], [[], []]);
   });
 
@@ -1478,7 +1478,7 @@ module.exports = H => {
     let k = byKey(t);
     eq([posted(t, MID).length, k[rk(url(1, 'parent1'))].a, k[rk(url(1, 'parent1'))].bg, k[rk(url(1, 'parent1'))].ac, k[rk(url(1, 'parent1'))].st],
       [0, 'b', rk(url(1, 'parent1')), 'x:parent1', STORY]);
-    assert.match(c35(t), /^✓ Midterms 2026 \(B33\): .* · today: 0 posted, 1 small held to be grouped$/);
+    assert.match(c35(t), /^✓ Midterms 2026 \(B33\) · today: 0 posted, 1 small held to be grouped · a flag that matters by itself /);
     eq(t.g.props.get('PW_ALERT_PENDING'), undefined);  // it isn't waiting to be posted: the tab isn't read for it every minute
     assert.ok(t.g.logs.some(l => /Watch alerts: not posted on their own: 1 small \(waiting for 3 accounts on one story\), 0 on a story already alerted, 0 not about Google/.test(l)));
     // 2: a second account, and a second post from the first: still two accounts. The pre-read was shown the build-up
@@ -1512,7 +1512,7 @@ module.exports = H => {
     k = byKey(t);
     eq([k[rk(REDDIT)].a, k[rk(REDDIT)].bu, k[rk(REDDIT)].st, [1, 2, 3].map(n => k[rk(url(n, n === 2 ? 'parent2' : 'parent1'))].a),
       k[rk(url(2, 'parent2'))].pm], ['p', 3, STORY, ['g', 'g', 'g'], msg.name]);
-    assert.match(c35(t), / · today: 1 posted \(1 a build-up of small posts\), \+3 in their story's thread, 3 small held to be grouped$/);
+    assert.match(c35(t), / · today: 1 posted \(1 a build-up of small posts\), \+3 in their story's thread, 3 small held to be grouped · a flag that matters by itself /);
     // the triage is told what built up, and to judge the story's momentum, not this one post's engagement
     chatShows(msg);
     t.poll();
@@ -1574,7 +1574,7 @@ module.exports = H => {
     assert.ok(of(2).text.includes('\n*Product:* Search, Shopping\n'), of(2).text);
     assert.ok(of(4).text.includes('\n*Product:* Search\n*Exposure Tag:* Product - Perceived bias (P0)\n'), of(4).text);
     assert.ok(of(4).text.includes('\n*Activity:* @Poster4 · X · 1,700 followers · 4 engagements\n'), of(4).text);
-    assert.match(c35(t), / · today: 3 posted, 1 off-topic not posted$/);
+    assert.match(c35(t), / · today: 3 posted, 1 off-topic not posted · a flag that matters by itself /);
     assert.ok(t.g.logs.some(l => l.includes(`Watch alerts: not posting ${u(1)}: the pre-read says it isn't about Google`)));
     eq([writes(t), outbox(t)], [[], []]);
   });
@@ -1605,7 +1605,7 @@ module.exports = H => {
     const shown = preReadOf(asked[asked.length - 1]).recent;
     eq(shown.map(r => [r.ref, r.story, r.status]), [['R1', ISSUE, undefined]]);
     eq([posted(t, MID).length, byKey(t)[rk(u(1))].a, byKey(t)[rk(u(1))].rf], [0, 'r', first]);
-    assert.match(c35(t), / · today: 0 posted, 1 repeats of an alerted story held back$/);
+    assert.match(c35(t), / · today: 0 posted, 1 repeats of an alerted story held back · a flag that matters by itself /);
     assert.ok(t.g.logs.some(l => l.includes(`Watch alerts: 1 flag not posted: ${first} already covered the story ("${ISSUE}")`)));
     // 2: 2,500 engagements (the alert's post had under 2,000): the stakes rose, posted
     look(w, [again(2, { eng: 2500 })]);
@@ -1618,7 +1618,7 @@ module.exports = H => {
     mode = 'unnamed';
     look(w, [again(4)]);
     eq([posted(t, MID).length, byKey(t)[rk(u(4))].a, byKey(t)[rk(u(4))].rf], [2, 'r', first]);
-    assert.match(c35(t), / · today: 2 posted, 2 repeats of an alerted story held back$/);
+    assert.match(c35(t), / · today: 2 posted, 2 repeats of an alerted story held back · a flag that matters by itself /);
     eq([writes(t), outbox(t)], [[], []]);
   });
 };
