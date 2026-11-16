@@ -17,6 +17,12 @@ module.exports = H => {
   const IN_PLACE = 'The agentic assistant reviewed this alert. The card above was posted before the review; the email uses ' +
     'these corrections:';
   const STAND_IN = { live: false, standIn: 'tester@testing.test', mailbox: 'bot@runner.test', from: 'Brand Social <bot@runner.test>' };
+  // The note's last line (RequirementLine.gs, settings.requirement_line): which alert requirement the alert met. F.P0_OK
+  // has a P0 exposure tag and 1 engagement; F.MISTAKES, corrected, a P0 exposure tag and 29,425 engagements, on an
+  // ongoing issue by an author who is no KOF: there the tag sends no Social Alert by itself, so the engagements are
+  // the requirement it meets
+  const REQ_P0 = '*Alert requirements:* met for a Social Alert: P0 exposure tag (Product - Perceived bias).';
+  const REQ_MISTAKES = '*Alert requirements:* met for a Social Alert: 29,425 engagements (2,000+ needed).';
   const SAM = 'https://x.com/WasSamLowryEsq/status/2109952063492993159';
   const P0_SUMMARY = parse(F.P0_OK).fields.summary;
   // The write-up Gemini gives for F.P0_OK, and the web searches behind it
@@ -82,7 +88,7 @@ module.exports = H => {
     const report = w.run();
     eq(tops(w).map(m => m.text), [`${CORRECTED}\n${F.MISTAKES_FIXED}`]);
     eq(notesUnder(w, tops(w)[0]), [`${HEAD}\n- Product: Gems to Gemini App\n- Social Network: Instagram to X\n` +
-      '- Priority banner: P2 to P0\n- Engagement: LOW to HIGH']);
+      `- Priority banner: P2 to P0\n- Engagement: LOW to HIGH\n${REQ_MISTAKES}`]);
     eq([w.bursonPosts(), report.corrected], [[], 1]);
     const main = ac({}, {}, false);
     main.paste(F.MISTAKES);
@@ -103,7 +109,8 @@ module.exports = H => {
     w.paste(F.P0_OK);
     w.run();
     const [top] = tops(w);
-    eq([tops(w).length, notesUnder(w, top)], [1, ['Not fixed: Burson\'s alert has no link to the post (Auto-find missing links, row 14, is OFF)', NOTE]]);
+    eq([tops(w).length, notesUnder(w, top)],
+      [1, [`Not fixed: Burson's alert has no link to the post (Auto-find missing links, row 14, is OFF)\n${REQ_P0}`, NOTE]]);
     eq(w.bursonPosts(), []);
     const forwarded = B.snapshotFields_(parse(F.NO_LINK).fields);
     eq([B.updateNote_(forwarded, review(F.P0_OK), true), B.updateNote_(forwarded, review(F.P0_OK))],
@@ -143,12 +150,13 @@ module.exports = H => {
     w.run();
     const [top] = tops(w);
     assert.ok(top.text.startsWith(`${CORRECTED}\n`) && top.text.includes('\n[Sensitive Topic]: Politics\n'), top.text);
-    eq(notesUnder(w, top).filter(n => !/^Social Alert/.test(n)), [`${HEAD}\n- Sensitive Topic: added Politics`]);
+    eq(notesUnder(w, top).filter(n => !/^Social Alert/.test(n)), [`${HEAD}\n- Sensitive Topic: added Politics\n` +
+      '*Alert requirements:* met for a Social Alert: P0 exposure tag (Product - Perceived bias) · Sensitive Topic (Politics).']);
     const low = ac();
     low.vertex.assess = () => ({ checks: [check('sensitive_topics_fit', 'Politics', 0.55)] });
     low.paste(F.P0_OK);
     low.run();
-    eq([tops(low)[0].text, notesUnder(low, tops(low)[0]).filter(n => !/^Social Alert/.test(n))], [`${REVIEWED}\n${F.P0_OK}`, []]);
+    eq([tops(low)[0].text, notesUnder(low, tops(low)[0]).filter(n => !/^Social Alert/.test(n))], [`${REVIEWED}\n${F.P0_OK}`, [REQ_P0]]);
     assert.ok(low.g.logs.some(l => /^left as Burson wrote it \(Gemini wasn't sure enough\): Sensitive Topic \(maybe Politics\), 55% sure/.test(l)),
       low.g.logs.join('\n'));
     const main = ac({}, {}, false);
@@ -212,7 +220,7 @@ module.exports = H => {
     eq(B.changeNoteText_(r), 'Sources: Le Monde, Reuters, BBC');
   });
 
-  test('reviewed alerts: end to end, the write-up takes the summary\'s place in the corrected alert and in the Social Alert email (nothing else in it changes, no link or bot wording), the note names its web sources, and it is no correction anywhere (the first line, C10, the Alert log); without web sources it has no background and no note; the main flow is exactly as before', () => {
+  test('reviewed alerts: end to end, the write-up takes the summary\'s place in the corrected alert and in the Social Alert email (nothing else in it changes, no link or bot wording), the note names its web sources, and it is no correction anywhere (the first line, C10, the Alert log); without web sources it has no background and its note is only the line on the alert requirements; the main flow is exactly as before', () => {
     const w = ac();
     w.vertex.assess = () => ({ checks: [], writeup: WRITEUP });
     w.vertex.grounding = SOURCES;
@@ -220,7 +228,7 @@ module.exports = H => {
     const report = w.run();
     const [top] = tops(w);
     eq(top.text, `${REVIEWED}\n${F.P0_OK.replace(P0_SUMMARY, `${POST_PART} ${WEB_PART}`)}`);
-    eq(notesUnder(w, top).filter(n => !/^Social Alert/.test(n)), ['Sources: Le Monde, Reuters']);
+    eq(notesUnder(w, top).filter(n => !/^Social Alert/.test(n)), [`Sources: Le Monde, Reuters\n${REQ_P0}`]);
     assert.ok(reviewCall(w).payload.systemInstruction.parts[0].text.includes('WRITE-UP (writeup)'));
     eq(reviewCall(w).payload.tools, [{ enterpriseWebSearch: {} }]);  // the review call already has the web search: no extra call
     eq(w.vertex.calls.filter(c => c.payload.generationConfig.responseSchema.properties.checks).length, 1);
@@ -237,15 +245,15 @@ module.exports = H => {
     without.run();
     const plainSent = without.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject))[0];
     eq(sent[0].text.replace(`${POST_PART} ${WEB_PART}`, P0_SUMMARY), plainSent.text);
-    eq([tops(without)[0].text, notesUnder(without, tops(without)[0]).filter(n => !/^Social Alert/.test(n))], [`${REVIEWED}\n${F.P0_OK}`, []]);
-    // no web sources: the post's part alone, and no note
+    eq([tops(without)[0].text, notesUnder(without, tops(without)[0]).filter(n => !/^Social Alert/.test(n))], [`${REVIEWED}\n${F.P0_OK}`, [REQ_P0]]);
+    // no web sources: the post's part alone, and no note but the line on the alert requirements
     const bare = ac();
     bare.vertex.assess = () => ({ checks: [], writeup: WRITEUP });
     bare.vertex.grounding = null;
     bare.paste(F.P0_OK);
     bare.run();
     eq([tops(bare)[0].text, notesUnder(bare, tops(bare)[0]).filter(n => !/^Social Alert/.test(n))],
-      [`${REVIEWED}\n${F.P0_OK.replace(P0_SUMMARY, POST_PART)}`, []]);
+      [`${REVIEWED}\n${F.P0_OK.replace(P0_SUMMARY, POST_PART)}`, [REQ_P0]]);
     // the main flow: no write-up asked for, the forward and the email as Burson wrote them
     const main = ac({}, {}, false);
     main.vertex.assess = () => ({ checks: [], writeup: WRITEUP });
@@ -262,7 +270,7 @@ module.exports = H => {
   // A5 + B3 (f). A Direct BigQuery card, posted before its review
   // =============================================================================================================
 
-  test('reviewed alerts: a Direct BigQuery card in the Auto-correct space, reviewed after it was posted, gets a thread note with what the review changed and the summary the email uses (the card is never edited); a card with nothing to say gets none', () => {
+  test('reviewed alerts: a Direct BigQuery card in the Auto-correct space, reviewed after it was posted, gets a thread note with what the review changed and the summary the email uses (the card is never edited); a card with nothing else to say gets the one line that says which alert requirement it met (no note at all with the setting requirement_line off)', () => {
     const card = (w, text, key) => {
       const msg = w.bot.mirrorPostMessage_(w.ANA, text, key);
       const kept = JSON.parse(w.g.props.get('BQ_INGESTED_MSGS') || '[]');
@@ -277,21 +285,27 @@ module.exports = H => {
     eq(tops(w).map(m => m.text), [F.MISTAKES]);  // the card, as posted
     eq(notesUnder(w, tops(w)[0]).filter(n => !/^Social Alert|^T&S/.test(n)), [`${IN_PLACE}\n- Product: Gems to Gemini App\n` +
       `- Social Network: Instagram to X\n- Priority banner: P2 to P0\n- Engagement: LOW to HIGH\n- Summary: ${POST_PART} ${WEB_PART}\n` +
-      'Sources: Le Monde, Reuters']);
+      `Sources: Le Monde, Reuters\n${REQ_MISTAKES}`]);
     eq(report.corrected, 1);
     eq(w.bursonPosts(), []);
-    // a card the review leaves as it is, with no write-up: no note
+    // a card the review leaves as it is, with no write-up: the note is its one line (which alert requirement the card met)
     const quiet = ac();
     const c2 = card(quiet, F.P0_OK, 'bq:BSIP:k2');
     quiet.run();
-    eq(notesUnder(quiet, tops(quiet)[0]).filter(n => !/^Social Alert|^T&S/.test(n)), []);
+    eq(notesUnder(quiet, tops(quiet)[0]).filter(n => !/^Social Alert|^T&S/.test(n)), [REQ_P0]);
+    // ...and with the setting requirement_line off, as before the line: no note at all
+    const silent = ac({ settings: { requirement_line: false } });
+    card(silent, F.P0_OK, 'bq:BSIP:k4');
+    silent.run();
+    eq(notesUnder(silent, tops(silent)[0]).filter(n => !/^Social Alert|^T&S/.test(n)), []);
     // the email of a card that goes out: the write-up is its summary
     const sent = ac();
     sent.vertex.assess = () => ({ checks: [], writeup: WRITEUP });
     sent.vertex.grounding = SOURCES;
     const c3 = card(sent, F.P0_OK, 'bq:BSIP:k3');
     sent.run();
-    eq(notesUnder(sent, tops(sent)[0]).filter(n => !/^Social Alert|^T&S/.test(n)), [`${IN_PLACE}\n- Summary: ${POST_PART} ${WEB_PART}\nSources: Le Monde, Reuters`]);
+    eq(notesUnder(sent, tops(sent)[0]).filter(n => !/^Social Alert|^T&S/.test(n)),
+      [`${IN_PLACE}\n- Summary: ${POST_PART} ${WEB_PART}\nSources: Le Monde, Reuters\n${REQ_P0}`]);
     const email = sent.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
     assert.ok(email.length === 1 && email[0].text.startsWith(`SOCIAL ALERT\n\n${POST_PART} ${WEB_PART}\n\n`), email.map(m => m.text).join('\n---\n'));
   });
@@ -399,7 +413,7 @@ module.exports = H => {
       w.paste(F.NO_LINK);
       w.run();
       eq(w.bursonPosts(), []);
-      return notesUnder(w, tops(w)[0]).filter(n => n.startsWith('Not fixed:'));
+      return notesUnder(w, tops(w)[0]).filter(n => n.startsWith('Not fixed:')).map(n => n.split('\n')[0]);  // (its last line: the alert requirements)
     };
     eq(linkLine(() => null), [`${LINE}, and the listening feeds had no match`]);
     eq(linkLine(() => { throw new Error('BigQuery refused'); }), [`${LINE} (the listening feeds couldn't be searched)`]);
@@ -438,12 +452,12 @@ module.exports = H => {
     const report = w.run();
     eq(tops(w).map(m => m.text), [F.MISTAKES]);  // the card, as posted
     eq(notesUnder(w, tops(w)[0]).filter(n => n.startsWith('The agentic assistant')), [`${IN_PLACE}\n` +
-      '- Social Network: Instagram to X\n- Priority banner: P2 to P0\n- Engagement: LOW to HIGH']);
+      `- Social Network: Instagram to X\n- Priority banner: P2 to P0\n- Engagement: LOW to HIGH\n${REQ_MISTAKES}`]);
     const sent = w.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
     eq(sent.length, 1);
     assert.ok(/: Gems \|/.test(sent[0].subject) && /\nProduct: Gems\n/.test(sent[0].text), sent[0].text);  // the email keeps Gems
     eq([report.corrected, w.bursonPosts()], [1, []]);
-    // a sheet test whose only correction the tab puts back: no note, and not counted as corrected
+    // a sheet test whose only correction the tab puts back: no list of changes in its note, and not counted as corrected
     const only = ac();
     sheetCard(only, F.MISTAKES_FIXED.replace('[Product]: Gemini App', '[Product]: Gems').split('Gemini App').join('Gems'));
     const r2 = only.run();

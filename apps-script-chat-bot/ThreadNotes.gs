@@ -27,8 +27,9 @@
  * has no note only if its thread is younger than that and than 25 hours. How old the thread is, the card says only when
  * it is the thread's first message (acNoteThreadBorn_: an Alert-log row's created_at and source_at, or the createTime
  * of a card just posted): a row that came into an earlier card's thread (Burson's resend, an update of a story) and a
- * card that is a reply never say it. Any other card's notes are counted in its thread, once (the count is then kept): a
- * card from before the value began, one whose thread's age isn't known, one older than 25 hours. So the cap of 3 holds
+ * card that is a reply never say it. Any other card's notes are counted in its thread, once (the count is then kept;
+ * the review's own note is never one of them: acNoteReviewIds_): a card from before the value began, one whose
+ * thread's age isn't known, one older than 25 hours. So the cap of 3 holds
  * for a thread's life with the cache value gone, too. A key posted again after the value forgot it makes no second
  * message (Chat keeps the message's id, and hands the first one back; a note of the bot's with the very same text,
  * found while the thread is counted, is taken for it) and is not counted again; under a full card, Chat is asked
@@ -168,7 +169,7 @@ function acThreadNote_(from, card, text, key) {
           say(`thread note not posted: ${noAsking}`);
           return false;
         }
-        const there = acNoteThread_(check, acNoteId_(check.space, k), run);
+        const there = acNoteThread_(check, acNoteId_(check.space, k), run, acNoteReviewIds_(check, card));
         if (!there || !there.card) {
           run.dark[cardHash] = there ? 'its card is no longer in the space'
             : 'its card\'s thread couldn\'t be read to count the notes it has';
@@ -256,6 +257,17 @@ function acNoteId_(space, key) {
   return CLIENT_ID_PREFIX_ + sha256Hex_(`${space}|${AC_NOTE_KEY_PREFIX_}${key}`).slice(0, 40);
 }
 
+/**
+ * The ids of the review's own note under a card (Bot.gs: posted with the key 'chg:' + the message it reviewed, which is
+ * the card itself for one reviewed in place and Burson's own message, the row's source_message, for a corrected copy).
+ * That note can be just its last line, "*Alert requirements:* …" (RequirementLine.gs), which starts as a note of this
+ * helper does; it is the review's, not one of the notes under another alert's card, so counting a thread leaves it out.
+ */
+function acNoteReviewIds_(check, card) {
+  return [check.message, card && card.source_message].filter(Boolean)
+    .map(name => CLIENT_ID_PREFIX_ + sha256Hex_(`${check.space}|chg:${name}`).slice(0, 40));
+}
+
 /** True when the note with `key` is in `space` already: Chat has a message under the id that note was given. Never throws. */
 function acNoteThere_(space, key) {
   try {
@@ -322,17 +334,22 @@ function acNotePlain_(text) {
 
 /**
  * What the thread of a card holds (`check`: acThreadNoteCheck_'s): {card: its message is there, notes: the bot's notes
- * under it (replies that start as a note does, from the bot's account when it is known), own: the message with id
- * `ownId` ('' when there's none), same: one of those notes with the very text of `check` ('' when there's none)}. null
- * when Chat can't be read, the thread is longer than AC_NOTE_THREAD_MAX_ messages or AC_NOTE_THREAD_PAGES_ pages (its
- * notes can't all be counted), or the run (`run`: acNoteRun_'s; each page counts as one thing asked) has asked Chat
- * its share. Never throws.
+ * under it (replies that start as a note does, from the bot's account when it is known; never the review's own note,
+ * known by its id: `reviewIds`, acNoteReviewIds_), own: the message with id `ownId` ('' when there's none), same: one
+ * of those notes with the very text of `check` ('' when there's none)}. null when Chat can't be read, the thread is
+ * longer than AC_NOTE_THREAD_MAX_ messages or AC_NOTE_THREAD_PAGES_ pages (its notes can't all be counted), or the run
+ * (`run`: acNoteRun_'s; each page counts as one thing asked) has asked Chat its share. Never throws.
  */
-function acNoteThread_(check, ownId, run) {
+function acNoteThread_(check, ownId, run, reviewIds) {
   try {
     const bot = (check.ctx && check.ctx.botUser) || PropertiesService.getScriptProperties().getProperty('BOT_USER') || '';
     const mine = acNotePlain_(truncate_(check.text, MAX_TEXT_));
     const out = { card: false, notes: 0, own: '', same: '' };
+    // (a question the person the bot runs as asks under the card, "Alert requirements: …?", is no note of the bot's:
+    // RequirementLine.gs isRequirementQuestion_, while the line is on)
+    const settings = (check.ctx && check.ctx.settings) || GEN.settings || {};
+    const asked = text => settings.requirement_line !== false && typeof isRequirementQuestion_ === 'function' &&
+      isRequirementQuestion_(text);
     let pageToken = '';
     let read = 0;
     let pages = 0;
@@ -348,7 +365,8 @@ function acNoteThread_(check, ownId, run) {
         if (m.name === check.message) out.card = true;
         if (!m.threadReply || m.name === check.message) return;
         if (ownId && m.clientId === ownId) out.own = m.name;
-        if (isThreadNoteText_(m.text) && (!bot || m.senderName === bot)) {
+        if (m.clientId && (reviewIds || []).indexOf(m.clientId) >= 0) return;
+        if (isThreadNoteText_(m.text) && (!bot || m.senderName === bot) && !asked(m.text)) {
           out.notes++;
           if (!out.same && acNotePlain_(m.text) === mine) out.same = m.name;
         }

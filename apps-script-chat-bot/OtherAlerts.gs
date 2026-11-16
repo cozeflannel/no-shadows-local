@@ -397,7 +397,9 @@ function handleOtherAlert_(ctx, m, other, report) {
   if (d.action !== 'escalate') {
     otherNoEmail_(ctx, row, d, report);
   }
-  const note = otherNoteText_(d);
+  // The auto-correct space (settings.requirement_line): the note says which alert requirement the alert meets, where
+  // it has its "SLRR" line everywhere else (RequirementLine.gs otherRequirementLine_: '' in every other flow)
+  const note = otherNoteText_(d, otherRequirementLine_(ctx, d, other));
   try {
     ctx.store.updateAlert(row, {
       forwarded_fields: Object.assign({}, row.forwarded_fields || {}, { triage: otherTriageSnap_(d, note) }),
@@ -1284,9 +1286,11 @@ function otherNoEscWhy_(esc, eng, kof) {
 
 /**
  * Fast-moving thread reply (max 3-5 sentences): leads immediately with the resolution + issue (hyperlinking the post
- * when available), followed by 1-3 concise bullets for SLRR threshold context, T&S/Teams, and escalation triggers. Pure.
+ * when available), followed by 1-3 concise bullets for SLRR threshold context, T&S/Teams, and escalation triggers.
+ * `requirement` (the auto-correct space only, RequirementLine.gs: "*Alert requirements:* …"): that line stands in the
+ * SLRR line's place; without it the note is as it always was. Pure.
  */
-function otherNoteText_(d) {
+function otherNoteText_(d, requirement) {
   const tri = d.tri;
   const f = d.fields || {};
   const url = String(f.post_url || '').trim();
@@ -1295,7 +1299,9 @@ function otherNoteText_(d) {
   const postLink = /^https?:\/\/[^\s<>|]+$/i.test(url) && typeof chatLink_ === 'function' ? chatLink_(url, linkLabel) : '';
   const severity = tri && tri.severity ? ` \u00b7 ${tri.severity}` : '';
   const sure = tri && d.basis === 'stream' && d.action !== 'no_action' ? ` (${otherPct_(tri.confidence)} sure)` : '';
-  const head = `${GEN.prefix} *Triage: ${otherCallWords_(d)}*${severity}${sure}`;
+  // (with the line on the alert requirements, the head and the first line say the team's rules in its words)
+  const words = s => (requirement ? requirementNoteWords_(s) : s);
+  const head = words(`${GEN.prefix} *Triage: ${otherCallWords_(d)}*${severity}${sure}`);
   if (!tri) {
     const facts = [postLink || [f.social_network, f.author].filter(Boolean).join(' \u00b7 '),
       Number.isInteger(f.followers) ? `${fmtInt_(f.followers)} followers` : '',
@@ -1307,9 +1313,9 @@ function otherNoteText_(d) {
   }
   const sumRaw = truncate_(String(tri.summary || f.summary || f.issue_name || 'Social post').replace(/\.$/, '').trim(), 220);
   const whyRaw = truncate_(String(d.why || '').replace(/\.$/, '').trim(), 180);
-  const lead = `${sumRaw}${whyRaw ? ` \u2014 ${whyRaw}` : ''}.${postLink ? ` (${postLink})` : ''}`;
+  const lead = `${words(`${sumRaw}${whyRaw ? ` \u2014 ${whyRaw}` : ''}`)}.${postLink ? ` (${postLink})` : ''}`;
   const bullets = [];
-  const slrr = otherSlrrLine_(d);
+  const slrr = requirement || otherSlrrLine_(d);
   if (slrr) bullets.push(`\u2022 ${slrr}`);
   if (d.action === 'escalate') {
     const names = Object.keys(tri.teamReasons).filter(c => c !== 'tns').map(c => {

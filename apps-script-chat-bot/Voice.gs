@@ -129,7 +129,11 @@ function isBotFormattedText_(text) {
   // The auto-correct space's "Not fixed: …" and "Sources: …" note lines (changeNoteText_) only in the bot's own forms: a
   // person's message that starts with those words stays theirs
   if (/^Not fixed: /.test(t)) return isNotFixedLine_(t.split('\n')[0]);
-  if (/^Sources: /.test(t)) return t.indexOf('\n') < 0 && isSourcesLine_(t);
+  // (alone, or with the note's last line under it: which alert requirement the alert met, isRequirementLine_)
+  if (/^Sources: /.test(t)) {
+    const lines = t.split('\n');
+    return isSourcesLine_(lines[0]) && (lines.length === 1 || (lines.length === 2 && isRequirementLine_(lines[1])));
+  }
   return /^(?:\uD83C\uDF21\uFE0F? \*Temp check|The alert (?:has been updated|regarding |was already submitted)|Please make the following updates|One more change:|A few changes are still needed|Please check this alert against the alert requirements|Here is what (?:needs to be updated|is left) on this alert:|This alert does not need any updates\.|I can help with questions about this alert|For escalated alerts, review and send the Social Alert draft|The Social Alert email for this alert has already been sent|QA corrected:|QA:|QA check:|Updates made to this alert:|Processed without waiting for Burson:|Still needs Burson:|Double-check:|Comms \/ Status Context:|Burson resent this alert(?: with updates:|\.)|Dry run \(Burson space actions\):|✅️? \*Reviewed (?:and corrected )?by the agentic assistant\*|The agentic assistant reviewed this alert|The post's own media wasn't reviewed|Gemini couldn't review|Social Alert (?:sent|draft|update draft)|Could not (?:auto-submit the T&S form|check the T&S sheet|create the Social Alert draft)|No Social Alert draft was created|The Social Alert draft's T&S row wasn't updated|(?:(?:<users\/[^>\s]+>|@Incident Manager)\s+)?(?:Social Alert|Please ping the YouTube team|Could not create the Social Alert draft|T&S form needed)|T&S (?:form needed|is in\.|already has this post)|Outcome:|\*?Early Wave \/ Velocity Warning\*?|The bot (?:crashed the last time|was short of time)|The Burson QA bot (?:is set up|has had problems|is running again)|The relay with S-F Burson |An alert from S-F Burson couldn't be brought over|A message from S-F Burson couldn't be brought over|Not sent to |\*Escalation protocol\*)/.test(t);
 }
 
@@ -830,6 +834,16 @@ function isSourcesLine_(line) {
 }
 
 /**
+ * Whether `line` is the line the auto-correct space's review note ends with: which alert requirement the alert met, in
+ * one of the forms RequirementLine.gs requirementLine_ writes under "*Alert requirements:*" (with Chat's bold marks, or
+ * as Chat gives it back without them). A person's line that only starts with those words is theirs. Pure.
+ */
+function isRequirementLine_(line) {
+  return /^\*?Alert requirements:\*? (?:met for a Social Alert[ :]|not met (?:for a Social Alert|yet) \(|below the Social Alert thresholds \()/
+    .test(String(line || ''));
+}
+
+/**
  * Whether `line` is notFixedLine_'s: the missing link's line (NO_LINK_LINE_), or "Not fixed: " and a field's label as
  * Burson writes it (burLabel_), then its problem. Pure.
  */
@@ -849,11 +863,13 @@ function isNotFixedLine_(line) {
  * Auto-find missing links, row 14, and opts.linkLookup what its search came to: Bot.gs findMissingLink_), the "Comms /
  * Status Context" line (Check outage & comms docs ON), that the post's own media was left out of the review (a review
  * with it crashed the run before, the run was too short for its video, or Gemini couldn't review it), and, when the
- * write-up has background from the web, "Sources: …" last. The agentic assistant decides (Review.gs,
+ * write-up has background from the web, "Sources: …". The agentic assistant decides (Review.gs,
  * autocorrect_min_confidence): there is nothing for the reader to double-check.
  * opts.inPlace: a Direct BigQuery or sheet-test card, posted before its review and never edited (Bot.gs inPlaceNote_):
- * NOTE_HEAD_IN_PLACE_, and the summary the email uses (the write-up, else a corrected summary) as "- Summary: …". ''
- * when there's none of that (no note is posted). Pure.
+ * NOTE_HEAD_IN_PLACE_, and the summary the email uses (the write-up, else a corrected summary) as "- Summary: …".
+ * opts.requirement: which alert requirement the alert meets ("*Alert requirements:* …", RequirementLine.gs: only with
+ * settings.requirement_line on), the note's last line, and the whole note when there's nothing else to say. '' when
+ * there's none of all that (no note is posted). Pure.
  */
 function changeNoteText_(review, opts) {
   const o = opts && typeof opts === 'object' ? opts : {};
@@ -874,6 +890,7 @@ function changeNoteText_(review, opts) {
   if (mediaNote) out.push(mediaNote);
   const sources = writeupSourcesLine_(review.writeup);
   if (sources) out.push(sources);
+  if (o.requirement) out.push(String(o.requirement));
   return out.join('\n');
 }
 
