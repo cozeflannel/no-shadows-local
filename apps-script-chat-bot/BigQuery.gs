@@ -2432,7 +2432,9 @@ function bqStoryNotes_(ctx, cards, now, hasTime) {
  * (bsipKofValue_): a KOF's post then gets its Social Alert at any size, as Burson's alerts do. In every other flow the
  * line is "No", as before. Also in the Auto-correct flow only (unless settings.cross_alert_notes is false): once every
  * card is posted, a new card whose post is in an Early Detection card of the last 24 hours gets one note in its thread
- * that says so and links that card (bqStoryNotes_).
+ * that says so and links that card (bqStoryNotes_); and a record Step 1 leaves out as on an issue already alerted still
+ * gets its own card when it is a bigger post on that issue (BqPipeline.gs bqBiggerPost_: the alert requirements'
+ * engagement bar or more, where no earlier alert on the issue had that many), and is then not counted as not posted.
  * {sprinklr, bmie, bsip, skipped_duplicates, skipped_step1, skipped_no_count}.
  */
 function pollBigQuerySources_(ctx, targetSpaceId) {
@@ -2648,10 +2650,12 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
   // posted, nor weighed again for an hour. The evaluation itself failing (it never should): the rules above decide.
   let passed = null;  // a Set of the candidates' ids ('c' + index); null: every candidate
   const whyOut = new Map();  // a left-out candidate's id -> why Step 1 left it out, and the earlier alert it matched
+  let priors = [];  // the earlier alerts Step 1 weighs the candidates against
   if (candidates.length) {
     try {
+      priors = bqPriorAlerts_(ctx, now, past ? candidates.map(c => c.key) : null);
       const step = evaluateBqDualTrack_(candidates.map((c, i) => Object.assign({}, c.row, { id: 'c' + i })), ctx, {
-        soloOnly: true, priorAlerts: bqPriorAlerts_(ctx, now, past ? candidates.map(c => c.key) : null), gemini: ctx && ctx.gemini,
+        soloOnly: true, priorAlerts: priors, gemini: ctx && ctx.gemini,
         // Gemini only with time for it and for posting after it: no try in the run's last minute
         deadline: ctx && ctx.deadline ? ctx.deadline - 60 * 1000 : 0,
         knowledge: items => knowledgeForCtx_(ctx, knowledgeQueryForRecords_(items),
@@ -2665,8 +2669,28 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
       passed = null;
     }
   }
+  // The Auto-correct flow only (setting cross_alert_notes): a bigger post on an issue that already has an alert goes
+  // through as its own card. Step 1 left it out as on that issue, it has the alert requirements' engagement bar or
+  // more, and no earlier alert on the issue had that many (BqPipeline.gs bqBiggerPost_), nor a post let through at this
+  // check. Its card is reviewed like any other. In every other flow, and with the setting off, nothing is let through
+  const biggerOn = !!(ctx && ctx.sourceReadOnly === true && S.cross_alert_notes !== false);
+  const letThrough = [];  // the records let through at this check, as earlier alerts for the next ones on their issue
+  const bigger = (c, x) => {
+    try {
+      if (!biggerOn || !bqBiggerPost_(c.row, x, priors.concat(letThrough))) return false;
+      const v = bqRecordView_(c.row, 0);
+      letThrough.push({ url: v.url, issue_name: v.issue, engagement: v.engagement });
+      console.log(`BigQuery direct poll: let through, a bigger post on an issue already alerted: ${c.row.url} · ` +
+        `${fmtInt_(v.engagement)} engagements, and no earlier alert on the issue had ${fmtInt_(bqEngagementBar_())} · ` +
+        `${alertWords(x.alert_id, rowOf(x.alert_id))} · Step 1 had left it out, ${x.why === BQ_LEFT_OUT_.GEMINI ? 'by Gemini' : 'by the rules'}`);
+      return true;
+    } catch (e) {
+      return false;  // left out, as Step 1 said
+    }
+  };
   const keep = candidates.filter((c, i) => {
     if (!passed || passed.has('c' + i)) return true;
+    if (bigger(c, whyOut.get('c' + i))) return true;
     step1Out++;
     step1Left(c, whyOut.get('c' + i));
     try {

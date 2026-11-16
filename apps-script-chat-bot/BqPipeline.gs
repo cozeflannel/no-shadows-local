@@ -466,6 +466,40 @@ function bqLeftOut_(id, why, match) {
 }
 
 /**
+ * The alert requirements' engagement bar for a Social Alert: the config's collection.high_engagement_threshold, as
+ * GEN.escalation_rules has it (2,000 today), never a number typed here; 0 when the config gives none. Pure.
+ */
+function bqEngagementBar_() {
+  const n = Number(typeof GEN !== 'undefined' && GEN && GEN.escalation_rules && GEN.escalation_rules.high_engagement_threshold);
+  return isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * A bigger post on an issue that already has an alert: the Direct BigQuery poll lets it through as its own card, in
+ * the Auto-correct flow only (BigQuery.gs pollBigQuerySources_). True when all of this holds:
+ *   - Step 1 left `record` out as on an issue already alerted (`x`: its entry in evaluateBqDualTrack_'s left_out, whose
+ *     match is 'issue'): by the rules as the same issue, or by Gemini while the code's own rule matches an earlier
+ *     alert by the issue;
+ *   - the record has the engagement bar or more (bqEngagementBar_);
+ *   - none of the earlier alerts on its issue had that many. `priors`: the earlier alerts Step 1 weighed it against
+ *     (bqPriorAlerts_). Every one the code's own rule (matchBqPriorAlert_) matches to the record counts, not only the
+ *     first one, which is the oldest; one whose count isn't known had none.
+ * Nothing else passes: not a record left out for any other reason (not about Google, the post itself already alerted,
+ * Gemini's own call with no earlier alert on the issue, no wave), not a post under the bar whoever wrote it, and no
+ * record at all while the config gives no bar. Pure.
+ */
+function bqBiggerPost_(record, x, priors) {
+  const bar = bqEngagementBar_();
+  if (!bar || !record || typeof record !== 'object' || !x || x.match !== 'issue' ||
+      (x.why !== BQ_LEFT_OUT_.SAME_ISSUE && x.why !== BQ_LEFT_OUT_.GEMINI)) return false;
+  const v = bqRecordView_(record, 0);
+  if (!(v.engagement >= bar)) return false;
+  const earlier = normalizeBqPriorAlerts_(Array.isArray(priors) ? priors : [], null)
+    .filter(p => matchBqPriorAlert_({ url: v.url, issue_name: v.issue }, [p]));
+  return earlier.length > 0 && earlier.every(p => !(Number(p.engagement) >= bar));
+}
+
+/**
  * Executes the 3-step BigQuery Dual-Track evaluation over `records`.
  * Calls Gemini whenever there is time remaining and at least one qualifying Track A solo candidate (when `!opts.wavesOnly`)
  * or enough sub-threshold records (`minAuthors`) to form a Track B group wave (when `!opts.soloOnly`). Falls back to
