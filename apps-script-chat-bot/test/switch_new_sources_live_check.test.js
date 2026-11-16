@@ -170,8 +170,9 @@ module.exports = H => {
       '- 333 | Competitor phones test | reddit | en | no',
     ]);
     eq(r.lines[r.lines.length - 1], 'CHECK gate for Brandwatch live: these sources are slower than 2 hours: forum (median 3 h 20 min); ' +
-      'leave them out of what Brandwatch live reads. Too few mentions with times to judge: facebook (2)');
-    eq(findings(r).slice(0, 17), [
+      'leave them out of what Brandwatch live reads. Too few mentions with times to judge: facebook (2). ' +
+      'No mention in the last 24 hours, so not judged: bluesky, facebook_public, instagram, instagram_public, tiktok, youtube, threads, tumblr');
+    eq(findings(r).slice(0, 18), [
       'OK Brandwatch project 1998344909 has 4 queries; 3 look like Google\'s by the plan\'s rule ("Google Pixel test", "Gemini app test", "Android test")',
       'OK this Brandwatch account has 15 content sources: twitter, reddit, facebook, facebook_public, instagram, instagram_public, tiktok, youtube, threads, tumblr, forum, bluesky, news, blog, linkedin',
       'OK the two Brandwatch reads use 2 queries: "Google Pixel test" (111), "Gemini app test" (222), and these content sources: reddit, bluesky, facebook, facebook_public, instagram, instagram_public, tiktok, youtube, threads, tumblr, forum',
@@ -185,12 +186,13 @@ module.exports = H => {
       'OK reddit: 7 mentions, 7 with words; from posting to added: median 10 min, 90% within 10 min',
       'CHECK forum: 5 mentions, 5 with words; from posting to added: median 3 h 20 min, 90% within 3 h 20 min',
       'OK facebook: 2 mentions, 2 with words; from posting to added: median 30 min, 90% within 30 min',
+      'CHECK no mention in the last 24 hours from bluesky, facebook_public, instagram, instagram_public, tiktok, youtube, threads, tumblr, so how late they are was not measured',
       'OK call-count headers on the answer to the test read: x-rate-limit-used "37"; x-rate-limit "600/10m": 600 calls in 10 minutes',
       'OK the AMIE table can be read and has every column the plan needs, of the right type (12 columns in all)',
       'OK the AMIE table\'s optional columns: followers (INTEGER), KOF (STRING), product (STRING), engagement (STRING)',
       'OK the AMIE table is partitioned by day on ingestionTimestamp',
     ]);
-    eq(findings(r).slice(17, -1), [
+    eq(findings(r).slice(18, -1), [
       'OK the AMIE table last changed 4 min ago (2026-10-14 11:56 UTC)',
       'OK one day of the AMIE table scans 0.08 GB (the dry run\'s figure; the limit is 1 GB)',
       'OK the AMIE table, last 24 hours: 24,000 rows; the newest landed 3 min ago',
@@ -465,12 +467,17 @@ module.exports = H => {
       [r.report, r.logs].forEach(t => clean(t, `headers ${n}`));
       assert.match(line(r, /call-count headers/), /^CHECK call-count headers on the answer to the test read: x-rate-limit-used "y+/);
     }
-    // Secret Manager's refusal (cut at 200 by the Watch's reader) with an address near the cut
-    for (let n = 120; n <= 200; n += 4) {
+    // Secret Manager's refusal (cut at 200 by the Watch's reader before this check sees it) with an address near the
+    // cut: not even the name part of the address (cut off from its @) reaches the report, at every cut point
+    for (let n = 120; n <= 205; n += 1) {
       const env = world();
       env.w.secret = { code: 403, message: `${'s'.repeat(n)} ${ADDRESS}` };
       const r = run(env);
-      [r.report, r.logs].forEach(t => clean(t, `secret ${n}`));
+      [r.report, r.logs].forEach(t => {
+        clean(t, `secret ${n}`);
+        assert.ok(!/analyst|\bana/.test(t), `secret ${n}: ${t}`);
+      });
+      assert.match(line(r, /Secret Manager/), /^PROBLEM the bot could not read the shared Brandwatch key from Secret Manager \(Secret Manager HTTP 403 reading the shared Brandwatch token:(?: s+ \[address\]| s+…|…)\), so Brandwatch was not asked anything$/, `secret ${n}`);
     }
     // BigQuery: a body that is not JSON (cut at 300) with an address near the cut
     for (let n = 270; n <= 300; n += 3) {
@@ -522,7 +529,7 @@ module.exports = H => {
     // ids given that are not query ids: said, and the suggested queries are used
     env = world();
     r = run(env, ['abc']);
-    eq(line(r, /query ids? given/), 'CHECK none of the query id given is a Brandwatch query id (a whole number), so the queries that look like Google\'s were used instead');
+    eq(line(r, /query ids? given/), 'CHECK the query id given is not a Brandwatch query id (a whole number), so the queries that look like Google\'s were used instead');
     assert.match(line(r, /^OK the two Brandwatch reads use/), /"Google Pixel test" \(111\), "Gemini app test" \(222\)/);
     env = world();
     r = run(env, ['abc', 1.5]);
@@ -532,7 +539,7 @@ module.exports = H => {
     env.w.fail.summary = { code: 500, body: 'Internal error' };
     r = run(env, ['abc']);
     eq([line(r, /query ids? given/), line(r, /^CHECK no mention was read/)], [
-      'CHECK none of the query id given is a Brandwatch query id (a whole number), so none was used',
+      'CHECK the query id given is not a Brandwatch query id (a whole number), so none was used',
       'CHECK no mention was read: the query list could not be read and no usable query id was given']);
     // some usable, some not, some over the limit
     env = world();
@@ -638,5 +645,56 @@ module.exports = H => {
     const b = loadBot(makeGoogle(NOW).services);
     eq(['STRING', 'TIMESTAMP', 'INTEGER', 'REPEATED STRING', 'GEOGRAPHY', ''].map(t => b.nsvTypeWords_(t)),
       ['text (STRING)', 'a time (TIMESTAMP)', 'a whole number (INTEGER)', 'a list of text (REPEATED STRING)', 'something else (GEOGRAPHY)', 'something else (no type)']);
+  });
+  test('new sources live check: the gate starts OK only when every source asked for was judged and none is slow; too few mentions, no readable times or no mention at all is a CHECK, never "none"', () => {
+    const gate = r => r.lines[r.lines.length - 1];
+    const only = (env, list) => { env.w.mentions = list; };
+    const others = 'bluesky, facebook, facebook_public, instagram, instagram_public, tiktok, youtube, threads, tumblr, forum';
+    // three reddit mentions, each added 10 hours after posting: too few to judge, so not measured (never OK ... none)
+    let env = world();
+    only(env, [0, 1, 2].map(i => mention(i, { addedAgo: 30 + i, delay: 600 })));
+    let r = run(env);
+    eq(line(r, /^(OK|CHECK) reddit:/), 'CHECK reddit: 3 mentions, 3 with words; from posting to added: median 10 h, 90% within 10 h');
+    eq(gate(r), 'CHECK gate for Brandwatch live: not measured (no source had at least 5 mentions with both times), so these sources are slower than 2 hours: unknown. ' +
+      `Too few mentions with times to judge: reddit (3). No mention in the last 24 hours, so not judged: ${others}`);
+    // six reddit mentions with no readable posting time: the source line is a CHECK, and the gate is not measured
+    env = world();
+    only(env, [0, 1, 2, 3, 4, 5].map(i => mention(i, { addedAgo: 30 + i, m: { date: 'not a time' } })));
+    r = run(env);
+    eq(line(r, /^(OK|CHECK) reddit:/), 'CHECK reddit: 6 mentions, 6 with words; from posting to added: no readable times');
+    assert.match(gate(r), /^CHECK gate for Brandwatch live: not measured \(no source had at least 5 mentions with both times\), so these sources are slower than 2 hours: unknown\. Too few mentions with times to judge: reddit \(0\)\. /);
+    // one fast source judged, the others silent: none is slow, but the gate is a CHECK that names what was not judged
+    env = world();
+    only(env, [0, 1, 2, 3, 4].map(i => mention(i, { addedAgo: 30 + i, delay: 10 })));
+    r = run(env);
+    eq(line(r, /^CHECK no mention in the last 24 hours from/), `CHECK no mention in the last 24 hours from ${others}, so how late they are was not measured`);
+    eq(gate(r), `CHECK gate for Brandwatch live: these sources are slower than 2 hours: none. No mention in the last 24 hours, so not judged: ${others}`);
+    // one source left to ask for: said in the singular
+    env = world();
+    env.w.sources = ['reddit', 'forum'];
+    only(env, [0, 1, 2, 3, 4].map(i => mention(i, { addedAgo: 30 + i, delay: 10 })));
+    r = run(env);
+    eq(line(r, /^CHECK no mention in the last 24 hours from/), 'CHECK no mention in the last 24 hours from forum, so how late it is was not measured');
+    // every source asked for judged and fast: only then OK ... none
+    env = world();
+    env.w.sources = ['reddit', 'forum'];
+    only(env, [].concat([0, 1, 2, 3, 4].map(i => mention(i, { addedAgo: 30 + i, delay: 10 })),
+      [5, 6, 7, 8, 9].map(i => mention(i, { src: 'forum', q: 222, addedAgo: 40 + i, delay: 20 }))));
+    r = run(env);
+    eq(line(r, /no mention in the last 24 hours from/), '');
+    eq(gate(r), 'OK gate for Brandwatch live: these sources are slower than 2 hours: none');
+    // a slow source is named whatever else is unjudged
+    env = world();
+    env.w.sources = ['reddit', 'forum'];
+    only(env, [0, 1, 2, 3, 4].map(i => mention(i, { addedAgo: 30 + i, delay: 300 })));
+    eq(gate(run(env)), 'CHECK gate for Brandwatch live: these sources are slower than 2 hours: reddit (median 5 h); leave them out of what Brandwatch live reads. ' +
+      'No mention in the last 24 hours, so not judged: forum');
+    // the helper alone
+    const b = loadBot(makeGoogle(NOW).services);
+    eq([b.nsvGateLine_([{ source: 'reddit', n: 3, median: 600 }], 'x', []), b.nsvGateLine_([{ source: 'reddit', n: 9, median: 10 }], 'x', []),
+      b.nsvGateLine_([{ source: 'reddit', n: 9, median: 10 }, { source: 'tiktok', n: 2, median: 10 }], 'x')], [
+      'CHECK gate for Brandwatch live: not measured (no source had at least 5 mentions with both times), so these sources are slower than 2 hours: unknown. Too few mentions with times to judge: reddit (3)',
+      'OK gate for Brandwatch live: these sources are slower than 2 hours: none',
+      'CHECK gate for Brandwatch live: these sources are slower than 2 hours: none. Too few mentions with times to judge: tiktok (2)']);
   });
 };

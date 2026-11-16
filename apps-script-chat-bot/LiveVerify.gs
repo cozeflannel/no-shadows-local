@@ -301,11 +301,14 @@ function verifyNewSourcesLive(queryIds) {
   const notes = [];   // the project's queries, listed after the findings
   const why = e => (e && e.message ? e.message : e);
   let bwToken = '';
-  const bw = { calls: [], gate: null, gateWhy: 'the shared Brandwatch key could not be read, so Brandwatch was not asked' };
+  const bw = { calls: [], gate: null, gateWhy: 'the shared Brandwatch key could not be read, so Brandwatch was not asked', silent: [] };
   try {
     bwToken = pwBwToken_();
   } catch (e) {
-    lines.push(`PROBLEM the bot could not read the shared Brandwatch key from Secret Manager (${nsvScrub_(why(e), '')}), so Brandwatch was not asked anything`);
+    // pwBwToken_ cuts Secret Manager's text before this check sees it: a word the cut ends in may be part of an address
+    // whose @ was cut off, so it is dropped before the scrub
+    const said = String(why(e) === undefined || why(e) === null ? '' : why(e)).replace(/\s*\S*…$/, '…');
+    lines.push(`PROBLEM the bot could not read the shared Brandwatch key from Secret Manager (${nsvScrub_(said, '')}), so Brandwatch was not asked anything`);
   }
   if (bwToken) {
     const given = queryIds === undefined || queryIds === null ? [] : Array.isArray(queryIds) ? queryIds : [queryIds];
@@ -317,7 +320,7 @@ function verifyNewSourcesLive(queryIds) {
     const metricsAt = lines.length;
     try { sources = nsvBwSources_(bwToken, bw, lines); } catch (e) { lines.push(`PROBLEM Brandwatch content sources: ${nsvScrub_(why(e), bwToken)}`); }
     if (given.length && !passed.length) {
-      lines.push(`CHECK none of the ${given.length === 1 ? 'query id' : given.length + ' query ids'} given is a Brandwatch query id (a whole number), so ` +
+      lines.push(`CHECK ${given.length === 1 ? 'the query id given is not' : `none of the ${given.length} query ids given is`} a Brandwatch query id (a whole number), so ` +
         (queries ? 'the queries that look like Google\'s were used instead' : 'none was used'));
     } else if (passed.length < given.length) {
       const bad = given.length - usable.length;
@@ -359,7 +362,7 @@ function verifyNewSourcesLive(queryIds) {
   }
   const head = `Live check of the new sources (read only), ${new Date(now).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
   const list = notes.length ? ['The project\'s Brandwatch queries (id | name | collects | languages | suggested):'].concat(notes) : [];
-  const report = [head].concat(lines, list, [nsvGateLine_(bw.gate, bw.gateWhy)]).map(l => nsvScrub_(l, bwToken, true)).join('\n');
+  const report = [head].concat(lines, list, [nsvGateLine_(bw.gate, bw.gateWhy, bw.silent)]).map(l => nsvScrub_(l, bwToken, true)).join('\n');
   console.log('LIVE_VERIFY_NEW_SOURCES\n' + report);
   return report;
 }
@@ -571,6 +574,7 @@ function nsvMinutes_(min) {
  * (d) One read of the last 24 hours by added time (NSV_BW_DAY_PAGE_ mentions, the newest added first): per content
  * source the count, how many came with words, and the median and 90th percentile of the minutes from posting (date)
  * to added. Returns [{source, n (mentions with both times), median}] for the gate, or null when nothing was measured.
+ * The sources asked for that brought no mention are said on one line and kept in `bw.silent` for the gate.
  */
 function nsvBwDayRead_(token, bw, lines, ids, sources, now) {
   const since = now - 24 * 60 * 60 * 1000;
@@ -610,32 +614,43 @@ function nsvBwDayRead_(token, bw, lines, ids, sources, now) {
     const added = pwBwTime_(m.added);
     if (posted && added) o.mins.push(Math.max(0, (added - posted) / 60000));
   });
-  return Object.keys(by).sort((a, b) => by[b].n - by[a].n || (a < b ? -1 : 1)).map(s => {
+  const gate = Object.keys(by).sort((a, b) => by[b].n - by[a].n || (a < b ? -1 : 1)).map(s => {
     const o = by[s];
     const mins = o.mins.sort((a, b) => a - b);
     const median = nsvQuantile_(mins, 0.5);
     const fewWords = o.words * 2 < o.n;
     const slow = median !== null && median > NSV_SLOW_MINUTES_;
-    lines.push(`${fewWords || slow ? 'CHECK' : 'OK'} ${s}: ${fmtInt_(o.n)} mentions, ${fmtInt_(o.words)} with words` +
+    lines.push(`${fewWords || slow || median === null ? 'CHECK' : 'OK'} ${s}: ${fmtInt_(o.n)} mentions, ${fmtInt_(o.words)} with words` +
       `${fewWords ? ' (most came without their words)' : ''}; from posting to added: ` +
       (median === null ? 'no readable times' : `median ${nsvMinutes_(median)}, 90% within ${nsvMinutes_(nsvQuantile_(mins, 0.9))}`));
     return { source: s, n: mins.length, median };
   });
+  bw.silent = sources.filter(s => !by[s]);
+  if (bw.silent.length) {
+    lines.push(`CHECK no mention in the last 24 hours from ${bw.silent.join(', ')}, so how late ${bw.silent.length === 1 ? 'it is' : 'they are'} was not measured`);
+  }
+  return gate;
 }
 
 /**
  * The gate for stage 2, the report's last line: the Brandwatch sources slower than 2 hours. `why`: in plain words, why
- * nothing was measured (used only when `gate` is empty). Pure.
+ * nothing was measured (used only when `gate` is empty). `silent`: the sources asked for that brought no mention. It
+ * starts OK only when every source asked for was judged and none is slow; with no source judged it says "not measured".
+ * Pure.
  */
-function nsvGateLine_(gate, why) {
-  if (!gate || !gate.length) return `CHECK gate for Brandwatch live: not measured (${why || 'no read of the last 24 hours gave times'}), so these sources are slower than 2 hours: unknown`;
+function nsvGateLine_(gate, why, silent) {
+  const notMeasured = reason => `CHECK gate for Brandwatch live: not measured (${reason}), so these sources are slower than 2 hours: unknown`;
+  if (!gate || !gate.length) return notMeasured(why || 'no read of the last 24 hours gave times');
   const judged = gate.filter(g => g.n >= NSV_SLOW_MIN_COUNT_ && g.median !== null);
   const slow = judged.filter(g => g.median > NSV_SLOW_MINUTES_);
   const few = gate.filter(g => !judged.includes(g)).map(g => `${g.source} (${g.n})`);
-  const tail = few.length ? `. Too few mentions with times to judge: ${few.join(', ')}` : '';
+  const none = (silent || []).filter(Boolean);
+  const tail = (few.length ? `. Too few mentions with times to judge: ${few.join(', ')}` : '') +
+    (none.length ? `. No mention in the last 24 hours, so not judged: ${none.join(', ')}` : '');
+  if (!judged.length) return notMeasured(`no source had at least ${NSV_SLOW_MIN_COUNT_} mentions with both times`) + tail;
   return slow.length
     ? `CHECK gate for Brandwatch live: these sources are slower than 2 hours: ${slow.map(g => `${g.source} (median ${nsvMinutes_(g.median)})`).join(', ')}; leave them out of what Brandwatch live reads${tail}`
-    : `OK gate for Brandwatch live: these sources are slower than 2 hours: none${tail}`;
+    : `${tail ? 'CHECK' : 'OK'} gate for Brandwatch live: these sources are slower than 2 hours: none${tail}`;
 }
 
 /** One BigQuery call (a GET, or a POST of `payload`): {code, body, why} (why: BigQuery's message, addresses removed). */
