@@ -591,7 +591,10 @@ function isOwnMessage_(ctx, m) {
       String(m.clientId).indexOf(CAMPAIGN_CLIENT_PREFIX_) === 0;
   }
   if (!ctx.botUser || m.senderName !== ctx.botUser) return false;
-  if (typeof isBotFormattedText_ === 'function' ? isBotFormattedText_(m.text) : String(m.text || '').trim().indexOf(GEN.prefix) === 0) {
+  // (the Auto-correct flow: a question from the bot's account that starts as the line on the alert requirements does is
+  // the person's the bot runs as: RequirementLine.gs isRequirementQuestion_)
+  const asked = ctx.sourceReadOnly === true && typeof isRequirementQuestion_ === 'function' && isRequirementQuestion_(m.text);
+  if (!asked && (typeof isBotFormattedText_ === 'function' ? isBotFormattedText_(m.text) : String(m.text || '').trim().indexOf(GEN.prefix) === 0)) {
     return true;
   }
   try {
@@ -1095,8 +1098,9 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
   const inPlace = Boolean(ctx.outboundBlocked || (ctx.sourceReadOnly && parsed && parsed.ingested && m.name &&
     ctx.spaces && ctx.spaces.analyst && String(m.name).indexOf(ctx.spaces.analyst.id + '/messages/') === 0));
   // The auto-correct space (settings.requirement_line): which alert requirement the alert meets, worked out before the
-  // review's note is posted, for that note's last line (RequirementLine.gs requirementOf_; null in every other flow)
-  const req = requirementOf_(ctx, review, history);
+  // review's note is posted, for that note's last line (RequirementLine.gs requirementOf_; null in every other flow).
+  // waits: the alert is not decided in this run while it waits on what Burson alone can add (step 3 below)
+  const req = requirementOf_(ctx, review, history, { waits: !switchOn_(ctx, 'noWait') && requested.some(x => x.problem) });
   const fwd = inPlace ? { name: m.name, thread: m.thread || '' } : forwardAlert_(ctx, m, parsed, review, '', req);
   if (fwd && !inPlace) report.forwarded++;
   // A Direct BigQuery or sheet-test card in the auto-correct space was posted before its review, and the bot never edits
@@ -1212,7 +1216,8 @@ function forwardAlert_(ctx, m, parsed, review, extraNote, req) {
       linkLookup: parsed && parsed.linkLookup, requirement: req && req.line })].filter(Boolean).join('\n');
     if (note && fwd && fwd.name) {
       try {
-        postTo_(ctx, ctx.spaces.analyst.id, note, fwd.thread || null, 'chg:' + m.name);
+        // (the note Chat hands back: at a second attempt at the alert it is the first attempt's, requirementNoted_)
+        requirementNoted_(req, postTo_(ctx, ctx.spaces.analyst.id, note, fwd.thread || null, 'chg:' + m.name));
       } catch (e) {  // the alert is out; a missing note isn't worth posting it twice
         ctx.log(`couldn't post what changed under ${fwd.name}: ${(e && e.message) || e}`);
       }
@@ -1274,7 +1279,8 @@ function inPlaceNote_(ctx, m, review, parsed, req) {
     linkLookup: parsed && parsed.linkLookup, requirement: req && req.line });
   if (!note) return;
   try {
-    postTo_(ctx, ctx.spaces.analyst.id, note, m.thread || null, 'chg:' + m.name);
+    // (the note Chat hands back: at a second attempt at the card it is the first attempt's, requirementNoted_)
+    requirementNoted_(req, postTo_(ctx, ctx.spaces.analyst.id, note, m.thread || null, 'chg:' + m.name));
   } catch (e) {
     ctx.log(`couldn't post what changed under ${m.name}: ${(e && e.message) || e}`);
   }
@@ -1389,8 +1395,11 @@ function handleResend_(ctx, m, parsed, review, pending, report, history) {
   const forwarded = pending.forwarded_fields || {};
   const raised = raisedBy_(forwarded, review.fields);
   let fresh = null;
-  // (the auto-correct space: which alert requirement the resend meets, for its note's last line; RequirementLine.gs)
-  const req = raised.length ? requirementOf_(ctx, review, history) : null;
+  const hadEmail = !!(pending.email_status || (pending.forward_message && ctx.store.emailRowByForward(pending.forward_message)));
+  // (the auto-correct space: which alert requirement the resend meets, for its note's last line; RequirementLine.gs.
+  // An alert that had its Social Alert keeps it, so the resend gets none: the line says so at once)
+  const req = raised.length ? requirementOf_(ctx, review, history, { waits: missing.length > 0,
+    decided: hadEmail ? `a resend of ${pending.alert_id}, whose Social Alert was already decided` : '' }) : null;
   if (raised.length) {
     if (ctx.outboundBlocked) {
       fresh = { name: m.name, thread: m.thread || '' };
@@ -1406,9 +1415,8 @@ function handleResend_(ctx, m, parsed, review, pending, report, history) {
   // 3. The resend becomes the live post for this alert. Forwarded as a new alert that is now escalated, it gets the
   //    Social Alert draft the original didn't have (an original that has one keeps it).
   const alertId = ctx.store.nextAlertId();
-  const hadEmail = !!(pending.email_status || (pending.forward_message && ctx.store.emailRowByForward(pending.forward_message)));
   const draft = fresh && !hadEmail ? draftPlan_(ctx, review, history) : null;
-  requirementFinal_(ctx, req, fresh, m.name, draft, hadEmail ? `a resend of ${pending.alert_id}, whose Social Alert was already decided` : '');
+  requirementFinal_(ctx, req, fresh, m.name, draft, '');
 
   // 1. Burson: ⬇️ on the original ("addressed on updated post below"); on the resend ⬇️ again if it still needs changes
   //    (they're in its thread), else 👍 right away only when people take the action from here (drafts off)
@@ -1476,8 +1484,11 @@ function handleResendNoWait_(ctx, m, parsed, review, pending, report, history) {
   // 1. Analysts already have the corrected alert. If the priority or engagement level went up, the resend goes to
   //    them as a new alert; otherwise they only get a thread note about values that changed (e.g. the link).
   let fresh = null;
-  // (the auto-correct space: which alert requirement the resend meets, for its note's last line; RequirementLine.gs)
-  const req = raised.length ? requirementOf_(ctx, review, history) : null;
+  const hadEmail = !!(pending.email_status || (pending.forward_message && ctx.store.emailRowByForward(pending.forward_message)));
+  // (the auto-correct space: which alert requirement the resend meets, for its note's last line; RequirementLine.gs.
+  // An alert that had its Social Alert keeps it, so the resend gets none: the line says so at once)
+  const req = raised.length ? requirementOf_(ctx, review, history,
+    { decided: hadEmail ? `a resend of ${pending.alert_id}, whose Social Alert was already decided` : '' }) : null;
   if (raised.length) {
     if (ctx.outboundBlocked) {
       fresh = { name: m.name, thread: m.thread || '' };
@@ -1495,9 +1506,8 @@ function handleResendNoWait_(ctx, m, parsed, review, pending, report, history) {
   //    an original never processed, it's decided now. Otherwise nothing is done twice: the resend keeps the alert's
   //    decision and what Burson was told (for answers in its thread), and stays open for Burson's next resend.
   const alertId = ctx.store.nextAlertId();
-  const hadEmail = !!(pending.email_status || (pending.forward_message && ctx.store.emailRowByForward(pending.forward_message)));
   const draft = fresh && !hadEmail ? draftPlan_(ctx, review, history) : null;
-  requirementFinal_(ctx, req, fresh, m.name, draft, hadEmail ? `a resend of ${pending.alert_id}, whose Social Alert was already decided` : '');
+  requirementFinal_(ctx, req, fresh, m.name, draft, '');
   const decide = !draft && !hadEmail && (fresh || !done);
   // Auto-find missing links: the found link stays marked until Burson's own link takes its place
   const values = fresh ? snapshotFields_(review.fields) : Object.assign({}, forwarded, snapshotFields_(review.fields));

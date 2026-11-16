@@ -959,7 +959,9 @@ function edNoteText_(d, requirement) {
   const rev = d.rev;
   const sev = rev && rev.severity && rev.severity !== 'none' ? ` \u00b7 ${rev.severity}` : '';
   const conf = rev && d.disposition !== 'dismiss' ? ` (${Math.round(rev.confidence * 100)}% sure)` : '';
-  const head = `${GEN.prefix} *Early Detection Review: ${edCallWords_(d)}*${sev}${conf}`;
+  // (with the line on the alert requirements, the head and the first line say the team's rules in its words)
+  const words = s => (requirement ? requirementNoteWords_(s) : s);
+  const head = words(`${GEN.prefix} *Early Detection Review: ${edCallWords_(d)}*${sev}${conf}`);
   if (!rev) {
     const sig = truncate_(String((d.ed && (d.ed.summary || d.ed.headline)) || '').replace(/\.$/, '').trim(), 180);
     const why = `${d.why || 'flagged for analyst review'}${d.llmError ? ` (${truncate_(d.llmError, 140)})` : ''}`;
@@ -995,7 +997,7 @@ function edNoteText_(d, requirement) {
   }
   // (a note with no SLRR line gets the line on the alert requirements as one bullet more: no other bullet goes for it)
   const first = requirement && !(rev.slrr && rev.slrr.is) ? [`\u2022 ${requirement}`] : [];
-  const lines = [head, `*Why:* ${whyText}.`].concat(first, bullets.slice(0, 3));
+  const lines = [head, `*Why:* ${words(whyText)}.`].concat(first, bullets.slice(0, 3));
   if (d.media) lines.push(`_${d.media}_`);
   return truncate_(lines.filter(Boolean).join('\n'), 1800);
 }

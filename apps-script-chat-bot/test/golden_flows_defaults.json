@@ -20,7 +20,7 @@
     "space": "spaces/AAQAonespace01",
     "thread": "spaces/AAQAonespace01/threads/t3",
     "reply": true,
-    "text": "The agentic assistant reviewed this alert and made these changes:\n- Product: Gems to Gemini App\n- Social Network: Instagram to X\n- Priority banner: P2 to P0\n- Engagement: LOW to HIGH\n*Alert requirements:* met for a Social Alert: P0 exposure tag (Product - Perceived bias) · 29,425 engagements (2,000+ needed)."
+    "text": "The agentic assistant reviewed this alert and made these changes:\n- Product: Gems to Gemini App\n- Social Network: Instagram to X\n- Priority banner: P2 to P0\n- Engagement: LOW to HIGH\n*Alert requirements:* met for a Social Alert: 29,425 engagements (2,000+ needed)."
    },
    {
     "run": "04 Direct BigQuery finds the Pixel post",
@@ -48,7 +48,7 @@
     "space": "spaces/AAQAonespace01",
     "thread": "spaces/AAQAonespace01/threads/t7",
     "reply": true,
-    "text": "🤖 *Triage: 👍 Worth a look · ✍️ T&S intake* · medium (80% sure)\nAn X user (@promptwatch, 18K followers) says the Gemini app invented a court ruling and cited it as real — A made-up legal citation from a Google AI product. (<https://x.com/promptwatch/status/2150000000000000003|@promptwatch on X>)\n• *Alert requirements:* not met for a Social Alert (a P1 tag needs 2,000+ engagements, a KOF author or a Sensitive Topic; this post: 520 engagements, no KOF author). Monitoring only.\n• *T&S:* Gemini hallucination — <https://docs.google.com/forms/d/e/pub-form1/viewform?usp=pp_url&entry.880042=Marketing&entry.880007=Gemini&entry.880014=Information%20Quality&entry.880021=https%3A%2F%2Fx.com%2Fpromptwatch%2Fstatus%2F2150000000000000003&entry.880028=An%20X%20user%20%28%40promptwatch%2C%2018K%20followers%29%20says%20the%20Gemini%20app%20invented%20a%20court%20ruling%20and%20cited%20it%20as%20real.%20520%20engagements%20on%20X.|Open the test copy of the T&S Intake Form, pre-filled> (Gemini / Information Quality).\n• *Escalate if:* A KOF or 2,000+ engagements amplifying it."
+    "text": "🤖 *Triage: 👍 Worth a look · ✍️ T&S intake* · medium (80% sure)\nAn X user (@promptwatch, 18K followers) says the Gemini app invented a court ruling and cited it as real — A made-up legal citation from a Google AI product. (<https://x.com/promptwatch/status/2150000000000000003|@promptwatch on X>)\n• *Alert requirements:* not met for a Social Alert (a P1 tag needs 2,000+ engagements, a KOF author or a Sensitive Topic; this post: 520 engagements, no KOF author). No Social Alert; a T&S form is asked for below.\n• *T&S:* Gemini hallucination — <https://docs.google.com/forms/d/e/pub-form1/viewform?usp=pp_url&entry.880042=Marketing&entry.880007=Gemini&entry.880014=Information%20Quality&entry.880021=https%3A%2F%2Fx.com%2Fpromptwatch%2Fstatus%2F2150000000000000003&entry.880028=An%20X%20user%20%28%40promptwatch%2C%2018K%20followers%29%20says%20the%20Gemini%20app%20invented%20a%20court%20ruling%20and%20cited%20it%20as%20real.%20520%20engagements%20on%20X.|Open the test copy of the T&S Intake Form, pre-filled> (Gemini / Information Quality).\n• *Escalate if:* A KOF or 2,000+ engagements amplifying it."
    },
    {
     "run": "09 Direct BigQuery finds the Maps post and a story is found",

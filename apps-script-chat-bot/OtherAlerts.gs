@@ -1299,7 +1299,9 @@ function otherNoteText_(d, requirement) {
   const postLink = /^https?:\/\/[^\s<>|]+$/i.test(url) && typeof chatLink_ === 'function' ? chatLink_(url, linkLabel) : '';
   const severity = tri && tri.severity ? ` \u00b7 ${tri.severity}` : '';
   const sure = tri && d.basis === 'stream' && d.action !== 'no_action' ? ` (${otherPct_(tri.confidence)} sure)` : '';
-  const head = `${GEN.prefix} *Triage: ${otherCallWords_(d)}*${severity}${sure}`;
+  // (with the line on the alert requirements, the head and the first line say the team's rules in its words)
+  const words = s => (requirement ? requirementNoteWords_(s) : s);
+  const head = words(`${GEN.prefix} *Triage: ${otherCallWords_(d)}*${severity}${sure}`);
   if (!tri) {
     const facts = [postLink || [f.social_network, f.author].filter(Boolean).join(' \u00b7 '),
       Number.isInteger(f.followers) ? `${fmtInt_(f.followers)} followers` : '',
@@ -1311,7 +1313,7 @@ function otherNoteText_(d, requirement) {
   }
   const sumRaw = truncate_(String(tri.summary || f.summary || f.issue_name || 'Social post').replace(/\.$/, '').trim(), 220);
   const whyRaw = truncate_(String(d.why || '').replace(/\.$/, '').trim(), 180);
-  const lead = `${sumRaw}${whyRaw ? ` \u2014 ${whyRaw}` : ''}.${postLink ? ` (${postLink})` : ''}`;
+  const lead = `${words(`${sumRaw}${whyRaw ? ` \u2014 ${whyRaw}` : ''}`)}.${postLink ? ` (${postLink})` : ''}`;
   const bullets = [];
   const slrr = requirement || otherSlrrLine_(d);
   if (slrr) bullets.push(`\u2022 ${slrr}`);

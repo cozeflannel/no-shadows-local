@@ -18,9 +18,11 @@ module.exports = H => {
     'these corrections:';
   const STAND_IN = { live: false, standIn: 'tester@testing.test', mailbox: 'bot@runner.test', from: 'Brand Social <bot@runner.test>' };
   // The note's last line (RequirementLine.gs, settings.requirement_line): which alert requirement the alert met. F.P0_OK
-  // has a P0 exposure tag and 1 engagement; F.MISTAKES, corrected, a P0 exposure tag and 29,425 engagements
+  // has a P0 exposure tag and 1 engagement; F.MISTAKES, corrected, a P0 exposure tag and 29,425 engagements, on an
+  // ongoing issue by an author who is no KOF: there the tag sends no Social Alert by itself, so the engagements are
+  // the requirement it meets
   const REQ_P0 = '*Alert requirements:* met for a Social Alert: P0 exposure tag (Product - Perceived bias).';
-  const REQ_MISTAKES = '*Alert requirements:* met for a Social Alert: P0 exposure tag (Product - Perceived bias) · 29,425 engagements (2,000+ needed).';
+  const REQ_MISTAKES = '*Alert requirements:* met for a Social Alert: 29,425 engagements (2,000+ needed).';
   const SAM = 'https://x.com/WasSamLowryEsq/status/2109952063492993159';
   const P0_SUMMARY = parse(F.P0_OK).fields.summary;
   // The write-up Gemini gives for F.P0_OK, and the web searches behind it
