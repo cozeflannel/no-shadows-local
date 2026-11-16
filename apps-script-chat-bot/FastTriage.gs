@@ -71,7 +71,7 @@ const FT_BAR_SPECS_ = [
 const FT_BAR_FIRST_ROW_ = Math.min.apply(null, FT_BAR_SPECS_.map(s => s.row));
 const FT_BAR_LAST_ROW_ = Math.max.apply(null, FT_BAR_SPECS_.map(s => s.row));
 
-const EW_WATCH_QUEUE_PER_DAY_ = 8;          // early-watch signals queued a day at most, of EW_MAX_PER_DAY_'s 40
+const EW_WATCH_QUEUE_PER_DAY_ = 8;          // early-watch signals queued a day at most, of EW_MAX_PER_DAY_'s 40 (or of the allowance's)
 const FT_ANSWER_CACHE_SEC_ = 3 * 3600;      // a signal's answers are kept as long as the producer's buffer keeps the signal
 const FT_ANSWER_CACHE_PREFIX_ = 'ft1:';
 
@@ -360,6 +360,27 @@ function ftProtected_(row) {
   return r.tag_raised || ftP0Group_(r);
 }
 
+/**
+ * True when signal `row` is serious, for the allowance of the Auto-correct flow (BigQuery.gs edAllowance_: a serious
+ * signal goes first and passes the hour's allowance for ordinary ones): an early-watch story (EARLY_WATCH); or a P0 risk
+ * group (ftP0Group_: also a row without facts whose hint is P0); or, when the fast triage answered (`dec`, decCompact_),
+ * its probability of medium severity or higher (sp[2] + sp[3] + sp[4]) is at or above the confidence bar (`bars.conf`,
+ * Control B43); or, only when there is no answer, a taxonomy hint raised it (`tag_raised === true`). Never
+ * ftProtected_, which is true for a row without facts. Pure.
+ */
+function edSerious_(row, dec, bars) {
+  const r = row || {};
+  if (String(r.signal_type || '').trim().toUpperCase() === EWS_WATCH_SIGNAL_) return true;
+  if (ftP0Group_(r)) return true;
+  const sp = dec && typeof dec === 'object' && Array.isArray(dec.sp) && dec.sp.length === 5 ? dec.sp.map(v => Number(v) || 0) : null;
+  if (sp) {
+    const set = Number(bars && bars.conf);
+    const bar = isFinite(set) && set > 0 ? set : FT_BAR_SEEDS_.conf;
+    return Math.round((sp[2] + sp[3] + sp[4]) * 1000) / 1000 >= bar;
+  }
+  return r.tag_raised === true;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Order and hold-back (pure rules)
 // ---------------------------------------------------------------------------------------------------------------
@@ -432,14 +453,15 @@ function ftAnswerWords_(dec) {
 /**
  * This check's fast triage, or null when nothing that is ON uses the answers (row 38 OFF, or rows 39 and 40 both OFF):
  * {session (decSession_), rank, hold, bars (ftBars_), log, asked, missed: {why: count}, held, watch: {asked, raised},
- * verdicts: [triage_verdicts rows]}. `left`: () => ms of the run left.
+ * verdicts: [triage_verdicts rows]}. `left`: () => ms of the run left. `perDay`: the day's cap of Decisions calls
+ * (decSession_; BigQuery.gs earlyWaveCheck_ gives DEC_MAX_PER_DAY_ALLOWANCE_ under the allowance, else DEC_MAX_PER_DAY_).
  */
-function ftStart_(ctx, left) {
+function ftStart_(ctx, left, perDay) {
   const rank = ftRankOn_(ctx);
   const hold = ftHoldOn_(ctx);
   if (!rank && !hold) return null;
   return {
-    session: decSession_(left, !!(ctx && ctx.slaBusy)),
+    session: decSession_(left, !!(ctx && ctx.slaBusy), perDay),
     rank,
     hold,
     bars: ftBars_(ctx),

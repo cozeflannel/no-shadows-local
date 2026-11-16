@@ -11,6 +11,8 @@
 //
 // What a signal's words make the scripted services do:
 //   DECNOISE    the fast triage answers "routine noise" (held back by row 40)     DECOFF   "not about Google" (held back)
+//   DECLOW      the fast triage answers severity low, not noise: not held back, and ordinary under the allowance
+//               (the usual answer, severity medium, makes a signal serious there: FastTriage.gs edSerious_)
 //   REVDISMISS  the review dismisses it          REVESCALATE  the review escalates it (a Social Alert)
 //   REVNONENG   the review says the posts are not English      REVREPEAT  the review finds an issue already alerted
 //   REVFAIL     Gemini's review fails            EVERGREEN    the listening data says its topic is always around
@@ -27,6 +29,9 @@ module.exports = H => {
   const MIRROR = 'spaces/AAQAedEndsMr1';
   const MIRROR_NAME = 'SLRR Zapier Training Mirror (endings)';
   const DAY1 = Date.UTC(2026, 9, 14, 4, 0);  // midnight Eastern (EDT) on the day the harness starts (at 08:00 that day)
+  // The settings of the old rule of the review queue (BigQuery.gs edAllowance_ returns null): a world's own when it is
+  // given none
+  const OLD_RULE = { early_wave_reviews_per_hour: 0, early_wave_topic_min_ratio: 0 };
 
   /** "09:31" (the first day) or "D2 00:05" (the day after), Eastern time, in ms. */
   const at = label => {
@@ -112,6 +117,7 @@ module.exports = H => {
   function decisions(input) {
     const a = /DECNOISE/.test(input) ? { g: 0.84, r: 0.09, i: 0.29, n: 0.93, cat: 'none', level: 1, conf: 0.6 }
       : /DECOFF/.test(input) ? { g: 0.06, r: 0.05, i: 0.2, n: 0.5, cat: 'none', level: 0, conf: 0.7 }
+        : /DECLOW/.test(input) ? { g: 0.9, r: 0.2, i: 0.3, n: 0.5, cat: 'none', level: 1, conf: 0.6 }
         : { g: 0.9, r: 0.5, i: 0.3, n: 0.4, cat: 'other risk', level: 2, conf: 0.6 };
     const yes = p => ({ type: 'noul', noul: p, confidence: Math.max(p, 1 - p) });
     const levels = { 0: 0.1, 1: 0.1, 2: 0.1, 3: 0.05, 4: 0.05 };
@@ -169,7 +175,14 @@ module.exports = H => {
   function world(o) {
     const x = o || {};
     const mirror = x.flow === 'mirror';
-    const t = golden.world.start(x.settings, [mirror ? [MIRROR, MIRROR_NAME] : [AC, AC_NAME]]);
+    // without settings of its own a world keeps the old rule of the review queue (40 queued a day; topic counts
+    // reviewed), which every flow but the Auto-correct one keeps whatever the settings: the long mixed day was written
+    // for it. The Auto-correct flow's allowance is tested with settings that turn it on (OLD_RULE's keys at their
+    // defaults: switch_ed_allowance.test.js). The notes under another alert's card (setting cross_alert_notes) are off
+    // unless the settings name them: the long mixed day was written for a story skipped when another alert covers its
+    // main post, the same in both flows (EarlyDetectionCross.gs is tested in switch_ed_cross_alerts.test.js)
+    const t = golden.world.start(Object.assign({ cross_alert_notes: false }, x.settings === undefined ? OLD_RULE : x.settings),
+      [mirror ? [MIRROR, MIRROR_NAME] : [AC, AC_NAME]]);
     const sh = t.control();
     const w = { t, sh, flow: mirror ? 'mirror' : 'one-space', space: mirror ? MIRROR : AC, rows: [], fail: '', writes: [],
       busy: false, partition: '', seen: { logs: 0, posts: new Set(), writes: 0 } };
@@ -416,5 +429,5 @@ module.exports = H => {
     return plan;
   }
 
-  return { world, signal, at, day, dayPlan, NOT_ENGLISH, spaces: { AC, MIRROR, REAL } };
+  return { world, signal, at, day, dayPlan, NOT_ENGLISH, OLD_RULE, spaces: { AC, MIRROR, REAL } };
 };

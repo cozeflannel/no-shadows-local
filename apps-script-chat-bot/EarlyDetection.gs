@@ -333,7 +333,7 @@ function edAct_(ctx, m, d, report) {
   report.early_detection_alerts = (report.early_detection_alerts || 0) + 1;
 
   if (d.disposition !== 'escalate') edNoEmail_(ctx, row, d, report);
-  const note = edNoteText_(d);
+  const note = [edNoteText_(d), d.relatedLine || ''].filter(Boolean).join('\n');  // (d.relatedLine: EarlyDetectionCross.gs)
   try {
     const ff = Object.assign({}, row.forwarded_fields || {}, { early_detection: edSnap_(d, note) });
     ctx.store.updateAlert(row, { forwarded_fields: ff });
@@ -1723,7 +1723,10 @@ function edDismissed_(d) {
  * edAct_ (the review
  * note in its thread, the marks, the drafts). The card's key makes a retried post return the
  * same message. An update of an earlier card on the same story (`row.update_of`) goes in that card's thread, without a
- * picture. A review that finds an issue already alerted with nothing materially new (basis 'repeat') posts no card, nor
+ * picture. In the Auto-correct flow with the setting cross_alert_notes, a new card whose main post another alert's card
+ * already covers says so in its review note (its Related alert line) and a note goes under that card
+ * (EarlyDetectionCross.gs). A review that finds an issue already alerted with nothing materially new (basis 'repeat')
+ * posts no card, nor
  * does any other dismissal (edDismissed_: filtered out, its reason logged). An early-watch signal (a story flagged
  * below the usual bar) whose review failed gets no card either: a card must rest on a review, so it is tried once more
  * (`retry`) and then dropped; the usual kinds keep their "needs a human look" card. {card (null when Chat held it
@@ -1790,6 +1793,11 @@ function edReviewAndPost_(ctx, row, report) {
   // the Auto-correct space (B10): the Web line only with web sources, and a card without a picture of the post carries
   // its words (edStoryCardText_ `ac`); everywhere else the card is as it always was
   const ac = ctx.sourceReadOnly ? {} : null;
+  // another alert's card already covers its main post (the Auto-correct flow, setting cross_alert_notes): its review
+  // note says so (not the card: Burson's parser would read the line's link as the post's), and a note goes under that
+  // card once this one is posted (EarlyDetectionCross.gs)
+  const related = ac ? edRelatedOf_(ctx, row, now, !!upd) : null;
+  if (related) d.relatedLine = edRelatedLine_(ctx, related, now);
   let text = edStoryCardText_(ed, d, now, ac);
   let card = null;
   if (attachments.length) {
@@ -1820,6 +1828,7 @@ function edReviewAndPost_(ctx, row, report) {
     samples: ed.samples,
   });
   const logged = edAct_(ctx, Object.assign({}, card, { text: card.text || text }), d, report);
+  if (related) edRelatedNote_(ctx, related, row, card, logged && logged.alert_id);
   return { card, held: '', call, logged: (logged && logged.alert_id) || '', updated: !!upd, updateOf: (upd && upd.id) || '',
     earlier: upd ? { id: upd.row || '', message: upd.msg || '', news: upd.news || '' } : null };
 }

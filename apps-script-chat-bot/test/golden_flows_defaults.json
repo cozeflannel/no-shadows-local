@@ -77,6 +77,27 @@
     "thread": "spaces/AAQAonespace01/threads/t11",
     "reply": true,
     "text": "The agentic assistant reviewed this alert. The card above was posted before the review; the email uses these corrections:\n- Summary: X user @roadwatcher (41,000 followers) says Google Maps keeps sending drivers onto a closed bridge and calls the routing biased toward toll roads. The post does not name the bridge."
+   },
+   {
+    "run": "12 a story whose main post is the Pixel post",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t13",
+    "reply": false,
+    "text": "🚨 *EARLY DETECTION* · New story\n*Pixel 10 owners say batteries are swelling after the update*\n*Product:* Pixel\n*Exposure Tag:* Product - Other/general criticism (P2)\n*Sensitive Topic:* None\n*KOF:* No (5 small, non-KOF accounts)\n\n*What's happening:* Owners describe <https://x.com/pixelcritic/status/2150000000000000001|swollen batteries> on X and <https://www.reddit.com/r/GooglePixel/comments/1p9xyz/battery_swelling/|Reddit>.\n*Post:* \"My Pixel 10 battery swelled up after the latest update, the back cover is lifting.\"\n*Call:* 👍 Monitor build-up: Several independent owners describe the same hardware safety symptom\n*Activity:* 5 small accounts on X and Reddit posted about this 6 times at 7:42 AM ET\n*Next steps:*\n1. Keep monitoring for volume growth and re-check in 2 hours.\n*Posts:* <https://x.com/pixelcritic/status/2150000000000000001|@pixelcritic> (X) · <https://x.com/droidfan22/status/2150000000000000022|@droidfan22> (X) · <https://www.reddit.com/r/GooglePixel/comments/1p9xyz/battery_swelling/|@u_pixel_owner> (Reddit)"
+   },
+   {
+    "run": "12 a story whose main post is the Pixel post",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t13",
+    "reply": true,
+    "text": "🤖 *Early Detection Review: 👍 Monitor build-up* · medium (86% sure)\n*Why:* Several independent owners describe the same hardware safety symptom.\n• *SLRR:* Product - Other/general criticism (P2) · Pixel.\n• *Draft Temp Check query:* `\"Pixel 10\" AND (battery OR swelling OR swollen)` (Last 6 hours across X and Reddit)\n• *Escalate if:* An official statement or press pickup.\n*Related alert:* its main post already has a card (QA-1002 · BigQuery · BSIP, 8:07 AM ET)"
+   },
+   {
+    "run": "12 a story whose main post is the Pixel post",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t5",
+    "reply": true,
+    "text": "🔗 *Part of a story:* 5 small accounts on X and Reddit tell it (story card QA-1006)"
    }
   ],
   "test_copy": [],
@@ -115,6 +136,11 @@
     "run": "10 the Maps card is reviewed and the watch flags the Maps post too",
     "on": "spaces/AAQAonespace01/messages/m11",
     "emoji": "📦"
+   },
+   {
+    "run": "12 a story whose main post is the Pixel post",
+    "on": "spaces/AAQAonespace01/messages/m13",
+    "emoji": "👍"
    }
   ],
   "emails": [

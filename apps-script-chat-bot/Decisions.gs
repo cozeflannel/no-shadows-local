@@ -67,10 +67,13 @@ const DEC_SLOW_MS_ = 10 * 1000;              // a call that took longer counts a
 const DEC_PAUSE_MS_ = 15 * 60 * 1000;        // after a failure no call is made for this long (one early-wave check interval)
 const DEC_MAX_PER_CHECK_ = 15;               // calls an early-wave check (queue candidates and early-watch stories together)
 const DEC_MAX_PER_DAY_ = 150;                // calls a day: about 72 queue candidates a day (Nov 11-13) plus the early watch
+const DEC_MAX_PER_DAY_ALLOWANCE_ = 300;      // calls a day while the Auto-correct flow's allowance is on (BigQuery.gs
+                                             // edAllowance_: every candidate is asked, ~136 signals a day on Nov 15); every
+                                             // other flow, and the setting at 0, keep DEC_MAX_PER_DAY_
 const DEC_INPUT_MAX_CHARS_ = 4000;           // the input's JSON: a headline, the counts and 8 snippets of 280 characters
 const DEC_HEADLINE_CHARS_ = 200;             // of the signal's headline
 const DEC_ID_DIGITS_ = 8;                    // a run of this many digits is taken for an id and cut (a CVE number has 4-7)
-const DEC_STATE_PROP_ = 'DECISIONS_STATE';   // {day, asked, failed, refused, until, why}: today's calls and the pause
+const DEC_STATE_PROP_ = 'DECISIONS_STATE';   // {day, asked, failed, refused, until, why[, cap]}: today's calls and the pause
 const DEC_REFUSAL_CODES_ = ['safety', 'prohibited_content', 'blocklist', 'image_safety', 'content_blocked'];  // HTTP 400: the input was refused
 
 // The fast triage's questions (decSignalQuestions_): their keys, and the severity rubric's levels (ED_SEVERITIES_)
@@ -88,8 +91,10 @@ const DEC_NO_CATEGORY_ = 'none';             // the category for no brand-safety
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
- * Today's Decisions calls: {day, asked, failed, refused, until (ms: no call before it), why (the last failure)}. A new
- * day starts the counts again; a pause still running is kept. Never throws.
+ * Today's Decisions calls: {day, asked, failed, refused, until (ms: no call before it), why (the last failure)}, and
+ * `cap` only when today's last call was made under a daily cap other than DEC_MAX_PER_DAY_ (the allowance's
+ * DEC_MAX_PER_DAY_ALLOWANCE_: decStatusText_ names that cap). A new day starts the counts again; a pause still running
+ * is kept. Never throws.
  */
 function decState_(props, now) {
   const day = dayKey_();
@@ -100,7 +105,7 @@ function decState_(props, now) {
   const until = num(s.until);
   const paused = until > (Number(now) || Date.now());
   const same = s.day === day;
-  return {
+  const out = {
     day,
     asked: same ? num(s.asked) : 0,
     failed: same ? num(s.failed) : 0,
@@ -108,6 +113,8 @@ function decState_(props, now) {
     until: paused ? until : 0,
     why: paused || same ? String(s.why || '') : '',
   };
+  if (same && num(s.cap)) out.cap = num(s.cap);
+  return out;
 }
 
 /** Saves today's Decisions calls. Never throws. */
@@ -136,8 +143,8 @@ function decStatusText_(props, now) {
       const tz = (typeof GEN !== 'undefined' && GEN && GEN.timezone) || 'America/New_York';
       parts.push(`paused until ${Utilities.formatDate(new Date(st.until), tz, 'h:mm a')}` +
         `${st.why ? ` (${st.why})` : ''}: signals go on without it`);
-    } else if (st.asked >= DEC_MAX_PER_DAY_) {
-      parts.push(`daily cap of ${DEC_MAX_PER_DAY_} reached, more tomorrow`);
+    } else if (st.asked >= (st.cap || DEC_MAX_PER_DAY_)) {
+      parts.push(`daily cap of ${st.cap || DEC_MAX_PER_DAY_} reached, more tomorrow`);
     }
     return parts.join(' \u00b7 ');
   } catch (e) {
@@ -151,10 +158,16 @@ function decStatusText_(props, now) {
 
 /**
  * A check's session with the Decisions API: {left: () => ms of the run left, busy: SLA triage is catching up, key: the
- * API key once read (in memory, this check only), asked: calls made this check}. Pure.
+ * API key once read (in memory, this check only), asked: calls made this check, perDay: the day's cap}. `perDay` is
+ * DEC_MAX_PER_DAY_ unless a positive number is given (the Auto-correct flow's allowance gives
+ * DEC_MAX_PER_DAY_ALLOWANCE_). Pure.
  */
-function decSession_(left, busy) {
-  return { left: typeof left === 'function' ? left : () => Infinity, busy: !!busy, key: '', asked: 0 };
+function decSession_(left, busy, perDay) {
+  const cap = Math.floor(Number(perDay));
+  return {
+    left: typeof left === 'function' ? left : () => Infinity, busy: !!busy, key: '', asked: 0,
+    perDay: isFinite(cap) && cap > 0 ? cap : DEC_MAX_PER_DAY_,
+  };
 }
 
 /**
@@ -190,7 +203,8 @@ function decSkipWhy_(session, st, now) {
   if (session.busy) return 'the alerts come first';
   if (st.until > now) return `paused after a failure${st.why ? ` (${st.why})` : ''}`;
   if (session.asked >= DEC_MAX_PER_CHECK_) return `${DEC_MAX_PER_CHECK_} calls this check`;
-  if (st.asked >= DEC_MAX_PER_DAY_) return `${DEC_MAX_PER_DAY_} calls today`;
+  const perDay = session.perDay || DEC_MAX_PER_DAY_;
+  if (st.asked >= perDay) return `${perDay} calls today`;
   if (typeof apiGuardAllowDecisions_ === 'function' && !apiGuardAllowDecisions_(now)) return 'too many calls lately';
   if (session.left() < DEC_MIN_LEFT_MS_) return 'too little of the run left';
   return '';
@@ -315,6 +329,7 @@ function decisionsAsk_(input, questions, session) {
       // Counted before the call is made: a run that dies mid-call still counts toward every cap
       s.asked++;
       st.asked++;
+      if ((s.perDay || DEC_MAX_PER_DAY_) !== DEC_MAX_PER_DAY_) st.cap = s.perDay; else delete st.cap;
       decSaveState_(props, st);
       if (typeof apiGuardNote_ === 'function') apiGuardNote_('decisions', 1);
       try {

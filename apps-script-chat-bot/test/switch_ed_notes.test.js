@@ -488,10 +488,13 @@ module.exports = H => {
     // why
     eq(['its review failed twice', ' Already   a sentence. ', 'cut short…', 'really?', '', null].map(s => bot.edNoteSentence_(s)),
       ['Its review failed twice.', 'Already a sentence.', 'Cut short…', 'Really?', '', '']);
-    eq(['day', 'watchDay', 'watchOff', 'full', 'pushed', 'stale', 'failed', 'lost', 'long', 'something else'].map(c => bot.edNeverWhy_(c)),
-      ['today\'s limit of 40 was reached', 'today\'s 8 early signals were used', 'early signals are switched OFF (row 39)',
-        'the review queue was full', 'pushed out of the full queue by higher-ranked stories', 'waited 3 hours while the bot worked on alerts',
-        'its review failed twice', 'its saved details were gone when its turn came', 'its details were too long to keep for a review', '']);
+    eq(['day', 'watchDay', 'watchOff', 'full', 'pushed', 'stale', 'failed', 'lost', 'long', 'check', 'hour', 'hourOrdinary', 'dayReviews',
+      'something else'].map(c => bot.edNeverWhy_(c)),
+    ['today\'s limit of 40 was reached', 'today\'s 8 early signals were used', 'early signals are switched OFF (row 39)',
+      'the review queue was full', 'pushed out of the full queue by higher-ranked stories', 'waited 3 hours while the bot worked on alerts',
+      'its review failed twice', 'its saved details were gone when its turn came', 'its details were too long to keep for a review',
+      'more than 5 stories arrived in 15 minutes; higher-ranked ones went first', 'this hour\'s 10 reviews were used',
+      'this hour\'s 6 reviews for ordinary stories were used', 'today\'s limit of 150 reviews was reached', '']);
     eq([bot.ev('EW_MAX_PER_DAY_'), bot.ev('EW_WATCH_QUEUE_PER_DAY_'), bot.ev('ED_QUEUE_MAX_AGE_MS_') / HOUR, bot.ev('ED_QUEUE_MAX_TRIES_')], [40, 8, 3, 2]);
     eq(bot.edNoiseWhy_({ g: 0.84, n: 0.9, l: 1, sc: 0.57 }, 'routine noise (routine noise 0.9, severity low 0.57)'),
       'Looks like routine chatter (90% likely), severity low (57% sure)');
@@ -517,7 +520,8 @@ module.exports = H => {
     eq([bot.edAlertCard_(alert('BSIP')), bot.edAlertCard_(alert('', { forward_message: '' }))],
       [{ id: 'QA-1001', message: 'spaces/AAQAcards0001/messages/f.f' }, { id: 'QA-1001', message: 'spaces/AAQAsource001/messages/s.s' }]);
     // none of the bot's own reasons holds a decimal
-    const own = DAY.map(x => x[2]).concat(['day', 'watchDay', 'watchOff', 'full', 'pushed', 'stale', 'failed', 'lost', 'long'].map(c => bot.edNeverWhy_(c)));
+    const own = DAY.map(x => x[2]).concat(['day', 'watchDay', 'watchOff', 'full', 'pushed', 'stale', 'failed', 'lost', 'long', 'check', 'hour',
+      'hourOrdinary', 'dayReviews'].map(c => bot.edNeverWhy_(c)));
     own.forEach(w => assert.ok(!/\d\.\d/.test(w), w));
   });
 
