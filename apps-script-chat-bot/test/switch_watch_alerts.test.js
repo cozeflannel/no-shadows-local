@@ -1512,7 +1512,8 @@ module.exports = H => {
     k = byKey(t);
     eq([k[rk(REDDIT)].a, k[rk(REDDIT)].bu, k[rk(REDDIT)].st, [1, 2, 3].map(n => k[rk(url(n, n === 2 ? 'parent2' : 'parent1'))].a),
       k[rk(url(2, 'parent2'))].pm], ['p', 3, STORY, ['g', 'g', 'g'], msg.name]);
-    assert.match(c35(t), / · today: 1 posted \(1 a build-up of small posts\), \+3 in their story's thread, 3 small held to be grouped · a flag that matters by itself /);
+    // (the three that waited went out with the build-up: they are counted in its thread, and no longer as held)
+    assert.match(c35(t), / · today: 1 posted \(1 a build-up of small posts\), \+3 in their story's thread · a flag that matters by itself /);
     // the triage is told what built up, and to judge the story's momentum, not this one post's engagement
     chatShows(msg);
     t.poll();

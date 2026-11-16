@@ -1517,10 +1517,12 @@ function pwRecord_(sh, results, floor, queue) {
  * Queues again the small flags that waited to be grouped (their key: a 'b') whose post has since grown into one that
  * matters by itself (`list`: pwDetections_'s requeue; `held`: "watch|key" -> {i: index in `block`, k}): the row's
  * engagements, followers and score brought up to date, its key back to a 'q' with rq (when: its 3 hours to go out count
- * from then), out of its build-up. The next pwPostAlerts_ takes it like a new flag. Rows queued again.
+ * from then), out of its build-up. The next pwPostAlerts_ takes it like a new flag. One that was held today is no longer
+ * in today's count of small flags held (C35: WatchAlerts.gs pwAlertDay_): it is counted where it ends. Rows queued again.
  */
 function pwRequeue_(sh, block, held, list, now) {
   let n = 0;
+  let today = 0;  // of them, held today
   (list || []).forEach(x => {
     const h = held.get(x.id);
     if (!h) return;
@@ -1533,7 +1535,9 @@ function pwRequeue_(sh, block, held, list, now) {
     delete k.ac;
     sh.getRange(row, PW_COL_.key).setValue(JSON.stringify(k));
     n++;
+    if (pwOnToday_(h.k.at)) today++;
   });
+  if (today) pwAlertDay_(0, 0, { held: -today });
   if (n) console.log(`Proactive watch: ${n} small flag${n === 1 ? '' : 's'} that waited to be grouped grew past ${PW_SOLO_MIN_ENG_} engagements: queued as alerts of their own`);
   return n;
 }

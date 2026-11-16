@@ -322,6 +322,160 @@ module.exports = H => {
   });
 
   // -----------------------------------------------------------------------------------------------------------
+  // C35: a small flag that waited is counted once, where it ended
+  // -----------------------------------------------------------------------------------------------------------
+
+  /** A pre-read in which posts with the same issue tell one story: an earlier story's, else the first such post's. */
+  const sameIssue = (p, recent, posts) => {
+    const earlier = recent.find(r => r.story === p.issue);
+    const first = posts.find(x => x.issue === p.issue);
+    return earlier ? { same_story_as: earlier.ref } : first.ref !== p.ref ? { same_story_as: first.ref } : {};
+  };
+  /** How many flags C35's counts account for (a build-up is one of the posted), and how many C34 calls flagged today. */
+  const accounted = t => {
+    const c = countsOf(c35(t));
+    return Object.keys(c).filter(k => k !== 'builds').reduce((n, k) => n + c[k], 0);
+  };
+  const flaggedToday = t => Number((c34(t).match(/ · today: (\d+) flagged, /) || [])[1]);
+  /** Chat refuses what the bot posts when its text says `rx` (a 500). */
+  const refuse = (t, rx) => {
+    t.chat.fail = (method, path, query, body) => (method === 'post' && body && rx.test(String(body.text || ''))
+      ? { code: 500, body: { error: { code: 500, message: 'Internal error encountered' } } } : null);
+  };
+
+  test('watch notes: a small flag that waited and then went out is counted once on C35, where it ended: "small held to be grouped" counts the flags held today that still wait, so one queued again when its post grew (then posted, or dropped 3 hours on) and the held posts of a build-up that goes out leave that count, and C35\'s counts add up to what C34 calls "flagged today" at every step; a flag held the day before that goes out today is not taken off today\'s count; the count never goes below zero', () => {
+    const w = oneSpace();
+    const { t } = w;
+    w.say = sameIssue;
+    const TODAY = text => `✓ ${AC_NAME} (B10) · today: ${text} · ${HOW}`;
+    // 1. a small post (20 engagements): held
+    look(w, [flag(31, { eng: 20, issue: 'Gmail search is slow' })]);
+    eq([letter(t, 31), c35(t)], ['b', TODAY('0 posted, 1 small held to be grouped')]);
+    // ...its post is handed over again at 150 engagements: queued again and posted. It is no longer held
+    look(w, [flag(31, { eng: 150, issue: 'Gmail search is slow' })]);
+    eq([letter(t, 31), c35(t)], ['p', TODAY('1 posted')]);
+    eq([flaggedToday(t), accounted(t)], [1, 1]);
+    // 2. two small posts on one story: held. A third account brings the build-up: one alert, the two in its thread
+    look(w, [flag(32, { eng: 20, issue: 'Drive loses a folder' }), flag(33, { eng: 30, issue: 'Drive loses a folder' })]);
+    eq([[32, 33].map(n => letter(t, n)), c35(t)], [['b', 'b'], TODAY('1 posted, 2 small held to be grouped')]);
+    eq([flaggedToday(t), accounted(t)], [3, 3]);
+    look(w, [flag(34, { eng: 40, issue: 'Drive loses a folder' })]);
+    eq([32, 33, 34].map(n => letter(t, n)), ['g', 'g', 'p']);
+    eq(c35(t), TODAY('2 posted (1 a build-up of small posts), +2 in their story\'s thread'));
+    eq([flaggedToday(t), accounted(t)], [4, 4]);
+    eq(JSON.parse(t.g.props.get('PW_ALERT_TODAY')), { day: t.bot.dayKey_(), n: 2, g: 2, b: 1 });  // a count back at zero has no key
+    // 3. a small post held, queued again when it grew, but Chat refuses its card: it waits, and 3 hours on it is dropped
+    look(w, [flag(35, { eng: 25, issue: 'Photos deletes albums' })]);
+    counts(t, { posted: 2, builds: 1, grouped: 2, held: 1 });
+    refuse(t, new RegExp(P(35).replace(/[.?]/g, '\\$&')));
+    look(w, [flag(35, { eng: 180, issue: 'Photos deletes albums' })]);
+    eq(letter(t, 35), 'q');
+    counts(t, { posted: 2, builds: 1, grouped: 2, waiting: 1 });
+    t.g.clock.now = keysOf(t)[`${P(35)}|${BRAND}`].rq + 3 * HOUR;
+    t.poll();
+    eq(letter(t, 35), 'x');
+    counts(t, { posted: 2, builds: 1, grouped: 2, dropped: 1 });
+    eq([flaggedToday(t), accounted(t)], [5, 5]);
+    t.chat.fail = null;
+    // 4. a small post held today; the next day starts from nothing; another small post is held then
+    look(w, [flag(36, { eng: 15, issue: 'Keep loses notes' })]);
+    counts(t, { posted: 2, builds: 1, grouped: 2, dropped: 1, held: 1 });
+    eq([flaggedToday(t), accounted(t)], [6, 6]);
+    t.g.clock.now += 24 * HOUR;
+    look(w, [flag(37, { eng: 12, issue: 'Calendar shifts events' })]);
+    eq([[36, 37].map(n => letter(t, n)), c35(t)], [['b', 'b'], TODAY('0 posted, 1 small held to be grouped')]);
+    // ...the one held the day before grows and is posted: today's count of held flags (the other one) stays
+    look(w, [flag(36, { eng: 400, issue: 'Keep loses notes' })]);
+    eq([[36, 37].map(n => letter(t, n)), c35(t)], [['p', 'b'], TODAY('1 posted, 1 small held to be grouped')]);
+    // the count by itself: only "held" can be taken from, and never below zero
+    t.bot.pwAlertDay_(0, 0, { dropped: 4, repeats: 2 });
+    t.bot.pwAlertDay_(0, 0, { held: -5, dropped: -3, repeats: -1 });
+    eq(JSON.parse(t.g.props.get('PW_ALERT_TODAY')), { day: t.bot.dayKey_(), n: 1, r: 2, x: 4 });
+    t.bot.pwAlertDay_(0, 0, { held: 3 });
+    t.bot.pwAlertDay_(0, 0, { held: -1 });
+    eq([t.bot.pwAlertDayMore_().held, t.bot.pwOnToday_(t.g.clock.now), t.bot.pwOnToday_(t.g.clock.now - 24 * HOUR), t.bot.pwOnToday_(0),
+      t.bot.pwOnToday_(undefined)], [2, true, false, false, false]);
+  });
+
+  test('watch notes: the held posts of a build-up are counted once however they end: when Chat refuses the reply that lists them in the build-up\'s thread they still left with that alert (their key says so) and are counted with the posts in their story\'s thread; when the story they waited on turns out to be one already alerted (the alert memory\'s own test, as the build-up is about to go out) they are counted as repeats; none of them stays in "small held to be grouped", and C35 adds up to C34\'s "flagged today"', () => {
+    const w = oneSpace();
+    const { t } = w;
+    w.say = sameIssue;
+    // 1. two small posts held; the third account's post brings the build-up, and Chat refuses the list of its other posts
+    look(w, [flag(51, { eng: 20, issue: 'Docs loses edits' }), flag(52, { eng: 30, issue: 'Docs loses edits' })]);
+    counts(t, { held: 2 });
+    refuse(t, /^🔗 \*Same story: /);
+    look(w, [flag(53, { eng: 40, issue: 'Docs loses edits' })]);
+    t.chat.fail = null;
+    eq([[51, 52, 53].map(n => letter(t, n)), cards(t).length], [['g', 'g', 'p'], 1]);
+    assert.ok(t.g.logs.some(l => /^Watch alerts: couldn't add the story's other posts to its alert's thread: /.test(l)), 'the reply was refused');
+    eq(t.chat.botPosts(AC).filter(m => m.threadReply && /Same story/.test(m.text)), []);
+    counts(t, { posted: 1, builds: 1, grouped: 2 });
+    eq([flaggedToday(t), accounted(t)], [3, 3]);
+    // 2. two small posts on the Maps story are held; then Direct BigQuery cards a bigger post on it, which ends in a
+    // Social Alert; a third account's small post would bring the build-up (the pre-read names the posts that wait, not
+    // that alert), but the story has had its alert: three repeats
+    const MAPS_STORY = 'Maps routing onto a closed bridge';
+    w.say = (p, recent, posts) => {
+      const waiting = recent.find(r => r.status === 'waiting' && r.story === p.issue);
+      return waiting ? { same_story_as: waiting.ref } : sameIssue(p, [], posts);
+    };
+    const maps = (n, eng) => flag(n, { eng, issue: MAPS_STORY,
+      summary: 'An X user says Google Maps keeps sending drivers onto a closed bridge and calls the routing biased toward toll roads.' });
+    look(w, [maps(54, 20), maps(55, 30)]);
+    eq([54, 55].map(n => letter(t, n)), ['b', 'b']);
+    counts(t, { posted: 1, builds: 1, grouped: 2, held: 2 });
+    w.feed.bsip = [golden.rows.mapsRow()];
+    const alerted = () => t.g.gmail.sentMessages().some(m => m.subject.includes(MAPS_STORY));
+    for (let i = 0; i < 15 && !alerted(); i++) t.poll();
+    assert.ok(alerted(), 'the Maps card ended in a Social Alert');
+    look(w, [maps(56, 40)]);
+    eq([[54, 55, 56].map(n => letter(t, n)), cards(t).length], [['r', 'r', 'r'], 1]);
+    counts(t, { posted: 1, builds: 1, grouped: 2, repeats: 3 });
+    eq([flaggedToday(t), accounted(t)], [6, 6]);
+  });
+
+  test('watch notes: around midnight Eastern "small held to be grouped" stays a count of the day: a small flag held in a run that passes midnight is held on the day its key says (the day before), so it is not in the new day\'s count, and when it goes out on the new day nothing is taken off a count it was never in; small posts held in the evening whose build-up goes out after midnight are not taken off the new day\'s count either', () => {
+    const w = oneSpace();
+    const { t } = w;
+    const MIDNIGHT = Date.UTC(2026, 9, 15, 4, 0);  // 00:00 Eastern on Oct 15
+    t.g.clock.now = MIDNIGHT - 30 * MIN;
+    // a look is sent; the run that collects it starts 20 seconds before midnight, and its pre-read takes 40 seconds
+    const before = sent(w);
+    for (let i = 0; i < 8 && sent(w) === before; i++) t.poll();
+    assert.ok(sent(w) > before && t.g.clock.now < MIDNIGHT - 2 * MIN, 'a look was sent before midnight');
+    t.g.clock.now = MIDNIGHT - 80 * 1000;
+    let slow = 40 * 1000;
+    w.say = () => { t.g.clock.now += slow; slow = 0; return {}; };
+    w.feed.look = [flag(61, { eng: 20 })];
+    t.poll();
+    w.feed.look = [];
+    const key = keysOf(t)[`${P(61)}|${BRAND}`];
+    eq([key.a, key.at < MIDNIGHT, t.g.clock.now > MIDNIGHT], ['b', true, true]);
+    eq(c35(t), `✓ ${AC_NAME} (B10) · today: 0 posted · ${HOW}`);
+    eq(t.bot.pwAlertDayMore_().held, 0);
+    // on the new day another small post is held, and the first one grows and is posted
+    w.say = null;
+    look(w, [flag(62, { eng: 15 })]);
+    eq(c35(t), `✓ ${AC_NAME} (B10) · today: 0 posted, 1 small held to be grouped · ${HOW}`);
+    look(w, [flag(61, { eng: 300 })]);
+    eq([[61, 62].map(n => letter(t, n)), c35(t)], [['p', 'b'], `✓ ${AC_NAME} (B10) · today: 1 posted, 1 small held to be grouped · ${HOW}`]);
+    // that evening (9 PM) two small posts on one story are held; half an hour into the next day a small post on another
+    // story is held, and then a third account brings the first story's build-up: its two posts were held the day
+    // before, so today's count of held flags (the one post) stays as it is
+    w.say = sameIssue;
+    t.g.clock.now = Date.UTC(2026, 9, 16, 1, 0);
+    look(w, [flag(63, { eng: 20, issue: 'Sheets drops a formula' }), flag(64, { eng: 30, issue: 'Sheets drops a formula' })]);
+    eq(c35(t), `✓ ${AC_NAME} (B10) · today: 1 posted, 3 small held to be grouped · ${HOW}`);
+    t.g.clock.now = Date.UTC(2026, 9, 16, 4, 30);
+    look(w, [flag(65, { eng: 15, issue: 'Slides loses a theme' })]);
+    eq(c35(t), `✓ ${AC_NAME} (B10) · today: 0 posted, 1 small held to be grouped · ${HOW}`);
+    look(w, [flag(66, { eng: 40, issue: 'Sheets drops a formula' })]);
+    eq([63, 64, 65, 66].map(n => letter(t, n)), ['g', 'g', 'b', 'p']);
+    eq(c35(t), `✓ ${AC_NAME} (B10) · today: 1 posted (1 a build-up of small posts), +2 in their story's thread, 1 small held to be grouped · ${HOW}`);
+  });
+
+  // -----------------------------------------------------------------------------------------------------------
   // C35 with no watch ON
   // -----------------------------------------------------------------------------------------------------------
 
