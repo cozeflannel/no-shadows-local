@@ -9,6 +9,8 @@
 //   golden.recorded.mirror, .one_space      -> what each put out at f93e31a (never edited)
 //   golden.differences(actual, expected)    -> [] when they are the same, else where they first differ
 //   golden.mirrorRun(overrides), golden.oneSpaceRun(overrides) -> {t, out}: the scenario's world too, to look further
+//   golden.world.oneSpaceWorld(overrides)   -> {t, sh, feed, rec}: the one-space setup before its first run, for a test
+//                                              with a timeline of its own (golden.rows: what its feeds can hand over)
 //
 // `overrides` are settings (config/default_config.yaml burson_qa -> GEN.settings), put on the scenario's own bot before
 // its first run, so code with a flow ctx (ctx.settings: a copy of GEN.settings made each run) and code without one (the
@@ -413,7 +415,12 @@ module.exports = H => {
   const AC = 'spaces/AAQAonespace01';
   const AC_NAME = 'SLRR One Space (Auto-correct)';
 
-  function oneSpaceRun(overrides) {
+  /**
+   * The one-space setup before its first run, for a test's own timeline: {t, sh (the Control tab), feed (feedsOf), rec
+   * (recorder)}, with Gemini's scripted answers. The watch's tabs come with the first run (then watchOn(t) turns its
+   * watch ON, and B35 says where its alerts go).
+   */
+  function oneSpaceWorld(overrides) {
     const t = start(overrides, [[AC, AC_NAME]]);
     const sh = t.control();
     [3, 4, 9].forEach(r => sh.getRange(r, 2).setValue(''));
@@ -422,6 +429,11 @@ module.exports = H => {
     const feed = feedsOf(t);
     scriptGemini(t);
     const rec = recorder(t, '');
+    return { t, sh, feed, rec };
+  }
+
+  function oneSpaceRun(overrides) {
+    const { t, sh, feed, rec } = oneSpaceWorld(overrides);
     rec.collect('setup');
     rec.step('01 first run: the watch tabs are made', 1);
     watchOn(t);
@@ -490,5 +502,8 @@ module.exports = H => {
     oneSpace: overrides => oneSpaceRun(overrides).out,
     mirrorRun, oneSpaceRun, differences, recorded, SETTINGS_OFF, RECORDED_FILE, LISTS,
     spaces: { MIRROR, COPY, AC, REAL }, posts: { PIXEL, MAPS, GEMINI, CHROME },
+    // the scenarios' building blocks, for a test with a timeline of its own
+    world: { start, oneSpaceWorld, feedsOf, scriptGemini, recorder, watchOn, names: { MIRROR: MIRROR_NAME, COPY: COPY_NAME, AC: AC_NAME } },
+    rows: { bsipRow, mapsRow, hit, mapsHit, pixelHit, story, pixelStory },
   };
 };

@@ -55,26 +55,26 @@
     "space": "spaces/AAQAonespace01",
     "thread": "spaces/AAQAonespace01/threads/t9",
     "reply": false,
-    "text": "THIS ALERT MEETS P0 CRITERIA · 🔷🔍 *[BigQuery · BSIP]*\n\n🟥SOCIAL ALERT🟥: Google Maps | Maps routing onto a closed bridge | X | 2400 Engagements\n[Name]: Maps routing onto a closed bridge / NEW\n[Engagement]: HIGH (2400 engagements)\n[Product]: Google Maps\n[Social Network]: X\n[Exposure Tag]: Product - Perceived bias\n[Sensitive Topic]: -\n[KOF]: No\n\nAn X user says Google Maps keeps sending drivers onto a closed bridge and calls the routing biased toward toll roads.\n\n[Link]: https://x.com/roadwatcher/status/2150000000000000002\n\n[Time/Date Post Went Live]: 2026-10-14 11:55 UTC\n\n[Code]: Product - Perceived bias,2400,roadwatcher,-,Google Maps,NEW"
-   },
-   {
-    "run": "09 Direct BigQuery finds the Maps post and a story is found",
-    "space": "spaces/AAQAonespace01",
-    "thread": "spaces/AAQAonespace01/threads/t10",
-    "reply": false,
     "text": "🚨 *EARLY DETECTION* · New story\n*Chrome users say the update closed all their open tabs*\n*Product:* Chrome\n*Exposure Tag:* Product - Other/general criticism (P2)\n*Sensitive Topic:* None\n*KOF:* No (6 small, non-KOF accounts)\n\n*What's happening:* Users say the update <https://x.com/tabhoarder/status/2150000000000000011|closed every open tab> and that <https://www.reddit.com/r/chrome/comments/1q2tabs/update_closed_tabs/|session restore does nothing>.\n*Post:* \"Chrome closed all my tabs after the update and the session restore is empty.\"\n*Call:* 👍 Monitor build-up: Several independent users describe the same data loss after one update\n*Activity:* 6 small accounts on X and Reddit posted about this 7 times at 7:42 AM ET\n*Next steps:*\n1. Keep monitoring for volume growth and re-check in 2 hours.\n*Posts:* <https://x.com/tabhoarder/status/2150000000000000011|@tabhoarder> (X) · <https://x.com/devnotes_k/status/2150000000000000012|@devnotes_k> (X) · <https://www.reddit.com/r/chrome/comments/1q2tabs/update_closed_tabs/|@u_tab_loss> (Reddit) · <https://x.com/latenightcoder/status/2150000000000000014|@latenightcoder> (X)"
    },
    {
     "run": "09 Direct BigQuery finds the Maps post and a story is found",
     "space": "spaces/AAQAonespace01",
-    "thread": "spaces/AAQAonespace01/threads/t10",
+    "thread": "spaces/AAQAonespace01/threads/t9",
     "reply": true,
     "text": "🤖 *Early Detection Review: 👍 Monitor build-up* · medium (86% sure)\n*Why:* Several independent users describe the same data loss after one update.\n• *SLRR:* Product - Other/general criticism (P2) · Chrome.\n• *Draft Temp Check query:* `Chrome AND (tabs OR \"session restore\") AND update` (Last 6 hours across X and Reddit)\n• *Escalate if:* An official statement or press pickup."
    },
    {
+    "run": "09 Direct BigQuery finds the Maps post and a story is found",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t11",
+    "reply": false,
+    "text": "THIS ALERT MEETS P0 CRITERIA · 🔷🔍 *[BigQuery · BSIP]*\n\n🟥SOCIAL ALERT🟥: Google Maps | Maps routing onto a closed bridge | X | 2400 Engagements\n[Name]: Maps routing onto a closed bridge / NEW\n[Engagement]: HIGH (2400 engagements)\n[Product]: Google Maps\n[Social Network]: X\n[Exposure Tag]: Product - Perceived bias\n[Sensitive Topic]: -\n[KOF]: No\n\nAn X user says Google Maps keeps sending drivers onto a closed bridge and calls the routing biased toward toll roads.\n\n[Link]: https://x.com/roadwatcher/status/2150000000000000002\n\n[Time/Date Post Went Live]: 2026-10-14 11:55 UTC\n\n[Code]: Product - Perceived bias,2400,roadwatcher,-,Google Maps,NEW"
+   },
+   {
     "run": "10 the Maps card is reviewed and the watch flags the Maps post too",
     "space": "spaces/AAQAonespace01",
-    "thread": "spaces/AAQAonespace01/threads/t9",
+    "thread": "spaces/AAQAonespace01/threads/t11",
     "reply": true,
     "text": "The agentic assistant reviewed this alert. The card above was posted before the review; the email uses these corrections:\n- Summary: X user @roadwatcher (41,000 followers) says Google Maps keeps sending drivers onto a closed bridge and calls the routing biased toward toll roads. The post does not name the bridge."
    }
@@ -103,17 +103,17 @@
    },
    {
     "run": "09 Direct BigQuery finds the Maps post and a story is found",
-    "on": "spaces/AAQAonespace01/messages/m10",
+    "on": "spaces/AAQAonespace01/messages/m9",
     "emoji": "👍"
    },
    {
     "run": "10 the Maps card is reviewed and the watch flags the Maps post too",
-    "on": "spaces/AAQAonespace01/messages/m9",
+    "on": "spaces/AAQAonespace01/messages/m11",
     "emoji": "📰"
    },
    {
     "run": "10 the Maps card is reviewed and the watch flags the Maps post too",
-    "on": "spaces/AAQAonespace01/messages/m9",
+    "on": "spaces/AAQAonespace01/messages/m11",
     "emoji": "📦"
    }
   ],

@@ -36,6 +36,7 @@ const AC_STANDALONE_BUDGET_MS_ = 220 * 1000;      // its share when B10 runs sta
 const AC_LATEST_MS_ = 240 * 1000;                 // it stops starting new alerts 4 minutes into a run (Apps Script stops at 6)
 const AC_STANDALONE_LATEST_MS_ = 260 * 1000;      // standalone latest stop (leaves 40s before RUN_HARD_STOP_MS_ for watches/Speed)
 const AC_MIN_MS_ = 30 * 1000;                     // less than this left: it waits for the next minute
+const AC_POLL_OVERDUE_MS_ = 10 * 60 * 1000;       // standalone: the Direct BigQuery poll goes first again once its last check is this old
 const AC_STATS_PROP_ = 'AC_STATS';
 const AC_LIVE_NAME_ = 'Burson space (live, read only)';
 
@@ -122,22 +123,27 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
       report.handled >= ctx.settings.max_messages_per_run ||
       (report.errors || []).some(e => /^time budget/.test(String(e)))));
     ctx.slaBusy = slaBusy;
-    let bqPolled = null;
-    if (ctx.allowDirectBq && switchOn_(ctx, 'directBq') && !slaBusy) {
-      Object.assign(ctx.settings, { bq_direct_poll: true, bq_poll_sprinklr: true, bq_poll_bmie: true, bq_poll_bsip: true });
-      if (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', false)) {
-        try { bqPolled = pollBigQuerySources_(ctx, space.id); } catch (e) {
-          console.error('auto-correct direct BigQuery alerts: ' + ((e && e.message) || e));
+    // The Direct BigQuery poll (Control row 15)
+    const pollDirect = () => {
+      let bqPolled = null;
+      if (ctx.allowDirectBq && switchOn_(ctx, 'directBq') && !slaBusy) {
+        Object.assign(ctx.settings, { bq_direct_poll: true, bq_poll_sprinklr: true, bq_poll_bmie: true, bq_poll_bsip: true });
+        if (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', false)) {
+          try { bqPolled = pollBigQuerySources_(ctx, space.id); } catch (e) {
+            console.error('auto-correct direct BigQuery alerts: ' + ((e && e.message) || e));
+          }
         }
       }
-    }
-    if (bqPolled && (bqPolled.sprinklr || bqPolled.bmie)) {
-      report.bq_sprinklr = bqPolled.sprinklr;
-      report.bq_bmie = bqPolled.bmie;
-    }
-    if (bqPolled && bqPolled.bsip) report.bq_bsip = bqPolled.bsip;
-    if (ctx.allowEarlyWave && switchOn_(ctx, 'earlyWave') &&
-        (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', slaBusy))) {
+      if (bqPolled && (bqPolled.sprinklr || bqPolled.bmie)) {
+        report.bq_sprinklr = bqPolled.sprinklr;
+        report.bq_bmie = bqPolled.bmie;
+      }
+      if (bqPolled && bqPolled.bsip) report.bq_bsip = bqPolled.bsip;
+    };
+    // Early Detection (Control row 19): the 15-minute check, then the reviews of the signals that wait
+    const earlyDetection = () => {
+      if (!(ctx.allowEarlyWave && switchOn_(ctx, 'earlyWave') &&
+          (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', slaBusy)))) return;
       ctx._ewBqDeferEvents = true;
       try {
         earlyWaveCheck_(ctx);
@@ -157,6 +163,15 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
           ewBqFlush_(ctx, props, () => (ctx.deadline ? ctx.deadline - ctx.now() : Infinity), { signal_events: evs });
         }
       }
+    };
+    // The poll, then Early Detection; in the one-space setup the other way round (acEarlyDetectionFirst_), so a poll
+    // with much to read no longer takes the time the reviews need
+    if (acEarlyDetectionFirst_(ctx, standalone, props)) {
+      earlyDetection();
+      pollDirect();
+    } else {
+      pollDirect();
+      earlyDetection();
     }
     ctx.recent.save();
     const today = bumpAutoCorrectStats_(props, report, dayKey_());
@@ -176,6 +191,25 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
       console.error('could not update the Control tab: ' + err);
     }
     return null;
+  }
+}
+
+/**
+ * Whether this pass does Early Detection (the 15-minute check, then the reviews) before the Direct BigQuery poll. Only
+ * in the one-space setup (`standalone`: B10 working alone, AutoCorrect.gs runAutoCorrect_'s opts.standalone), with the
+ * setting early_detection_first on (config burson_qa; on unless it is false), and only while the poll is not overdue:
+ * its last check started (BQ_DIRECT_AT) less than AC_POLL_OVERDUE_MS_ ago. Once the last check is that old, or there
+ * has been none, the poll goes first in that run, so it still gets its turn however many signals wait for a review.
+ * Everywhere else, and with the setting off, the poll goes first as it always did. Never throws.
+ */
+function acEarlyDetectionFirst_(ctx, standalone, props) {
+  try {
+    if (!standalone || !ctx || !ctx.settings || ctx.settings.early_detection_first === false) return false;
+    const last = Number(props.getProperty(BQ_DIRECT_AT_PROP_)) || 0;
+    const now = typeof ctx.now === 'function' ? ctx.now() : Date.now();
+    return last > 0 && now >= last && now - last < AC_POLL_OVERDUE_MS_;
+  } catch (e) {
+    return false;
   }
 }
 
