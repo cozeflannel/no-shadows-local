@@ -13,7 +13,7 @@
  *                                                full review, card that says it is an early signal and how many
  *                                                accounts it rests on).
  *   Row 40  Fast triage: hold back noise         drops a signal that meets the hold-back conditions without a review,
- *                                                counts it on Control C19 as filtered by fast triage, and logs it in
+ *                                                counts it on Control C19 among the signals let go, and logs it in
  *                                                one line with its ID, the reason and the probabilities (ftHoldWhy_).
  *   Row 46  Write early-wave records to BigQuery writes each check's stories, story posts, signals, signal events and
  *                                                Decisions verdicts to brand-social-central-data.early_wave.

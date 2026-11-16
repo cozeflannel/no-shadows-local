@@ -173,6 +173,11 @@ module.exports = H => {
   const switchOn = (t, v) => t.control().getRange(ROW, 2).setValue(v || 'ON');
   const ready = t => { t.bot.setup(); t.set('B30', 'tester@testing.test'); t.chat.addDm('tester@testing.test', 'spaces/DMSTANDIN'); return t; };
   const note = t => t.control().cell(ROW, 3);
+  // How C19 ends: what became of every signal found today (BigQuery.gs edDayNoteText_), then the pointer to the tab or,
+  // at the day's limit, the words for it
+  const today = (found, cards, under, letgo, never, waiting) => ` · today: ${found} found, ${cards} card${cards === 1 ? '' : 's'}, ` +
+    `${under} under another alert, ${letgo} let go, ${never} never reviewed, ${waiting} waiting`;
+  const TAB = ' · the Early Detection tab lists each one';
   const lastRun = t => JSON.parse(t.g.props.get('LAST_RUN'));
   const edProps = g => Array.from(g.props.keys()).filter(k => /^(?:EARLY_DETECTION_|ED_ALERT_)/.test(k)).sort();
   const edCards = (chat, space) => chat.botPosts(space).filter(m => !m.threadReply && /^client-zeda-/.test(m.clientAssignedMessageId || ''));
@@ -361,11 +366,11 @@ module.exports = H => {
     t.poll();
     eq(edQueries(calls).length, 3);
     eq(edCards(t.chat, TEST_FEED).length, 2);
-    assert.match(note(t), / · 3 waiting for review · 2 cluster, 0 velocity alerts today$/);
+    assert.ok(note(t).endsWith(`${today(5, 2, 0, 0, 0, 3)}${TAB}`), note(t));  // the 2 not queued yet are not found yet
     eq(JSON.parse(t.g.props.get('ED_ALERT_QUEUE')).length, 3);
     for (let i = 0; i < 2; i++) { t.g.clock.now += MIN; t.poll(); }
     eq(edCards(t.chat, TEST_FEED).length, 5);
-    assert.match(note(t), / · last check [^·]+ · 5 cluster, 0 velocity alerts today$/);
+    assert.match(note(t), / · last check [^·(]+ · today: 5 found, 5 cards, 0 under another alert, 0 let go, 0 never reviewed, 0 waiting · the Early Detection tab lists each one$/);
     eq([t.g.props.has('ED_ALERT_QUEUE'), Array.from(t.g.props.keys()).filter(k => /^ED_ALERT_Q_/.test(k))], [false, []]);
     eq(edQueries(calls).length, 3);  // reviewing the queue reads nothing more from BigQuery
     // every card was posted only after its review: each one's copy in the analyst space has the review note in its thread
@@ -379,7 +384,7 @@ module.exports = H => {
     t.poll();
     eq(edQueries(calls).length, 4);
     eq(edCards(t.chat, TEST_FEED).length, 7);
-    assert.match(note(t), /7 cluster, 0 velocity alerts today$/);
+    assert.ok(note(t).endsWith(`${today(7, 7, 0, 0, 0, 0)}${TAB}`), note(t));
 
     // the daily ceiling: once EW_MAX_PER_DAY_ signals were queued today, no more queries or reviews run until tomorrow PT
     const day = JSON.parse(t.g.props.get('EARLY_DETECTION_TODAY'));
@@ -390,7 +395,8 @@ module.exports = H => {
     t.poll();
     eq([edQueries(calls).length, edCards(t.chat, TEST_FEED).length], [4, 7]);
     eq([t.g.props.has('ED_ALERT_QUEUE'), JSON.parse(t.g.props.get('EARLY_DETECTION_TODAY')).queued, edReviewsOf(t)], [false, 40, 7]);
-    assert.match(note(t), / · daily cap of 40 reached, more tomorrow · 7 cluster, 0 velocity alerts today$/);
+    // at the limit the words for it take the pointer's place (nothing was read, so the new story is not among the found)
+    assert.ok(note(t).endsWith(`${today(7, 7, 0, 0, 0, 0)} · daily cap of 40 reached, more tomorrow`), note(t));
     eq(lastRun(t).errors, []);
   });
 
@@ -541,7 +547,7 @@ module.exports = H => {
     eq(t.chat.botPosts(MIRROR).filter(m => /pixel art|astrofan9/i.test(m.text)), []);
     assert.ok(t.g.logs.some(l => /early detection: dismissed "Casual mentions of pixel art wallpaper packs" after its review, so it was filtered out: Off-brand pixel-art homonym unrelated to Google Pixel devices/.test(l)),
       t.g.logs.join('\n'));
-    assert.match(note(t), / · 1 cluster, 1 velocity alerts today · 1 dismissal filtered out$/);
+    assert.ok(note(t).endsWith(`${today(3, 2, 0, 1, 0, 0)}${TAB}`), note(t));  // the dismissal is the one let go
 
     const rows = t.bot.sheetBackend_(t.sheet()).loadAlerts().filter(r => r.ingested === 'Early detection');
     eq(rows.length, 2);
@@ -649,7 +655,7 @@ module.exports = H => {
     eq(t.bot.sheetBackend_(t.sheet()).loadAlerts().filter(r => r.ingested === 'Early detection'), []);
     assert.ok(t.g.logs.some(l => /early detection: dismissed "Multiple users report Pixel 9 emergency dialer freezing after overnight update" after its review, so it was filtered out: One-off glitch that clears after a restart, nothing to escalate/.test(l)),
       t.g.logs.join('\n'));
-    assert.match(note(t), / · 0 cluster, 0 velocity alerts today · 1 dismissal filtered out$/);
+    assert.ok(note(t).endsWith(`${today(1, 0, 0, 1, 0, 0)}${TAB}`), note(t));
     eq(lastRun(t).errors, []);
   });
 
@@ -1139,12 +1145,12 @@ module.exports = H => {
     bot.edQueuePut_(props, row('C', 'P1', 9), NOW + 2);
     bot.edQueuePut_(props, row('D', 'P0', 2), NOW + 3);
     eq(bot.edQueueList_(props).map(e => e.id), ['D', 'C', 'B', 'A']);
-    eq(bot.edQueuePut_(props, row('C', 'P1', 9), NOW + 4), false);
+    eq(bot.edQueuePut_(props, row('C', 'P1', 9), NOW + 4), { queued: false, why: 'already there', pushed: [] });
     for (let i = 0; i < 10; i++) bot.edQueuePut_(props, row(`E${i}`, 'P1', 3), NOW + 10 + i);
     const ids = bot.edQueueList_(props).map(e => e.id);
     eq([ids.length, ids.includes('A'), ids[0]], [12, false, 'D']);
     eq(Array.from(g.props.keys()).filter(k => /^ED_ALERT_Q_/.test(k)).length, 12);
-    eq(bot.edQueuePut_(props, row('F', 'P2', 1), NOW + 30), false);  // ranked out: never stored
+    eq(bot.edQueuePut_(props, row('F', 'P2', 1), NOW + 30), { queued: false, why: 'ranked out', pushed: [] });  // never stored
 
     const long = clusterRow({ representative_posts_json: JSON.stringify(Array.from({ length: 12 }, (_, i) => ({
       platform: 'Reddit', author_id: 'u' + i, url: `https://www.reddit.com/r/x/comments/${'a'.repeat(900)}${i}/`, snippet: 'y'.repeat(2000) }))) });
@@ -1223,7 +1229,7 @@ module.exports = H => {
     t.poll();
     eq([edCards(t.chat, TEST_FEED).length, edReviewsOf(t), t.g.props.has('ED_ALERT_QUEUE')], [1, 1, false]);
     assert.ok(t.g.logs.some(l => /early detection: held back a repeat of "Pixel 9 owners say the overnight update froze the emergency dialer": 11 accounts vs 9 on its card at \d{1,2}:\d\d [AP]M ET \(QA-\d+\), nothing new/.test(l)), t.g.logs.join('\n'));
-    assert.match(note(t), / · 1 cluster, 0 velocity alert today · 1 repeat held back$/);
+    assert.ok(note(t).endsWith(`${today(2, 1, 0, 1, 0, 0)}${TAB}`), note(t));  // the repeat is the one let go
 
     // 3. The same cluster with 21 accounts and a new platform: an update, reviewed with the earlier card in its prompt and
     // posted in the first card's thread (no new top-level card, no picture), its copy in the first copy's thread
@@ -1270,7 +1276,7 @@ module.exports = H => {
     t.poll();
     eq([edCards(t.chat, TEST_FEED).length, edReviewsOf(t), t.chat.botPosts(TEST_FEED).filter(m => /^\ud83d\udcc8 \*UPDATE\*/.test(m.text)).length], [1, 2, 1]);
     assert.ok(t.g.logs.some(l => /held back a repeat of "Dialer freeze reports double and reach TikTok": 30 accounts vs 21 on its card/.test(l)), t.g.logs.join('\n'));
-    assert.match(note(t), / · 2 cluster, 0 velocity alerts today · 2 repeats held back$/);
+    assert.ok(note(t).endsWith(`${today(4, 2, 0, 2, 0, 0)}${TAB}`), note(t));  // a card and its update; two repeats let go
     eq(lastRun(t).errors, []);
   });
 
@@ -1284,7 +1290,7 @@ module.exports = H => {
     eq([edCards(t.chat, TEST_FEED).length, edReviewsOf(t), t.g.props.has('ED_ALERT_QUEUE')], [0, 1, false]);
     eq(t.chat.botPosts(TRIAGED).filter(m => /Early Detection|EARLY DETECTION|EARLY SIGNAL|\*UPDATE\*/.test(m.text)), []);
     assert.ok(t.g.logs.some(l => /early detection: held back "Pixel 9 owners say the overnight update froze the emergency dialer" after its review: already alerted as a known issue \(QA-4228/.test(l)), t.g.logs.join('\n'));
-    assert.match(note(t), / · 0 cluster, 0 velocity alerts today · 1 repeat held back$/);
+    assert.ok(note(t).endsWith(`${today(1, 0, 0, 1, 0, 0)}${TAB}`), note(t));
     eq(lastRun(t).errors, []);
   });
 
@@ -1316,7 +1322,7 @@ module.exports = H => {
     eq([edCards(t.chat, TEST_FEED).length, edReviewsOf(t), t.g.props.has('ED_ALERT_QUEUE')], [1, 1, false]);
     assert.ok(edCards(t.chat, TEST_FEED)[0].text.includes('\n*Activity:* 14 small accounts on'), edCards(t.chat, TEST_FEED)[0].text);
     assert.ok(t.g.logs.some(l => /early detection: held back a repeat \(ED-CLU-SMALL\): 9 accounts vs 14 on its card at \d{1,2}:\d\d [AP]M ET \(QA-\d+\), nothing new/.test(l)), t.g.logs.join('\n'));
-    assert.match(note(t), / · 1 cluster, 0 velocity alert today · 1 repeat held back$/);
+    assert.ok(note(t).endsWith(`${today(2, 1, 0, 1, 0, 0)}${TAB}`), note(t));
   });
 
   test('early detection same-story dedup rules: what counts as new (2x and 3 more accounts, or a platform the card didn\'t list), which cards tell the same story (same cluster, the alert BigQuery says it updates, the same term group, 2+ shared posts, its own card), the seen counts in both formats, and the seen map under the 9 KB property limit', () => {
