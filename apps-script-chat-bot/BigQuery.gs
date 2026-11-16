@@ -2901,9 +2901,12 @@ const EW_SEEN_MAX_CHARS_ = 8800;              // the seen map's JSON (ScriptProp
 const ED_AT_PROP_ = 'EARLY_DETECTION_AT';     // timestamp (ms) when last poll started
 const ED_SEEN_PROP_ = 'EARLY_DETECTION_SEEN'; // {hash: ms | [ms, authors]} of recently queued early-detection signals
 const ED_DAY_PROP_ = 'EARLY_DETECTION_TODAY'; // {day, clusters, velocity, queued, repeats, dismissed, at, problem} for Control C19
-// ... and what became of every signal today: {found, cards, under, letgo, never, once} (edDayState_, edCount_)
+// ... and what became of every signal today: {found, cards, under, letgo, never, once} (edDayState_, edCount_); C19's
+// line is made of these (edDayNoteText_), and `limit` is the day's limit the last check ran under (noteEarlyWave_)
 const ED_ONCE_MAX_ = 80;                      // signals counted without being marked as seen, kept so that each counts once: the
                                               // producer's buffer holds 30 at a time, so the newest 80 cover every one still read
+const ED_C19_MAX_CHARS_ = 200;                // Control.gs noteSwitch_ cuts a switch's note there: C19's line is made to fit
+const ED_TAB_POINTER_ = 'the Early Detection tab lists each one';  // the end of C19's line (setting early_detection_tab)
 const ED_POSTED_PROP_ = 'ED_ALERT_POSTED';    // recent message name hashes of the bot's early-detection cards
 const ED_POSTED_MAX_ = 300;
 const ED_INFO_PROP_ = 'ED_ALERT_INFO';        // structured BigQuery metadata keyed by message name hash
@@ -3379,14 +3382,44 @@ function edDayNumbers_(props, state) {
 }
 
 /**
- * Updates today's counts in `EARLY_DETECTION_TODAY` and writes the Control C19 status note
- * (`"last check 10:15 AM · 2 waiting for review · N cluster, M velocity alert(s) today · K repeats held back · D
- * dismissals filtered out"`). `clusters` / `velocity`: story cards just posted; o.queued: signals just queued;
- * o.repeats: signals just held back as repeats; o.dismissed: signals the review just dismissed (filtered out);
- * o.checked === false: a review's count, which keeps the last check's time and problem; o.waiting: how many signals wait
- * for review (read from the queue when not given). From the fast triage: o.triaged (signals it just held back: "N
- * filtered by fast triage", beside the dismissals), o.watch (early-watch cards just posted: "N early watch") and
- * o.watchQueued (early-watch signals just queued). Never throws.
+ * Control C19's note, in one line that adds up and fits: "last check <time> (<problem>; it tries again at the next
+ * check) · today: F found, C cards, U under another alert, L let go, N never reviewed, W waiting · the Early Detection
+ * tab lists each one". `s`: {at, problem} of the last check; `n`: the day's numbers (edDayNumbers_: found = cards +
+ * under + letgo + never + waiting); o: {stop: the day's stop in words, which takes the pointer's place; tab: true when
+ * the pointer to the tab is shown}. Never longer than ED_C19_MAX_CHARS_ (Control.gs noteSwitch_ would cut it there),
+ * and no number is ever cut: what gives way, in this order, is the pointer to the tab, the words "it tries again at
+ * the next check", the day's stop, and then the end of the problem's words. Pure.
+ */
+function edDayNoteText_(s, n, o) {
+  const x = o || {};
+  const num = k => String(Math.max(0, Math.round(Number(n && n[k]) || 0)));
+  const counts = `today: ${num('found')} found, ${num('cards')} card${num('cards') === '1' ? '' : 's'}, ` +
+    `${num('under')} under another alert, ${num('letgo')} let go, ${num('never')} never reviewed, ${num('waiting')} waiting`;
+  const problem = String((s && s.problem) || '');
+  const again = problem ? `${problem}; it tries again at the next check` : '';
+  const stop = String(x.stop || '');
+  const line = (why, last) => `last check ${(s && s.at) || ''}${why ? ` (${why})` : ''} · ${counts}${last ? ` · ${last}` : ''}`;
+  const fits = [line(again, stop || (x.tab ? ED_TAB_POINTER_ : '')), line(again, stop), line(problem, stop), line(problem, '')]
+    .find(text => text.length <= ED_C19_MAX_CHARS_);
+  if (fits) return fits;
+  const room = ED_C19_MAX_CHARS_ - line('', '').length - 3;
+  return line(room > 1 ? truncate_(problem, room) : '', '');
+}
+
+/**
+ * Updates today's counts in `EARLY_DETECTION_TODAY` and writes the Control C19 status note (edDayNoteText_: "last check
+ * 10:15 AM · today: 12 found, 3 cards, 0 under another alert, 6 let go, 1 never reviewed, 2 waiting · the Early
+ * Detection tab lists each one"). The numbers of that line are the ones every ending is counted in (edCount_,
+ * edDayNumbers_). The counts kept here are older ones: `clusters` / `velocity`: story cards just posted; o.queued:
+ * signals just queued (the day's limit counts these); o.repeats: signals just held back as repeats; o.dismissed: signals
+ * the review just dismissed; from the fast triage o.triaged (signals it just held back), o.watch (early-watch cards
+ * just posted) and o.watchQueued (early-watch signals just queued, which their share of the day counts).
+ * o.checked === false: a review's count, which keeps the last check's time and problem.
+ * The day's stop: once EW_MAX_PER_DAY_ signals were queued, "daily cap of 40 reached, more tomorrow". A check that runs
+ * under another daily limit passes it (o.dayLimit: the number of reviews a day); it is kept with the counts until the
+ * next check, and the line then says "today's limit of 150 reviews is reached, more after midnight ET" once that many
+ * were queued. The pointer to the Early Detection tab is there only with the setting early_detection_tab on. Never
+ * throws.
  */
 function noteEarlyWave_(props, clusters, velocity, problem, o) {
   const opt = o || {};
@@ -3404,19 +3437,15 @@ function noteEarlyWave_(props, clusters, velocity, problem, o) {
     if (opt.checked !== false) {
       s.at = nowLabel_();
       s.problem = problem || '';
+      if (Number(opt.dayLimit) > 0) s.limit = Math.round(Number(opt.dayLimit));
+      else delete s.limit;
     }
     const next = JSON.stringify(s);
     if (next !== was) props.setProperty(ED_DAY_PROP_, next);
-    const total = s.clusters + s.velocity;
-    const waiting = opt.waiting !== undefined ? opt.waiting : edQueueList_(props).length;
-    noteSwitch_('earlyWave', `last check ${s.at || nowLabel_()}${s.problem ? ` (${s.problem}; it tries again at the next check)` : ''}` +
-      `${waiting ? ` · ${waiting} waiting for review` : ''}` +
-      `${s.queued >= EW_MAX_PER_DAY_ ? ` · daily cap of ${EW_MAX_PER_DAY_} reached, more tomorrow` : ''}` +
-      ` · ${s.clusters} cluster, ${s.velocity} velocity alert${total === 1 ? '' : 's'} today` +
-      `${s.watch ? ` · ${s.watch} early watch` : ''}` +
-      `${s.repeats ? ` · ${s.repeats} repeat${s.repeats === 1 ? '' : 's'} held back` : ''}` +
-      `${s.dismissed ? ` · ${s.dismissed} dismissal${s.dismissed === 1 ? '' : 's'} filtered out` : ''}` +
-      `${s.triaged ? ` · ${s.triaged} filtered by fast triage` : ''}`);
+    const stop = s.limit ? (s.queued >= s.limit ? `today's limit of ${s.limit} reviews is reached, more after midnight ET` : '')
+      : s.queued >= EW_MAX_PER_DAY_ ? `daily cap of ${EW_MAX_PER_DAY_} reached, more tomorrow` : '';
+    noteSwitch_('earlyWave', edDayNoteText_({ at: s.at || nowLabel_(), problem: s.problem }, edDayNumbers_(props, s),
+      { stop, tab: GEN.settings.early_detection_tab !== false }));
   } catch (e) {
     console.error('could not count early detection alerts: ' + ((e && e.message) || e));
   }

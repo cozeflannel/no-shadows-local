@@ -790,7 +790,11 @@ module.exports = function (H) {
     holdSeed.t.control().getRange(40, 2).setValue('ON');
     holdSeed.t.poll();
     assert.match(holdSeed.t.control().cell(40, 3), /^✓ ON: a low-severity signal that meets the hold-back bars in B41:B43 is dropped without a review/);
-    assert.match(holdSeed.t.control().cell(19, 3), / · 2 filtered by fast triage$/); // ED-VEL-CLUSTER (g=0.07) and the Chrome gripe (n=0.95, sc=0.60) held back at seed
+    // ED-VEL-CLUSTER (g=0.07) and the Chrome gripe (n=0.95, sc=0.60) held back at seed: C19 counts them among the signals let go, and the
+    // run's record names each as held back as noise
+    assert.match(holdSeed.t.control().cell(19, 3), / · today: 4 found, 2 cards, 0 under another alert, 2 let go, 0 never reviewed, 0 waiting · the Early Detection tab lists each one$/);
+    eq(holdSeed.t.bot.edNotesOfRun_().map(r => holdSeed.t.bot.edNoteObj_(r)).filter(r => r.outcome === 'Held back as noise (no review)').map(r => r.id),
+      ['ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402', 'ED-CLU-CLU-3aa05dedf0a7-202611072231']);
     assert.match(holdSeed.t.g.logs.join('\n'), /early detection: fast triage held back ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402: not about Google/);
     assert.match(holdSeed.t.g.logs.join('\n'), /early detection: fast triage held back ED-CLU-CLU-3aa05dedf0a7-202611072231: routine noise/);
     eq(edCardsOf(holdSeed.t).map(m => /ED-CLU-CLU-(?:dc5a8afd13da|abe6decf9a2a)/.test(m.text)), [true, true]);  // the P0-group signal and the one below the noise bar: reviewed
@@ -812,7 +816,8 @@ module.exports = function (H) {
     holdEdited.t.control().getRange(43, 2).setValue('0.65');
     holdEdited.t.poll();
 
-    assert.match(holdEdited.t.control().cell(19, 3), / · 2 filtered by fast triage$/);
+    assert.match(holdEdited.t.control().cell(19, 3), / · today: 4 found, 2 cards, 0 under another alert, 2 let go, 0 never reviewed, 0 waiting · the Early Detection tab lists each one$/);
+    eq(holdEdited.t.bot.edNotesOfRun_().map(r => holdEdited.t.bot.edNoteObj_(r)).filter(r => r.outcome === 'Held back as noise (no review)').length, 2);
     eq(edCardsOf(holdEdited.t).length, 2); // P0-group signal + low-confidence Chrome adblock signal both reviewed and carded!
     assert.ok(edCardsOf(holdEdited.t).some(m => m.text.includes('ED-CLU-CLU-dc5a8afd13da-202611061731')), 'P0-group signal never held back');
     assert.ok(edCardsOf(holdEdited.t).some(m => m.text.includes('ED-CLU-CLU-3aa05dedf0a7-202611072231')), 'below-confidence signal never held back');
@@ -860,7 +865,7 @@ module.exports = function (H) {
 
       eq(JSON.parse(env.t.g.props.get('LAST_RUN')).errors, [], fm.name);
       eq(edCardsOf(env.t).map(m => m.text), baselineCards, `${fm.name}: cards identical to OFF baseline`);
-      assert.ok(!env.t.control().cell(19, 3).includes('filtered by fast triage'), fm.name);
+      assert.match(env.t.control().cell(19, 3), /, 0 let go, /, fm.name);  // nothing was held back
       const c38 = env.t.control().cell(38, 3);
       if (fm.paused) {
         assert.match(c38, /paused until .*: signals go on without it/, `${fm.name}: C38 shows cooldown`);
@@ -1138,7 +1143,9 @@ module.exports = function (H) {
     eq(topCards1.length, 1);
     const firstCard = topCards1[0];
     eq(firstCard.text.split('\n')[0], '\u26a1 *EARLY SIGNAL* \u00b7 3 accounts so far (a story is usually flagged at 5)');
-    assert.match(cal.t.control().cell(19, 3), /0 cluster, 0 velocity alerts today · 1 early watch/);
+    // C19 counts the early signal's card among the day's cards; the run's record says which kind it was
+    assert.match(cal.t.control().cell(19, 3), / · today: 1 found, 1 card, 0 under another alert, 0 let go, 0 never reviewed, 0 waiting · /);
+    eq(cal.t.bot.edNotesOfRun_().map(r => cal.t.bot.edNoteObj_(r)).map(r => [r.kind, /^Card posted: /.test(r.outcome)]), [['Early signal (3-4 accounts)', true]]);
 
     // 15 minutes later: 2 more distinct accounts report the same story (total 5 -> crosses normal promotion bar!)
     cal.t.g.clock.now += 15 * MIN;

@@ -36,7 +36,7 @@
  *   the alert the producer says it updates, or 2+ of the same posts) unless it reached 2x the accounts and 3 more, or a new
  *   platform: then its card goes in the earlier card's thread as `📈 *UPDATE* · …` with what's new. A
  *   review that finds an issue already alerted with nothing new posts no card, nor does any other dismissal (filtered
- *   out): Control C19 counts the repeats held back and the dismissals filtered out.
+ *   out): Control C19 counts each among the signals let go (BigQuery.gs edDayNoteText_).
  *   The fast triage (Control rows 38-45 and 47, FastTriage.gs; OFF, nothing here differs): Gemini Decisions answers six
  *   questions about each signal before it is queued; row 38 enables rows 39 and 40, row 39 orders the queue and runs
  *   the early-watch tier, and row 40 holds back a signal that is plainly noise. Under row 39 a story still below the
@@ -1873,6 +1873,7 @@ function edDrainQueue_(ctx, report) {
     return p.list;
   };
   let reviews = 0;
+  let other = 0;  // signals that left the queue here in a way `out` has no count for
   let list = prune();
   while (list.length && reviews < EW_DRAIN_MAX_PER_RUN_) {
     if (left() < EW_DRAIN_MIN_LEFT_MS_) break;
@@ -1966,15 +1967,16 @@ function edDrainQueue_(ctx, report) {
       out.held++;
     } else if (res && res.dismissed) {
       out.dismissed++;
+    } else {
+      other++;  // its stored row was gone, or Chat gave no message for its card
     }
     list = prune();
   }
   out.waiting = list.length;
   flushEvents();
-  if (out.held || out.dismissed) {
-    noteEarlyWave_(props, 0, 0, '', { checked: false, repeats: out.held, dismissed: out.dismissed, waiting: out.waiting });
-  } else if (out.dropped && !out.posted) {
-    noteEarlyWave_(props, 0, 0, '', { checked: false, waiting: out.waiting });
+  // C19 after this run's reviews: a card wrote it when it was posted; whatever else ended here is in its numbers now
+  if (out.held || out.dismissed || out.dropped || other) {
+    noteEarlyWave_(props, 0, 0, '', { checked: false, repeats: out.held, dismissed: out.dismissed });
   }
   return out;
 }
