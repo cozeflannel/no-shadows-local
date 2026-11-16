@@ -276,6 +276,165 @@ module.exports = H => {
       ['Blocked', 'not sent: it mentions "The bot". Edit the text, then set Send again.', 1]);
   });
 
+  test('thread notes: at Send, the row of the bot\'s own answer is checked as that answer always was only while its Text cell holds the very text the bot queued: the hidden key of an answer that opens as a note does keeps that text\'s fingerprint, and every other row\'s key is as it always was. A note typed or pasted into an answer\'s row, whichever answer it was, makes the row Blocked and nothing goes to S-F Burson; so does one word changed in an answer that opens as a note does. The unedited answer is sent as written, a Blocked row put back to the text the bot queued is sent, and an answer edited to words no pattern holds is sent as any text is. The same where the bot works on S-F Burson itself', () => {
+    const t = golden.mirrorRun(golden.SETTINGS_OFF).t;  // ends LIVE, with rows 22 and 24 ON
+    const alert = t.chat.spaces.get(REAL).messages.filter(m => !m.threadReply && /SOCIAL ALERT/.test(m.text)).slice(-1)[0];
+    const rows = () => outboxRows(t);
+    /** Burson asks, Gemini answers `answer`: the index of the answer's outbox row. */
+    const ask = (question, answer) => {
+      const n = rows().length;
+      t.g.vertex.answer = () => answer;
+      t.chat.say(REAL, question, Object.assign({ thread: alert.thread.name }, ALICE));
+      t.poll();
+      t.poll();
+      eq([rows().length, rows()[n][3], /^own:ans:/.test(keyOf(rows()[n]).ck)], [n + 1, answer, true]);
+      return n;
+    };
+    const plain = rows().findIndex(r => r[3] === 'Happy to help with that.' && r[5] === 'Pending');  // the scenario's own answer
+    const first = ask('What does a P1 need to be escalated?', ANSWERS[0]);
+    const second = ask('And what about a P2 like this one?', ANSWERS[1]);
+    const third = ask('Is this post part of something bigger?', ANSWERS[2]);
+    // the keys: only an answer that opens as a note does carries the fingerprint of its text
+    eq([plain >= 0, Object.keys(keyOf(rows()[plain]))], [true, ['v', 'k', 'kind', 's', 'thread', 'ck']]);
+    eq([first, second, third].map(i => Object.keys(keyOf(rows()[i]))), Array(3).fill(['v', 'k', 'kind', 's', 'thread', 'ck', 'tx']));
+    eq([first, second, third].map(i => keyOf(rows()[i]).tx), ANSWERS.map(a => B.outboxTextPrint_(a)));
+    const posted = () => t.chat.botPosts(REAL).map(m => m.text);
+    eq(posted(), []);
+    // a note pasted into the ordinary answer's row; another note pasted into an answer that opens as one; one word
+    // changed in such an answer; and one left as the bot wrote it
+    const PASTED = '🔗 Part of a story: 5 small accounts on X and Reddit now tell it: Pixel 10 owners say the update is the issue';
+    send(t, plain, PASTED);
+    send(t, first, plainOf(REQ_NOTE));
+    send(t, third, ANSWERS[2].replace('Monday', 'Tuesday'));
+    send(t, second);
+    t.poll();
+    eq([plain, first, third, second].map(i => [rows()[i][5], rows()[i][6].replace(/^sent \d{4}-\d\d-\d\d \d\d:\d\d ET: .*$/, 'sent')]), [
+      ['Blocked', 'not sent: it mentions "Part of a story". Edit the text, then set Send again.'],
+      ['Blocked', 'not sent: it mentions "Alert requirements". Edit the text, then set Send again.'],
+      ['Blocked', 'not sent: it mentions "Part of a story". Edit the text, then set Send again.'],
+      ['Sent', 'sent']]);
+    eq(posted(), [ANSWERS[1]]);
+    // put back to the text the bot queued, the first answer goes; edited to words no pattern holds, the third goes as
+    // any text does; the ordinary one with its own words back, too
+    send(t, first, ANSWERS[0]);
+    send(t, third, 'The same post was escalated on Monday.');
+    send(t, plain, 'Happy to help with that.');
+    t.poll();
+    eq([[first, third, plain].map(i => rows()[i][5]), posted()],  // (rows go top to bottom: the scenario's own answer is the first of them)
+      [['Sent', 'Sent', 'Sent'], [ANSWERS[1], 'Happy to help with that.', ANSWERS[0], 'The same post was escalated on Monday.']]);
+
+    // The bot working on S-F Burson itself: its answer's row (key "ans:…"), the same way
+    const ROOM = 'https://chat.google.com/room/AAQAaa_0I9g';
+    const m = e2e();
+    m.bot.setup();
+    m.set('B25', ROOM);
+    m.set('B3', ROOM);
+    [11, 23, 24].forEach(r => m.control().getRange(r, 2).setValue('ON'));  // Auto-send, Never wait on Burson, Post in S-F Burson
+    m.poll();
+    const ok = m.chat.say(REAL, F.P0_OK, ZAPIER);
+    m.poll();
+    const answerRow = answer => {
+      m.g.vertex.answer = () => answer;
+      m.chat.say(REAL, 'Why is this one P0?', Object.assign({ thread: ok.thread.name }, ALICE));
+      m.poll();
+      return outboxRows(m).findIndex(r => r[3] === answer && r[5] === 'Pending');
+    };
+    const usual = answerRow('Happy to help with that.');
+    const likeNote = answerRow(ANSWERS[0]);
+    eq([/^ans:/.test(keyOf(outboxRows(m)[usual]).ck), keyOf(outboxRows(m)[usual]).tx, keyOf(outboxRows(m)[likeNote]).tx],
+      [true, undefined, B.outboxTextPrint_(ANSWERS[0])]);
+    send(m, usual, PASTED);
+    send(m, likeNote, `${ANSWERS[0]} (as the note under the card says)`);
+    m.poll();
+    eq([[usual, likeNote].map(i => outboxRows(m)[i][5]), m.chat.botPosts(REAL).map(x => x.text)], [['Blocked', 'Blocked'], []]);
+    send(m, likeNote, ANSWERS[0]);
+    m.poll();
+    eq([outboxRows(m)[likeNote][5], m.chat.botPosts(REAL).map(x => [x.thread.name, x.text])], ['Sent', [[ok.thread.name, ANSWERS[0]]]]);
+  });
+
+  test('thread notes: what tells an answer\'s row at Send (outboxAnswerAsQueued_, outboxTextPrint_, outboxItem_). The fingerprint is the text\'s as the Text cell holds it: the same with the apostrophe put before a first character Sheets would read as a formula, with either kind of line end and with spaces around it, another for any other word. It is kept only for the bot\'s own answer, never for a row the Relay queued, an analyst\'s answer or another reply of the bot\'s, and only when the answer holds a note\'s first words; a row without it, with another text, or of the Relay is checked as every row is', () => {
+    const SFB = 'spaces/AAQAaa_0I9g';
+    const THREAD = `${SFB}/threads/t9`;
+    const print = B.outboxTextPrint_;
+    const TEXT = '*Alert requirements:* a P1 exposure tag needs 2,000+ engagements or a KOF author.';
+    eq([/^[0-9a-f]{16}$/.test(print(TEXT)), print(`  ${TEXT}\n`), print(TEXT.replace(/ a P1/, '\r\na P1')), print(TEXT.replace(/ a P1/, '\ra P1')),
+      print(`'${TEXT}`), print('\'- Alert requirements: a P1 needs 2,000+ engagements.')],
+    [true, print(TEXT), print(TEXT.replace(/ a P1/, '\na P1')), print(TEXT.replace(/ a P1/, '\na P1')), print(TEXT), print('- Alert requirements: a P1 needs 2,000+ engagements.')]);
+    assert.ok(print(TEXT) !== print(TEXT.replace('P1', 'P2')) && print(TEXT) !== print(TEXT.toLowerCase()) && print('') === print(null) && print(TEXT) !== print(''));
+    // the row the bot queues
+    const item = (text, key, relay) => B.outboxItem_({ kind: 'reply', text, thread: THREAD, key, from: 'bot', relay }, SFB).key;
+    eq([item(TEXT, 'own:ans:m1').tx, item(TEXT, 'ans:m1').tx, item(`Sure!\n${plainOf(REQ_NOTE)}`, 'ans:m1').tx],
+      [print(TEXT), print(TEXT), print(`Sure!\n${plainOf(REQ_NOTE)}`)]);
+    eq([item('Happy to help with that.', 'own:ans:m1'), item('Please look at the alert requirements for this one.', 'ans:m1'),
+      item(TEXT, 'own:fix:m1'), item(TEXT, 'anaans:m1'), item(TEXT, ''), item(TEXT, 'ans:m1', { m: 'spaces/AAQAmirrorgf1', tm: 'x', who: 'Dana Lee' })]
+      .map(k => Object.prototype.hasOwnProperty.call(k, 'tx')), Array(6).fill(false));
+    // a key as it always was, field by field
+    eq(item('Happy to help with that.', 'own:ans:m1'), { v: 1, k: 'p|own:ans:m1', kind: 'reply', s: SFB, thread: THREAD, ck: 'own:ans:m1' });
+    // the row at Send
+    const asQueued = (key, cell) => B.outboxAnswerAsQueued_(key, cell);
+    const key = item(TEXT, 'own:ans:m1');
+    eq([asQueued(key, TEXT), asQueued(key, ` ${TEXT} `), asQueued(key, `'${TEXT}`), asQueued(item(TEXT, 'ans:m1'), TEXT)], [true, true, true, true]);
+    eq([asQueued(key, TEXT.replace('P1', 'P2')), asQueued(key, plainOf(STORY_NOTE)), asQueued(key, ''), asQueued(key, null),
+      asQueued(Object.assign({}, key, { tx: '' }), TEXT), asQueued(Object.assign({}, key, { tx: undefined }), TEXT),
+      asQueued(Object.assign({}, key, { ck: 'own:fix:m1' }), TEXT), asQueued(Object.assign({}, key, { ck: 'anaans:m1' }), TEXT),
+      asQueued(Object.assign({}, key, { relay: { m: 'spaces/AAQAmirrorgf1' } }), TEXT), asQueued(item('Happy to help with that.', 'own:ans:m1'), 'Happy to help with that.'),
+      asQueued(null, TEXT), asQueued({}, TEXT)], Array(12).fill(false));
+    // what the guard lets an answer off is exactly the notes' first words: the two checks differ by outboxNoteHits_
+    [TEXT, STORY_NOTE, WATCH_NOTE, `Thanks!\n${REQ_NOTE}`, 'Happy to help with that.', '*Alert requirements:* per SLRR, a P1 needs 2,000+ engagements.',
+      'Product - Perceived bias is part of a story: see the alert requirements.'].forEach(text => {
+      eq(B.outboxGuardHits_(text, GUARD), B.outboxGuardHits_(text, GUARD, true).concat(B.outboxNoteHits_(text)), text);
+    });
+    eq([B.outboxNoteHits_(TEXT), B.outboxNoteHits_('Happy to help with that.'), B.outboxNoteHits_(null)], [['Alert requirements'], [], []]);
+  });
+
+  test('thread notes: the fixed answer that goes to Burson in place of an answer the wider guard holds lists the Resources documents as it always did, also a document whose name opens as a note does ("Alert requirements: …"): the fixed answer is queued with that document, and sent as written on Send; the Mirror space keeps Gemini\'s answer', () => {
+    const t = golden.mirrorRun(golden.SETTINGS_OFF).t;
+    const resources = t.sheet().getSheetByName('Resources');
+    eq(resources.rows[1][0], 'SLRR Collection Requirements');
+    resources.rows[1][0] = 'Alert requirements: collection rules';  // someone renames the document on the Resources tab
+    const alert = t.chat.spaces.get(REAL).messages.filter(m => !m.threadReply && /SOCIAL ALERT/.test(m.text)).slice(-1)[0];
+    const n = outboxRows(t).length;
+    const GEMINI = 'Zapier copied it for you.';  // nothing the bot's own check holds, but a tool's name: not for Burson
+    t.g.vertex.answer = () => GEMINI;
+    t.chat.say(REAL, 'What does a P1 need to be escalated?', Object.assign({ thread: alert.thread.name }, ALICE));
+    t.poll();
+    t.poll();
+    const row = outboxRows(t)[n];
+    const links = resources.rows.slice(1, 3).map(r => r[1]);
+    const FIXED = 'This alert does not need any updates.\n- Escalation status: This alert is being escalated — we have the escalation email in review ' +
+      `right now.\nResources:\n- <${links[0]}|Alert requirements: collection rules>\n- <${links[1]}|KOF lists>`;
+    H.ownAnswerInBurson(FIXED);
+    eq([outboxRows(t).length, row[1], row[3], row[5], /^own:ans:/.test(keyOf(row).ck), keyOf(row).tx], [n + 1, 'reply', FIXED, 'Pending', true, B.outboxTextPrint_(FIXED)]);
+    assert.ok(t.g.logs.some(l => l === 'Post in S-F Burson: the bot\'s answer mentions "Zapier", so the fixed answer goes in its place'), 'the run log says why');
+    eq(t.chat.botPosts(MIRROR).slice(-1).map(m => m.text), [GEMINI]);
+    send(t, n);
+    t.poll();
+    eq([outboxRows(t)[n][5], t.chat.botPosts(REAL).map(m => [m.thread.name, m.text])], ['Sent', [[alert.thread.name, FIXED]]]);
+  });
+
+  test('thread notes: a note quoted in another of Chat\'s marks is held as well: in italics, struck through, as code, with the colon inside the mark or after it, at the start of a text or after a name. The wider guard holds it on any way to S-F Burson and the leak audit\'s own list denies it; what is anyone\'s to say stays so', () => {
+    const held = text => B.outboxGuardHits_(text, GUARD).length > 0;
+    ['_Part of a story:_ 5 small accounts on X and Reddit now tell it: a title', 'Dana Lee: _Part of a story:_ 5 small accounts tell it',
+      '_Alert requirements:_ met for a Social Alert: P0 exposure tag.', 'Dana Lee: fyi _Alert requirements:_ met', '🔗 _Part of a story:_ 5 accounts',
+      'Dana Lee: 🔗 _Part of a story_: 5 accounts', 'Dana Lee: 🔗 *Part of a story*: 5 accounts', 'Dana Lee: ~Alert requirements, final~: met',
+      'x_Alert requirements, final:_ met', '~Alert requirements:~ met', '`Alert requirements:` met', '_Also flagged by the watch “X”._ No separate Watch alert',
+      'Dana Lee: it was _flagged by the watch_ today', '~Part of a story~ we alerted', '_Alert requirements_ are met', 'see below\n  _Part of a story_ again']
+      .forEach(text => eq([held(text), leakDenied(text)], [true, true], text));
+    // what the guard says it found: the words, with the mark only where it stands before the colon
+    eq([B.outboxNoteHits_('_Part of a story:_ 5 accounts'), B.outboxNoteHits_('Dana Lee: 🔗 _Part of a story_: 5 accounts'),
+      B.outboxNoteHits_('Dana Lee: it was _flagged by the watch_ today'), B.outboxNoteHits_('Dana Lee: ~Alert requirements, final~: met')],
+    [['Part of a story'], ['Part of a story_:'], ['flagged by the watch'], ['Alert requirements, final~:']]);
+    // ...and these are still neither held for a note's words nor denied
+    ['What are the _Alert requirements_ for a P1?', 'This post is _part of a story_ we alerted yesterday.', 'Part of a storyline about maps', '_Part of a storyline_',
+      'Alert requirementss', 'Also flagged by the watchdog group', 'the watch_flagged by the watcher'].forEach(text => {
+      eq([B.outboxNoteHits_(text), leakDenied(text)], [[], false], text);
+    });
+    eq(B.outboxNoteHits_('PreAlert requirements: none'), []);  // (the words inside another word; the audit's own list is the stricter one there)
+    // the bot's own notes are as they were: with the bold mark, or as Chat hands them back without it
+    eq(NOTES.concat(NOTES.map(plainOf)).map(text => [B.isThreadNoteText_(text), held(text)]), Array(8).fill([true, true]));
+    eq(['_Part of a story:_ 5 accounts', '~Alert requirements:~ met'].map(text => B.isThreadNoteText_(text)), [false, false]);  // a quote is not the bot's own note
+  });
+
   // =============================================================================================================
   // Where a note goes
   // =============================================================================================================
