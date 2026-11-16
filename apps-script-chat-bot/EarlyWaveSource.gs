@@ -99,7 +99,9 @@
  * and of embedding with a day bar and a carry ('carry'), their own same-author signatures ('sn:N'), stitching against
  * every other source by post key (ewsStitch_, index 'nk:N'), their own account names (ewsNewAuthor_), three limits at
  * promotion and a trial for the stories only they lift (ewsLiftGate_), and a day record (property EWS_SRC_DAY). With
- * every new switch OFF none of this runs and nothing of it is read or written.
+ * every new switch OFF none of this runs and nothing of it is read or written, but for one thing: while stories still
+ * hold a new lane's posts from before the row went OFF (they age out within 24 hours), the promotion limits and the
+ * trial keep applying to them.
  */
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -133,9 +135,10 @@ const EWS_CARRY_MS_ = 2 * 3600 * 1000;     // a new lane's post not embedded is 
 const EWS_SRC_DAY_PROP_ = 'EWS_SRC_DAY';   // the new sources' day record: first ON date, counts per day (7 days), lifted stories
 const EWS_SRC_DAYS_KEPT_ = 7;
 const EWS_SN_MAX_ = 20000;               // the new lanes' same-author signatures kept at most (about 2 cache items)
-const EWS_NK_MS_ = 72 * 3600 * 1000;       // the new-lane post-key index keeps 72 hours (the slow lanes' age gate)...
-const EWS_NK_MAX_ = 12000;                 // ...this many keys at most, the newest hours first (about 4 cache items)
+const EWS_NK_MS_ = 72 * 3600 * 1000;       // the new-lane post-key index keeps 72 hours at most (the slow lanes' age gate)...
+const EWS_NK_MAX_ = 12000;                 // ...and this many keys (about 4 cache items): at a busy hour that is a few hours
 const EWS_NK_RECORD_ = 1000;               // keys a record (three records to a cache item)
+const EWS_NK_TODAY_MIN_ = 3000;            // today's lanes' keys kept at least (about one check's); the new lanes' come first
 const EWS_XB_MS_ = 24 * 3600 * 1000;       // the keys of big posts Sonar knew (cache 'xb') count this long
 const EWS_XA_MS_ = 7 * 24 * 3600 * 1000;   // the new lanes' excluded authors (cache 'ak') count this long
 const EWS_LIFTED_KEPT_ = 20;               // stories only the new sources lifted, listed for the New sources tab
@@ -868,8 +871,12 @@ function ewsReadLanes_(st, now, deadline, ownDue, firstMins, lanes) {
 function ewsPostOf_(r) {
   if (!r || r.kind !== 'post' || !r.mid || !r.url) return null;
   const url = String(r.url).trim();
-  const lane = String(r.lane || '');
+  let lane = String(r.lane || '');
   const nl = EWS_NEW_LANES_.indexOf(lane) >= 0;
+  // the late split, again here (the job's SQL decides it first): a new lane's post first seen more than
+  // early_wave_new_late_minutes after it was posted is slow (amis / bwls) whatever its job said
+  if (nl && (lane === 'ami' || lane === 'bwl') && Number(r.posted_ms) > 0 && Number(r.seen_ms) > 0 &&
+    Number(r.seen_ms) - Number(r.posted_ms) > ewsNewCfg_().lateMinutes * 60000) lane += 's';
   const platform = nl ? ewsNewPlatform_(url) : ewsPlatform_(r.platform, url);
   const author = nl ? ewsNewAuthor_(platform, r.author, url) : String(r.author || '').trim().toLowerCase().replace(/^@+/, '') || url;
   const num = v => (v === null || v === undefined || v === '' || !isFinite(Number(v)) ? null : Math.max(0, Math.round(Number(v))));
@@ -988,6 +995,24 @@ function ewsLoadSigs_(cache, count, name) {
     } catch (e) { /* lost */ }
   });
   return out;
+}
+
+/**
+ * The new-lane post-key index as records to pack (ewsChunks_), EWS_NK_MAX_ keys in all (`max`, optional): the new
+ * lanes' keys first, the newest hours first, leaving today's lanes' keys ('t<hour>') at least EWS_NK_TODAY_MIN_ places
+ * (or as many as they have); today's lanes' keys fill what is left, the newest first. Pure.
+ */
+function ewsNkRecords_(index, max) {
+  const cap = max > 0 ? max : EWS_NK_MAX_;
+  const fresh = {};
+  const today = {};
+  Object.keys(index || {}).forEach(h => { if (/^t/.test(h)) today[h.slice(1)] = index[h]; else fresh[h] = index[h]; });
+  const count = part => Object.keys(part).reduce((n, h) => n + (Array.isArray(part[h]) ? part[h].length : 0), 0);
+  const freshCap = cap - Math.min(count(today), EWS_NK_TODAY_MIN_, cap);
+  const a = freshCap > 0 ? ewsSigRecords_(fresh, freshCap, EWS_NK_RECORD_) : [];
+  const left = cap - a.reduce((n, r) => n + r[1].length, 0);
+  const b = left > 0 ? ewsSigRecords_(today, left, EWS_NK_RECORD_).map(r => [`t${r[0]}`, r[1]]) : [];
+  return a.concat(b);
 }
 
 /**
@@ -1430,27 +1455,40 @@ function ewsStoryCheck_(cand, priors, now) {
  * 2+ platforms), 2+ links, not a copy-paste ring that never names Google, out of its cooldown (or 2x the accounts of its
  * last signal), and not a story already told (unless it grew: then an update); of two candidates telling one story the
  * one with more accounts; at most EWS_MAX_ALERTS_ (P0 > P1 > P2, then accounts, platforms, the latest). With new
- * lanes' members, `lim` and the platforms rule of ewsStoryWindow_ apply, and a story today's lanes' accounts alone
- * would leave under the bar is marked `lifted` (ewsLiftGate_ decides whether it goes for review). Pure.
+ * lanes' members, `lim` and the platforms rule of ewsStoryWindow_ apply, and a story that today's lanes' members alone
+ * would not get through (the accounts, the links, the copy-paste test, the cooldown or the same-story check, each
+ * worked out on a window of today's lanes' members only) is marked `lifted` (ewsLiftGate_ decides whether it goes for
+ * review). Pure.
  */
 function ewsPromote_(clusters, priors, now, lim) {
   const cands = [];
+  // the bar on a window `w` of story `c` (its own accounts' bar: 4 on two platforms of today's lanes, else 5)
+  const passes = (c, w) => {
+    const minAuthors = Math.max(2, EWS_MIN_AUTHORS_ - (w.platforms.length >= 2 ? EWS_PLATFORM_DISCOUNT_ : 0));
+    if ((w.allPlatforms || w.platforms).length < 1 || w.urls < EWS_MIN_URLS_ || w.authors < minAuthors) return false;
+    const al = c.al;
+    if (al && now - (Number(al.at) || 0) < EWS_CLUSTER_COOLDOWN_MS_ && w.authors < (Number(al.au) || 0) * 2) return false;
+    if (w.texts * 3 <= w.authors && !w.brand) return false;  // a copy-paste ring that never names Google
+    return true;
+  };
   clusters.forEach(c => {
     const w = ewsStoryWindow_(c, now, lim);
-    if (!w) return;
-    const minAuthors = Math.max(2, EWS_MIN_AUTHORS_ - (w.platforms.length >= 2 ? EWS_PLATFORM_DISCOUNT_ : 0));
-    if ((w.allPlatforms || w.platforms).length < 1 || w.urls < EWS_MIN_URLS_ || w.authors < minAuthors) return;
-    const al = c.al;
-    if (al && now - (Number(al.at) || 0) < EWS_CLUSTER_COOLDOWN_MS_ && w.authors < (Number(al.au) || 0) * 2) return;
-    if (w.texts * 3 <= w.authors && !w.brand) return;  // a copy-paste ring that never names Google
+    if (!w || !passes(c, w)) return;
     const x = Object.assign({ c, id: c.id, vec: ewsCentroid_(c), priority: w.risk.length || w.platforms.length >= 2 ? 'P1' : 'P2' }, w);
-    if (w.allPlatforms && w.todayAuthors < minAuthors) x.lifted = true;
+    if (w.allPlatforms) {  // new lanes' members in the window: would today's lanes' members alone pass?
+      const alone = ewsStoryWindow_(Object.assign({}, c, { m: (c.m || []).filter(m => !m.nl) }), now);
+      if (!alone || !passes(c, alone)) x.lifted = true;
+      else x.alone = alone;
+    }
     cands.push(x);
   });
   const allowed = [];
   cands.forEach(x => {
     const chk = ewsStoryCheck_(x, priors, now);
     if (!chk.allowed) return;
+    // a story today's lanes alone would have as "already told" (no growth of their own) is lifted by the new lanes
+    if (x.alone && !ewsStoryCheck_(Object.assign({}, x, { authors: x.alone.authors, platforms: x.alone.platforms }), priors, now).allowed) x.lifted = true;
+    delete x.alone;
     x.update = chk.latest ? { id: chk.latest.id, au: Number(chk.latest.au) || 0 } : null;
     allowed.push(x);
   });
@@ -1763,14 +1801,15 @@ function ewsWatchMarks_(cache, now) {
  * (at the bar a story is ewsPromote_'s), 2+ links, not a copy-paste ring that never names Google, not signalled within
  * its cooldown, not raised before nor asked about at this size (`marks`), and not a story already told (`priors`: its
  * updates are ewsPromote_'s). Risk-term stories first, then the most accounts, the latest; EWS_WATCH_PICK_MAX_ at most.
- * Each as ewsPromote_'s candidates (the window's numbers, `c`, `id`, `vec`, `priority`). Pure.
+ * Each as ewsPromote_'s candidates (the window's numbers, `c`, `id`, `vec`, `priority`). `lim` (optional, the new
+ * lanes' leave-out lists: ewsNewLeaveOut_) leaves out the new lanes' members ewsNewLeftOut_ names. Pure.
  */
-function ewsWatchPick_(clusters, priors, marks, now, minAuthors) {
+function ewsWatchPick_(clusters, priors, marks, now, minAuthors, lim) {
   const minAu = isFinite(Number(minAuthors)) && Number(minAuthors) >= 2 ? Math.round(Number(minAuthors))
     : ewsWatchBars_().accounts;
   const out = [];
   clusters.forEach(c => {
-    const w = ewsStoryWindow_(c, now);
+    const w = ewsStoryWindow_(c, now, lim);
     if (!w) return;
     const bar = Math.max(2, EWS_MIN_AUTHORS_ - (w.platforms.length >= 2 ? EWS_PLATFORM_DISCOUNT_ : 0));
     if (w.authors < minAu || w.authors >= bar) return;
@@ -1867,9 +1906,14 @@ function ewsNewSources_(sw) {
   const out = [];
   Object.keys(EWS_NEW_SWITCHES_).forEach(k => { if (on[k] === true && out.indexOf(EWS_NEW_SWITCHES_[k]) < 0) out.push(EWS_NEW_SWITCHES_[k]); });
   EWS_NEW_LANE_DEFS_.forEach(d => {
-    if (d && d.sw && on[d.sw] === true) { const src = d.src || 'new'; if (out.indexOf(src) < 0) out.push(src); }
+    if (d && d.sw && on[d.sw] === true) { const src = ewsSrcOfDef_(d); if (out.indexOf(src) < 0) out.push(src); }
   });
   return out;
+}
+
+/** The source of a new lane's def: its `src`, else the source of its switch (EWS_NEW_SWITCHES_), else 'new'. Pure. */
+function ewsSrcOfDef_(d) {
+  return (d && (d.src || EWS_NEW_SWITCHES_[d.sw])) || 'new';
 }
 
 /** The source of a new lane ('ami' for ami / amis, 'bwl' for bwl / bwls, else the lane itself). Pure. */
@@ -1920,13 +1964,18 @@ function ewsEmbedSplit_(need, room, dayDone, newDone, now, cfg) {
   const pace = Math.min(EWS_NEW_DAY_CAP_, Math.floor(EWS_EMBED_PER_DAY_ * (new Date(now).getUTCHours() + 1) / 24));
   const dayRoom = Math.max(0, Math.min(c.embedPerDay - newDone, pace - dayDone));
   const todayHashes = new Set(today.map(p => p.chash));
-  const newUsable = Math.min(uniq(newSide.filter(p => !todayHashes.has(p.chash))).length, dayRoom);
-  const todayN = Math.min(today.length, Math.max(0, room - Math.min(newUsable, c.embedPerCheck)));
-  const chosen = today.slice(0, todayN);
-  const chosenHashes = new Set(chosen.map(p => p.chash));
-  const newU = uniq(newSide.filter(p => !chosenHashes.has(p.chash)));
-  const newN = Math.max(0, Math.min(newU.length, dayRoom, room - todayN));
-  return { order: chosen.concat(newU.slice(0, newN)), today: todayN, fresh: newN, barred: newU.length > newN && newN === dayRoom };
+  const usable = uniq(newSide.filter(p => !todayHashes.has(p.chash))).length;
+  const pick = bar => {  // the split with `bar` texts left to the new lanes for the day
+    const todayN = Math.min(today.length, Math.max(0, room - Math.min(Math.min(usable, bar), c.embedPerCheck)));
+    const chosen = today.slice(0, todayN);
+    const chosenHashes = new Set(chosen.map(p => p.chash));
+    const newU = uniq(newSide.filter(p => !chosenHashes.has(p.chash)));
+    return { todayN, chosen, newU, newN: Math.max(0, Math.min(newU.length, bar, room - todayN)) };
+  };
+  const got = pick(dayRoom);
+  // barred: the day bar, not the check's share, held some back (without it the new lanes would have had more)
+  const barred = got.newN < pick(Infinity).newN;
+  return { order: got.chosen.concat(got.newU.slice(0, got.newN)), today: got.todayN, fresh: got.newN, barred };
 }
 
 /** A new lane's post as carried to the next check (compact). Pure. */
@@ -1995,9 +2044,9 @@ function ewsNewPoolShare_(records, inPool, poolMax) {
 }
 
 /**
- * EWS_SRC_DAY: {v, on: {source: 'YYYY-MM-DD' (UTC) its row first went ON; never cleared}, d: {day: {source: {count:
- * n}, bar: 1}}, lh: [hour, n], ld: [day, n] (lifted stories sent for review), ls: [lifted stories, newest last]}.
- * Never throws.
+ * EWS_SRC_DAY: {v, on: {source: 'YYYY-MM-DD' (UTC) its job was first collected while its row was ON; never cleared},
+ * d: {day: {source: {count: n}, bar: 1}}, lh: [hour, n], ld: [day, n] (lifted stories sent for review), ls: [lifted
+ * stories, newest last]}. Never throws.
  */
 function ewsSrcDay_(props) {
   let r = null;
@@ -2096,7 +2145,7 @@ function ewsNewLeaveOut_(cache, now) {
 /**
  * Stitching (one post, one alert), before the "already known" step, while a new source is ON. In order:
  *   1. today's lanes' posts are never dropped (their velocity rows included);
- *   2. a new lane's post is dropped when its post key is in the new-lane post-key index (72 hours), or is the key of a
+ *   2. a new lane's post is dropped when its post key is in the new-lane post-key index ('nk'), or is the key of a
  *      post of today's lanes in this check, a story member or a pool post, or of a new lane's post kept before it in
  *      this check (bwl before ami); except "same link, different post" (ewsSameWho_);
  *   3. a post of today's lanes with the key of a story member that came from a new lane takes that member's place (id,
@@ -2105,8 +2154,8 @@ function ewsNewLeaveOut_(cache, now) {
  *   4. only posts that passed the gates come here, so a copy with no words never blocks a later copy with words;
  *   5. a new lane's post whose key is a big post Sonar knew (`big`) is dropped, and so is one by an excluded author;
  *   6. a new lane's post the alert memory has seen (`seen(url)`) is dropped.
- * `ctx`: {index: {hour: [entry]} (updated: every kept post's entry is added), clusters, pool, big: Set, authors: Set,
- * seen: url -> true, now}. Returns {posts, replaced: [{post, cluster, member, gap}], poolGone: [pool post], drops:
+ * `ctx`: {index: {hour: [entry]} (updated: every kept post's entry is added, today's lanes' under 't<hour>'), clusters,
+ * pool, big: Set, authors: Set, seen: url -> true, now}. Returns {posts, replaced: [{post, cluster, member, gap}], poolGone: [pool post], drops:
  * {source: {same, big, ex, al, sl}}}. Pure (but for `ctx.index`, the members it replaces and `k` on the posts).
  */
 function ewsStitch_(posts, ctx) {
@@ -2127,7 +2176,8 @@ function ewsStitch_(posts, ctx) {
   const index = new Map();
   Object.keys(c.index || {}).forEach(h => (c.index[h] || []).forEach(e => add(index, String(e).slice(0, 16), String(e).slice(16))));
   const hour = String(Math.floor(now / 3600000));
-  const entries = [];
+  const entries = [];       // the new lanes' keys kept this check (index hour `hour`)
+  const todayEntries = [];  // today's lanes' keys this check (index hour `t<hour>`: trimmed first, ewsNkRecords_)
   // today's lanes: their keys, and (rule 3) the new lanes' members and pool posts they replace
   const nlMembers = new Map();
   (c.clusters || []).forEach(cl => (cl.m || []).forEach(m => { if (m.nl) add(nlMembers, ewsPostKey_(m), { m, cl }); }));
@@ -2140,7 +2190,7 @@ function ewsStitch_(posts, ctx) {
     const k = ewsPostKey_(p);
     const who = whoOf(p);
     add(todayKeys, k, who);
-    if (k) entries.push(k + who);
+    if (k) todayEntries.push(k + who);
     const hit = (nlMembers.get(k) || []).find(x => x.m.nl && ewsSameWho_(memberWho(x.m), who));
     if (hit) {
       const m = hit.m;
@@ -2186,11 +2236,12 @@ function ewsStitch_(posts, ctx) {
     out.posts.push(p);
   });
   out.posts = today.filter(p => !replacedIds.has(p.id)).concat(out.posts);
-  // the index: this check's keys, 72 hours kept
+  // the index: this check's keys, 72 hours at most (today's lanes' under 't<hour>')
   if (c.index) {
     const minHour = Math.floor((now - EWS_NK_MS_) / 3600000);
-    Object.keys(c.index).forEach(h => { if (Number(h) < minHour) delete c.index[h]; });
+    Object.keys(c.index).forEach(h => { if (!(Number(String(h).replace(/^t/, '')) >= minHour)) delete c.index[h]; });
     if (entries.length) c.index[hour] = (c.index[hour] || []).concat(entries);
+    if (todayEntries.length) c.index[`t${hour}`] = (c.index[`t${hour}`] || []).concat(todayEntries);
   }
   return out;
 }
@@ -2204,15 +2255,20 @@ function ewsDaysBetween_(from, to) {
 
 /**
  * The lifted stories of this check (ewsPromote_'s `lifted`: over the bar only with the new lanes' accounts): while a
- * source that lifts it is in its trial (early_wave_new_trial_days from the day its row first went ON; 0: no trial) the
+ * source that lifts it is in its trial (early_wave_new_trial_days from the day it was first read; 0: no trial) the
  * story is not signalled but noted; after the trial at most early_wave_new_lifted_per_hour and _per_day are signalled
  * (UTC hour and day), the rest noted. A noted story is taken out of `promoted`. Each lifted story is listed in
  * `nx.rec.ls` (the newest EWS_LIFTED_KEPT_, for the New sources tab: ewsLiftedStories_) and counted once a story and
- * size (lf, and lfs sent or lfn noted). Stories over the bar with today's lanes alone are never held back.
+ * size (lf, and lfs sent or lfn noted). Stories over the bar with today's lanes alone are never held back. A source's
+ * trial starts the first day its job was collected (`nx.live`), not the day its switch went ON. With every new switch
+ * OFF this still runs (a minimal `nx`, ewsProduce_) while stories hold new lanes' members, so turning a row OFF never
+ * lets a lifted story through; with nothing lifted and no record read, it reads and writes nothing.
  */
 function ewsLiftGate_(promoted, nx, now, props) {
+  if (!nx.rec && !promoted.some(x => x.lifted)) return;  // nothing lifted: the record is not read
   const rec = nx.rec = nx.rec || ewsSrcDay_(props);
-  (nx.sources || []).forEach(s => { if (!rec.on[s]) rec.on[s] = nx.day; });
+  (nx.live || []).forEach(s => { if (!rec.on[s]) rec.on[s] = nx.day; });
+  nx.touched = true;
   const hour = Math.floor(now / 3600000);
   if (Number(rec.lh[0]) !== hour) rec.lh = [hour, 0];
   if (rec.ld[0] !== nx.day) rec.ld = [nx.day, 0];
@@ -2269,14 +2325,14 @@ function ewsNewStoryCounts_(nx, stories, startedBy, now) {
 }
 
 /**
- * A check's end for the new sources: the date each source ON now first went ON (kept for good: turning a row OFF
- * never clears it), the check's counts and day flags, and `nx.rec` (the record, when the check already read it), saved
- * in EWS_SRC_DAY. Never throws.
+ * A check's end for the new sources: the date each source whose job was collected (`nx.live`) was first read (its
+ * trial's start, kept for good: turning a row OFF never clears it), the check's counts and day flags, and `nx.rec`
+ * (the record, when the check already read it), saved in EWS_SRC_DAY. Never throws.
  */
 function ewsNewDayClose_(props, nx, now) {
   try {
     const rec = nx.rec || ewsSrcDay_(props);
-    (nx.sources || []).forEach(s => { if (!rec.on[s]) rec.on[s] = nx.day; });
+    (nx.live || []).forEach(s => { if (!rec.on[s]) rec.on[s] = nx.day; });
     ewsSrcDayAdd_(rec, nx.day, nx.n, nx.flags);
     ewsSaveSrcDay_(props, rec, now);
   } catch (e) {
@@ -2355,6 +2411,8 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     const usDone = read.us.state === 'done';
     const c1Done = read.c1.state === 'done';
     const newLanes = lanes.filter(l => l.def);
+    // the sources read this check (their job collected): a source's trial starts the first day it is read
+    if (nx) nx.live = Array.from(new Set(newLanes.filter(l => read[l.key].state === 'done').map(l => ewsSrcOfDef_(l.def))));
     // a new source's job: its posts only under a new lane's name (its other rows are its own, for its `done`)
     const newRows = [].concat.apply([], newLanes.map(l => (read[l.key].state === 'done' ? read[l.key].rows || [] : [])
       .filter(r => r && (r.kind !== 'post' || EWS_NEW_LANES_.indexOf(String(r.lane || '')) >= 0))));
@@ -2511,17 +2569,19 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     // Signals
     const tidy = ewsTidyStories_(clusters, now);
     ewsCloseHours_(acc, roll, tidy, now);
-    const promoted = ewsPromote_(tidy, priors, now, nx ? nx.leave : undefined);
-    if (nx) {
-      ewsLiftGate_(promoted, nx, now, props);  // stories only the new sources lift: the trial, then the two caps
-      ewsNewStoryCounts_(nx, tidy, startedBy, now);
-    }
+    // with every new switch OFF, stories may still hold new lanes' members (they stay until they age out): their limits
+    // hold all the same (the leave-out lists, the trial and the two caps), so turning a row OFF lifts nothing through
+    const lx = nx || (tidy.some(c => (c.m || []).some(m => m.nl))
+      ? { cfg: ewsNewCfg_(), day: ewsUtcDay_(now), sources: [], live: [], n: {}, flags: {}, leave: ewsNewLeaveOut_(cache, now) } : null);
+    const promoted = ewsPromote_(tidy, priors, now, lx ? lx.leave : undefined);
+    if (lx) ewsLiftGate_(promoted, lx, now, props);  // stories only the new sources lift: the trial, then the two caps
+    if (nx) ewsNewStoryCounts_(nx, tidy, startedBy, now);
     const spikes = ewsVelocity_(acc, roll, tidy, priors, now);
     const facts = !!(opts && opts.facts);
     const watchMinAu = opts && opts.watch && opts.watch.bars ? opts.watch.bars.accounts : undefined;
     // The early watch (only when the caller's fast triage asks for it): stories still below the bar
     const watching = opts && opts.watch
-      ? ewsWatchPick_(tidy.filter(c => !promoted.some(x => x.c === c)), priors, ewsWatchMarks_(cache, now), now, watchMinAu) : [];
+      ? ewsWatchPick_(tidy.filter(c => !promoted.some(x => x.c === c)), priors, ewsWatchMarks_(cache, now), now, watchMinAu, lx ? lx.leave : undefined) : [];
 
     // Representative posts for topic / risk spikes: the window's posts the pool or a story keeps
     const rich = [];
@@ -2656,8 +2716,8 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     for (let i = sigChunks.length; i < (Number(st.sg) || 0); i++) { try { if (cache) cache.remove(`${EWS_CACHE_PREFIX_}sg:${i}`); } catch (e) { /* expires */ } }
     if (!(Number(st.sg) > 0)) { try { if (cache) cache.remove(`${EWS_CACHE_PREFIX_}sig`); } catch (e) { /* expires */ } }
     st.sg = sigChunks.length;
-    if (nx) {  // the new-lane post-key index: 72 hours of keys, packed like the signatures
-      const nkChunks = ewsChunks_(ewsSigRecords_(nx.index || {}, EWS_NK_MAX_, EWS_NK_RECORD_));
+    if (nx) {  // the new-lane post-key index: the new lanes' keys first, then today's, packed like the signatures
+      const nkChunks = ewsChunks_(ewsNkRecords_(nx.index || {}, EWS_NK_MAX_));
       const nkItems = {};
       nkChunks.forEach((ch, i) => { nkItems[`nk:${i}`] = ch; });
       ewsCachePut_(cache, nkItems);
@@ -2693,6 +2753,7 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     }
     ewsSaveRollup_(props, roll);
     if (nx) ewsNewDayClose_(props, nx, now);
+    else if (lx && lx.touched) ewsNewDayClose_(props, lx, now);  // a lifted story while every row is OFF: its record
     const problems = EWS_LANES_.filter(l => read[l.key].state === 'failed').map(l => `${l.key}: ${read[l.key].why}`);
     const pending = EWS_LANES_.filter(l => read[l.key].state === 'pending').map(l => l.key);
     // a new source's failure is named in the log line only: C19 (last.problem, the error) keeps today's lanes

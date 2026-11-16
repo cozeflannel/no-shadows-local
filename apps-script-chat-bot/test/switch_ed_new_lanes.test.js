@@ -781,4 +781,157 @@ module.exports = H => {
     eq(['nk', 'sn'].filter(k => k in st).concat('nl' in (st.day || {}) ? ['day.nl'] : []), []);
     assert.ok(none.state.cache['ews1:cl:0'], 'the run made stories');
   });
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 9. After the review: what "lifted" means, a row turned OFF, the trial's start, and the rules no test held before
+  // ---------------------------------------------------------------------------------------------------------------
+
+  // Story members as ewsStoryWindow_ reads them: today's lanes' (X) and a new lane's (Reddit, nl)
+  const sm = (i, o) => Object.assign({ i: `SONAR|L${i}`, a: `X:p${i}`, p: 'X', u: `https://x.com/p${i}/status/219300000000000${String(i).padStart(2, '0')}`,
+    t: NOW - 10 * MIN, s: 'Pixel dialer froze after the update', d: 0.9, h: `h${i}`, b: 1 }, o || {});
+  const nm = (i, o) => sm(i, Object.assign({ i: `BWL|L${i}`, a: `Reddit:r${i}`, p: 'Reddit', u: `https://www.reddit.com/r/google/comments/L${i}/t/`, nl: 1 }, o || {}));
+  const lstory = (members, o) => Object.assign({ id: 'CLU-lift', s: '', n: members.length, t0: NOW - HOUR, ts: NOW, m: members, tp: {} }, o || {});
+  const range = (a, b) => Array.from({ length: b - a }, (_, i) => a + i);
+
+  test('new lanes (promotion): a story is "lifted" whenever today\'s lanes\' members alone would not pass, not only on accounts: the 2-links bar, the cooldown, the copy-paste test and the same-story check are each worked out on today\'s members alone', () => {
+    const P = (members, priors, o) => B.ewsPromote_([lstory(members, o)], priors || [], NOW).map(x => [x.authors, x.urls, !!x.lifted]);
+    // links: five Sonar accounts on one link, one new-lane post on a second link
+    const oneLink = range(0, 5).map(i => sm(i, { u: 'https://x.com/p0/status/21930000000000000' }));
+    eq([P(oneLink.concat([nm(5)])), P(oneLink)], [[[6, 2, true]], []]);
+    // cooldown: signalled an hour ago at 5 accounts; 6 new-lane accounts take it to 11 (2x): lifted; 10 Sonar and 1 new: not
+    const cool = { al: { at: NOW - HOUR, au: 5, id: 'ED-1' } };
+    eq([P(range(0, 5).map(i => sm(i)).concat(range(5, 11).map(i => nm(i))), [], cool), P(range(0, 10).map(i => sm(i)).concat([nm(10)]), [], cool)],
+      [[[11, 11, true]], [[11, 11, false]]]);
+    // the copy-paste test: five Sonar accounts with one text that never names Google; two new-lane texts break the ring
+    const ring = range(0, 5).map(i => sm(i, { s: 'buy cheap followers now at my shop today', b: 0, h: 'ring' }));
+    eq([P(ring.concat([nm(5, { s: 'buy cheap followers now', b: 0, h: 'n5' }), nm(6, { s: 'cheap followers here', b: 0, h: 'n6' })])), P(ring)],
+      [[[7, 7, true]], []]);
+    // the same-story check: told 7 hours ago at 5 accounts (out of its cooldown, inside the day); new-lane growth alone
+    const priors = [{ id: 'ED-1', cid: 'CLU-lift', at: NOW - 7 * HOUR, au: 5, pl: ['X'] }];
+    eq([P(range(0, 5).map(i => sm(i)).concat(range(5, 11).map(i => nm(i))), priors), P(range(0, 5).map(i => sm(i)), priors),
+      P(range(0, 10).map(i => sm(i)).concat([nm(10)]), priors)], [[[11, 11, true]], [], [[11, 11, false]]]);
+    // with no new-lane member nothing is marked
+    eq(P(range(0, 5).map(i => sm(i))), [[5, 5, false]]);
+  });
+
+  test('new lanes (promotion): in a full check, five Sonar accounts on one link and one Brandwatch-live post on a second link are noted in the trial (lifted), not signalled; with no trial they go for review', () => {
+    const sonar = Array.from({ length: 5 }, (_, i) => row({ mid: `SONAR|ol${i}`, author: `ol${i}`, url: 'https://x.com/ol0/status/2194000000000000001',
+      txt: `${TOPICS[0]} ${WORDS[i]} same link`, chash: `ol${i}`, sig: `ol${i}`, posted_ms: NOW - (6 + i * 3) * MIN }));
+    const bw = liftRows(0, 1);
+    let env = liftRun(bw, { c1: sonar });
+    eq([signals(env.rows).length, env.lifted.length, env.lifted[0].trial], [0, 1, true]);
+    env = liftRun([], { c1: sonar });
+    eq(signals(env.rows).length, 0);
+    env = liftRun(bw, { c1: sonar, settings: { early_wave_new_trial_days: 0 } });
+    eq([signals(env.rows).length, env.lifted[0].sent], [1, true]);
+  });
+
+  test('new lanes (promotion): a story only a new lane lifted, noted in its trial, stays held back once every new row is OFF (its posts stay in the story), and the hour cap still holds then; the next hour, after the trial, it goes for review', () => {
+    let check = 1;
+    let env = makeEnv(job => (check === 1 && job === 'fk' ? liftRows(0, 5) : []));
+    addFakeLane(env.b, { src: 'bwl' });
+    env.b.ewsRunSwitches_({ edFake: true });
+    eq(signals(env.b.bqEarlyDetectionRows_(30)).length, 0);
+    check = 2;
+    env.g.clock.now += 15 * MIN;
+    env.b.ewsRunSwitches_({});
+    eq(signals(env.b.bqEarlyDetectionRows_(30)).length, 0);
+    eq(env.b.ewsLiftedStories_().map(s => [s.accounts, s.sent, s.trial]), [[5, false, true]]);
+    eq(env.bq.filter(c => c.job === 'fk').length, 1);
+    // no trial; this hour's 2 already sent: noted while ON, still noted when OFF in the same hour, sent the next hour OFF
+    check = 1;
+    const hour = Math.floor(NOW / HOUR);
+    env = makeEnv(job => (check === 1 && job === 'fk' ? liftRows(1, 5) : []));
+    Object.assign(env.b.ev('GEN').settings, { early_wave_new_trial_days: 0 });
+    env.g.props.set('EWS_SRC_DAY', JSON.stringify({ v: 1, on: {}, d: {}, lh: [hour, 2], ld: [DAY, 2] }));
+    addFakeLane(env.b, { src: 'bwl' });
+    env.b.ewsRunSwitches_({ edFake: true });
+    eq(signals(env.b.bqEarlyDetectionRows_(30)).length, 0);
+    check = 2;
+    env.b.ewsRunSwitches_({});
+    env.g.clock.now += 15 * MIN;
+    eq(new Date(NOW + 15 * MIN).getUTCHours(), new Date(NOW).getUTCHours());  // the same UTC hour
+    eq(signals(env.b.bqEarlyDetectionRows_(30)).length, 0);
+    env.g.clock.now = (hour + 1) * HOUR + 5 * MIN;
+    eq(signals(env.b.bqEarlyDetectionRows_(30)).length, 1);
+    const rec = JSON.parse(env.g.props.get('EWS_SRC_DAY'));
+    eq([rec.lh, rec.ld[1]], [[hour + 1, 1], 3]);
+  });
+
+  test('new lanes (trial): a source\'s trial starts the first day its job is collected, not the day its switch goes ON: a switch ON with no source built yet, or a lane with nothing to read, sets no date; the first date is kept on later days', () => {
+    const env = makeEnv(() => []);
+    let ready = false;
+    addFakeLane(env.b, { src: 'bwl', ready: () => ready });
+    env.b.ewsRunSwitches_({ edFake: true, edAmie: true, edBwLive: true });
+    env.b.bqEarlyDetectionRows_(30);
+    eq(JSON.parse(env.g.props.get('EWS_SRC_DAY')).on, {});
+    ready = true;
+    env.g.clock.now += 15 * MIN;
+    env.b.bqEarlyDetectionRows_(30);
+    eq(JSON.parse(env.g.props.get('EWS_SRC_DAY')).on, { bwl: DAY });
+    env.g.clock.now += 3 * 24 * HOUR;
+    env.b.bqEarlyDetectionRows_(30);
+    eq(JSON.parse(env.g.props.get('EWS_SRC_DAY')).on, { bwl: DAY });
+    eq([B.ewsSrcOfDef_({ sw: 'edAmie' }), B.ewsSrcOfDef_({ sw: 'edFake' }), B.ewsSrcOfDef_({ sw: 'edAmie', src: 'bwl' })], ['ami', 'new', 'bwl']);
+  });
+
+  test('new lanes (E9): the day-bar flag is raised only when the day bar held new-lane texts back, not when the check\'s own share did', () => {
+    const cfg = B.ewsNewCfg_();
+    const need = range(0, 300).map(i => ({ chash: `t${i}` })).concat(range(0, 200).map(i => ({ chash: `n${i}`, nl: true })));
+    // 100 left for the day and 100 left in the check: the check's share held the rest back
+    let sp = B.ewsEmbedSplit_(need, 400, 0, cfg.embedPerDay - 100, NOW, cfg);
+    eq([sp.today, sp.fresh, sp.barred], [300, 100, false]);
+    // 50 left for the day: the bar held 50 back
+    sp = B.ewsEmbedSplit_(need, 400, 0, cfg.embedPerDay - 50, NOW, cfg);
+    eq([sp.today, sp.fresh, sp.barred], [300, 50, true]);
+    // nothing left for the day and today's lanes fill the check: barred (the new lanes would have had 100)
+    sp = B.ewsEmbedSplit_(range(0, 500).map(i => ({ chash: `u${i}` })).concat(need.slice(300)), 400, 0, cfg.embedPerDay, NOW, cfg);
+    eq([sp.today, sp.fresh, sp.barred], [400, 0, true]);
+    // no bar and no share reached: nothing held back
+    sp = B.ewsEmbedSplit_(need.slice(250), 400, 0, 0, NOW, cfg);
+    eq([sp.today, sp.fresh, sp.barred], [50, 200, false]);
+  });
+
+  test('new lanes (stitching): the post-key index keeps the new lanes\' keys ahead of today\'s when it is full (today\'s keep at least 3,000 places), stays under 4 cache items, and drops every key older than 72 hours, its own and today\'s', () => {
+    const h0 = Math.floor(NOW / HOUR);
+    const keys = (n, tag) => Array.from({ length: n }, (_, j) => `${tag}${j.toString(16).padStart(23, '0')}`);
+    const index = {};
+    for (let h = 0; h < 10; h++) { index[String(h0 - h)] = keys(1500, 'a'); index[`t${h0 - h}`] = keys(3000, 'b'); }
+    const recs = B.ewsNkRecords_(index);
+    const count = pred => recs.filter(r => pred(String(r[0]))).reduce((n, r) => n + r[1].length, 0);
+    eq([count(h => !h.startsWith('t')), count(h => h.startsWith('t')), recs.filter(r => r[0].startsWith('t')).every(r => r[0] === `t${h0}`)], [9000, 3000, true]);
+    eq(B.ewsChunks_(recs).length <= 4 && B.ewsChunks_(recs).every(ch => JSON.stringify(ch).length <= B.ev('EWS_CACHE_ITEM_CHARS_')), true);
+    // few new-lane keys: today's fill the rest
+    const few = { [String(h0)]: keys(500, 'a'), [`t${h0}`]: keys(3000, 'b'), [`t${h0 - 1}`]: keys(3000, 'b'), [`t${h0 - 9}`]: keys(9000, 'b') };
+    const r2 = B.ewsNkRecords_(few);
+    eq([r2.reduce((n, r) => n + r[1].length, 0), r2.filter(r => r[0] === `t${h0 - 9}`).reduce((n, r) => n + r[1].length, 0)], [12000, 5500]);
+    eq(B.ewsNkRecords_({}), []);
+    // in a check: keys older than 72 hours go, both kinds; this check's keys come in
+    const env = stitchEnv([{ fk: [row({ lane: 'bwl', mid: 'BWL|nk1', platform: 'reddit', url: 'https://www.reddit.com/r/google/comments/1nk/t/', author: 'nk', chash: 'nk1', txt: lone('nk', 1) })],
+      c1: [row({ mid: 'SONAR|nk2', chash: 'nk2', txt: lone('nk', 2) })] }], { before: (i, e) => {
+      e.g.cache.set('ews1:nk:0', JSON.stringify([[String(h0 - 73), ['f'.repeat(24)]], [`t${h0 - 73}`, ['e'.repeat(24)]], [String(h0 - 71), ['d'.repeat(24)]], [`t${h0 - 71}`, ['c'.repeat(24)]]]));
+      e.g.props.set('EWS_STATE', JSON.stringify({ v: 1, marks: {}, jobs: {}, day: {}, nk: 1 }));
+    } }).run();
+    const got = {};
+    env.items('nk:').forEach(r => { got[r[0]] = (got[r[0]] || []).concat(r[1]); });
+    eq(Object.keys(got).sort(), [String(h0 - 71), String(h0), `t${h0 - 71}`, `t${h0}`].sort());
+    eq([got[String(h0)].length, got[`t${h0}`].length], [1, 1]);
+  });
+
+  test('new lanes (E10): the late split holds in the producer too: a post of ami / bwl first seen more than early_wave_new_late_minutes after posting is slow (amis / bwls) whatever its job said; within that it stays real time', () => {
+    const of = (lane, lateMin) => B.ewsPostOf_({ kind: 'post', lane, mid: 'X|1', url: 'https://www.reddit.com/r/google/comments/1l/t/', platform: 'reddit',
+      author: 'a', posted_ms: NOW - lateMin * MIN, seen_ms: NOW, txt: 'w' });
+    eq([['bwl', 181], ['bwl', 180], ['ami', 240], ['ami', 30], ['sonar', 600], ['bw', 600]].map(([l, m]) => [of(l, m).lane, of(l, m).slow]),
+      [['bwls', true], ['bwl', false], ['amis', true], ['ami', false], ['sonar', false], ['bw', true]]);
+    const b = loadBot(makeGoogle(NOW).services);
+    b.ev('GEN').settings.early_wave_new_late_minutes = 300;
+    eq(b.ewsPostOf_({ kind: 'post', lane: 'bwl', mid: 'X|1', url: 'https://www.reddit.com/r/google/comments/1l/t/', posted_ms: NOW - 240 * MIN, seen_ms: NOW, txt: 'w' }).lane, 'bwl');
+  });
+
+  test('new lanes: the early watch leaves out the new lanes\' members on the leave-out lists, as the promotion does; with no list it is as before', () => {
+    const story = lstory([sm(0), sm(1), nm(2, { a: 'Reddit:gone' })]);
+    eq(B.ewsWatchPick_([story], [], {}, NOW, 3).length, 1);
+    eq(B.ewsWatchPick_([story], [], {}, NOW, 3, { authors: new Set(['gone']), big: new Set() }).length, 0);
+    eq(B.ewsWatchPick_([story], [], {}, NOW, 3, { authors: new Set(['other']), big: new Set() }).length, 1);
+  });
 };
