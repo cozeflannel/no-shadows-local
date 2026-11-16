@@ -4647,19 +4647,26 @@ function markAs(t, user, org, name) {
   if (name) tab.getRange(r + 1, head.indexOf('name') + 1).setValue(name);
 }
 
+// The leak audit's own lists (below; not the bot's guard): what a text in a Burson space must never hold. The first
+// words of the notes the bot posts under a card in the Auto-correct space (ThreadNotes.gs; Voice.gs THREAD_NOTE_HEADS_)
+// are on it: at the start of a text or of a line, after an emoji and a bold mark or not, and as a note has them anywhere
+// (never "the alert requirements" in a sentence: the bot's answers to Burson say that). H.leakDenied: for the test files.
+const LEAK_DENY_ = /\bforward(?:ed|ing|s)?\b|analyst\s+space|clean(?:\s+data)?\s+space|triage(?:d)?\s+(?:space|alerts)|second\s+space|reduc(?:e|ing)\s+reliance|replace\s+burson|\bgo\/|@\w+\.com|brand-social-sends|AAQAaLn375E|ANALYST|SLRR Triaged Alerts/i;
+const LEAK_NOTE_HEADS_ = /(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?(?:Also flagged by the watch|Part of a story|Alert requirements)\b|[Ff]lagged by the watch\b|Part of a story:|Alert requirements(?:, final)?:/;
+const leakDenied = t => LEAK_DENY_.test(t) || LEAK_NOTE_HEADS_.test(t);
+
 const H = { assert, F, B, NOW, test, eq, plain, parse, review, world, e2e, collectBurson, makeGoogle, loadBot, decodeMime,
   CHAT_POSTS, FakeSpreadsheet, GUARD, ANALYST_NAME, TEST_FEED, TRIAGED, REAL, VENDOR, CELL, RES, KB, driveFile, resultsRow,
-  resultsRows, MAPS_LOW, MISTAKES_NO_LINK, bursonTexts, markAs };
+  resultsRows, MAPS_LOW, MISTAKES_NO_LINK, bursonTexts, markAs, leakDenied };
 require('fs').readdirSync(__dirname).filter(f => /^switch_.+\.test\.js$/.test(f)).sort().forEach(f => require('./' + f)(H));
 
 // =============================================================================================================
 // Leak audit: everything any test posted in a Burson space, checked with a separate list (not the bot's guard)
 // =============================================================================================================
 
-test('nothing posted in a Burson space mentions the second analyst space, forwarding, reducing reliance on Burson, or internal emails/ids', () => {
-  const deny = /\bforward(?:ed|ing|s)?\b|analyst\s+space|clean(?:\s+data)?\s+space|triage(?:d)?\s+(?:space|alerts)|second\s+space|reduc(?:e|ing)\s+reliance|replace\s+burson|\bgo\/|@\w+\.com|brand-social-sends|AAQAaLn375E|ANALYST|SLRR Triaged Alerts/i;
+test('nothing posted in a Burson space mentions the second analyst space, forwarding, reducing reliance on Burson, or internal emails/ids, or starts as a note the bot posts under a card in the Auto-correct space', () => {
   assert.ok(bursonTexts.length >= 8, `only ${bursonTexts.length} Burson texts collected`);
-  for (const t of bursonTexts) assert.ok(!deny.test(t), t);
+  for (const t of bursonTexts) assert.ok(!leakDenied(t), t);
   const legend = new Set(B.ev('GEN').legend.map(a => a.emoji));
   for (const e of bursonReactions) {
     assert.ok(legend.has(e) || legend.has(e + '\uFE0F'), `unexpected reaction ${e}`);

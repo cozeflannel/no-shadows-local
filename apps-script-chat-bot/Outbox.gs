@@ -299,12 +299,19 @@ function outboxNotTheBot_(control) {
  * Beyond the bot's own guard (GUARD_PATTERNS_, unchanged): the internal setup, the tools and the people behind it. The
  * bot by the names people give it here ("the bot", "our bot", "my bot", "QA bot", "triage bot"), never the bare word:
  * analysts' messages go through this too, and a robot, a chatbot, bots or "a bot account" in a post are theirs to say.
+ * And the notes the bot puts under a card in the Auto-correct space (ThreadNotes.gs; their first words are Voice.gs
+ * THREAD_NOTE_HEADS_), which are never for Burson: a text or a line that starts with one (after an emoji and a bold
+ * mark, or not), and the words as a note has them anywhere in a text (someone quoting the note). Only in those forms:
+ * "the alert requirements" in a sentence, or a story someone is "part of", is theirs to say.
  */
 const OUTBOX_GUARD_PATTERNS_ = [
   /\bauto[\s-]*correct\w*/i, /\bwrite-?backs?\b/i, /\bwritten\s+back\b/i, /\bslrr\b/i, /\bmirror(?:s|ed|ing)?\b/i,
   /\brelay(?:s|ed|ing)?\b/i, /\b(?:the|our|my)\s+bot\b/i, /\b(?:qa|q&a|triage)[\s-]*bot\b/i,
   /\bautomat(?:ion|ions|ed|ically)\b/i, /\bauto[\s-]*(?:sent|submitted)\b/i,
   /\bzapier\b/i, /\bstand-?ins?\b/i, /\boutbox(?:es)?\b/i, /\b(?:control|relay|results)\s+tab\b/i, /\banalyst\s+space\b/i,
+  /\bflagged by the watch\b/i,
+  /(?<=(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?)Part of a story\b|\bPart of a story:/,
+  /(?<=(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?)Alert requirements\b|\bAlert requirements(?:, final)?:/,
 ];
 
 /**

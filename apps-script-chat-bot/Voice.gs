@@ -117,18 +117,39 @@ function chatMarkupText_(text) {
  * request ("Link is missing. Please add it. Then resend the alert here."), used as a fallback to recognize the bot's own
  * messages when neither their message id nor the bot's records say so (Bot.gs isOwnMessage_). The Auto-correct space's
  * too: the corrected alert's first line (reviewedLine_) and each way its thread note can start (changeNoteText_,
- * updateNote_), with the heads those notes had before (notes already posted stay in the space).
+ * updateNote_), with the heads those notes had before (notes already posted stay in the space), and the notes the bot
+ * puts under a card that is already there (isThreadNoteText_).
  */
 function isBotFormattedText_(text) {
   const t = String(text || '').trim();
   if (!t) return false;
   if (typeof GEN !== 'undefined' && GEN && GEN.prefix && t.indexOf(GEN.prefix) === 0) return true;
+  if (isThreadNoteText_(t)) return true;
   if (/(?:^|[.!?]\s)Then resend the alert here\.$/.test(t) && t.split('\n').length === 1) return true;  // fixRequestText_, one item
   // The auto-correct space's "Not fixed: …" and "Sources: …" note lines (changeNoteText_) only in the bot's own forms: a
   // person's message that starts with those words stays theirs
   if (/^Not fixed: /.test(t)) return isNotFixedLine_(t.split('\n')[0]);
   if (/^Sources: /.test(t)) return t.indexOf('\n') < 0 && isSourcesLine_(t);
   return /^(?:\uD83C\uDF21\uFE0F? \*Temp check|The alert (?:has been updated|regarding |was already submitted)|Please make the following updates|One more change:|A few changes are still needed|Please check this alert against the alert requirements|Here is what (?:needs to be updated|is left) on this alert:|This alert does not need any updates\.|I can help with questions about this alert|For escalated alerts, review and send the Social Alert draft|The Social Alert email for this alert has already been sent|QA corrected:|QA:|QA check:|Updates made to this alert:|Processed without waiting for Burson:|Still needs Burson:|Double-check:|Comms \/ Status Context:|Burson resent this alert(?: with updates:|\.)|Dry run \(Burson space actions\):|✅️? \*Reviewed (?:and corrected )?by the agentic assistant\*|The agentic assistant reviewed this alert|The post's own media wasn't reviewed|Gemini couldn't review|Social Alert (?:sent|draft|update draft)|Could not (?:auto-submit the T&S form|check the T&S sheet|create the Social Alert draft)|No Social Alert draft was created|The Social Alert draft's T&S row wasn't updated|(?:(?:<users\/[^>\s]+>|@Incident Manager)\s+)?(?:Social Alert|Please ping the YouTube team|Could not create the Social Alert draft|T&S form needed)|T&S (?:form needed|is in\.|already has this post)|Outcome:|\*?Early Wave \/ Velocity Warning\*?|The bot (?:crashed the last time|was short of time)|The Burson QA bot (?:is set up|has had problems|is running again)|The relay with S-F Burson |An alert from S-F Burson couldn't be brought over|A message from S-F Burson couldn't be brought over|Not sent to |\*Escalation protocol\*)/.test(t);
+}
+
+/**
+ * The fixed first words of the notes the bot puts under a card that is already in the Auto-correct space (ThreadNotes.gs
+ * acThreadNote_, which posts no note that starts otherwise). A note with new first words is registered in three places:
+ * here (so the bot knows the note as its own with no message id, and never answers it), in Outbox.gs
+ * OUTBOX_GUARD_PATTERNS_ (it can never go to S-F Burson) and in the leak audit's list (test/run_tests.js LEAK_NOTE_HEADS_).
+ */
+const THREAD_NOTE_HEADS_ = ['Also flagged by the watch', 'Part of a story', 'Alert requirements'];
+
+/**
+ * True when `text` starts as one of those notes does: an emoji and a space first, or not; a bold mark first, or not;
+ * then one of THREAD_NOTE_HEADS_ as whole words ("🔭 *Also flagged by the watch …", "🔗 *Part of a story:* …",
+ * "*Alert requirements:* …", "*Alert requirements, final:* …", and each as Chat gives it back without its marks). Pure.
+ */
+function isThreadNoteText_(text) {
+  const t = String(text || '').trim();
+  const rest = t.replace(/^(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?/, '');
+  return THREAD_NOTE_HEADS_.some(h => rest.indexOf(h) === 0 && !/[A-Za-z0-9]/.test(rest.charAt(h.length)));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
