@@ -2326,6 +2326,70 @@ function bqIsStoryCard_(m) {
   }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// A Direct BigQuery card whose post is in a story's card says so, in its thread (the Auto-correct flow only; setting
+// cross_alert_notes). Where stories go first a post can have two cards, the story's and its own (see above): this
+// note is what ties them together. It is also posted for a post the story's card links that is not its main post.
+// ---------------------------------------------------------------------------------------------------------------
+
+const BQ_STORY_NOTE_LEFT_MS_ = 45 * 1000;  // the note is posted only with this much of the flow left
+
+/**
+ * The note under a Direct BigQuery card whose post is in a story's card (`story`: that card, as EarlyDetection.gs
+ * edLedger_ gives it): "🔗 *Part of a story:* 5 small accounts on X and Reddit tell it (<link|story card>)". The
+ * accounts and the platforms are the ones the story's card had; the link opens that card in the space (Voice.gs
+ * originalAlertLink_). A card whose message name gives no link is named by its Alert-log id instead ("(story card
+ * QA-1002)"). Pure.
+ */
+function bqStoryNoteText_(story) {
+  const s = story || {};
+  const n = Number(s.au) || 0;
+  const where = edAndList_((s.plats || []).map(p => ewText_(p).replace(/[*_~`]/g, '')).filter(Boolean));
+  const link = originalAlertLink_(s.msg);
+  return `🔗 *Part of a story:* ${n ? `${fmtInt_(n)} small account${n === 1 ? '' : 's'}` : 'small accounts'}` +
+    `${where ? ` on ${where}` : ''} tell${n === 1 ? 's' : ''} it ` +
+    `(${link ? `<${link}|story card>` : `story card${s.row ? ` ${s.row}` : ''}`})`;
+}
+
+/**
+ * The Auto-correct flow only (ctx.sourceReadOnly), and unless the setting cross_alert_notes is false: one note under
+ * each card this check posted (`cards`: [{key: the post's record key, url, msg: the card's message}]) whose post is in
+ * an Early Detection card of the last 24 hours (bqStoryNoteText_). The story cards are the ones in this flow's Alert
+ * log (EarlyDetection.gs edLedger_, which the check has read already); a post is in one when its record key is the
+ * card's main post or one of the posts the card links; the newest such card is the one named. Nothing is looked up by
+ * meaning, no embedding is made and the producer's story store is not read. The note goes through ThreadNotes.gs
+ * acThreadNote_ (only under a card in the Auto-correct space, once), and only when `hasTime` (the flow has more than
+ * BQ_STORY_NOTE_LEFT_MS_ left): a note there was no time for is not added by a later run, and the run log says so.
+ * Anything that goes wrong skips the note, and nothing else of the check depends on it. How many notes are in place.
+ * Never throws.
+ */
+function bqStoryNotes_(ctx, cards, now, hasTime) {
+  let notes = 0;
+  try {
+    const S = (ctx && ctx.settings) || {};
+    if (!ctx || ctx.sourceReadOnly !== true || S.cross_alert_notes === false || !(cards || []).length) return 0;
+    const ledger = edLedger_(ctx, now);
+    cards.forEach(c => {
+      try {
+        const story = ledger.find(L => L.keys.has(c.key));
+        if (!story) return;
+        const whose = `${c.url}, whose post is in a story's card${story.row ? ` (${story.row})` : ''}`;
+        if (!hasTime) {
+          console.log(`BigQuery direct poll: no note under the new card of ${whose}: the flow had ` +
+            `${BQ_STORY_NOTE_LEFT_MS_ / 1000} seconds or less left (it is not added later)`);
+          return;
+        }
+        const inThread = acThreadNote_(ctx, { thread: c.msg.thread, message: c.msg.name, createTime: c.msg.createTime },
+          bqStoryNoteText_(story), `bqstory:${c.msg.name}`);
+        if (inThread) notes++;
+        console.log(`BigQuery direct poll: ${inThread ? 'a note is' : 'no note'} under the new card of ${whose}` +
+          `${inThread ? '' : ': it could not be posted'}`);
+      } catch (e) { /* this card goes without its note */ }
+    });
+  } catch (e) { /* the cards are posted: a note is never worth more than that */ }
+  return notes;
+}
+
 /**
  * Polls BigQuery for new actionable posts and posts each new one into `targetSpaceId` (the space this run reads as
  * Burson's) as a Zapier-format alert, so the bot reviews and actions it like Burson's (with the post's picture under it
@@ -2366,7 +2430,9 @@ function bqIsStoryCard_(m) {
  * a log line with its reason. None of that changes what is posted. In the Auto-correct flow (ctx.sourceReadOnly, and
  * unless settings.requirement_line is false) a BSIP card's [KOF] line says what the feed's KOF column says
  * (bsipKofValue_): a KOF's post then gets its Social Alert at any size, as Burson's alerts do. In every other flow the
- * line is "No", as before.
+ * line is "No", as before. Also in the Auto-correct flow only (unless settings.cross_alert_notes is false): once every
+ * card is posted, a new card whose post is in an Early Detection card of the last 24 hours gets one note in its thread
+ * that says so and links that card (bqStoryNotes_).
  * {sprinklr, bmie, bsip, skipped_duplicates, skipped_step1, skipped_no_count}.
  */
 function pollBigQuerySources_(ctx, targetSpaceId) {
@@ -2484,6 +2550,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
   const counts = { SPRINKLR: 0, BMIE: 0, BSIP: 0 };
   const total = () => counts.SPRINKLR + counts.BMIE + counts.BSIP;
   const posted = [];  // [hash of the message name, source]
+  const cards = [];   // the cards this check posted: [{key, url, msg}], for the story notes (bqStoryNotes_)
   let skipped = 0;    // not about Google, taken before, in a log, or already waiting in the space
   let step1Out = 0;   // left out by Step 1 of the 3-step evaluation
   let noCount = 0;    // no true engagement count for the card (never made up): tried again at the next check
@@ -2506,6 +2573,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
       seen.add(key);
       counts[kind]++;
       if (msg && msg.name) posted.push([hashText_(String(msg.name)), BQ_SOURCE_LABELS_[kind]]);
+      if (msg && msg.name) cards.push({ key, url, msg });
     } catch (e) {
       notPosted++;
       console.warn(`BigQuery direct poll: couldn't post ${url}: ${(e && e.message) || e}`);
@@ -2666,6 +2734,9 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
       console.error('BigQuery direct poll: couldn\'t remember the posts it took: ' + ((e && e.message) || e));
     }
   }
+  // The Auto-correct flow only (setting cross_alert_notes): a new card whose post is in a story's card gets one note
+  // that says so, once every card is posted and remembered, and only with 45 seconds of the flow left
+  bqStoryNotes_(ctx, cards, now, timeLeft(BQ_STORY_NOTE_LEFT_MS_));
   if (on) {
     const names = list => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}` : list[0]);
     const problem = [refusedFor.length ? `BigQuery refused the query for ${names(refusedFor)}` : '',
