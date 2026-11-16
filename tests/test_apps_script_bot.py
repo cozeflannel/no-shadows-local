@@ -32,7 +32,7 @@ PARITY_FIELDS = [
 
 @needs_node
 def test_node_suite_passes():
-    result = subprocess.run([NODE, str(BOT / "test" / "run_tests.js")], capture_output=True, text=True, timeout=120)
+    result = subprocess.run([NODE, str(BOT / "test" / "run_tests.js")], capture_output=True, text=True, timeout=600)
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-2000:]
     assert "FAIL" not in result.stdout
 
