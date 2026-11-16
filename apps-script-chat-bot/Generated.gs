@@ -54,6 +54,13 @@ const GEN = {
   "speed_log_table": "brand-social-central-data.slrr_alerts.slrr_alerts",
   "speed_im_sender": "",
   "speed_gmail": true,
+  "early_detection_first": true,
+  "early_wave_reviews_per_hour": 6,
+  "early_wave_reviews_per_day": 150,
+  "early_wave_topic_min_ratio": 3.0,
+  "early_detection_tab": true,
+  "cross_alert_notes": true,
+  "requirement_line": true,
   "resources": [
    {
     "name": "SLRR Collection Requirements",

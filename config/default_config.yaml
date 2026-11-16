@@ -99,6 +99,16 @@ burson_qa:
   speed_log_table: brand-social-central-data.slrr_alerts.slrr_alerts    # the IMs' actioned alerts (backs up their call)
   speed_im_sender: ""                                                   # resolved dynamically from Brand safety groups when configured
   speed_gmail: true              # look up when the IMs' emails went out (in the mailbox the bot runs as)
+  # Rollback settings: each guards one behaviour, so it can be turned off here (then rebuild and clasp push) without
+  # reverting code. false, or 0 for a number, keeps what the bot did before. Outside the Auto-correct flow none of them
+  # changes what the bot posts, queues or emails.
+  early_detection_first: true    # the one-space setup: Early Detection runs before the Direct BigQuery poll (false: the poll first, as before)
+  early_wave_reviews_per_hour: 6 # the Auto-correct flow: ordinary story signals queued for review in a clock hour (0: the old rule, 40 queued a day)
+  early_wave_reviews_per_day: 150  # ...and story signals queued a day at most (used only while the hourly rule is on)
+  early_wave_topic_min_ratio: 3  # the Auto-correct flow: a topic's pace jump under this multiple of its usual count is noted, not reviewed (0: reviewed, as before)
+  early_detection_tab: true      # the "Early Detection" tab: every story signal and what happened to it (false: no tab is made or written)
+  cross_alert_notes: true        # the Auto-correct flow: a note under another alert's card when two alert types meet on one post or story (false: no note)
+  requirement_line: true         # the Auto-correct flow: the "Alert requirements" line in the note after each review (false: no such line)
   # What the Resources tab of the bot's sheet starts with. After that the tab is what the bot uses: edit it there.
   # The bot links these when Burson asks about the alert requirements, so only list documents Burson can open.
   resources:

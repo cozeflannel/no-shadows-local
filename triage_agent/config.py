@@ -603,6 +603,28 @@ class BursonQAConfig(ConfigModel):
     speed_log_table: str = "brand-social-central-data.slrr_alerts.slrr_alerts"
     speed_im_sender: str = ""
     speed_gmail: bool = True
+    # Rollback settings: each guards one behaviour of the Apps Script bot, so that behaviour can be turned off here (then
+    # a rebuild and a clasp push) without reverting code. A true/false one is read as `settings.<name> !== false`; a
+    # number set to 0 keeps the rule the bot had before. Outside the Auto-correct flow none of them changes what the bot
+    # posts, queues or emails.
+    # The one-space setup (the Auto-correct space working alone): the Early Detection check and its reviews run before
+    # the Direct BigQuery poll. false: the poll runs first, as before.
+    early_detection_first: bool = True
+    # The Auto-correct flow: ordinary story signals queued for review in a clock hour (Eastern). 0: the old rule (40
+    # queued a day, whatever they are).
+    early_wave_reviews_per_hour: int = 6
+    # ...and story signals queued a day at most (used only while early_wave_reviews_per_hour is above 0).
+    early_wave_reviews_per_day: int = 150
+    # The Auto-correct flow: a pace jump on a whole topic under this multiple of its usual count is noted, not reviewed.
+    # 0: every topic count is queued and reviewed, as before.
+    early_wave_topic_min_ratio: float = 3
+    # The "Early Detection" tab (every story signal and what happened to it). false: no tab is made or written.
+    early_detection_tab: bool = True
+    # The Auto-correct flow: a note under another alert's card when two alert types meet on one post or story. false:
+    # no note (the post or story is skipped as before, and counted).
+    cross_alert_notes: bool = True
+    # The Auto-correct flow: the "Alert requirements" line in the note that follows each review. false: no such line.
+    requirement_line: bool = True
     # What the Resources tab of the bot's sheet starts with: documents the bot links when Burson asks about the alert
     # requirements. After that the tab is what the bot uses (people edit it there). Only links Burson can open.
     resources: list[BursonResource] = Field(default_factory=list)
