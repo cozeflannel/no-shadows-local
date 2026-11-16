@@ -1151,6 +1151,21 @@ module.exports = H => {
     eq([tryNotes(t, [[fresh, REQ_FINAL, 'f6']]), noteCount(t, fresh.thread)], [[[false, 0, 1]], 3]);
   });
 
+  test('thread notes: when the script cache refuses both the write of the counts and taking the older value out, that older value stays in the cache, and it lacks the notes just posted: it is still not read again in that run, so a card posted since has its notes counted in its thread and gets 3 notes and no more', () => {
+    const { t, cards } = oneSpace();
+    eq(tryNotes(t, [[cards.pixel, REQ_NOTE, 'a']]).map(r => r[0]), [true]);
+    const older = t.g.cache.get('ac_thread_notes');
+    assert.ok(older, 'the counts are kept in the cache');
+    t.g.clock.now += 60 * 1000;
+    const fresh = cardNow(t);  // posted since the counts began, saying when
+    t.bot.ev('CacheService = (cs => ({ getScriptCache: () => { const c = cs.getScriptCache(); const no = () => { throw new Error("Service invoked too many times"); }; ' +
+      'return Object.assign({}, c, { put: (k, v, s) => (k === "ac_thread_notes" ? no() : c.put(k, v, s)), remove: k => (k === "ac_thread_notes" ? no() : c.remove(k)) }); } }))(CacheService)');
+    const got = tryNotes(t, [[fresh, REQ_NOTE, 'f1'], [fresh, STORY_NOTE, 'f2'], [fresh, WATCH_NOTE, 'f3'], [fresh, REQ_FINAL, 'f4']]);
+    eq(got.map(r => r[0]), [true, true, true, false]);
+    eq(got.slice(1).map(r => r[1]), [1, 1, 1]);  // after the first failed write every note has its card's thread read
+    eq([noteCount(t, fresh.thread), t.g.cache.get('ac_thread_notes') === older, t.bot.ev('AC_NOTE_UNKEPT_')], [3, true, true]);
+  });
+
   test('thread notes: a note is never posted twice for want of an id. With Chat refusing custom message ids and then every record of a note gone (the counts, the bot\'s record of what it posted, Chat\'s memory of the request), the same key again has its card\'s thread read, finds a note of the bot\'s with the very same words there (with its bold marks, or as Chat can hand it back without them) and posts nothing; a note with other words is still posted, and a person\'s message with the same words is not taken for the bot\'s', () => {
     const { t, cards } = oneSpace();
     t.g.props.set('CHAT_CLIENT_IDS_OFF', String(t.g.clock.now));
