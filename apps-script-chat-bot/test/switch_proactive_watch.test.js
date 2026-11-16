@@ -362,7 +362,7 @@ module.exports = H => {
     eq([Number(third.params.until_ms) - Number(third.params.since_ms), Number(third.params.until_ms)], [30 * MIN, t.g.clock.now - MIN]);
   });
 
-  test('proactive watch: a look BigQuery refuses is noted (naming its sources) and tried again at the next look from the same start, the other location carrying on; after 3 tries its window is skipped (noted), so one bad window never stops the watch; a look still running after 4 minutes is cancelled and counts as a try', () => {
+  test('proactive watch: a look BigQuery refuses is noted (naming its sources, since when and why, until a look of that location succeeds again) and tried again at the next look from the same start, the other location carrying on; after 3 tries its window is skipped (the log says so), so one bad window never stops the watch; a look still running after 4 minutes is cancelled and counts as a try', () => {
     const { t, bq } = watching();
     bq.submit = look => (look.location === C1 ? { code: 500, message: 'Backend error' } : null);  // us-central1 refuses; US is fine
     bq.answers = { [US]: { rows: [] } };
@@ -371,7 +371,11 @@ module.exports = H => {
     const start = c1()[0].params.since_ms;
     eq([t.g.props.get('PW_TRIES'), t.g.props.get('PW_SINCE'), t.g.props.get('PW_JOB'), t.g.props.get('PW_US_TRIES'), lanes(bq).us.length],
       ['1', start, undefined, undefined, 1]);
-    assert.match(note(t), / · ⚠️ the last look at Sonar and Tubular failed \(BigQuery HTTP 500: Backend error\); it tries again at the next look$/);
+    // C34 says so from the first failed try on, in one form: since when, and why (no look has been collected yet)
+    const failedAt = t.g.clock.now;
+    const SINCE = ` · the look at Sonar and Tubular has failed since ${B.pwWhen_(failedAt)}: `;
+    const TODAY = ' · today: 0 flagged, 0 near misses';
+    eq(note(t), `${ON_TEXT} · first look on its way${SINCE}BigQuery HTTP 500: Backend error${TODAY}`);
     for (let i = 0; i < 4; i++) t.poll();
     eq(c1().length, 1, 'not again before 5 minutes');
     t.poll();  // try 2
@@ -379,7 +383,10 @@ module.exports = H => {
     for (let i = 0; i < 4; i++) t.poll();  // try 3, 5 minutes after try 2
     eq([c1().length, c1().map(l => l.params.since_ms)], [3, [start, start, start]]);
     eq([t.g.props.get('PW_TRIES'), t.g.props.get('PW_SINCE')], [undefined, c1()[2].params.until_ms]);
-    assert.match(note(t), / · ⚠️ skipped \d\d:\d\d-\d\d:\d\d for Sonar and Tubular after 3 tries \(BigQuery HTTP 500: Backend error\); the next look carries on$/);
+    // the skip is in the log; C34 keeps saying since when the look has failed, after the other location's last look
+    assert.ok(t.g.logs.some(l => /^Proactive watch: skipped \d\d:\d\d-\d\d:\d\d for Sonar and Tubular after 3 tries; the next look carries on$/.test(l)));
+    const failing = why => new RegExp(`^ · last look Oct 14, \\d+:\\d\\d [AP]M EDT: 0 new posts, 0 flagged${SINCE}${why}${TODAY}$`);
+    assert.match(note(t).slice(ON_TEXT.length), failing('BigQuery HTTP 500: Backend error'));
     // the skipped window moved the location's other sources past it
     const marks = JSON.parse(t.g.props.get('PW_MARKS'));
     eq([marks.tubular, marks.outbound], [Number(c1()[2].params.until_ms), undefined]);
@@ -397,7 +404,9 @@ module.exports = H => {
     eq([bq.cancels.length, c1().length, retry.tries, retry.since, t.g.props.get('PW_TRIES')],
       [1, 5, 1, Number(c1()[3].params.since_ms), '1']);
     assert.match(bq.cancels[0], new RegExp(`/projects/brand-social-central-data/jobs/${c1()[3].jobId}/cancel\\?location=us-central1$`));
-    assert.match(note(t), / · ⚠️ the last look at Sonar and Tubular failed \(BigQuery took more than 4 minutes\); it tries again at the next look$/);
+    // still the same failure (no look of that location has succeeded since the first failed try), with the latest reason
+    assert.match(note(t).slice(ON_TEXT.length), failing('BigQuery took more than 4 minutes'));
+    eq(JSON.parse(t.g.props.get('PW_LAST')).lanes.c1, { fail: { since: failedAt, why: 'BigQuery took more than 4 minutes' } });
   });
 
   test('proactive watch: while the bot is paused nothing is looked at; back ON, the watch starts afresh from the last 15 minutes (not from where it stopped), every source from its first-look start', () => {

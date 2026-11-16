@@ -1,8 +1,11 @@
 // What the Control tab says about the Proactive watch (row 34, ProactiveWatch.gs) and its Watch alerts (row 35,
 // WatchAlerts.gs), in the one-space setup (everything in the Auto-correct space, B10; B35 = B10):
 //   - C35 counts how every flag of the day ended, the counts before its explanation, and never cuts a count;
-//   - with no watch ON on the Watches tab, C35 says so in place of its healthy sentence.
-// Nothing here changes what is posted in Chat, emailed or queued: only notes on the Control tab.
+//   - with no watch ON on the Watches tab, C35 says so in place of its healthy sentence;
+//   - a look whose BigQuery job fails as a whole stays visible: C34 says since when and why until that job succeeds
+//     again, and the Watch sources tab shows the job's sources as failing, not as stale.
+// Nothing here changes what is posted in Chat, emailed or queued: only notes on the Control tab and status text on
+// the Watch sources tab.
 //   node apps-script-chat-bot/test/run_tests.js "watch notes:"
 'use strict';
 
@@ -12,6 +15,7 @@ module.exports = H => {
   const MIN = 60 * 1000;
   const HOUR = 60 * MIN;
   const C1 = 'us-central1';
+  const US = 'US';
   const AC = golden.spaces.AC;
   const AC_NAME = golden.world.names.AC;
   const TO_AC = 'Auto-correct space (B10)';
@@ -48,6 +52,24 @@ module.exports = H => {
     if (opt.watch !== false) w.watch(BRAND, true);
     if (opt.midterms) w.watch(MIDTERMS, true);
     if (opt.b35) w.sh.getRange(35, 2).setValue(opt.b35);
+    // What a look answers when it is collected, where the test says so (w.answers[its BigQuery location]): {rows} (its
+    // 'hit' and 'src' rows) or {fail: {code, message}} (BigQuery's error for the whole job); and a look BigQuery refuses
+    // when it is sent (w.refuse(its location): {code, message}, or null). Else as golden's feeds do
+    w.answers = {};
+    w.refuse = null;
+    const fetch = t.g.services.UrlFetchApp.fetch;
+    t.g.services.UrlFetchApp.fetch = (link, params) => {
+      const job = (String(link).match(/^https:\/\/bigquery\.googleapis\.com\/.*\/queries\/(pwjob_\d+)\?/) || [])[1];
+      const asked = !job && w.refuse && /^https:\/\/bigquery\.googleapis\.com\/.*\/queries$/.test(String(link)) ? JSON.parse(params.payload) : null;
+      const refused = asked && /CREATE TEMP TABLE pw_new/.test(asked.query || '') ? w.refuse(asked.location) : null;
+      const a = job ? w.answers[w.feed.jobs[job]] : refused ? { fail: refused } : null;
+      if (!a) return fetch(link, params);
+      const body = a.fail ? { error: { code: a.fail.code, message: a.fail.message } }
+        : { jobComplete: true, jobReference: { projectId: 'brand-social-central-data', jobId: job, location: w.feed.jobs[job] },
+          schema: { fields: LOOK_COLS.map(c => ({ name: c[0], type: c[1] || 'STRING' })) },
+          rows: a.rows.map(r => ({ f: LOOK_COLS.map(c => ({ v: r[c[0]] === undefined || r[c[0]] === null ? null : String(r[c[0]]) })) })) };
+      return { getResponseCode: () => (a.fail ? a.fail.code : 200), getHeaders: () => ({}), getContentText: () => JSON.stringify(body) };
+    };
     w.say = null;
     t.g.vertex.watchPreRead = payload => {
       const prompt = payload.contents[0].parts.map(p => p.text || '').join('');
@@ -60,6 +82,16 @@ module.exports = H => {
     };
     return w;
   }
+  // A look's result columns (ProactiveWatch.gs pwSql_'s final SELECT), and a row a source of each of its two jobs
+  const LOOK_COLS = [['kind'], ['source'], ['why'], ['idx', 'INTEGER'], ['watch'], ['post_url'], ['platform'], ['author'],
+    ['followers', 'INTEGER'], ['eng', 'INTEGER'], ['posted_ms', 'INTEGER'], ['seen_ms', 'INTEGER'], ['issue'], ['issue_new', 'BOOLEAN'],
+    ['summary'], ['impact', 'FLOAT'], ['bar', 'FLOAT'], ['topic'], ['found', 'INTEGER'], ['checked', 'INTEGER'],
+    ['newest_ms', 'INTEGER'], ['mod_ms', 'INTEGER'], ['err'], ['detail'], ['tax']];
+  const C1_SOURCES = ['sonar', 'tubular'];
+  const US_SOURCES = ['bwm', 'owned', 'comments', 'story', 'chat', 'bwq'];
+  /** A source's row for each of `keys`: nothing new, unless `o[key]` says otherwise. */
+  const srcs = (keys, o) => keys.map(k => Object.assign({ kind: 'src', source: k, found: 0, checked: 0, newest_ms: null, mod_ms: null,
+    err: null }, (o || {})[k]));
   /** The us-central1 looks (Sonar and Tubular) sent so far. */
   const sent = w => Object.keys(w.feed.jobs).filter(id => w.feed.jobs[id] === C1).length;
   /** The watch's next look: runs go by, a minute each, until it is sent; the run after collects it, with `hits`. */
@@ -299,5 +331,160 @@ module.exports = H => {
       'hours) · today: 3 posted, 2 on a post that already had an alert, 1 waiting');
     eq([text({ choice: '' }, null, true), text(dest, null, false)], [B.pwAlertsOffText_(),
       '⚠️ Auto-correct space (B10) chosen, but the Proactive watch (row 34) is OFF: nothing to post']);
+  });
+
+  // -----------------------------------------------------------------------------------------------------------
+  // C34 and the Watch sources tab while a look fails as a whole
+  // -----------------------------------------------------------------------------------------------------------
+
+  /** C34's note: what follows the switch's fixed text, as it is kept (at most 200 characters). */
+  const noteOf = t => JSON.parse(t.g.props.get('SWITCH_NOTES')).proactiveWatch.text;
+  /** The Watch sources tab's Status column, by source. */
+  const statuses = t => Object.fromEntries(t.sheet().getSheetByName('Watch sources').rows.slice(3).map(r => [r[0], r[3]]));
+
+  test('watch notes: a look that fails as a whole stays visible (the one-space setup: one good look, then the Sonar and Tubular job failing every time it is collected, for a day, the other job fine): C34 says so from the first failed try until that job succeeds again, after the last look and before today\'s counts ("the look at Sonar and Tubular has failed since <time>: <why>", the reason cut so that the note keeps to its 200 characters with the counts whole); the last look\'s numbers no longer carry the failed job\'s last good look; the Watch sources tab shows that job\'s sources as failing, with the whole error, not as stale, and status() says the same; the window skipped after 3 tries is in the log; when the job succeeds again C34 and the tab read as before; nothing is posted or emailed in all of it', () => {
+    const w = oneSpace();
+    const { t } = w;
+    const ERR = 'Query error: AI.IF: quota exceeded for the Gemini model in us-central1';
+    const good = found => ({ [C1]: { rows: srcs(C1_SOURCES, { sonar: { found, checked: Math.min(found, 150), newest_ms: t.g.clock.now,
+      mod_ms: t.g.clock.now } }) }, [US]: { rows: srcs(US_SOURCES) } });
+    const bad = { [C1]: { fail: { code: 400, message: ERR } }, [US]: { rows: srcs(US_SOURCES) } };
+    const out = () => [t.chat.botPosts(AC).length, t.g.gmail.sentMessages().length, t.g.gmail.allDrafts().length];
+    const quiet = out();
+    // one good look: Sonar had 180 new posts and 150 of them were checked
+    w.answers = good(180);
+    look(w);
+    const HEALTHY = 'last look Oct 14, 8:03 AM EDT: 150 new posts, 0 flagged · today: 0 flagged, 0 near misses · all 8 sources live (Watch sources tab)';
+    eq(noteOf(t), HEALTHY);
+    assert.ok(c34(t).endsWith(` · ${HEALTHY}`), c34(t));
+    eq(statuses(t).Sonar, '✓ live: 180 new at the last look');
+    // From now on the Sonar and Tubular job fails every time it is collected. Minute by minute: nothing changes until the
+    // next look (sent 5 minutes after the last one) is collected; from then on every minute's C34 says so
+    w.answers = bad;
+    const minutes = [];
+    for (let m = 1; m <= 16; m++) { t.poll(); minutes.push(noteOf(t)); }
+    const failing = at => `last look ${at} EDT: 0 new posts, 0 flagged · the look at Sonar and Tubular has failed since Oct 14, 8:08 AM: ` +
+      'BigQuery HTTP 400: Query error: AI.IF: quota… · today: 0 flagged, 0 near misses';
+    eq(minutes, Array(4).fill(HEALTHY).concat(Array(5).fill(failing('Oct 14, 8:08 AM')), Array(5).fill(failing('Oct 14, 8:13 AM')),
+      Array(2).fill(failing('Oct 14, 8:18 AM'))));
+    minutes.forEach(n => assert.ok(n.length <= 200, n));
+    assert.ok(c34(t).endsWith(` · ${failing('Oct 14, 8:18 AM')}`), c34(t));
+    const since = JSON.parse(t.g.props.get('PW_LAST')).lanes.c1.fail.since;
+    eq(B.pwWhen_(since), 'Oct 14, 8:08 AM');
+    // 45 minutes on. Sonar's table last changed 46 minutes ago: before, its row read "stale" by now (it does after 30)
+    for (let m = 17; m <= 45; m++) t.poll();
+    eq(noteOf(t), failing('Oct 14, 8:48 AM'));
+    const FAILING = `⚠️ failing: the look at Sonar and Tubular has failed since 2026-10-14 08:08 ET: BigQuery HTTP 400: ${ERR} ` +
+      '(tried again at the next look)';
+    const LIVE = '✓ live: nothing new at the last look';
+    const others = { 'Brandwatch mentions': LIVE, 'Sprinklr owned posts': LIVE, 'Sprinklr comments': LIVE, 'DSD story selection': LIVE,
+      'Other alerts space': LIVE, 'Brandwatch: 2026 Election Alerts': LIVE };
+    eq(statuses(t), Object.assign({ Sonar: FAILING, Tubular: FAILING }, others));
+    eq(t.bot.status().proactive_watch_sources.slice(0, 3), [`Sonar: ${FAILING}`, `Tubular: ${FAILING}`, `Brandwatch mentions: ${LIVE}`]);
+    assert.ok(t.g.logs.includes('Proactive watch: skipped 08:01-08:16 for Sonar and Tubular after 3 tries; the next look carries on'));
+    // ...and for the rest of the day and the night (a look every half hour here, to keep the test short): the next
+    // morning C34 and the tab still say since when
+    for (let i = 0; i < 52; i++) { t.g.clock.now += 28 * MIN; t.poll(); t.poll(); }
+    eq(noteOf(t), failing('Oct 15, 10:48 AM'));
+    eq(noteOf(t).length, 200);
+    eq(statuses(t), Object.assign({ Sonar: FAILING, Tubular: FAILING }, others));
+    eq(JSON.parse(t.g.props.get('PW_LAST')).lanes.c1, { fail: { since, why: `BigQuery HTTP 400: ${ERR}` } });
+    // the job succeeds again: both read as they did before
+    w.answers = good(12);
+    look(w);
+    eq(noteOf(t), 'last look Oct 15, 10:53 AM EDT: 12 new posts, 0 flagged · today: 0 flagged, 0 near misses · all 8 sources live (Watch sources tab)');
+    eq(statuses(t), Object.assign({ Sonar: '✓ live: 12 new at the last look', Tubular: LIVE }, others));
+    eq(Object.keys(JSON.parse(t.g.props.get('PW_LAST')).lanes.c1).sort(), ['at', 'checked', 'flagged', 'near']);
+    eq(out(), quiet);
+  });
+
+  test('watch notes: C34 with a look failing keeps to the 200 characters a switch note has, whatever the day held: with every count at three digits none is cut, the reason is; the reason keeps 16 characters at least (the last look\'s numbers go first, then the last look itself); the US job is named by its first source ("Brandwatch mentions and 5 more"); with every look failing C34 says "the looks at all 8 sources have failed since", from when the later of them began to and with its reason, and no last look; the sources follow only when they fit whole; with no look failing the note is what it was', () => {
+    const since = Date.UTC(2026, 9, 14, 14, 4);  // 10:04 AM ET
+    const WHY = 'BigQuery HTTP 403: Access Denied: Project brand-social-central-data: User does not have bigquery.jobs.create permission';
+    const text = (fails, o) => {
+      const x = Object.assign({ today: { flagged: 120, near: 345 }, last: { at: 1, checked: 510, flagged: 120 },
+        label: 'Oct 14, 10:05 AM EDT', sources: 'sources: 6 live, 2 failing: Sonar, Tubular' }, o);
+      return B.pwNoteText_(x.today, x.last, x.label, x.sources, fails);
+    };
+    const LOOKED = 'last look Oct 14, 10:05 AM EDT: 510 new posts, 120 flagged';
+    const COUNTS = ' · today: 120 flagged, 345 near misses';
+    // no look failing: as it was
+    const healthy = `${LOOKED}${COUNTS} · all 8 sources live (Watch sources tab)`;
+    eq([text(undefined, { sources: 'all 8 sources live' }), text({}, { sources: 'all 8 sources live' })], [healthy, healthy]);
+    eq(B.pwNoteText_({ flagged: 0, near: 1 }, null, '', ''), 'first look on its way · today: 0 flagged, 1 near miss (Watch detections tab)');
+    // every count at three digits: the reason is cut to the room there is, never a count
+    const c1 = text({ c1: { since, why: WHY } });
+    eq(c1, `${LOOKED} · the look at Sonar and Tubular has failed since Oct 14, 10:04 AM: BigQuery HTTP 403: Access Denied: P…${COUNTS}`);
+    const us = text({ us: { since, why: WHY } });
+    eq(us, `${LOOKED} · the look at Brandwatch mentions and 5 more has failed since Oct 14, 10:04 AM: BigQuery HTTP 403: Acc…${COUNTS}`);
+    eq([c1.length, us.length], [200, 200]);
+    // counts so long that under 16 characters of the reason would be left: the last look's numbers go, then the last look
+    const big = text({ us: { since, why: WHY } }, { today: { flagged: 1234567, near: 2345678 } });
+    eq(big, 'last look Oct 14, 10:05 AM EDT · the look at Brandwatch mentions and 5 more has failed since Oct 14, 10:04 AM: ' +
+      'BigQuery HTTP 403: Access Denied: Proj… · today: 1,234,567 flagged, 2,345,678 near misses');
+    const bigger = text({ us: { since, why: WHY } }, { today: { flagged: 1e15, near: 1e15 } });
+    eq(bigger, 'the look at Brandwatch mentions and 5 more has failed since Oct 14, 10:04 AM: BigQuery HTTP 403: Access Denied: ' +
+      'Project brand… · today: 1,000,000,000,000,000 flagged, 1,000,000,000,000,000 near misses');
+    eq([big.length, bigger.length], [200, 200]);
+    // a short reason stays whole; the sources follow the counts only when they fit whole
+    eq(text({ c1: { since, why: 'BigQuery took more than 4 minutes' } }),
+      `${LOOKED} · the look at Sonar and Tubular has failed since Oct 14, 10:04 AM: BigQuery took more than 4 minutes${COUNTS}`);
+    const first = B.pwNoteText_({ flagged: 0, near: 1 }, null, '', 'sources: 6 waiting, 2 failing: Sonar, Tubular',
+      { c1: { since, why: 'unknown' } });
+    eq(first, 'first look on its way · the look at Sonar and Tubular has failed since Oct 14, 10:04 AM: unknown · today: 0 flagged, ' +
+      '1 near miss · sources: 6 waiting, 2 failing: Sonar, Tubular (Watch sources tab)');
+    assert.ok(first.length <= 200, String(first.length));
+    // every look failing: one sentence, from when the later of them began to fail and with its reason; no last look
+    const all = { c1: { since, why: 'BigQuery HTTP 500: Backend error' }, us: { since: since + MIN, why: WHY } };
+    const both = text(all, { last: { at: 0, checked: 0, flagged: 0 }, label: '' });
+    eq(both, 'the looks at all 8 sources have failed since Oct 14, 10:05 AM: BigQuery HTTP 403: Access Denied: Project ' +
+      `brand-social-central-data: User does not have bigquery.j…${COUNTS}`);
+    eq(both.length, 200);
+    all.us.since = since;  // both from the same minute: the first job's reason
+    eq(text(all, { last: { at: 0, checked: 0, flagged: 0 }, label: '', sources: 'sources: 8 failing' }),
+      `the looks at all 8 sources have failed since Oct 14, 10:04 AM: BigQuery HTTP 500: Backend error${COUNTS} · sources: 8 failing ` +
+      '(Watch sources tab)');
+  });
+
+  test('watch notes: every look failing (BigQuery refuses both jobs when they are sent, from the first look on): C34 says "the looks at all 8 sources have failed since <time>: <why>" and every row of the Watch sources tab says failing; what is kept of it (the script property PW_LAST) stays small whatever the error is (160 characters of a job\'s reason: far under the 9 KB a property holds); one job succeeding leaves the other\'s failure standing; with the last watch turned OFF nothing is looked at and the failure is forgotten', () => {
+    const w = oneSpace();
+    const { t } = w;
+    const MSG = 'Access Denied: Project brand-social-central-data: User does not have bigquery.jobs.create permission';
+    w.refuse = () => ({ code: 403, message: MSG });
+    t.poll();  // the first looks: both refused
+    const TODAY = ' · today: 0 flagged, 0 near misses';
+    eq(noteOf(t), 'the looks at all 8 sources have failed since Oct 14, 8:02 AM: BigQuery HTTP 403: Access Denied: Project ' +
+      `brand-social-central-data: User does not have bigquery.jobs.c…${TODAY}`);
+    assert.ok(noteOf(t).length === 200 && c34(t).endsWith(` · ${noteOf(t)}`), c34(t));
+    const failing = names => `⚠️ failing: the look at ${names} has failed since 2026-10-14 08:02 ET: BigQuery HTTP 403: ${MSG} ` +
+      '(tried again at the next look)';
+    eq(Object.values(statuses(t)), Array(2).fill(failing('Sonar and Tubular')).concat(Array(6).fill(failing('Brandwatch mentions and 5 more'))));
+    const failedAt = t.g.clock.now;
+    const fail = { fail: { since: failedAt, why: `BigQuery HTTP 403: ${MSG}` } };
+    eq(JSON.parse(t.g.props.get('PW_LAST')), { at: 0, checked: 0, flagged: 0, near: 0, lanes: { c1: fail, us: fail } });
+    // the worst an error can be: long, and every character one that JSON writes as six (\u0001)
+    w.refuse = () => ({ code: 403, message: '\u0001'.repeat(2000) });
+    t.g.clock.now += 4 * MIN;
+    t.poll();
+    const kept = t.g.props.get('PW_LAST');
+    const lanes = JSON.parse(kept).lanes;
+    eq([lanes.us.fail.why.length, lanes.c1.fail.why, lanes.c1.fail.since, lanes.us.fail.since], [160, lanes.us.fail.why, failedAt, failedAt]);
+    assert.ok(kept.length <= 8800 && kept.length < 2000, `${kept.length} characters`);
+    assert.ok(noteOf(t).length <= 200 && noteOf(t).endsWith(TODAY), noteOf(t));
+    // the US job is no longer refused: its look is collected, and C34 keeps saying that the other one fails
+    w.refuse = location => (location === C1 ? { code: 403, message: MSG } : null);
+    w.answers = { [US]: { rows: srcs(US_SOURCES) } };
+    t.g.clock.now += 4 * MIN;
+    t.poll();
+    t.poll();
+    eq(noteOf(t), 'last look Oct 14, 8:13 AM EDT: 0 new posts, 0 flagged · the look at Sonar and Tubular has failed since Oct 14, 8:02 AM: ' +
+      `BigQuery HTTP 403: Access Denied: Project bra…${TODAY}`);
+    eq(noteOf(t).length, 200);
+    eq(Object.values(statuses(t)), Array(2).fill(failing('Sonar and Tubular')).concat(Array(6).fill('✓ live: nothing new at the last look')));
+    // no watch ON: nothing is looked at, and the failure is forgotten with the last looks
+    w.watch(BRAND, false);
+    t.poll();
+    eq([noteOf(t), t.g.props.get('PW_LAST')], ['waiting: no watch is ON (set a watch\'s On to ON on the Watches tab)', undefined]);
+    eq(Object.values(statuses(t)).slice(0, 2), Array(2).fill('... waiting for its first look'));
   });
 };

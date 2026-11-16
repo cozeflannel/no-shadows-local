@@ -189,7 +189,8 @@ function status() {
   try { info.proactive_watch_today = JSON.parse(props.getProperty(PW_DAY_PROP_) || 'null'); } catch (e) { info.proactive_watch_today = null; }
   try {
     const pwAll = pwSourceStats_(props);
-    info.proactive_watch_sources = PW_SOURCES_.map(s => `${s.name}: ${pwSourceStatus_(s, pwAll[s.key], Date.now()).text}`);
+    const pwFails = pwLaneFails_(pwLast_(props));  // a look failing as a whole: its sources say so, as on their tab
+    info.proactive_watch_sources = PW_SOURCES_.map(s => `${s.name}: ${pwSourceStatus_(s, pwAll[s.key], Date.now(), pwFails[s.lane]).text}`);
   } catch (e) { info.proactive_watch_sources = null; }
   try {
     info.knowledge = knowledgeSummaryText_(JSON.parse(props.getProperty(KNOWLEDGE_STATE_PROP_) || 'null'));
