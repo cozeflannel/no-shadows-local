@@ -119,7 +119,7 @@ module.exports = H => {
   // C35: the day's counts
   // -----------------------------------------------------------------------------------------------------------
 
-  test('watch notes: C35 says the day\'s counts before its explanation, each count but "posted" only when above zero; with every count at three digits none is cut: the explanation is, then a long reason for waiting, then a long space name', () => {
+  test('watch notes: C35 says the day\'s counts before its explanation, each count but "posted" only when above zero; with every count at three digits none is cut: the explanation is, then a long reason for waiting, then a long space name; and no cut leaves half an emoji in the cell', () => {
     const dest = { choice: 'autocorrect', space: { id: AC, name: AC_NAME }, problem: '' };
     const text = (d, res, today, grouped, more) => B.pwAlertsNoteText_(d, res, true, today, grouped, more);
     // a quiet day: the explanation whole, after the one count
@@ -154,6 +154,22 @@ module.exports = H => {
     // a space with a very long name: the name is cut, never a count
     const long = text({ choice: 'autocorrect', space: { id: AC, name: 'N'.repeat(128) }, problem: '' }, { waiting: 111 }, 912, 102, more);
     assert.ok(/^✓ N+… · today: 912 posted /.test(long) && long.endsWith(COUNTS) && long.length <= 480, long);
+    // the explanation has an emoji, which a cell holds as two characters: a cut that falls inside it leaves none of it,
+    // never its first half (these counts put the cut there)
+    const HALF = /[\ud800-\udbff](?![\udc00-\udfff])|(?:^|[^\ud800-\udbff])[\udc00-\udfff]/;  // half an emoji, by itself
+    const inside = text(dest, { waiting: 0 }, 1, 3, { builds: 123, held: 123, repeats: 123, offTopic: 123, already: 123, noted: 123,
+      twin: 123, dropped: 123, empty: 123 });
+    assert.ok(inside.endsWith(', 123 with nothing to show · a flag that matters by itself (a KOF author, 100+ engagements or a P0 tag) ' +
+      'is posted there as a…'), inside);
+    assert.ok(!HALF.test(inside) && inside.length <= 480, inside);
+    // ...and wherever the cut falls, in the explanation or in a space's name: counts of every length
+    assert.ok(HALF.test('as a \ud83d…') && !HALF.test(HOW), 'the check itself');
+    for (let n = 1; n <= 470; n++) {
+      const fit = B.pwAlertsNoteFit_('✓ Space 🔭🔭🔭 (B10)', 'c'.repeat(n), HOW);
+      assert.ok(!HALF.test(fit) && fit.length <= 480 && fit.includes(` · ${'c'.repeat(n)}`), `${n}: ${fit}`);
+    }
+    eq([B.pwCut_('one 🔭 two', 6), B.pwCut_('one 🔭 two', 7), B.pwCut_('one 🔭 two', 9), B.pwCut_('one 🔭 two', 10), B.pwCut_('🔭', 2),
+      B.pwCut_('🔭🔭', 2)], ['one…', 'one 🔭…', 'one 🔭 t…', 'one 🔭 two', '🔭', '…']);
     // how many of the flags on a post that already had an alert were noted under that alert's card: all, some, none
     const noted = (already, n) => B.pwAlertCountsText_(1, 0, { already, noted: n }, 0);
     eq([noted(5, 5), noted(5, 2), noted(5, 0), noted(1, 1), noted(0, 3)], [

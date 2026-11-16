@@ -274,15 +274,24 @@ function pwAlertCountsText_(today, grouped, more, waiting) {
 }
 
 /**
+ * `s` within `n` characters, cut as truncate_ cuts it but never through a character: a cut that falls inside an emoji
+ * (one character, written as two) leaves none of it, where truncate_ would leave its first half before the ellipsis.
+ * Pure.
+ */
+function pwCut_(s, n) {
+  return truncate_(s, n).replace(/\s*[\ud800-\udbff]\u2026$/, '\u2026');
+}
+
+/**
  * C35's text within PW_ALERTS_NOTE_CHARS_: `lead`, the day's `counts` (pwAlertCountsText_), then `tail` (the fixed
  * explanation, or none). Never a count is cut: the tail is, or left out when under PW_ALERTS_NOTE_TAIL_MIN_ characters
- * of it would fit, and then the lead. Pure.
+ * of it would fit, and then the lead; neither is cut through a character (pwCut_: the explanation has an emoji). Pure.
  */
 function pwAlertsNoteFit_(lead, counts, tail) {
   const sep = ' \u00b7 ';
-  const base = `${truncate_(lead, Math.max(1, PW_ALERTS_NOTE_CHARS_ - sep.length - counts.length))}${sep}${counts}`;
+  const base = `${pwCut_(lead, Math.max(1, PW_ALERTS_NOTE_CHARS_ - sep.length - counts.length))}${sep}${counts}`;
   const room = PW_ALERTS_NOTE_CHARS_ - base.length - sep.length;
-  return tail && room >= PW_ALERTS_NOTE_TAIL_MIN_ ? `${base}${sep}${truncate_(tail, room)}` : base;
+  return tail && room >= PW_ALERTS_NOTE_TAIL_MIN_ ? `${base}${sep}${pwCut_(tail, room)}` : base;
 }
 
 /**
