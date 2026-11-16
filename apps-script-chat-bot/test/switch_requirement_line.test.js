@@ -1470,6 +1470,9 @@ module.exports = H => {
         'a KOF author or a Sensitive Topic; this one: 520 engagements (the alert), not a KOF).',
       '• *SLRR:* Product - Other/general criticism (P2) · Chrome.',
       'the same note without its last line',
+      // (step 12: the story whose main post is the Pixel post, reviewed with its own card since the notes under another
+      // alert's card came in: EarlyDetectionCross.gs)
+      '• *SLRR:* Product - Other/general criticism (P2) · Pixel.',
     ]);
     eq(pairs.map(([a]) => (a.text.match(/(?:^|\n)(?:• )?(\*Alert requirements:\*[^\n]*)/) || [])[1]), [
       `${HEAD}met for a Social Alert: 29,425 engagements (2,000+ needed).`,  // (Burson's alert is on an ongoing issue: its P0 tag alone sends nothing)
@@ -1477,6 +1480,7 @@ module.exports = H => {
       `${HEAD}not met for a Social Alert (${BELOW('P1', '520')}). ${TNS_ASKED}`,  // (the Watch alert's note asks for a T&S form in its next bullet)
       `${HEAD}not met yet (${EARLY}). Posted early because 6 accounts tell the same story.`,
       `${HEAD}met for a Social Alert: P0 exposure tag (Product - Perceived bias) · 2,400 engagements (2,000+ needed).`,
+      `${HEAD}not met yet (${EARLY}). Posted early because 5 accounts tell the same story.`,  // (step 12's story)
     ]);
     // in a triage or review note the line took the other line's place: the rest of the note is the same
     pairs.filter(([, b]) => /\n• \*SLRR:\*/.test(b.text)).forEach(([a, b]) => {
