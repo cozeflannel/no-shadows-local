@@ -42,8 +42,11 @@ module.exports = H => {
    * /metrics and /data/mentions answer w.queries, w.sources and w.mentions, the mentions call applying queryId,
    * pageType, sinceAdded, orderDirection, page and pageSize unless w.ignore names the filter; w.fail[part] ('summary',
    * 'metrics', 'test' for pageSize 5, 'day' for pageSize 500) answers {code, body} or throws ('throw'); every answer
-   * carries w.headers. BigQuery answers tables.get with w.table (or w.tableFail), a dry run with w.bytes (or w.dryFail)
-   * and the SELECT with w.rows. Every call is recorded in w.calls: {host, method, path, payload, headers, kind}.
+   * carries w.headers; w.order ('asc' or 'desc') forces the order of every mentions answer. BigQuery answers tables.get
+   * with w.table, a dry run with w.bytes and the SELECT (and a GET of its job, kind 'results') with w.rows, the first
+   * w.incomplete answers of those saying the job is not complete yet; w.tableFail, w.dryFail, w.selectFail and
+   * w.resultsFail answer {code, message} (BigQuery's JSON error), {code, text} (a body that is not JSON) or throw
+   * ('throw'). Every call is recorded in w.calls: {host, method, path, payload, headers, kind}.
    */
   function world() {
     const g = makeGoogle(NOW);
@@ -66,7 +69,7 @@ module.exports = H => {
           ['postTime', 'TIMESTAMP'], ['ingestionTimestamp', 'TIMESTAMP'], ['followers', 'INTEGER'], ['KOF'], ['product'], ['engagement']]
           .map(([name, type]) => ({ name, type: type || 'STRING', mode: 'NULLABLE' })) },
       },
-      tableFail: null, dryFail: null, bytes: 80 * 1000 * 1000,
+      tableFail: null, dryFail: null, selectFail: null, resultsFail: null, incomplete: 0, bytes: 80 * 1000 * 1000,
       rows: [
         { kind: 'all', net: '', n: 24000, newest_ms: NOW - 3 * MIN, no_post_time: 12, median_min: 1320, p90_min: 4320 },
         { kind: 'net', net: 'Twitter', n: 15000 }, { kind: 'net', net: 'Reddit', n: 6000 }, { kind: 'net', net: 'Facebook', n: 3000 },
@@ -102,7 +105,7 @@ module.exports = H => {
         let list = w.mentions.filter(m => ids.includes(m.queryId));
         if (!w.ignore.pageType) list = list.filter(m => types.includes(m.contentSource));
         if (!w.ignore.sinceAdded) list = list.filter(m => at(m) > since);
-        const dir = w.ignore.orderDirection ? 'desc' : q.get('orderDirection');
+        const dir = w.order || (w.ignore.orderDirection ? 'desc' : q.get('orderDirection'));
         list = list.slice().sort((a, b) => (dir === 'asc' ? at(a) - at(b) : at(b) - at(a)));
         const size = Number(q.get('pageSize'));
         const page = Number(q.get('page'));
@@ -112,17 +115,26 @@ module.exports = H => {
         const body = call.payload ? JSON.parse(call.payload) : null;
         const kind = url.endsWith(AMIE_PATH) && call.method === 'get' ? 'tables.get'
           : /\/queries$/.test(url) && body && body.dryRun === true ? 'dryRun'
-            : /\/queries$/.test(url) && body ? 'select' : 'other';
+            : /\/queries$/.test(url) && body ? 'select'
+              : call.method === 'get' && /\/projects\/brand-social-central-data\/queries\/nsv_1\?/.test(url) ? 'results' : 'other';
         w.calls.push(Object.assign(call, { host: 'bigquery', kind, body }));
-        if (kind === 'tables.get') return w.tableFail ? resp(w.tableFail.code, { error: { code: w.tableFail.code, message: w.tableFail.message } }) : resp(200, w.table);
+        const failed = f => {
+          if (f === 'throw') throw new Error(`BigQuery unreachable for ${ADDRESS}`);
+          return f.text !== undefined ? resp(f.code, f.text) : resp(f.code, { error: { code: f.code, message: f.message } });
+        };
+        if (kind === 'tables.get') return w.tableFail ? failed(w.tableFail) : resp(200, w.table);
         if (kind === 'dryRun') {
-          return w.dryFail ? resp(w.dryFail.code, { error: { code: w.dryFail.code, message: w.dryFail.message } })
+          return w.dryFail ? failed(w.dryFail)
             : resp(200, { kind: 'bigquery#queryResponse', jobComplete: true, totalBytesProcessed: String(w.bytes) });
         }
-        if (kind === 'select') {
+        if (kind === 'select' && w.selectFail) return failed(w.selectFail);
+        if (kind === 'results' && w.resultsFail) return failed(w.resultsFail);
+        if (kind === 'select' || kind === 'results') {
           const cols = [['kind'], ['net'], ['n', 'INTEGER'], ['newest_ms', 'INTEGER'], ['no_post_time', 'INTEGER'], ['median_min', 'INTEGER'], ['p90_min', 'INTEGER']];
+          const ref = { projectId: 'brand-social-central-data', jobId: 'nsv_1', location: 'US' };
+          if (w.incomplete > 0) { w.incomplete--; return resp(200, { jobComplete: false, jobReference: ref }); }
           return resp(200, {
-            jobComplete: true, jobReference: { projectId: 'brand-social-central-data', jobId: 'nsv_1', location: 'US' },
+            jobComplete: true, jobReference: ref,
             schema: { fields: cols.map(c => ({ name: c[0], type: c[1] || 'STRING' })) },
             rows: w.rows.map(r => ({ f: cols.map(c => ({ v: r[c[0]] === undefined || r[c[0]] === null ? null : String(r[c[0]]) })) })),
           });
@@ -173,7 +185,7 @@ module.exports = H => {
       'OK reddit: 7 mentions, 7 with words; from posting to added: median 10 min, 90% within 10 min',
       'CHECK forum: 5 mentions, 5 with words; from posting to added: median 3 h 20 min, 90% within 3 h 20 min',
       'OK facebook: 2 mentions, 2 with words; from posting to added: median 30 min, 90% within 30 min',
-      'OK call-count headers on the answer to the test read: x-rate-limit-used "37"; x-rate-limit "600/10m", the form <limit>/<minutes>m: 600 calls in 10 minutes',
+      'OK call-count headers on the answer to the test read: x-rate-limit-used "37"; x-rate-limit "600/10m": 600 calls in 10 minutes',
       'OK the AMIE table can be read and has every column the plan needs, of the right type (12 columns in all)',
       'OK the AMIE table\'s optional columns: followers (INTEGER), KOF (STRING), product (STRING), engagement (STRING)',
       'OK the AMIE table is partitioned by day on ingestionTimestamp',
@@ -242,7 +254,7 @@ module.exports = H => {
     r = run(env);
     eq(line(r, /no query looks like/), 'CHECK no query looks like Google\'s by the plan\'s rule, so no mention was read: run it again with two query ids, as verifyNewSourcesLive([123, 456])');
     eq(env.w.calls.filter(c => c.part === 'test' || c.part === 'day').length, 0);
-    eq(r.lines[r.lines.length - 1], 'CHECK gate for Brandwatch live: not measured (no read of the last 24 hours gave times), so these sources are slower than 2 hours: unknown');
+    eq(r.lines[r.lines.length - 1], 'CHECK gate for Brandwatch live: not measured (no query was chosen, so the read of the last 24 hours was not sent), so these sources are slower than 2 hours: unknown');
     // the account lacks some of the plan's sources: they are not asked for
     env = world();
     env.w.sources = ['twitter', 'reddit', 'forum'];
@@ -259,11 +271,11 @@ module.exports = H => {
   test('new sources live check: the call-count headers are found in any letter case and read in both forms; missing ones are said', () => {
     const cases = [
       [{ 'X-Rate-Limit': '600/10m', 'X-Rate-Limit-Used': '452' },
-        'OK call-count headers on the answer to the test read: X-Rate-Limit-Used "452"; X-Rate-Limit "600/10m", the form <limit>/<minutes>m: 600 calls in 10 minutes'],
+        'OK call-count headers on the answer to the test read: X-Rate-Limit-Used "452"; X-Rate-Limit "600/10m": 600 calls in 10 minutes'],
       [{ 'x-rate-limit': '600', 'x-rate-limit-used': '37' },
         'OK call-count headers on the answer to the test read: x-rate-limit-used "37"; x-rate-limit "600", a bare number: 600 calls (the minutes not given)'],
       [{ 'X-RATE-LIMIT': '600/10M', 'x-Rate-limit-USED': '5' },
-        'OK call-count headers on the answer to the test read: x-Rate-limit-USED "5"; X-RATE-LIMIT "600/10M", the form <limit>/<minutes>m: 600 calls in 10 minutes'],
+        'OK call-count headers on the answer to the test read: x-Rate-limit-USED "5"; X-RATE-LIMIT "600/10M": 600 calls in 10 minutes'],
       [{ 'x-rate-limit-used': '37' },
         'CHECK call-count headers on the answer to the test read: x-rate-limit-used "37"; x-rate-limit missing'],
       [{ 'Content-Type': 'application/json' },
@@ -336,7 +348,7 @@ module.exports = H => {
     env.w.table.schema.fields.find(f => f.name === 'postTime').type = 'STRING';
     r = run(env);
     eq([line(r, /"postTime"/), line(r, /one-day read was not sent/)], [
-      'PROBLEM the AMIE table\'s column "postTime" is STRING; the plan needs TIMESTAMP',
+      'PROBLEM the AMIE table\'s column "postTime" holds text (STRING), but the plan needs a time (TIMESTAMP)',
       'CHECK the AMIE table\'s one-day read was not sent: a column it counts by is missing or of another type (above)']);
     eq(env.w.calls.filter(c => c.host === 'bigquery').map(c => c.kind), ['tables.get']);
     // not partitioned on ingestionTimestamp, and stale
@@ -423,5 +435,208 @@ module.exports = H => {
     eq([0, 14, 60, 190, 2879, 2880, 4400].map(m => b.nsvMinutes_(m)), ['0 min', '14 min', '1 h', '3 h 10 min', '47 h 59 min', '2 days', '3 days 1 h']);
     // the place where steps 1c and 2b add the new jobs' dry runs sends nothing yet
     eq(b.nsvNewJobDryRuns_('TOKEN'), []);
+  });
+
+  test('new sources live check: an address or the key late in a long outside text or in a header is scrubbed before anything cuts it short', () => {
+    const KEY_START = TOKEN.slice(0, 8);
+    const clean = (t, why) => assert.ok(!t.includes('@') && !/%40/i.test(t) && !t.includes(KEY_START) && !t.includes('example.test'), `${why}: ${t}`);
+    // a 403 whose message holds an address and the key around character 190 (pwHttpWhy_ cuts at 200), for every Brandwatch call
+    ['summary', 'metrics', 'test', 'day'].forEach(part => {
+      for (let n = 150; n <= 210; n += 3) {
+        const env = world();
+        env.w.fail[part] = { code: 403, body: { errors: [{ code: 403, message: `${'z'.repeat(n)} ${ADDRESS} ${TOKEN}` }] } };
+        const r = run(env, part === 'summary' ? [111, 222] : undefined);
+        [r.report, r.logs].forEach(t => clean(t, `${part} ${n}`));
+        assert.ok(line(r, /HTTP 403: zzz/), `${part} ${n}: ${r.report}`);
+      }
+    });
+    // the same in a body that is not JSON, and URL-encoded
+    for (let n = 180; n <= 200; n += 2) {
+      const env = world();
+      env.w.fail.test = { code: 500, body: `${'z'.repeat(n)} analyst.one%40example.test ${TOKEN}` };
+      const r = run(env);
+      [r.report, r.logs].forEach(t => clean(t, `text ${n}`));
+    }
+    // the key and an address inside the call-count headers (the report cuts a value it can't read to 40 characters)
+    for (let n = 10; n <= 40; n += 2) {
+      const env = world();
+      env.w.headers = { 'x-rate-limit-used': `${'y'.repeat(n)} ${TOKEN}`, 'x-rate-limit': `${'y'.repeat(n)} ${ADDRESS}` };
+      const r = run(env);
+      [r.report, r.logs].forEach(t => clean(t, `headers ${n}`));
+      assert.match(line(r, /call-count headers/), /^CHECK call-count headers on the answer to the test read: x-rate-limit-used "y+/);
+    }
+    // Secret Manager's refusal (cut at 200 by the Watch's reader) with an address near the cut
+    for (let n = 120; n <= 200; n += 4) {
+      const env = world();
+      env.w.secret = { code: 403, message: `${'s'.repeat(n)} ${ADDRESS}` };
+      const r = run(env);
+      [r.report, r.logs].forEach(t => clean(t, `secret ${n}`));
+    }
+    // BigQuery: a body that is not JSON (cut at 300) with an address near the cut
+    for (let n = 270; n <= 300; n += 3) {
+      const env = world();
+      env.w.tableFail = { code: 500, text: `${'q'.repeat(n)} ${ADDRESS}` };
+      const r = run(env);
+      [r.report, r.logs].forEach(t => clean(t, `bigquery ${n}`));
+    }
+    // the scrub itself: an address another helper cut short is caught too; a handle with no name before the @ stays
+    const b = loadBot(makeGoogle(NOW).services);
+    eq([b.nsvScrub_('see analyst.one@exampl…)', ''), b.nsvScrub_('analyst.one@…', ''), b.nsvScrub_('{"message":"a.b%40exa"}', '', true),
+      b.nsvScrub_('Pixel @madebygoogle', ''), b.nsvScrub_(`${'w'.repeat(320)} ${TOKEN}`, TOKEN).includes(KEY_START)],
+    ['see [address])', '[address]', '{"message":"[address]"}', 'Pixel @madebygoogle', false]);
+  });
+
+  test('new sources live check: the gate says why nothing was measured, the content-source refusal says the plan\'s list is used only when a read is sent, and ids given that can\'t be used are said', () => {
+    const gate = r => r.lines[r.lines.length - 1];
+    const tail = '), so these sources are slower than 2 hours: unknown';
+    const refuseAll = env => ['summary', 'metrics', 'test', 'day'].forEach(p => { env.w.fail[p] = { code: 401, body: { errors: [{ message: 'invalid token' }] } }; });
+    // 401 on every Brandwatch call: no read is sent, and the gate and the content-source line say so
+    let env = world();
+    refuseAll(env);
+    let r = run(env);
+    eq(line(r, /^PROBLEM Brandwatch content sources/), 'PROBLEM Brandwatch content sources: Brandwatch refused the shared key (HTTP 401). The service that renews it may be down');
+    eq(gate(r), 'CHECK gate for Brandwatch live: not measured (no query was chosen, so the read of the last 24 hours was not sent' + tail);
+    eq(env.w.calls.filter(c => c.part === 'test' || c.part === 'day').length, 0);
+    // the same with ids given: the reads are sent, so the content-source line says they ask for the plan's whole list
+    env = world();
+    refuseAll(env);
+    r = run(env, [111, 222]);
+    eq(line(r, /^PROBLEM Brandwatch content sources/), 'PROBLEM Brandwatch content sources: Brandwatch refused the shared key (HTTP 401). The service that renews it may be down; the reads below ask for the plan\'s whole list');
+    eq(gate(r), 'CHECK gate for Brandwatch live: not measured (the read of the last 24 hours was refused or failed (said above)' + tail);
+    // the key can't be read
+    env = world();
+    env.w.secret = { code: 403, message: 'Permission denied' };
+    eq(gate(run(env)), 'CHECK gate for Brandwatch live: not measured (the shared Brandwatch key could not be read, so Brandwatch was not asked' + tail);
+    // the day read thrown
+    env = world();
+    env.w.fail.day = 'throw';
+    eq(gate(run(env)), 'CHECK gate for Brandwatch live: not measured (the read of the last 24 hours was refused or failed (said above)' + tail);
+    // no mention added in the last 24 hours
+    env = world();
+    env.w.mentions = [];
+    eq(gate(run(env)), 'CHECK gate for Brandwatch live: not measured (the read of the last 24 hours found no mention added in that time' + tail);
+    // none of the account's content sources is on the plan's list
+    env = world();
+    env.w.sources = ['twitter', 'news', 'linkedin'];
+    eq(gate(run(env)), 'CHECK gate for Brandwatch live: not measured (no content source was left to ask for, so the read of the last 24 hours was not sent' + tail);
+    // ids given that are not query ids: said, and the suggested queries are used
+    env = world();
+    r = run(env, ['abc']);
+    eq(line(r, /query ids? given/), 'CHECK none of the query id given is a Brandwatch query id (a whole number), so the queries that look like Google\'s were used instead');
+    assert.match(line(r, /^OK the two Brandwatch reads use/), /"Google Pixel test" \(111\), "Gemini app test" \(222\)/);
+    env = world();
+    r = run(env, ['abc', 1.5]);
+    eq(line(r, /query ids? given/), 'CHECK none of the 2 query ids given is a Brandwatch query id (a whole number), so the queries that look like Google\'s were used instead');
+    // the query list refused too: nothing to fall back on
+    env = world();
+    env.w.fail.summary = { code: 500, body: 'Internal error' };
+    r = run(env, ['abc']);
+    eq([line(r, /query ids? given/), line(r, /^CHECK no mention was read/)], [
+      'CHECK none of the query id given is a Brandwatch query id (a whole number), so none was used',
+      'CHECK no mention was read: the query list could not be read and no usable query id was given']);
+    // some usable, some not, some over the limit
+    env = world();
+    r = run(env, [111, 'abc', 222]);
+    eq(line(r, /query ids given/), 'CHECK of the 3 query ids given, 1 is not a whole number; it was left out');
+    eq(env.w.calls.find(c => c.part === 'test').params.getAll('queryId'), ['111', '222']);
+    env = world();
+    r = run(env, Array.from({ length: 23 }, (_, i) => 1000 + i).concat(['x']));
+    eq(line(r, /query ids given/), 'CHECK of the 24 query ids given, 1 is not a whole number and 3 are over the 20 a read may carry; they were left out');
+    eq(env.w.calls.find(c => c.part === 'test').params.getAll('queryId').length, 20);
+    // one id given as a number, not in a list: used
+    env = world();
+    r = run(env, 444);
+    eq(line(r, /query ids? given/), '');
+    eq(env.w.calls.find(c => c.part === 'test').params.getAll('queryId'), ['444']);
+    // ids that all work: no such line
+    env = world();
+    eq(line(run(env, [111, 222]), /query ids? given/), '');
+  });
+
+  test('new sources live check: the read of the last 24 hours says what it left out (added before the 24 hours, no added time) and when it did not come newest first', () => {
+    // "added since" ignored: two mentions added over 24 hours ago and one with no added time come back and are said, not counted
+    let env = world();
+    env.w.ignore.sinceAdded = true;
+    env.w.mentions.push(mention(30, { addedAgo: 30 * 60, delay: 10 }), mention(31, { addedAgo: 31 * 60, delay: 10 }));
+    env.w.mentions.push(mention(32, { addedAgo: 20, m: { added: '' } }));
+    let r = run(env);
+    eq([line(r, /ignored "added since" in the read of the last 24 hours/), line(r, /no readable added time/)], [
+      'PROBLEM Brandwatch ignored "added since" in the read of the last 24 hours: 2 mentions were added before it (left out of the figures below)',
+      'CHECK 1 mention of the read of the last 24 hours had no readable added time (left out of the figures below)']);
+    // the per-source figures are the healthy ones: what was left out is not in them
+    eq(line(r, /^(OK|CHECK) reddit:/), 'OK reddit: 7 mentions, 7 with words; from posting to added: median 10 min, 90% within 10 min');
+    // healthy answers: none of these lines
+    env = world();
+    r = run(env);
+    eq([line(r, /in the read of the last 24 hours: \d/), line(r, /no readable added time/), line(r, /did not come newest added first/)], ['', '', '']);
+    // the order of the day read ignored (oldest first)
+    env = world();
+    env.w.order = 'asc';
+    r = run(env);
+    eq(line(r, /did not come newest added first/), 'CHECK the read of the last 24 hours did not come newest added first (the order asked for was ignored), so a full page may not be the newest mentions');
+  });
+
+  test('new sources live check: BigQuery refusing, throwing or answering late at each step is said in plain words, and BigQuery is only ever asked for the table\'s metadata, dry runs, the one bounded SELECT and that job\'s results', () => {
+    const allowed = c => (c.kind === 'tables.get' && c.method === 'get' && c.payload === null)
+      || (c.kind === 'dryRun' && c.method === 'post' && c.body.dryRun === true)
+      || (c.kind === 'select' && c.method === 'post' && c.body.maximumBytesBilled === '1000000000' && !c.body.dryRun)
+      || (c.kind === 'results' && c.method === 'get' && c.payload === null);
+    const go = setUp => {
+      const env = world();
+      setUp(env.w);
+      const r = run(env);
+      const bq = env.w.calls.filter(c => c.host === 'bigquery');
+      bq.forEach(c => assert.ok(allowed(c), `not allowed: ${c.kind} ${c.method} ${c.url}`));
+      [r.report, r.logs].forEach(t => assert.ok(!t.includes('@') && !t.includes(TOKEN), t));
+      // the Brandwatch part and the gate are not stopped by it
+      assert.ok(line(r, /^OK the read of the last 24 hours/), r.report);
+      assert.match(r.lines[r.lines.length - 1], /gate for Brandwatch live: /);
+      return { r, kinds: bq.map(c => c.kind) };
+    };
+    // the AMIE lines that say something went wrong (the healthy fixture's slow-delay CHECK left aside)
+    const amie = r => findings(r).filter(l => /AMIE/.test(l) && /^(PROBLEM|CHECK)/.test(l) && !/^CHECK from posting to the AMIE table/.test(l));
+    // the SELECT refused (bytes billed over the cap) or thrown
+    let o = go(w => { w.selectFail = { code: 400, message: 'Query exceeded limit for bytes billed: 1000000000. 2000000000 or higher required.' }; });
+    eq(amie(o.r), ['PROBLEM the AMIE table\'s one-day read: BigQuery refused (HTTP 400: Query exceeded limit for bytes billed: 1000000000. 2000000000 or higher required.)']);
+    eq(o.kinds, ['tables.get', 'dryRun', 'select']);
+    o = go(w => { w.selectFail = 'throw'; });
+    eq(amie(o.r), ['PROBLEM the AMIE table\'s one-day read: the call to BigQuery did not complete (BigQuery unreachable for [address])']);
+    // the metadata read failed (500 with a body that is not JSON, or thrown): said; the dry run and the bounded SELECT still go
+    o = go(w => { w.tableFail = { code: 500, text: '<html>Backend Error</html>' }; });
+    eq(amie(o.r), ['PROBLEM the AMIE table\'s metadata: BigQuery refused (HTTP 500: <html>Backend Error</html>)']);
+    eq(o.kinds, ['tables.get', 'dryRun', 'select']);
+    assert.ok(line(o.r, /^OK the AMIE table, last 24 hours: 24,000 rows/));
+    o = go(w => { w.tableFail = 'throw'; });
+    eq(amie(o.r), ['PROBLEM the AMIE table\'s metadata: the call to BigQuery did not complete (BigQuery unreachable for [address])']);
+    eq(o.kinds, ['tables.get', 'dryRun', 'select']);
+    // the dry run refused (500) or thrown: no SELECT
+    o = go(w => { w.dryFail = { code: 500, message: 'Backend error' }; });
+    eq(amie(o.r), ['PROBLEM the dry run of the AMIE table\'s one-day read: BigQuery refused (HTTP 500: Backend error)']);
+    eq(o.kinds, ['tables.get', 'dryRun']);
+    o = go(w => { w.dryFail = 'throw'; });
+    eq(amie(o.r), ['PROBLEM the dry run of the AMIE table\'s one-day read: the call to BigQuery did not complete (BigQuery unreachable for [address])']);
+    eq(o.kinds, ['tables.get', 'dryRun']);
+    // the dry run says nothing about bytes: no SELECT
+    o = go(w => { w.bytes = undefined; });
+    eq(o.kinds, ['tables.get', 'dryRun']);
+    // the SELECT not complete at first: its own job is asked again, at most twice, with a GET
+    o = go(w => { w.incomplete = 2; });
+    eq(o.kinds, ['tables.get', 'dryRun', 'select', 'results', 'results']);
+    eq(amie(o.r), []);
+    assert.ok(line(o.r, /^OK the AMIE table, last 24 hours: 24,000 rows/));
+    o = go(w => { w.incomplete = 3; });
+    eq(o.kinds, ['tables.get', 'dryRun', 'select', 'results', 'results']);
+    eq(amie(o.r), ['CHECK the AMIE table\'s one-day read did not finish in time; run the check again']);
+    o = go(w => { w.incomplete = 1; w.resultsFail = { code: 404, message: 'Not found: Job nsv_1' }; });
+    eq(o.kinds, ['tables.get', 'dryRun', 'select', 'results']);
+    eq(amie(o.r), ['PROBLEM the AMIE table\'s one-day read: the AMIE table was not found (HTTP 404: Not found: Job nsv_1)']);
+    // a counted column missing: only the metadata is read
+    o = go(w => { w.table.schema.fields = w.table.schema.fields.filter(f => f.name !== 'ingestionTimestamp'); });
+    eq(o.kinds, ['tables.get']);
+    eq(amie(o.r).slice(0, 1), ['PROBLEM the AMIE table has no column "ingestionTimestamp", which the plan needs']);
+    // the type words
+    const b = loadBot(makeGoogle(NOW).services);
+    eq(['STRING', 'TIMESTAMP', 'INTEGER', 'REPEATED STRING', 'GEOGRAPHY', ''].map(t => b.nsvTypeWords_(t)),
+      ['text (STRING)', 'a time (TIMESTAMP)', 'a whole number (INTEGER)', 'a list of text (REPEATED STRING)', 'something else (GEOGRAPHY)', 'something else (no type)']);
   });
 };

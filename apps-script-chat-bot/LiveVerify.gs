@@ -301,32 +301,50 @@ function verifyNewSourcesLive(queryIds) {
   const notes = [];   // the project's queries, listed after the findings
   const why = e => (e && e.message ? e.message : e);
   let bwToken = '';
-  const bw = { calls: [], gate: null };
+  const bw = { calls: [], gate: null, gateWhy: 'the shared Brandwatch key could not be read, so Brandwatch was not asked' };
   try {
     bwToken = pwBwToken_();
   } catch (e) {
     lines.push(`PROBLEM the bot could not read the shared Brandwatch key from Secret Manager (${nsvScrub_(why(e), '')}), so Brandwatch was not asked anything`);
   }
   if (bwToken) {
-    const passed = Array.isArray(queryIds) ? queryIds.map(Number).filter(n => isFinite(n) && n > 0).slice(0, NSV_BW_QUERIES_MAX_) : [];
+    const given = queryIds === undefined || queryIds === null ? [] : Array.isArray(queryIds) ? queryIds : [queryIds];
+    const usable = given.map(Number).filter(n => isFinite(n) && n > 0 && Math.floor(n) === n);
+    const passed = usable.slice(0, NSV_BW_QUERIES_MAX_);
     let queries = null;
     let sources = null;
     try { queries = nsvBwQueries_(bwToken, bw, lines, notes); } catch (e) { lines.push(`PROBLEM Brandwatch query list: ${nsvScrub_(why(e), bwToken)}`); }
+    const metricsAt = lines.length;
     try { sources = nsvBwSources_(bwToken, bw, lines); } catch (e) { lines.push(`PROBLEM Brandwatch content sources: ${nsvScrub_(why(e), bwToken)}`); }
+    if (given.length && !passed.length) {
+      lines.push(`CHECK none of the ${given.length === 1 ? 'query id' : given.length + ' query ids'} given is a Brandwatch query id (a whole number), so ` +
+        (queries ? 'the queries that look like Google\'s were used instead' : 'none was used'));
+    } else if (passed.length < given.length) {
+      const bad = given.length - usable.length;
+      const over = usable.length - passed.length;
+      lines.push(`CHECK of the ${given.length} query ids given, ${[bad ? `${bad} ${bad === 1 ? 'is' : 'are'} not a whole number` : '',
+        over ? `${over} ${over === 1 ? 'is' : 'are'} over the ${NSV_BW_QUERIES_MAX_} a read may carry` : ''].filter(Boolean).join(' and ')}; ` +
+        `${bad + over === 1 ? 'it was' : 'they were'} left out`);
+    }
     const chosen = passed.length ? passed.map(id => ({ id, name: ((queries || []).find(q => q.id === id) || {}).name || '' }))
       : (queries || []).filter(q => q.suggested).slice(0, 2);
     const asked = NSV_BW_SOURCES_.filter(s => !NSV_BW_NEVER_RX_.test(s) && (!sources || sources.includes(s)));
     if (!chosen.length) {
       lines.push(queries ? 'CHECK no query looks like Google\'s by the plan\'s rule, so no mention was read: run it again with two query ids, as verifyNewSourcesLive([123, 456])'
-        : 'CHECK no mention was read: the query list could not be read and no query ids were given');
+        : `CHECK no mention was read: the query list could not be read and no ${given.length ? 'usable query id was' : 'query ids were'} given`);
+      bw.gateWhy = 'no query was chosen, so the read of the last 24 hours was not sent';
     } else if (!asked.length) {
       lines.push('PROBLEM no mention was read: this Brandwatch account has none of the content sources Brandwatch live would ask for');
+      bw.gateWhy = 'no content source was left to ask for, so the read of the last 24 hours was not sent';
     } else {
+      // Brandwatch's own list of content sources was not read: say on its line that the reads ask for the plan's list
+      if (!sources && /^PROBLEM /.test(lines[metricsAt] || '')) lines[metricsAt] += '; the reads below ask for the plan\'s whole list';
       lines.push(`OK the two Brandwatch reads use ${chosen.length === 1 ? 'one query' : chosen.length + ' queries'}: ` +
         chosen.map(q => (q.name ? `"${nsvScrub_(q.name, bwToken)}" (${q.id})` : String(q.id))).join(', ') +
         `, and these content sources: ${asked.join(', ')}`);
       const ids = chosen.map(q => q.id);
       try { nsvBwTestRead_(bwToken, bw, lines, ids, asked, now); } catch (e) { lines.push(`PROBLEM Brandwatch test read: ${nsvScrub_(why(e), bwToken)}`); }
+      bw.gateWhy = 'the read of the last 24 hours was refused or failed (said above)';
       try { bw.gate = nsvBwDayRead_(bwToken, bw, lines, ids, asked, now); } catch (e) { lines.push(`PROBLEM Brandwatch read of the last 24 hours: ${nsvScrub_(why(e), bwToken)}`); }
     }
     try { lines.push(nsvBwHeaderLine_(bw.calls)); } catch (e) { lines.push('CHECK the call-count headers could not be read'); }
@@ -341,35 +359,46 @@ function verifyNewSourcesLive(queryIds) {
   }
   const head = `Live check of the new sources (read only), ${new Date(now).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
   const list = notes.length ? ['The project\'s Brandwatch queries (id | name | collects | languages | suggested):'].concat(notes) : [];
-  const report = [head].concat(lines, list, [nsvGateLine_(bw.gate)]).map(l => nsvScrub_(l, bwToken, true)).join('\n');
+  const report = [head].concat(lines, list, [nsvGateLine_(bw.gate, bw.gateWhy)]).map(l => nsvScrub_(l, bwToken, true)).join('\n');
   console.log('LIVE_VERIFY_NEW_SOURCES\n' + report);
   return report;
 }
 
 /**
  * A text from outside (an error, a name) made safe for the report: the Brandwatch key out, anything shaped like an
- * email address (plain or URL-encoded) replaced by [address], on one line, at most 300 characters unless `whole`. Pure.
+ * email address (plain or URL-encoded) replaced by [address], on one line, at most 300 characters unless `whole`.
+ * It scrubs before it cuts; and a word with an @ (or %40) after a name, such as an address another helper already cut
+ * short ("someone@exam…"), is replaced too. Pure.
  */
 function nsvScrub_(s, token, whole) {
   let t = String(s === undefined || s === null ? '' : s);
   if (token) t = t.split(String(token)).join('[token]');
   t = t.replace(/[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/gi, '[address]')
+    .replace(/[A-Za-z0-9._%+-]+(?:@|%40)[^\s"'<>()\[\]{},;]*/gi, '[address]')
     .replace(/[\r\n\t]+/g, ' ');
   return whole ? t : truncate_(t.replace(/\s+/g, ' ').trim(), 300);
 }
 
-/** One GET to Brandwatch (no method, no body): {what, code, body, headers, why, thrown}, also kept in `bw.calls`. */
+/**
+ * One GET to Brandwatch (no method, no body): {what, code, body, headers (values scrubbed), why, thrown}, also kept in
+ * `bw.calls`. Every outside text is scrubbed whole before anything cuts it.
+ */
 function nsvBwGet_(token, bw, what, path) {
   const r = { what, code: 0, body: null, headers: {}, why: '', thrown: '' };
   try {
     const resp = UrlFetchApp.fetch(PW_BW_API_ + path,
       { muteHttpExceptions: true, headers: { Authorization: 'bearer ' + token, Accept: 'application/json' } });
     r.code = resp.getResponseCode();
-    try { r.headers = (resp.getHeaders && resp.getHeaders()) || {}; } catch (e) { r.headers = {}; }
+    let headers = {};
+    try { headers = (resp.getHeaders && resp.getHeaders()) || {}; } catch (e) { headers = {}; }
+    // header values are kept scrubbed whole, so a later cut can't leave part of the key or of an address
+    Object.keys(headers).forEach(k => { r.headers[k] = nsvScrub_(headers[k], token, true); });
     if (r.code === 200) {
       try { r.body = JSON.parse(resp.getContentText() || ''); } catch (e) { r.body = null; }
     } else {
-      r.why = nsvScrub_(pwHttpWhy_(resp), token);
+      // scrubbed before pwHttpWhy_ cuts it to 200 characters, and again after
+      const text = nsvScrub_(resp.getContentText(), token, true);
+      r.why = nsvScrub_(pwHttpWhy_({ getContentText: () => text }), token);
     }
   } catch (e) {
     r.thrown = nsvScrub_(e && e.message ? e.message : e, token);
@@ -420,13 +449,16 @@ function nsvBwQueries_(token, bw, lines, notes) {
   return list;
 }
 
-/** (b) The account's content sources, from GET /metrics (lowercase names), or null when Brandwatch gave none. */
+/**
+ * (b) The account's content sources, from GET /metrics (lowercase names), or null when Brandwatch gave none (its
+ * PROBLEM line is then the next line; verifyNewSourcesLive adds to it when the reads ask for the plan's whole list).
+ */
 function nsvBwSources_(token, bw, lines) {
   const r = nsvBwGet_(token, bw, 'Brandwatch content sources', '/metrics');
   const refused = nsvBwRefusal_(r);
-  if (refused) { lines.push(refused + '; the reads below ask for the plan\'s whole list'); return null; }
+  if (refused) { lines.push(refused); return null; }
   const names = nsvNames_(r.body.contentSources).map(s => s.toLowerCase());
-  if (!names.length) { lines.push('PROBLEM Brandwatch content sources: the answer had none; the reads below ask for the plan\'s whole list'); return null; }
+  if (!names.length) { lines.push('PROBLEM Brandwatch content sources: the answer had none'); return null; }
   lines.push(`OK this Brandwatch account has ${names.length} content sources: ${names.join(', ')}`);
   const missing = NSV_BW_SOURCES_.filter(s => !names.includes(s));
   if (missing.length) lines.push(`CHECK on the plan's list but not on this account (they are not asked for): ${missing.join(', ')}`);
@@ -512,7 +544,7 @@ function nsvBwHeaderLine_(calls) {
   const limit = nsvHeader_(r.headers, 'x-rate-limit');
   if (!used && !limit) return `CHECK no call-count header on Brandwatch's answer to the ${on} (looked for x-rate-limit and x-rate-limit-used in any letter case): the reader would show the shared login's use as unknown`;
   const m = limit ? limit.value.match(/^(\d+)\s*\/\s*(\d+)\s*m$/i) : null;
-  const form = !limit ? 'missing' : m ? `"${limit.value}", the form <limit>/<minutes>m: ${m[1]} calls in ${m[2]} minutes`
+  const form = !limit ? 'missing' : m ? `"${limit.value}": ${m[1]} calls in ${m[2]} minutes`
     : /^\d+$/.test(limit.value) ? `"${limit.value}", a bare number: ${limit.value} calls (the minutes not given)`
       : `"${truncate_(limit.value, 40)}", a form the reader can't read`;
   const usedText = !used ? 'missing' : /^\d+$/.test(used.value) ? `"${used.value}"` : `"${truncate_(used.value, 40)}", not a number`;
@@ -553,8 +585,21 @@ function nsvBwDayRead_(token, bw, lines, ids, sources, now) {
   const total = Number(r.body.resultsTotal);
   lines.push(`OK the read of the last 24 hours gave ${fmtInt_(all.length)} mentions` +
     (isFinite(total) && total > all.length ? ` (the newest ${fmtInt_(all.length)} of ${fmtInt_(total)}; the figures below are for those)` : ''));
-  const list = all.filter(m => !nsvIsX_(m) && pwBwTime_(m.added) >= since - NSV_BW_EARLY_MS_);
-  if (!list.length) { lines.push('CHECK no mention added in the last 24 hours came back, so how late each source is could not be measured'); return null; }
+  const notX = all.filter(m => !nsvIsX_(m));
+  const noAdded = notX.filter(m => !pwBwTime_(m.added)).length;
+  const early = notX.filter(m => pwBwTime_(m.added) && pwBwTime_(m.added) < since - NSV_BW_EARLY_MS_).length;
+  if (early) lines.push(`PROBLEM Brandwatch ignored "added since" in the read of the last 24 hours: ${fmtInt_(early)} ${early === 1 ? 'mention was' : 'mentions were'} added before it (left out of the figures below)`);
+  if (noAdded) lines.push(`CHECK ${fmtInt_(noAdded)} ${noAdded === 1 ? 'mention' : 'mentions'} of the read of the last 24 hours had no readable added time (left out of the figures below)`);
+  const times = all.map(m => pwBwTime_(m.added)).filter(Boolean);
+  if (times.some((t, i) => i && t > times[i - 1])) {
+    lines.push('CHECK the read of the last 24 hours did not come newest added first (the order asked for was ignored), so a full page may not be the newest mentions');
+  }
+  const list = notX.filter(m => pwBwTime_(m.added) >= since - NSV_BW_EARLY_MS_);
+  if (!list.length) {
+    bw.gateWhy = 'the read of the last 24 hours found no mention added in that time';
+    lines.push('CHECK no mention added in the last 24 hours came back, so how late each source is could not be measured');
+    return null;
+  }
   const by = {};
   list.forEach(m => {
     const s = String(m.contentSource || m.pageType || '').trim().toLowerCase() || 'unknown';
@@ -578,9 +623,12 @@ function nsvBwDayRead_(token, bw, lines, ids, sources, now) {
   });
 }
 
-/** The gate for stage 2, the report's last line: the Brandwatch sources slower than 2 hours. Pure. */
-function nsvGateLine_(gate) {
-  if (!gate || !gate.length) return 'CHECK gate for Brandwatch live: not measured (no read of the last 24 hours gave times), so these sources are slower than 2 hours: unknown';
+/**
+ * The gate for stage 2, the report's last line: the Brandwatch sources slower than 2 hours. `why`: in plain words, why
+ * nothing was measured (used only when `gate` is empty). Pure.
+ */
+function nsvGateLine_(gate, why) {
+  if (!gate || !gate.length) return `CHECK gate for Brandwatch live: not measured (${why || 'no read of the last 24 hours gave times'}), so these sources are slower than 2 hours: unknown`;
   const judged = gate.filter(g => g.n >= NSV_SLOW_MIN_COUNT_ && g.median !== null);
   const slow = judged.filter(g => g.median > NSV_SLOW_MINUTES_);
   const few = gate.filter(g => !judged.includes(g)).map(g => `${g.source} (${g.n})`);
@@ -600,7 +648,7 @@ function nsvBq_(token, url, payload) {
     r.code = resp.getResponseCode();
     const text = String(resp.getContentText() || '');
     try { r.body = JSON.parse(text); } catch (e) { r.body = null; }
-    if (r.code !== 200) r.why = nsvScrub_((r.body && r.body.error && r.body.error.message) || text.slice(0, 300), '');
+    if (r.code !== 200) r.why = nsvScrub_((r.body && r.body.error && r.body.error.message) || text, '');  // scrubbed, then cut to 300
   } catch (e) {
     r.why = nsvScrub_(e && e.message ? e.message : e, '');
   }
@@ -632,7 +680,7 @@ function nsvAmieSchema_(token, lines, now) {
   const missing = Object.keys(NSV_AMIE_NEEDED_).filter(c => !type(c));
   const wrong = Object.keys(NSV_AMIE_NEEDED_).filter(c => type(c) && type(c) !== NSV_AMIE_NEEDED_[c]);
   if (missing.length) lines.push(`PROBLEM the AMIE table has no column ${missing.map(c => `"${c}"`).join(', ')}, which the plan needs`);
-  wrong.forEach(c => lines.push(`PROBLEM the AMIE table's column "${c}" is ${type(c)}; the plan needs ${NSV_AMIE_NEEDED_[c]}`));
+  wrong.forEach(c => lines.push(`PROBLEM the AMIE table's column "${c}" holds ${nsvTypeWords_(type(c))}, but the plan needs ${nsvTypeWords_(NSV_AMIE_NEEDED_[c])}`));
   if (!missing.length && !wrong.length) lines.push(`OK the AMIE table can be read and has every column the plan needs, of the right type (${r.body.schema.fields.length} columns in all)`);
   const optMissing = NSV_AMIE_OPTIONAL_.filter(c => !type(c));
   lines.push(`${optMissing.length ? 'CHECK' : 'OK'} the AMIE table's optional columns: ` + NSV_AMIE_OPTIONAL_.filter(c => type(c))
@@ -647,6 +695,16 @@ function nsvAmieSchema_(token, lines, now) {
     : `${now - changed > NSV_AMIE_STALE_MS_ ? 'CHECK' : 'OK'} the AMIE table last changed ${nsvMinutes_((now - changed) / 60000)} ago ` +
       `(${new Date(changed).toISOString().slice(0, 16).replace('T', ' ')} UTC)`);
   return { cols };
+}
+
+/** A BigQuery column type in plain words, the type after them: "text (STRING)", "a time (TIMESTAMP)". Pure. */
+function nsvTypeWords_(type) {
+  const t = String(type || '').toUpperCase();
+  const words = { STRING: 'text', TIMESTAMP: 'a time', DATETIME: 'a time', DATE: 'a date', INTEGER: 'a whole number', INT64: 'a whole number',
+    FLOAT: 'a number', FLOAT64: 'a number', NUMERIC: 'a number', BOOLEAN: 'yes or no', BOOL: 'yes or no', RECORD: 'a group of fields' };
+  const base = t.replace(/^REPEATED /, '');
+  const w = words[base] ? (t === base ? words[base] : `a list of ${words[base].replace(/^an? /, '')}`) : 'something else';
+  return `${w} (${t || 'no type'})`;
 }
 
 /** The one-day SELECT of the AMIE table: rows, newest ingestionTimestamp, rows by network, no postTime, the delay. Pure. */
