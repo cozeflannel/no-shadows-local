@@ -2360,9 +2360,13 @@ function bqIsStoryCard_(m) {
 // A Direct BigQuery card whose post is in a story's card says so, in its thread (the Auto-correct flow only; setting
 // cross_alert_notes). Where stories go first a post can have two cards, the story's and its own (see above): this
 // note is what ties them together. It is also posted for a post the story's card links that is not its main post.
+// The note belongs to the check that posts the card (bqStoryNotes_). A card that went without it then (the flow was
+// short of time, or the note could not be posted) gets it at a later check of its first hour (bqStoryNotesLate_), with
+// nothing new kept for that: the card's Alert-log row says where the card is, and the helper posts a note's key once.
 // ---------------------------------------------------------------------------------------------------------------
 
 const BQ_STORY_NOTE_LEFT_MS_ = 45 * 1000;  // the note is posted only with this much of the flow left
+const BQ_STORY_NOTE_LATE_MS_ = 60 * 60 * 1000;  // a card that went without its note is looked at again this long
 
 /**
  * The note under a Direct BigQuery card whose post is in a story's card (`story`: that card, as EarlyDetection.gs
@@ -2389,7 +2393,8 @@ function bqStoryNoteText_(story) {
  * card's main post or one of the posts the card links; the newest such card is the one named. Nothing is looked up by
  * meaning, no embedding is made and the producer's story store is not read. The note goes through ThreadNotes.gs
  * acThreadNote_ (only under a card in the Auto-correct space, once), and only when `hasTime` (the flow has more than
- * BQ_STORY_NOTE_LEFT_MS_ left): a note there was no time for is not added by a later run, and the run log says so.
+ * BQ_STORY_NOTE_LEFT_MS_ left): a note there was no time for, or that could not be posted, is left to a later check
+ * (bqStoryNotesLate_), and the run log says so.
  * Anything that goes wrong skips the note, and nothing else of the check depends on it. How many notes are in place.
  * Never throws.
  */
@@ -2406,7 +2411,7 @@ function bqStoryNotes_(ctx, cards, now, hasTime) {
         const whose = `${c.url}, whose post is in a story's card${story.row ? ` (${story.row})` : ''}`;
         if (!hasTime) {
           console.log(`BigQuery direct poll: no note under the new card of ${whose}: the flow had ` +
-            `${BQ_STORY_NOTE_LEFT_MS_ / 1000} seconds or less left (it is not added later)`);
+            `${BQ_STORY_NOTE_LEFT_MS_ / 1000} seconds or less left (a check in the next hour adds it)`);
           return;
         }
         const inThread = acThreadNote_(ctx, { thread: c.msg.thread, message: c.msg.name, createTime: c.msg.createTime },
@@ -2417,6 +2422,56 @@ function bqStoryNotes_(ctx, cards, now, hasTime) {
       } catch (e) { /* this card goes without its note */ }
     });
   } catch (e) { /* the cards are posted: a note is never worth more than that */ }
+  return notes;
+}
+
+/**
+ * The Auto-correct flow only (ctx.sourceReadOnly), and unless the setting cross_alert_notes is false: the story note
+ * of a Direct BigQuery card that went without it at its own check (bqStoryNotes_ had no time for it, or the note could
+ * not be posted then). Nothing is kept to know which card that is:
+ *   - the cards are the ones in this flow's Alert log that the poll posted in the last BQ_STORY_NOTE_LATE_MS_ and
+ *     that were reviewed where they stand (the row's forward_message is the card itself; its source_at is when the
+ *     card was posted);
+ *   - the story's card is the newest Early Detection card of the last 24 hours that has the card's post and was there
+ *     before the card was posted (EarlyDetection.gs edLedger_'s `at`, earlier than the row's source_at). A story that
+ *     came after the card is none of this note's business: the note is only for a card posted into a story;
+ *   - the note is the one of the card's own check, under the same key, through ThreadNotes.gs acThreadNote_, which
+ *     posts a key once: a card that has its note gets no second one, whatever the helper remembers. A card the helper
+ *     would refuse in any case (acThreadNoteCheck_) is passed over.
+ * `hasTime`: asked before each note (a function, or a boolean): the flow has more than BQ_STORY_NOTE_LEFT_MS_ left.
+ * The caller asks only at a check that has read the Alert log anyway. One line in the run log for each note posted
+ * here; a note the helper refuses has the helper's own line. How many notes were posted now. Never throws.
+ */
+function bqStoryNotesLate_(ctx, now, hasTime) {
+  let notes = 0;
+  try {
+    const S = (ctx && ctx.settings) || {};
+    if (!ctx || ctx.sourceReadOnly !== true || S.cross_alert_notes === false) return 0;
+    const time = () => (typeof hasTime === 'function' ? !!hasTime() : !!hasTime);
+    if (!time()) return 0;
+    const at = Number(now) || Date.now();
+    const posted = a => Number(a.source_at) || 0;  // when the card was posted: its own time, never its row's
+    const rows = ((ctx.store && ctx.store.alerts) || []).filter(a => a && bqDirectSource_(a.ingested) && a.record_key &&
+      a.forward_thread && a.forward_message && String(a.forward_message) === String(a.source_message) &&
+      posted(a) > 0 && posted(a) <= at && at - posted(a) < BQ_STORY_NOTE_LATE_MS_);
+    if (!rows.length) return 0;
+    const ledger = edLedger_(ctx, at);
+    // the notes this run has posted (ThreadNotes.gs): it moves only when a note is posted now, not when it was there
+    const posts = () => (typeof acNoteRun_ === 'function' ? Number(acNoteRun_(ctx).n) || 0 : 0);
+    rows.forEach(a => {
+      try {
+        const story = ledger.find(L => L.keys.has(String(a.record_key)) && Number(L.at) > 0 && Number(L.at) < posted(a));
+        if (!story || !time()) return;
+        const text = bqStoryNoteText_(story);
+        if (!acThreadNoteCheck_(ctx, a, text).ok) return;
+        const before = posts();
+        if (!acThreadNote_(ctx, a, text, `bqstory:${a.forward_message}`) || posts() <= before) return;
+        notes++;
+        console.log(`BigQuery direct poll: a note is under the card of ${(a.forwarded_fields && a.forwarded_fields.post_url) || a.record_key}` +
+          `${a.alert_id ? ` (${a.alert_id})` : ''}, whose post is in a story's card${story.row ? ` (${story.row})` : ''}: added at a later check`);
+      } catch (e) { /* this card goes without its note */ }
+    });
+  } catch (e) { /* a note is never worth more than the check */ }
   return notes;
 }
 
@@ -2465,7 +2520,8 @@ function bqStoryNotes_(ctx, cards, now, hasTime) {
  * (bsipKofValue_): a KOF's post then gets its Social Alert at any size, as Burson's alerts do. In every other flow the
  * line is "No", as before. Also in the Auto-correct flow only (unless settings.cross_alert_notes is false): once every
  * card is posted, a new card whose post is in an Early Detection card of the last 24 hours gets one note in its thread
- * that says so and links that card (bqStoryNotes_); and a record Step 1 leaves out as on an issue already alerted still
+ * that says so and links that card (bqStoryNotes_; a card that went without it gets it at a later check of its first
+ * hour: bqStoryNotesLate_); and a record Step 1 leaves out as on an issue already alerted still
  * gets its own card when it is a bigger post on that issue (BqPipeline.gs bqBiggerPost_: the alert requirements'
  * engagement bar or more, where no earlier alert on the issue had that many, nor a post that goes on at the same check:
  * one Step 1 passed itself, or one let through before it), and is then not counted as not posted.
@@ -2822,6 +2878,9 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
   // The Auto-correct flow only (setting cross_alert_notes): a new card whose post is in a story's card gets one note
   // that says so, once every card is posted and remembered, and only with 45 seconds of the flow left
   bqStoryNotes_(ctx, cards, now, timeLeft(BQ_STORY_NOTE_LEFT_MS_));
+  // ...and a card of the last hour that went without that note gets it now: only at a check that has read the Alert log
+  // anyway (any check whose feeds gave a post about Google), never one that would open the log for it
+  if (storeAlerts) bqStoryNotesLate_(ctx, now, () => timeLeft(BQ_STORY_NOTE_LEFT_MS_));
   if (on) {
     const names = list => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}` : list[0]);
     const problem = [refusedFor.length ? `BigQuery refused the query for ${names(refusedFor)}` : '',

@@ -6,8 +6,11 @@
 // together. It is also posted for a post the story's card links that is not its main post. The poll looks the post up
 // among the Early Detection cards of the last 24 hours (EarlyDetection.gs edLedger_, by the post's record key), once
 // every card of the check is posted and only with 45 seconds of the flow left; the note goes through the one helper
-// (ThreadNotes.gs acThreadNote_). A note there was no time for is not added by a later run. With the setting off, in
-// the Mirror flow and in every flow that is not the Auto-correct flow, nothing is posted and nothing else changes.
+// (ThreadNotes.gs acThreadNote_). A card that went without its note at its own check (the flow was short of time, or
+// the note could not be posted) gets it at a later check of its first hour (bqStoryNotesLate_), with nothing new kept
+// for that: only a card that was posted when the story's card was already there, only once, and only at a check that
+// reads the Alert log anyway. With the setting off, in the Mirror flow and in every flow that is not the Auto-correct
+// flow, nothing is posted and nothing else changes.
 //
 // Every scenario here turns the fix plan's other settings off (golden.SETTINGS_OFF), so what a later change does by
 // default never moves these tests.
@@ -150,7 +153,9 @@ module.exports = H => {
   const alertRows = t => t.bot.sheetBackend_(t.sheet()).loadAlerts();
   const c15 = t => String(t.control().cell(15, 3));
   const said = t => t.g.logs.filter(l => /^BigQuery direct poll: (?:a note is|no note) under the new card of /.test(l));
+  const saidLate = t => t.g.logs.filter(l => /^BigQuery direct poll: a note is under the card of /.test(l));  // a note added at a later check
   const noteLogs = t => t.g.logs.filter(l => /^thread note not posted/.test(l));
+  const storyNotes = t => botPosts(t, AC).filter(m => kind(m) === 'story note');
   const mails = t => t.g.gmail.sentMessages().map(m => [m.to, m.subject.split(' | ')[0]]);
   const ALERT = [[TESTER], '[Auto-correct test] 🟥SOCIAL ALERT🟥: Google Maps'];  // the Maps post's own Social Alert
 
@@ -443,7 +448,7 @@ module.exports = H => {
       `no note ${WHOSE}: it could not be posted`,  // the Mirror flow's mark
       `no note ${WHOSE}: it could not be posted`,  // B25
       `no note ${WHOSE}: it could not be posted`,  // the Other alerts space
-      `no note ${WHOSE}: the flow had 45 seconds or less left (it is not added later)`,
+      `no note ${WHOSE}: the flow had 45 seconds or less left (a check in the next hour adds it)`,
       `no note ${WHOSE}: it could not be posted`,  // a card in S-F Burson
       `a note is ${WHOSE}`, `a note is ${WHOSE}`,
     ]);
@@ -455,31 +460,48 @@ module.exports = H => {
   // The helper refusing, and a run short of time
   // -----------------------------------------------------------------------------------------------------------
 
-  test('story notes: when the note can\'t be posted (Chat refuses it) nothing is posted and nothing is thrown: the check ends as it does without a note (the card posted, remembered and counted, its review and its Social Alert a run later), the run log says the note is missing, and no later run tries it again', () => {
+  test('story notes: when the note can\'t be posted (Chat refuses it) nothing is posted and nothing is thrown: the check ends as it does without a note (the card posted, remembered and counted, its review and its Social Alert a run later), and the run log says the note is missing. The next check tries the note again: nothing while Chat still refuses it. Once Chat takes it the note is under the card, once, the same note the card\'s own check would have posted, and the run log says it was added at a later check; no check after that tries or posts anything more', () => {
     const w = oneSpace(FIRST);
-    const { t } = w;
+    const { t, rec, feed } = w;
     // Chat refuses every reply that is a note of this kind
-    t.chat.fail = (method, path, query, body) => (method === 'post' && /\/messages$/.test(path) && body && /Part of a story/.test(String(body.text || ''))
+    const REFUSED = (method, path, query, body) => (method === 'post' && /\/messages$/.test(path) && body && /Part of a story/.test(String(body.text || ''))
       ? { code: 500, body: { error: { message: 'Internal error encountered.' } } } : null);
-    const got = storyThenPost(w, golden.rows.mapsRow(), 0);
-    eq([got.atCheck, got.after, got.notes.map(kind), mails(t), got.elsewhere],
-      [['story card', 'story review note', 'Direct BigQuery card'], ['card review note'], ['card review note'], [ALERT], []]);
+    const tries = () => t.chat.calls.filter(c => c.method === 'post' && c.body && /Part of a story/.test(String(c.body.text || ''))).length;
+    const refusals = () => noteLogs(t).map(l => l.replace(/Chat API 500 on posting to \S+: /, 'Chat API 500: '));
+    t.chat.fail = REFUSED;
+    const before = botPosts(t, AC).length;
+    rec.step('the story and the post are found in one run', 5, () => { feed.stories = [mapsStory()]; feed.bsip = [golden.rows.mapsRow()]; });
+    eq(kinds(t, AC, before), ['story card', 'story review note', 'Direct BigQuery card']);
+    const story = botPosts(t, AC).find(m => kind(m) === 'story card');
+    const card = cardOf(t, AC, MAPS);
     const storyId = alertRows(t).find(r => r.ingested === 'Early detection').alert_id;
     eq(said(t), [`BigQuery direct poll: no note under the new card of ${MAPS}, whose post is in a story's card (${storyId}): it could not be posted`]);
-    eq(noteLogs(t).map(l => l.replace(/Chat API 500 on posting to \S+: /, 'Chat API 500: ')), ['thread note not posted: Chat API 500: Internal error encountered.']);
+    const once = tries();
+    eq([once > 0, refusals()], [true, ['thread note not posted: Chat API 500: Internal error encountered.']]);
     // the poll kept what it posted: the post is not carded again, and C15 counts the card
     eq([JSON.parse(t.g.props.get('BQ_INGESTED_KEYS')).length, JSON.parse(t.g.props.get('BQ_INGESTED_MSGS')).length], [1, 1]);
+    rec.step('the card is reviewed', 1);
+    eq([under(t, card).map(kind), mails(t)], [['card review note'], [ALERT]]);
+    // the next check tries the note again, as often as the first did, and Chat refuses it again
+    rec.step('the next check: Chat still refuses the note', 4);
+    eq([under(t, card).map(kind), tries(), refusals().length, saidLate(t)], [['card review note'], 2 * once, 2, []]);
     assert.ok(/ · 1 post today \(1 for a Social Alert, 0 monitoring only\) /.test(c15(t)), c15(t));
-    eq(t.chat.calls.filter(c => c.method === 'post' && c.body && /Part of a story/.test(String(c.body.text || ''))).length > 0, true);
-    // with Chat working again, later checks have no new card: the note is not tried again
+    // Chat works again: the check after that posts the note
     t.chat.fail = null;
-    const tried = t.chat.calls.length;
-    [5, 1, 5].forEach(minutes => w.rec.step('later', minutes));
-    eq([under(t, got.card).map(kind), t.chat.calls.slice(tried).filter(c => c.body && /Part of a story/.test(String(c.body.text || ''))).length],
-      [['card review note'], 0]);
+    rec.step('the check after: Chat takes the note', 5);
+    const cardId = alertRows(t).find(r => r.ingested === 'BSIP').alert_id;
+    const [note] = storyNotes(t);
+    eq([under(t, card).map(kind), storyNotes(t).length, tries()], [['card review note', 'story note'], 1, 2 * once + 1]);
+    eq(note.text, `🔗 *Part of a story:* 6 small accounts on X and Reddit tell it (<${linkTo(story)}|story card>)`);
+    eq([note.thread.name, note.threadReply, /^client-bqa-[0-9a-f]{40}$/.test(note.clientAssignedMessageId)], [card.thread.name, true, true]);
+    eq(saidLate(t), [`BigQuery direct poll: a note is under the card of ${MAPS} (${cardId}), whose post is in a story's card (${storyId}): added at a later check`]);
+    // the checks after that: the note is there, nothing is tried or posted again, and the bot never answers it
+    const posts = botPosts(t, AC).length;
+    [1, 4, 5, 5].forEach(minutes => rec.step('later', minutes));
+    eq([botPosts(t, AC).length, tries(), saidLate(t).length, refusals().length, mails(t)], [posts, 2 * once + 1, 1, 2, [ALERT]]);
   });
 
-  test('story notes: a note needs more than 45 seconds of the flow left once the cards are posted. With 45 seconds or less the card is posted and remembered as always and the note is not; the run log says so; the next runs and checks, with all their time, do not add it later. With a millisecond more the note is posted. A check with too little time for the card itself posts the card at a later check, and the note with it', () => {
+  test('story notes: a note needs more than 45 seconds of the flow left once the cards are posted. With 45 seconds or less the card is posted and remembered as always and the note is not, and the run log says so; the next check, which has its time, adds the note: once, the very note the card\'s own check would have posted, under the same card. With a millisecond more the note is posted at the card\'s own check, and no later check adds a second one. A check with too little time for the card itself posts the card at a later check, and the note with it', () => {
     // how much of the flow is left when the notes are asked for, in a check that costs nothing
     const probe = oneSpace(FIRST);
     storyThenPost(probe, golden.rows.mapsRow(), 5);
@@ -493,21 +515,253 @@ module.exports = H => {
       w.rec.step('Direct BigQuery finds the post', 5, () => { w.feed.bsip = [golden.rows.mapsRow()]; });
       w.cost.poll = 0;
       const first = { call: w.noteCalls.filter(c => c[2] > 0), notes: notes() };
-      [1, 1, 5, 1, 5, 1].forEach(minutes => w.rec.step('after', minutes));
-      return Object.assign(first, { t: w.t, later: notes(), calls: w.noteCalls.filter(c => c[2] > 0).length });
+      w.rec.step('the card is reviewed', 1);
+      const reviewed = notes();
+      [1, 5, 1, 5, 1].forEach(minutes => w.rec.step('after', minutes));
+      return Object.assign(first, { t: w.t, reviewed, later: notes(), calls: w.noteCalls.filter(c => c[2] > 0).length,
+        texts: storyNotes(w.t).map(m => m.text), late: saidLate(w.t) });
     };
     const short = run(45 * SEC);
-    eq([short.call, short.notes, short.later, short.calls], [[[45 * SEC, false, 1]], [], ['card review note'], 1]);
+    eq([short.call, short.notes, short.reviewed, short.later, short.calls], [[[45 * SEC, false, 1]], [], ['card review note'], ['card review note', 'story note'], 1]);
     assert.match(said(short.t).join('\n'),
-      /^BigQuery direct poll: no note under the new card of \S+, whose post is in a story's card \(QA-\d+\): the flow had 45 seconds or less left \(it is not added later\)$/);
+      /^BigQuery direct poll: no note under the new card of \S+, whose post is in a story's card \(QA-\d+\): the flow had 45 seconds or less left \(a check in the next hour adds it\)$/);
+    assert.match(short.late.join('\n'),
+      /^BigQuery direct poll: a note is under the card of \S+ \(QA-\d+\), whose post is in a story's card \(QA-\d+\): added at a later check$/);
     eq([mails(short.t), JSON.parse(short.t.g.props.get('BQ_INGESTED_KEYS')).length, noteLogs(short.t)], [[ALERT], 1, []]);
     const enough = run(45 * SEC + 1);
-    eq([enough.call, enough.notes, enough.later, enough.calls], [[[45 * SEC + 1, true, 1]], ['story note'], ['story note', 'card review note'], 1]);
-    // less still: a card needs 30 seconds, so with 40 there is a card and no note
+    eq([enough.call, enough.notes, enough.later, enough.calls, enough.late], [[[45 * SEC + 1, true, 1]], ['story note'], ['story note', 'card review note'], 1, []]);
+    // the note added later is the one the card's own check posts: the same words, the same link to the story's card
+    eq([short.texts.length, short.texts], [1, enough.texts]);
+    assert.match(short.texts[0], /^🔗 \*Part of a story:\* 6 small accounts on X and Reddit tell it \(<https:\/\/chat\.google\.com\/room\/AAQAonespace01\/t\d+\/m\d+\|story card>\)$/);
+    // less still: a card needs 30 seconds, so with 40 there is a card and no note; the next check adds it
     const less = run(40 * SEC);
-    eq([less.call, less.notes, less.later], [[[40 * SEC, false, 1]], [], ['card review note']]);
+    eq([less.call, less.notes, less.later, less.texts], [[[40 * SEC, false, 1]], [], ['card review note', 'story note'], enough.texts]);
     // ...and with 20 there is no card in that check: it comes at the next one, which has its time, and the note with it
     const none = run(20 * SEC);
-    eq([none.call, none.notes, none.later, none.calls], [[], 'no card', ['story note', 'card review note'], 1]);
+    eq([none.call, none.notes, none.later, none.calls, none.late], [[], 'no card', ['story note', 'card review note'], 1, []]);
+  });
+
+  // -----------------------------------------------------------------------------------------------------------
+  // A note added at a later check: when, for which card, and at what cost
+  // -----------------------------------------------------------------------------------------------------------
+
+  /**
+   * From now on a world's Direct BigQuery checks end with `w.leave.ms` of the flow left (null: as they come): the check's
+   * BSIP read takes all the rest of the flow's time. (The harness's Chat takes a second for each message it is given,
+   * so this is exact for a check that posts nothing after its read.)
+   */
+  const leaving = w => {
+    w.leave = { ms: null };
+    w.t.bot.__leave = w.leave;
+    w.t.bot.__cost = w.cost;
+    w.t.bot.ev('pollBigQuerySources_ = (orig => function (ctx, target) { ' +
+      'if (__leave.ms !== null && ctx && ctx.deadline) __cost.poll = Math.max(0, ctx.deadline - ctx.now() - __leave.ms); ' +
+      'return orig(ctx, target); })(pollBigQuerySources_)');
+    return w;
+  };
+  /** How often a world's flows opened the Alert log (each flow's store is made when the run first needs it). */
+  const logOpens = t => {
+    t.bot.__opens = { n: 0 };
+    t.bot.ev('makeStore_ = (orig => function () { __opens.n++; return orig.apply(this, arguments); })(makeStore_)');
+    return t.bot.__opens;
+  };
+  /**
+   * A started one-space world where the story on the Maps post is carded, and five minutes on Direct BigQuery cards
+   * `row`'s post in a check that ends with 40 seconds of the flow left: the card has no note. {w, card, noNote}.
+   */
+  const cardWithoutItsNote = (overrides, row) => {
+    const w = leaving(oneSpace(overrides));
+    w.rec.step('the story is found', 5, () => { w.feed.stories = [mapsStory()]; });
+    w.leave.ms = 40 * SEC;
+    w.rec.step('Direct BigQuery finds the post with little time left', 5, () => { w.feed.bsip = [row]; });
+    w.leave.ms = null;
+    w.cost.poll = 0;
+    const card = cardOf(w.t, AC, row.url);
+    assert.ok(card, 'the card is posted');
+    // (with the setting off there is no note to miss, and nothing is said)
+    const on = w.t.bot.ev('GEN').settings.cross_alert_notes !== false;
+    eq([under(w.t, card).map(kind), said(w.t).length, on ? /45 seconds or less left \(a check in the next hour adds it\)$/.test(said(w.t)[0]) : true],
+      [[], on ? 1 : 0, true]);
+    return { w, card };
+  };
+
+  test('story notes: the later look has the same 45 seconds, and one hour. A card went without its note; while every check after it ends with 45 seconds or less of the flow left, no note is added; the first check with a millisecond more adds it. A card whose first hour passes that way never gets the note: a check with all its time, 61 minutes after the card, adds nothing', () => {
+    // every later check short of time, then one with 45,001 ms left: that one adds the note
+    const { w, card } = cardWithoutItsNote(FIRST, otherRow());
+    const { t, rec } = w;
+    rec.step('the card is reviewed', 1);
+    w.leave.ms = 45 * SEC;
+    [4, 5, 5].forEach(minutes => rec.step('a check with 45 seconds left', minutes));
+    eq([under(t, card).map(kind), saidLate(t), said(t).length, noteLogs(t)], [[], [], 1, []]);
+    w.leave.ms = 45 * SEC + 1;
+    rec.step('a check with a millisecond more', 5);
+    eq([under(t, card).map(kind), saidLate(t).length], [['story note'], 1]);
+    w.leave.ms = null;
+    w.cost.poll = 0;
+    [5, 5].forEach(minutes => rec.step('later', minutes));
+    eq([storyNotes(t).length, saidLate(t).length], [1, 1]);
+
+    // the whole first hour short of time: the note is never added, not even by a check that has all its time
+    const late = cardWithoutItsNote(FIRST, otherRow());
+    late.w.rec.step('the card is reviewed', 1);
+    late.w.leave.ms = 30 * SEC;
+    // (a run short of time takes most of its flow's minutes: the clock is read, not added up)
+    const posted = Date.parse(late.card.createTime);
+    const since = () => late.w.t.g.clock.now - posted;
+    const checks = late.w.noteCalls.length;
+    while (since() < 50 * MIN) late.w.rec.step('a check short of time', 1);
+    late.w.leave.ms = null;
+    late.w.cost.poll = 0;
+    assert.ok(since() > 50 * MIN && since() < 60 * MIN, 'still inside the card\'s first hour');
+    assert.ok(late.w.noteCalls.length - checks >= 8, `checks were made in that hour: ${late.w.noteCalls.length - checks}`);
+    late.w.rec.step('61 minutes after the card: a check with all its time', Math.ceil((61 * MIN - since()) / MIN) + 1);
+    assert.ok(late.w.t.g.clock.now - posted > 60 * MIN, 'the card\'s first hour has passed');
+    [5, 5].forEach(minutes => late.w.rec.step('later', minutes));
+    eq([under(late.w.t, late.card).map(kind), storyNotes(late.w.t), saidLate(late.w.t)], [[], [], []]);
+    eq(B.ev('[BQ_STORY_NOTE_LATE_MS_, BQ_STORY_NOTE_LEFT_MS_]'), [HOUR, 45 * SEC]);
+  });
+
+  test('story notes: a note is added later only under a card that was posted into a story: the story\'s card was there before the post\'s own card. A card posted before the story\'s card (the poll first and the story in the same run; or the story found a check after the card) never gets one from the poll, however many checks follow, with stories first or not: the poll\'s note is not for a story that comes after the card', () => {
+    // the poll first, the story found in the same run: the card is posted before the story's card
+    const same = oneSpace(NOTES);
+    const got = storyThenPost(same, otherRow(), 0);
+    eq([got.atCheck, got.notes.map(kind), storyNotes(same.t), saidLate(same.t)], [['Direct BigQuery card', 'story card', 'story review note'], [], [], []]);
+    // (the later look did see that card: it is one the poll posted in the last hour, and the story's card has its post)
+    const rows = alertRows(same.t);
+    const [cardRow, storyRow] = [rows.find(r => r.ingested === 'BSIP'), rows.find(r => r.ingested === 'Early detection')];
+    eq([cardRow.record_key, storyRow.forwarded_fields.early_detection.post_keys.indexOf(cardRow.record_key) >= 0, storyRow.created_at > cardRow.source_at,
+      same.t.g.clock.now - cardRow.source_at < HOUR], [same.t.bot.recordKey_({ post_url: OTHER }), true, true, true]);
+
+    // the story found a check after the card, where stories go first and where they don't
+    [['stories first', FIRST], ['the poll first', NOTES]].forEach(([name, overrides]) => {
+      const w = oneSpace(overrides);
+      const { t, rec, feed } = w;
+      rec.step('Direct BigQuery finds the other post', 5, () => { feed.bsip = [otherRow()]; });
+      rec.step('its card is reviewed', 1);
+      rec.step('the story is found', 14, () => { feed.stories = [mapsStory()]; });
+      [1, 4, 5, 5, 5].forEach(minutes => rec.step('later', minutes));
+      eq([name, botPosts(t, AC).filter(m => !m.threadReply).map(kind), storyNotes(t), saidLate(t), said(t), noteLogs(t)],
+        [name, ['Direct BigQuery card', 'story card'], [], [], [], []]);
+    });
+  });
+
+  test('story notes: the later look opens nothing for itself. A check whose feeds give no post did not read the Alert log, and makes no later look: there the note waits, and the flows open the Alert log exactly as often with the notes on as with them off. The next check that reads the log anyway (the feed gives the post again) adds the note. Gemini, the embeddings and BigQuery are asked as often with the notes on as with them off', () => {
+    const run = overrides => {
+      const { w, card } = cardWithoutItsNote(overrides, otherRow());
+      const { t, rec, feed } = w;
+      const opens = logOpens(t);
+      // the checks that made a later look (it is made only at a check that has read the Alert log for its posts)
+      t.bot.__looks = { n: 0 };
+      t.bot.ev('bqStoryNotesLate_ = (orig => function () { __looks.n++; return orig.apply(this, arguments); })(bqStoryNotesLate_)');
+      const looks = [];
+      const asked = () => [t.g.vertex.calls.length, t.g.vertex.embedCalls.length, w.bigquery.n];
+      rec.step('the card is reviewed', 1);
+      const at = [opens.n];
+      looks.push(t.bot.__looks.n);
+      rec.step('a check whose feeds give nothing', 4, () => { feed.bsip = []; });
+      at.push(opens.n);
+      looks.push(t.bot.__looks.n);
+      const quiet = under(t, card).map(kind);
+      rec.step('a check that reads the post again', 5, () => { feed.bsip = [otherRow()]; });
+      at.push(opens.n);
+      looks.push(t.bot.__looks.n);
+      [1, 4].forEach(minutes => rec.step('later', minutes));
+      return { quiet, later: under(t, card).map(kind), opens: at.concat([opens.n]), asked: asked(), late: saidLate(t).length,
+        looks: looks.concat([t.bot.__looks.n]) };
+    };
+    const on = run(FIRST);
+    const off = run(FIRST_NO_NOTES);
+    eq([on.quiet, on.later, on.late], [[], ['story note'], 1]);
+    eq([off.quiet, off.later, off.late], [[], [], 0]);
+    eq([on.opens, on.asked], [off.opens, off.asked]);
+    // the quiet check made no later look; the one that read the post again made one (with the notes off too: the look
+    // itself then returns at once)
+    eq([on.looks[1] - on.looks[0], on.looks[2] - on.looks[1] >= 1], [0, true]);
+  });
+
+  test('story notes: a card whose thread can\'t be read when it is posted (the helper counts a card\'s notes in its thread, and Chat fails the read) goes without its note at that check; the next check, with Chat answering again, adds it', () => {
+    const w = oneSpace(FIRST);
+    const { t, rec, feed } = w;
+    rec.step('the story is found', 5, () => { feed.stories = [mapsStory()]; });
+    t.g.cache.delete('ac_thread_notes');  // (the helper remembers nothing: it counts the new card's notes in its thread)
+    t.chat.fail = (method, path, query) => (method === 'get' && /\/messages$/.test(path) && /thread\.name/.test(String((query && query.filter) || ''))
+      ? { code: 503, body: { error: { code: 503, message: 'The service is currently unavailable.' } } } : null);
+    rec.step('Direct BigQuery finds the post', 5, () => { feed.bsip = [golden.rows.mapsRow()]; });
+    t.chat.fail = null;
+    const card = cardOf(t, AC, MAPS);
+    eq([under(t, card).map(kind), noteLogs(t), said(t).length], [[], ['thread note not posted: its card\'s thread couldn\'t be read to count the notes it has'], 1]);
+    rec.step('the card is reviewed', 1);
+    rec.step('the next check', 4);
+    eq([under(t, card).map(kind), saidLate(t).length, storyNotes(t).length, mails(t)], [['card review note', 'story note'], 1, 1, [ALERT]]);
+  });
+
+  test('story notes: the later look by hand (bqStoryNotesLate_), on a card of the last hour that was posted into a story and has no note. It posts nothing and logs nothing in a flow that is not the Auto-correct flow, in one that only looks like it, with the setting off and with no time; for a card older than an hour, one whose row doesn\'t say when it was posted, one that was not reviewed where it stands, one in another space, an alert that is no Direct BigQuery card, a post no story has, and a story whose card came with or after the post\'s card; an Alert log that can\'t be read throws nothing. Then the note is posted once, as the card\'s own check posts it; asked again, also with the helper\'s memory gone, and by the card\'s own check, nothing more is posted', () => {
+    const w = oneSpace(OFF);  // the notes off: the story's card, then the card of the other post it links, without a note
+    const { t } = w;
+    storyThenPost(w, otherRow(), 5);
+    const card = cardOf(t, AC, OTHER);
+    const story = botPosts(t, AC).find(m => kind(m) === 'story card');
+    eq(under(t, card), []);
+    const live = t.chat.say(REAL, 'A message in S-F Burson');
+    const count = () => everyPost(t).size;
+    const got = inFlow(t, ctx => {
+      const now = ctx.now();
+      const before = count();
+      const logged = t.g.logs.length;
+      const on = Object.assign({}, ctx.settings, { cross_alert_notes: true });
+      const flow = patch => Object.assign({}, ctx, { settings: on }, patch || {});
+      const late = (c, at, hasTime) => t.bot.bqStoryNotesLate_(c, at === undefined ? now : at, hasTime === undefined ? true : hasTime);
+      const rows = ctx.store.alerts;
+      const cardRow = rows.find(r => r.ingested === 'BSIP');
+      const storyRow = rows.find(r => r.ingested === 'Early detection');
+      // a flow whose Alert log holds `list`: the story's row and the card's row with something changed
+      const withRows = list => flow({ store: { alerts: list, alertById: id => list.find(r => r.alert_id === id) || null } });
+      const cardAs = patch => withRows([storyRow, Object.assign({}, cardRow, patch)]);
+      const broken = flow();
+      Object.defineProperty(broken, 'store', { get() { throw new Error('the Alert log can\'t be read'); } });
+      const out = {
+        facts: [ctx.sourceReadOnly === true, ctx.settings.cross_alert_notes === false, cardRow.source_message === card.name,
+          cardRow.forward_message === card.name, cardRow.forward_thread === card.thread.name, cardRow.source_at === Date.parse(card.createTime),
+          now - cardRow.source_at > 10 * MIN && now - cardRow.source_at < HOUR, storyRow.created_at < cardRow.source_at],
+        passedOver: [
+          late(ctx),                                                  // the setting off (this world's own)
+          late(flow({ settings: Object.assign({}, on, { cross_alert_notes: false }) })),
+          late(flow({ sourceReadOnly: false })), late(flow({ sourceReadOnly: undefined })), late(flow({ sourceReadOnly: 'true' })),
+          late(flow({ outboundBlocked: true })),                      // a flow that only looks like it: the helper would refuse, so it is passed over
+          late(flow({ direct: true })), late(flow({ otherSpace: true })),
+          late(flow(), now, false), late(flow(), now, () => false),   // no time
+          late(flow(), now, (() => { let asked = 0; return () => asked++ === 0; })()),  // time at the start, none left for the note
+          late(flow(), cardRow.source_at + HOUR),                     // the card's first hour is over
+          late(flow(), cardRow.source_at - 1),                        // (a card from after the check)
+          late(cardAs({ source_at: 0 })), late(cardAs({ source_at: undefined })), late(cardAs({ source_at: '' })),  // no time of its own
+          late(cardAs({ forward_message: `${card.name}x` })),         // not reviewed where it stands: the alert post is another message
+          late(cardAs({ source_message: '' })), late(cardAs({ forward_message: '' })), late(cardAs({ forward_thread: '' })),
+          late(cardAs({ source_message: live.name, forward_message: live.name, forward_thread: live.thread.name })),  // a card in S-F Burson
+          late(cardAs({ ingested: 'Early detection' })), late(cardAs({ ingested: 'Watch alert' })), late(cardAs({ ingested: '' })),
+          late(cardAs({ record_key: '' })), late(cardAs({ record_key: 'x.com/status/1' })),  // a post no story's card has
+          late(cardAs({ source_at: storyRow.created_at })),           // the story's card came with the post's card,
+          late(cardAs({ source_at: storyRow.created_at - 1 })),       // ...or after it
+          late(withRows([cardRow])),                                  // no story's card at all
+          late(broken), late(null), late(undefined), late({}),
+        ],
+      };
+      out.afterPassedOver = [count() - before, t.g.logs.slice(logged)];
+      out.posted = late(flow());
+      out.again = late(flow());
+      t.g.cache.delete('ac_thread_notes');  // the helper's memory gone: the note under the card is still the same note
+      out.forgotten = late(flow());
+      out.ownCheck = t.bot.bqStoryNotes_(flow(), [{ key: cardRow.record_key, url: OTHER,
+        msg: { name: card.name, thread: card.thread.name, createTime: Date.parse(card.createTime) } }], now, true);
+      out.afterPosting = count() - before;
+      out.ids = [cardRow.alert_id, storyRow.alert_id];
+      return out;
+    });
+    eq([got.facts, got.passedOver, got.afterPassedOver], [Array(8).fill(true), Array(33).fill(0), [0, []]]);
+    // posted once: 1 note posted now; asked again 0; with the helper's memory gone 0; the card's own check finds its note there
+    eq([got.posted, got.again, got.forgotten, got.ownCheck, got.afterPosting], [1, 0, 0, 1, 1]);
+    const [note] = under(t, card);
+    eq([under(t, card).map(kind), note.text], [['story note'], `🔗 *Part of a story:* 6 small accounts on X and Reddit tell it (<${linkTo(story)}|story card>)`]);
+    eq(saidLate(t), [`BigQuery direct poll: a note is under the card of ${OTHER} (${got.ids[0]}), whose post is in a story's card (${got.ids[1]}): added at a later check`]);
+    eq([noteLogs(t), t.chat.botPosts(REAL)], [[], []]);
   });
 };
