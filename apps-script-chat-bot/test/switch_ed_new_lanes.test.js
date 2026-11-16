@@ -629,7 +629,7 @@ module.exports = H => {
     return env;
   }
 
-  test('new lanes (promotion, E4): a story started by new-lane posts alone (5 accounts in the last hour) is noted, not signalled, during the trial; with the trial over, or early_wave_new_trial_days at 0, it is signalled; the trial date is the day the source\'s row first went ON', () => {
+  test('new lanes (promotion, E4): a story started by new-lane posts alone (5 accounts in the last hour) is noted, not signalled, during the trial; with the trial over, or early_wave_new_trial_days at 0, it is signalled; the trial date is the first day the source is read', () => {
     let env = liftRun(liftRows(0, 5));
     eq([signals(env.rows).length, env.rec.on.bwl, env.lifted.length, env.lifted[0].sent, env.lifted[0].trial, env.lifted[0].accounts],
       [0, DAY, 1, false, true, 5]);
@@ -1062,5 +1062,191 @@ module.exports = H => {
     eq(B.ewsWatchPick_([story], [], {}, NOW, 3).length, 1);
     eq(B.ewsWatchPick_([story], [], {}, NOW, 3, { authors: new Set(['gone']), big: new Set() }).length, 0);
     eq(B.ewsWatchPick_([story], [], {}, NOW, 3, { authors: new Set(['other']), big: new Set() }).length, 1);
+  });
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 9. The early watch under the trial and the caps; the index keeps the latest keys; the wiring of the OFF checks
+  // ---------------------------------------------------------------------------------------------------------------
+
+  // A story of `sonarN` Sonar accounts and `bwlN` Brandwatch-live accounts, one topic with a risk term, each on its own
+  // link, posted in the last hour (`tag` keeps two stories apart)
+  const watchRows = (sonarN, bwlN, tag, o) => ({
+    c1: Array.from({ length: sonarN }, (_, i) => row(Object.assign({ mid: `SONAR|${tag}s${i}`, author: `${tag}s${i}`,
+      url: `https://x.com/${tag}s${i}/status/2196000000000000${i}`, txt: `${TOPICS[1]} ${WORDS[i]} outage`, chash: `${tag}s${i}`,
+      sig: `${tag}s${i}`, risk: 'outage', posted_ms: NOW - (8 + i * 3) * MIN }, (o && o.sonar) || {}))),
+    fk: Array.from({ length: bwlN }, (_, i) => row(Object.assign({ lane: 'bwl', mid: `BWL|${tag}b${i}`, platform: 'reddit', author: `${tag}b${i}`,
+      url: `https://www.reddit.com/r/google/comments/${tag}b${i}/x/`, txt: `${TOPICS[1]} ${WORDS[i + 3]} outage`, chash: `${tag}b${i}`,
+      sig: `${tag}b${i}`, risk: 'outage', posted_ms: NOW - (6 + i * 3) * MIN }, (o && o.bwl) || {}))),
+  });
+  // A check with the early watch asked (bar 3 accounts); returns the headlines the fast triage was asked about
+  function watchRun(env, raise) {
+    const asked = [];
+    const watch = { bars: { accounts: 3 }, ask: r => { asked.push(r.headline); return raise ? { ok: true, dec: raise } : { ok: false }; } };
+    env.b.bqEarlyDetectionRows_(30, { watch });
+    return asked;
+  }
+  // Checks with the fake lane ON (source bwl): `batches[i]` the rows of check i by job (the last one repeats)
+  const watchEnv = (batches, o) => {
+    let i = 0;
+    const env = makeEnv(job => (batches[Math.min(i, batches.length - 1)] || {})[job] || []);
+    if (o && o.settings) Object.assign(env.b.ev('GEN').settings, o.settings);
+    if (o && o.srcDay) env.g.props.set('EWS_SRC_DAY', JSON.stringify(o.srcDay));
+    addFakeLane(env.b, { src: 'bwl', ready: () => !(o && o.notReady && o.notReady(i)) });
+    env.b.ewsRunSwitches_({ edFake: true });
+    env.next = () => { i++; env.g.clock.now += 15 * MIN; };
+    return env;
+  };
+  const membersIn = env => {
+    const out = [];
+    for (const [k, v] of env.g.cache.entries()) if (k.startsWith('ews1:cl:')) JSON.parse(v).forEach(c => (c.m || []).forEach(m => out.push(m)));
+    return out;
+  };
+
+  test('new lanes (the early watch, Q5): 1 Sonar and 2 Brandwatch-live accounts with a risk term are not asked about in the trial; with early_wave_new_trial_days at 0 they are; 3 Sonar accounts are asked about in the trial', () => {
+    let env = watchEnv([watchRows(1, 2, 'w')]);
+    eq(watchRun(env), []);
+    env = watchEnv([watchRows(1, 2, 'w')], { settings: { early_wave_new_trial_days: 0 } });
+    eq(watchRun(env).length, 1);
+    env = watchEnv([watchRows(3, 0, 'w')]);
+    eq(watchRun(env).length, 1);
+    // a story today's lanes alone would also bring to the watch (3 Sonar + 1 Brandwatch live): asked in the trial
+    env = watchEnv([watchRows(3, 1, 'w')]);
+    eq(watchRun(env).length, 1);
+    // the pick is marked lifted only when today's members alone would not be picked
+    eq([B.ewsWatchPick_([lstory([sm(0), nm(1), nm(2)])], [], {}, NOW, 3).map(x => !!x.lifted),
+      B.ewsWatchPick_([lstory([sm(0), sm(1), sm(2), nm(3)])], [], {}, NOW, 3).map(x => !!x.lifted),
+      B.ewsWatchPick_([lstory([sm(0), sm(1), sm(2)])], [], {}, NOW, 3).map(x => 'lifted' in x)], [[true], [false], [false]]);
+  });
+
+  test('new lanes (the early watch): a story lifted to the watch stays out of it in the trial once every new row is OFF (its posts stay in the story); a lifted pick is asked about only while the two caps have room, and once raised it counts against them and is listed', () => {
+    let env = watchEnv([watchRows(1, 2, 'w'), {}]);
+    eq(watchRun(env), []);
+    env.next();
+    env.b.ewsRunSwitches_({});
+    eq(watchRun(env), []);
+    // after the trial, the hour's 2 already used: not asked; with room: asked, and raised it uses one of the caps
+    const hour = Math.floor(NOW / HOUR);
+    const noTrial = lh => ({ settings: { early_wave_new_trial_days: 0 }, srcDay: { v: 1, on: {}, d: {}, lh: [hour, lh], ld: [DAY, lh] } });
+    env = watchEnv([watchRows(1, 2, 'w')], noTrial(2));
+    eq(watchRun(env), []);
+    env = watchEnv([watchRows(1, 2, 'w')], noTrial(1));
+    eq(watchRun(env, { g: 0.99, r: 0.99, i: 0.99, sc: 0.99, l: 3 }).length, 1);
+    const rec = JSON.parse(env.g.props.get('EWS_SRC_DAY'));
+    eq([rec.lh, rec.ld, rec.ls.map(e => [e[2], e[5], e[6], e[7]])], [[hour, 2], [DAY, 2], [[3, 1, 'bwl', 0]]]);
+    // asked but not raised: nothing is counted
+    env = watchEnv([watchRows(1, 2, 'w')], noTrial(1));
+    eq(watchRun(env).length, 1);
+    eq(JSON.parse(env.g.props.get('EWS_SRC_DAY')).lh, [hour, 1]);
+  });
+
+  test('new lanes (the early watch, in a check): a Brandwatch-live member whose author joined the excluded list after it came in is left out of the watch, so 2 Sonar and 1 such account are not asked about; with no list they are', () => {
+    const run = excluded => {
+      const env = watchEnv([watchRows(2, 1, 'x', { bwl: { author: 'u/Banned' } }), {}], { settings: { early_wave_new_trial_days: 0 } });
+      env.b.bqEarlyDetectionRows_(30);  // the story forms (no early watch asked at this check)
+      eq(membersIn(env).filter(m => m.nl).length, 1);
+      if (excluded) env.g.cache.set('ews1:ak', JSON.stringify([['banned', NOW]]));
+      env.next();
+      return watchRun(env).length;
+    };
+    eq([run(false), run(true)], [1, 0]);
+  });
+
+  test('new lanes (stitching): in an hour cut short the post-key index keeps the latest check\'s keys of today\'s lanes, not the first one\'s, and a check writes the new lanes\' keys ahead of today\'s', () => {
+    const h0 = Math.floor(NOW / HOUR);
+    const keys = (n, tag) => Array.from({ length: n }, (_, j) => `${tag}${j.toString(16).padStart(23, '0')}`);
+    const index = {};
+    for (let h = 0; h < 15; h++) index[String(h0 - h)] = keys(600, `f${h.toString(16)}`);
+    index[`t${h0}`] = keys(3000, 'A').concat(keys(3000, 'B'));  // check A, then check B, in one hour
+    const today = [].concat(...B.ewsNkRecords_(index).filter(r => r[0] === `t${h0}`).map(r => r[1]));
+    eq(today, keys(3000, 'B'));
+    // the new lanes' own hour cut short keeps its latest keys too, in their order
+    eq([].concat(...B.ewsNkRecords_({ [String(h0)]: keys(500, 'C').concat(keys(500, 'D')) }, 600).map(r => r[1])),
+      keys(500, 'C').slice(400).concat(keys(500, 'D')));
+    // in a check: an index full of an older hour's keys of today's lanes; the check's new-lane key comes first and its
+    // own key of today's lanes is kept, the oldest of the older hour go
+    const old = keys(12000, 'e');
+    const recsIn = [];
+    for (let j = 0; j < old.length; j += 1000) recsIn.push([`t${h0 - 1}`, old.slice(j, j + 1000)]);
+    const chunks = B.ewsChunks_(recsIn);
+    const env = stitchEnv([{ fk: [row({ lane: 'bwl', mid: 'BWL|nkw', platform: 'reddit', url: 'https://www.reddit.com/r/google/comments/1nkw/t/', author: 'nkw', chash: 'nkw', txt: lone('nkw', 1) })],
+      c1: [row({ mid: 'SONAR|nkw', chash: 'nkw2', txt: lone('nkw', 2) })] }], { before: (i, e) => {
+      chunks.forEach((ch, n) => e.g.cache.set(`ews1:nk:${n}`, JSON.stringify(ch)));
+      e.g.props.set('EWS_STATE', JSON.stringify({ v: 1, marks: {}, jobs: {}, day: {}, nk: chunks.length }));
+    } }).run();
+    const got = env.items('nk:');
+    const sum = h => got.filter(r => r[0] === h).reduce((n, r) => n + r[1].length, 0);
+    eq([got[0][0], got[0][1].length, sum(`t${h0}`), sum(`t${h0 - 1}`)], [String(h0), 1, 1, 11998]);
+    eq([].concat(...got.filter(r => r[0] === `t${h0 - 1}`).map(r => r[1]))[0], old[2]);
+  });
+
+  test('new lanes (every row OFF, wiring): a check with every row OFF whose story holds a Brandwatch-live member by an excluded author does not count that member; with nothing lifted it writes no EWS_SRC_DAY', () => {
+    const sonar = (i, ago) => row({ mid: `SONAR|o${i}`, author: `so${i}`, url: `https://x.com/so${i}/status/2197000000000000${i}`,
+      txt: `${TOPICS[0]} ${WORDS[i]} sonar`, chash: `o${i}`, sig: `o${i}`, posted_ms: NOW - ago * MIN });
+    const run = excluded => {
+      let check = 1;
+      const env = makeEnv(job => {
+        if (check === 1) return job === 'c1' ? [sonar(0, 30), sonar(1, 28), sonar(2, 26)] : job === 'fk' ? liftRows(0, 1, { author: 'u/Excluded', mid: 'BWL|ox' }) : [];
+        return job === 'c1' ? [sonar(3, 5)] : [];
+      });
+      Object.assign(env.b.ev('GEN').settings, { early_wave_new_trial_days: 0 });
+      addFakeLane(env.b, { src: 'bwl' });
+      env.b.ewsRunSwitches_({ edFake: true });
+      env.b.bqEarlyDetectionRows_(30);
+      if (excluded) env.g.cache.set('ews1:ak', JSON.stringify([['excluded', NOW]]));
+      check = 2;
+      env.g.clock.now += 15 * MIN;
+      env.b.ewsRunSwitches_({});
+      return signals(env.b.bqEarlyDetectionRows_(30)).length;
+    };
+    eq([run(false), run(true)], [1, 0]);
+    // nothing lifted: 3 Sonar accounts and 1 Brandwatch-live account, under the bar; the OFF check leaves EWS_SRC_DAY alone
+    let check = 1;
+    const env = makeEnv(job => (check === 1 ? (job === 'c1' ? [sonar(0, 30), sonar(1, 28), sonar(2, 26)] : job === 'fk' ? liftRows(0, 1) : []) : []));
+    addFakeLane(env.b, { src: 'bwl' });
+    env.b.ewsRunSwitches_({ edFake: true });
+    env.b.bqEarlyDetectionRows_(30);
+    eq(membersIn(env).some(m => m.nl), true);
+    env.g.props.delete('EWS_SRC_DAY');
+    check = 2;
+    env.g.clock.now += 15 * MIN;
+    env.b.ewsRunSwitches_({});
+    env.b.bqEarlyDetectionRows_(30);
+    eq([membersIn(env).some(m => m.nl), env.g.props.get('EWS_SRC_DAY')], [true, undefined]);
+  });
+
+  test('new lanes (trial): a lifted story whose source has no first date yet is in its trial, and a check whose switch is ON but whose job was not collected sets no date', () => {
+    const env = watchEnv([{ fk: liftRows(0, 5) }, {}], { notReady: i => i === 1 });
+    eq(signals(env.b.bqEarlyDetectionRows_(30)).length, 0);
+    eq(env.b.ewsLiftedStories_().length, 1);
+    env.g.props.set('EWS_SRC_DAY', JSON.stringify({ v: 1, on: {}, d: {} }));
+    env.next();
+    eq(signals(env.b.bqEarlyDetectionRows_(30)).length, 0);
+    const rec = JSON.parse(env.g.props.get('EWS_SRC_DAY'));
+    eq([rec.on, rec.ls.map(e => [e[5], e[7]])], [{}, [[0, 1]]]);
+  });
+
+  test('new lanes (stitching, rule 3 with every row OFF): a Sonar copy of a Brandwatch-live member that comes after the row went OFF takes its place (one member, one account), keeps its velocity row and is counted "replaced"', () => {
+    const link = 'https://www.reddit.com/r/google/comments/1roff/t/';
+    const bw = row({ lane: 'bwl', mid: 'BWL|r1', platform: 'reddit', url: link, author: 'u/alice', chash: 'roff', sig: 'roff', txt: STORY,
+      posted_ms: NOW - 30 * MIN, seen_ms: NOW - 25 * MIN });
+    const sonarStory = i => row({ mid: `SONAR|rs${i}`, author: `rs${i}`, url: `https://x.com/rs${i}/status/2198000000000000${i}`, chash: `rs${i}`, sig: `rs${i}`,
+      txt: `${STORY} ${WORDS[i]}`, posted_ms: NOW - (28 - i) * MIN });
+    const copy = row({ mid: 'SONAR|rcopy', platform: 'reddit', url: link, author: '', chash: 'roff', sig: 'roff2', txt: STORY,
+      posted_ms: NOW - 30 * MIN, seen_ms: NOW + 12 * MIN });
+    let check = 1;
+    const env = makeEnv(job => (check === 1 ? (job === 'fk' ? [bw] : job === 'c1' ? [sonarStory(0), sonarStory(1)] : []) : job === 'c1' ? [copy] : []));
+    addFakeLane(env.b, { src: 'bwl' });
+    env.b.ewsRunSwitches_({ edFake: true });
+    env.b.bqEarlyDetectionRows_(30);
+    eq(membersIn(env).filter(m => m.nl).map(m => m.i), ['BWL|r1']);
+    check = 2;
+    env.g.clock.now += 15 * MIN;
+    env.b.ewsRunSwitches_({});
+    env.b.bqEarlyDetectionRows_(30);
+    const ms = membersIn(env);
+    eq([ms.some(m => m.nl), ms.filter(m => m.u === link).map(m => m.i)], [false, ['SONAR|rcopy']]);
+    eq(env.g.cache.get('ews1:acc').indexOf(B.ewsFnv_('SONAR|rcopy')) >= 0, true);
+    const day = JSON.parse(env.g.props.get('EWS_SRC_DAY')).d[DAY].bwl;
+    eq([day.rp, day.sf], [1, 1]);
   });
 };
