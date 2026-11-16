@@ -5,11 +5,28 @@
 // What the one-space setup puts out with the DEFAULT settings is recorded apart (golden_flows_defaults.json): a change
 // that is meant to show there updates that file on purpose and says so in its commit message
 // (GOLDEN_UPDATE_DEFAULTS=1 node apps-script-chat-bot/test/run_tests.js "golden flows: the one-space setup with the default"
-// rewrites it from the code as it is). The record of f93e31a is never edited: its fingerprint is pinned below.
+// rewrites it from the code as it is).
 //
-// Compared: every Chat post (space, thread, text), every Burson test copy post, every emoji the bot put on a message,
-// every email (recipients, subject, text and html) and every Burson outbox row, each in order. Not compared: the Control
-// tab's notes.
+// The record of f93e31a, and when it may change. Never for a change of the fix plan: what such a change is meant to
+// alter shows in golden_flows_defaults.json, or sits behind its setting. Its fingerprint is pinned below, so no edit
+// slips in. But its texts come from more than the bot's code: the config (a product renamed, an exposure tag added, a
+// recipient list) and the harness's own fixtures are in them too. When a change of THAT kind moves a scenario's texts,
+// the two "as at f93e31a" tests fail and name the first entries that differ; then, in a commit that holds that change
+// and nothing of the fix plan:
+//   1. GOLDEN_UPDATE_RECORD=1 node apps-script-chat-bot/test/run_tests.js "golden flows: the record of f93e31a is as"
+//      writes the record again from both scenarios with every new setting off (which is what the bot did at f93e31a),
+//      and the test then fails with the new fingerprint in its message;
+//   2. read the diff of golden_flows_f93e31a.json: it must hold that change and nothing else;
+//   3. put the new fingerprint in RECORDED_SHA256, record the default set again too (above), and name all of it in the
+//      commit message.
+// Retiring it: once the fix plan's round is merged and released and its settings are no longer something to turn off
+// (or are gone), the record, its fingerprint and the "as at f93e31a" tests can be deleted in one commit;
+// golden_flows_defaults.json stays as the record of what the bot puts out.
+//
+// Compared: every Chat post (space, thread, text, and the names of its attachments when it has any), every Burson test
+// copy post, every emoji the bot put on a message, every email (recipients, subject, text and html) and every Burson
+// outbox row, each in order. Not compared: the Control tab's notes, and the prompts sent to Gemini. What the scenarios
+// don't hold at all is listed at the top of golden_flows.js: a change there needs a test of its own.
 'use strict';
 
 const crypto = require('crypto');
@@ -101,8 +118,15 @@ module.exports = H => {
     eq([reactedOn(o, '❌').length, reactedOn(o, '📦').length], [1, 2]);
   });
 
-  test('golden flows: the record of f93e31a is as it was recorded (its fingerprint; it is never edited: what a change is meant to alter goes in golden_flows_defaults.json), and differences() says where two records differ: a changed text, a missing or a new post', () => {
-    eq(crypto.createHash('sha256').update(fs.readFileSync(golden.RECORDED_FILE)).digest('hex'), RECORDED_SHA256);
+  test('golden flows: the record of f93e31a is as it was recorded (its fingerprint: no change of the fix plan edits it; what such a change is meant to alter goes in golden_flows_defaults.json), and differences() says where two records differ: a changed text, a missing or a new post', () => {
+    if (process.env.GOLDEN_UPDATE_RECORD === '1') {  // only for a change outside the fix plan that moves the texts: see the top of this file
+      fs.writeFileSync(golden.RECORDED_FILE, `${JSON.stringify({ mirror: golden.mirror(golden.SETTINGS_OFF),
+        one_space: golden.oneSpace(golden.SETTINGS_OFF) }, null, 1)}\n`);
+    }
+    const fingerprint = crypto.createHash('sha256').update(fs.readFileSync(golden.RECORDED_FILE)).digest('hex');
+    assert.strictEqual(fingerprint, RECORDED_SHA256, `golden_flows_f93e31a.json is not the file that was recorded (its fingerprint is now ${fingerprint}). ` +
+      'No change of the fix plan edits it: put it back. Only a change outside the plan that moves the scenarios\' texts (the config, the harness) ' +
+      'records it again: the steps are at the top of switch_golden_flows.test.js.');
     const base = golden.recorded.one_space;
     const copy = () => JSON.parse(JSON.stringify(base));
     eq(golden.differences(copy(), base), []);

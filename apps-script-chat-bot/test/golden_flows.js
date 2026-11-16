@@ -11,13 +11,22 @@
 //   golden.mirrorRun(overrides), golden.oneSpaceRun(overrides) -> {t, out}: the scenario's world too, to look further
 //   golden.world.oneSpaceWorld(overrides)   -> {t, sh, feed, rec}: the one-space setup before its first run, for a test
 //                                              with a timeline of its own (golden.rows: what its feeds can hand over)
+//   golden.world.mirrorWorld(overrides)     -> {t, sh, feed, rec}: the Mirror flow of scenario (a), set up and two runs
+//                                              in (Testing, with the Burson test copy; t.set('B26', '') makes it LIVE)
+//
+// What the two scenarios do NOT hold, so a change there needs a test of its own in the Mirror flow (mirrorWorld) and in
+// the one-space setup (oneSpaceWorld), never these records alone: a Direct BigQuery card on a post that is already in a
+// story's card; a record Step 1 leaves out as the same issue; a BSIP row with a KOF list; more than two story signals
+// in a check (the day's and the hour's allowance); an answer of Gemini's other than "Happy to help with that."; a card
+// with a picture. The prompts sent to Gemini are not compared at all (its answers are scripted).
 //
 // `overrides` are settings (config/default_config.yaml burson_qa -> GEN.settings), put on the scenario's own bot before
 // its first run, so code with a flow ctx (ctx.settings: a copy of GEN.settings made each run) and code without one (the
 // watch reads GEN.settings) both see them.
 //
 // What a scenario returns, each list in the order it happened:
-//   chat       every message the bot posted in any space but the Burson test copy: {run, space, thread, reply, text}
+//   chat       every message the bot posted in any space but the Burson test copy: {run, space, thread, reply, text},
+//              and `attachments` (their file names) only when the message has any: none in either record
 //   test_copy  every message it posted in the Burson test copy (B26): the same fields
 //   reactions  every emoji it put on a message: {run, on, emoji}
 //   emails     every email it sent, and every Gmail draft it made, changed or deleted: {run, kind, to, cc, bcc, subject,
@@ -292,6 +301,7 @@ module.exports = H => {
       fresh.sort((a, b) => order(a) - order(b)).forEach(m => {
         const space = m.name.split('/messages/')[0];
         const entry = { run, space, thread: m.thread.name, reply: m.threadReply, text: m.text };
+        if ((m.attachment || []).length) entry.attachments = m.attachment.map(a => String(a.contentName || ''));
         (space === copySpace ? out.test_copy : out.chat).push(entry);
       });
       const mail = (kind, m) => ({ run, kind, to: m.to, cc: m.cc, bcc: m.bcc, subject: m.subject, text: m.text, html: m.html });
@@ -361,7 +371,13 @@ module.exports = H => {
   const MISTAKES_2 = F.MISTAKES.split('2109566527900926417').join('2109566527900926999');  // another post, the same mistakes
   const MISTAKES_2_FIXED = F.MISTAKES_FIXED.split('2109566527900926417').join('2109566527900926999');
 
-  function mirrorRun(overrides) {
+  /**
+   * The Mirror flow of scenario (a), set up and two runs in, for a test's own timeline: {t, sh (the Control tab), feed
+   * (feedsOf), rec (recorder: what goes to the Burson test copy is its test_copy list)}, with Gemini's scripted answers.
+   * B9 the Mirror space, B25 S-F Burson, B30 a tester, rows 15, 19, 22, 24 and 34 ON, the watch ON with its alerts going
+   * to the Mirror space (B35), and Testing with a Burson test copy in B26: t.set('B26', '') and a run make it LIVE.
+   */
+  function mirrorWorld(overrides) {
     const t = start(overrides, [[MIRROR, MIRROR_NAME], [COPY, COPY_NAME]]);
     const sh = t.control();
     const feed = feedsOf(t);
@@ -375,6 +391,11 @@ module.exports = H => {
     rec.step('01 first run: the Relay starts and the watch tabs are made', 1);
     watchOn(t);
     sh.getRange(35, 2).setValue('Mirror space (B9)');
+    return { t, sh, feed, rec };
+  }
+
+  function mirrorRun(overrides) {
+    const { t, feed, rec } = mirrorWorld(overrides);
     const mirrorTop = text => t.chat.botPosts(MIRROR).find(m => !m.threadReply && m.text === text);
 
     // Testing, with the Burson test copy
@@ -503,7 +524,8 @@ module.exports = H => {
     mirrorRun, oneSpaceRun, differences, recorded, SETTINGS_OFF, RECORDED_FILE, LISTS,
     spaces: { MIRROR, COPY, AC, REAL }, posts: { PIXEL, MAPS, GEMINI, CHROME },
     // the scenarios' building blocks, for a test with a timeline of its own
-    world: { start, oneSpaceWorld, feedsOf, scriptGemini, recorder, watchOn, names: { MIRROR: MIRROR_NAME, COPY: COPY_NAME, AC: AC_NAME } },
+    world: { start, oneSpaceWorld, mirrorWorld, feedsOf, scriptGemini, recorder, watchOn,
+      names: { MIRROR: MIRROR_NAME, COPY: COPY_NAME, AC: AC_NAME } },
     rows: { bsipRow, mapsRow, hit, mapsHit, pixelHit, story, pixelStory },
   };
 };
