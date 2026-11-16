@@ -865,7 +865,9 @@ function edReviewPrompts_(parsed, media) {
     'since. Open `story` with that change, make `story_title` name the new development, and weigh the change for `known_issue.adds_materially_new`.\n\n' +
     `EXPOSURE TAGS:\n${tags}\n\nSENSITIVE TOPICS:\n${topics}\n\nPRODUCTS (distribution names): ${products}\n\n` +
     (parsed && parsed.tagHintLine ? `${parsed.tagHintLine}\n\n` : '') +
-    `SLRR PLAYBOOK:\n${playbookText_()}\n\n` +
+    `SLRR PLAYBOOK:\n${playbookText_()}\n` +
+    'The escalation thresholds in the playbook decide the Social Alert email for a single post; they are never by ' +
+    'themselves a reason to dismiss an early build-up among small accounts.\n\n' +
     'TEAMS (recommended_groups):\n' + teamGuideText_() +
     knowledgePrompt_(parsed && parsed.knowledge) +
     guidancePrompt_(parsed && parsed.guidance, false) +

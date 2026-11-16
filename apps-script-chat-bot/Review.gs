@@ -715,7 +715,7 @@ const PROCESS_NOTES_ = [
 ];
 
 function playbookText_() {
-  const keep = /^(Collection thresholds|KOF \(Key Opinion Former\)|Issue status|When alerts are escalated|Trust & Safety)/;
+  const keep = /^(Collection thresholds|KOF \(Key Opinion Former\)|Issue status|When alerts are escalated|Escalation thresholds|Trust & Safety)/;
   return requirementsLines_().filter(l => keep.test(l)).concat(PROCESS_NOTES_).map(l => `- ${l}`).join('\n');
 }
 

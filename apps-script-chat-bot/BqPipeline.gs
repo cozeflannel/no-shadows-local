@@ -346,7 +346,8 @@ function bqAlertPrompts_(views, knowledge, guidance, priors, opts) {
   const mode = o.soloOnly
     ? 'MODE: STEP 1 ONLY. Every record already met its own source\'s alert rule, so Track A\'s engagement threshold does ' +
       'not apply and there is no Track B. Put every record that passes Step 1 in `solo_alerts` (with its id) and every ' +
-      'other record\'s id in `discarded_ids`. `group_waves` must be empty.'
+      'other record\'s id in `discarded_ids`. `group_waves` must be empty. The escalation thresholds decide the Social ' +
+      'Alert email later; they are never a reason to discard a record here.'
     : `ENGAGEMENT GUIDELINE THRESHOLDS: Track A (a Solo Alert): a record at ${fmtInt_(o.threshold || EW_SINGLE_MAX_)} ` +
       'engagements or more (likes + comments + shares, views excluded). Track B (a Group Wave Alert): records under that, ' +
       `from at least ${o.minAuthors || EW_WAVE_MIN_AUTHORS_} different authors, about the same story, with more than ` +
