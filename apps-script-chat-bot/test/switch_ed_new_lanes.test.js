@@ -858,6 +858,18 @@ module.exports = H => {
     eq([rec.lh, rec.ld[1]], [[hour + 1, 1], 3]);
   });
 
+  test('new lanes (promotion): the two caps start again: yesterday\'s 20 and the last hour\'s 2 hold nothing back today, this hour', () => {
+    const yesterday = new Date(NOW - 24 * HOUR).toISOString().slice(0, 10);
+    const hour = Math.floor(NOW / HOUR);
+    const run = (lh, ld) => liftRun(liftRows(0, 5), { settings: { early_wave_new_trial_days: 0 }, srcDay: { v: 1, on: {}, d: {}, lh, ld } });
+    let env = run([hour - 1, 2], [yesterday, 20]);
+    eq([signals(env.rows).length, env.rec.lh, env.rec.ld], [1, [hour, 1], [DAY, 1]]);
+    env = run([hour, 2], [DAY, 2]);
+    eq(signals(env.rows).length, 0);
+    env = run([hour, 0], [DAY, 20]);
+    eq(signals(env.rows).length, 0);
+  });
+
   test('new lanes (trial): a source\'s trial starts the first day its job is collected, not the day its switch goes ON: a switch ON with no source built yet, or a lane with nothing to read, sets no date; the first date is kept on later days', () => {
     const env = makeEnv(() => []);
     let ready = false;
@@ -916,6 +928,123 @@ module.exports = H => {
     env.items('nk:').forEach(r => { got[r[0]] = (got[r[0]] || []).concat(r[1]); });
     eq(Object.keys(got).sort(), [String(h0 - 71), String(h0), `t${h0 - 71}`, `t${h0}`].sort());
     eq([got[String(h0)].length, got[`t${h0}`].length], [1, 1]);
+  });
+
+  test('new lanes (signatures): the new lanes\' own same-author signatures older than 24 hours are dropped, so a new-lane post with such a signature is kept and the old one is not written back', () => {
+    const h0 = Math.floor(NOW / HOUR);
+    const env = stitchEnv([{ fk: [row({ lane: 'bwl', mid: 'BWL|sg1', platform: 'reddit', url: 'https://www.reddit.com/r/google/comments/1sg/t/', author: 'sg', sig: 'oldsig', chash: 'sg1', txt: lone('sg', 1) })] }], {
+      before: (i, e) => {
+        const f = e.b.ewsFnv_('oldsig');
+        e.g.cache.set('ews1:sn:0', JSON.stringify([[String(h0 - 25), [f, 'zz1']], [String(h0 - 2), ['zz2']]]));
+        e.g.props.set('EWS_STATE', JSON.stringify({ v: 1, marks: {}, jobs: {}, day: {}, sn: 1 }));
+      } }).run();
+    eq(env.ids(), ['BWL|sg1']);
+    const sn = {};
+    env.items('sn:').forEach(r => { sn[r[0]] = r[1]; });
+    eq(sn, { [String(h0 - 2)]: ['zz2'], [String(h0)]: [env.b.ewsFnv_('oldsig')] });
+  });
+
+  test('new lanes (stitching): the leave-out lists count only inside their windows: a big post Sonar knew for 24 hours, an excluded author for 7 days', () => {
+    const env = makeEnv(() => []);
+    env.g.cache.set('ews1:xb', JSON.stringify([['aaaa000000000001', NOW - 23 * HOUR], ['aaaa000000000002', NOW - 25 * HOUR], ['bad'], 'junk']));
+    env.g.cache.set('ews1:ak', JSON.stringify([['Fresh', NOW - 6 * 24 * HOUR], ['stale', NOW - 8 * 24 * HOUR]]));
+    const lo = env.b.ewsNewLeaveOut_(env.b.ewsCache_(), NOW);
+    eq([Array.from(lo.big), Array.from(lo.authors)], [['aaaa000000000001'], ['fresh']]);
+    eq(Array.from(env.b.ewsNewLeaveOut_(null, NOW).big), []);
+  });
+
+  test('new lanes (stitching, rule 3): a later copy from today\'s lanes takes a new lane\'s post out of the pool (the pool keeps one post, today\'s)', () => {
+    const url = 'https://www.reddit.com/r/google/comments/1pool/t/';
+    const env = stitchEnv([
+      { fk: [row({ lane: 'bwl', mid: 'BWL|pool', platform: 'reddit', url, author: 'erin', chash: 'pl1', txt: lone('pl', 1) })] },
+      { c1: [row({ mid: 'SONAR|pool', platform: 'reddit', url, author: 'erin', chash: 'pl1', txt: lone('pl', 1), posted_ms: NOW - 20 * MIN, seen_ms: NOW + 10 * MIN })] },
+    ]);
+    env.run();
+    const pool = env.items('pv:').map(p => p.i);
+    eq([pool.includes('BWL|pool'), pool.includes('SONAR|pool')], [false, true]);
+  });
+
+  test('new lanes: a new source\'s job gives posts only under a new lane\'s name (a post row under another name is dropped), its other rows go to its own done(), and its failure is named in the log line only, never in C19\'s problem or error', () => {
+    let got = null;
+    const env = makeEnv(job => (job === 'fk' ? [row({ lane: 'sonar', mid: 'SONAR|sneaky', txt: lone('sk', 1), chash: 'sk1' }),
+      row({ lane: 'bwl', mid: 'BWL|ok', platform: 'reddit', url: 'https://www.reddit.com/r/google/comments/1ok/t/', txt: lone('ok', 1), chash: 'ok1' }),
+      { kind: 'amark', lane: '', mid: '', url: '', seen_ms: NOW - MIN }] : []));
+    addFakeLane(env.b, { src: 'bwl', done: (st, lane) => { got = lane.rows.map(r => r.kind); } });
+    env.b.ewsRunSwitches_({ edFake: true });
+    env.b.bqEarlyDetectionRows_(30);
+    const st = JSON.parse(env.g.props.get('EWS_STATE'));
+    const ids = [];
+    for (const [k, v] of env.g.cache.entries()) if (/^ews1:(pv|cl):/.test(k)) JSON.parse(v).forEach(x => (x.m ? x.m.forEach(m => ids.push(m.i)) : ids.push(x.i)));
+    eq([ids.includes('SONAR|sneaky'), ids.includes('BWL|ok'), st.last.read, got], [false, true, 1, ['post', 'post', 'amark']]);
+    // a failing lane: today's lanes go on, C19 hears nothing
+    const warns = [];
+    const env2 = makeEnv(job => (job === 'c1' ? [row({ txt: lone('fa', 1), chash: 'fa1' })] : []));
+    addFakeLane(env2.b, { query: () => { throw new Error('the fake source is down'); } });
+    env2.b.ewsRunSwitches_({ edFake: true });
+    env2.b.console.warn = (...a) => warns.push(a.join(' '));
+    const rows = env2.b.bqEarlyDetectionRows_(30);
+    const st2 = JSON.parse(env2.g.props.get('EWS_STATE'));
+    eq([st2.last.problem, st2.last.read, Array.isArray(rows)], ['', 1, true]);
+    assert.ok(warns.some(w => /fk: the fake source is down/.test(w)), 'the log line names it');
+  });
+
+  test('new lanes: a new lane\'s job still running when its row goes OFF is cancelled at the next check and forgotten; today\'s two jobs are sent as usual', () => {
+    const env = makeEnv(() => []);
+    env.g.props.set('EWS_STATE', JSON.stringify({ v: 1, marks: {}, day: {},
+      jobs: { fk: { id: 'job_fk_1', project: 'brand-social-central-data', location: 'US', at: NOW - 5 * MIN, q: {} } } }));
+    addFakeLane(env.b);
+    env.b.ewsRunSwitches_({});
+    env.b.bqEarlyDetectionRows_(30);
+    const cancels = env.bq.filter(c => /\/cancel/.test(c.url));
+    eq([cancels.length, cancels.length && /jobs\/job_fk_1\/cancel\?location=US/.test(cancels[0].url), 'fk' in JSON.parse(env.g.props.get('EWS_STATE')).jobs],
+      [1, true, false]);
+    eq(env.bq.filter(c => /\/queries$/.test(c.url)).map(c => c.job), ['us', 'c1']);
+  });
+
+  test('new lanes (E8): the pool share holds across checks: new-lane posts already waiting count against early_wave_new_pool_max', () => {
+    let check = 1;
+    const env = makeEnv(job => (job === 'fk' ? newN(8, check === 1 ? 'pa' : 'pb') : []));
+    env.b.ev('GEN').settings.early_wave_new_pool_max = 3;
+    addFakeLane(env.b, { src: 'bwl' });
+    env.b.ewsRunSwitches_({ edFake: true });
+    const poolNl = () => {
+      const st = JSON.parse(env.g.props.get('EWS_STATE'));
+      const out = [];
+      (st.pool || []).forEach(([stamp, n]) => { for (let j = 0; j < n; j++) JSON.parse(env.g.cache.get(`ews1:pv:${stamp}:${j}`) || '[]').forEach(p => { if (p.nl) out.push(p.i); }); });
+      return out.sort();
+    };
+    env.b.bqEarlyDetectionRows_(30);
+    eq(poolNl(), ['BWL|pa0', 'BWL|pa1', 'BWL|pa2']);
+    check = 2;
+    env.g.clock.now += 15 * MIN;
+    env.b.bqEarlyDetectionRows_(30);
+    eq(poolNl(), ['BWL|pa0', 'BWL|pa1', 'BWL|pa2']);
+  });
+
+  test('new lanes (limit 1, in a check): a story member whose author joined the excluded authors after it came in is not counted at promotion, while the same story without that list is signalled', () => {
+    const sonar = (i, ago) => row({ mid: `SONAR|x${i}`, author: `sx${i}`, url: `https://x.com/sx${i}/status/2195000000000000${i}`,
+      txt: `${TOPICS[0]} ${WORDS[i]} sonar`, chash: `x${i}`, sig: `x${i}`, posted_ms: NOW - ago * MIN });
+    const run = excluded => {
+      let check = 1;
+      const env = makeEnv(job => {
+        if (check === 1) return job === 'c1' ? [sonar(0, 30), sonar(1, 28), sonar(2, 26)] : job === 'fk' ? liftRows(0, 1, { author: 'u/Excluded', mid: 'BWL|xx' }) : [];
+        return job === 'c1' ? [sonar(3, 5)] : [];
+      });
+      Object.assign(env.b.ev('GEN').settings, { early_wave_new_trial_days: 0 });
+      addFakeLane(env.b, { src: 'bwl' });
+      env.b.ewsRunSwitches_({ edFake: true });
+      env.b.bqEarlyDetectionRows_(30);
+      if (excluded) env.g.cache.set('ews1:ak', JSON.stringify([['excluded', NOW]]));
+      check = 2;
+      env.g.clock.now += 15 * MIN;
+      const rows = signals(env.b.bqEarlyDetectionRows_(30));
+      const members = [];
+      for (const [k, v] of env.g.cache.entries()) if (k.startsWith('ews1:cl:')) JSON.parse(v).forEach(c => (c.m || []).forEach(m => members.push(m.i)));
+      return { rows, members };
+    };
+    const without = run(false);
+    const withList = run(true);
+    eq([without.rows.length, without.rows[0] && without.rows[0].unique_low_tier_authors, withList.rows.length, withList.members.includes('BWL|xx')], [1, 5, 0, true]);
   });
 
   test('new lanes (E10): the late split holds in the producer too: a post of ami / bwl first seen more than early_wave_new_late_minutes after posting is slow (amis / bwls) whatever its job said; within that it stays real time', () => {
