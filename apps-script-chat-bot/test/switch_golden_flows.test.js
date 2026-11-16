@@ -145,4 +145,46 @@ module.exports = H => {
     eq(golden.LISTS.slice().sort(), Object.keys(base).sort());
     eq(golden.differences(Object.assign(copy(), { notes: [] }), base), ['a list this comparison doesn\'t know: notes']);
   });
+
+  test('golden flows: a picture under a card is part of what is compared. In the one-space setup the Pixel post has a photo of its own: its Direct BigQuery card carries it and the scenario\'s record names the file on that card and on no other message; compared with the same scenario without the photo, differences() names that card, whichever of the two is the one expected', () => {
+    const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70, 0, 1, 1, 0, 0, 1, 0xff, 0xd9]);
+    const FOUND = '02 Direct BigQuery finds the Pixel post';
+    const scenario = withPhoto => {
+      const { t, rec, feed } = golden.world.oneSpaceWorld(golden.SETTINGS_OFF);
+      if (withPhoto) {  // what X's embed says of the post: one photo; and the photo itself
+        const id = PIXEL.split('/status/')[1];
+        const photo = 'https://pbs.twimg.com/media/PixelBatteryBack.jpg';
+        t.g.pages.set(`https://cdn.syndication.twimg.com/tweet-result?id=${id}&lang=en&token=${t.bot.xEmbedToken_(id)}`, JSON.stringify({ id_str: id,
+          text: 'My Pixel 10 battery swelled up after the latest update, the back cover is lifting.', user: { screen_name: 'pixelcritic' },
+          mediaDetails: [{ type: 'photo', media_url_https: photo }] }));
+        t.g.pages.set(photo, { code: 200, bytes: JPEG, headers: { 'Content-Type': 'image/jpeg' } });
+      }
+      rec.collect('setup');
+      rec.step('01 the first run', 1);
+      rec.step(FOUND, 5, () => { feed.bsip = [golden.rows.bsipRow()]; });
+      rec.step('03 the Pixel card is reviewed', 1);
+      return { out: rec.out(), uploads: (t.chat.uploads || []).map(u => [u.space, u.filename, u.contentType]) };
+    };
+    const plain = scenario(false);
+    const pictured = scenario(true);
+    const cardAt = out => out.chat.findIndex(c => !c.reply && /\*\[BigQuery · BSIP\]\*/.test(c.text) && c.text.includes(PIXEL));
+    const at = cardAt(plain.out);
+    eq([at >= 0, cardAt(pictured.out), plain.out.chat[at].run, plain.uploads, pictured.uploads], [true, at, FOUND, [], [[AC, 'post.jpg', 'image/jpeg']]]);
+    // the record: the file's name on the card, and no such field on a message without a picture
+    eq([pictured.out.chat[at].attachments, pictured.out.chat.filter(c => 'attachments' in c).length, plain.out.chat.filter(c => 'attachments' in c).length],
+      [['post.jpg'], 1, 0]);
+    eq(Object.assign({}, pictured.out.chat[at], { attachments: undefined }), Object.assign({}, plain.out.chat[at], { attachments: undefined }));
+    // the comparison names the card, both ways round
+    const names = rx => d => rx.test(d);
+    const gained = golden.differences(pictured.out, plain.out, 50).filter(d => d.indexOf(`chat[${at}] `) === 0);
+    const lost = golden.differences(plain.out, pictured.out, 50).filter(d => d.indexOf(`chat[${at}] `) === 0);
+    eq([gained.length, lost.length], [1, 1]);
+    assert.ok(names(new RegExp(`^chat\\[${at}\\] \\(run "${FOUND}"\\) differs at character \\d+: got ".*attachments.*post\\.jpg.*", expected `))(gained[0]), gained[0]);
+    assert.ok(names(new RegExp(`^chat\\[${at}\\] \\(run "${FOUND}"\\) differs at character \\d+: got .*, expected ".*attachments.*post\\.jpg.*"$`))(lost[0]), lost[0]);
+    // two records with the same picture are the same; with another file name they are not
+    const again = JSON.parse(JSON.stringify(pictured.out));
+    eq(golden.differences(again, pictured.out), []);
+    again.chat[at].attachments = ['other.png'];
+    eq(golden.differences(again, pictured.out).length, 1);
+  });
 };

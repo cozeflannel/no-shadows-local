@@ -3,7 +3,8 @@
 // Auto-correct space), only under a card whose thread and message are in that space, never in S-F Burson, the Burson test
 // copy or a space people outside Google can join, only a note that starts with one of the fixed first words, once per
 // key, at most 3 under one card in its life (what the card's thread holds is the truth; the script cache only saves
-// reading it) and 6 a run. The bot knows such a note as its own and never answers it; the wider guard holds its first
+// reading it) and 6 a run, asking Chat at most 12 times a run about its cards' notes. The bot knows such a note as its
+// own and never answers it; the wider guard holds its first
 // words on any way to S-F Burson but one: the bot's own answer to a question of Burson's, which is checked as it always
 // was. Nothing in the bot calls the helper yet: these tests call it directly.
 'use strict';
@@ -273,6 +274,165 @@ module.exports = H => {
     t.poll();
     eq([rows()[second][5], rows()[second][6], t.chat.botPosts(REAL).length],
       ['Blocked', 'not sent: it mentions "The bot". Edit the text, then set Send again.', 1]);
+  });
+
+  test('thread notes: at Send, the row of the bot\'s own answer is checked as that answer always was only while its Text cell holds the very text the bot queued: the hidden key of an answer that opens as a note does keeps that text\'s fingerprint, and every other row\'s key is as it always was. A note typed or pasted into an answer\'s row, whichever answer it was, makes the row Blocked and nothing goes to S-F Burson; so does one word changed in an answer that opens as a note does. The unedited answer is sent as written, a Blocked row put back to the text the bot queued is sent, and an answer edited to words no pattern holds is sent as any text is. The same where the bot works on S-F Burson itself', () => {
+    const t = golden.mirrorRun(golden.SETTINGS_OFF).t;  // ends LIVE, with rows 22 and 24 ON
+    const alert = t.chat.spaces.get(REAL).messages.filter(m => !m.threadReply && /SOCIAL ALERT/.test(m.text)).slice(-1)[0];
+    const rows = () => outboxRows(t);
+    /** Burson asks, Gemini answers `answer`: the index of the answer's outbox row. */
+    const ask = (question, answer) => {
+      const n = rows().length;
+      t.g.vertex.answer = () => answer;
+      t.chat.say(REAL, question, Object.assign({ thread: alert.thread.name }, ALICE));
+      t.poll();
+      t.poll();
+      eq([rows().length, rows()[n][3], /^own:ans:/.test(keyOf(rows()[n]).ck)], [n + 1, answer, true]);
+      return n;
+    };
+    const plain = rows().findIndex(r => r[3] === 'Happy to help with that.' && r[5] === 'Pending');  // the scenario's own answer
+    const first = ask('What does a P1 need to be escalated?', ANSWERS[0]);
+    const second = ask('And what about a P2 like this one?', ANSWERS[1]);
+    const third = ask('Is this post part of something bigger?', ANSWERS[2]);
+    // the keys: only an answer that opens as a note does carries the fingerprint of its text
+    eq([plain >= 0, Object.keys(keyOf(rows()[plain]))], [true, ['v', 'k', 'kind', 's', 'thread', 'ck']]);
+    eq([first, second, third].map(i => Object.keys(keyOf(rows()[i]))), Array(3).fill(['v', 'k', 'kind', 's', 'thread', 'ck', 'tx']));
+    eq([first, second, third].map(i => keyOf(rows()[i]).tx), ANSWERS.map(a => B.outboxTextPrint_(a)));
+    const posted = () => t.chat.botPosts(REAL).map(m => m.text);
+    eq(posted(), []);
+    // a note pasted into the ordinary answer's row; another note pasted into an answer that opens as one; one word
+    // changed in such an answer; and one left as the bot wrote it
+    const PASTED = '🔗 Part of a story: 5 small accounts on X and Reddit now tell it: Pixel 10 owners say the update is the issue';
+    send(t, plain, PASTED);
+    send(t, first, plainOf(REQ_NOTE));
+    send(t, third, ANSWERS[2].replace('Monday', 'Tuesday'));
+    send(t, second);
+    t.poll();
+    eq([plain, first, third, second].map(i => [rows()[i][5], rows()[i][6].replace(/^sent \d{4}-\d\d-\d\d \d\d:\d\d ET: .*$/, 'sent')]), [
+      ['Blocked', 'not sent: it mentions "Part of a story". Edit the text, then set Send again.'],
+      ['Blocked', 'not sent: it mentions "Alert requirements". Edit the text, then set Send again.'],
+      ['Blocked', 'not sent: it mentions "Part of a story". Edit the text, then set Send again.'],
+      ['Sent', 'sent']]);
+    eq(posted(), [ANSWERS[1]]);
+    // put back to the text the bot queued, the first answer goes; edited to words no pattern holds, the third goes as
+    // any text does; the ordinary one with its own words back, too
+    send(t, first, ANSWERS[0]);
+    send(t, third, 'The same post was escalated on Monday.');
+    send(t, plain, 'Happy to help with that.');
+    t.poll();
+    eq([[first, third, plain].map(i => rows()[i][5]), posted()],  // (rows go top to bottom: the scenario's own answer is the first of them)
+      [['Sent', 'Sent', 'Sent'], [ANSWERS[1], 'Happy to help with that.', ANSWERS[0], 'The same post was escalated on Monday.']]);
+
+    // The bot working on S-F Burson itself: its answer's row (key "ans:…"), the same way
+    const ROOM = 'https://chat.google.com/room/AAQAaa_0I9g';
+    const m = e2e();
+    m.bot.setup();
+    m.set('B25', ROOM);
+    m.set('B3', ROOM);
+    [11, 23, 24].forEach(r => m.control().getRange(r, 2).setValue('ON'));  // Auto-send, Never wait on Burson, Post in S-F Burson
+    m.poll();
+    const ok = m.chat.say(REAL, F.P0_OK, ZAPIER);
+    m.poll();
+    const answerRow = answer => {
+      m.g.vertex.answer = () => answer;
+      m.chat.say(REAL, 'Why is this one P0?', Object.assign({ thread: ok.thread.name }, ALICE));
+      m.poll();
+      return outboxRows(m).findIndex(r => r[3] === answer && r[5] === 'Pending');
+    };
+    const usual = answerRow('Happy to help with that.');
+    const likeNote = answerRow(ANSWERS[0]);
+    eq([/^ans:/.test(keyOf(outboxRows(m)[usual]).ck), keyOf(outboxRows(m)[usual]).tx, keyOf(outboxRows(m)[likeNote]).tx],
+      [true, undefined, B.outboxTextPrint_(ANSWERS[0])]);
+    send(m, usual, PASTED);
+    send(m, likeNote, `${ANSWERS[0]} (as the note under the card says)`);
+    m.poll();
+    eq([[usual, likeNote].map(i => outboxRows(m)[i][5]), m.chat.botPosts(REAL).map(x => x.text)], [['Blocked', 'Blocked'], []]);
+    send(m, likeNote, ANSWERS[0]);
+    m.poll();
+    eq([outboxRows(m)[likeNote][5], m.chat.botPosts(REAL).map(x => [x.thread.name, x.text])], ['Sent', [[ok.thread.name, ANSWERS[0]]]]);
+  });
+
+  test('thread notes: what tells an answer\'s row at Send (outboxAnswerAsQueued_, outboxTextPrint_, outboxItem_). The fingerprint is the text\'s as the Text cell holds it: the same with the apostrophe put before a first character Sheets would read as a formula, with either kind of line end and with spaces around it, another for any other word. It is kept only for the bot\'s own answer, never for a row the Relay queued, an analyst\'s answer or another reply of the bot\'s, and only when the answer holds a note\'s first words; a row without it, with another text, or of the Relay is checked as every row is', () => {
+    const SFB = 'spaces/AAQAaa_0I9g';
+    const THREAD = `${SFB}/threads/t9`;
+    const print = B.outboxTextPrint_;
+    const TEXT = '*Alert requirements:* a P1 exposure tag needs 2,000+ engagements or a KOF author.';
+    eq([/^[0-9a-f]{16}$/.test(print(TEXT)), print(`  ${TEXT}\n`), print(TEXT.replace(/ a P1/, '\r\na P1')), print(TEXT.replace(/ a P1/, '\ra P1')),
+      print(`'${TEXT}`), print('\'- Alert requirements: a P1 needs 2,000+ engagements.')],
+    [true, print(TEXT), print(TEXT.replace(/ a P1/, '\na P1')), print(TEXT.replace(/ a P1/, '\na P1')), print(TEXT), print('- Alert requirements: a P1 needs 2,000+ engagements.')]);
+    assert.ok(print(TEXT) !== print(TEXT.replace('P1', 'P2')) && print(TEXT) !== print(TEXT.toLowerCase()) && print('') === print(null) && print(TEXT) !== print(''));
+    // the row the bot queues
+    const item = (text, key, relay) => B.outboxItem_({ kind: 'reply', text, thread: THREAD, key, from: 'bot', relay }, SFB).key;
+    eq([item(TEXT, 'own:ans:m1').tx, item(TEXT, 'ans:m1').tx, item(`Sure!\n${plainOf(REQ_NOTE)}`, 'ans:m1').tx],
+      [print(TEXT), print(TEXT), print(`Sure!\n${plainOf(REQ_NOTE)}`)]);
+    eq([item('Happy to help with that.', 'own:ans:m1'), item('Please look at the alert requirements for this one.', 'ans:m1'),
+      item(TEXT, 'own:fix:m1'), item(TEXT, 'anaans:m1'), item(TEXT, ''), item(TEXT, 'ans:m1', { m: 'spaces/AAQAmirrorgf1', tm: 'x', who: 'Dana Lee' })]
+      .map(k => Object.prototype.hasOwnProperty.call(k, 'tx')), Array(6).fill(false));
+    // a key as it always was, field by field
+    eq(item('Happy to help with that.', 'own:ans:m1'), { v: 1, k: 'p|own:ans:m1', kind: 'reply', s: SFB, thread: THREAD, ck: 'own:ans:m1' });
+    // the row at Send
+    const asQueued = (key, cell) => B.outboxAnswerAsQueued_(key, cell);
+    const key = item(TEXT, 'own:ans:m1');
+    eq([asQueued(key, TEXT), asQueued(key, ` ${TEXT} `), asQueued(key, `'${TEXT}`), asQueued(item(TEXT, 'ans:m1'), TEXT)], [true, true, true, true]);
+    eq([asQueued(key, TEXT.replace('P1', 'P2')), asQueued(key, plainOf(STORY_NOTE)), asQueued(key, ''), asQueued(key, null),
+      asQueued(Object.assign({}, key, { tx: '' }), TEXT), asQueued(Object.assign({}, key, { tx: undefined }), TEXT),
+      asQueued(Object.assign({}, key, { ck: 'own:fix:m1' }), TEXT), asQueued(Object.assign({}, key, { ck: 'anaans:m1' }), TEXT),
+      asQueued(Object.assign({}, key, { relay: { m: 'spaces/AAQAmirrorgf1' } }), TEXT), asQueued(item('Happy to help with that.', 'own:ans:m1'), 'Happy to help with that.'),
+      asQueued(null, TEXT), asQueued({}, TEXT)], Array(12).fill(false));
+    // what the guard lets an answer off is exactly the notes' first words: the two checks differ by outboxNoteHits_
+    [TEXT, STORY_NOTE, WATCH_NOTE, `Thanks!\n${REQ_NOTE}`, 'Happy to help with that.', '*Alert requirements:* per SLRR, a P1 needs 2,000+ engagements.',
+      'Product - Perceived bias is part of a story: see the alert requirements.'].forEach(text => {
+      eq(B.outboxGuardHits_(text, GUARD), B.outboxGuardHits_(text, GUARD, true).concat(B.outboxNoteHits_(text)), text);
+    });
+    eq([B.outboxNoteHits_(TEXT), B.outboxNoteHits_('Happy to help with that.'), B.outboxNoteHits_(null)], [['Alert requirements'], [], []]);
+  });
+
+  test('thread notes: the fixed answer that goes to Burson in place of an answer the wider guard holds lists the Resources documents as it always did, also a document whose name opens as a note does ("Alert requirements: …"): the fixed answer is queued with that document, and sent as written on Send; the Mirror space keeps Gemini\'s answer', () => {
+    const t = golden.mirrorRun(golden.SETTINGS_OFF).t;
+    const resources = t.sheet().getSheetByName('Resources');
+    eq(resources.rows[1][0], 'SLRR Collection Requirements');
+    resources.rows[1][0] = 'Alert requirements: collection rules';  // someone renames the document on the Resources tab
+    const alert = t.chat.spaces.get(REAL).messages.filter(m => !m.threadReply && /SOCIAL ALERT/.test(m.text)).slice(-1)[0];
+    const n = outboxRows(t).length;
+    const GEMINI = 'Zapier copied it for you.';  // nothing the bot's own check holds, but a tool's name: not for Burson
+    t.g.vertex.answer = () => GEMINI;
+    t.chat.say(REAL, 'What does a P1 need to be escalated?', Object.assign({ thread: alert.thread.name }, ALICE));
+    t.poll();
+    t.poll();
+    const row = outboxRows(t)[n];
+    const links = resources.rows.slice(1, 3).map(r => r[1]);
+    const FIXED = 'This alert does not need any updates.\n- Escalation status: This alert is being escalated — we have the escalation email in review ' +
+      `right now.\nResources:\n- <${links[0]}|Alert requirements: collection rules>\n- <${links[1]}|KOF lists>`;
+    H.ownAnswerInBurson(FIXED);
+    eq([outboxRows(t).length, row[1], row[3], row[5], /^own:ans:/.test(keyOf(row).ck), keyOf(row).tx], [n + 1, 'reply', FIXED, 'Pending', true, B.outboxTextPrint_(FIXED)]);
+    assert.ok(t.g.logs.some(l => l === 'Post in S-F Burson: the bot\'s answer mentions "Zapier", so the fixed answer goes in its place'), 'the run log says why');
+    eq(t.chat.botPosts(MIRROR).slice(-1).map(m => m.text), [GEMINI]);
+    send(t, n);
+    t.poll();
+    eq([outboxRows(t)[n][5], t.chat.botPosts(REAL).map(m => [m.thread.name, m.text])], ['Sent', [[alert.thread.name, FIXED]]]);
+  });
+
+  test('thread notes: a note quoted in another of Chat\'s marks is held as well: in italics, struck through, as code, with the colon inside the mark or after it, at the start of a text or after a name. The wider guard holds it on any way to S-F Burson and the leak audit\'s own list denies it; what is anyone\'s to say stays so', () => {
+    const held = text => B.outboxGuardHits_(text, GUARD).length > 0;
+    ['_Part of a story:_ 5 small accounts on X and Reddit now tell it: a title', 'Dana Lee: _Part of a story:_ 5 small accounts tell it',
+      '_Alert requirements:_ met for a Social Alert: P0 exposure tag.', 'Dana Lee: fyi _Alert requirements:_ met', '🔗 _Part of a story:_ 5 accounts',
+      'Dana Lee: 🔗 _Part of a story_: 5 accounts', 'Dana Lee: 🔗 *Part of a story*: 5 accounts', 'Dana Lee: ~Alert requirements, final~: met',
+      'x_Alert requirements, final:_ met', '~Alert requirements:~ met', '`Alert requirements:` met', '_Also flagged by the watch “X”._ No separate Watch alert',
+      'Dana Lee: it was _flagged by the watch_ today', '~Part of a story~ we alerted', '_Alert requirements_ are met', 'see below\n  _Part of a story_ again']
+      .forEach(text => eq([held(text), leakDenied(text)], [true, true], text));
+    // what the guard says it found: the words, with the mark only where it stands before the colon
+    eq([B.outboxNoteHits_('_Part of a story:_ 5 accounts'), B.outboxNoteHits_('Dana Lee: 🔗 _Part of a story_: 5 accounts'),
+      B.outboxNoteHits_('Dana Lee: it was _flagged by the watch_ today'), B.outboxNoteHits_('Dana Lee: ~Alert requirements, final~: met')],
+    [['Part of a story'], ['Part of a story_:'], ['flagged by the watch'], ['Alert requirements, final~:']]);
+    // ...and these are still neither held for a note's words nor denied
+    ['What are the _Alert requirements_ for a P1?', 'This post is _part of a story_ we alerted yesterday.', 'Part of a storyline about maps', '_Part of a storyline_',
+      'Alert requirementss', 'Also flagged by the watchdog group', 'the watch_flagged by the watcher'].forEach(text => {
+      eq([B.outboxNoteHits_(text), leakDenied(text)], [[], false], text);
+    });
+    eq(B.outboxNoteHits_('PreAlert requirements: none'), []);  // (the words inside another word; the audit's own list is the stricter one there)
+    // the bot's own notes are as they were: with the bold mark, or as Chat hands them back without it
+    eq(NOTES.concat(NOTES.map(plainOf)).map(text => [B.isThreadNoteText_(text), held(text)]), Array(8).fill([true, true]));
+    eq(['_Part of a story:_ 5 accounts', '~Alert requirements:~ met'].map(text => B.isThreadNoteText_(text)), [false, false]);  // a quote is not the bot's own note
   });
 
   // =============================================================================================================
@@ -583,18 +743,22 @@ module.exports = H => {
     // 3. a day later the card is still full, by the counts
     t.g.clock.now += 24 * HOUR;
     eq([tryNotes(t, [[pixel, REQ_NOTE, 'i']]), noteCount(t, pixel.forward_thread)], [[[false, 0, 1]], 3]);
-    // 4. 26 hours after its last note the counts have let the card go: its thread is read, and says 3, for the card's life
+    // 4. 26 hours after its last note the counts have let the card go: its thread is read, and says 3, for the card's
+    // life (the thread just read has shown that this key's note isn't there: Chat isn't asked for it by its id as well)
     t.g.clock.now += 2 * HOUR;
-    eq([cacheOf(t).c[t.bot.hashText_(pixel.forward_thread)] !== undefined, tryNotes(t, [[pixel, REQ_NOTE, 'j']]), noteCount(t, pixel.forward_thread)],
-      [true, [[false, 1, 1]], 3]);
+    eq([cacheOf(t).c[t.bot.hashText_(pixel.forward_thread)] !== undefined, tryNotes(t, [[pixel, REQ_FINAL, 'j']]), noteCount(t, pixel.forward_thread)],
+      [true, [[false, 1, 0]], 3]);
     eq(cacheOf(t).c[t.bot.hashText_(pixel.forward_thread)][0], 3);
     // a key from before, forgotten with it: its note is there (Chat has it under its id), so it is true and nothing is posted
     eq([tryNotes(t, [[pixel, REQ_NOTE, 'a'], [pixel, STORY_NOTE, 'b']]), noteCount(t, pixel.forward_thread)], [[[true, 0, 1], [true, 0, 1]], 3]);
     // 5. the cache dropped the value: the thread again; the card found full, an old key's note found there while counting
     t.g.cache.delete('ac_thread_notes');
-    eq([tryNotes(t, [[pixel, REQ_FINAL, 'k'], [pixel, WATCH_NOTE, 'c']]), noteCount(t, pixel.forward_thread)], [[[false, 1, 1], [true, 0, 1]], 3]);
+    eq([tryNotes(t, [[pixel, REQ_FINAL, 'k'], [pixel, WATCH_NOTE, 'c']]), noteCount(t, pixel.forward_thread)], [[[false, 1, 0], [true, 0, 1]], 3]);
     t.g.cache.delete('ac_thread_notes');
     eq([tryNotes(t, [[pixel, REQ_NOTE, 'a']]), noteCount(t, pixel.forward_thread)], [[[true, 1, 0]], 3]);
+    // (by its id, whatever the words are by now: the same key with other words is that note still)
+    t.g.cache.delete('ac_thread_notes');
+    eq([tryNotes(t, [[pixel, REQ_FINAL, 'b']]), noteCount(t, pixel.forward_thread)], [[[true, 1, 0]], 3]);
     eq(t.g.logs.filter(l => l === 'thread note not posted: its card already has 3 notes').length, 4);  // d, i, j, k: the run log says why
     // the other cards: two notes under the one that didn't say when, one under each of the others
     eq([noteCount(t, timed.thread), noteCount(t, plain.thread), noteCount(t, fresh.forward_thread)], [1, 2, 1]);
@@ -673,9 +837,31 @@ module.exports = H => {
       [['c', 'k', 's'], at, 1, [3], 3]);
     // read back: what is younger than 25 hours, with since when
     const now = t.g.clock.now;
-    t.g.cache.set('ac_thread_notes', JSON.stringify({ s: now - 30 * HOUR, c: { old: [3, now - 26 * HOUR], young: [2, now - HOUR], odd: 'x' },
+    t.g.cache.set('ac_thread_notes', JSON.stringify({ s: now - 30 * HOUR, c: { old: [3, now - 26 * HOUR], young: [2, now - HOUR], none: [0, now - HOUR] },
       k: { old: now - 26 * HOUR, young: now - HOUR } }));
-    eq(t.bot.acNoteState_(now), { s: now - 30 * HOUR, c: { young: [2, now - HOUR] }, k: { young: now - HOUR } });
+    eq(t.bot.acNoteState_(now), { s: now - 30 * HOUR, c: { young: [2, now - HOUR], none: [0, now - HOUR] }, k: { young: now - HOUR } });
+    // a value with anything in it that isn't as the bot writes it is not taken at its word: its sound entries are kept,
+    // and it knows nothing of the cards from before now (`s`: now), so a card it has no count for is counted in its thread
+    const sound = { s: now - 30 * HOUR, c: { young: [2, now - HOUR] }, k: { young: now - HOUR } };
+    const unsure = { s: now, c: { young: [2, now - HOUR] }, k: { young: now - HOUR } };
+    const withC = (h, v) => JSON.stringify(Object.assign({}, sound, { c: Object.assign({}, sound.c, { [h]: v }) }));
+    [withC('odd', 'x'), withC('odd', 3), withC('odd', ['3', now - HOUR]), withC('odd', [-1, now - HOUR]), withC('odd', [2.5, now - HOUR]),
+      withC('odd', [3]), withC('odd', [3, 'x']), withC('odd', [3, now + 10 * MIN]), withC('odd', null),
+      JSON.stringify(Object.assign({}, sound, { k: { young: now - HOUR, odd: 'x' } })),
+      JSON.stringify(Object.assign({}, sound, { k: { young: now - HOUR, odd: -5 } }))].forEach(v => {
+      t.g.cache.set('ac_thread_notes', v);
+      eq(t.bot.acNoteState_(now), unsure, v);
+    });
+    [[{ s: now - 30 * HOUR, c: [], k: { young: now - HOUR } }, { s: now, c: {}, k: { young: now - HOUR } }],
+      [{ s: now - 30 * HOUR, c: { young: [2, now - HOUR] }, k: [] }, { s: now, c: { young: [2, now - HOUR] }, k: {} }],
+      [{ s: now - 30 * HOUR, c: 'y', k: 3 }, { s: now, c: {}, k: {} }], [{ s: -5, c: {}, k: {} }, { s: now, c: {}, k: {} }],
+      [{ s: now - 30 * HOUR }, { s: now, c: {}, k: {} }]].forEach(([v, want]) => {
+      t.g.cache.set('ac_thread_notes', JSON.stringify(v));
+      eq(t.bot.acNoteState_(now), want, JSON.stringify(v));
+    });
+    // (a time a little ahead of this run's clock is another run's clock, not a fault)
+    t.g.cache.set('ac_thread_notes', JSON.stringify({ s: now - HOUR, c: { young: [1, now + 5000] }, k: { young: now + 5000 } }));
+    eq(t.bot.acNoteState_(now), { s: now - HOUR, c: { young: [1, now + 5000] }, k: { young: now + 5000 } });
     // a value from before `s` was kept, one that says a time to come, and one that isn't the bot's JSON: nothing is known from before now
     [JSON.stringify({ c: { young: [2, now - HOUR] }, k: {} }), JSON.stringify({ s: now + HOUR, c: { young: [2, now - HOUR] }, k: {} }),
       JSON.stringify({ s: 'x', c: { young: [2, now - HOUR] }, k: {} })].forEach(v => {
@@ -705,20 +891,308 @@ module.exports = H => {
     const roomy = { s: now - 20 * HOUR, c: { one: [1, now - HOUR] }, k: {} };
     t.bot.acNoteSave_(roomy);
     eq(cacheOf(t).s, now - 20 * HOUR);  // with room for every card, since when stays
-    // so a card with no count that is younger than the value's knowledge needs no read, and an older one does
+    // so a card with no count that is younger than the value's knowledge needs no read, and an older one does (three
+    // cards of their own, each the first message of its thread, saying how old they are)
+    const aged = ms => Object.assign(cardNow(t), { createTime: now - ms });
+    const young = aged(300 * 1000);
+    const older = aged(900 * 1000);
+    const ancient = aged(26 * HOUR);
     t.bot.acNoteSave_({ s: now - 600 * 1000, c: {}, k: {} });
     const reads = threadReads(t);
-    const young = { thread: cards.maps.forward_thread, message: cards.maps.forward_message, createTime: now - 300 * 1000 };
-    const older = { thread: cards.story.forward_thread, message: cards.story.forward_message, createTime: now - 900 * 1000 };
     eq([note(young, REQ_NOTE, 'y'), threadReads(t) - reads, note(older, REQ_NOTE, 'o'), threadReads(t) - reads], [true, 0, true, 1]);
     // a card that says it is older than 25 hours is read too, however long the value has known
     t.bot.acNoteSave_({ s: now - 40 * HOUR, c: {}, k: {} });
-    const ancient = { thread: cards.watch.forward_thread, message: cards.watch.forward_message, createTime: now - 26 * HOUR };
     eq([note(ancient, REQ_NOTE, 'z'), threadReads(t) - reads], [true, 2]);
+    // and a time handed over for a card whose thread the flow's Alert log knows to be older is not taken: the Maps
+    // card's row is from before the value's knowledge, whatever createTime says
+    t.bot.acNoteSave_({ s: now - 600 * 1000, c: {}, k: {} });
+    const claimed = { thread: cards.maps.forward_thread, message: cards.maps.forward_message, createTime: now - 300 * 1000 };
+    assert.ok(Number(cards.maps.created_at) < now - 600 * 1000, 'the Maps card is older than that');
+    eq(tryNotes(t, [[claimed, REQ_NOTE, 'q']]), [[true, 1, 0]]);  // (in a run of its own: the six above were this one's share)
     eq([t.bot.acNoteCardBorn_({ created_at: 500, source_at: 300 }), t.bot.acNoteCardBorn_({ created_at: 500, source_at: 0 }),
       t.bot.acNoteCardBorn_({ created_at: '700' }), t.bot.acNoteCardBorn_({ createTime: 900 }), t.bot.acNoteCardBorn_({ createTime: '2026-10-14T12:00:00Z' }),
       t.bot.acNoteCardBorn_({ thread: 'x' }), t.bot.acNoteCardBorn_(null)], [300, 500, 700, 900, 0, 0, 0]);
-    eq(B.ev('[AC_NOTE_PER_CARD_, AC_NOTE_PER_RUN_, AC_NOTE_KEEP_MS_ / 3600000, AC_NOTE_CACHE_SEC_, AC_NOTE_OLD_MS_, AC_NOTE_THREAD_MAX_]'),
-      [3, 6, 25, 21600, 60000, 200]);
+    eq(B.ev('[AC_NOTE_PER_CARD_, AC_NOTE_PER_RUN_, AC_NOTE_KEEP_MS_ / 3600000, AC_NOTE_CACHE_SEC_, AC_NOTE_OLD_MS_, AC_NOTE_THREAD_MAX_, ' +
+      'AC_NOTE_THREAD_PAGES_, AC_NOTE_ASKS_PER_RUN_, AC_NOTE_ASK_LEFT_MS_]'), [3, 6, 25, 21600, 60000, 200, 4, 12, 20000]);
+  });
+
+  // =============================================================================================================
+  // The cap is the thread's: a later Alert-log row in a card's thread is never a young card
+  // =============================================================================================================
+
+  test('thread notes: the cap of 3 is the thread\'s, whichever of its Alert-log rows a note comes with. An update of a story is posted in the story\'s thread with a row of its own, and Burson\'s resend keeps the first card\'s thread and message under a newer row: neither row is taken for a young card. With the counts gone (the script cache dropped them) and a note under another card since, a note offered with the update\'s row or with the resend\'s row has its thread read, which says 3, and is refused, from the flow and from the watch; and a later row that carries no mark of its own is told by the earliest row the flow\'s Alert log has for that thread', () => {
+    const w = golden.world.oneSpaceWorld(golden.SETTINGS_OFF);
+    const { t, rec, feed } = w;
+    hooked(t);
+    rec.collect('setup');
+    rec.step('the first run', 1);
+    golden.world.watchOn(t);
+    w.sh.getRange(35, 2).setValue('Auto-correct space (B10)');  // the watch's alerts go to the Auto-correct space
+    rec.step('a quiet run', 5);
+    rec.step('a quiet run', 5);
+    rec.step('a story is found', 5, () => { feed.stories = [golden.rows.story()]; });  // (the story check is due again: 15 minutes)
+    rec.step('its review', 1);
+    rec.step('Burson alerts, with mistakes', 1, () => { t.chat.say(REAL, F.MISTAKES, ZAPIER); });
+    rec.step('Direct BigQuery finds a post', 5, () => { feed.bsip = [golden.rows.bsipRow()]; });
+    rec.step('its review', 1);
+    const first = alertRows(t);
+    const story = first.find(r => r.ingested === 'Early detection');
+    const burson = first.find(r => !r.ingested);
+    const other = first.find(r => r.ingested === 'BSIP');
+    const three = (card, k) => [[card, REQ_NOTE, k + '1'], [card, STORY_NOTE, k + '2'], [card, WATCH_NOTE, k + '3']];
+    // three notes under the story card and three under Burson's corrected alert; a fourth under either is refused
+    eq(tryNotes(t, three(story, 's').concat(three(burson, 'b'))).map(r => r[0]), Array(6).fill(true));
+    eq(tryNotes(t, [[story, REQ_FINAL, 's4'], [burson, REQ_FINAL, 'b4']]).map(r => r[0]), [false, false]);
+    // Seven quiet hours: the script cache has dropped the counts. Then a note under another card: the counts begin anew
+    const lose = () => {
+      t.g.cache.delete('ac_thread_notes');
+      eq(cacheOf(t), null);
+    };
+    t.g.clock.now += 7 * HOUR;
+    lose();
+    eq(tryNotes(t, [[other, REQ_NOTE, 'o1']]), [[true, 1, 0]]);
+    const began = cacheOf(t).s;
+    // The story grows: its update goes in the story's thread, with a row of its own. Burson resends the alert, fixed
+    rec.step('the story grows', 20, () => {
+      feed.stories = [golden.rows.story({ alert_id: 'ED-CLU-clu_chrome_tabs-202610142000', unique_low_tier_authors: 14, mention_count: 16,
+        headline: 'Low-tier claim cluster (14 accounts): Chrome closed all my tabs after the update' })];
+    });
+    rec.step('its review', 1);
+    rec.step('Burson resends the alert, fixed', 1, () => { t.chat.say(REAL, F.MISTAKES_FIXED, ZAPIER); });
+    rec.step('after', 1);
+    const rows = alertRows(t);
+    const update = rows.find(r => r.ingested === 'Early detection' && r.alert_id !== story.alert_id);
+    const resend = rows.find(r => r.resend_of === burson.alert_id);
+    // each is a newer row, made after the counts began, in the first card's thread
+    eq([update.forward_thread, update.forward_message !== story.forward_message, update.forwarded_fields.early_detection.update_of,
+      Math.min(Number(update.created_at), Number(update.source_at)) > began],
+    [story.forward_thread, true, story.alert_id, true]);
+    eq([resend.forward_thread, resend.forward_message, Math.min(Number(resend.created_at), Number(resend.source_at)) > began],
+      [burson.forward_thread, burson.forward_message, true]);
+    eq([story, burson].map(r => cacheOf(t).c[t.bot.hashText_(r.forward_thread)]), [undefined, undefined]);  // (the counts have neither thread)
+    // A note with either row: its thread is read (once: the count is then kept), says 3, and nothing is posted
+    const before = posted(t).length;
+    const counts = () => [posted(t).length - before, noteCount(t, story.forward_thread), noteCount(t, burson.forward_thread)];
+    eq(tryNotes(t, [[update, REQ_FINAL, 's5'], [update, REQ_FINAL, 's6'], [resend, REQ_FINAL, 'b5'], [resend, REQ_FINAL, 'b6']]),
+      [[false, 1, 0], [false, 0, 1], [false, 1, 0], [false, 0, 1]]);
+    eq(counts(), [0, 3, 3]);
+    eq(tryNotes(t, [[story, REQ_FINAL, 's7'], [burson, REQ_FINAL, 'b7']]).map(r => r[0]), [false, false]);  // with the first rows as well
+    // ...from the watch too, which has no Alert log at hand: the rows' own marks tell
+    lose();
+    eq(tryNotes(t, [[other, STORY_NOTE, 'o2']]), [[true, 1, 0]]);
+    let got = run(t, null, dest => {
+      const reads = threadReads(t);
+      return [t.bot.acThreadNote_(dest, update, REQ_FINAL, 'w1'), t.bot.acThreadNote_(dest, resend, REQ_FINAL, 'w2'), threadReads(t) - reads];
+    });
+    eq([got.dest.choice, got.watch, counts()], ['autocorrect', [false, false, 2], [1, 3, 3]]);  // (1: the note under the other card)
+    // A later row with no mark of its own: the flow's Alert log has an earlier row in that thread, which says how old
+    // the thread is
+    lose();
+    eq(tryNotes(t, [[other, WATCH_NOTE, 'o3']]), [[true, 1, 0]]);
+    const bare = row => Object.assign({}, row, { resend_of: '', forwarded_fields: {} });
+    eq(tryNotes(t, [[bare(update), REQ_FINAL, 's8'], [bare(resend), REQ_FINAL, 'b8']]), [[false, 1, 0], [false, 1, 0]]);
+    eq(counts(), [2, 3, 3]);
+    eq(t.g.logs.filter(l => l === 'thread note not posted: its card already has 3 notes').length, 12);
+  });
+
+  test('thread notes: a card says how old its thread is only when it is the thread\'s first message (acNoteThreadBorn_). Never a card handed over as a reply, a resend\'s row, an update\'s row, or a message that Chat\'s own name places in another message\'s thread (Chat names a thread\'s first message "<thread id>.<thread id>"); and where the flow\'s Alert log has other rows in the thread, the earliest of them all says it', () => {
+    const S = AC;
+    const T = 1791980000000;
+    const at = (thread, message, rows) => ({ space: S, thread: `${S}/threads/${thread}`, message: `${S}/messages/${message}`,
+      ctx: rows ? { store: { alerts: rows } } : null });
+    const born = (c, card) => B.acNoteThreadBorn_(c, card);
+    // the first message of its thread: the createTime handed over, an Alert-log row's earliest time
+    eq([born(at('t7', 'm7'), { createTime: T }), born(at('t7', 'm7'), { created_at: T, source_at: T - 5000 }), born(at('t7', 'm7'), {}),
+      born(at('t7', 'm7'), null)], [T, T - 5000, 0, 0]);
+    // handed over as a reply; a resend's row; an update's row
+    eq([born(at('t7', 'm9'), { createTime: T, threadReply: true }), born(at('t7', 'm7'), { created_at: T, resend_of: 'QA-1001' }),
+      born(at('t7', 'm9'), { created_at: T, forwarded_fields: { early_detection: { update_of: 'QA-1001' } } })], [0, 0, 0]);
+    eq([born(at('t7', 'm7'), { createTime: T, threadReply: false }),
+      born(at('t7', 'm7'), { created_at: T, resend_of: '', forwarded_fields: { early_detection: { update_of: '' } } }),
+      born(at('t7', 'm7'), { created_at: T, forwarded_fields: 'not an object' }), born(at('t7', 'm7'), { created_at: T, forwarded_fields: { triage: {} } })],
+    [T, T, T, T]);
+    // Chat's own names: only "<thread id>.<thread id>" is a thread's first message; a name without a dot says nothing
+    eq([born(at('Abc123', 'Abc123.Abc123'), { createTime: T }), born(at('Abc123', 'Xyz789.Abc123'), { createTime: T }),
+      born(at('Abc123', 'Abc123.Xyz789'), { createTime: T }), born(at('Abc123', 'Abc123.Abc1234'), { createTime: T }),
+      born(at('Abc123', 'Abc123.'), { createTime: T }), born(at('Abc123', 'client-bqa-0123'), { createTime: T })], [T, 0, 0, 0, 0, T]);
+    // the flow's Alert log: the earliest row of the thread; a row of it that doesn't say when: unknown; other threads don't count
+    const rows = [{ forward_thread: `${S}/threads/t7`, created_at: T - 9000, source_at: T - 8000 }, { forward_thread: `${S}/threads/t8`, created_at: T - 99000 },
+      null, { forward_thread: '' }];
+    eq([born(at('t7', 'm9', rows), { created_at: T }), born(at('t8', 'm9', rows), { created_at: T }), born(at('t9', 'm9', rows), { created_at: T }),
+      born(at('t7', 'm9', rows), { created_at: T - 20000 }), born(at('t7', 'm9', rows.concat([{ forward_thread: `${S}/threads/t7` }])), { created_at: T }),
+      born(at('t7', 'm9', rows), {})], [T - 9000, T - 99000, T, T - 20000, 0, 0]);
+    // an Alert log that can't be read, or nothing to go by: unknown
+    eq([born({ space: S, thread: `${S}/threads/t7`, message: `${S}/messages/m7`, ctx: { get store() { throw new Error('the Alert log can\'t be read'); } } }, { created_at: T }),
+      born(null, { created_at: T }), born({}, { created_at: T })], [0, 0, 0]);
+  });
+
+  // =============================================================================================================
+  // What the notes cost, and what the counts are worth
+  // =============================================================================================================
+
+  test('thread notes: what the notes cost is bounded, not only what is posted. A run asks Chat at most 12 times about its cards\' notes (a page of a card\'s thread, a look for a note by its id): past that, a note that needs asking is refused unasked; a key not found under a full card is asked about once a run, and so is a card whose thread couldn\'t be counted in; a thread is read 4 pages far at most, however short the pages Chat hands over; and a flow with less than 20 seconds of its time left asks nothing, though it still posts a note that needs no asking', () => {
+    const { t, cards } = oneSpace();
+    const asks = () => threadReads(t) + idReads(t);
+    const logged = why => t.g.logs.filter(l => l === 'thread note not posted: ' + why).length;
+    const FULL = 'its card already has 3 notes';
+    const UNREAD = 'its card\'s thread couldn\'t be read to count the notes it has';
+    const ago = ms => new Date(t.g.clock.now - ms).toISOString();
+    /** A card with `replies` replies from an analyst under it, all dated back (so the flow has nothing to read in them). */
+    const threadOf = replies => {
+      const card = untimed(cardNow(t));
+      t.chat.message(card.message).createTime = ago(2 * HOUR);
+      for (let i = 0; i < replies; i++) t.chat.say(AC, `reply ${i}`, Object.assign({ thread: card.thread }, DANA)).createTime = ago(HOUR);
+      return card;
+    };
+    // 1. A full card and 20 notes with keys of their own in one run: Chat is asked for 12 of them, the others are refused unasked
+    eq(tryNotes(t, [[cards.pixel, REQ_NOTE, 'p1'], [cards.pixel, STORY_NOTE, 'p2'], [cards.pixel, WATCH_NOTE, 'p3']]).map(r => r[0]), [true, true, true]);
+    let before = asks();
+    let got = run(t, ctx => Array.from({ length: 20 }, (x, i) => t.bot.acThreadNote_(ctx, cards.pixel, REQ_FINAL, 'more' + i))).flow;
+    eq([got.some(Boolean), asks() - before, logged(FULL)], [false, 12, 20]);
+    // the watch's notes count toward the same 12
+    before = asks();
+    got = run(t, ctx => Array.from({ length: 8 }, (x, i) => t.bot.acThreadNote_(ctx, cards.pixel, REQ_FINAL, 'flow' + i)),
+      dest => Array.from({ length: 8 }, (x, i) => t.bot.acThreadNote_(dest, cards.pixel, REQ_FINAL, 'watch' + i)));
+    eq([got.flow.concat(got.watch).some(Boolean), asks() - before], [false, 12]);
+    // ...and one key tried three times in a run is asked about once (the next run asks again: nothing of it is kept)
+    before = asks();
+    got = run(t, ctx => [1, 2, 3].map(() => t.bot.acThreadNote_(ctx, cards.pixel, REQ_FINAL, 'again'))).flow;
+    eq([got, asks() - before], [[false, false, false], 1]);
+    got = run(t, ctx => t.bot.acThreadNote_(ctx, cards.pixel, REQ_FINAL, 'again')).flow;
+    eq([got, asks() - before], [false, 2]);
+    // 2. A thread too long to count in (its card and 201 replies): read once a run, two pages, however many notes are tried
+    const long = threadOf(201);
+    before = asks();
+    got = run(t, ctx => Array.from({ length: 10 }, (x, i) => t.bot.acThreadNote_(ctx, long, REQ_NOTE, 'long' + i))).flow;
+    eq([got.some(Boolean), asks() - before, logged(UNREAD)], [false, 2, 10]);
+    // 3. Chat hands over pages shorter than asked (30 messages a page): a thread of 100 messages is counted in its 4
+    // pages; one of 130 would need a fifth and gets no note
+    const hundred = threadOf(99);
+    const more = threadOf(129);
+    t.chat.fail = (method, path, query) => {
+      const m = method === 'get' && String((query || {}).filter || '').match(/^thread\.name = (\S+)$/);
+      if (!m) return null;
+      const all = t.chat.spaces.get(AC).messages.filter(x => x.thread.name === m[1]);
+      const from = Number(query.pageToken || 0);
+      const body = { messages: all.slice(from, from + 30).map(x => t.chat._public(x)) };
+      if (from + 30 < all.length) body.nextPageToken = String(from + 30);
+      return { code: 200, body };
+    };
+    eq([tryNotes(t, [[hundred, REQ_NOTE, 'h1']]), tryNotes(t, [[more, REQ_NOTE, 'm1']]), logged(UNREAD)], [[[true, 4, 0]], [[false, 4, 0]], 11]);
+    t.chat.fail = null;
+    eq([noteCount(t, hundred.thread), noteCount(t, more.thread), noteCount(t, long.thread)], [1, 0, 0]);
+    // 4. A flow with less than 20 seconds left asks Chat nothing: a card whose notes would have to be counted and a full
+    // card's new key are refused unasked; a card that needs no asking (posted since the counts began, saying when) gets
+    // its note. With 20 seconds or more it asks again
+    const unknown = untimed(cardNow(t));
+    const young = cardNow(t);
+    got = run(t, ctx => {
+      const from = asks();
+      ctx.deadline = ctx.now() + 19 * 1000;
+      const out = [t.bot.acThreadNote_(ctx, unknown, REQ_NOTE, 'd1'), t.bot.acThreadNote_(ctx, cards.pixel, REQ_FINAL, 'd2'),
+        t.bot.acThreadNote_(ctx, young, REQ_NOTE, 'd3'), asks() - from];
+      ctx.deadline = ctx.now() + 20 * 1000;
+      return out.concat([t.bot.acThreadNote_(ctx, unknown, REQ_NOTE, 'd1'), asks() - from]);
+    }).flow;
+    eq([got, logged('the run has too little time left to count its card\'s notes')], [[false, false, true, 0, true, 1], 1]);
+    assert.ok(logged('this run already asked Chat 12 times about its cards\' notes') === 0, 'a full card\'s refusal says the card is full');
+    // 5. The pages of a thread count toward the run's 12 as the looks by id do: two pages for a thread of 150 messages
+    // and ten looks for a full card's new keys make 12, and a card with no count is then refused unasked, and says so
+    const twoPages = threadOf(149);
+    const ten = Array.from({ length: 10 }, (x, i) => [cards.pixel, REQ_FINAL, 'last' + i]);
+    const late = untimed(cardNow(t));
+    eq(tryNotes(t, [[twoPages, REQ_NOTE, 't1']].concat(ten, [[late, REQ_NOTE, 'l1']])).filter((r, i) => i === 0 || i === 11), [[true, 2, 0], [false, 0, 0]]);
+    eq(logged('this run already asked Chat 12 times about its cards\' notes'), 1);
+    // ...and a thread whose second page would be the run's 13th ask is not read to its end: no note for its card
+    const eleven = Array.from({ length: 11 }, (x, i) => [cards.pixel, REQ_FINAL, 'eleven' + i]);
+    const alsoTwoPages = threadOf(149);
+    eq(tryNotes(t, eleven.concat([[alsoTwoPages, REQ_NOTE, 't2']])).slice(-1), [[false, 1, 0]]);
+    eq(noteCount(t, alsoTwoPages.thread), 0);
+  });
+
+  test('thread notes: the counts are taken only as the bot writes them. A count in the cache value that is no whole number of 0 or more, a time that is none, a list where a map belongs, or a value cut off half way: the card\'s notes are counted in its thread, so a card with 3 notes takes no fourth. And when the counts can\'t be written (the script cache refuses the write), the older value, which lacks the note just posted, is taken out and not read again in that run: every note is then counted in its thread, and a card posted since still gets 3 notes and no more', () => {
+    const { t, cards } = oneSpace();
+    const pixel = cards.pixel;
+    eq(tryNotes(t, [[pixel, REQ_NOTE, 'a'], [pixel, STORY_NOTE, 'b'], [pixel, WATCH_NOTE, 'c']]).map(r => r[0]), [true, true, true]);
+    const good = t.g.cache.get('ac_thread_notes');
+    const h = t.bot.hashText_(pixel.forward_thread);
+    const now = () => t.g.clock.now;
+    const VALUES = {
+      'a list where the counts belong': () => JSON.stringify({ s: 1, c: [], k: [] }),
+      'the count is a word': () => JSON.stringify({ s: 1, c: { [h]: ['x', now()] }, k: {} }),
+      'the count is negative': () => JSON.stringify({ s: 1, c: { [h]: [-9, now()] }, k: {} }),
+      'the count is a fraction': () => JSON.stringify({ s: 1, c: { [h]: [0.5, now()] }, k: {} }),
+      'the entry is a number': () => JSON.stringify({ s: now() - HOUR, c: { [h]: 3 }, k: {} }),
+      'the time of its last note is a word': () => JSON.stringify({ s: 1, c: { [h]: [0, 'x'] }, k: {} }),
+      'the time of its last note is yet to come': () => JSON.stringify({ s: 1, c: { [h]: [0, now() + HOUR] }, k: {} }),
+      'another card\'s count is a word': () => JSON.stringify({ s: 1, c: { other: ['x', now()] }, k: {} }),
+      'a key\'s time is a word': () => JSON.stringify({ s: 1, c: {}, k: { other: 'x' } }),
+      'since when is yet to come': () => JSON.stringify({ s: now() + HOUR, c: {}, k: {} }),
+      'cut off half way': () => good.slice(0, Math.floor(good.length / 2)),
+      'not the bot\'s JSON': () => '[3]',
+    };
+    Object.keys(VALUES).forEach((name, i) => {
+      t.g.cache.set('ac_thread_notes', VALUES[name]());
+      eq([name, tryNotes(t, [[pixel, REQ_FINAL, 'g' + i]]), noteCount(t, pixel.forward_thread)], [name, [[false, 1, 0]], 3]);
+    });
+
+    // The cache refuses the write of the counts
+    const fresh = cardNow(t);  // posted since the counts began, saying when: no read needed for its first note
+    t.bot.__refuse = true;
+    t.bot.ev('CacheService = (cs => ({ getScriptCache: () => { const c = cs.getScriptCache(); return Object.assign({}, c, { put: (k, v, s) => { ' +
+      'if (__refuse && k === "ac_thread_notes") throw new Error("Service invoked too many times"); return c.put(k, v, s); } }); } }))(CacheService)');
+    eq(tryNotes(t, [[fresh, REQ_NOTE, 'f1'], [fresh, STORY_NOTE, 'f2'], [fresh, WATCH_NOTE, 'f3'], [fresh, REQ_FINAL, 'f4']]),
+      [[true, 0, 0], [true, 1, 0], [true, 1, 0], [false, 1, 0]]);
+    eq([noteCount(t, fresh.thread), t.g.cache.get('ac_thread_notes') || null, t.bot.ev('AC_NOTE_UNKEPT_')], [3, null, true]);
+    assert.ok(t.g.logs.some(l => /^thread notes: couldn't keep the counts \(Service invoked too many times\)/.test(l)), 'the run log says so');
+    // ...and once it takes writes again, the counts begin anew: the thread once more, then the count is kept
+    t.bot.__refuse = false;
+    eq([tryNotes(t, [[fresh, REQ_FINAL, 'f5']]), t.bot.ev('AC_NOTE_UNKEPT_'), cacheOf(t).c[t.bot.hashText_(fresh.thread)][0]], [[[false, 1, 0]], false, 3]);
+    eq([tryNotes(t, [[fresh, REQ_FINAL, 'f6']]), noteCount(t, fresh.thread)], [[[false, 0, 1]], 3]);
+  });
+
+  test('thread notes: when the script cache refuses both the write of the counts and taking the older value out, that older value stays in the cache, and it lacks the notes just posted: it is still not read again in that run, so a card posted since has its notes counted in its thread and gets 3 notes and no more', () => {
+    const { t, cards } = oneSpace();
+    eq(tryNotes(t, [[cards.pixel, REQ_NOTE, 'a']]).map(r => r[0]), [true]);
+    const older = t.g.cache.get('ac_thread_notes');
+    assert.ok(older, 'the counts are kept in the cache');
+    t.g.clock.now += 60 * 1000;
+    const fresh = cardNow(t);  // posted since the counts began, saying when
+    t.bot.ev('CacheService = (cs => ({ getScriptCache: () => { const c = cs.getScriptCache(); const no = () => { throw new Error("Service invoked too many times"); }; ' +
+      'return Object.assign({}, c, { put: (k, v, s) => (k === "ac_thread_notes" ? no() : c.put(k, v, s)), remove: k => (k === "ac_thread_notes" ? no() : c.remove(k)) }); } }))(CacheService)');
+    const got = tryNotes(t, [[fresh, REQ_NOTE, 'f1'], [fresh, STORY_NOTE, 'f2'], [fresh, WATCH_NOTE, 'f3'], [fresh, REQ_FINAL, 'f4']]);
+    eq(got.map(r => r[0]), [true, true, true, false]);
+    eq(got.slice(1).map(r => r[1]), [1, 1, 1]);  // after the first failed write every note has its card's thread read
+    eq([noteCount(t, fresh.thread), t.g.cache.get('ac_thread_notes') === older, t.bot.ev('AC_NOTE_UNKEPT_')], [3, true, true]);
+  });
+
+  test('thread notes: a note is never posted twice for want of an id. With Chat refusing custom message ids and then every record of a note gone (the counts, the bot\'s record of what it posted, Chat\'s memory of the request), the same key again has its card\'s thread read, finds a note of the bot\'s with the very same words there (with its bold marks, or as Chat can hand it back without them) and posts nothing; a note with other words is still posted, and a person\'s message with the same words is not taken for the bot\'s', () => {
+    const { t, cards } = oneSpace();
+    t.g.props.set('CHAT_CLIENT_IDS_OFF', String(t.g.clock.now));
+    eq(tryNotes(t, [[cards.pixel, STORY_NOTE, 'k1']]), [[true, 1, 0]]);
+    const note = inThread(t, cards.pixel.forward_thread).find(m => m.text === STORY_NOTE);
+    assert.ok(note && !note.clientAssignedMessageId, 'Chat gave it no custom id');
+    const forget = () => {
+      t.g.cache.delete('ac_thread_notes');
+      forgetIds(t);
+      t.chat.requestIds.clear();
+    };
+    forget();
+    const posts = posted(t).length;
+    eq([tryNotes(t, [[cards.pixel, STORY_NOTE, 'k1']]), posted(t).length - posts, noteCount(t, cards.pixel.forward_thread)], [[[true, 1, 0]], 0, 1]);
+    // as Chat can hand the note back: without its bold marks
+    note.text = plainOf(STORY_NOTE);
+    forget();
+    eq([tryNotes(t, [[cards.pixel, STORY_NOTE, 'k1']]), posted(t).length - posts, noteCount(t, cards.pixel.forward_thread)], [[[true, 1, 0]], 0, 1]);
+    // another note under the same card is posted, as it should be
+    forget();
+    eq([tryNotes(t, [[cards.pixel, REQ_NOTE, 'k2']]), posted(t).length - posts, noteCount(t, cards.pixel.forward_thread)], [[[true, 1, 0]], 1, 2]);
+    // a person who wrote the same words under another card: theirs, not the bot's note (the bot's account is known)
+    t.chat.say(AC, plainOf(STORY_NOTE), Object.assign({ thread: cards.maps.forward_thread }, DANA));
+    t.poll();
+    forget();
+    eq([tryNotes(t, [[cards.maps, STORY_NOTE, 'k3']]), noteCount(t, cards.maps.forward_thread)], [[[true, 1, 0]], 2]);
+    eq(B.ev('[acNotePlain_("🔗 *Part of a story:* 5 accounts tell it (<https://chat.google.com/room/x/y|story card>)"), acNotePlain_(" a  _b_ ~c~ `d`\\n e "), ' +
+      'acNotePlain_(null), acNotePlain_(undefined)]'), ['🔗 Part of a story: 5 accounts tell it (story card)', 'a b c d e', '', '']);
   });
 };
