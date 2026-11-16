@@ -444,11 +444,71 @@ function bqWaveOf_(members, words) {
   }, summary ? { wave_summary: summary } : {}, breakdown.length ? { platform_breakdown: breakdown } : {});
 }
 
+// Why evaluateBqDualTrack_ left a record out (the `why` of its `left_out` entries), in the order its steps run
+const BQ_LEFT_OUT_ = {
+  NOT_GOOGLE: 'not_google',  // the rules: not about Google ("google it" slang, a feed or an issue name that isn't Google's)
+  SAME_POST: 'same_post',    // the rules: the post itself already has an alert, and nothing says what is new
+  GEMINI: 'gemini',          // Gemini's Step 1 discarded it (it gives no reason)
+  SAME_ISSUE: 'same_issue',  // the rules: on an issue already alerted, with no new development (a wave on one, too)
+  NO_WAVE: 'no_wave',        // the Dual-Track only: under the Solo threshold and in no Group Wave
+};
+
+/**
+ * One entry of evaluateBqDualTrack_'s `left_out`: {id, why, alert_id, match}. `why`: one of BQ_LEFT_OUT_. `match`: what
+ * the code's own rule (matchBqPriorAlert_) answered for the record, or null. alert_id is that earlier alert's id as the
+ * caller's list of earlier alerts has it (from the poll, bqPriorAlerts_: its Alert-log id), and `match` says how the
+ * rule matched it: 'post' (the post itself) or 'issue' (the same issue); both '' when it matched none. Never the
+ * prior_alert_ref Gemini writes, which is free text. Pure.
+ */
+function bqLeftOut_(id, why, match) {
+  const prior = (match && match.prior) || null;
+  return { id, why, alert_id: prior ? String(prior.alert_id || '') : '', match: prior ? (match.same_post ? 'post' : 'issue') : '' };
+}
+
+/**
+ * The alert requirements' engagement bar for a Social Alert: the config's collection.high_engagement_threshold, as
+ * GEN.escalation_rules has it (2,000 today), never a number typed here; 0 when the config gives none. Pure.
+ */
+function bqEngagementBar_() {
+  const n = Number(typeof GEN !== 'undefined' && GEN && GEN.escalation_rules && GEN.escalation_rules.high_engagement_threshold);
+  return isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * A bigger post on an issue that already has an alert: the Direct BigQuery poll lets it through as its own card, in
+ * the Auto-correct flow only (BigQuery.gs pollBigQuerySources_). True when all of this holds:
+ *   - Step 1 left `record` out as on an issue already alerted (`x`: its entry in evaluateBqDualTrack_'s left_out, whose
+ *     match is 'issue'): by the rules as the same issue, or by Gemini while the code's own rule matches an earlier
+ *     alert by the issue;
+ *   - the record has the engagement bar or more (bqEngagementBar_);
+ *   - none of the earlier alerts on its issue had that many. `priors`: the earlier alerts Step 1 weighed it against
+ *     (bqPriorAlerts_), to which the poll adds the posts that go on at the same check (those Step 1 passed itself and
+ *     those let through before this one). Every one the code's own rule (matchBqPriorAlert_) matches to the record
+ *     counts, not only the first one, which is the oldest; one whose count isn't known had none.
+ * Nothing else passes: not a record left out for any other reason (not about Google, the post itself already alerted,
+ * Gemini's own call with no earlier alert on the issue, no wave), not a post under the bar whoever wrote it, and no
+ * record at all while the config gives no bar. Pure.
+ */
+function bqBiggerPost_(record, x, priors) {
+  const bar = bqEngagementBar_();
+  if (!bar || !record || typeof record !== 'object' || !x || x.match !== 'issue' ||
+      (x.why !== BQ_LEFT_OUT_.SAME_ISSUE && x.why !== BQ_LEFT_OUT_.GEMINI)) return false;
+  const v = bqRecordView_(record, 0);
+  if (!(v.engagement >= bar)) return false;
+  const earlier = normalizeBqPriorAlerts_(Array.isArray(priors) ? priors : [], null)
+    .filter(p => matchBqPriorAlert_({ url: v.url, issue_name: v.issue }, [p]));
+  return earlier.length > 0 && earlier.every(p => !(Number(p.engagement) >= bar));
+}
+
 /**
  * Executes the 3-step BigQuery Dual-Track evaluation over `records`.
  * Calls Gemini whenever there is time remaining and at least one qualifying Track A solo candidate (when `!opts.wavesOnly`)
  * or enough sub-threshold records (`minAuthors`) to form a Track B group wave (when `!opts.soloOnly`). Falls back to
  * deterministic rules if Gemini is unavailable or errors. Never throws.
+ * {solo_alerts, group_waves, discarded_ids, by, left_out}. left_out says why each record in discarded_ids was left out,
+ * one entry a record in the same order (bqLeftOut_: {id, why, alert_id, match}), with the earlier alert the code's own
+ * rule matched it to. For a record Gemini discarded that is the alert matchBqPriorAlert_ finds for its link and issue
+ * name (none when it finds none); for the posts of a wave held back, the alert the wave matched.
  */
 function evaluateBqDualTrack_(records, ctx, opts) {
   const o = opts || {};
@@ -458,7 +518,11 @@ function evaluateBqDualTrack_(records, ctx, opts) {
   const waveMin = ewCount_(o.waveMin) || EW_WAVE_MIN_TOTAL_;
   const minAuthors = Math.max(2, ewCount_(o.minWaveAuthors) || 2);
   const priors = normalizeBqPriorAlerts_(Array.isArray(o.priorAlerts) ? o.priorAlerts : [], null);
-  const out = { solo_alerts: [], group_waves: [], discarded_ids: [], by: 'rules' };
+  const out = { solo_alerts: [], group_waves: [], discarded_ids: [], by: 'rules', left_out: [] };
+  const leave = (v, why, match) => {  // its id, as always, and why
+    out.discarded_ids.push(v.id);
+    out.left_out.push(bqLeftOut_(v.id, why, match));
+  };
   const items = [];
   const ids = new Set();
   (Array.isArray(records) ? records : []).forEach((r, idx) => {
@@ -470,7 +534,7 @@ function evaluateBqDualTrack_(records, ctx, opts) {
     const same = relevant ? matchBqPriorAlert_({ url: v.url }, priors) : null;
     const repeat = !!(same && same.same_post && !assessBqNewDevelopment_(Object.assign({}, r, { text: v.text }), same).allowed);
     if (relevant && !repeat) items.push(v);
-    else out.discarded_ids.push(v.id);
+    else leave(v, relevant ? BQ_LEFT_OUT_.SAME_POST : BQ_LEFT_OUT_.NOT_GOOGLE, relevant ? same : null);
   });
   if (!items.length) return out;
   const byId = new Map(items.map(v => [v.id, v]));
@@ -521,12 +585,15 @@ function evaluateBqDualTrack_(records, ctx, opts) {
     };
   };
 
+  const ruled = new Map();  // id -> the earlier alert the rules left the record out for
+  const held = new Map();   // id -> the earlier alert its wave was held back for
   live.filter(v => soloOnly || v.engagement >= threshold).forEach(v => {
     const match = matchBqPriorAlert_({ url: v.url, issue_name: v.issue }, priors);
     const dev = devOf(llmSolo.get(v.id), match,
       assessBqNewDevelopment_({ url: v.url, issue_name: v.issue, text: v.text, engagement: v.engagement }, match));
     if (!dev.allowed) {
       dropped.add(v.id);
+      ruled.set(v.id, match);
       return;
     }
     const said = llmSolo.get(v.id) || {};
@@ -559,7 +626,10 @@ function evaluateBqDualTrack_(records, ctx, opts) {
         total_engagement: wave.total_engagement,
         platforms: wave.platforms,
       }, match));
-      if (!dev.allowed) return;
+      if (!dev.allowed) {
+        members.forEach(v => held.set(v.id, match));
+        return;
+      }
       members.forEach(v => used.add(v.id));
       out.group_waves.push(Object.assign(wave, dev.is_new_development ? {
         is_new_development: true,
@@ -589,6 +659,14 @@ function evaluateBqDualTrack_(records, ctx, opts) {
   }
 
   const alerted = new Set(out.solo_alerts.map(s => s.id).concat(Array.from(used)));
-  items.forEach(v => { if (!alerted.has(v.id)) out.discarded_ids.push(v.id); });
+  items.forEach(v => {
+    if (alerted.has(v.id)) return;
+    const rule = ruled.get(v.id);
+    const wave = held.get(v.id);
+    if (ruled.has(v.id)) leave(v, rule && rule.same_post ? BQ_LEFT_OUT_.SAME_POST : BQ_LEFT_OUT_.SAME_ISSUE, rule);
+    else if (dropped.has(v.id)) leave(v, BQ_LEFT_OUT_.GEMINI, matchBqPriorAlert_({ url: v.url, issue_name: v.issue }, priors));
+    else if (held.has(v.id)) leave(v, BQ_LEFT_OUT_.SAME_ISSUE, wave ? { prior: wave.prior, same_post: false } : null);
+    else leave(v, BQ_LEFT_OUT_.NO_WAVE, null);
+  });
   return out;
 }
