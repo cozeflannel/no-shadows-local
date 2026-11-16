@@ -3717,8 +3717,11 @@ function earlyWaveCheck_(ctx) {
       }
       const au = ewCount_(r.unique_low_tier_authors);
       // An early-watch signal marks only itself, never its story: the story's usual signal at the promotion bar must not
-      // be held back as a repeat of it (with its card posted, that signal goes in the card's thread: edStoryVerdict_)
-      (isWatch(r) ? keys.filter(k => k === idKey) : keys).forEach(k => seen.add(k, now, k === idKey ? 0 : au));
+      // be held back as a repeat of it (with its card posted, that signal goes in the card's thread: edStoryVerdict_).
+      // So does a signal the queue had no room for (or whose row was too big to store): nobody reviewed its story, so
+      // the story's next signal is no repeat of it
+      const refused = !res.queued && res.why !== 'already there' && !!idKey;
+      (isWatch(r) || refused ? keys.filter(k => k === idKey) : keys).forEach(k => seen.add(k, now, k === idKey ? 0 : au));
       marked++;
       res.pushed.forEach(p => edNote_(ctx, p.row || edEntryRow_(p.entry), ED_OUT_.never, edNeverWhy_('pushed'), { waited: true }));
       if (!res.queued && res.why !== 'already there') {
