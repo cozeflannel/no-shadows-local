@@ -7,6 +7,9 @@
 // own card). B: posts Step 1 left out as on a story already alerted. A and B count each post once a day for each
 // reason, with one line in the run log. The note is 200 characters at most: with a problem to tell, the bracket goes
 // first, then "; it tries again at the next check", then the problem's own words are cut; never a count.
+// A post Step 1 leaves out on its own call (not about Google, or Gemini's call with no earlier alert on the issue) is
+// on neither count of C15: it has its line in the run log once a day too, however often Step 1 weighs it, and the day's
+// record counts it apart (o).
 // Nothing here changes what is posted, queued or emailed (the golden tests hold that).
 'use strict';
 
@@ -71,7 +74,8 @@ module.exports = H => {
   const review = w => { w.g.clock.now += 1000; const r = w.bot.runOnce_(onCtx(w)); collectBurson(w.chat, [w.BUR]); return r; };
   const note = w => JSON.parse(w.g.props.get('SWITCH_NOTES')).directBq.text;
   const today = w => JSON.parse(w.g.props.get('BQ_DIRECT_TODAY'));
-  const counts = w => ['n', 's', 'm', 'a', 'b'].map(k => today(w)[k]);
+  const counts = w => ['n', 's', 'm', 'a', 'b'].map(k => today(w)[k]);  // what C15 shows
+  const ownCall = w => today(w).o;  // the posts Step 1 left out on its own call: counted apart, not on C15
   const said = w => w.g.logs.filter(l => /^BigQuery direct poll: not posted/.test(l));
   const cards = w => w.chat.botPosts(w.BUR).filter(m => !m.threadReply && /^THIS ALERT MEETS/.test(m.text)).map(m => m.text.match(/\[Link\]: (\S+)/)[1]);
   const forget = (w, prefix) => Array.from(w.g.cache.keys()).filter(k => k.indexOf(prefix) === 0).forEach(k => w.g.cache.delete(k));
@@ -229,7 +233,7 @@ module.exports = H => {
     eq([counts(w), said(w).length], [[0, 0, 0, 5, 0], 5]);
   });
 
-  test('direct BQ C15: a post Step 1 leaves out as on a story already alerted is counted once a day under "on a story already alerted", with the alert the code\'s own rule matched and who left it out (the rules, or Gemini): not again while Step 1 doesn\'t weigh it (an hour), nor when it weighs it again. A post Gemini leaves out that matches no earlier alert is not counted, and the log says so. A post Step 1 matches to an earlier alert by the post itself counts under "already had an alert", unless that alert is the poll\'s own card', () => {
+  test('direct BQ C15: a post Step 1 leaves out as on a story already alerted is counted once a day under "on a story already alerted", with the alert the code\'s own rule matched and who left it out (the rules, or Gemini): not again while Step 1 doesn\'t weigh it (an hour), nor when it weighs it again. A post Gemini leaves out that matches no earlier alert is on neither count of C15: the log says so, once, and the day\'s record counts it apart. A post Step 1 matches to an earlier alert by the post itself counts under "already had an alert", unless that alert is the poll\'s own card', () => {
     const w = world();
     const feed = fakeBq(w.g);
     w.paste(F.NO_LINK);  // Burson's alert on the issue, without its link (so SAM's post is not in the log by its link)
@@ -254,12 +258,18 @@ module.exports = H => {
       return { solo_alerts: [], group_waves: [], discarded_ids: recs.map(r => r.id) };
     };
     feed.bsip = [bsip(2, { issue_name: ISSUE, summary: 'Another X user says Google Search shows a biased picture of the Paris riots.' }), bsip(3)];
-    eq(check(w), res({ skipped_step1: 2 }));
-    eq([cards(w), counts(w)], [[], [0, 0, 0, 0, 2]]);
+    eq([ownCall(w), check(w)], [0, res({ skipped_step1: 2 })]);
+    eq([cards(w), counts(w), ownCall(w)], [[], [0, 0, 0, 0, 2], 1]);
+    // (each in the order Step 1 was given them, said when the check is noted)
     eq(said(w).slice(1), [
-      `BigQuery direct poll: not posted, left out by Step 1: ${link(3)} · by Gemini (it matched no earlier alert)`,
       `BigQuery direct poll: not posted, on a story already alerted: ${link(2)} · ${prior} (Burson's alert) · Step 1, by Gemini`,
+      `BigQuery direct poll: not posted, left out by Step 1: ${link(3)} · by Gemini (it matched no earlier alert)`,
     ]);
+    assert.ok(note(w).endsWith(' · 0 posts today (0 for a Social Alert, 0 monitoring only) · not posted: 0 already had an alert, 2 on a story already alerted'), note(w));
+    // weighed again an hour on, and left out again: neither is said or counted a second time
+    forget(w, 'bqstep1:');
+    eq(check(w), res({ skipped_step1: 2 }));
+    eq([counts(w), ownCall(w), said(w).length], [[0, 0, 0, 0, 2], 1, 3]);
     w.vertex.bqRecords = null;
 
     // The post itself, under a link the log doesn't know it by: Step 1's own rule finds the earlier alert by the post
@@ -279,6 +289,61 @@ module.exports = H => {
     feed2.bsip = [bsip(1, { url: link(1).replace('x.com', 'vxtwitter.com') })];
     eq(check(w2), res({ skipped_step1: 1 }));
     eq([cards(w2), counts(w2), said(w2).length], [[link(1)], [1, 0, 1, 1, 0], 1]);
+  });
+
+  test('direct BQ C15: a post Step 1 leaves out on its own call has one line in the run log a day, however often Step 1 weighs it, like the two reasons C15 counts. Three posts are read at every check for 25 hours (300 checks, past midnight Eastern): one Burson alerted, one on that alert\'s issue, one Gemini leaves out with no earlier alert on its issue. With the script cache as it works (Step 1 weighs a post again every hour), with its keys for these counts emptied before every check, and with the whole cache emptied before every check (Step 1 then weighs the posts at every check): each post has one line a day, C15 counts the first two once a day and never the third, and the day\'s record counts the third apart', () => {
+    const HOURLY = 12;  // checks in an hour: how long the cache keeps what Step 1 left out
+    ['the cache as it works', 'its keys for these counts emptied before every check', 'the whole cache emptied before every check'].forEach((state, mode) => {
+      const w = world();
+      const feed = fakeBq(w.g);
+      w.paste(F.P0_OK);  // Burson alerts SAM's post, on the Paris issue
+      w.run();
+      const prior = w.alertRows()[0].alert_id;
+      // Gemini leaves post 3 out (no alert has its issue) and passes post 2, which the rules then leave out for its issue
+      let weighed = 0;
+      w.vertex.bqRecords = payload => {
+        weighed++;
+        const recs = JSON.parse(payload.contents[0].parts.map(p => p.text || '').join('\n').match(/<records>\n([\s\S]*)\n<\/records>/)[1]);
+        const out = recs.filter(r => r.url === link(3)).map(r => r.id);
+        return { solo_alerts: recs.filter(r => out.indexOf(r.id) < 0).map(r => ({ id: r.id, why_met_guidelines: 'A complaint about a Google product.' })),
+          group_waves: [], discarded_ids: out };
+      };
+      feed.bsip = [samRow(), bsip(2, { issue_name: ISSUE, summary: 'Another X user says Google Search shows a biased picture of the Paris riots.' }), bsip(3)];
+      const days = {};  // each day's counts as its last check left them: [what C15 shows, the posts left out on Step 1's own call]
+      let longest = 0;
+      for (let i = 0; i < 300; i++) {
+        if (mode === 2 || i % HOURLY === 0) forget(w, 'bqstep1:');
+        if (mode >= 1) forget(w, 'bqnp:');
+        check(w);
+        longest = Math.max(longest, note(w).length);
+        days[today(w).day] = [counts(w), ownCall(w)];
+      }
+      eq([state, days], [state, { '2026-10-14': [[0, 0, 0, 1, 1], 1], '2026-10-15': [[0, 0, 0, 1, 1], 1] }]);
+      // Step 1 weighed the two posts 25 times (once an hour), or at all 300 checks: one line a day for each reason all the same
+      eq([state, weighed], [state, mode === 2 ? 300 : 300 / HOURLY]);
+      const lines = reason => said(w).filter(l => l.indexOf(`BigQuery direct poll: not posted, ${reason}: `) === 0).map(l => l.split(': ').slice(2).join(': '));
+      eq([state, lines('it already had an alert'), lines('on a story already alerted'), lines('left out by Step 1'), said(w).length], [state,
+        Array(2).fill(`${SAM} · ${prior} (Burson's alert)`),
+        Array(2).fill(`${link(2)} · ${prior} (Burson's alert) · Step 1, by the rules`),
+        Array(2).fill(`${link(3)} · by Gemini (it matched no earlier alert)`), 6]);
+      assert.ok(note(w).endsWith(` · 0 posts today (0 for a Social Alert, 0 monitoring only) · not posted: 1 already had an alert, 1 on a story already alerted`), note(w));
+      assert.ok(longest <= 200, `${longest} characters`);
+      eq([cards(w), today(w).k.map(id => id.charAt(0)).sort().join('')], [[], 'abo']);
+    });
+
+    // the other reason Step 1 can give on its own call (not about Google, by the rules: the poll's own test comes first,
+    // so Step 1 hardly ever says it): its line, once a day as well
+    const w = world();
+    const feed = fakeBq(w.g);
+    feed.bsip = [bsip(4)];
+    w.bot.ev('evaluateBqDualTrack_ = records => ({ solo_alerts: [], group_waves: [], discarded_ids: records.map(r => r.id), by: "rules", ' +
+      'left_out: records.map(r => bqLeftOut_(r.id, BQ_LEFT_OUT_.NOT_GOOGLE, null)) })');
+    for (let i = 0; i < 5; i++) {
+      forget(w, 'bqstep1:');
+      forget(w, 'bqnp:');
+      eq(check(w), res({ skipped_step1: 1 }));
+    }
+    eq([said(w), counts(w), ownCall(w)], [[`BigQuery direct poll: not posted, left out by Step 1: ${link(4)} · not about Google, by the rules`], [0, 0, 0, 0, 0], 1]);
   });
 
   // -----------------------------------------------------------------------------------------------------------
@@ -377,40 +442,82 @@ module.exports = H => {
   // The day's record
   // -----------------------------------------------------------------------------------------------------------
 
-  test('direct BQ C15: the day\'s record (script property BQ_DIRECT_TODAY: {day, n, s, m, a, b, k}) stays well under a property\'s 9 KB: it keeps the newest 300 posts it counted, its worst case is under 8,800 characters; a record from before the new counts keeps its posts, one of another day or one that can\'t be read starts from nothing; with the switch OFF nothing is counted or logged', () => {
+  test('direct BQ C15: the day\'s record (script property BQ_DIRECT_TODAY: {day, n, s, m, a, b, o, k}) stays well under a property\'s 9 KB: it keeps the newest 300 posts C15 counts and, apart from them, the newest 100 that Step 1 left out on its own call (those never push out a post C15 counts); its worst case is under 8,800 characters; a record from before the new counts keeps its posts, one of another day or one that can\'t be read starts from nothing; with the switch OFF nothing is counted or logged', () => {
     const w = world();
     const day = w.bot.dayKey_();
     eq(day, '2026-10-14');
-    // 400 posts not posted for the first reason and 400 for the second, each with a long key: all counted, 300 kept
-    const s = w.bot.bqDirectDay_(JSON.stringify({ day, n: 999999, s: 499999, m: 499999 }));
-    const many = why => Array.from({ length: 400 }, (_, i) => ({ why, key: `x.com/status/${'9'.repeat(1200)}${i}`, url: `https://x.com/u/status/${i}`, said: 'QA-1 (Watch alert)' }));
+    eq(B.ev('[BQ_NOT_POSTED_KEPT_, BQ_LEFT_OUT_KEPT_]'), [300, 100]);
+    // 400 posts not posted for each reason, each with a long key: all counted and logged, 300 + 100 kept
+    const s = w.bot.bqDirectDay_(JSON.stringify({ day, n: 99999999, s: 49999999, m: 49999999 }));
+    const many = (why, n) => Array.from({ length: n || 400 }, (_, i) => ({ why, key: `x.com/status/${'9'.repeat(1200)}${i}`, url: `https://x.com/u/status/${i}`,
+      said: why === 'o' ? 'by Gemini (it matched no earlier alert)' : 'QA-1 (Watch alert)' }));
+    const kinds = () => ['a', 'b', 'o'].map(why => s.k.filter(id => id.charAt(0) === why).length);
     w.bot.bqCountNotPosted_(s, many('a'));
+    eq([s.a, kinds()], [400, [300, 0, 0]]);
+    // the posts Step 1 left out on its own call have room of their own: 400 of them push out none of the 300
+    w.bot.bqCountNotPosted_(s, many('o'));
+    eq([s.o, kinds()], [400, [300, 0, 100]]);
     w.bot.bqCountNotPosted_(s, many('b'));
-    Object.assign(s, { a: s.a + 999000, b: s.b + 999000 });
+    eq([s.b, kinds()], [400, [0, 300, 100]]);
+    Object.assign(s, { a: s.a + 99999000, b: s.b + 99999000, o: s.o + 99999000 });
     const text = JSON.stringify(s);
-    eq([s.a, s.b, s.k.length, s.k.every(id => /^b[0-9a-f]{1,8}:\d{4}$/.test(id))], [999400, 999400, 300, true]);
+    eq([s.a, s.b, s.o, s.k.length, s.k.every(id => /^[bo][0-9a-f]{1,8}:\d{4}$/.test(id))], [99999400, 99999400, 99999400, 400, true]);
     assert.ok(text.length < 8800, `${text.length} characters`);
-    eq(w.g.logs.filter(l => /^BigQuery direct poll: not posted/.test(l)).length, 800);
-    // counted again in the same order: all known (the newest 300 by the record, the others by their cache key)
-    w.bot.bqCountNotPosted_(s, many('b'));
-    eq([s.b, s.k.length], [999400, 300]);
+    const lines = w.g.logs.filter(l => /^BigQuery direct poll: not posted/.test(l));
+    eq([lines.length, lines[0], lines[400], lines[800]], [1200,
+      'BigQuery direct poll: not posted, it already had an alert: https://x.com/u/status/0 · QA-1 (Watch alert)',
+      'BigQuery direct poll: not posted, left out by Step 1: https://x.com/u/status/0 · by Gemini (it matched no earlier alert)',
+      'BigQuery direct poll: not posted, on a story already alerted: https://x.com/u/status/0 · QA-1 (Watch alert)']);
+    // counted again in the same order: all known (the newest by the record, the others by their cache key)
+    w.bot.bqCountNotPosted_(s, many('b').concat(many('o')));
+    eq([s.b, s.o, s.k.length, w.g.logs.filter(l => /^BigQuery direct poll: not posted/.test(l)).length], [99999400, 99999400, 400, 1200]);
+    // which ones are kept, by itself: each kind's newest, in the order they were counted; anything else is passed over
+    const mixed = ['a1:1', 'o1:1', 'b2:1', 'o2:1', 'a3:1'];
+    eq([B.bqNotPostedKept_(mixed), B.bqNotPostedKept_([]), B.bqNotPostedKept_(null), B.bqNotPostedKept_(undefined)], [mixed, [], [], []]);
+    const long = Array.from({ length: 350 }, (_, i) => `a${i}:1`).concat(Array.from({ length: 150 }, (_, i) => `o${i}:1`), ['b9:1']);
+    const kept = B.bqNotPostedKept_(long);
+    eq([kept.length, kept[0], kept[298], kept[299], kept[398], kept[399]], [400, 'a51:1', 'a349:1', 'o50:1', 'o149:1', 'b9:1']);
+    const before = { a: s.a, b: s.b, o: s.o, k: s.k.length };
+    w.bot.bqCountNotPosted_(s, [null, undefined, {}, { why: 'x', key: 'k', url: 'u', said: '' }, { why: 'constructor', key: 'k', url: 'u', said: '' },
+      { why: 'k', key: 'k', url: 'u', said: '' }, { why: 'day', key: 'k', url: 'u', said: '' }]);
+    eq([{ a: s.a, b: s.b, o: s.o, k: s.k.length }, s.day, Array.isArray(s.k)], [before, day, true]);
     // what bqDirectDay_ reads
     const read = raw => w.bot.bqDirectDay_(raw);
-    const NEW = { day, n: 0, s: 0, m: 0, a: 0, b: 0, k: [] };
-    eq([read(JSON.stringify({ day, n: 7 })), read(JSON.stringify({ day: '2026-10-13', n: 7, s: 3, m: 4, a: 5, b: 6, k: ['a1:2'] })),
-      read('{not json'), read(null), read('[]'), read(JSON.stringify({ day, n: -4, s: 'x', k: 'y' }))],
+    const NEW = { day, n: 0, s: 0, m: 0, a: 0, b: 0, o: 0, k: [] };
+    eq([read(JSON.stringify({ day, n: 7 })), read(JSON.stringify({ day: '2026-10-13', n: 7, s: 3, m: 4, a: 5, b: 6, o: 8, k: ['a1:2'] })),
+      read('{not json'), read(null), read('[]'), read(JSON.stringify({ day, n: -4, s: 'x', o: 'z', k: 'y' }))],
     [Object.assign({}, NEW, { n: 7 }), NEW, NEW, NEW, NEW, NEW]);
-    eq(read(JSON.stringify({ day, n: 2, s: 1, m: 1, a: 3, b: 4, k: ['a1:2', 'b3:4'] })), { day, n: 2, s: 1, m: 1, a: 3, b: 4, k: ['a1:2', 'b3:4'] });
+    eq(read(JSON.stringify({ day, n: 2, s: 1, m: 1, a: 3, b: 4, o: 5, k: ['a1:2', 'o5:6', 'b3:4'] })),
+      { day, n: 2, s: 1, m: 1, a: 3, b: 4, o: 5, k: ['a1:2', 'o5:6', 'b3:4'] });
+    // (a record written before the posts Step 1 left out on its own call were counted keeps what it has)
+    eq(read(JSON.stringify({ day, n: 2, s: 1, m: 1, a: 3, b: 4, k: ['a1:2', 'b3:4'] })), { day, n: 2, s: 1, m: 1, a: 3, b: 4, o: 0, k: ['a1:2', 'b3:4'] });
 
-    // the poll with the switch OFF (its settings alone): it reads and posts as before, counts nothing, logs no such line
+    // the poll with the switch OFF (its settings alone): it reads and posts as before, counts nothing, logs no such line,
+    // whatever the reason a post gets no card for: Burson alerted it, it is on that alert's issue, Gemini left it out
     const off = world();
     const feed = fakeBq(off.g);
     off.paste(F.P0_OK);
     off.run();
-    feed.bsip = [samRow(), bsip(1)];
+    off.vertex.bqRecords = payload => {
+      const recs = JSON.parse(payload.contents[0].parts.map(p => p.text || '').join('\n').match(/<records>\n([\s\S]*)\n<\/records>/)[1]);
+      const out = recs.filter(r => r.url === link(3)).map(r => r.id);
+      return { solo_alerts: recs.filter(r => out.indexOf(r.id) < 0).map(r => ({ id: r.id, why_met_guidelines: 'A complaint about a Google product.' })),
+        group_waves: [], discarded_ids: out };
+    };
+    feed.bsip = [samRow(), bsip(1), bsip(2, { issue_name: ISSUE, summary: 'Another X user says Google Search shows a biased picture of the Paris riots.' }), bsip(3)];
     const ctx = off.ctx();
     Object.assign(ctx.settings, { bq_direct_poll: true, bq_poll_bsip: true });
-    eq(off.bot.pollBigQuerySources_(ctx, off.BUR), res({ bsip: 1, skipped_duplicates: 1 }));
+    eq(off.bot.pollBigQuerySources_(ctx, off.BUR), res({ bsip: 1, skipped_duplicates: 1, skipped_step1: 2 }));
     eq([off.g.props.has('BQ_DIRECT_TODAY'), off.g.props.has('SWITCH_NOTES'), said(off)], [false, false, []]);
+    // (the same check with the switch ON says all three)
+    const on = world();
+    const onFeed = fakeBq(on.g);
+    on.paste(F.P0_OK);
+    on.run();
+    on.vertex.bqRecords = off.vertex.bqRecords;
+    onFeed.bsip = feed.bsip;
+    eq(check(on), res({ bsip: 1, skipped_duplicates: 1, skipped_step1: 2 }));
+    eq([counts(on), ownCall(on), said(on).map(l => l.replace(/^BigQuery direct poll: not posted, ([^:]+): .*$/, '$1'))],
+      [[1, 0, 0, 1, 1], 1, ['it already had an alert', 'on a story already alerted', 'left out by Step 1']]);
   });
 };
