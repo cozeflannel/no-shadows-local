@@ -3177,7 +3177,7 @@ function edRowKeys_(row) {
 
 /**
  * Recently queued early-detection keys (`EARLY_DETECTION_SEEN`): `{has(key), authors(keys), first(keys), add(key, ms,
- * authors), forget(key, ms, authors), save()}`.
+ * authors), forget(key, authors), save()}`.
  * A story key keeps how many accounts its signal had when it was queued (`[ms, authors]`); `authors(keys)` is the most
  * of those among the keys seen in the last 24h (Infinity for an entry from before the counts were kept, so its repeat is
  * held back as it always was; null when none of them is seen). `first(keys)` is that same entry with its time: {at (ms),

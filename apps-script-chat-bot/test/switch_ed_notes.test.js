@@ -393,6 +393,9 @@ module.exports = H => {
     const bot = loadBot(g.services, g.clock);
     const props = g.services.PropertiesService.getScriptProperties();
     eq(bot.ev('ED_ONCE_MAX_'), 80);
+    // the keys kept cover every signal a check can still be handed: the producer's buffer holds 30, so between a
+    // signal's note and its last read fewer than twice that many others can be noted
+    assert.ok(bot.ev('ED_ONCE_MAX_') > 2 * bot.ev('EWS_BUFFER_MAX_'), String(bot.ev('EWS_BUFFER_MAX_')));
     const full = { day: '2026-10-14', clusters: 999999, velocity: 999999, queued: 999999, repeats: 999999, dismissed: 999999, triaged: 999999,
       watch: 999999, watchq: 999999, at: 'Sep 30, 12:59 PM EDT', problem: 'a BigQuery source table was not found',
       found: 999999, cards: 999999, under: 999999, letgo: 999999, never: 999999 };
