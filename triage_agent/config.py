@@ -640,8 +640,9 @@ class BursonQAConfig(ConfigModel):
     early_wave_new_pool_minutes: int = 120
     # The new sources' posts not embedded in a check, kept for the next one (2 hours at most).
     early_wave_new_carry_max: int = 100
-    # Days after a source's row first goes ON when stories only the new sources lift over the bar are listed, not
-    # sent for review. 0: no trial (sent from the first day, within the two caps below).
+    # Days after a source is first read when stories only the new sources lift over the bar are listed, not sent
+    # for review, and stories only they lift to the early watch are not asked about. 0: no trial (sent from the
+    # first day, within the two caps below).
     early_wave_new_trial_days: int = 7
     # After the trial: such lifted stories sent for review in an hour, and in a day, at most (the rest are listed).
     early_wave_new_lifted_per_hour: int = 2
