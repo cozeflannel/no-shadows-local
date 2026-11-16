@@ -298,11 +298,14 @@ module.exports = H => {
   // The golden scenarios
   // -----------------------------------------------------------------------------------------------------------
 
-  test('early detection cross alerts: the golden scenarios: with the setting off the one-space setup puts out the default set without its step 12 (a story whose main post is the Pixel post: no card, as before); the Mirror flow with the default settings puts out exactly the f93e31a record', () => {
+  test('early detection cross alerts: the golden scenarios: with the setting off the one-space setup puts out the default set without its step 12 (a story whose main post is the Pixel post: no card, as before) and without the Watch's note under the Maps card; the Mirror flow with the default settings puts out exactly the f93e31a record', () => {
     const rec = JSON.parse(fs.readFileSync(path.join(__dirname, 'golden_flows_defaults.json'), 'utf8')).one_space;
     const step12 = x => /^12 /.test(String(x.run || ''));
     eq(['chat', 'reactions', 'emails'].map(k => (rec[k] || []).filter(step12).length), [3, 1, 0]);
-    const without = Object.assign({}, rec, { chat: rec.chat.filter(x => !step12(x)), reactions: rec.reactions.filter(x => !step12(x)) });
+    // (and without the Watch's note under the Maps card, which the same setting adds: switch_watch_cover_notes.test.js)
+    const watchNote = x => /^🔭 \*Also flagged by the watch /.test(String(x.text || ''));
+    const without = Object.assign({}, rec, { chat: rec.chat.filter(x => !step12(x) && !watchNote(x)),
+      reactions: rec.reactions.filter(x => !step12(x)) });
     eq(golden.differences(golden.oneSpace({ cross_alert_notes: false }), without), []);
     eq(golden.differences(golden.mirror({}), golden.recorded.mirror), []);
   });

@@ -159,7 +159,7 @@ module.exports = H => {
     assert.ok(v.t.g.logs.some(l => l === 'thread note not posted: the Auto-correct flow hasn\'t worked in that space'), 'refused by the check');
   });
 
-  test('watch cover notes: the golden scenarios: the one-space setup with only cross_alert_notes on puts out what it puts out with every setting off plus ONE note, under the Maps card, and its Maps flag is "listed under another alert"; with every setting off that flag is "already alerted" and C35 has no "noted"; the Mirror flow\'s flags, C35 and output are the same with the defaults and with every setting off (its Pixel flag "already alerted")', () => {
+  test('watch cover notes: the golden scenarios: the one-space setup with only cross_alert_notes on puts out what it puts out with every setting off plus ONE Watch note, under the Maps card (and the story card of step 12 with its two notes, which the same setting lets through), and its Maps flag is "listed under another alert"; with every setting off that flag is "already alerted" and C35 has no "noted"; the Mirror flow\'s flags, C35 and output are the same with the defaults and with every setting off (its Pixel flag "already alerted")', () => {
     const off = golden.oneSpaceRun(golden.SETTINGS_OFF);
     const on = golden.oneSpaceRun(ONLY_NOTES);
     eq(golden.differences(off.out, golden.recorded.one_space), []);
@@ -170,7 +170,16 @@ module.exports = H => {
     const mapsThread = maps.rows.slice(1).find(r => r[col('record_key')] === 'x.com/status/2150000000000000002')[col('forward_thread')];
     eq(added, [{ run: '10 the Maps card is reviewed and the watch flags the Maps post too', space: AC, thread: mapsThread, reply: true,
       text: note([BRAND]) }]);
-    eq(golden.differences(Object.assign({}, on.out, { chat: on.out.chat.filter(c => !NOTE_RX.test(c.text)) }), off.out), []);
+    // the same setting also lets a story whose main post already has a card be reviewed (EarlyDetectionCross.gs): the
+    // golden scenario's step 12 then posts the story's card, its review note and one note under the Pixel card, and
+    // nothing else; with the setting off that step posts nothing
+    const step12 = c => /^12 /.test(String(c.run || ''));
+    eq([off.out.chat.filter(step12), off.out.reactions.filter(step12)], [[], []]);
+    eq(on.out.chat.filter(step12).map(c => [c.reply, c.text.split(' ').slice(0, 3).join(' ')]),
+      [[false, '🚨 *EARLY DETECTION*'], [true, '🤖 *Early Detection'], [true, '🔗 *Part of']]);
+    eq(on.out.reactions.filter(step12).length, 1);
+    eq(golden.differences(Object.assign({}, on.out, { chat: on.out.chat.filter(c => !NOTE_RX.test(c.text) && !step12(c)),
+      reactions: on.out.reactions.filter(c => !step12(c)) }), off.out), []);
     eq(keysOf(on.t)[`${MAPS}|${BRAND}`].a, 'u');
     assert.match(c35(on.t), /, 1 on a post that already had an alert \(noted in its thread\)/);
     // the Mirror flow
