@@ -387,6 +387,78 @@ module.exports = H => {
     eq([counts(w2), B.bqDirectSource_('BSIP'), B.bqDirectSource_('Early detection'), B.bqDirectSource_('')], [[0, 1, 2, 0, 0], true, false, false]);
   });
 
+  test('direct BQ C15: the bracket never holds more cards than "N posts today". A card posted before midnight (Eastern) and reviewed after it is none of the new day\'s posts: its review is counted on no day, and the new day starts "0 posts today (0 for a Social Alert, 0 monitoring only)". A card posted after midnight is counted when it is reviewed, as always; so is one whose row doesn\'t say when it was posted', () => {
+    const w = world();
+    const feed = fakeBq(w.g);
+    feed.bsip = [bsip(1)];
+    w.g.clock.now += (16 * 60 - 15) * MIN;  // 11:45 PM Eastern: the check comes 5 minutes on
+    eq(check(w), res({ bsip: 1 }));
+    eq([today(w).day, counts(w)], ['2026-10-14', [1, 0, 0, 0, 0]]);
+    assert.match(note(w), /^last check Oct 14, 11:50 PM EDT · 1 post today \(0 for a Social Alert, 0 monitoring only\) /);
+    w.g.clock.now += 15 * MIN;  // five past midnight: the card is reviewed on the new day
+    review(w);
+    const [row] = w.alertRows();
+    eq([row.ingested, w.bot.etDay_(row.source_at), w.bot.dayKey_()], ['BSIP', '2026-10-14', '2026-10-15']);
+    eq([today(w).day, counts(w)], ['2026-10-14', [1, 0, 0, 0, 0]]);  // the day's record is yesterday's still: nothing was counted
+    eq(check(w), res({ skipped_duplicates: 1 }));
+    eq([today(w).day, counts(w)], ['2026-10-15', [0, 0, 0, 0, 0]]);
+    assert.ok(note(w).endsWith(` · 0 posts today (0 for a Social Alert, 0 monitoring only)${NONE}`), note(w));
+    // a card posted on the new day and reviewed on it counts
+    feed.bsip = [bsip(1), bsip(2)];
+    eq(check(w), res({ bsip: 1, skipped_duplicates: 1 }));
+    review(w);
+    check(w);
+    eq(counts(w), [1, 0, 1, 0, 0]);
+    assert.ok(note(w).endsWith(` · 1 post today (0 for a Social Alert, 1 monitoring only)${NONE}`), note(w));
+
+    // the rule on its own, at the day's edge (midnight Eastern is 04:00 UTC in October)
+    const MIDNIGHT = Date.UTC(2026, 9, 15, 4, 0);
+    const w2 = world();
+    w2.g.clock.now = MIDNIGHT + 30 * 1000;  // half a minute into the 15th
+    const reviewed = (sourceAt, alerted) => w2.bot.bqDirectReviewed_(Object.assign({ alert_id: 'QA-1', ingested: 'BSIP' }, sourceAt === undefined ? {} : { source_at: sourceAt }), alerted);
+    [MIDNIGHT - 1, MIDNIGHT - 30 * 1000, MIDNIGHT - 24 * 60 * MIN, String(MIDNIGHT - 1)].forEach(at => reviewed(at, true));
+    eq(w2.g.props.has('BQ_DIRECT_TODAY'), false);  // a card of the 14th: not counted, and nothing written
+    reviewed(MIDNIGHT, true);            // the first millisecond of the 15th
+    reviewed(MIDNIGHT + 29 * 1000, false);
+    eq([today(w2).day, counts(w2)], ['2026-10-15', [0, 1, 1, 0, 0]]);
+    // a row that doesn't say when its card was posted counts on the day of its review, as before
+    [undefined, 0, '', null, 'soon'].forEach(at => reviewed(at, false));
+    eq(counts(w2), [0, 1, 6, 0, 0]);
+  });
+
+  test('direct BQ C15: the poll\'s own card is no other alert while it waits to be reviewed, also with the poll\'s memory of the posts it took lost: the record of the messages it posted says the waiting card is its own, so the post is not counted and nothing is logged, while Burson\'s alert of another post that waits beside it is. Only with that record lost as well is the card taken for a post waiting in the space, once', () => {
+    /** A world whose poll has just posted the card of post 1: the card waits in the space (no run reviews it here). */
+    const waitingCard = () => {
+      const w = world();
+      const feed = fakeBq(w.g);
+      feed.bsip = [bsip(1)];
+      eq(check(w), res({ bsip: 1 }));
+      eq([cards(w), counts(w), JSON.parse(w.g.props.get('BQ_INGESTED_MSGS')).length], [[link(1)], [1, 0, 0, 0, 0], 1]);
+      return { w, feed };
+    };
+    // before the card is reviewed the memory of the posts the poll took is lost, and Burson alerts another post
+    const { w, feed } = waitingCard();
+    w.g.props.delete('BQ_INGESTED_KEYS');
+    w.paste(F.AIO);
+    feed.bsip = [bsip(1), bsip(2, { url: AIO })];
+    eq(check(w), res({ skipped_duplicates: 2 }));
+    eq([cards(w), counts(w), said(w)], [[link(1)], [1, 0, 0, 1, 0],
+      [`BigQuery direct poll: not posted, it already had an alert: ${AIO} · in the space, not reviewed yet`]]);
+    eq(w.g.props.has('BQ_INGESTED_KEYS'), false);  // (still lost: the next check says the same)
+    check(w);
+    eq([cards(w), counts(w), said(w).length], [[link(1)], [1, 0, 0, 1, 0], 1]);
+
+    // the record of the messages it posted lost as well: nothing says whose the waiting card is
+    const lost = waitingCard().w;
+    lost.g.props.delete('BQ_INGESTED_KEYS');
+    lost.g.props.delete('BQ_INGESTED_MSGS');
+    eq(check(lost), res({ skipped_duplicates: 1 }));
+    eq([cards(lost), counts(lost), said(lost)], [[link(1)], [1, 0, 0, 1, 0],
+      [`BigQuery direct poll: not posted, it already had an alert: ${link(1)} · in the space, not reviewed yet`]]);
+    check(lost);
+    eq([cards(lost), counts(lost), said(lost).length], [[link(1)], [1, 0, 0, 1, 0], 1]);
+  });
+
   test('direct BQ C15: in the flows as they run. The one-space setup: the watch alerts a post first, then Direct BigQuery reads it (counted as already alerted, by the Watch alert), posts two cards (one reviewed for a Social Alert, one for none) and later reads another post on the first card\'s issue (on a story already alerted); column C says all of it. The golden scenarios end with their cards counted too, the Mirror flow\'s as the one-space setup\'s', () => {
     const { t, sh, feed, rec } = golden.world.oneSpaceWorld(golden.SETTINGS_OFF);
     const c15 = () => String(t.control().cell(15, 3));

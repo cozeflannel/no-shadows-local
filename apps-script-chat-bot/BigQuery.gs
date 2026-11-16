@@ -2208,11 +2208,15 @@ function noteBqDirect_(props, posted, problem, notPosted) {
  * C15's "(S for a Social Alert, M monitoring only)": a Direct BigQuery card is counted where its review ends (Bot.gs
  * handleNewAlert_, with the Alert-log `row` it has just written for the card: a card gets one row, so it is counted
  * once). `alerted`: the review called for a Social Alert (Drafts.gs draftPlan_). Any other alert's row is passed over.
- * Only the count moves here: C15 shows it at the poll's next check. Never throws.
+ * So is a card posted on an earlier day than its review (Eastern, by the card's own time, the row's source_at): it is
+ * none of "N posts today", so it is counted on no day and the bracket never holds more cards than N. Only the count
+ * moves here: C15 shows it at the poll's next check. Never throws.
  */
 function bqDirectReviewed_(row, alerted) {
   try {
     if (!row || !bqDirectSource_(row.ingested)) return;
+    const posted = Number(row.source_at) > 0 ? etDay_(Number(row.source_at)) : '';
+    if (posted && posted !== dayKey_()) return;  // (a row that doesn't say when its card was posted counts today)
     const props = PropertiesService.getScriptProperties();
     const s = bqDirectDay_(props.getProperty(BQ_DIRECT_DAY_PROP_));
     s[alerted ? 's' : 'm']++;
@@ -2551,6 +2555,16 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
   const alertWords = (id, row) => `${id} (${row ? row.ingested || 'Burson\'s alert' : 'an alert of another flow'})`;
   const rowOf = id => (id && ctx && ctx.store && typeof ctx.store.alertById === 'function' ? ctx.store.alertById(id) : null);
   const ownCard = row => !!row && bqDirectSource_(row.ingested);  // an Alert-log row of a card the poll posted
+  // The posts whose card, posted by the poll itself, still waits in the space to be reviewed: the record of the messages
+  // it posted (BQ_INGESTED_MSGS) says which of the waiting ones are its own. Read once, and only when it is asked
+  let ownWaiting = null;
+  const waitsAsOwnCard = key => {
+    if (!ownWaiting) {
+      const mine = new Set((JSON.parse(props.getProperty(BQ_INGESTED_MSGS_PROP_) || '[]') || []).filter(p => Array.isArray(p)).map(p => p[0]));
+      ownWaiting = bqWaitingKeys_(ctx, targetSpaceId, S, now, msgs.filter(m => m && m.name && mine.has(hashText_(String(m.name)))));
+    }
+    return ownWaiting.has(key);
+  };
   const hadAlert = (url, key) => {  // a post about Google that isn't new (isNew said so): which alert it has
     try {
       if (seen.has(key)) return;  // the poll took the post itself
@@ -2562,7 +2576,9 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
       const said = s && !(past && bqOnlyStoryCards_(ctx, s, now))
         ? (s.alert_id ? alertWords(s.alert_id, rowOf(s.alert_id)) : `a ${s.claim || 'producer'} card, not reviewed yet`)
         : row ? alertWords(row.alert_id, row)
-          : waiting.has(key) ? 'in the space, not reviewed yet' : '';  // '': Step 1 left it out within the hour (said then)
+          // (a card of the poll's own that waits there is no other alert either; '' also when Step 1 left the post
+          // out within the hour: that was said then)
+          : waiting.has(key) && !waitsAsOwnCard(key) ? 'in the space, not reviewed yet' : '';
       if (said) already.push({ why: 'a', key, url, said });
     } catch (e) { /* a count and a log line only */ }
   };
