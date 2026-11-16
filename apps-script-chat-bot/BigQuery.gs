@@ -3587,6 +3587,22 @@ function edAllowance_(ctx, today, now) {
   }
 }
 
+/**
+ * True when signal `row` is only a head count on a topic that is busier than usual, short of `min` times its usual
+ * count (the setting early_wave_topic_min_ratio): a pace jump on a topic label (VELOCITY_SPIKE, grain PRIORITY_TOPIC)
+ * whose ratio is under `min`. False for `min` 0 (off), a ratio that can't be read, and every other kind (a story, a
+ * pace jump on a story or on risk words). Pure.
+ */
+function edTopicCount_(row, min) {
+  const r = row || {};
+  const bar = Number(min);
+  if (!(bar > 0)) return false;
+  if (String(r.signal_type || '').trim().toUpperCase() !== 'VELOCITY_SPIKE') return false;
+  if (String(r.velocity_grain || '').trim().toUpperCase() !== 'PRIORITY_TOPIC') return false;
+  const ratio = Number(r.velocity_ratio);
+  return r.velocity_ratio !== null && r.velocity_ratio !== '' && isFinite(ratio) && ratio > 0 && ratio < bar;
+}
+
 /** Saves the queue's index (the property is deleted when nothing waits). */
 function edQueueSave_(props, list) {
   if (list && list.length) props.setProperty(ED_QUEUE_PROP_, JSON.stringify(list));
@@ -3791,6 +3807,8 @@ function ewLogCheck_(ctx, props, left) {
  * and the producer always tells the risk facts; every row read for the first time is ended or queued in that check
  * (queueByAllowance below), serious signals first (FastTriage.gs edSerious_), at most EW_MAX_PER_CHECK_ a check,
  * early_wave_reviews_per_day a day, EW_MAX_PER_HOUR_ a clock hour and early_wave_reviews_per_hour ordinary ones in it.
+ * There a pace jump on a topic under early_wave_topic_min_ratio times its usual count that is not serious is noted as a
+ * topic count and not reviewed (edTopicCount_).
  * Returns `{queued, failed, capped, repeats}` (and `triaged` when the fast triage held any back) or `null` when skipped.
  */
 function earlyWaveCheck_(ctx) {
@@ -4041,7 +4059,9 @@ function earlyWaveCheck_(ctx) {
   // read nothing). Every row read for the first time ends here or is queued, in this check: seen, skipped; not English,
   // its main post covered, a repeat: ended as above (and its id marked). The rest are candidates: Gemini Decisions is
   // asked about each (15 new calls a check; a kept answer costs nothing; no answer: it goes on without one), row 40's
-  // hold-back ends some, the serious ones (FastTriage.gs edSerious_) go first, then the fast triage's order (row 39) or
+  // hold-back ends some, a head count on a topic that is not serious ends others ("Topic busier than usual, not a story":
+  // setting early_wave_topic_min_ratio, edTopicCount_), the serious ones (FastTriage.gs edSerious_) go first, then the
+  // fast triage's order (row 39) or
   // the producer's. They are queued in that order; each one refused is "Never reviewed" with its cause (edNeverWhy_:
   // the check's 5, the day's limit, the early watch's 8, the hour's 10, the hour's ordinary ones) and finished: its own id
   // is marked as seen, never its story's keys, so the story comes back when the producer sends it again. True when the
@@ -4109,8 +4129,22 @@ function earlyWaveCheck_(ctx) {
       return !why;
     });
     keep.forEach(c => { c.serious = edSerious_(c.row, c.dec, ft ? ft.bars : null); });
-    keep.sort((a, b) => (b.serious ? 1 : 0) - (a.serious ? 1 : 0) || (ft && ft.rank ? ftRank_(a, b) : a.idx - b.idx));
-    for (const c of keep) {
+    // A head count on a topic under the setting early_wave_topic_min_ratio (3) times its usual, and not serious: noted
+    // as such, not reviewed; only its own id is marked, so a real jump on that topic later is no repeat (edTopicCount_)
+    const topicMin = Number((ctx.settings || {}).early_wave_topic_min_ratio) || 0;
+    const go = keep.filter(c => {
+      if (c.serious || !edTopicCount_(c.row, topicMin)) return true;
+      if (c.idKey) seen.add(c.idKey, now);
+      marked++;
+      const au = ewCount_(c.row.unique_low_tier_authors);
+      ctx.log(`early detection: topic count on "${ewText_(c.row.signal_key || c.row.topic_product || '')}" noted, not reviewed: ` +
+        `${Number(c.row.velocity_ratio)}x its usual (under ${topicMin}x), ${au} account${au === 1 ? '' : 's'} in an hour (${c.row.alert_id || 'no id'})`);
+      edNote_(ctx, c.row, ED_OUT_.topic, `Under ${topicMin} times its usual count`,
+        { logged: true, dec: c.dec });
+      return false;
+    });
+    go.sort((a, b) => (b.serious ? 1 : 0) - (a.serious ? 1 : 0) || (ft && ft.rank ? ftRank_(a, b) : a.idx - b.idx));
+    for (const c of go) {
       const cause = queued >= EW_MAX_PER_CHECK_ ? 'check'
         : allow.dayQueued + queued >= allow.perDay ? 'dayReviews'
           : isWatch(c.row) && kinds.watch >= watchRoom ? 'watchDay'
