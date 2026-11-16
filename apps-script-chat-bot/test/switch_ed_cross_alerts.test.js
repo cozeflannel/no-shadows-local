@@ -76,7 +76,8 @@ module.exports = H => {
     return !!p.early_detection_call;
   }).length;
   const seenId = (w, sig) => w.t.bot.earlyWaveSeen_(props(w), w.t.g.clock.now).has(`id:${sig.alert_id}`);
-  const plainTitle = sig => `${sig.unique_low_tier_authors} accounts posting “${sig.headline.replace(/^Low-tier claim cluster \(\d+ accounts\):\s*/, '')}”`;
+  // the note counts the accounts once, in its own words: the plain title's "5 accounts posting" is left out
+  const plainTitle = sig => `“${sig.headline.replace(/^Low-tier claim cluster \(\d+ accounts\):\s*/, '')}”`;
   const links = sig => JSON.parse(sig.representative_posts_json).slice(0, 3).map(p => `<${p.url}|@${p.author_handle}>`).join(' · ');
 
   // -----------------------------------------------------------------------------------------------------------

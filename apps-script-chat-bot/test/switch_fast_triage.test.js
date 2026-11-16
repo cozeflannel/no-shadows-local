@@ -190,12 +190,12 @@ module.exports = function (H) {
     g.clock.now += 55 * 60 * 1000; // past 60m: all buckets prune
     eq([bot.apiGuardDecisionsCounts_(), bot.apiGuardAllowDecisions_()], [{ decisions10m: 0, decisions60m: 0 }, true]);
 
-    // Daily cap (DEC_MAX_PER_DAY_ = 300) + Control note text
+    // Daily cap (DEC_MAX_PER_DAY_ = 150) + Control note text
     const st = bot.decState_(props, g.clock.now);
     st.asked = bot.ev('DEC_MAX_PER_DAY_');
     bot.decSaveState_(props, st);
-    eq(bot.decisionsAsk_('hi', q, bot.decSession_(() => 60000, false)), { ok: false, skipped: true, why: '300 calls today' });
-    assert.match(bot.decStatusText_(props, g.clock.now), /300 asked today · daily cap of 300 reached, more tomorrow$/);
+    eq(bot.decisionsAsk_('hi', q, bot.decSession_(() => 60000, false)), { ok: false, skipped: true, why: '150 calls today' });
+    assert.match(bot.decStatusText_(props, g.clock.now), /150 asked today · daily cap of 150 reached, more tomorrow$/);
   });
 
   test('decisions client (5A / Rule 4): live "too_many_requests" and documented "rate_limit_exceeded" 429s, missing/bad key, HTTP/JSON/slow/throw failures, safety refusals without pause, and key redaction', () => {

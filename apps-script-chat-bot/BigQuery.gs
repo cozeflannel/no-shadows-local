@@ -3844,7 +3844,7 @@ function earlyWaveCheck_(ctx) {
   const minutes = edLookbackMinutes_(ctx.settings, last, now);
   // The fast triage (null when nothing ON uses the answers, or at the daily ceiling where nothing can be queued)
   // (under the allowance it starts whether or not there is room: every signal read is ended or queued in this check)
-  const ft = room || allow ? ftStart_(ctx, left) : null;
+  const ft = room || allow ? ftStart_(ctx, left, allow ? DEC_MAX_PER_DAY_ALLOWANCE_ : 0) : null;
   const rec = writeBq ? { stories: [], posts: [], signals: [], events: [] } : null;
 
   let rows;

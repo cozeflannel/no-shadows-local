@@ -116,7 +116,7 @@ module.exports = H => {
     // the old rule's words are as they were
     eq(bot.edNeverWhy_('day'), 'today\'s limit of 40 was reached');
     eq([bot.ev('EW_MAX_PER_HOUR_'), bot.ev('EW_ALLOW_PER_DAY_'), bot.ev('EW_MAX_PER_CHECK_'), bot.ev('EW_SEEN_ID_MS_') / HOUR,
-      bot.ev('DEC_MAX_PER_DAY_'), bot.ev('DEC_MAX_PER_CHECK_')], [10, 150, 5, 3.5, 300, 15]);
+      bot.ev('DEC_MAX_PER_DAY_'), bot.ev('DEC_MAX_PER_DAY_ALLOWANCE_'), bot.ev('DEC_MAX_PER_CHECK_')], [10, 150, 5, 3.5, 150, 300, 15]);
     eq([bot.ev('GEN').settings.early_wave_reviews_per_hour, bot.ev('GEN').settings.early_wave_reviews_per_day], [6, 150]);
   });
 

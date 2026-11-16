@@ -453,14 +453,15 @@ function ftAnswerWords_(dec) {
 /**
  * This check's fast triage, or null when nothing that is ON uses the answers (row 38 OFF, or rows 39 and 40 both OFF):
  * {session (decSession_), rank, hold, bars (ftBars_), log, asked, missed: {why: count}, held, watch: {asked, raised},
- * verdicts: [triage_verdicts rows]}. `left`: () => ms of the run left.
+ * verdicts: [triage_verdicts rows]}. `left`: () => ms of the run left. `perDay`: the day's cap of Decisions calls
+ * (decSession_; BigQuery.gs earlyWaveCheck_ gives DEC_MAX_PER_DAY_ALLOWANCE_ under the allowance, else DEC_MAX_PER_DAY_).
  */
-function ftStart_(ctx, left) {
+function ftStart_(ctx, left, perDay) {
   const rank = ftRankOn_(ctx);
   const hold = ftHoldOn_(ctx);
   if (!rank && !hold) return null;
   return {
-    session: decSession_(left, !!(ctx && ctx.slaBusy)),
+    session: decSession_(left, !!(ctx && ctx.slaBusy), perDay),
     rank,
     hold,
     bars: ftBars_(ctx),

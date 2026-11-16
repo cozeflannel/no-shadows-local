@@ -70,11 +70,14 @@ function edCrossAccounts_(row) {
 /**
  * The note under the card of an alert that went out as a Social Alert: "🔗 *Part of a story:* 5 small accounts on X and
  * Reddit now tell it: <the story's plain title> (<post> · <post> · <post>)". The title is the one a card without a review
- * gets (EarlyDetectionNotes.gs edNoteStory_), never the producer's label; up to 3 of the story's posts are linked. Pure.
+ * gets (EarlyDetectionNotes.gs edNoteStory_) without its "5 accounts posting" (the note counts them already), never the
+ * producer's label; up to 3 of the story's posts are linked. Pure.
  */
 function edCrossNoteText_(row) {
   const r = row || {};
-  const title = truncate_(String(edNoteStory_(r, '')).replace(/[<>|*\r\n]+/g, ' ').replace(/\s+/g, ' ').trim(), 120);
+  // the accounts are already counted in the note's own words: the plain title's "5 accounts posting" goes
+  const title = truncate_(String(edNoteStory_(r, '')).replace(/[<>|*\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
+    .replace(/^(?:[\d,]+ accounts|Small accounts) posting (?=“)/, ''), 120);
   const links = edRepPosts_(Array.isArray(r.posts) ? r.posts : r.representative_posts_json)
     .filter(p => /^https?:\/\/[^\s<>|]+$/i.test(p.url)).slice(0, 3)
     .map(p => edChatLink_(p.url, `@${String(p.author || 'post').replace(/^@+/, '')}`));
