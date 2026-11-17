@@ -400,20 +400,61 @@ function ensureControlTab_(ss, owner) {
  * edits it). In column A of the rows between the last switch (row 48) and the help, the bot's own old help is cleared
  * (controlHelpOwn_: its title or a help line), so a tab from before the help moved (its "How it works" at row 49, or at
  * row 52) keeps no old text there; anything else a person wrote there is left as it is, and a switch row is never
- * touched.
+ * touched. In column A of the rows the help is written over (row 53 down, CONTROL_HELP_ROWS_ rows), a text that is not
+ * the bot's own help is a person's (a tab whose help was higher up had room below it, rows 96-100): it is kept,
+ * unchanged and in order, in the first blank cells of column A below the help, and the log says so. Other columns are
+ * never touched.
  */
 function writeControlHelp_(sh) {
   const lines = [['How it works']].concat(CONTROL_HELP_.map(line => [line]));
   while (lines.length < CONTROL_HELP_ROWS_) lines.push(['']);
   const from = Math.min(CONTROL_HELP_ROW_ - 1, Math.max.apply(null, switchRows_()) + 1);
-  const above = sh.getRange(from, 1, CONTROL_HELP_ROW_ - from, 1).getValues();
-  above.forEach((v, i) => {
-    if (!controlHelpOwn_(v && v[0])) return;
-    sh.getRange(from + i, 1).setValue('').setFontWeight('normal');
+  const end = CONTROL_HELP_ROW_ + lines.length - 1;
+  const col = sh.getRange(from, 1, end - from + 1, 1).getValues().map(v => (v ? v[0] : ''));
+  const kept = [];
+  col.forEach((v, i) => {
+    const row = from + i;
+    if (row < CONTROL_HELP_ROW_) {
+      if (controlHelpOwn_(v)) sh.getRange(row, 1).setValue('').setFontWeight('normal');
+    } else if (!controlCellBlank_(v) && !controlHelpOwn_(v)) {
+      kept.push({ row, v });
+    }
   });
   sh.getRange(CONTROL_HELP_ROW_, 1, lines.length, 1).setValues(lines);
   sh.getRange(CONTROL_HELP_ROW_, 1).setFontWeight('bold');
   sh.getRange(CONTROL_HELP_ROW_ + 1, 1, lines.length - 1, 1).setFontWeight('normal');
+  if (kept.length) keepBelowControlHelp_(sh, end, kept);
+}
+
+/** True when a cell holds nothing (blank, or only spaces). Pure. */
+function controlCellBlank_(v) {
+  return String(v === undefined || v === null ? '' : v).trim() === '';
+}
+
+/**
+ * Puts a person's texts (`kept`: {row, v}, in row order) that the help was written over into the first blank cells of
+ * column A below row `end`, unchanged, one each; past the tab's last row each goes in a new row (appendRow, which also
+ * grows the grid). Logs one line that says where each went.
+ */
+function keepBelowControlHelp_(sh, end, kept) {
+  const last = sh.getLastRow();
+  const below = last > end ? sh.getRange(end + 1, 1, last - end, 1).getValues() : [];
+  let i = 0;
+  const moved = kept.map(k => {
+    while (i < below.length && !controlCellBlank_(below[i][0])) i++;
+    let to;
+    if (i < below.length) {
+      to = end + 1 + i;
+      sh.getRange(to, 1).setValue(k.v);
+      i++;
+    } else {
+      sh.appendRow([k.v]);
+      to = sh.getLastRow();
+    }
+    return `A${k.row} to A${to}`;
+  });
+  console.log(`Control tab: "How it works" now fills rows ${CONTROL_HELP_ROW_}-${end} of column A; a person's text ` +
+    `there was kept below it (${moved.join(', ')})`);
 }
 
 /** True when a cell holds the bot's own help text: the title "How it works" or a help line ("• ..."). Pure. */

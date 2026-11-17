@@ -229,6 +229,65 @@ module.exports = H => {
     helpAt53(sh, 'written again');
   });
 
+  // A person's text in column A of the rows the help moves over (rows 96-100: below the first build's help, which ended
+  // at row 95, or below the first stage's, which ended at row 98) is kept below the help, unchanged and in order
+  const notesBelow = (sh, end) => sh.rows.slice(end).map(r => r[0]).filter(v => String(v === undefined ? '' : v).trim() !== '');
+  const helpEnd = () => 53 + B.ev('CONTROL_HELP_ROWS_') - 1;
+
+  test('new sources control (help at row 53): on a tab from the first build, a person\'s notes in A96 and A97 (below its help, which ended at row 95) are kept below the help at its next run, unchanged and in order, and the log says where they went; their notes in B96, A101, A102, B60 and C70 do not change; a second run and setup() change nothing', () => {
+    const { t, sh } = world();
+    const old = firstBuildHelp();
+    sh.rows = sh.rows.slice(0, 47);
+    sh.rows[47] = [''];
+    sh.rows[48] = ['How it works'];
+    old.forEach((l, i) => { sh.rows[49 + i] = [l]; });
+    eq(sh.rows.length, 95);
+    delete sh.validations['48,2'];
+    const notes = { '96,1': 'note A96', '97,1': 'note A97', '96,2': 'note B96', '101,1': 'note A101', '102,1': 'note A102',
+      '60,2': 'note B60', '70,3': 'note C70' };
+    Object.entries(notes).forEach(([k, v]) => { const [r, c] = k.split(',').map(Number); sh.getRange(r, c).setValue(v); });
+    t.g.logs.length = 0;
+    t.poll();
+    eq(helpEnd(), 100);
+    helpAt53(sh, 'first build with notes');
+    eq([sh.cell(96, 2), sh.cell(101, 1), sh.cell(102, 1), sh.cell(60, 2), sh.cell(70, 3)],
+      ['note B96', 'note A101', 'note A102', 'note B60', 'note C70']);
+    eq(notesBelow(sh, 100), ['note A101', 'note A102', 'note A96', 'note A97']);
+    eq([sh.cell(103, 1), sh.cell(104, 1)], ['note A96', 'note A97']);
+    eq(t.g.logs.filter(l => /person's text there was kept below it/.test(l)),
+      ['Control tab: "How it works" now fills rows 53-100 of column A; a person\'s text there was kept below it (A96 to A103, A97 to A104)']);
+    const snap = JSON.stringify(sh.rows.slice(47));  // row 48 down (the status rows above change each run)
+    t.poll();
+    eq(JSON.stringify(sh.rows.slice(47)), snap, 'a second run');
+    t.bot.setup();
+    t.poll();
+    eq(JSON.stringify(sh.rows.slice(47)), snap, 'setup() and a run');
+  });
+
+  test('new sources control (help at row 53): on a tab with the help at row 52 as the first stage of the new sources wrote it (46 lines, to row 98), a person\'s notes in A99 and A100 are kept below the help at its next run, in the first blank cells of column A below row 100 (a blank A101 first, then past the last row), unchanged and in order; a second run changes nothing', () => {
+    const { t, sh } = world();
+    const stage1 = B.ev('CONTROL_HELP_').filter(l => !l.startsWith('• The Early Detection tab lists every story'));
+    eq(stage1.length, 46);
+    sh.rows = sh.rows.slice(0, 48);
+    sh.rows[48] = [''];
+    sh.rows[49] = [''];
+    sh.rows[50] = [''];
+    sh.rows[51] = ['How it works'];
+    stage1.forEach((l, i) => { sh.rows[52 + i] = [l]; });
+    eq(sh.rows.length, 98);
+    sh.getRange(99, 1).setValue('note A99');
+    sh.getRange(100, 1).setValue(42);
+    sh.getRange(101, 2).setValue('note B101');  // A101 is blank: the first note goes there
+    sh.getRange(102, 1).setValue('note A102');
+    t.poll();
+    helpAt53(sh, 'first stage with notes');
+    eq([sh.cell(101, 1), sh.cell(101, 2), sh.cell(102, 1), sh.cell(103, 1)], ['note A99', 'note B101', 'note A102', 42]);
+    eq(notesBelow(sh, 100), ['note A99', 'note A102', 42]);
+    const snap = JSON.stringify(sh.rows.slice(47));  // row 48 down (the status rows above change each run)
+    t.poll();
+    eq(JSON.stringify(sh.rows.slice(47)), snap, 'a second run');
+  });
+
   test('new sources control: column C of row 48 while ON says it is waiting while row 19 is OFF, and otherwise the ON text (115 characters) with what the last check found after it; OFF it is the OFF text whatever row 19 says; row 19 turned OFF again leaves only the waiting words (no note of an earlier check)', () => {
     const texts = sw => B.switchStatusTexts_(sw, '', {}, NOW)[B.switchRows_().indexOf(48)];
     eq([texts({ edAmie: true }), texts({ edAmie: true, earlyWave: true }), texts({ earlyWave: true }), texts({})],
