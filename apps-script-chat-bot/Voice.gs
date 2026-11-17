@@ -146,14 +146,28 @@ function isBotFormattedText_(text) {
 const THREAD_NOTE_HEADS_ = ['Also flagged by the watch', 'Part of a story', 'Alert requirements', 'Same story'];
 
 /**
- * True when `text` starts as one of those notes does: an emoji and a space first, or not; a bold mark first, or not;
- * then one of THREAD_NOTE_HEADS_ as whole words ("🔭 *Also flagged by the watch …", "🔗 *Part of a story:* …",
- * "*Alert requirements:* …", "*Alert requirements, final:* …", and each as Chat gives it back without its marks). Pure.
+ * True when `text` starts as one of those notes does, in the very shape the bot posts it: an emoji and a space first, or
+ * not; a bold mark first, or not; then
+ *   - the watch's note: "Also flagged by the watch “" (WatchAlerts.gs pwAlsoFlaggedText_);
+ *   - a story note: "Part of a story:" and the accounts that tell it, "5 small accounts …" or "Small accounts …"
+ *     (EarlyDetectionCross.gs, BigQuery.gs);
+ *   - a requirement line as Voice.gs isRequirementLine_ knows it, or its "final" form ("*Alert requirements, final:* …"),
+ *     never a one-line question;
+ *   - the watch's reply under its own alert: "Same story: 2 more posts" (WatchAlerts.gs pwStoryReplyText_);
+ * and each as Chat gives it back without its marks. A message that only starts with the same words ("Same story as
+ * yesterday?", "Part of a story we sent", "Alert requirements look met here") is a person's. Pure.
  */
 function isThreadNoteText_(text) {
   const t = String(text || '').trim();
   const rest = t.replace(/^(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?/, '');
-  return THREAD_NOTE_HEADS_.some(h => rest.indexOf(h) === 0 && !/[A-Za-z0-9]/.test(rest.charAt(h.length)));
+  if (/^Also flagged by the watch “/.test(rest)) return true;
+  if (/^Part of a story:\*? (?:\d[\d,]* small accounts?|[Ss]mall accounts)(?![A-Za-z0-9])/.test(rest)) return true;
+  if (/^Same story: \d[\d,]* more posts?(?![A-Za-z0-9])/.test(rest)) return true;
+  if (/^Alert requirements(?:, final)?:/.test(rest)) {
+    const line = rest.split('\n')[0].replace(/^Alert requirements, final:/, 'Alert requirements:');
+    return !(t.indexOf('\n') < 0 && /\?$/.test(t)) && isRequirementLine_(line);
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------------------------------------------

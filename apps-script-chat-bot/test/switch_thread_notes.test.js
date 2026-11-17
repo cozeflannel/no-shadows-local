@@ -83,25 +83,39 @@ module.exports = H => {
   // The fixed first words
   // =============================================================================================================
 
-  test('thread notes: the fixed first words ("Also flagged by the watch", "Part of a story", "Alert requirements") are registered three ways: the bot knows a note that starts with one as its own (with its emoji and bold mark, or as Chat gives it back without them), the wider guard holds it on any way to S-F Burson (alone, as a note, quoted by an analyst, on a later line), and the leak audit\'s own list denies it; "the alert requirements" in a sentence, or being part of a story, is still anyone\'s to say', () => {
+  test('thread notes: the fixed first words ("Also flagged by the watch", "Part of a story", "Alert requirements") are registered three ways: the bot knows a note as its own only in the very shape it posts it (with its emoji and bold mark, or as Chat gives it back without them; a person\'s message from the bot\'s account that merely starts with the words stays theirs), the wider guard holds it on any way to S-F Burson (alone, as a note, quoted by an analyst, on a later line), and the leak audit\'s own list denies it; "the alert requirements" in a sentence, or being part of a story, is still anyone\'s to say', () => {
     const heads = B.ev('THREAD_NOTE_HEADS_');
     eq(heads, ['Also flagged by the watch', 'Part of a story', 'Alert requirements', 'Same story']);
     const ctx = { botUser: 'users/bot', store: { isOwnPost: () => false } };
     const own = text => B.isOwnMessage_(ctx, { senderName: 'users/bot', text });
     const held = text => B.outboxGuardHits_(text, GUARD).length > 0;
-    // each head by itself, and each real note: the bot's own, held by the wider guard, denied by the leak audit. "Same
-    // story" (the watch's reply under its own alert) is held and denied only in its own shape, "Same story: N more
+    // each real note, in the very shape the bot posts it: the bot's own, held by the wider guard, denied by the leak
+    // audit. The bot knows a note as its own only in that shape (with its emoji and bold mark, or without them); a
+    // message that merely starts with a head's words is a person's, and is relayed and answered as before the notes.
+    // "Same story" (the watch's reply under its own alert) is held and denied only in its own shape, "Same story: N more
     // posts": "Same story:" by itself is an analyst's wording too, and reaches S-F Burson as it always did
     const SAME = 'Same story';
-    const shaped = h => (h === SAME ? `${SAME}: 2 more posts` : h);
-    heads.map(shaped).concat(NOTES, NOTES.map(plainOf), heads.map(h => (h === SAME ? `🔗 *${SAME}: 1 more post*` : `🔗 *${h}:* and more`))).forEach(text => {
+    const SHAPES = [WATCH_NOTE, STORY_NOTE, REQ_NOTE, REQ_FINAL, '🔗 *Same story: 1 more post*', 'Same story: 2 more posts',
+      '🔗 *Part of a story:* 1 small account on X tells it (<https://chat.google.com/x|story card>)',
+      '🔗 *Part of a story:* Small accounts now tell it: a title', '🔭 *Also flagged by the watch “A” and the watch “B”.* No separate Watch alert',
+      '*Alert requirements:* not met yet (small accounts, no KOF author, no P0 tag). Posted early because 5 accounts tell the same story.',
+      '*Alert requirements, final:* below the Social Alert thresholds (620 engagements). A Social Alert goes out anyway on the review\'s call.'];
+    SHAPES.concat(SHAPES.map(plainOf)).forEach(text => {
       eq([B.isThreadNoteText_(text), B.isBotFormattedText_(text), own(text), held(text), leakDenied(text)], [true, true, true, true, true], text);
     });
-    // every registered head is on all three lists (a note with new first words has to be added to each); the guard's
-    // own list of them (Outbox.gs OUTBOX_NOTE_PATTERNS_) has one pattern for each
-    heads.forEach(h => eq([B.isBotFormattedText_(`${shaped(h)}: x`), held(`${shaped(h)}: x`), leakDenied(`${shaped(h)}: x`)], [true, true, true], h));
+    // every registered head is held and denied by the guard and the leak audit in a note's form (a note with new first
+    // words has to be added to each); the guard's own list of them (Outbox.gs OUTBOX_NOTE_PATTERNS_) has one pattern
+    // for each. The bot's own: only the shapes above
+    const shaped = h => (h === SAME ? `${SAME}: 2 more posts` : h);
+    heads.forEach(h => eq([held(`${shaped(h)}: x`), leakDenied(`${shaped(h)}: x`)], [true, true], h));
+    heads.map(h => `🔗 *${h}:* and more`).concat(heads, heads.map(h => `${h}: x`), ['Same story as yesterday? Why is the product wrong?',
+      'Part of a story we already sent, FYI.', 'Alert requirements look met here, can you confirm the link?',
+      'Same story, different account: please hold this one.', 'Also flagged by the watch earlier, please merge',
+      'Alert requirements: why was this one not met?', 'Alert requirements: met for a Social Alert?',
+      'Part of a story: the one from Monday', '🔗 *Same story:* and more'])
+      .forEach(text => eq([B.isThreadNoteText_(text), B.isBotFormattedText_(text), own(text)], [false, false, false], text));
     ['Same story', 'Same story: x', '🔗 *Same story:* and more'].forEach(text => {
-      eq([B.isBotFormattedText_(text), held(text), leakDenied(text)], [true, false, false], text);
+      eq([B.isBotFormattedText_(text), held(text), leakDenied(text)], [false, false, false], text);
     });
     eq(B.ev('OUTBOX_NOTE_PATTERNS_.length'), heads.length);
     // what the guard says it found is the words, not the line break or the emoji before them
@@ -772,7 +786,7 @@ module.exports = H => {
     eq([noteCount(t, timed.thread), noteCount(t, plain.thread), noteCount(t, fresh.forward_thread)], [1, 2, 1]);
   });
 
-  test('thread notes: a key posted again after the counts lost it is never a second message and never counted twice: with Chat\'s custom ids gone too (and the bot\'s record of its posts), Chat hands the first message back and the card\'s count stays; counting in a thread takes only the bot\'s own notes (a person\'s message that starts with the same words is theirs, one from the bot\'s account counts); and with a thread that can\'t be read, one longer than 200 messages, or a card that is no longer there, no note is posted', () => {
+  test('thread notes: a key posted again after the counts lost it is never a second message and never counted twice: with Chat\'s custom ids gone too (and the bot\'s record of its posts), Chat hands the first message back and the card\'s count stays; counting in a thread takes only the bot\'s own notes (a person\'s message that starts with the same words is theirs, one from the bot\'s account in a note\'s very shape counts); and with a thread that can\'t be read, one longer than 200 messages, or a card that is no longer there, no note is posted', () => {
     const { t, cards } = oneSpace();
     const count = card => noteCount(t, card.thread || card.forward_thread);
     const entry = card => (cacheOf(t).c || {})[t.bot.hashText_(card.thread || card.forward_thread)] || null;
@@ -793,9 +807,11 @@ module.exports = H => {
     t.chat.say(AC, plainOf(STORY_NOTE), { thread: mixed.thread, sender: 'users/bot' });
     t.poll();
     eq([tryNotes(t, [[mixed, REQ_NOTE, 'm1']]), entry(mixed)[0]], [[[true, 1, 0]], 2]);
-    // ...and where the bot's account isn't known, every message that starts as a note does
+    // ...and where the bot's account isn't known, every message in a note's very shape does (a message that only
+    // starts with a note's words never does)
     const unknown = untimed(cardNow(t));
     t.chat.say(AC, 'Alert requirements: are they met for this one', Object.assign({ thread: unknown.thread }, DANA));
+    t.chat.say(AC, plainOf(STORY_NOTE), Object.assign({ thread: unknown.thread }, DANA));
     t.poll();
     const dest = run(t).dest;
     const botUser = t.g.props.get('BOT_USER');

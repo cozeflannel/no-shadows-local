@@ -219,7 +219,7 @@ module.exports = H => {
     const s = ends.signal(6, { at: '08:10' });
     const c = cover(w, s, { id: 'QA-0906', email: 'sent' });
     for (let i = 0; i < 3; i++) {
-      w.t.chat._add(w.space, { text: `🔗 *Part of a story:* earlier note ${i + 1}`, thread: c.card.thread.name,
+      w.t.chat._add(w.space, { text: `🔗 *Part of a story:* ${i + 3} small accounts on X tell it (earlier note ${i + 1})`, thread: c.card.thread.name,
         sender: { name: w.t.chat.botUser, type: 'BOT' }, viaApi: true, clientId: `client-bqa-earlier-${i}` });
     }
     const a = w.step('08:16', [s]);

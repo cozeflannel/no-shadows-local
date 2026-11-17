@@ -1413,12 +1413,12 @@ module.exports = H => {
     eq(['Alert requirements: why was this one not met?', '*Alert requirements:* is this right?', '🔗 Alert requirements, final: why?',
       'Alert requirements: why?\nAnd this', `${HEAD}met for a Social Alert (2,400 engagements), but none was sent: the review says "Is it news?".`,
       `${FINAL}met for a Social Alert (KOF author), but none was sent: why not?.`, 'Part of a story: is it?'].map(acOwn),
-    [false, false, false, true, true, true, true]);
-    // (only the Auto-correct flow, where the line is: elsewhere such a message stays as it was, the bot's own by its words)
-    eq(B.isOwnMessage_(ctx, { senderName: 'users/bot', text: 'Alert requirements: why was this one not met?' }), true);
-    // (nor with the setting requirement_line off, or no settings at all: the bot's own by its words, as before the line)
+    [false, false, false, false, true, true, false]);
+    // (the bot knows its notes only in the very shape it posts them: in every flow, and with the setting
+    // requirement_line off or no settings at all, such a message is a person's, as before the line)
+    eq(B.isOwnMessage_(ctx, { senderName: 'users/bot', text: 'Alert requirements: why was this one not met?' }), false);
     eq([{ requirement_line: false }, undefined].map(settings => B.isOwnMessage_(Object.assign({ sourceReadOnly: true, settings }, ctx),
-      { senderName: 'users/bot', text: 'Alert requirements: why was this one not met?' })), [true, true]);
+      { senderName: 'users/bot', text: 'Alert requirements: why was this one not met?' })), [false, false]);
     eq(B.isRequirementQuestion_(`${HEAD}not met for a Social Alert (${BELOW('P2', '300')}). Monitoring only.`), false);
     // the words alone: each form of the note is the bot's own; a person's two lines that only look alike are theirs
     const own = text => B.isOwnMessage_(ctx, { senderName: 'users/bot', text });
@@ -1590,18 +1590,18 @@ module.exports = H => {
     return { w, card, asked: answers() - before, replies: under(w.t, card).map(m => m.text) };
   };
 
-  test('requirement line: a question from the bot\'s own account that starts "Alert requirements" is answered only where the line is on; with the setting requirement_line off it is taken for the bot\'s own by its words, as before the line: no answer and no Gemini call', () => {
+  test('requirement line: a question from the bot\'s own account that starts "Alert requirements" is answered, with the setting requirement_line on and off (the bot knows its notes only in the very shape it posts them, so the question is a person\'s, as before the line)', () => {
     const Q = 'Alert requirements: why was this one not met?';
     const on = ownerAsks(null, Q);
     eq([on.asked, on.replies.slice(-2)], [1, [Q, 'Happy to help with that.']]);
     const off = ownerAsks({ requirement_line: false }, Q);
-    eq([off.asked, off.replies.slice(-1)], [0, [Q]]);
+    eq([off.asked, off.replies.slice(-2)], [1, [Q, 'Happy to help with that.']]);
     assert.ok(!off.replies.some(r => r.indexOf(HEAD) >= 0), 'no line with the setting off');
     const allOff = ownerAsks(golden.SETTINGS_OFF, Q);
-    eq([allOff.asked, allOff.replies.slice(-1)], [0, [Q]]);
+    eq([allOff.asked, allOff.replies.slice(-2)], [1, [Q, 'Happy to help with that.']]);
   });
 
-  test('requirement line: the owner\'s question "Alert requirements: …?" under a card is not one of the three notes the card may take from other alerts, also when the card\'s notes are counted in its thread (the counts gone); with the setting requirement_line off it counts as before the line', () => {
+  test('requirement line: the owner\'s question "Alert requirements: …?" under a card is not one of the three notes the card may take from other alerts, also when the card\'s notes are counted in its thread (the counts gone); with the setting requirement_line off neither: a person\'s message is never one of the bot\'s notes', () => {
     const STORY = '🔗 *Part of a story:* 5 small accounts on X and Reddit now tell it: Pixel 10 owners say the update is the issue';
     const take = overrides => {
       const r = ownerAsks(overrides, 'Alert requirements: was this one met by its tag?');
@@ -1610,7 +1610,7 @@ module.exports = H => {
       return inFlow(r.w, ctx => ['a', 'b', 'c', 'd'].map(k => r.w.t.bot.acThreadNote_(ctx, row, STORY, `${row.alert_id}:${k}`)));
     };
     eq(take(null), [true, true, true, false]);
-    eq(take({ requirement_line: false }), [true, true, false, false]);
+    eq(take({ requirement_line: false }), [true, true, true, false]);
   });
 
   test('requirement line: a review\'s note too long for one Chat message keeps its line whole: the body above the line is cut, never the line, so the note Chat hands back ends with it and no "final" line repeats it; a note that fits, one without the line and one that does not end with it are left as they are', () => {
