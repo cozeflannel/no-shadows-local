@@ -317,7 +317,7 @@ like one is ever relayed or queued for S-F Burson (see row 22).
 | Note | Posted by | Under which card |
 |---|---|---|
 | `🔗 *Part of a story:* 5 small accounts on X and Reddit now tell it: “Pixel owners say the update drains the battery” (post · post · post)` | Early Detection | The card of an alert that went out as a Social Alert, when a story's main post is that alert's post, or when a story's review finds it repeats that alert (one of its posts, or its issue). The story gets no review or card of its own. The same story adds another note only once it has twice the accounts and 3 more |
-| `🔗 *Part of a story:* 5 small accounts on X and Reddit tell it (story card)` | Early Detection, the Direct BigQuery poll and the Watch | Another alert's card that sent no Social Alert, when a story card is posted for its post; a new Direct BigQuery card whose post is in a story card of the last 24 hours (posted with 45 seconds of the run left; a card that missed it gets it at a later check within its first hour); a Watch alert whose post's only card is a story card that sent no Social Alert. "story card" is a link to the story's card |
+| `🔗 *Part of a story:* 5 small accounts on X and Reddit tell it (story card)` | Early Detection, the Direct BigQuery poll and the Watch | Another alert's card that sent no Social Alert, when a story card is posted for its post; a new Direct BigQuery card whose post is in a story card of the last 24 hours (posted with 45 seconds of the run left; a card that missed it gets it at a later check within its first hour); a Watch alert whose post's only card is a story card that sent no Social Alert (posted right after the alert; an alert that missed it gets it within its first hour, the next time the watch posts flags). "story card" is a link to the story's card |
 | `🔭 *Also flagged by the watch “Midterms 2026 × Google”.* No separate Watch alert: this card already covers the post.` | The Watch | A card that already covers the post the watch flagged (Burson's corrected alert, a Direct BigQuery card, a story card that sent its Social Alert, another Watch alert). Once a card: up to 3 watch names when they flag the post in the same run. When the card is only minutes old and not yet in the Alert log, the flag waits a run for it |
 | `🔗 *Same story: 2 more posts*` | The Watch | Its own Watch alert, for each later post on the alert's story (at most 6 such replies a run; the rest wait for the next run) |
 | `*Alert requirements, final:* …` | The review | The alert where what was done differs from what its `Alert requirements` line said, or where the line in its thread is an earlier attempt's and says otherwise |
@@ -1036,7 +1036,10 @@ it's watching, the last check and today's updates (the main run's, not the auto-
   story turned away by the check's 5 or an hour's limit is not finished: it **comes back at the next check** (the
   producer hands it over again), where the serious ones go first again, and it is in none of C19's numbers until it is
   queued or ends. It ends `Never reviewed` only when it is about to drop out of what a check reads (about 40 minutes
-  after the producer made it, with B31 at 60 minutes) or when the day's 150 are used. A topic that is only busier than
+  after the producer made it, with B31 at 60 minutes) or when the day's 150 are used. The bot remembers each story it
+  put off (at most 150), so one that no later check reads again (checks were skipped while the bot was busy, or busier
+  stories filled the 25 a check reads) still ends `Never reviewed` at the next check that runs, is counted once, and
+  has its row on the Early Detection tab. A topic that is only busier than
   usual (a head count on a topic under 3 times its usual, setting `early_wave_topic_min_ratio`) and isn't serious is
   not reviewed: it ends `Topic busier than usual, not a story`; real jumps of 3 times or more, and serious ones, are
   reviewed. Gemini Decisions may make 300 calls a day here (150 elsewhere), 15 a check. Worst case a day: 150 stories
@@ -1077,7 +1080,10 @@ it's watching, the last check and today's updates (the main run's, not the auto-
   of 40 was reached` (the old rule) · `today's 8 early signals were used` · `early signals are switched OFF (row 39)` ·
   `the review queue was full` · `pushed out of the full queue by higher-ranked stories` · `waited 3 hours while the bot
   worked on alerts` · `its review failed twice` · `its saved details were gone when its turn came` · `its details were
-  too long to keep for a review`. A signal whose card reached the space but which the bot could not record is listed as
+  too long to keep for a review`. A story that was put off and then not read again has the reason it was put off for,
+  followed by `No later check read it again in time (checks were skipped, or busier stories came first).`; when its
+  saved details are gone by then (they are kept 6 hours), its row has no Id and reads `A story whose details are
+  gone`. A signal whose card reached the space but which the bot could not record is listed as
   `Card posted: Needs a human look` (its story is not posted a second time). The run log has one line for an ending
   that had none before: `early detection: <outcome> · "<story>" · <why>`.
 - **Where**: the Mirror space (B9), a Google-only test feed (B3 → B4), or the Auto-correct space standing alone (B10,
