@@ -131,7 +131,7 @@ module.exports = H => {
       assert.ok(look.logs.map(String).includes(`early detection: dropped ${first.alert_id} (2 reviews started without finishing)`));
       const again = ends.signal(90, { au: 7, at: '09:31', words: say('the keyboard lags', 90) });
       look = w.step('09:31', [first, again]);
-      eq(brief(look.recs), [['90', 'Seen before, nothing new', 'First seen 9:16 AM ET with 5 accounts; 7 now, nothing new.']]);
+      eq(brief(look.recs), [['90', 'Seen before, nothing new', 'First seen 9:16 AM ET with 5 accounts; 7 now, not yet twice as many.']]);
       w.step('09:32', null);
       const stories = w.t.chat.botPosts(w.space).filter(m => /^client-zeda-/.test(String(m.clientAssignedMessageId || '')) && !m.threadReply);
       eq(stories.length, 1);

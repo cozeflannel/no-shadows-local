@@ -384,7 +384,7 @@ module.exports = H => {
     ['08:16', '1', 'Card posted: Monitor build-up', 'Early reports worth watching.'],
     ['08:16', '2', 'Card posted: Social Alert', 'Several independent owners describe the same concrete failure.'],
     ['08:17', '3', 'Card posted: Needs a human look', 'AI review unavailable, so a person makes the call.'],
-    ['08:31', '1', 'Seen before, nothing new', 'Its card of 8:16 AM ET had 6 accounts; 8 now, nothing new.'],
+    ['08:31', '1', 'Seen before, nothing new', 'Its card of 8:16 AM ET had 6 accounts; 8 now, not yet twice as many.'],
     ['08:31', '12', 'Held back as noise (no review)', 'Looks unrelated to Google (94% likely), severity none (70% sure).'],
     ['08:31', '13', 'Held back as noise (no review)', 'Looks like routine chatter (93% likely), severity low (60% sure).'],
     ['08:31', '10', 'Card posted: Monitor build-up', 'Early reports worth watching.'],
@@ -392,7 +392,7 @@ module.exports = H => {
     ['08:32', '8', 'Not English', 'The posts are not in English (Portuguese).'],
     ['08:32', '9', 'Seen before, nothing new', 'Already alerted as a known issue (QA-4228, "Pixel camera crash"): nothing materially new.'],
     ['08:33', '11', 'Reviewed and dismissed', 'Its topic is always around in the listening data ("Shot on Pixel showcase").'],
-    ['08:46', '7', 'Seen before, nothing new', 'First seen 8:31 AM ET with 5 accounts; 8 now, nothing new.'],
+    ['08:46', '7', 'Seen before, nothing new', 'First seen 8:31 AM ET with 5 accounts; 8 now, not yet twice as many.'],
     ['08:46', '15', 'Card posted: Monitor build-up', 'Early reports worth watching.'],
     ['08:46', '1', 'Update added to its earlier card', '14 accounts now, up from 6; now also on TikTok.'],
     // 16 and 17 met the hour's 10 at 08:46: left for the next check, they are queued in the new hour

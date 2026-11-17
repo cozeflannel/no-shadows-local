@@ -410,23 +410,28 @@ function edNoiseWhy_(dec, why) {
 
 /**
  * Why a signal is a repeat with nothing new (the same-story dedup's `verdict`: EarlyDetection.gs edStoryVerdict_): "Its
- * card of 8:16 AM ET had 6 accounts; 8 now, nothing new", "Its card is already in the space", or, for a story that was
- * queued and has no card, "First seen 10:51 AM ET with 5 accounts; 8 now, nothing new" (`first`: the seen map's entry
+ * card of 8:16 AM ET had 12 accounts; 8 now, nothing new" ("6 accounts; 8 now, not yet twice as many" when it has more
+ * accounts, not enough to be new), "Its card is already in the space", or, for a story that was queued and has no card,
+ * "First seen 10:51 AM ET with 5 accounts; 8 now, not yet twice as many" (`first`: the seen map's entry
  * for its story, earlyWaveSeen_ first()). Pure but for the time zone.
  */
 function edRepeatWhy_(row, verdict, first, now) {
   const r = row || {};
   const au = ewCount_(r.unique_low_tier_authors);
   const accounts = n => `${fmtInt_(n)} account${n === 1 ? '' : 's'}`;
+  // more accounts than before, but not the growth that makes a story new (EarlyDetection.gs edStoryVerdict_: twice the
+  // accounts and 3 more, or a new platform): said so, never "nothing new" beside a bigger number
+  const grown = was => (au > was ? (au < 2 * was ? 'not yet twice as many' : 'not enough more to be new') : 'nothing new');
   const prior = verdict && verdict.prior;
   if (prior && prior.latest) {
     if (r.alert_id && prior.latest.ed === String(r.alert_id)) return 'Its card is already in the space';
     const when = edCardTime_(prior.latest.at, now);
-    return `Its card${when ? ` of ${when}` : ''} had ${accounts(Number(prior.au) || 0)}; ${fmtInt_(au)} now, nothing new`;
+    const was = Number(prior.au) || 0;
+    return `Its card${when ? ` of ${when}` : ''} had ${accounts(was)}; ${fmtInt_(au)} now, ${grown(was)}`;
   }
   if (first && first.at) {
     const when = edCardTime_(first.at, now);
-    return isFinite(first.au) ? `First seen ${when} with ${accounts(first.au)}; ${fmtInt_(au)} now, nothing new`
+    return isFinite(first.au) ? `First seen ${when} with ${accounts(first.au)}; ${fmtInt_(au)} now, ${grown(first.au)}`
       : `First seen ${when}; nothing new since`;
   }
   return 'Seen in the last 24 hours, nothing new';
