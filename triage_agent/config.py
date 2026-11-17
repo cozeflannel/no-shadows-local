@@ -694,6 +694,9 @@ class BursonQAConfig(ConfigModel):
     open_burson_pickup_p90_s: float = 120
     open_check_minutes: int = 5
     open_queue_max: int = 24
+    open_equal_lanes: bool = True
+    open_fresh_minutes: int = 180
+    open_lane_bars: str = ''
     open_velocity_fix: bool = True
     open_velocity_lag_minutes: int = 60
     # What the Resources tab of the bot's sheet starts with: documents the bot links when Burson asks about the alert

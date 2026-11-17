@@ -1510,11 +1510,22 @@ function ewsRepsOf_(members, order) {
 
 /** representative_posts_json: the view's struct (mention_id, platform, author_id, audience_size, engagement, posted_at, url, snippet). Pure. */
 function ewsRepsJson_(reps) {
-  return JSON.stringify((reps || []).map(m => ({
+  // the open engine (row 51, step S9, equal standing): each post says which source it came from; OFF: as before
+  const withSource = typeof openEqualLanes_ === 'function' && openEqualLanes_();
+  return JSON.stringify((reps || []).map(m => Object.assign({
     mention_id: String(m.i || ''), platform: m.p || '', author_id: String(m.a || '').replace(/^[^:]*:/, ''),
     audience_size: m.f === undefined ? null : m.f, engagement: m.e === undefined ? null : m.e,
     posted_at: ewsIso_(m.t), url: m.u || '', snippet: truncate_(String(m.s || ''), EWS_SNIPPET_CHARS_),
-  })));
+  }, withSource ? { source: ewsSrcOfId_(m.i) } : {})));
+}
+
+/**
+ * Under equal standing (step S9) a post is late when the bot read it more than open_fresh_minutes after it was
+ * posted (it only joins a story); otherwise, as before, when it is from a slow lane (by name). Pure but for the settings.
+ */
+function ewsLate_(p, now) {
+  if (typeof openEqualLanes_ === 'function' && openEqualLanes_()) return (Number(now) || 0) - (Number(p && p.t) || 0) > openFreshMs_();
+  return !!(p && p.slow);
 }
 
 /** True when a new lane's member is left out of the bar: its author is excluded, or its post was big for Sonar. Pure. */
@@ -3120,7 +3131,7 @@ function ewsEmbed_(posts, known, st, now, deadline, nlCfg) {
   posts.forEach(p => { shared[p.chash] = (shared[p.chash] || 0) + 1; });
   posts.forEach(p => { if (!p.vec && known.has(p.chash)) p.vec = known.get(p.chash); });
   const need = posts.filter(p => !p.vec && p.text)
-    .sort((a, b) => (a.slow ? 1 : 0) - (b.slow ? 1 : 0) || (b.risk.length ? 1 : 0) - (a.risk.length ? 1 : 0) ||
+    .sort((a, b) => (ewsLate_(a, now) ? 1 : 0) - (ewsLate_(b, now) ? 1 : 0) || (b.risk.length ? 1 : 0) - (a.risk.length ? 1 : 0) ||
       (shared[b.chash] || 0) - (shared[a.chash] || 0) || b.t - a.t);
   const texts = [];
   const byText = new Map();
@@ -3321,7 +3332,8 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     last.joined = joins.length;
 
     // Stage B: new stories around the new real-time posts, in the pool
-    const fresh = embedded.filter(p => !p.slow && !joined.has(p.id));
+    // (row 51, step S9: a fresh post of any source may start a story; a late one, of any source, only joins)
+    const fresh = embedded.filter(p => !ewsLate_(p, now) && !joined.has(p.id));
     const universe = pool.concat(fresh);
     const found = fresh.length ? ewsDiscover_(universe, pool.length) : [];
     const leftPool = new Set();

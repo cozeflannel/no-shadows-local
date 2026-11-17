@@ -163,6 +163,9 @@ burson_qa:
   open_check_minutes: 5                 # how often Early Detection checks under row 51 (step S6): 10 from 0.60 of the day's run time, 15 from 0.70
   open_velocity_fix: true               # under row 51 (step S8): late posts and posts read over the lag after posting give no velocity count
   open_velocity_lag_minutes: 60         # ...the lag (raise to 120 if Sonar's median lag is over 45 minutes)
+  open_equal_lanes: true                # under row 51 (step S9): every source's fresh post may start a story; a late one only joins
+  open_fresh_minutes: 180               # ...a post read later than this after posting is late
+  open_lane_bars: ''                    # measured same-story bars by source (JSON); blank: the script property OPEN_LANE_BARS, else today's bars
   open_queue_max: 24                    # the review queue under row 51 (step S5); a story that does not fit waits for a later check
   # What the Resources tab of the bot's sheet starts with. After that the tab is what the bot uses: edit it there.
   # The bot links these when Burson asks about the alert requirements, so only list documents Burson can open.

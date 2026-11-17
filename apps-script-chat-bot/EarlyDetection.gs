@@ -269,6 +269,7 @@ function edPrepare_(ctx, ed, now) {
   if (parsed.knowledge && parsed.knowledge.docs.length && ctx && typeof ctx.log === 'function') {
     ctx.log(`knowledge: ${knowledgeBrief_(parsed.knowledge)}`);
   }
+  if (ed.lanesLine) parsed.lanesLine = ed.lanesLine;
   if (ed.taxonomyHint) parsed.tagHintLine = ed.taxonomyHint;
   else if (typeof vecTagHints_ === 'function' && typeof vecTagHintLine_ === 'function') {
     try {
@@ -902,6 +903,7 @@ function edReviewPrompts_(parsed, media) {
     'since. Open `story` with that change, make `story_title` name the new development, and weigh the change for `known_issue.adds_materially_new`.\n\n' +
     `EXPOSURE TAGS:\n${tags}\n\nSENSITIVE TOPICS:\n${topics}\n\nPRODUCTS (distribution names): ${products}\n\n` +
     (parsed && parsed.tagHintLine ? `${parsed.tagHintLine}\n\n` : '') +
+    (parsed && parsed.lanesLine ? `${parsed.lanesLine}\n\n` : '') +
     `SLRR PLAYBOOK:\n${playbookText_()}\n` +
     'The escalation thresholds in the playbook decide the Social Alert email for a single post; they are never by ' +
     'themselves a reason to dismiss an early build-up among small accounts.\n\n' +
@@ -1342,7 +1344,7 @@ function edFromRow_(row) {
     ? `Low-tier velocity spike${grain ? ` (${grain.replace(/_/g, ' ').toLowerCase()} grain)` : ''}`
     : sig === EWS_WATCH_SIGNAL_ ? 'Early watch (a few low-tier accounts on one story, below the usual bar)'
       : 'Low-tier semantic cluster emergence';
-  return {
+  return Object.assign({
     headline: ewText_(r.headline || r.signal_key || primary.snippet || 'Emerging low-tier discussion'),
     signalLabel,
     product,
@@ -1374,7 +1376,16 @@ function edFromRow_(row) {
     windowStart: String(r.window_start_utc || ''),
     windowEnd: String(r.window_end_utc || ''),
     update: edUpdateOf_(r.update_of),  // the earlier card on this story it updates (same-story dedup), or null
-  };
+  }, edLanesLine_(r));
+}
+
+/**
+ * The open engine (row 51, step S9): {lanesLine} when most of a signal's posts come from a source whose same-story
+ * grouping has not been checked yet (OpenEngine.gs openReviewerLine_); {} otherwise, as before. Never throws.
+ */
+function edLanesLine_(r) {
+  const line = typeof openReviewerLine_ === 'function' ? openReviewerLine_(r) : '';
+  return line ? { lanesLine: line } : {};
 }
 
 /**

@@ -212,7 +212,22 @@ one line under it: what was built, the suite's count, and anything left out with
       `acc` row gains a field, so `acc` must be chunked first (step S7), and S7's chunking is left out (see S7). Without
       it a bigger row would fill the one cache item sooner and lose velocity rows. The reviewers' warm-up scenarios
       (WR-M1, WR-M2) wait for those points.
-- [ ] **S9** Equal standing
+- [ ] **S9** Equal standing (built in part: see below; left unticked)
+      Built, under row 51 with the setting `open_equal_lanes` (true): freshness by the bot's own read time in place of the
+      source's name (`ewsLate_`: a post read more than `open_fresh_minutes`, 180, after posting is late; a fresh one of
+      any source, Tubular's and the nightly table's too, may start a story in Stage B, a late one only joins; the
+      embedding order puts fresh before late); each of a signal's posts carries its source (`ewsRepsJson_`, kept
+      through the queue by `edRepPosts_`); the reviewer's line ("Most of these posts come from Tubular, where the
+      same-story grouping has not been checked yet: weigh whether they really tell one story.") in the story review
+      when most posts come from a source not yet checked (Sonar and Sprinklr comments are; a source with measured bars
+      from `open_lane_bars`, or the property `OPEN_LANE_BARS` when the setting is blank, is); `openLaneBars_` reads
+      those bars (a malformed value means today's bars). Velocity keeps the slow lanes' meaning (S8's warm-up is not
+      built). Suite: 1,306 of 1,306 passed. Left out, and why: the measured bars used in the grouping itself (each
+      comparison would need its post's source; the bars exist only once step S1 has run live), the one platform rule
+      with `Web`, one post once by link key plus who with its copy rules, one author function, exclusions and big
+      authors for every lane, the alert memory's marks, Tubular and the nightly table read on change, and the Sources
+      column on the Early Detection tab. Each changes the producer's SQL, its stitching or its stored state (the same
+      ground as S7's carry), and none can be checked against the live tables here.
 - [ ] **S10** The new sources' rules amended under row 51
 - [ ] **S11** Quick looks for every candidate, from 2 accounts
 - [ ] **S12** Story reviews side by side

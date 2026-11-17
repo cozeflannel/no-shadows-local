@@ -447,6 +447,75 @@ function openVelocityFix_() {
   }
 }
 
+// Step S9 (equal standing), the part built. The sources' names as the owner reads them; the two whose posts the
+// same-story bars were set on (EWS:59-76); and how fresh a post must be to start a story or sit in the pool
+const OE_SOURCE_NAMES_ = { sonar: 'Sonar', spk: 'Sprinklr comments', bw: 'Brandwatch (nightly)', tub: 'Tubular',
+  ami: 'the AMIE table', amis: 'the AMIE table', bwl: 'Brandwatch live', bwls: 'Brandwatch live' };
+const OE_CALIBRATED_ = ['sonar', 'spk'];
+
+/** Equal standing is on: row 51 ON and the setting open_equal_lanes (true). Never throws. */
+function openEqualLanes_() {
+  try {
+    return openOn_() && ((typeof GEN !== 'undefined' && GEN && GEN.settings) || {}).open_equal_lanes !== false;
+  } catch (e) {
+    return false;
+  }
+}
+
+/** A post read more than open_fresh_minutes (180) after it was posted is late: it only joins a story. Never throws. */
+function openFreshMs_() {
+  const m = Number(((typeof GEN !== 'undefined' && GEN && GEN.settings) || {}).open_fresh_minutes);
+  return (m > 0 ? m : 180) * 60 * 1000;
+}
+
+/**
+ * The measured same-story bars by source (step S1 writes them): the setting open_lane_bars when filled (a JSON object
+ * or text), else the script property OPEN_LANE_BARS ({date, lanes: {tub: {start, join}}}); {} when neither, or when
+ * malformed (today's bars then). Never throws.
+ */
+function openLaneBars_() {
+  try {
+    const S = (typeof GEN !== 'undefined' && GEN && GEN.settings) || {};
+    let v = S.open_lane_bars;
+    if (v === undefined || v === null || v === '') v = PropertiesService.getScriptProperties().getProperty('OPEN_LANE_BARS');
+    const o = typeof v === 'string' ? JSON.parse(v || 'null') : v;
+    const lanes = o && typeof o === 'object' ? (o.lanes && typeof o.lanes === 'object' ? o.lanes : o) : null;
+    const out = {};
+    Object.keys(lanes || {}).forEach(k => {
+      const b = lanes[k];
+      if (b && typeof b === 'object' && isFinite(Number(b.start)) && isFinite(Number(b.join))) out[k] = { start: Number(b.start), join: Number(b.join) };
+    });
+    return out;
+  } catch (e) {
+    return {};
+  }
+}
+
+/**
+ * The reviewer's line (step S9): when equal standing is on and most of a signal's posts (its representative posts'
+ * `source`) come from a source whose same-story grouping has not been checked yet (not Sonar or Sprinklr comments, and
+ * no measured bars for it): "Most of these posts come from Tubular, where the same-story grouping has not been checked
+ * yet: weigh whether they really tell one story." Else ''. Never throws.
+ */
+function openReviewerLine_(row) {
+  try {
+    if (!openEqualLanes_()) return '';
+    // (a queued row keeps its posts as `posts`; the producer's row as representative_posts_json)
+    let posts = row && Array.isArray(row.posts) ? row.posts : [];
+    if (!posts.length) {
+      try { posts = JSON.parse(String((row && row.representative_posts_json) || '[]')); } catch (e) { posts = []; }
+    }
+    const n = {};
+    (Array.isArray(posts) ? posts : []).forEach(p => { const s = String((p && p.source) || ''); if (s) n[s] = (n[s] || 0) + 1; });
+    const top = Object.keys(n).sort((a, b) => n[b] - n[a])[0];
+    if (!top || n[top] * 2 < posts.length || OE_CALIBRATED_.indexOf(top) >= 0 || openLaneBars_()[top]) return '';
+    return `Most of these posts come from ${OE_SOURCE_NAMES_[top] || top}, where the same-story grouping has not been ` +
+      'checked yet: weigh whether they really tell one story.';
+  } catch (e) {
+    return '';
+  }
+}
+
 /** The review queue's size: open_queue_max (24) under row 51, else today's 12 (BigQuery.gs ED_QUEUE_MAX_). Never throws. */
 function openQueueMax_() {
   try {

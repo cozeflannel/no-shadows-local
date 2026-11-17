@@ -3471,7 +3471,7 @@ function edRepPosts_(raw) {
   if (!Array.isArray(list)) return [];
   const count = v => (v !== undefined && v !== null && v !== '' && isFinite(Number(v)) ? Math.max(0, Math.round(Number(v))) : null);
   const first = (...vals) => vals.find(v => v !== undefined && v !== null && v !== '');
-  return list.filter(p => p && typeof p === 'object').map(p => ({
+  return list.filter(p => p && typeof p === 'object').map(p => Object.assign({
     url: String(p.url || p.post_url || '').trim(),
     author: ewText_(p.author_handle || p.author || p.author_id || ''),
     platform: ewText_(p.platform || p.network || ''),
@@ -3479,7 +3479,7 @@ function edRepPosts_(raw) {
     engagement: count(first(p.engagement_total, p.engagement)),
     followers: count(first(p.followers, p.audience_size)),
     published_at: ewText_(p.published_at || p.post_time || p.posted_at || ''),
-  }));
+  }, p.source ? { source: ewText_(p.source).slice(0, 8) } : {}));  // the source, only where a post has one (row 51, S9)
 }
 
 /**
