@@ -140,7 +140,24 @@ one line under it: what was built, the suite's count, and anything left out with
       builds it: the posts carry no source today); `Single post` as a kind (step S19b); `Update noted in its card's
       thread` (step S16's growth notes); the early-ask summary's caller (step S11 makes the early asks); the daily row's
       faster / wider / accurate measures (they need the later steps' records: the row gives the day's sums and a line).
-- [ ] **S4** The bot's own cards never make Burson look busy
+- [x] **S4** The bot's own cards never make Burson look busy
+      Built, under row 51 in the Auto-correct space (Bot.gs, AutoCorrect.gs, WatchAlerts.gs, OpenEngine.gs): a Watch alert
+      or Direct BigQuery card the bot posted that waits (the run's count of messages, a hold, its time) sets
+      `report.bg_backlog`, never `analyst_backlog`, `held` or the time-budget error, and the cards it reviewed
+      (`bg_handled`) are not counted in the flow's count of messages, so `slaBusy` stays false while only the bot's own
+      cards wait; one at the count no longer stops the loop; an ordinary one (Watch: no KOF, 2,000+, P0 / P1 tag or
+      Sensitive Topic; Direct: no KOF or 2,000+: `openCardSerious_`) waits for the next run while the story queue's next
+      signal is serious (`ser`), or while a due Early Detection check needs the rest of the run (`openCheckRoom_`: the
+      check's 30 s, a review's 90 s and a card's 40 s); the Watch posts a new card there only while fewer than 3 of the
+      bot's own cards wait unreviewed (`pwAlertsMax_`, from `report.bg_waiting`; the 2 a run goes there), and the Direct
+      poll already counted Watch cards in its 3 (`bqDirectWaiting_`). Suite: 1,286 of 1,286 passed. Choices: (1) the room for
+      a due check (not in the plan's four points) was added because 30 cards at about 20 s each used the whole run
+      before the check could start, so the story waited two runs; with it the story is reviewed within one run of its
+      signal, as point 4 asks; (2) a person's sheet test in the space is handled as Burson's alerts (not a bot card).
+      Left out, and why: a test for a person's message after the bot's own cards once the count is reached (the loop now
+      goes on to it instead of stopping): in this setup Burson's alerts are handled before this loop and sheet tests
+      at its start, so nothing of Burson's can be behind the cards; whether a Direct candidate not posted for want of
+      room is marked as posted is left to step S14, as the plan says.
 - [ ] **S5** Ranking in place of the allowance
 - [ ] **S6** Checks every 5 minutes
 - [ ] **S7** Ingest capacity

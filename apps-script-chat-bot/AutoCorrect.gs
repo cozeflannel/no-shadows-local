@@ -122,8 +122,9 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
     startFromAutoCorrect_(props, cfg, ctx);
     // Triage existing S-F Burson and B10 alerts FIRST so Direct BigQuery queries never starve aging cards in B10
     const report = runOnce_(ctx);
+    // (the open engine, row 51, OpenEngine.gs / Bot.gs: the bot's own Watch and Direct cards it reviewed don't count)
     const slaBusy = Boolean(report && (report.held > 0 || report.analyst_backlog ||
-      report.handled >= ctx.settings.max_messages_per_run ||
+      report.handled - (Number(report.bg_handled) || 0) >= ctx.settings.max_messages_per_run ||
       (report.errors || []).some(e => /^time budget/.test(String(e)))));
     ctx.slaBusy = slaBusy;
     // The Direct BigQuery poll (Control row 15)

@@ -2192,7 +2192,7 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       problem = 'the Auto-correct space\'s flow ran out of time on this run (Burson\'s alerts come first)';
     }
     if (!problem) {
-      const max = (dest.choice === 'mirror' || dest.choice === 'autocorrect') ? PW_ALERTS_MAX_MIRROR_ : PW_ALERTS_MAX_OTHER_;
+      const max = pwAlertsMax_(dest);
       // the flags that matter by themselves first (a KOF author, PW_SOLO_MIN_ENG_ engagements), so the small ones never
       // crowd them out of a run's pre-read; then the highest scores, the oldest first
       const big = q => ((q.k.x && q.k.x.k === true) || (Number(q.v[PW_COL_.eng - 1]) || 0) >= PW_SOLO_MIN_ENG_ ? 1 : 0);
@@ -2306,6 +2306,22 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     console.error('Watch alerts: ' + ((e && e.stack) || e));
   }
   return out;
+}
+
+/**
+ * How many Watch alerts a run may post where `dest` sends them: PW_ALERTS_MAX_OTHER_ in the Other alerts space,
+ * PW_ALERTS_MAX_MIRROR_ in the Mirror and Auto-correct spaces. Under the open engine (Control row 51, step S4) in the
+ * Auto-correct space no count a run, but a new card only while fewer than 3 of the bot's own cards wait unreviewed there
+ * (dest.bgWaiting, which Main.gs hands over from that space's flow); row 51 OFF: as before. Never throws.
+ */
+function pwAlertsMax_(dest) {
+  const d = dest || {};
+  try {
+    if (d.choice === 'autocorrect' && typeof openOn_ === 'function' && openOn_() && d.bgWaiting !== undefined) {
+      return Math.max(0, OE_BG_WAITING_MAX_ - (Number(d.bgWaiting) || 0));
+    }
+  } catch (e) { /* as before */ }
+  return (d.choice === 'mirror' || d.choice === 'autocorrect') ? PW_ALERTS_MAX_MIRROR_ : PW_ALERTS_MAX_OTHER_;
 }
 
 /**

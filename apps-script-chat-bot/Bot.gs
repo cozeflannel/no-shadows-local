@@ -1766,6 +1766,31 @@ function pollAnalystMessages_(ctx, report) {
   let newCursor = cursor;
   let blocked = false;
   const advance = m => { if (!blocked) newCursor = Math.max(newCursor, m.createTime); };
+  // The open engine (Control row 51, step S4 of the open-engine plan), in the Auto-correct space: a card the bot posted
+  // itself (a Watch alert, a Direct BigQuery card) that waits is the bot's own backlog (report.bg_backlog), never
+  // Burson's (analyst_backlog, held, the time budget's error: what makes the flow look busy); it never stops Burson's
+  // alerts after it in the list; and an ordinary one waits for the next run while the story queue's next signal is
+  // serious. Row 51 OFF: as before
+  const open = !!ctx.sourceReadOnly && typeof openOn_ === 'function' && openOn_();
+  const botCard = m => !!(m && !m.threadReply && ((typeof pwAlertOf_ === 'function' && pwAlertOf_(ctx, m)) ||
+    (typeof bqIngestedSource_ === 'function' && bqIngestedSource_(ctx, m))));
+  const backlog = bot => { if (open && bot) report.bg_backlog = true; else report.analyst_backlog = true; };
+  let bgTold = false;
+  // an ordinary bot card waits for the next run behind a serious story in the queue, or when an Early Detection check
+  // is due and the run has only the check's time left (the check and a review go first: openCheckRoom_)
+  const bgWaits = (m, kind, x) => {
+    if (!open || openCardSerious_(kind, x)) return false;
+    const serious = openQueueTopSerious_();
+    if (!serious && openCheckRoom_(ctx)) return false;
+    if (!bgTold) {
+      ctx.log(`the bot's own ordinary cards wait for the next run: ${serious ? 'a serious story is next in the review queue'
+        : 'an Early Detection check is due and needs the rest of the run'}`);
+    }
+    bgTold = true;
+    report.bg_backlog = true;
+    blocked = true;
+    return true;
+  };
   const isPendingB10Alert = m => {
     if (!ctx.sourceReadOnly || !m || m.threadReply) return false;
     if (ctx.recent.has(m.name) || ctx.store.isDone(m.name)) return false;
@@ -1800,7 +1825,10 @@ function pollAnalystMessages_(ctx, report) {
   for (let idx = 0; idx < msgs.length; idx++) {
     const m = msgs[idx];
     if (ctx.now() > ctx.deadline) {
-      if (msgs.slice(idx).some(isPendingB10Alert)) {
+      const pending = msgs.slice(idx).filter(isPendingB10Alert);
+      if (open && pending.length && pending.every(botCard)) {
+        report.bg_backlog = true;  // only the bot's own cards wait: Burson's flow is not busy
+      } else if (pending.length) {
         report.analyst_backlog = true;
         if (!(report.errors || []).some(e => /^time budget/.test(String(e))) ) {
           report.errors.push('time budget reached; the rest is handled next run');
@@ -1817,9 +1845,16 @@ function pollAnalystMessages_(ctx, report) {
           advance(m);
           continue;
         }
-        if (report.handled >= S.max_messages_per_run) { report.analyst_backlog = true; blocked = true; break; }
+        if (report.handled >= S.max_messages_per_run) {
+          backlog(true);
+          blocked = true;
+          if (open) continue;  // row 51: Burson's alerts after it are still handled
+          break;
+        }
+        if (bgWaits(m, 'watch', watched)) continue;
         report.handled++;
         report.alerts++;
+        if (open) report.bg_handled = (report.bg_handled || 0) + 1;
         ctx.reviewHold = { first: report.handled === 1, room };
         try {
           handleOtherAlert_(ctx, m, watched, report);
@@ -1829,14 +1864,20 @@ function pollAnalystMessages_(ctx, report) {
           if (e && e.holdReview) {
             report.handled--;
             report.alerts--;
-            report.held = (report.held || 0) + 1;
-            report.analyst_backlog = true;
+            if (open) {
+              report.bg_handled--;
+              report.bg_held = (report.bg_held || 0) + 1;
+            } else {
+              report.held = (report.held || 0) + 1;
+            }
+            backlog(true);
             ctx.log(`held ${m.name} for the next run: ${e.message}`);
             blocked = true;
+            if (open) continue;
             break;
           }
           report.errors.push(`${m.name}: ${(e && e.message) || e}`);
-          report.analyst_backlog = true;
+          backlog(true);
           blocked = true;
         } finally {
           ctx.reviewHold = null;
@@ -1857,9 +1898,19 @@ function pollAnalystMessages_(ctx, report) {
         }
         const parsedBq = parseAlert_(m.text);
         if (detectAlert_(m.text, parsedBq, 'Zapier')) {
-          if (report.handled >= S.max_messages_per_run) { report.analyst_backlog = true; blocked = true; break; }
+          // a Direct BigQuery card is the bot's own; a sheet test is a person's (as Burson's alerts)
+          const own = open && !!(typeof bqIngestedSource_ === 'function' && bqIngestedSource_(ctx, m));
+          // (row 51: a person's sheet test is not held back by the bot's own cards handled before it)
+          if (report.handled - (open && !own ? (report.bg_handled || 0) : 0) >= S.max_messages_per_run) {
+            backlog(own);
+            blocked = true;
+            if (own) continue;  // row 51: Burson's alerts after it are still handled
+            break;
+          }
+          if (own && bgWaits(m, 'direct', parsedBq)) continue;
           report.handled++;
           report.alerts++;
+          if (own) report.bg_handled = (report.bg_handled || 0) + 1;
           ctx.reviewHold = { first: report.handled === 1, room };
           try {
             handleAlert_(ctx, m, parsedBq, report);
@@ -1869,14 +1920,20 @@ function pollAnalystMessages_(ctx, report) {
             if (e && e.holdReview) {
               report.handled--;
               report.alerts--;
-              report.held = (report.held || 0) + 1;
-              report.analyst_backlog = true;
+              if (own) {
+                report.bg_handled--;
+                report.bg_held = (report.bg_held || 0) + 1;
+              } else {
+                report.held = (report.held || 0) + 1;
+              }
+              backlog(own);
               ctx.log(`held ${m.name} for the next run: ${e.message}`);
               blocked = true;
+              if (own) continue;
               break;
             }
             report.errors.push(`${m.name}: ${(e && e.message) || e}`);
-            report.analyst_backlog = true;
+            backlog(own);
             blocked = true;
           } finally {
             ctx.reviewHold = null;
@@ -1967,6 +2024,8 @@ function pollAnalystMessages_(ctx, report) {
     advance(m);
   }
   if (ctx.memo && newCursor !== saved) ctx.memo.set('analyst_cursor', String(newCursor));
+  // row 51: how many of the bot's own cards wait unreviewed here (the Watch posts a new one only while fewer than 3 do)
+  if (open) report.bg_waiting = msgs.filter(m => botCard(m) && !ctx.recent.has(m.name) && !ctx.store.isDone(m.name)).length;
 }
 
 // ---------------------------------------------------------------------------------------------------------------

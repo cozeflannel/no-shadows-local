@@ -38,6 +38,9 @@
  *                                      2,000+. Row 51 OFF: always {ok: true}
  *   openCountReview_(n)                counts n background reviews against the day's stop (and stops at it)
  *   openSerious_(row)                  an Early Detection signal is serious (P0 / P1, raised by a tag, a 2,000+ post)
+ *   openCardSerious_(kind, x)          one of the bot's own cards is serious ('watch': KOF, 2,000+, P0 / P1, Sensitive
+ *                                      Topic; 'direct': KOF, 2,000+)
+ *   openQueueTopSerious_()             the review queue's next signal is serious
  *   openStopReached_()                 true while row 51 is ON and today's stop (or a derived ceiling) was reached
  *   openCheckHeld_()                   true when no Early Detection check may run (Burson's reserve)
  *   openHeldCause_(now)                'stop' / 'pace' when a background start was held so in the last 3 hours
@@ -373,6 +376,61 @@ function openSerious_(row) {
     let posts = [];
     try { posts = JSON.parse(String(r.representative_posts_json || '[]')); } catch (e) { posts = []; }
     return (Array.isArray(posts) ? posts : []).some(p => p && Number(p.engagement !== undefined ? p.engagement : p.e) >= 2000);
+  } catch (e) {
+    return false;
+  }
+}
+
+const OE_BG_WAITING_MAX_ = 3;  // the bot's own cards waiting unreviewed in the Auto-correct space before a new one waits
+
+/**
+ * Is one of the bot's own cards serious (step S4)? `kind` 'watch' (WatchAlerts.gs pwAlertOf_'s alert): a KOF, 2,000+
+ * engagements, a P0 / P1 Exposure Tag or a Sensitive Topic on it; 'direct' (Alert.gs parseAlert_'s): a KOF or 2,000+.
+ * Never throws.
+ */
+function openCardSerious_(kind, x) {
+  try {
+    const big = v => {
+      const n = Number(String(v === undefined || v === null ? '' : v).replace(/,/g, ''));
+      return isFinite(n) && n >= 2000;
+    };
+    if (kind === 'watch') {
+      const a = x || {};
+      const eng = a.engagement || {};
+      const card = label => ((a.unknown || []).find(u => u && u.label === label) || {}).value || '';
+      const tag = card('card_exposure_tag') && typeof lookupTag_ === 'function' ? lookupTag_(card('card_exposure_tag')) : null;
+      return a.kof === true || big(eng.count) || big(eng.min) || !!(tag && /^P[01]$/.test(String(tag.priority))) || !!card('card_sensitive_topics');
+    }
+    const f = (x && x.fields) || {};
+    const kof = String(f.kof || '').trim();  // "Yes", or the KOF lists the card names; "No" or blank when none
+    return (!!kof && !/^(?:no|none|-)$/i.test(kof)) || big(f.total_engagement);
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Room for one more of the bot's own ordinary cards in this run (step S4)? No when an Early Detection check is due (its
+ * interval passed: BigQuery.gs ED_AT_PROP_) and the run's time left is under what the check and a review need
+ * (EW_MIN_LEFT_MS_ + EW_DRAIN_MIN_LEFT_MS_ + a card's 40 s). Never throws.
+ */
+function openCheckRoom_(ctx) {
+  try {
+    const now = ctx && typeof ctx.now === 'function' ? ctx.now() : Date.now();
+    const last = Number(PropertiesService.getScriptProperties().getProperty(ED_AT_PROP_)) || 0;
+    const due = !last || now < last || now - last >= EW_EVERY_MS_;
+    if (!due || !ctx || !(Number(ctx.deadline) > 0)) return true;
+    return Number(ctx.deadline) - now >= EW_MIN_LEFT_MS_ + EW_DRAIN_MIN_LEFT_MS_ + 40 * 1000;
+  } catch (e) {
+    return true;
+  }
+}
+
+/** Is the review queue's next signal serious (the allowance's `ser` mark, BigQuery.gs)? Never throws. */
+function openQueueTopSerious_() {
+  try {
+    const list = typeof edQueueList_ === 'function' ? edQueueList_(PropertiesService.getScriptProperties()) : [];
+    return !!(list[0] && list[0].ser);
   } catch (e) {
     return false;
   }
