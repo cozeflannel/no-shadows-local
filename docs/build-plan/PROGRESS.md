@@ -365,7 +365,13 @@ one line under it: what was built, the suite's count, and anything left out with
       works on step S19b's list of passes and its cards, not built (no pass is ever queued or carded today, so a hold
       would wait for nothing); the tests `switch_rq_watch.test.js`'s queued-pass and held-flag cases and
       `switch_rq_growth.test.js` with them.
-- [ ] **S19f** Every size grouped
+- [ ] **S19f** Every size grouped (not built: see below)
+      Not built, and why: the step takes the size line out of the producer's `WHERE` for grouping, keeps KOF posts as
+      members, and gives `big` posts their own bars from S1's measurements and their warming from S8; then sweeps every
+      text that says "small accounts" or "low-tier" (both parsers in the same commit). The `big` column and the size
+      change are the producer's SQL, the ground S7, S9 and S19a leave out; S1's measured bars do not exist (it is a
+      hand-run check, not run); S8's warming part is not built. Without the grouping change the sweep would make true
+      texts untrue: stories are still made of small accounts only.
 - [ ] **S18** "Why not this post?" (built in part: see below; left unticked)
       Built, under row 51: `WhyNot.gs`; a person's `why not <link>` in the Auto-correct space (B10; Bot.gs
       `pollAnalystMessages_`) is answered in its thread from what the bot holds, read-only and with no Gemini call: the
@@ -379,7 +385,12 @@ one line under it: what was built, the suite's count, and anything left out with
       the answers are not kept with the story, and the lists are cached only inside a check; "which gate it fails" when
       nothing is held (that would read the sources again, not read-only); the requirements-first texts of RQ8 (checked
       alone, the first screen's) wait for the stores S19a (seen set) and S19d (carry, answers) leave out.
-- [ ] **S19g** Misses counted
+- [ ] **S19g** Misses counted (not built: see below)
+      Not built, and why: every count of the step is a lookup in the seen set (16 characters a post checked) and its
+      daily filters on a bot-made `Requirement check` tab, at the moment Burson, a person or another path alerts a post;
+      the seen set is the store S19a leaves out, and the quick passes it measures (S19e, S19b's list) are not built. The
+      `*First check:*` notes, "at least N", the audit's estimate and the Results split read the same records. Nothing of
+      it can be counted from what the bot keeps today.
 
 ### The rest (plan 2; briefs 26 to 29)
 - [ ] **S14** Direct BigQuery by time
