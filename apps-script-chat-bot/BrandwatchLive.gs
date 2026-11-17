@@ -87,6 +87,8 @@ function bwLiveCfg_() {
 
 /** The least time between two reads (ms): bw_live_every_minutes. The one place a faster rhythm would change it. */
 function bwLiveEveryMs_() {
+  // the open engine (Control row 51, step S10): at every Early Detection check (a minute under its interval)
+  if (typeof openOn_ === 'function' && openOn_() && typeof openProducerMs_ === 'function') return openProducerMs_();
   return bwLiveCfg_().everyMinutes * 60 * 1000;
 }
 

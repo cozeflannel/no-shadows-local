@@ -351,7 +351,7 @@ function ewsNewCfg_() {
     const v = s[name];
     return v === null || v === undefined || v === '' || typeof v === 'boolean' || !isFinite(Number(v)) || Number(v) < 0 ? d : Math.floor(Number(v));
   };
-  return {
+  const cfg = {
     embedPerCheck: n('early_wave_new_embed_per_check', 100),
     embedPerDay: n('early_wave_new_embed_per_day', 5000),
     lateMinutes: n('early_wave_new_late_minutes', 180),
@@ -362,6 +362,14 @@ function ewsNewCfg_() {
     liftedPerHour: n('early_wave_new_lifted_per_hour', 2),
     liftedPerDay: n('early_wave_new_lifted_per_day', 20),
   };
+  // the open engine (Control row 51, step S10): the new sources' caution rules go (no trial, no cap on the stories only
+  // they lift, no share of the embeddings or the pool); the lateness rule, the pool's age and the carry stay. With row 51
+  // OFF they are exactly as above
+  if (typeof openOn_ === 'function' && openOn_()) {
+    Object.assign(cfg, { embedPerCheck: Infinity, embedPerDay: Infinity, poolMax: Infinity, trialDays: 0,
+      liftedPerHour: Infinity, liftedPerDay: Infinity });
+  }
+  return cfg;
 }
 
 /**
@@ -2197,7 +2205,8 @@ function ewsEmbedSplit_(need, room, dayDone, newDone, now, cfg) {
   const newSide = need.filter(p => p.nl).map((p, i) => [p, i])
     .sort((a, b) => (b[0]._carry ? 1 : 0) - (a[0]._carry ? 1 : 0) || a[1] - b[1]).map(x => x[0]);
   const pace = Math.min(EWS_NEW_DAY_CAP_, Math.floor(EWS_EMBED_PER_DAY_ * (new Date(now).getUTCHours() + 1) / 24));
-  const dayRoom = Math.max(0, Math.min(c.embedPerDay - newDone, pace - dayDone));
+  // (the open engine, row 51, step S10: no day's share or pace for the new lanes; the check's time bounds them)
+  const dayRoom = typeof openOn_ === 'function' && openOn_() ? Infinity : Math.max(0, Math.min(c.embedPerDay - newDone, pace - dayDone));
   const todayHashes = new Set(today.map(p => p.chash));
   const usable = uniq(newSide.filter(p => !todayHashes.has(p.chash))).length;
   const pick = bar => {  // the split with `bar` texts left to the new lanes for the day
@@ -2713,7 +2722,8 @@ function ewsAmiCfg_() {
   const maxGb = num('amie_max_gb', 1, 0.001);
   const staleHours = num('amie_stale_hours', 3, 0.1);
   return {
-    take: Math.min(5000, Math.floor(num('amie_rows_per_check', 300, 1))),
+    // (the open engine, row 51, step S10: 5,000 rows a check, the page size, from the mark as before)
+    take: typeof openOn_ === 'function' && openOn_() ? 5000 : Math.min(5000, Math.floor(num('amie_rows_per_check', 300, 1))),
     overlapMin: Math.min(360, Math.floor(num('amie_overlap_minutes', 60, 0))),
     maxGb, maxBytes: Math.round(maxGb * 1e9),
     staleHours, staleMs: Math.round(staleHours * 3600 * 1000),

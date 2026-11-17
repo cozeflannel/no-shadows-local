@@ -228,7 +228,17 @@ one line under it: what was built, the suite's count, and anything left out with
       authors for every lane, the alert memory's marks, Tubular and the nightly table read on change, and the Sources
       column on the Early Detection tab. Each changes the producer's SQL, its stitching or its stored state (the same
       ground as S7's carry), and none can be checked against the live tables here.
-- [ ] **S10** The new sources' rules amended under row 51
+- [ ] **S10** The new sources' rules amended under row 51 (built in part: see below; left unticked)
+      What the base has: all three new sources (rows 48-50: the AMIE table for Early Detection, Brandwatch live, the
+      Watch's AMIE source), so all are amended here. Built, under row 51: no trial (whatever
+      `early_wave_new_trial_days` says), no cap on the stories only a new source lifts, no share of the embeddings or the
+      pool for the new lanes and no day's pace for them (`ewsNewCfg_`, `ewsEmbedSplit_`); the new lanes' lateness rule,
+      the pool's age and their carry stay; Brandwatch live read at every Early Detection check (`bwLiveEveryMs_`: the
+      producer's interval, a minute under the check's); the AMIE table read 5,000 rows a check from its mark. With row 51
+      OFF the new-lane rules are exactly as at the base (switch_ed_new_lanes unchanged). The Brandwatch reader's day
+      ceiling and pacing were never built (A4). Suite: 1,309 of 1,309 passed. Left out, and why: the one-sided rules of
+      50aa822 (platforms only from today's lanes, one-sided exclusions, today's copy always wins): they give way to S9's
+      one platform rule and its copy rules, which are left out with S9's stitching.
 - [ ] **S11** Quick looks for every candidate, from 2 accounts
 - [ ] **S12** Story reviews side by side
 
