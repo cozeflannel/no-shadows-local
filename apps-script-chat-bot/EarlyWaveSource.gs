@@ -136,7 +136,7 @@ const EWS_NEW_LANES_ = ['ami', 'amis', 'bwl', 'bwls'];
 const EWS_NEW_LANE_DEFS_ = [
   { key: 'ami', location: 'US', sw: 'edAmie', src: 'ami', ready: st => ewsAmiReady_(st, Date.now()),
     query: (st, until) => ewsAmiQuery_(st, until), done: (st, lane, now, nx) => ewsAmiDone_(st, lane, now, nx),
-    failed: (st, lane, now) => ewsAmiFailed_(st, lane, now) },
+    failed: (st, lane, now, nx) => ewsAmiFailed_(st, lane, now, nx) },
 ];
 const EWS_NEW_SWITCHES_ = { edAmie: 'ami', edBwLive: 'bwl' };  // a new source's Control switch -> the source
 // Each new source's marks in EWS_STATE's `marks`, forgotten when its row is OFF (ewsNewSourceOff_); the step that
@@ -357,7 +357,8 @@ function ewsNewCfg_() {
  * Which Control switches are ON for this run, as the producer reads them (ewsRows_ is given none): with `switches`
  * (the run's wanted.switches, Main.gs, right after the Control tab is read) it keeps the ones that are exactly true;
  * with no argument it returns them. Never set in a run (or set to nothing): every switch reads OFF, so no new source is
- * read (fail closed). Never throws.
+ * read (fail closed). With row 48 ON and row 19 OFF no check runs, so row 48's note a check left is taken away
+ * (NewSources.gs nsrcWaiting_): its column C says only that it waits. Never throws.
  */
 let EWS_RUN_SW_ = null;
 function ewsRunSwitches_(switches) {
@@ -365,6 +366,7 @@ function ewsRunSwitches_(switches) {
     const out = {};
     if (switches && typeof switches === 'object') Object.keys(switches).forEach(k => { if (switches[k] === true) out[k] = true; });
     EWS_RUN_SW_ = out;
+    if (out.edAmie && !out.earlyWave && typeof nsrcWaiting_ === 'function') nsrcWaiting_('edAmie');
   }
   return Object.assign({}, EWS_RUN_SW_ || {});
 }
@@ -2065,6 +2067,7 @@ function ewsNewSourceOff_(src, sw) {
       delete st.sn;
       changed = true;
     }
+    if (!ewsNewSources_(sw).length && 'nsf' in st) { delete st.nsf; changed = true; }  // the New sources tab's wait
     if (items.length) {
       const cache = ewsCache_();
       try { if (cache) cache.removeAll(items.map(k => EWS_CACHE_PREFIX_ + k)); } catch (e) { /* they expire */ }
@@ -2805,6 +2808,7 @@ function ewsAmiMeta_(q, now) {
   let code = 0;
   let text = '';
   let body = null;
+  q.nc = (Number(q.nc) || 0) + 1;  // a call, for the day's count (ewsAmiCallsOut_)
   try {
     if (typeof apiGuardNote_ === 'function') apiGuardNote_('bigquery', 1);
     const resp = UrlFetchApp.fetch(`${BQ_API_BASE_}${project}/datasets/${dataset}/tables/${table}`, { method: 'get', muteHttpExceptions: true,
@@ -2856,6 +2860,7 @@ function ewsAmiMeta_(q, now) {
 function ewsAmiDryRun_(st, q, now) {
   const cfg = ewsAmiCfg_();
   let a;
+  q.nc = (Number(q.nc) || 0) + 1;  // a call, for the day's count (ewsAmiCallsOut_)
   try {
     const job = ewsAmiQuery_(st, now - EWS_SETTLE_MS_);
     const req = ewsJobRequest_({ key: 'ami', location: 'US' }, job, ScriptApp.getOAuthToken());
@@ -2892,11 +2897,16 @@ function ewsAmiDryRun_(st, q, now) {
  * Whether the AMIE job goes out this check (EWS_NEW_LANE_DEFS_'s ready; only while row 48 is ON): not while it is
  * stopped for the UTC day or paused; first the table's metadata (at the first check after the row goes ON, then
  * hourly, and on a new day after a stop) and a dry run (once a UTC day, and after any failure). What they find stays in
- * st.marks.amiq for the note (ewsAmiStatus_). Never throws.
+ * st.marks.amiq for the note (ewsAmiStatus_). Not while a tab named "New sources" that a person made is there
+ * (st.nsf: NewSources.gs). Never throws.
  */
 function ewsAmiReady_(st, now) {
   try {
+    // a tab named "New sources" that a person made: the source waits until it is renamed (NewSources.gs, at the end of
+    // each check; asked here at the first check after the row goes ON, before anything is read)
+    if (st.nsf) return false;
     const q = ewsAmiQ_(st);
+    if (!(Number(q.mt) > 0) && typeof nsrcForeign_ === 'function' && nsrcForeign_()) { st.nsf = now; return false; }
     const day = ewsUtcDay_(now);
     if (q.sd) {
       if (q.sd === day) return false;
@@ -2919,7 +2929,8 @@ function ewsAmiReady_(st, now) {
 /**
  * The AMIE job was collected: its mark moves to the newest ingestion time taken (its 'amark' row; never back, and not
  * at all when nothing was taken), the problem it had is over, and the day record counts the rows ('rows': new rows
- * taken, 'npt': of them with no posting time, never a post).
+ * taken, 'npt': of them with no posting time, never a post) and the job ('calls'); q.lr keeps the read's new rows for
+ * the New sources tab.
  */
 function ewsAmiDone_(st, lane, now, nx) {
   const am = ((lane && lane.rows) || []).find(r => r && r.kind === 'amark');
@@ -2930,6 +2941,8 @@ function ewsAmiDone_(st, lane, now, nx) {
   delete q.prob;
   delete q.pu;
   delete q.sd;
+  q.lr = am ? Number(am.audience) || 0 : 0;
+  if (nx) ewsNewCount_(nx, 'ami', 'calls');
   if (nx && am) {
     ewsNewCount_(nx, 'ami', 'rows', Number(am.audience) || 0);
     ewsNewCount_(nx, 'ami', 'npt', Number(am.eng) || 0);
@@ -2937,11 +2950,23 @@ function ewsAmiDone_(st, lane, now, nx) {
 }
 
 /** The AMIE job failed (refused, or its answer could not be read): a pause of an hour, then a dry run before the next. */
-function ewsAmiFailed_(st, lane, now) {
+function ewsAmiFailed_(st, lane, now, nx) {
   const q = ewsAmiQ_(st);
+  if (nx) ewsNewCount_(nx, 'ami', 'calls');
   const code = Number((String((lane && lane.why) || '').match(/^HTTP (\d{3})/) || [])[1]) || 0;
   const why = ewsAmiRefusal_(code, String((lane && lane.why) || '').replace(/^HTTP \d{3}:\s*/, ''), 'BigQuery refused the AMIE read')[1];
   ewsAmiProblem_(q, 'failed', why.replace(/, so it isn't read$/, ''), now, false);
+}
+
+/**
+ * The AMIE table's metadata reads and dry runs of this check (q.nc, counted where they are sent) go into the check's
+ * day counts ('calls', with its jobs: the New sources tab's "calls today"). Never throws.
+ */
+function ewsAmiCallsOut_(st, nx) {
+  const q = st && st.marks && st.marks.amiq;
+  if (!nx || !q || typeof q !== 'object' || !(Number(q.nc) > 0)) return;
+  ewsNewCount_(nx, 'ami', 'calls', Number(q.nc));
+  delete q.nc;
 }
 
 /**
@@ -3423,9 +3448,12 @@ function ewsProduce_(props, st, now, firstMins, opts) {
         st.marks.tubAt = now;
       }
     }
+    if (nx) ewsAmiCallsOut_(st, nx);
     ewsSaveRollup_(props, roll);
     if (nx) ewsNewDayClose_(props, nx, now);
     else if (lx && lx.touched) ewsNewDayClose_(props, lx, now);  // a lifted story while every row is OFF: its record
+    // the new sources' log line, the New sources tab and their Control notes (NewSources.gs), after the day record
+    if (nx && typeof nsrcAfterCheck_ === 'function') nsrcAfterCheck_(props, st, nx, now, read);
     const problems = EWS_LANES_.filter(l => read[l.key].state === 'failed').map(l => `${l.key}: ${read[l.key].why}`);
     const pending = EWS_LANES_.filter(l => read[l.key].state === 'pending').map(l => l.key);
     // a new source's failure is named in the log line only: C19 (last.problem, the error) keeps today's lanes

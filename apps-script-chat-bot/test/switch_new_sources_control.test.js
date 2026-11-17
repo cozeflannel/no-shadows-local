@@ -135,7 +135,7 @@ module.exports = H => {
     eq(cells(sh, 48), [LABEL, 'OFF', OFF_TEXT]);
   });
 
-  test('new sources control: column C of row 48 while ON says it is waiting while row 19 is OFF, and otherwise the ON text (115 characters); OFF it is the OFF text whatever row 19 says', () => {
+  test('new sources control: column C of row 48 while ON says it is waiting while row 19 is OFF, and otherwise the ON text (115 characters) with what the last check found after it; OFF it is the OFF text whatever row 19 says; row 19 turned OFF again leaves only the waiting words (no note of an earlier check)', () => {
     const texts = sw => B.switchStatusTexts_(sw, '', {}, NOW)[B.switchRows_().indexOf(48)];
     eq([texts({ edAmie: true }), texts({ edAmie: true, earlyWave: true }), texts({ earlyWave: true }), texts({})],
       [WAITING, ON_TEXT, OFF_TEXT, OFF_TEXT]);
@@ -146,7 +146,12 @@ module.exports = H => {
     eq(sh.cell(48, 3), WAITING);
     sh.getRange(19, 2).setValue('ON');
     t.poll();
-    eq(sh.cell(48, 3), ON_TEXT);
+    // this fake's table has none of the AMIE table's columns: the check's note says so after the ON text (NewSources.gs)
+    eq(sh.cell(48, 3), `${ON_TEXT} · ⚠️ since 8:02 AM (just now): the AMIE table has no column "alert_source" any more, so it ` +
+      'isn\'t read. The other sources go on (New sources tab) · today: 0 rows, 0 used');
+    sh.getRange(19, 2).setValue('OFF');
+    t.poll();
+    eq(sh.cell(48, 3), WAITING);
   });
 
   // -----------------------------------------------------------------------------------------------------------------
@@ -219,12 +224,15 @@ module.exports = H => {
     const big = B.ewsC1BigSql_().join('\n');
     eq(of(amie, 'c1').map(b => b.query), of(off, 'c1').map(b => `${b.query}\n${big}`));
     eq(of(amie, 'c1').map(b => Object.assign(b, { query: '' })), of(off, 'c1').map(b => Object.assign(b, { query: '' })));
-    eq([jobs(amie).length, jobs(amie).filter(c => c.lane !== 'us' && c.lane !== 'c1'), amie.t.sheet().getSheetByName('New sources')], [6, [], null]);
+    eq([jobs(amie).length, jobs(amie).filter(c => c.lane !== 'us' && c.lane !== 'c1')], [6, []]);
+    // the New sources tab is made (the bot's own, its title in A1) and says why the AMIE table isn't read
+    const tab = amie.t.sheet().getSheetByName('New sources');
+    eq([!!tab, tab && tab.cell(1, 1), tab && /^⚠️ since .*the AMIE table has no column/.test(tab.cell(4, 2))], [true, B.ev('NSRC_TITLE_'), true]);
     // the AMIE table's check (its metadata, read once): this fake answers with other columns, so it stops for the day
     eq(newCalls(amie).map(c => [c.method, c.url.replace(/^.*\/projects\//, '')]),
       [['get', 'brand-social-central-data/datasets/social_alerts_dataset/tables/all_sundar_mentions']]);
     eq([amie.t.bot.ewsAmiStatus_().state, amie.t.bot.ewsAmiStatus_().kind], ['stopped', 'column']);
-    eq(amie.sh.cell(48, 3), ON_TEXT);
+    assert.ok(amie.sh.cell(48, 3).startsWith(`${ON_TEXT} · ⚠️ since `), amie.sh.cell(48, 3));
     // the new-lane rules of EarlyWaveSource.gs run while a new row is ON (their own day record and index), but with no
     // AMIE job collected the source is never read, so its trial has no first day
     const day = JSON.parse(amie.t.g.props.get('EWS_SRC_DAY') || '{}');
@@ -294,5 +302,159 @@ module.exports = H => {
     empty.props.set('EWS_STATE', '{not json');
     b2.ewsAmieOff_({});
     eq(empty.props.get('EWS_STATE'), '{not json');
+  });
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // The New sources tab is the bot's only by its title in A1 (NewSources.gs): any other tab of that name is left alone
+  // -----------------------------------------------------------------------------------------------------------------
+
+  const TITLE = B.ev('NSRC_TITLE_');
+  const FOREIGN_NOTE = '⚠️ waiting: a tab named "New sources" exists that the bot didn\'t make; rename it to let the bot make its own';
+  const tablesGets = w => w.bq.filter(c => /\/tables\/all_sundar_mentions$/.test(c.url)).length;
+  const checks = (w, n) => { for (let i = 0; i < n; i++) { w.t.g.clock.now += 15 * MIN; w.t.poll(); } };
+
+  test('new sources control (Q12): a tab named "New sources" the bot didn\'t make (a person\'s, an empty one, a title one character short or long, a protected one, a hidden one) is never written, and the AMIE table waits: it is not read at all and C48 says why; once that tab is renamed the bot makes its own and reads again', () => {
+    const cases = {
+      'a person\'s tab': sh => sh.getRange(1, 1, 2, 2).setValues([['My notes on sources', 'kept'], ['Reddit', 'check weekly']]),
+      'an empty tab': () => {},
+      'a title one character short': sh => sh.getRange(1, 1).setValue(TITLE.slice(0, -1)),
+      'a title one character long': sh => sh.getRange(1, 1).setValue(`${TITLE}.`),
+      'a protected tab': sh => { sh.getRange(1, 1).setValue('Ours'); sh.protect().setDescription('Only us'); },
+      'a hidden tab': sh => { sh.getRange(1, 2).setValue(TITLE); sh.hideSheet(); },
+    };
+    Object.keys(cases).forEach(what => {
+      const w = world();
+      const { t, sh } = w;
+      const theirs = t.sheet().insertSheet('New sources');
+      cases[what](theirs);
+      const look = () => JSON.stringify([theirs.rows, theirs.protections.length, theirs.isSheetHidden(), theirs.validations, theirs.cleared || []]);
+      const before = look();
+      sh.getRange(19, 2).setValue('ON');
+      sh.getRange(48, 2).setValue('ON');
+      checks(w, 3);
+      eq([what, look()], [what, before]);
+      eq([what, t.sheet().sheets.filter(x => x.name === 'New sources').length, tablesGets(w), jobs(w).filter(c => c.lane === 'ami').length],
+        [what, 1, 0, 0]);
+      assert.ok(sh.cell(48, 3).startsWith(`${ON_TEXT} · ${FOREIGN_NOTE}`), `${what}: ${sh.cell(48, 3)}`);
+      assert.ok(JSON.parse(t.g.props.get('EWS_STATE')).nsf > 0, what);
+      // renamed: the bot makes its own tab at the next check, and the check after that reads the AMIE table again
+      theirs.setName('Our sources');
+      checks(w, 1);
+      const mine = t.sheet().getSheetByName('New sources');
+      eq([what, mine && mine.cell(1, 1), 'nsf' in JSON.parse(t.g.props.get('EWS_STATE')), theirs.name, look()], [what, TITLE, false, 'Our sources', before]);
+      checks(w, 1);
+      eq([what, tablesGets(w)], [what, 1]);
+      assert.ok(!sh.cell(48, 3).includes('a tab named'), sh.cell(48, 3));
+    });
+  });
+
+  test('new sources control (Q12): the bot\'s own New sources tab stays its own when a person hides it or protects it: it is written at each check, never made twice, never shown again or unprotected; turning row 48 OFF leaves the tab as it is (nothing more is written to it)', () => {
+    const w = world();
+    const { t, sh } = w;
+    sh.getRange(19, 2).setValue('ON');
+    sh.getRange(48, 2).setValue('ON');
+    checks(w, 1);
+    const tab = t.sheet().getSheetByName('New sources');
+    eq([tab.cell(1, 1), tab.protections.map(p => p.warningOnly)], [TITLE, [true]]);
+    tab.hideSheet();
+    tab.protect().setDescription('Only the owner');
+    const summary = tab.cell(2, 1);
+    checks(w, 1);
+    eq([t.sheet().sheets.filter(x => x.name === 'New sources').length, tab.isSheetHidden(), tab.protections.length], [1, true, 2]);
+    assert.ok(tab.cell(2, 1) !== summary && /^Calls today: /.test(tab.cell(2, 1)), tab.cell(2, 1));  // written again: its time moved
+    // OFF: the tab stays, as it was; the bot writes no more there
+    sh.getRange(48, 2).setValue('OFF');
+    const rows = JSON.stringify(tab.rows);
+    checks(w, 2);
+    eq([JSON.stringify(tab.rows), sh.cell(48, 3)], [rows, OFF_TEXT]);
+    eq(t.sheet().sheets.map(x => x.name).filter(n => /^New sources/.test(n)), ['New sources']);
+  });
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // E26: a full run with row 48 ON puts nothing new in front of Burson
+  // -----------------------------------------------------------------------------------------------------------------
+
+  const golden = require('./golden_flows')(H);
+  const ZAPIER = { sender: 'users/zapier', type: 'BOT', displayName: 'Zapier' };
+  const AMIE_TABLE = now => ({ lastModifiedTime: String(now), timePartitioning: { type: 'DAY', field: 'ingestionTimestamp' },
+    schema: { fields: [['url'], ['alert_source'], ['snippet'], ['authorHandle'], ['SocialNetwork'], ['Sentiment'], ['postTime', 'TIMESTAMP'],
+      ['ingestionTimestamp', 'TIMESTAMP'], ['followers', 'INTEGER'], ['KOF'], ['product'], ['engagement']]
+      .map(([name, type]) => ({ name, type: type || 'STRING', mode: 'NULLABLE' })) } });
+  const STORY = 'Google Wallet keeps declining my transit card at the gate since the update this morning';
+  const AMIE_POSTS = ['alpha', 'bravo', 'charlie', 'delta', 'echo'].map((x, i) => ({
+    url: `https://www.reddit.com/r/googlewallet/comments/1wal${i}/gate/`, author: `walletrider${i}`, txt: `${STORY} ${x}` }));
+  const COLS16 = [['kind'], ['lane'], ['mid'], ['url'], ['platform'], ['author'], ['audience', 'INTEGER'], ['eng', 'INTEGER'],
+    ['posted_ms', 'INTEGER'], ['seen_ms', 'INTEGER'], ['txt'], ['topic'], ['chash'], ['sig'], ['risk'], ['brand', 'BOOLEAN']];
+
+  /**
+   * Row 48 ON (and row 19) in a world `t`: the AMIE table's checks and jobs answered (its first job has five posts of one
+   * story, by five accounts), today's two jobs with no rows, and Early Detection's real producer in place of a scenario's
+   * scripted one. Every other call goes to the world's own fakes.
+   */
+  function amieOn(t, sh) {
+    Object.assign(t.bot.ev('GEN').settings, { early_wave_new_trial_days: 0 });
+    let amieJobs = 0;
+    const prev = t.g.services.UrlFetchApp.fetch;
+    const resp = body => ({ getResponseCode: () => 200, getHeaders: () => ({}), getContentText: () => JSON.stringify(body) });
+    t.g.services.UrlFetchApp.fetch = (url, params) => {
+      const u = String(url);
+      const method = String((params && params.method) || 'get').toLowerCase();
+      if (!u.startsWith('https://bigquery.googleapis.com/')) return prev(url, params);
+      if (method === 'get' && /\/tables\/all_sundar_mentions$/.test(u)) return resp(AMIE_TABLE(t.g.clock.now));
+      let body = {};
+      try { body = JSON.parse((params && params.payload) || '{}'); } catch (e) { body = {}; }
+      const labels = body.labels || {};
+      if (method !== 'post' || !/\/queries$/.test(u) || labels.purpose !== 'early-wave') return prev(url, params);
+      if (body.dryRun === true) return resp({ jobComplete: true, totalBytesProcessed: '80000000' });
+      const now = t.g.clock.now;
+      const rows = labels.lane !== 'ami' ? [] : ++amieJobs > 1 ? [{ kind: 'amark', lane: 'ami', seen_ms: now - 2 * MIN }]
+        : AMIE_POSTS.map((p, i) => ({ kind: 'post', lane: 'ami', mid: `AMI|e26p${i}`, url: p.url, platform: 'Reddit', author: p.author,
+          audience: 140, posted_ms: now - (12 + i * 3) * MIN, seen_ms: now - 4 * MIN, txt: p.txt, topic: 'Google Wallet', chash: `e26c${i}`,
+          sig: `e26s${i}`, risk: '', brand: true })).concat([{ kind: 'amark', lane: 'ami', audience: 5, eng: 0, posted_ms: 5, seen_ms: now - 3 * MIN }]);
+      return resp({ jobComplete: true, jobReference: { projectId: 'brand-social-central-data', jobId: `e26_${labels.lane}_${now}`, location: body.location },
+        schema: { fields: COLS16.map(c => ({ name: c[0], type: c[1] || 'STRING' })) },
+        rows: rows.map(r => ({ f: COLS16.map(c => ({ v: r[c[0]] === undefined || r[c[0]] === null ? null : String(r[c[0]]) })) })) });
+    };
+    t.bot.bqEarlyDetectionRows_ = (minutes, opts) => t.bot.ewsRows_(minutes, opts);
+    sh.getRange(19, 2).setValue('ON');
+    sh.getRange(48, 2).setValue('ON');
+  }
+
+  /** What the bot put where Burson sees it: its posts in S-F Burson (B25) and the Burson test copy, and the outbox tab. */
+  function bursonSide(t, spaces) {
+    const posts = [].concat(...spaces.filter(s => s && t.chat.spaces.has(s)).map(s => t.chat.botPosts(s).map(m => m.text || '')));
+    const outbox = t.sheet().getSheetByName('Burson outbox');
+    return { posts, outbox: outbox ? outbox.rows.slice(1).map(r => r.join(' | ')) : [] };
+  }
+
+  /** None of it holds a new-lane post's words or link, "AMIE", "Brandwatch" or the AMIE table's name. */
+  function assertNothingNew(what, side) {
+    const leaks = side.posts.concat(side.outbox).filter(text => /amie|brandwatch|all_sundar|social_alerts_dataset/i.test(text) ||
+      text.includes(STORY.slice(0, 30)) || AMIE_POSTS.some(p => text.includes(p.url) || text.includes(p.author)));
+    eq([what, leaks], [what, []]);
+  }
+
+  test('new sources control (E26): a full run with row 48 ON, in the one-space setup, beside a Mirror space and in the main flow: the AMIE table\'s story is found and reviewed where the bot works, but no outbox row, relay post or post in S-F Burson (B25) or the Burson test copy (B26) holds a new-lane post\'s words or link, "AMIE" or "Brandwatch"', () => {
+    const run = (t, sh) => {
+      amieOn(t, sh);
+      t.chat.say(golden.spaces.REAL, H.F.MISTAKES, ZAPIER);  // Burson's own alert: the relay and the outbox have work too
+      checks({ t }, 6);
+    };
+    const one = golden.world.oneSpaceWorld({});  // B10 alone; B25 the live Burson space, read only
+    run(one.t, one.sh);
+    const mir = golden.world.mirrorWorld({});    // beside a Mirror space, Testing, with the Burson test copy
+    run(mir.t, mir.sh);
+    const main = world();                        // the main flow: the test feed into the analysts' space, B25 set
+    main.t.set('B25', golden.spaces.REAL);
+    run(main.t, main.sh);
+    [['one-space', one.t, golden.spaces.AC], ['mirror', mir.t, golden.spaces.MIRROR], ['main', main.t, null]].forEach(([what, t, where]) => {
+      const day = JSON.parse(t.g.props.get('EWS_SRC_DAY') || '{}');
+      const today = Object.keys(day.d || {}).sort().slice(-1)[0];
+      eq([what, (((day.d || {})[today] || {}).ami || {}).used], [what, 5]);  // the AMIE table's five posts came in
+      // beside the Mirror space the test copy does get Burson's corrected alert: the way to Burson is open, and holds nothing new
+      if (what === 'mirror') assert.ok(bursonSide(t, [golden.spaces.COPY]).posts.length > 0, 'the test copy has posts');
+      assertNothingNew(what, bursonSide(t, [golden.spaces.REAL, golden.spaces.COPY]));
+      if (where) assert.ok(t.chat.botPosts(where).some(m => /EARLY DETECTION/.test(m.text || '') && AMIE_POSTS.some(p => (m.text || '').includes(p.url))), `${what}: the story's card is where the bot works`);
+    });
   });
 };

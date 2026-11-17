@@ -651,4 +651,238 @@ module.exports = H => {
     const src = read.call(fs, require('path').join(dir, 'ProactiveWatch.gs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     assert.ok(!/all_sundar_mentions/.test(src));
   });
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // 7. What the owner reads (step 1d, NewSources.gs): column C of row 48, the log line, the New sources tab
+  // ---------------------------------------------------------------------------------------------------------------
+
+  const T0 = Date.UTC(2026, 10, 16, 15, 15);  // 10:15 AM ET on Nov 16 (EST)
+  const T_DAY = '2026-11-16';
+  /** ewsAmiStatus_'s shape: healthy, read at T0, unless `o` says otherwise. */
+  const status = o => Object.assign({ state: 'ok', kind: '', why: '', since: 0, until: 0, read: T0, mark: T0 - 62 * 1000, changed: T0 - 3 * MIN,
+    newest: T0 - MIN, stale: false, gb: 0.2 }, o || {});
+  /** Today's counts of the AMIE table as the day record keeps them (nsrcDay_). */
+  const counts = o => B.nsrcDay_({ d: { [T_DAY]: { ami: Object.assign({ rows: 1240, used: 310, same: 41, st: 22, sb: 4, dl: [0, 10, 60, 30, 5] }, o || {}) } } }, 'ami', T_DAY);
+  // BigQuery's words for a failed job, 60 characters as ewsAmiRefusal_ keeps them
+  const FAILED_WHY = `BigQuery refused the AMIE read (${'Resources exceeded during query execution: '.padEnd(59, 'x')}…)`;
+  // every situation of the plan's table for row 48 (Q11): [what, the state, foreign tab, trial, the note]
+  const NOTES = [
+    ['healthy', status(), false, null,
+      'read 10:15 AM · today: 1,240 rows, 310 posts used, 41 same as another source, 22 in stories (4 started) · most arrive 1-3 h after posting · New sources tab'],
+    ['trial, 3 noted', status(), false, { until: '2026-11-23', noted: 3 },
+      'trial until Nov 23: 3 stories it alone lifted were noted, not sent for review (New sources tab) · read 10:15 AM · today: 1,240 rows, 310 used'],
+    ['trial, 1 noted', status(), false, { until: '2026-11-23', noted: 1 },
+      'trial until Nov 23: 1 story it alone lifted was noted, not sent for review (New sources tab) · read 10:15 AM · today: 1,240 rows, 310 used'],
+    ['trial, none yet', status(), false, { until: '2026-11-23', noted: 0 },
+      'trial until Nov 23: stories it alone lifts are noted, not sent for review (New sources tab) · read 10:15 AM · today: 1,240 rows, 310 used'],
+    ['column changed', status({ state: 'stopped', kind: 'column', why: 'the AMIE table has no column "snippet" any more, so it isn\'t read', since: T0 - 26 * HOUR }), false, null,
+      '⚠️ since Nov 15, 8:15 AM (26 h): the AMIE table has no column "snippet" any more, so it isn\'t read. The other sources go on (New sources tab) · read 10:15 AM · today: 1,240 rows, 310 used'],
+    ['column of another type', status({ state: 'stopped', kind: 'column', why: 'the AMIE table\'s column "postTime" no longer holds a time, so it isn\'t read', since: T0 - 2 * HOUR }), false, null,
+      '⚠️ since 8:15 AM (2 h): the AMIE table\'s column "postTime" no longer holds a time, so it isn\'t read. The other sources go on (New sources tab) · read 10:15 AM · today: 1,240 rows, 310 used'],
+    ['no access', status({ state: 'stopped', kind: 'access', why: 'BigQuery won\'t let the bot read the AMIE table (access denied), so it isn\'t read', since: T0 - 2 * HOUR }), false, null,
+      '⚠️ since 8:15 AM (2 h): BigQuery won\'t let the bot read the AMIE table (access denied), so it isn\'t read. The other sources go on (New sources tab) · read 10:15 AM · today: 1,240 rows, 310 used'],
+    ['table gone', status({ state: 'stopped', kind: 'gone', why: 'BigQuery can\'t find the AMIE table, so it isn\'t read', since: T0 - 45 * MIN }), false, null,
+      '⚠️ since 9:30 AM (45 min): BigQuery can\'t find the AMIE table, so it isn\'t read. The other sources go on (New sources tab) · read 10:15 AM · today: 1,240 rows, 310 used'],
+    ['not split by day', status({ state: 'stopped', kind: 'partition', why: 'the AMIE table is no longer split by day, so one read would scan all of it; it isn\'t read today', since: T0 }), false, null,
+      '⚠️ since 10:15 AM (just now): the AMIE table is no longer split by day, so one read would scan all of it; it isn\'t read today. The other sources go on (New sources tab) · read 10:15 AM'],
+    ['stale', status({ kind: 'stale', why: 'the AMIE table has had no new rows', since: T0 - 3 * HOUR - 35 * MIN, stale: true }), false, null,
+      '⚠️ the AMIE table has had no new rows since 6:40 AM (3 h; it is usually written every few minutes). It reads on when rows come · read 10:15 AM · today: 1,240 rows, 310 used'],
+    ['too costly', status({ state: 'stopped', kind: 'cost', why: 'one read of the AMIE table would scan 3.2 GB (the limit is 1 GB)', since: T0 }), false, null,
+      '⚠️ stopped for today: one read of the AMIE table would scan 3.2 GB (the limit is 1 GB). It tries again tomorrow; the other sources go on · read 10:15 AM · today: 1,240 rows, 310 used'],
+    ['job failed', status({ state: 'paused', kind: 'failed', why: FAILED_WHY, since: T0 - HOUR }), false, null,
+      `⚠️ since 9:15 AM (1 h): ${FAILED_WHY}. It tries again in an hour · read 10:15 AM · today: 1,240 rows, 310 used`],
+    ['failing, the pause over', status({ state: 'failing', kind: 'failed', why: 'BigQuery refused the AMIE read (Backend error)', since: T0 - 70 * MIN }), false, null,
+      '⚠️ since 9:05 AM (1 h): BigQuery refused the AMIE read (Backend error). It tries again at the next check · read 10:15 AM · today: 1,240 rows, 310 used'],
+    ['foreign tab', status(), true, null,
+      '⚠️ waiting: a tab named "New sources" exists that the bot didn\'t make; rename it to let the bot make its own · read 10:15 AM · today: 1,240 rows, 310 used'],
+    ['first read not back yet', status({ state: 'starting', read: 0 }), false, null,
+      'waiting for its first read · today: 1,240 rows, 310 posts used, 41 same as another source, 22 in stories (4 started) · most arrive 1-3 h after posting · New sources tab'],
+  ];
+
+  test('ed amie (Q11): every wording of row 48\'s note in the plan\'s table, word for word with its length: the warning first (at most one), since when, then the last read and today\'s counts while they fit 200 characters', () => {
+    const lengths = NOTES.map(([what, s, foreign, trial, want]) => {
+      const note = B.nsrcAmiNote_({ status: s, day: counts(), trial, now: T0, foreign });
+      eq([what, note], [what, want]);
+      assert.ok(note.length <= 200, `${what}: ${note.length}`);
+      const warning = B.nsrcAmiWarning_(s, T0, foreign);
+      if (warning) assert.ok(note.startsWith(warning) && /^⚠️ /.test(warning), what);
+      return [what, note.length];
+    });
+    eq(lengths, [['healthy', 155], ['trial, 3 noted', 141], ['trial, 1 noted', 138], ['trial, none yet', 137], ['column changed', 187],
+      ['column of another type', 188], ['no access', 193], ['table gone', 168], ['not split by day', 184], ['stale', 172], ['too costly', 182],
+      ['job failed', 190], ['failing, the pause over', 150], ['foreign tab', 154], ['first read not back yet', 168]]);
+    // the warnings alone (the rest of each note is the counts): the plan's sentences, with "Nov 15," and the tab's name
+    eq(['column changed', 'no access', 'stale', 'too costly', 'foreign tab'].map(w => {
+      const [, s, foreign] = NOTES.find(n => n[0] === w);
+      return B.nsrcAmiWarning_(s, T0, foreign).length;
+    }), [141, 147, 126, 136, 108]);
+    // no warning while healthy, and no time or warning sign in a reason ewsAmiStatus_ gives (the note adds them)
+    eq(B.nsrcAmiWarning_(status(), T0, false), '');
+  });
+
+  test('ed amie (E25): every warning, with the longest healthy counts there can be and the longest reasons the AMIE table\'s checks give, stays whole after the 200-character cut, first and alone; a reason too long for the note is shortened inside the warning, never its end', () => {
+    const longest = counts({ rows: 999999, used: 999999, same: 999999, st: 999999, sb: 999999, dl: [999999, 0, 0, 0, 0] });
+    const at = Date.UTC(2026, 10, 30, 17, 59);  // 12:59 PM ET: the longest time of day
+    const since = at - 47 * HOUR - 59 * MIN;    // "Nov 28, 12:00 PM (47 h)": the longest since
+    const reasons = {
+      column: 'the AMIE table\'s column "ingestionTimestamp" no longer holds a time, so it isn\'t read',
+      access: 'BigQuery won\'t let the bot read the AMIE table (access denied), so it isn\'t read',
+      gone: 'BigQuery can\'t find the AMIE table, so it isn\'t read',
+      partition: 'the AMIE table is no longer split by day, so one read would scan all of it; it isn\'t read today',
+      cost: 'one read of the AMIE table would scan 99999.9 GB (the limit is 0.001 GB)',
+      failed: FAILED_WHY,
+    };
+    const cases = [];
+    Object.keys(reasons).forEach(kind => ['stopped', 'paused', 'failing'].forEach(state => {
+      if ((kind === 'failed') === (state === 'stopped')) return;
+      cases.push(status({ state, kind, why: reasons[kind], since, read: at - MIN }));
+    }));
+    cases.push(status({ kind: 'stale', why: 'the AMIE table has had no new rows', since, stale: true, read: at - MIN }));
+    // a reason as long as ewsAmiProblem_ keeps (200 characters)
+    cases.push(status({ state: 'paused', kind: 'failed', why: `BigQuery refused the AMIE read (${'y'.repeat(166)})`, since, read: at - MIN }));
+    [false, true].forEach(foreign => cases.forEach(s => {
+      const warning = B.nsrcAmiWarning_(s, at, foreign);
+      const note = B.nsrcAmiNote_({ status: s, day: longest, now: at, foreign });
+      const shown = B.truncate_(note, 200);  // what Control.gs noteSwitch_ keeps
+      assert.ok(warning && /^⚠️ /.test(warning), JSON.stringify(s));
+      assert.ok(warning.length <= 200 && note.length <= 200 && shown === note, `${note.length}: ${note}`);
+      assert.ok(shown.startsWith(warning), note);
+      eq((shown.match(/⚠️/g) || []).length, 1);
+      // the warning ends as it should: its reason may be shortened, its last words never
+      assert.match(warning, /(The other sources go on( \(New sources tab\))?|It tries again in an hour|It tries again at the next check|the other sources go on|It reads on when rows come|rename it to let the bot make its own)$/);
+    }));
+  });
+
+  test('ed amie (Q11): the line a read leaves in the log has the plan\'s form; a check that collected no AMIE read leaves none', () => {
+    eq(B.nsrcAmiLog_({ rows: 1240, used: 310, same: 41, lc: 6 }, Date.UTC(2026, 10, 16, 10, 0), Date.UTC(2026, 10, 16, 10, 13, 58), 60, 0.2),
+      'early wave source ami: 1240 rows 10:00-10:13 UTC (overlap 60 min), 310 kept, 41 same post, 6 late caught, mark 10:13:58Z, 0.2 GB');
+    eq(B.nsrcAmiLog_({}, 0, 0, 60, null), 'early wave source ami: 0 rows (overlap 60 min), 0 kept, 0 same post, 0 late caught, mark none yet');
+    const env = amieEnv();
+    const a = ami({ mid: 'AMI|log1', url: 'https://www.reddit.com/r/google/comments/1log/t/', platform: 'Reddit', author: 'log_one' });
+    env.w.rows.ami = (body, check) => (check === 1 ? [a, amark(NOW - 3 * MIN, 12)] : [amark(NOW - 3 * MIN, 0)]);
+    env.run();
+    const lines = () => env.g.logs.filter(l => /^early wave source ami: /.test(l));
+    eq(lines(), [`early wave source ami: 12 rows 10:59-11:57 UTC (overlap 60 min), 1 kept, 0 same post, 0 late caught, mark 11:57:00Z, 0.08 GB`]);
+    // paused (its job failed): no line for that check, and none while it is paused
+    env.w.jobFail.ami = { code: 500, message: 'Backend error' };
+    env.next();
+    env.next();
+    eq(lines().length, 1);
+  });
+
+  /** amieEnv with the bot's sheet (STORE_SHEET_ID), so the New sources tab can be made. */
+  const sheetEnv = o => {
+    const env = amieEnv(o);
+    env.ss = env.g.services.SpreadsheetApp.create('Burson QA bot');
+    env.g.props.set('STORE_SHEET_ID', env.ss.getId());
+    env.tab = () => env.ss.getSheetByName('New sources');
+    env.note = () => ((JSON.parse(env.g.props.get('SWITCH_NOTES') || '{}').edAmie) || {}).text;
+    env.rec = () => JSON.parse(env.g.props.get('EWS_SRC_DAY') || '{}');
+    return env;
+  };
+
+  test('ed amie (Q13): the New sources tab is made at the first check with row 48 ON (its title in A1, protected with a warning only, last of the tabs); its AMIE row\'s numbers are the day record\'s, check after check; row 2 counts the calls (the metadata, the dry run, each job); C48 is written at each check from the same numbers', () => {
+    const env = sheetEnv();
+    const story = 'Google Drive keeps failing to sync my folders since the last update and nothing seems to fix it';
+    const p = (i, o) => ami(Object.assign({ mid: `AMI|tab${i}`, url: `https://www.reddit.com/r/google/comments/1tab${i}/t/`, platform: 'Reddit',
+      author: `tab_${i}`, txt: `${story} ${['alpha', 'bravo', 'charlie', 'delta'][i]}`, chash: `tb${i}`, posted_ms: NOW - (40 + i) * MIN, seen_ms: NOW - 5 * MIN }, o));
+    // a Sonar copy of one AMIE post comes after it (replaced, seen first by the AMIE table), and an AMIE copy of a Sonar post (same)
+    const sonarFirst = sonar({ mid: 'SONAR|tabs', url: 'https://x.com/tabsonar/status/2290000000000000001', author: 'tabsonar', chash: 'tbs' });
+    env.w.rows.c1 = (body, check) => (check === 1 ? [sonarFirst] : check === 2
+      ? [sonar({ mid: 'SONAR|tab0', url: p(0).url, platform: 'reddit', author: 'tab_0', chash: 'tb0', txt: p(0).txt, seen_ms: NOW + 14 * MIN })] : []);
+    env.w.rows.ami = (body, check) => (check === 1
+      ? [p(0), p(1), p(2), ami({ mid: 'AMI|tabsame', url: 'https://twitter.com/tabsonar/statuses/2290000000000000001', author: 'tabsonar', chash: 'tbs' }), amark(NOW - 4 * MIN, 30, 2, 30)]
+      : check === 2 ? [p(3, { posted_ms: NOW - 20 * HOUR }), amark(NOW + 10 * MIN, 8, 0, 8)] : [amark(NOW + 10 * MIN, 0)]);
+    env.run();
+    const tab = env.tab();
+    eq([tab.cell(1, 1), tab.protections.map(x => x.warningOnly), env.ss.getSheets().slice(-1)[0].name, tab.cell(3, 1), tab.rows[2]],
+      [B.ev('NSRC_TITLE_'), [true], 'New sources', 'Source', B.ev('NSRC_HEADER_')]);
+    const check = () => {
+      const d = env.rec().d[DAY].ami;
+      const row = tab.rows[3];
+      const n = v => (Number(v) || 0).toLocaleString('en-US');
+      const s = env.b.ewsAmiStatus_();
+      eq(row[0], 'The AMIE table (Brandwatch\'s alert feeds, X with its words)');
+      eq(row[3], `${n(d.rows)} rows / ${n(d.used)} / ${n(d.same)} / ${n(d.rp)}`);
+      const most = B.nsrcMedianBucket_(d.dl);
+      eq(row[4], `most ${B.ev('NSRC_DELAY_WORDS_')[most]} (${(d.dl || []).map(n).join(' / ')})`);
+      eq(row[6], `— / — / ${n(d.ne)}`);
+      eq(row[7], `${n(d.st)} / ${n(d.sb)} / ${n(d.lf)} (${n(d.lfs)} / ${n(d.lfn)})`);
+      eq(row[9], `${B.nsrcWhen_(s.mark, env.g.clock.now)} / ${B.nsrcWhen_(s.changed, env.g.clock.now)} / 0.08 GB`);
+      eq(row[2], B.nsrcWhen_(s.read, env.g.clock.now));
+      assert.ok(tab.rows[1][0].startsWith(`Calls today: ${n(d.calls)} to BigQuery for the AMIE table`), tab.rows[1][0]);
+      // C48: the same numbers, from the same record
+      eq(env.note(), B.nsrcAmiNote_({ status: s, day: B.nsrcDay_(env.rec(), 'ami', DAY), trial: B.nsrcTrial_(env.rec(), 'ami', DAY), now: env.g.clock.now }));
+      return d;
+    };
+    let d = check();
+    eq([d.rows, d.used, d.same, d.calls], [30, 3, 1, 3]);  // the metadata, the dry run, the job
+    eq(tab.rows[3][1], '✓ live: 30 new rows at the last read');
+    eq(tab.rows[3][5], 'none today');
+    assert.match(env.note(), /^trial until Oct 21: stories it alone lifts are noted, not sent for review \(New sources tab\) · read 8:00 AM · today: 30 rows, 3 used$/);
+    env.next();
+    d = check();
+    eq([d.rows, d.used, d.rp, d.sf, d.calls], [38, 4, 1, 1, 4]);
+    eq(tab.rows[3][5], 'first on 1 post, most of them 15-60 min before the other source\'s copy');
+    eq(tab.rows[3][1], '✓ live: 8 new rows at the last read');
+    // a check that reads nothing new keeps the numbers; the tab is written again only when a cell changed
+    const writes = [];
+    const real = tab.getRange.bind(tab);
+    tab.getRange = (...a) => { const r = real(...a); const set = r.setValues; r.setValues = v => { writes.push(a); return set(v); }; return r; };
+    env.next();
+    check();
+    env.next(0);
+    eq(writes.length <= 1, true);
+  });
+
+  test('ed amie (Q13): the tab lists the stories only the new sources lifted, newest first (what happened to each in words), every cell one line of at most 500 characters and written as text; words from outside are scrubbed (an address becomes [address], a handle stays)', () => {
+    const env = sheetEnv();
+    const rec = { v: 1, on: { ami: DAY }, d: {}, lh: [0, 0], ld: ['', 0], ls: [
+      [NOW - 3 * HOUR, 'CLU-one', 6, 3, 'Owners say Pixel calls drop, says @pixelfan to reach.out@example.test', 0, 'ami', 1],
+      [NOW - 2 * HOUR, 'CLU-two', 5, 2, '=HYPERLINK("https://phish.example.test","click")', 1, 'ami', 0],
+      [NOW - HOUR, 'CLU-three', 7, 4, 'x'.repeat(2000), 0, 'ami,bwl', 0],
+    ] };
+    env.g.props.set('EWS_SRC_DAY', JSON.stringify(rec));
+    env.w.rows.ami = [amark(NOW - 3 * MIN, 0)];
+    env.run();
+    const tab = env.tab();
+    const head = tab.rows.findIndex(r => /^Stories only the new sources lifted/.test(r[0]));
+    eq(head, 6);  // row 7 of the tab
+    eq(tab.rows[head + 1].slice(0, 6), B.ev('NSRC_LIFT_HEADER_'));
+    const list = tab.rows.slice(head + 2).map(r => r.slice(0, 6));
+    eq(list.map(r => r.slice(2)), [['7', '4', 'noted, not sent: the hour\'s or day\'s limit was reached', 'the AMIE table, Brandwatch live'],
+      ['5', '2', 'sent for review', 'the AMIE table'], ['6', '3', 'noted, not sent: the source\'s first week', 'the AMIE table']]);
+    eq(list.map(r => r[0]), ['Oct 14, 7:00 AM', 'Oct 14, 6:00 AM', 'Oct 14, 5:00 AM']);
+    eq(list[2][1], 'Owners say Pixel calls drop, says @pixelfan to [address]');
+    eq([list[0][1].length, list[0][1].endsWith('…')], [500, true]);
+    eq(list[1][1], '=HYPERLINK("https://phish.example.test","click")');  // shown as its words: written with an apostrophe
+    tab.rows.forEach(r => r.forEach(c => assert.ok(String(c).length <= 500 && !/\n/.test(String(c)), String(c).slice(0, 80))));
+    // as written: every cell text (an apostrophe before what Sheets would read as a number, a time or a formula)
+    const raw = B.nsrcRows_([B.nsrcAmiRow_(env.b.ewsAmiStatus_(), B.nsrcDay_(env.rec(), 'ami', DAY), env.g.clock.now, false, 0)],
+      env.b.ewsLiftedStories_(), 3, env.g.clock.now);
+    raw.forEach(r => r.forEach(c => { assert.ok(typeof c === 'string'); if (/^[\d=+\-@]/.test(c.replace(/^'/, ''))) assert.ok(c.startsWith('\''), c); }));
+    eq([B.nsrcCell_('10:15 AM'), B.nsrcCell_('=1+1'), B.nsrcCell_('TRUE'), B.nsrcCell_('a\nb'), B.nsrcCell_('Status')], ['\'10:15 AM', '\'=1+1', '\'TRUE', 'a b', 'Status']);
+    eq([B.nsrcScrub_('to a.person@example.test, cut b.person@exa…, @handle stays, token tok-123', 0, 'tok-123')],
+      ['to [address], cut [address], @handle stays, token [token]']);
+  });
+
+  test('ed amie (Q13, Q12): the day record holds everything the tab shows and stays under 8,800 characters in its worst case (7 days, both sources, every count of steps 1b, 1c and 1d at its largest, 20 lifted stories), with nothing dropped', () => {
+    const keys = ['in', 'used', 'same', 'sl', 'big', 'ex', 'al', 'rp', 'sf', 'ne', 'emb', 'st', 'sb', 'lf', 'lfs', 'lfn', 'rows', 'npt', 'rep', 'lc', 'le', 'calls'];
+    const big = Object.fromEntries(keys.map(k => [k, 999999]));
+    big.sfb = [99999, 99999, 99999, 99999, 99999];
+    big.dl = [99999, 99999, 99999, 99999, 99999];
+    const rec = B.ewsSrcDay_({ getProperty: () => null });
+    rec.on = { ami: '2026-10-01', bwl: '2026-10-02' };
+    for (let d = 0; d < 7; d++) rec.d[new Date(NOW - d * 24 * HOUR).toISOString().slice(0, 10)] = { ami: Object.assign({}, big), bwl: Object.assign({}, big), bar: 1 };
+    for (let i = 0; i < 20; i++) rec.ls.push([NOW, `CLU-${'a'.repeat(12)}`, 99, 99, 'h'.repeat(100), 1, 'ami,bwl', 1]);
+    rec.lh = [999999, 99];
+    rec.ld = [DAY, 99];
+    const store = {};
+    B.ewsSaveSrcDay_({ setProperty: (k, v) => { store[k] = v; } }, JSON.parse(JSON.stringify(rec)), NOW);
+    assert.ok(store.EWS_SRC_DAY.length <= 8800, String(store.EWS_SRC_DAY.length));
+    const saved = JSON.parse(store.EWS_SRC_DAY);
+    eq([Object.keys(saved.d).length, saved.ls.length, saved.d[DAY].ami.calls], [7, 20, 999999]);
+    // every count the tab reads is one the record keeps
+    eq(Object.keys(B.nsrcDay_(saved, 'ami', DAY)).sort(), keys.concat(['dl', 'sfb']).sort());
+  });
 };
