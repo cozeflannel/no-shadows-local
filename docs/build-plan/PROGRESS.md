@@ -400,9 +400,23 @@ one line under it: what was built, the suite's count, and anything left out with
       wait unreviewed (`BQ_DIRECT_MAX_WAITING_`, kept) and 120 s of the flow is left; a candidate not posted is not marked
       and comes back at the next check. The 500 engagements and the "Burson first" skip are unchanged; row 51 OFF: 2 a
       check, 15 a source, as before. Suite: 1,357 of 1,357 passed. Left out: nothing of the step's row.
-- [ ] **S16** Growth notes
-- [ ] **S17** Readability on a busy day
-- [ ] **S1** The same-story check and the engine measurements, run by hand
+- [ ] **S16** Growth notes (built in part: see below; left unticked)
+      Built, under row 51: the producer lets a carded story back inside its 6 hours at 1.5 times and 3 more accounts (2
+      times OFF); `edStoryVerdict_` holds a repeat between that bar and the update bar (2 times and 3 more, or a new
+      platform: an update with its review, as before) with a growth note (`edGrowthOf_`): `📈 *Growing:* 14 accounts now,
+      up from 9` and up to 3 of its posts' links its card did not name, in the card's thread (`edGrowthNote_` through
+      `acThreadNote_`, key `grow:`, which no cap refuses), counted from the card's accounts or the last note's (kept 25
+      hours), never once the story's newest post is more than 180 minutes old; no review. The note's shape is registered
+      where every note is (Voice.gs, Outbox.gs, the leak audit) and counted on the Engine tab (`Growth notes`). Suite:
+      1,362 of 1,362 passed. Left out, and why: the quick look between the bars (one level up on two asks in a row gives
+      a full review): the quick look's levels are not kept with the card's queued row (S11's ask is per check, not per
+      story); so the "5 to 200 accounts gives about 8 notes and 5 reviews" test is not built. Not caught by a test: the
+      note at the third place a repeat is held (a signal left for a later check, read again when it leaves the window).
+- [ ] **S17** Readability on a busy day (not built yet)
+      Not started: the build stopped after S16 at the owner's ask (17 Nov) to push for live testing in the chat spaces.
+- [ ] **S1** The same-story check and the engine measurements, run by hand (not built yet)
+      Not started, for the same reason. Until it runs, every new source keeps today's same-story bars and its stories'
+      reviews carry the "not checked yet" line (S9).
 
 ### Closing
 - [ ] A look at the whole change as a skeptic (the checks at the end of STEP_NOTES.md, over everything built)
@@ -411,7 +425,10 @@ one line under it: what was built, the suite's count, and anything left out with
 
 ## Left out, and why
 
-(nothing yet)
+Each step's entry above says what of it was left out and why. In short: the producer's stored state and SQL changes
+(the carry, the seen set, the new SQL columns, chunked state), the list of quick and code passes and its review path
+(S19b, S19d part two, S19e), S12's batched story reviews, and everything built on those (S19c's hold and growth, S19f,
+S19g, the first screen's audit and misses row). S17 and S1 were not started (the owner asked to push for live testing).
 
 ## What only a live run can prove
 

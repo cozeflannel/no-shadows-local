@@ -1101,6 +1101,14 @@ function edTriageLines_(snap) {
 
 const ED_UPDATE_MIN_GROWTH_ = 2;  // a repeat is an update from this multiple of the accounts on the last card (story_update_min_growth) ...
 const ED_UPDATE_MIN_NEW_ = 3;     // ... and this many more accounts (story_update_min_new_authors), or a platform the card didn't have
+// The open engine (Control row 51, step S16): between the card's (or the last growth note's) accounts and the update bar,
+// a story that grew 1.5 times and 3 more gets a short note in its card's thread, with no review; never once its newest
+// post is older than ED_GROW_FRESH_MS_
+const ED_GROW_FACTOR_ = 1.5;
+const ED_GROW_MIN_NEW_ = 3;
+const ED_GROW_FRESH_MS_ = 180 * 60 * 1000;
+const ED_GROW_KEY_ = 'ed_grow:';  // cache: the accounts of a card's last growth note (25 hours)
+const ED_GROW_LINKS_ = 3;
 
 /** Platform names in a list like "X, Reddit" (as written, without repeats). Pure. */
 function edPlatformList_(csv) {
@@ -1301,8 +1309,10 @@ function edStoryVerdict_(row, ledger, seenAu, now) {
     const news = edUpdateNews_(story, prior) || edWatchNews_(story, prior);
     if (!news) {
       const when = edCardTime_(L.at, now);
-      return { hold: `${fmtInt_(story.au)} account${story.au === 1 ? '' : 's'} vs ${fmtInt_(prior.au)} on its card` +
+      const held = { hold: `${fmtInt_(story.au)} account${story.au === 1 ? '' : 's'} vs ${fmtInt_(prior.au)} on its card` +
         `${when ? ` at ${when}` : ''}${L.row ? ` (${L.row})` : ''}, nothing new`, prior };
+      const grow = edGrowthOf_(row, story, prior, now);
+      return grow ? Object.assign(held, { grow }) : held;
     }
     return { update: edUpdateOf_({ row: L.row, ed: L.ed, msg: L.msg, thread: L.thread, fwd: L.fwdThread, title: L.title,
       au: prior.au, plats: prior.plats.join(', '), at: L.at, news }), prior };
@@ -1312,6 +1322,61 @@ function edStoryVerdict_(row, ledger, seenAu, now) {
       : 'already queued in the last 24 hours, nothing new' };
   }
   return {};
+}
+
+/**
+ * Under the open engine (row 51, step S16): a held repeat that grew ED_GROW_FACTOR_ times and ED_GROW_MIN_NEW_ more
+ * accounts since its card (or since the last growth note on it) while its newest post is fresh: {card: {thread,
+ * message}, au, was, links (up to ED_GROW_LINKS_ of its posts' links its card didn't name), key}; else null. Never throws.
+ */
+function edGrowthOf_(row, story, prior, now) {
+  try {
+    if (typeof openOn_ !== 'function' || !openOn_()) return null;
+    const L = prior && prior.latest;
+    if (!L || !L.msg) return null;
+    let noted = 0;
+    try { noted = Number(CacheService.getScriptCache().get(ED_GROW_KEY_ + hashText_(String(L.row || L.msg)))) || 0; } catch (e) { noted = 0; }
+    const was = Math.max(Number(prior.au) || 0, noted);
+    const au = Number(story && story.au) || 0;
+    if (!(was > 0) || au < was * ED_GROW_FACTOR_ || au - was < ED_GROW_MIN_NEW_) return null;
+    const r = row || {};
+    const posts = edRepPosts_(Array.isArray(r.posts) ? r.posts : r.representative_posts_json);
+    const newest = Date.parse(String(r.window_end_utc || '')) || Math.max(0, ...posts.map(p => Date.parse(String(p.posted_at || p.time || '')) || 0));
+    if (newest > 0 && (Number(now) || Date.now()) - newest > ED_GROW_FRESH_MS_) return null;
+    const had = new Set(Array.from((L.keys && typeof L.keys.has === 'function') ? L.keys : []));
+    const links = posts.map(p => String(p.url || '').trim()).filter(u => /^https?:\/\//.test(u))
+      .filter(u => !had.has(edPostKeys_([u])[0])).slice(0, ED_GROW_LINKS_);
+    return { card: { thread: L.fwdThread || L.thread || '', message: L.msg }, au, was, links, key: `grow:${L.row || L.msg}:${au}`,
+      row: String(L.row || L.msg) };
+  } catch (e) {
+    return null;
+  }
+}
+
+/** The growth note's words: "📈 *Growing:* 14 accounts now, up from 9 · <link> · <link>". Pure. */
+function edGrowthText_(grow) {
+  const g = grow || {};
+  return `📈 *Growing:* ${fmtInt_(g.au)} accounts now, up from ${fmtInt_(g.was)}${(g.links || []).length ? ` · ${g.links.join(' · ')}` : ''}`;
+}
+
+/**
+ * Posts a held repeat's growth note (`verdict.grow`, edStoryVerdict_) in its card's thread in the Auto-correct space
+ * (ThreadNotes.gs acThreadNote_: no cap refuses it, once per key), keeps its accounts as the next note's base and counts
+ * it on the Engine tab. Never throws.
+ */
+function edGrowthNote_(ctx, verdict) {
+  try {
+    const g = verdict && verdict.grow;
+    if (!g || typeof acThreadNote_ !== 'function') return false;
+    const ok = acThreadNote_(ctx, g.card, edGrowthText_(g), g.key) === true;
+    if (ok) {
+      try { CacheService.getScriptCache().put(ED_GROW_KEY_ + hashText_(g.row), String(g.au), 25 * 3600); } catch (e) { /* the card's count again */ }
+      if (typeof engAdd_ === 'function') engAdd_('growth', 1);
+    }
+    return ok;
+  } catch (e) {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------

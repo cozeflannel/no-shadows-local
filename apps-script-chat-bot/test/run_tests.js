@@ -4659,7 +4659,7 @@ function markAs(t, user, org, name) {
 // or not, and as a note has them anywhere, the colon inside the mark or after it (never "the alert requirements" in a
 // sentence: the bot's answers to Burson say that). H.leakDenied: for the test files.
 const LEAK_DENY_ = /\bforward(?:ed|ing|s)?\b|analyst\s+space|clean(?:\s+data)?\s+space|triage(?:d)?\s+(?:space|alerts)|second\s+space|reduc(?:e|ing)\s+reliance|replace\s+burson|\bgo\/|@\w+\.com|brand-social-sends|AAQAaLn375E|ANALYST|SLRR Triaged Alerts/i;
-const LEAK_NOTE_HEADS_ = /(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?[*_~]?(?:Also flagged by the watch|Part of a story|Alert requirements)(?![A-Za-z0-9])|[Ff]lagged by the watch(?![A-Za-z0-9])|Part of a story[*_~]?:|Alert requirements(?:, final)?[*_~]?:|(?<![A-Za-z0-9])Same story: \d[\d,]* more posts?(?![A-Za-z0-9])/;
+const LEAK_NOTE_HEADS_ = /(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?[*_~]?(?:Also flagged by the watch|Part of a story|Alert requirements)(?![A-Za-z0-9])|[Ff]lagged by the watch(?![A-Za-z0-9])|Part of a story[*_~]?:|Alert requirements(?:, final)?[*_~]?:|(?<![A-Za-z0-9])Same story: \d[\d,]* more posts?(?![A-Za-z0-9])|(?<![A-Za-z0-9])Growing:\*? \d[\d,]* accounts now(?![A-Za-z0-9])/;
 const leakDenied = t => LEAK_DENY_.test(t) || LEAK_NOTE_HEADS_.test(t);
 // The bot's own answer to a question of Burson's is no such note, though it can open with the same words (Gemini writes
 // it from a context whose rules stand under "[Alert requirements]"), and it goes to Burson as it always did (Outbox.gs

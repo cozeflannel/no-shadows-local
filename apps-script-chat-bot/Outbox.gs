@@ -333,6 +333,7 @@ const OUTBOX_NOTE_PATTERNS_ = [
   /(?<=(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?[*_~]?)Part of a story(?![A-Za-z0-9])|(?<![A-Za-z0-9])Part of a story[*_~]?:/,
   /(?<=(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?[*_~]?)Alert requirements(?![A-Za-z0-9])|(?<![A-Za-z0-9])Alert requirements(?:, final)?[*_~]?:/,
   /(?<![A-Za-z0-9])Same story: \d[\d,]* more posts?(?![A-Za-z0-9])/,  // the watch's reply only in its own shape: "Same story:" is analysts' wording too
+  /(?<![A-Za-z0-9])Growing:\*? \d[\d,]* accounts now(?![A-Za-z0-9])/,  // a story's growth note (row 51, step S16), in its own shape
 ];
 
 /**

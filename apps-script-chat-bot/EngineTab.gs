@@ -49,6 +49,7 @@ const ENG_COLS_ = [
   ['sPosts', 'screen posts', 'n'], ['sCalls', 'screen calls', 'n'], ['sPicked', 'screen picked', 'n'], ['sSentOn', 'screen sent on', 'n'],
   ['sBad', 'screen bad answers', 'n'], ['sS', 'screen s', 'm'], ['sTokens', 'screen tokens', 'n'], ['sPeak', 'screen peak tokens', 'm'],
   ['sThink', 'screen thinking', 'm'], ['sWhy', 'screen why off', 't'],
+  ['growth', 'Growth notes', 'n'],  // step S16: a story's growth told in its card's thread
   ['note', 'Note', 't'],
 ];
 const ENG_KIND_ = ENG_COLS_.reduce((o, c) => Object.assign(o, { [c[0]]: c[2] }), {});

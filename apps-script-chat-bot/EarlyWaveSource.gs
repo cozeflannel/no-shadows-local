@@ -1615,7 +1615,10 @@ function ewsPromote_(clusters, priors, now, lim) {
     const minAuthors = Math.max(2, EWS_MIN_AUTHORS_ - (w.platforms.length >= 2 ? EWS_PLATFORM_DISCOUNT_ : 0));
     if ((w.allPlatforms || w.platforms).length < 1 || w.urls < EWS_MIN_URLS_ || w.authors < minAuthors) return false;
     const al = c.al;
-    if (al && now - (Number(al.at) || 0) < EWS_CLUSTER_COOLDOWN_MS_ && w.authors < (Number(al.au) || 0) * 2) return false;
+    // (the open engine, row 51, step S16: a carded story comes back at 1.5 times and 3 more accounts, for its growth note)
+    const grows = typeof openOn_ === 'function' && openOn_()
+      ? w.authors >= (Number(al && al.au) || 0) * 1.5 && w.authors - (Number(al && al.au) || 0) >= 3 : w.authors >= (Number(al && al.au) || 0) * 2;
+    if (al && now - (Number(al.at) || 0) < EWS_CLUSTER_COOLDOWN_MS_ && !grows) return false;
     if (w.texts * 3 <= w.authors && !w.brand) return false;  // a copy-paste ring that never names Google
     return true;
   };

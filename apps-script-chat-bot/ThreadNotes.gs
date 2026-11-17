@@ -271,7 +271,7 @@ function acNoteDarkCode_(why) {
  * leaves it out (acNoteReviewIds_, acNoteUncappedText_). Pure.
  */
 function acNoteUncapped_(key) {
-  return /^(?:reqfinal|pwg):/.test(String(key === undefined || key === null ? '' : key));
+  return /^(?:reqfinal|pwg|grow):/.test(String(key === undefined || key === null ? '' : key));
 }
 
 /**
@@ -279,7 +279,7 @@ function acNoteUncapped_(key) {
  * with no id to go by: the "final" requirement line, and the watch's "Same story: N more posts" reply. Pure.
  */
 function acNoteUncappedText_(text) {
-  return /^(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?(?:Alert requirements, final:|Same story: \d[\d,]* more posts?(?![A-Za-z0-9]))/
+  return /^(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?(?:Alert requirements, final:|Same story: \d[\d,]* more posts?(?![A-Za-z0-9])|Growing:\*? \d[\d,]* accounts now)/
     .test(String(text || '').trim());
 }
 

@@ -143,7 +143,7 @@ function isBotFormattedText_(text) {
  * here (so the bot knows the note as its own with no message id, and never answers it), in Outbox.gs
  * OUTBOX_NOTE_PATTERNS_ (it can never go to S-F Burson) and in the leak audit's list (test/run_tests.js LEAK_NOTE_HEADS_).
  */
-const THREAD_NOTE_HEADS_ = ['Also flagged by the watch', 'Part of a story', 'Alert requirements', 'Same story'];
+const THREAD_NOTE_HEADS_ = ['Also flagged by the watch', 'Part of a story', 'Alert requirements', 'Same story', 'Growing'];
 
 /**
  * True when `text` starts as one of those notes does, in the very shape the bot posts it: an emoji and a space first, or
@@ -163,6 +163,7 @@ function isThreadNoteText_(text) {
   if (/^Also flagged by the watch “/.test(rest)) return true;
   if (/^Part of a story:\*? (?:\d[\d,]* small accounts?|[Ss]mall accounts)(?![A-Za-z0-9])/.test(rest)) return true;
   if (/^Same story: \d[\d,]* more posts?(?![A-Za-z0-9])/.test(rest)) return true;
+  if (/^Growing:\*? \d[\d,]* accounts now, up from \d[\d,]*(?: · https?:\/\/\S+){0,3}$/.test(rest)) return true;  // a story's growth (row 51, S16)
   if (/^Alert requirements(?:, final)?:/.test(rest)) {
     const line = rest.split('\n')[0].replace(/^Alert requirements, final:/, 'Alert requirements:');
     return !(t.indexOf('\n') < 0 && /\?$/.test(t)) && isRequirementLine_(line);

@@ -85,7 +85,7 @@ module.exports = H => {
 
   test('thread notes: the fixed first words ("Also flagged by the watch", "Part of a story", "Alert requirements") are registered three ways: the bot knows a note as its own only in the very shape it posts it (with its emoji and bold mark, or as Chat gives it back without them; a person\'s message from the bot\'s account that merely starts with the words stays theirs), the wider guard holds it on any way to S-F Burson (alone, as a note, quoted by an analyst, on a later line), and the leak audit\'s own list denies it; "the alert requirements" in a sentence, or being part of a story, is still anyone\'s to say', () => {
     const heads = B.ev('THREAD_NOTE_HEADS_');
-    eq(heads, ['Also flagged by the watch', 'Part of a story', 'Alert requirements', 'Same story']);
+    eq(heads, ['Also flagged by the watch', 'Part of a story', 'Alert requirements', 'Same story', 'Growing']);  // (Growing: a story's growth note, row 51)
     const ctx = { botUser: 'users/bot', store: { isOwnPost: () => false } };
     const own = text => B.isOwnMessage_(ctx, { senderName: 'users/bot', text });
     const held = text => B.outboxGuardHits_(text, GUARD).length > 0;
@@ -99,14 +99,16 @@ module.exports = H => {
       '🔗 *Part of a story:* 1 small account on X tells it (<https://chat.google.com/x|story card>)',
       '🔗 *Part of a story:* Small accounts now tell it: a title', '🔭 *Also flagged by the watch “A” and the watch “B”.* No separate Watch alert',
       '*Alert requirements:* not met yet (small accounts, no KOF author, no P0 tag). Posted early because 5 accounts tell the same story.',
-      '*Alert requirements, final:* below the Social Alert thresholds (620 engagements). A Social Alert goes out anyway on the review\'s call.'];
+      '*Alert requirements, final:* below the Social Alert thresholds (620 engagements). A Social Alert goes out anyway on the review\'s call.',
+      '📈 *Growing:* 14 accounts now, up from 9 · https://x.com/b/status/2'];
     SHAPES.concat(SHAPES.map(plainOf)).forEach(text => {
       eq([B.isThreadNoteText_(text), B.isBotFormattedText_(text), own(text), held(text), leakDenied(text)], [true, true, true, true, true], text);
     });
     // every registered head is held and denied by the guard and the leak audit in a note's form (a note with new first
     // words has to be added to each); the guard's own list of them (Outbox.gs OUTBOX_NOTE_PATTERNS_) has one pattern
     // for each. The bot's own: only the shapes above
-    const shaped = h => (h === SAME ? `${SAME}: 2 more posts` : h);
+    // ("Growing", a story's growth note under row 51, is held only in its own shape too: "Growing: N accounts now")
+    const shaped = h => (h === SAME ? `${SAME}: 2 more posts` : h === 'Growing' ? 'Growing: 14 accounts now' : h);
     heads.forEach(h => eq([held(`${shaped(h)}: x`), leakDenied(`${shaped(h)}: x`)], [true, true], h));
     heads.map(h => `🔗 *${h}:* and more`).concat(heads, heads.map(h => `${h}: x`), ['Same story as yesterday? Why is the product wrong?',
       'Part of a story we already sent, FYI.', 'Alert requirements look met here, can you confirm the link?',

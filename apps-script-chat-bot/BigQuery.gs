@@ -4750,6 +4750,7 @@ function earlyWaveCheck_(ctx) {
       if (v.hold) {
         repeats++;
         edNote_(ctx, row, ED_OUT_.repeat, edRepeatWhy_(row, v, seen.first(storyKeys), now), { title, card: edPriorCard_(v) });
+        if (typeof edGrowthNote_ === 'function') edGrowthNote_(ctx, v);  // row 51: a story that grew (step S16)
         return;
       }
     }
@@ -4889,6 +4890,7 @@ function earlyWaveCheck_(ctx) {
       }
       // its own card is in the space: it was counted when it was queued, and is only read again here
       const own = !!(r.alert_id && verdict.prior && verdict.prior.latest && verdict.prior.latest.ed === String(r.alert_id));
+      if (!own && typeof edGrowthNote_ === 'function') edGrowthNote_(ctx, verdict);  // row 51: a story that grew (step S16)
       if (!own) {
         edNote_(ctx, r, ED_OUT_.repeat, edRepeatWhy_(r, verdict, seen.first(storyKeys), now),
           { logged: true, card: edPriorCard_(verdict) });
@@ -5002,6 +5004,7 @@ function earlyWaveCheck_(ctx) {
           rec.events.push(ewBqEventRow_(r.alert_id, r.cluster_id, 'held_repeat', verdict.hold, null, now));
         }
         const own = !!(r.alert_id && verdict.prior && verdict.prior.latest && verdict.prior.latest.ed === String(r.alert_id));
+        if (!own && typeof edGrowthNote_ === 'function') edGrowthNote_(ctx, verdict);  // row 51: a story that grew (step S16)
         if (!own) {
           edNote_(ctx, r, ED_OUT_.repeat, edRepeatWhy_(r, verdict, seen.first(storyKeys), now),
             { logged: true, card: edPriorCard_(verdict) });
