@@ -30,8 +30,10 @@ module.exports = H => {
    * A day in the one-space setup with the default settings, every minute from 09:01 to `until`. The producer hands over,
    * as it really reads, only the rows made within the check's lookback, more accounts first, then the oldest first, at
    * most `cap` (25). `batches`: [[made at, first story, how many, accounts]] (odd ones serious, even ones ordinary);
-   * `skip`: [[from, to]]: no check runs then (as when the API guard or a busy run skips it). Returns what was read, what
-   * ended, the tab and the numbers.
+   * `skip`: [[from, to]]: no check runs then (as when the API guard or a busy run skips it); `wide(time)`: true when
+   * the producer then reads 3 hours back whatever the check asks (as after B31 is raised). After every run, no signal
+   * still remembered as left for later has ended already. Returns what was read (and by the run: `readAt`), what ended,
+   * the tab and the numbers.
    */
   const day = o => {
     const w = ends.world({ flow: 'one-space', row46: false, settings: o.settings || {} });
@@ -44,15 +46,20 @@ module.exports = H => {
       }
     });
     const read = new Set();
+    const readAt = {};
+    let clock = '';
     w.t.bot.bqEarlyDetectionRows_ = minutes => {
       const now = w.t.g.clock.now;
-      const out = rows.filter(r => madeAt(r) >= now - minutes * MIN && madeAt(r) <= now)
+      const back = o.wide && o.wide(clock) ? 180 : minutes;
+      const out = rows.filter(r => madeAt(r) >= now - back * MIN && madeAt(r) <= now)
         .sort((a, b) => b.unique_low_tier_authors - a.unique_low_tier_authors || madeAt(a) - madeAt(b))
         .slice(0, o.cap || 25).map(r => JSON.parse(JSON.stringify(r)));
       out.forEach(r => read.add(r.alert_id));
+      readAt[clock] = new Set(out.map(r => r.alert_id));
       return out;
     };
-    let clock = '';
+    const hashOf = {};
+    rows.forEach(r => { hashOf[w.t.bot.hashText_(`id:${r.alert_id}`)] = r.alert_id; });
     w.t.bot.__edDeferredSkip = () => (o.skip || []).some(s => clock >= s[0] && clock <= s[1]);
     w.t.bot.ev('earlyWaveCheck_ = (check => function (ctx) { return __edDeferredSkip() ? null : check(ctx); })(earlyWaveCheck_)');
     const endings = {};
@@ -72,8 +79,10 @@ module.exports = H => {
       eq(n.found, n.cards + n.under + n.letgo + n.never + n.waiting, `the run at ${time}: ${JSON.stringify(n)}`);
       assert.ok(!look.logs.map(String).some(l => /did not add up/.test(l)), `the run at ${time}`);
       sizes.push(String(w.t.g.props.get('EARLY_DETECTION_DEFERRED') || '').length);
+      const kept = Object.keys(JSON.parse(w.t.g.props.get('EARLY_DETECTION_DEFERRED') || '{}'));
+      eq(kept.filter(h => endings[hashOf[h]]).map(h => hashOf[h]), [], `the run at ${time}: remembered, though ended`);
     });
-    return { w, read, endings, log, queued, n: w.t.bot.edDayNumbers_(props(w)), tab: tabRows(w), sizes,
+    return { w, read, readAt, endings, log, queued, n: w.t.bot.edDayNumbers_(props(w)), tab: tabRows(w), sizes,
       deferred: w.t.g.props.get('EARLY_DETECTION_DEFERRED') || null };
   };
 
@@ -142,6 +151,25 @@ module.exports = H => {
       assert.ok(/^This hour's|^More than 5/.test(x[3]), x.join(' | '));
     });
     eq(r.deferred, null);
+  });
+
+  test('early detection deferred: a signal the sweep ended is not taken up again when the producer hands it over again later (the read widened, as after B31 is raised): it keeps its one ending', () => {
+    const r = day({ batches: [['09:30', 1, 25]], skip: [['10:15', '10:40']], wide: time => time >= '10:50', until: '12:00' });
+    eq(r.read.size, 25);
+    const late = r.log.filter(x => /read it again in time/.test(x[3]));
+    assert.ok(late.length >= 1, 'some were swept');
+    // the swept ones were handed over again after 10:50
+    assert.ok(late.some(x => Object.keys(r.readAt).some(t => t >= '10:50' && r.readAt[t].has(x[1]))), 'handed over again');
+    everyReadEndsOnce(r, 'handed over again');
+  });
+
+  test('early detection deferred: a signal left for later that the check reads again is not swept as unread, even past the window (the producer reads further back): it ends as a read signal does', () => {
+    const r = day({ batches: [['09:30', 1, 25]], skip: [['10:15', '10:40']], wide: () => true, until: '12:00' });
+    eq(r.read.size, 25);
+    everyReadEndsOnce(r, 'read past the window');
+    const late = r.log.filter(x => /read it again in time/.test(x[3]));
+    eq(late.filter(x => r.readAt[x[0]] && r.readAt[x[0]].has(x[1])).map(x => x.join(' | ')), [], 'swept, though read in that check');
+    assert.ok(r.log.some(x => x[0] >= '10:41' && x[2] === 'Never reviewed'), 'some ended after the gap');
   });
 
   test('early detection deferred: with the cache of their details deleted before every run, the same signals still end once each and C19 adds up (their rows name no story)', () => {
