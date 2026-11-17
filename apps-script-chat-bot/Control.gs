@@ -52,8 +52,9 @@
  *   B47                Fast triage bars, the sixth: the early watch's independent_reports bar; C47 what the bot is using
  *   B48                Early Detection: also read the AMIE table: one more switch (EarlyWaveSource.gs); it needs row 19
  *                      ON; C48 what it is doing
- *   A49:A51            blank (rows 49 and 50 are kept free for the next two switches)
- *   A52...             How it works (CONTROL_HELP_ROW_, below the blank row 51)
+ *   A49:A52            blank (rows 49, 50 and 51 are kept free for three more switches; row 52 is the blank row above
+ *                      the help)
+ *   A53...             How it works (CONTROL_HELP_ROW_, below the blank row 52)
  *
  * Plus the Resources tab: the bot's knowledge base (Knowledge.gs). Name · Link · What it covers · Burson can see it? ·
  * Bot status. Gemini reads every document listed there to triage and action each alert and to answer questions; only
@@ -320,11 +321,12 @@ const CONTROL_HELP_ = [
 // switches, 30 Testing: send to, 31 BigQuery lookback, 32 one more switch (Work directly in B25), 33 Other alerts space,
 // 34 one more switch (Proactive watch), 35 Watch alerts, 36-37 two more switches (Temp checks, Group test emails), 38-40
 // three more switches (Fast triage), 41-45 five fast-triage bars, 46 one more switch (Write early-wave records to
-// BigQuery), 47 the sixth fast-triage bar, 48 one more switch (Early Detection: also read the AMIE table), 49-50 blank,
-// kept free for the next two switches so the help need not move again, 51 blank). It moved here from row 49 once, and a
-// tab from before that is brought up to date on its next run (ensureSwitchRows_ writes row 48, writeControlHelp_ blanks
-// rows 49-51 and writes the help from row 52)
-const CONTROL_HELP_ROW_ = 52;
+// BigQuery), 47 the sixth fast-triage bar, 48 one more switch (Early Detection: also read the AMIE table), 49-51 blank,
+// kept free for three more switches so the help need not move again, 52 blank). It moved here from row 49 once (no
+// tab was ever deployed with it at row 52), and a tab from before that is brought up to date on its next run
+// (ensureSwitchRows_ writes row 48, writeControlHelp_ clears the bot's own old help from rows 49-52 and writes the help
+// from row 53)
+const CONTROL_HELP_ROW_ = 53;
 const CONTROL_HELP_ROWS_ = 48;  // rows kept for the help text (blank ones clear older, longer text)
 
 // Row 30: Testing: send to (B30). Up to 5 email addresses; blank holds test emails until filled in.
@@ -394,21 +396,30 @@ function ensureControlTab_(ss, owner) {
 }
 
 /**
- * "How it works" from row 52 (CONTROL_HELP_ROW_), under blank rows (rewritten by setup(), so it stays current; nobody
- * edits it). Column A of every row between the last switch (row 48) and the help is written blank, so a tab from before
- * the help moved (its "How it works" at row 49, a help line at row 50) keeps no old text there; a switch row is never
- * blanked.
+ * "How it works" from row 53 (CONTROL_HELP_ROW_), under blank rows (rewritten by setup(), so it stays current; nobody
+ * edits it). In column A of the rows between the last switch (row 48) and the help, the bot's own old help is cleared
+ * (controlHelpOwn_: its title or a help line), so a tab from before the help moved (its "How it works" at row 49, or at
+ * row 52) keeps no old text there; anything else a person wrote there is left as it is, and a switch row is never
+ * touched.
  */
 function writeControlHelp_(sh) {
   const lines = [['How it works']].concat(CONTROL_HELP_.map(line => [line]));
   while (lines.length < CONTROL_HELP_ROWS_) lines.push(['']);
   const from = Math.min(CONTROL_HELP_ROW_ - 1, Math.max.apply(null, switchRows_()) + 1);
-  const blanks = [];
-  for (let r = from; r < CONTROL_HELP_ROW_; r++) blanks.push(['']);
-  sh.getRange(from, 1, blanks.length + lines.length, 1).setValues(blanks.concat(lines));
-  if (from < CONTROL_HELP_ROW_ - 1) sh.getRange(from, 1, CONTROL_HELP_ROW_ - 1 - from, 1).setFontWeight('normal');
+  const above = sh.getRange(from, 1, CONTROL_HELP_ROW_ - from, 1).getValues();
+  above.forEach((v, i) => {
+    if (!controlHelpOwn_(v && v[0])) return;
+    sh.getRange(from + i, 1).setValue('').setFontWeight('normal');
+  });
+  sh.getRange(CONTROL_HELP_ROW_, 1, lines.length, 1).setValues(lines);
   sh.getRange(CONTROL_HELP_ROW_, 1).setFontWeight('bold');
   sh.getRange(CONTROL_HELP_ROW_ + 1, 1, lines.length - 1, 1).setFontWeight('normal');
+}
+
+/** True when a cell holds the bot's own help text: the title "How it works" or a help line ("• ..."). Pure. */
+function controlHelpOwn_(v) {
+  const text = String(v === undefined || v === null ? '' : v).trim();
+  return text === 'How it works' || text.startsWith('\u2022');
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -684,16 +695,23 @@ function switchOffText_(s, switches, live, extra) {
 /**
  * Rows 11-24, 27-29, 32, 34, 36-40, 46 and 48: one switch each, with its ON / OFF dropdown. A row that isn't its switch yet (a tab from
  * before it: the help text or a blank row was there, or a label someone cleared) gets it, OFF; a switch already there
- * keeps its value. "How it works" moves below them. Never sets a switch ON, and never touches rows 25-26 (the space cells).
+ * keeps its value. "How it works" moves below them, and also when every switch is in place but row 53 does not hold
+ * the help's title (a tab with the help at row 52). Never sets a switch ON, and never touches rows 25-26 (the space cells).
  */
 function ensureSwitchRows_(sh) {
   if (!sh) return;
   const rows = switchRows_();
-  const last = Math.max.apply(null, rows);
+  const last = Math.max(CONTROL_HELP_ROW_, Math.max.apply(null, rows));
   const labels = sh.getRange(SWITCH_FIRST_ROW_, 1, last - SWITCH_FIRST_ROW_ + 1, 1).getValues();
   const todo = CONTROL_SWITCHES_.map((s, i) => i)
     .filter(i => String((labels[rows[i] - SWITCH_FIRST_ROW_] || [])[0] || '').trim() !== CONTROL_SWITCHES_[i].label);
-  if (!todo.length) return;
+  if (!todo.length) {
+    // every switch is in place: the help is written again only when its title is not at CONTROL_HELP_ROW_ (a tab whose
+    // help is still where an earlier build put it, at row 52)
+    const title = String((labels[CONTROL_HELP_ROW_ - SWITCH_FIRST_ROW_] || [])[0] || '').trim();
+    if (title !== 'How it works') writeControlHelp_(sh);
+    return;
+  }
   const rule = SpreadsheetApp.newDataValidation().requireValueInList(['ON', 'OFF'], true).build();
   todo.forEach(i => {
     const s = CONTROL_SWITCHES_[i];
@@ -709,7 +727,7 @@ function ensureSwitchRows_(sh) {
  * Row 25: S-F Burson space. A tab from before it (help text was here, or the blank row above "How it works") gets it on
  * its next run, without setup(), blank: only a person pastes S-F Burson there. Rows 1-24 never move; "How it works"
  * is written again below every row (the Burson test copy in row 26, TestCopy.gs ensureTestCopyRow_, and the rows after
- * it), at CONTROL_HELP_ROW_ (row 52).
+ * it), at CONTROL_HELP_ROW_ (row 53).
  * A value already in B25 is kept (a label someone cleared is put back).
  */
 function ensureSfBursonRow_(sh) {
@@ -818,7 +836,7 @@ function testersFrom_(raw) {
 
 /**
  * Row 30: Testing: send to. A tab from before it gets it on its next run, without setup(); a value already in B30 is
- * kept (a cleared label is put back), and "How it works" is written again below every row (CONTROL_HELP_ROW_, row 52).
+ * kept (a cleared label is put back), and "How it works" is written again below every row (CONTROL_HELP_ROW_, row 53).
  */
 function ensureTestersRow_(sh) {
   if (!sh) return;

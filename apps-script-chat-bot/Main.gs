@@ -344,7 +344,7 @@ function poll() {
     ensureBqLookbackRow_(control);  // row 31 (BigQuery lookback, 60 minutes) on a tab from before it
     ensureOtherSpaceRow_(control);  // row 33 (Other alerts space, blank) on a tab from before it
     ensureWatchAlertsRow_(control);  // row 35 (Watch alerts, OFF) on a tab from before it
-    ensureFtBarRows_(control);    // rows 41-45 and 47 (fast-triage bars, seeds) on a tab from before them; the help is at row 52
+    ensureFtBarRows_(control);    // rows 41-45 and 47 (fast-triage bars, seeds) on a tab from before them; the help is at row 53
     wanted = readControl_(control);
     ewsRunSwitches_(wanted.switches);  // EarlyWaveSource.gs: which new sources' rows (48) are ON this run; unset: all OFF
     testers = testersFor_(wanted.testers, control);  // C30 is kept current even while the bot is paused

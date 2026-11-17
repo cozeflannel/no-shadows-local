@@ -1611,14 +1611,14 @@ module.exports = H => {
       'of its own, and updates every 10 minutes at most.');
     assert.match(help[i + 2], /^• The Follow-up tab /);
     eq([help.filter(l => /Head start/.test(l)).length, i > 0], [1, true]);
-    // On the tab setup() makes: "How it works" is where it was (row 52, under blank rows), every line is under it in
+    // On the tab setup() makes: "How it works" is where it was (row 53, under blank rows), every line is under it in
     // order, and the rows kept for the help hold its title and every line
     const t = e2e();
     t.bot.setup();
     const sh = t.control();
     const ROW = B.ev('CONTROL_HELP_ROW_');
-    eq([ROW, sh.cell(ROW - 4, 1), sh.cell(ROW - 3, 1), sh.cell(ROW - 2, 1), sh.cell(ROW - 1, 1), sh.cell(ROW, 1)],
-      [52, 'Early Detection: also read the AMIE table', '', '', '', 'How it works']);
+    eq([ROW, sh.cell(ROW - 5, 1), sh.cell(ROW - 4, 1), sh.cell(ROW - 3, 1), sh.cell(ROW - 2, 1), sh.cell(ROW - 1, 1), sh.cell(ROW, 1)],
+      [53, 'Early Detection: also read the AMIE table', '', '', '', '', 'How it works']);
     eq(help.map((_, k) => sh.cell(ROW + 1 + k, 1)), help);
     eq([sh.cell(ROW + 1 + i, 1), sh.cell(ROW + 2 + i, 1), sh.rows.length, B.ev('CONTROL_HELP_ROWS_') >= help.length + 1],
       [help[i], help[i + 1], ROW + help.length, true]);
