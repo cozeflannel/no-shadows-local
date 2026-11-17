@@ -4,7 +4,7 @@
  *
  * Exposes structured, read-only MCP tools over:
  *   1. Live Control Google Sheet (`1dVGeQjLOfEYoCm_iIOmXd5hLM3rOTY_71IF-J8Hl2AI`):
- *      - `slrr_get_control_status`: Bot state, space bindings, all 21 switches, B30 testers, B31 lookback validation, safety checks
+ *      - `slrr_get_control_status`: Bot state, space bindings, all 26 switches, B30 testers, B31 lookback validation, safety checks
  *      - `slrr_inspect_relay_and_outbox`: `Burson outbox`, `Relay`, and `Relay names` (flags unmapped Chat users & pending/blocked items)
  *      - `slrr_inspect_parity_and_results`: `Results` and `Learned precedents` tabs (`im_only` / `bot_only` disagreements & KPIs)
  *      - `slrr_inspect_knowledge_and_guidance`: `Resources` and `Guidance` tabs (doc read health, visibility flags, active guidance)
@@ -135,7 +135,7 @@ async function handleGetControlStatus(args) {
     };
   };
 
-  const switchRows = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 27, 28, 29, 32, 34, 36, 37, 38, 39, 40];
+  const switchRows = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 27, 28, 29, 32, 34, 36, 37, 38, 39, 40, 46, 48];
   const switches = switchRows.map(r => ({
     row: r,
     label: cellText(r, 1),
@@ -1090,7 +1090,7 @@ const TOOLS = [
   {
     name: 'slrr_get_control_status',
     description:
-      'Read live Control tab state from the Burson QA Bot Google Sheet: Bot ON/OFF, Last check, Today stats, space links/statuses (Burson, Analyst, Mirror, Auto-correct, S-F Burson B25, Burson test copy B26), all 21 switches (row 32: Work directly in B25; row 34: Proactive watch; row 36: Temp checks; row 37: Group test emails), row 35 Watch alerts (where the watch\'s flags are posted: OFF, B33, B9 or B10), B30 testers, B31 BigQuery lookback validation, and live safety checks.',
+      'Read live Control tab state from the Burson QA Bot Google Sheet: Bot ON/OFF, Last check, Today stats, space links/statuses (Burson, Analyst, Mirror, Auto-correct, S-F Burson B25, Burson test copy B26), all 26 switches (row 32: Work directly in B25; row 34: Proactive watch; row 36: Temp checks; row 37: Group test emails; row 46: Write early-wave records to BigQuery; row 48: Early Detection: also read the AMIE table), row 35 Watch alerts (where the watch\'s flags are posted: OFF, B33, B9 or B10), B30 testers, B31 BigQuery lookback validation, and live safety checks.',
     inputSchema: {
       type: 'object',
       properties: {
