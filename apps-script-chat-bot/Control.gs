@@ -338,8 +338,9 @@ const CONTROL_HELP_ = [
     '19) ON. It sets one safety stop a day (2,000 background reviews, the setting open_daily_stop: then stories, Watch and ' +
     'Direct cards wait until midnight ET) and guards the day\'s trigger run time and outside calls: as they near their ' +
     'budgets, background work slows and then stops, so Burson\'s alerts always keep their share, and a new Burson alert ' +
-    'always goes first. Burson\'s alerts are never counted or stopped. Even while OFF, C51 shows the run time of the last ' +
-    '24 hours. C51 says what it is doing.',
+    'always goes first. Burson\'s alerts are never counted or stopped. The Engine tab then has a row for each Early ' +
+    'Detection check, and the Early Detection tab says why a check was skipped. Even while OFF, C51 shows the run time of ' +
+    'the last 24 hours. C51 says what it is doing.',
 ];
 // "How it works" starts here (rows 11-24 the switches, 25 S-F Burson space, 26 Burson test copy, 27-29 three more
 // switches, 30 Testing: send to, 31 BigQuery lookback, 32 one more switch (Work directly in B25), 33 Other alerts space,

@@ -3134,6 +3134,13 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     const ex = ewsExclusions_(exCached, read.us.rows, usDone, now);
     let posts = allRows.map(ewsPostOf_).filter(Boolean);
     last.read = posts.length;
+    // the open engine (Control row 51): what each source gave, for the Engine tab (EngineTab.gs); OFF, as before
+    if (typeof openOn_ === 'function' && openOn_()) {
+      last.lanes = {};
+      Object.keys(read).forEach(k => {
+        if (read[k] && read[k].state === 'done') last.lanes[k] = (read[k].rows || []).map(ewsPostOf_).filter(Boolean).length;
+      });
+    }
     if (nx) posts.forEach(p => { if (p.nl) ewsNewCount_(nx, ewsSrcOfLane_(p.lane), 'in'); });
     posts = ewsExclude_(posts, ex);
     const sigs = ewsLoadSigs_(cache, Number(st.sg) || 0);

@@ -298,6 +298,7 @@ function poll() {
     return;
   }
   openRunStart_(runStart);  // this run's record: its outside calls are counted (OpenEngine.gs)
+  engRunStart_();  // the Engine tab's numbers for this run (EngineTab.gs; row 51 only)
   const tookOver = runTookOver_;  // a run that died: the record counts it from its claim's start
   if (runTookOver_) {  // the run before ended partway (out of memory, a time limit): a failed run, as an error makes one
     try {
@@ -585,13 +586,18 @@ function poll() {
       report.bq_bmie = bqPolled.bmie;
     }
     if (bqPolled && bqPolled.bsip) report.bq_bsip = bqPolled.bsip;
+    if (bqPolled) engAdd_('direct', (Number(bqPolled.sprinklr) || 0) + (Number(bqPolled.bmie) || 0) + (Number(bqPolled.bsip) || 0));
     // Early detection (Control row 19): ON reads BigQuery low-tier clusters and multi-grain velocity spikes at most every
     // 15 minutes into a review queue (BigQuery.gs earlyWaveCheck_), then reviews queued signals and posts each one as a
     // single story card, at most 2 a run (EarlyDetection.gs edDrainQueue_). After the alerts; its failures stay isolated.
+    // the open engine (row 51): a check that was due but is skipped says so on the Early Detection tab (edCheckSkipped_)
+    if (switchOn_(ctx, 'earlyWave') && !(typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', slaBusy))) {
+      edCheckSkipped_(ctx, slaBusy ? 'busy' : 'guard');
+    }
     if (switchOn_(ctx, 'earlyWave') && (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', slaBusy))) {
       ctx._ewBqDeferEvents = true;
       try {
-        earlyWaveCheck_(ctx);
+        engCheck_(earlyWaveCheck_(ctx));  // its numbers for the Engine tab (row 51 only)
       } catch (e) {
         console.error('early detection check: ' + ((e && e.message) || e));
       }
@@ -776,6 +782,8 @@ function poll() {
           // of each story signal, written with 30 seconds of the run left and never in a run still catching up on alerts;
           // else its rows wait for the next run. A run without a row makes no Sheets call. Never throws
           maybeWriteEdTab_(ss, any, { deadline: runStart + RUN_HARD_STOP_MS_, flows: [mainCtx, ac, os] });
+          // The Engine tab (EngineTab.gs, Control row 51 only): a row for a check this run made, and the day's row
+          maybeWriteEngineTab_(ss, any, { deadline: runStart + RUN_HARD_STOP_MS_, flows: [mainCtx, ac, os] });
         }
       }
     } catch (e) {

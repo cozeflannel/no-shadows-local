@@ -336,6 +336,7 @@ function decisionsAsk_(input, questions, session) {
       s.asked++;
       st.asked++;
       if (typeof openCount_ === 'function') openCount_('ql', 1);  // row 51: one toward the day's quick-look ceiling
+      if (typeof engAdd_ === 'function') engAdd_('qAsked', 1);
       if ((s.perDay || DEC_MAX_PER_DAY_) !== DEC_MAX_PER_DAY_) st.cap = s.perDay; else delete st.cap;
       decSaveState_(props, st);
       if (typeof apiGuardNote_ === 'function') apiGuardNote_('decisions', 1);

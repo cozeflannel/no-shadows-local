@@ -142,14 +142,19 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
         report.bq_bmie = bqPolled.bmie;
       }
       if (bqPolled && bqPolled.bsip) report.bq_bsip = bqPolled.bsip;
+      if (bqPolled) engAdd_('direct', (Number(bqPolled.sprinklr) || 0) + (Number(bqPolled.bmie) || 0) + (Number(bqPolled.bsip) || 0));
     };
     // Early Detection (Control row 19): the 15-minute check, then the reviews of the signals that wait
     const earlyDetection = () => {
       if (!(ctx.allowEarlyWave && switchOn_(ctx, 'earlyWave') &&
-          (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', slaBusy)))) return;
+          (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', slaBusy)))) {
+        // the open engine (row 51): a check that was due but is skipped says so on the Early Detection tab
+        if (ctx.allowEarlyWave && switchOn_(ctx, 'earlyWave')) edCheckSkipped_(ctx, slaBusy ? 'busy' : 'guard');
+        return;
+      }
       ctx._ewBqDeferEvents = true;
       try {
-        earlyWaveCheck_(ctx);
+        engCheck_(earlyWaveCheck_(ctx));  // its numbers for the Engine tab (row 51 only)
       } catch (e) {
         console.error('auto-correct early detection check: ' + ((e && e.message) || e));
       }

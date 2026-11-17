@@ -323,6 +323,10 @@ function parseBqRows_(res) {
 // brand-social-central-data:slrr_alerts.slrr_alerts` (and :slrr_feedback.alert_sends) before turning the switch ON. Only
 // columns the code already reads are written, each value as text (BigQuery reads text into number and time columns).
 const BQ_WRITEBACK_SENDS_TABLE_ = 'slrr_feedback.alert_sends';  // the SLRR Assistant's log of Social Alerts (Speed.gs)
+// Two rules about the SLRR alerts table (the open-engine plan's O5, settled by the owner): it holds only negative posts,
+// so (1) the absence of positive rows in it is never read as a signal, and (2) it is never used to judge sentiment
+// balance: no SQL the bot builds from it selects or counts a sentiment column (switch_open_sentiment_rule.test.js).
+// It is a leave-out list ("already alerted") and an alert history, nothing more
 const BQ_WRITEBACK_ALERTS_TABLE_ = 'slrr_alerts.slrr_alerts';   // the master SLRR alert log
 const BQ_WRITEBACK_TRIES_ = 3;                       // tries per alert: when it's finished, then on later runs
 const BQ_WRITEBACK_RETRY_MS_ = 5 * 60 * 1000;        // at least this long between two tries
@@ -4591,6 +4595,11 @@ function earlyWaveCheck_(ctx) {
   const props = PropertiesService.getScriptProperties();
   const last = Number(props.getProperty(ED_AT_PROP_)) || 0;
   if (last && now >= last && now - last < EW_EVERY_MS_) return null;
+  // the open engine (row 51): with the day's run time or outside calls nearly used, no check (Burson's reserve)
+  if (typeof openCheckHeld_ === 'function' && openCheckHeld_()) {
+    edCheckSkipped_(ctx, 'pace');
+    return null;
+  }
   props.setProperty(ED_AT_PROP_, String(now));
   const today = edDayState_(props);
   const room = Math.max(0, EW_MAX_PER_DAY_ - (Number(today.queued) || 0));

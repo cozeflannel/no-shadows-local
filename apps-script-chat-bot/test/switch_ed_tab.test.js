@@ -477,4 +477,134 @@ module.exports = H => {
     eq(golden.differences(golden.mirror(golden.SETTINGS_OFF), golden.recorded.mirror), []);
     eq(golden.differences(golden.mirror(), golden.recorded.mirror), []);
   });
+  // ---------------------------------------------------------------------------------------------------------------
+  // Under the open engine (Control row 51, step S3 of the open-engine plan)
+  // ---------------------------------------------------------------------------------------------------------------
+
+  const open = w => { w.bot.ewsRunSwitches_({ openEngine: true, earlyWave: true }); w.bot.openRunStart_(w.g.clock.now); return w; };
+
+  test('early detection tab (row 51): a signal that waited out its 3 hours while reviews were held says why: the day\'s safety stop, or the run time nearly used; the ranking\'s words wait for step S5; with row 51 OFF it is "waited 3 hours" as before', () => {
+    const w = open(world());
+    eq([w.bot.edNeverWhy_('stop'), w.bot.edNeverWhy_('pace'), w.bot.edNeverWhy_('ranked', 7)], [
+      'today\'s safety stop of 2,000 reviews was reached (Burson\'s alerts went on)',
+      'the day\'s run time was nearly used, so only serious stories were reviewed',
+      'it waited 3 hours while 7 more serious stories were reviewed first']);
+    const drop = (v, held) => {
+      v.g.clock.now = NOW;
+      if (held) v.bot.openHeld_(held, NOW - HOUR);
+      v.bot.edNotesStart_();
+      v.bot.edNoteDropped_({ now: () => NOW, log: () => {} }, v.g.services.PropertiesService.getScriptProperties(), { id: sig(9).alert_id, row: sig(9), cause: 'stale' }, NOW);
+      return w.bot.edNoteObj_(v.bot.edNotesOfRun_()[0]).why;
+    };
+    eq(drop(open(world()), 'stop'), 'Today\'s safety stop of 2,000 reviews was reached (Burson\'s alerts went on).');
+    eq(drop(open(world()), 'pace'), 'The day\'s run time was nearly used, so only serious stories were reviewed.');
+    eq(drop(open(world()), ''), 'Waited 3 hours while the bot worked on alerts.');
+    eq(drop(world(), 'stop'), 'Waited 3 hours while the bot worked on alerts.');  // row 51 OFF
+    // a hold more than 3 hours old is not the reason
+    const old = open(world());
+    old.bot.openHeld_('stop', NOW - 4 * HOUR);
+    eq(old.bot.openHeldCause_(NOW), '');
+  });
+
+  test('early detection tab (row 51): a check that was due but is skipped gets one row "Check skipped" with why (Burson\'s alerts waiting, ApiGuard, the run time), at most one a check\'s interval; it is no ending (C19\'s numbers do not change); with row 51 OFF it is a silent skip as before', () => {
+    const w = open(world());
+    const props = w.g.services.PropertiesService.getScriptProperties();
+    props.setProperty('EARLY_DETECTION_AT', String(NOW - 20 * MIN));
+    const ctx = at => ({ now: () => at });
+    const day = () => props.getProperty('EARLY_DETECTION_TODAY');
+    const before = day();
+    w.bot.edNotesStart_();
+    eq(w.bot.edCheckSkipped_(ctx(NOW), 'busy'), true);
+    eq(w.bot.edCheckSkipped_(ctx(NOW + MIN), 'busy'), false);  // the same check: said once
+    const rows = w.bot.edNotesOfRun_().map(r => w.bot.edNoteObj_(r));
+    eq(rows.map(r => [r.outcome, r.why, r.kind]), [['Check skipped', 'Burson\'s alerts were waiting (the check runs again next minute).', 'Check']]);
+    eq(day(), before);  // not counted
+    // a check not yet due: no row
+    props.setProperty('EARLY_DETECTION_AT', String(NOW + 10 * MIN));
+    eq(w.bot.edCheckSkipped_(ctx(NOW + 12 * MIN), 'guard'), false);
+    // the next due check, skipped for ApiGuard, then for the run time
+    props.setProperty('EARLY_DETECTION_AT', String(NOW));
+    eq(w.bot.edCheckSkipped_(ctx(NOW + 16 * MIN), 'guard'), true);
+    eq(w.bot.edCheckSkipped_(ctx(NOW + 32 * MIN), 'pace'), true);
+    eq(w.bot.edNotesOfRun_().map(r => w.bot.edNoteObj_(r).why).slice(1), [
+      'Too many outside calls in the last hour, so ApiGuard held background work (the check runs again next minute).',
+      'The day\'s run time or outside calls are nearly used, so Burson\'s alerts keep the rest (the check runs again once they allow).']);
+    // the rows go on the tab like any other
+    const ss = sheetOf(w);
+    eq(w.bot.maybeWriteEdTab_(ss, ctxAt(w, NOW + 33 * MIN), { deadline: NOW + 40 * MIN }).written, 3);
+    eq(data(tabOf(ss)).map(r => r.Outcome), ['Check skipped', 'Check skipped', 'Check skipped']);
+    // a check not due yet (its 15 minutes have not passed), in a run with nothing said before: no row
+    const early = open(world());
+    early.g.services.PropertiesService.getScriptProperties().setProperty('EARLY_DETECTION_AT', String(NOW - 5 * MIN));
+    early.bot.edNotesStart_();
+    eq([early.bot.edCheckSkipped_(ctx(NOW), 'busy'), early.bot.edNotesOfRun_()], [false, []]);
+    // row 51 OFF
+    const off = world();
+    off.g.services.PropertiesService.getScriptProperties().setProperty('EARLY_DETECTION_AT', String(NOW - 20 * MIN));
+    off.bot.edNotesStart_();
+    eq([off.bot.edCheckSkipped_(ctx(NOW), 'busy'), off.bot.edNotesOfRun_()], [false, []]);
+  });
+
+  test('early detection tab (row 51): with the day\'s run time at 97% of its budget a due check is not made (Burson\'s reserve): BigQuery is not asked, and the tab says "Check skipped" once; with row 51 OFF the check runs', () => {
+    const run = on => {
+      const w = golden.world.oneSpaceWorld(Object.assign({}, golden.SETTINGS_OFF, { early_detection_first: true, early_detection_tab: true }));
+      if (on) w.t.bot.ev('readSwitches_ = (read => sh => Object.assign(read(sh), { openEngine: true }))(readSwitches_)');
+      w.rec.collect('setup');
+      w.rec.step('the first run', 1);
+      const at = w.t.g.props.get('EARLY_DETECTION_AT');
+      const hour = Math.floor(w.t.g.clock.now / HOUR) * HOUR;
+      w.t.g.props.set('RUN_LEDGER', JSON.stringify({ v: 1, h: [[hour, 0.98 * 4.5 * 3600, 0, 1, 0]], p: [], a: { d: w.t.bot.openEtDay_(w.t.g.clock.now), w: 1 } }));
+      w.rec.step('a check is due', 16);
+      w.rec.step('the next minute', 1);
+      const tab = w.t.sheet().getSheetByName(TAB);
+      return { moved: w.t.g.props.get('EARLY_DETECTION_AT') !== at, skipped: tab ? data(tab).filter(r => r.Outcome === 'Check skipped').map(r => r.Why) : [] };
+    };
+    eq(run(true), { moved: false, skipped: ['The day\'s run time or outside calls are nearly used, so Burson\'s alerts keep the rest (the check runs again once they allow).'] });
+    eq(run(false), { moved: true, skipped: [] });
+  });
+
+  test('early detection tab (row 51): the summary row of a check\'s early asks: how many stories were asked about at 2 to 4 accounts, how many were raised, and the nearest misses that fit; not counted; nothing with none asked or row 51 OFF', () => {
+    const w = open(world());
+    w.bot.edNotesStart_();
+    w.bot.edAskedEarlyNote_(14, 2, [{ story: 'Pixel 10 battery drain', severity: 'medium', sure: 0.48, google: 0.92 },
+      { story: 'Maps reroutes into a closed bridge', severity: 'low', sure: 0.3, google: 0.88 }], NOW);
+    w.bot.edAskedEarlyNote_(0, 0, [], NOW);
+    const rows = w.bot.edNotesOfRun_().map(r => w.bot.edNoteObj_(r));
+    eq(rows.map(r => [r.outcome, r.kind]), [['Asked early (2-4 accounts)', 'Early asks']]);
+    // (as many misses as fit a row's reason, 180 characters: here the nearest one)
+    eq(rows[0].why, '14 stories, 2 raised. Nearest misses: "Pixel 10 battery drain" (severity medium 48% sure, about Google 92%).');
+    const off = world();
+    off.bot.edNotesStart_();
+    off.bot.edAskedEarlyNote_(14, 2, [], NOW);
+    eq(off.bot.edNotesOfRun_(), []);
+  });
+
+  test('early detection tab (row 51): rows that wait are kept in up to 10 cache values (2,000 rows), their counts in one property; a value the cache dropped is counted as not recorded; all written, everything is removed; with row 51 OFF one value of at most 200 rows, as before', () => {
+    const rowsOf = (w, n) => Array.from({ length: n }, (_, i) => w.bot.edNoteRow_(sig(i + 1), 'Never reviewed', 'the review queue was full', {}, NOW + i * 1000));
+    const w = open(world());
+    eq(w.bot.edTabWait_(rowsOf(w, 1000), 0, 0), 200);
+    const man = JSON.parse(w.g.props.get('ED_TAB_WAIT_MAN'));
+    eq([man.c.reduce((s, n) => s + n, 0), man.c.length >= 4], [800, true]);
+    const got = w.bot.edTabWaiting_();
+    eq([got.rows.length, got.lost], [1000, 0]);
+    eq(w.bot.edTabWaitingCount_(), 1000);
+    assert.ok(/1,000 story rows wait for the tab/.test(w.bot.openC51Text_(NOW)), w.bot.openC51Text_(NOW));
+    // the cache drops a value: its rows are counted as not recorded
+    cache(w).remove('ed_tab_waiting:2');
+    const after = w.bot.edTabWaiting_();
+    eq([after.rows.length, after.lost], [1000 - man.c[1], man.c[1]]);
+    // more than 2,000: the oldest go, counted
+    const big = w.bot.edTabWait_(rowsOf(w, 2300), 0, 0);
+    const all = w.bot.edTabWaiting_();
+    eq([big, all.rows.length, all.lost], [200, 2000, 300]);
+    // written: nothing left
+    const ss = sheetOf(w);
+    w.bot.edNotesStart_();
+    eq(w.bot.maybeWriteEdTab_(ss, ctxAt(w, NOW + HOUR), { deadline: NOW + 2 * HOUR }).written > 2000, true);
+    eq([w.g.props.get('ED_TAB_WAIT_MAN'), Array.from(w.g.cache.keys()).filter(k => /^ed_tab_waiting/.test(k))], [undefined, []]);
+    // row 51 OFF: as before
+    const off = world();
+    eq(off.bot.edTabWait_(rowsOf(off, 1000), 0, 0), 200);
+    eq([off.g.props.get('ED_TAB_WAIT_MAN'), off.bot.edTabWaiting_().lost], [undefined, 800]);
+  });
 };

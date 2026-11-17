@@ -39,13 +39,16 @@
  *   openCountReview_(n)                counts n background reviews against the day's stop (and stops at it)
  *   openSerious_(row)                  an Early Detection signal is serious (P0 / P1, raised by a tag, a 2,000+ post)
  *   openStopReached_()                 true while row 51 is ON and today's stop (or a derived ceiling) was reached
+ *   openCheckHeld_()                   true when no Early Detection check may run (Burson's reserve)
+ *   openHeldCause_(now)                'stop' / 'pace' when a background start was held so in the last 3 hours
  *   openCount_(kind, n)                counts toward a derived ceiling: 'ql' quick looks, 'wc' Watch post checks, 'gb'
  *                                      background BigQuery GB
  *   openYield_(ctx)                    true when S-F Burson has a new post since the cursor (background work ends)
  *   openShrinkMs_(usage)               the background time a run gives up while Burson's pick-up p90 is too slow (ms)
  *   openWall_(name)                    counts a wall hit today, once a run (C51's "walls hit")
  *   openC51Text_(now)                  the note of C51 (row 51 ON), at most 200 characters, warning first
- *   openC51Add_(fn)                    a later step adds a part to C51: fn(usage, day, now) -> '' or a short part
+ *   openC51Add_(fn)                    a later step adds a part to C51: fn(usage, day, now) -> '' or a short part (call
+ *                                      it from run code, never at a file's top level: Apps Script loads files in order)
  */
 
 const OE_LEDGER_PROP_ = 'RUN_LEDGER';
@@ -463,14 +466,18 @@ function openMayStart_(kind, ctx, o) {
     if (!openOn_()) return { ok: true, why: '', wall: '' };
     const now = Date.now();
     const x = o || {};
-    const no = (why, wall) => { if (wall) openWall_(wall); return { ok: false, why, wall: wall || '' }; };
+    const no = (why, wall, held) => {
+      if (wall) openWall_(wall);
+      if (held && kind !== 'quick') openHeld_(held, now);
+      return { ok: false, why, wall: wall || '' };
+    };
     const d = openDay_(now);
     const reached = openStopped_(d);
-    if (reached && (kind !== 'quick' || reached === 'ql')) return no(`today's safety stop was reached (${openStopWords_(reached)})`, '');
+    if (reached && (kind !== 'quick' || reached === 'ql')) return no(`today's safety stop was reached (${openStopWords_(reached)})`, '', 'stop');
     const u = openUsage_(now);
-    if (u.step >= 5 || u.fetchStep >= 2) return no('the day\'s run time or outside calls are nearly used: Burson\'s reserve', 'pace');
-    if (u.step >= 4 && kind !== 'quick') return no('the day\'s run time is nearly used: no background reviews or cards', 'pace');
-    if (u.step >= 3 && !x.serious && kind !== 'quick') return no('the day\'s run time is ahead of pace: only serious work starts', 'pace');
+    if (u.step >= 5 || u.fetchStep >= 2) return no('the day\'s run time or outside calls are nearly used: Burson\'s reserve', 'pace', 'pace');
+    if (u.step >= 4 && kind !== 'quick') return no('the day\'s run time is nearly used: no background reviews or cards', 'pace', 'pace');
+    if (u.step >= 3 && !x.serious && kind !== 'quick') return no('the day\'s run time is ahead of pace: only serious work starts', 'pace', 'pace');
     if (u.fetchStep >= 1 && kind === 'quick') return no('the day\'s outside calls are ahead of pace: no quick looks', 'pace');
     try {
       if (Number(CacheService.getScriptCache().get(OE_BG429_KEY_)) > now) return no('Gemini said "too busy" in the last 10 minutes', 'gemini');
@@ -481,6 +488,44 @@ function openMayStart_(kind, ctx, o) {
     return { ok: true, why: '', wall: '' };
   } catch (e) {
     return { ok: true, why: '', wall: '' };
+  }
+}
+
+/** A background start held by the day's stop or the pace (kept with the day's counts, `h`: {k, at}). Never throws. */
+function openHeld_(k, now) {
+  try {
+    const d = openDay_(now);
+    d.h = { k, at: Number(now) || Date.now() };
+    d.dirty = 1;
+  } catch (e) { /* not kept */ }
+}
+
+/**
+ * Why a queued signal that waited out its hours was not reviewed, under row 51: 'stop' or 'pace' when a background start
+ * was held for that reason in the last 3 hours (the queue's age), else ''. Never throws.
+ */
+function openHeldCause_(now) {
+  try {
+    if (!openOn_()) return '';
+    const t = Number(now) || Date.now();
+    const h = openDay_(t).h;
+    const age = typeof ED_QUEUE_MAX_AGE_MS_ !== 'undefined' ? ED_QUEUE_MAX_AGE_MS_ : 3 * OE_HOUR_MS_;
+    return h && (h.k === 'stop' || h.k === 'pace') && t - Number(h.at) <= age ? h.k : '';
+  } catch (e) {
+    return '';
+  }
+}
+
+/** Row 51: true when no Early Detection check may run (run time from 0.97, or outside calls from 0.90). Never throws. */
+function openCheckHeld_() {
+  try {
+    if (!openOn_()) return false;
+    const u = openUsage_(Date.now());
+    if (!(u.step >= 5 || u.fetchStep >= 2)) return false;
+    openWall_('pace');
+    return true;
+  } catch (e) {
+    return false;
   }
 }
 
@@ -553,7 +598,8 @@ function openC51Text_(now) {
       `today: ${n(d.rev)} of ${n(openCfg_().stop)} reviews`,
       openRunWords_(u),
       u.counted ? `calls ${n(u.fetches)} of ${n(u.fetchBudget)}` : '',
-    ].concat(OE_C51_PARTS_.map(fn => { try { return String(fn(u, d, t) || ''); } catch (e) { return ''; } }),
+    ].concat(typeof engC51Part_ === 'function' ? [engC51Part_()] : [],
+      OE_C51_PARTS_.map(fn => { try { return String(fn(u, d, t) || ''); } catch (e) { return ''; } }),
       walls.length ? [`walls hit: ${walls.join(', ')}`] : []).filter(Boolean);
     let note = warning;
     parts.forEach(p => {

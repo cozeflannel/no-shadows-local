@@ -116,7 +116,30 @@ one line under it: what was built, the suite's count, and anything left out with
       Direct cards in the Auto-correct space (telling them from Burson's copies there is step S4's); the per-post quick
       look's own ceiling, min(150 x the stop, half the call budget) (step S19d builds that look); the pick-up gauge on
       the Engine tab (step S3 builds the tab).
-- [ ] **S3** The Engine tab and the new endings
+- [x] **S3** The Engine tab and the new endings
+      Built, under row 51 only: `EngineTab.gs` (the bot-made tab `Engine`, A1 its 111-character title, one row a check
+      and a row a day, newest first, 7 days kept, every cell a number or at most 100 characters; never a tab the bot did
+      not make, and C51 says when one is in the way); on the Early Detection tab the reasons `today's safety stop of 2,000
+      reviews was reached (Burson's alerts went on)` and `the day's run time was nearly used, so only serious stories were
+      reviewed` for a signal that waited out its 3 hours while reviews were held, a `Check skipped` row when a due check
+      is not made (Burson's alerts waiting, ApiGuard, the run time nearly used; the check itself now waits from the 0.97
+      step), and the `Asked early (2-4 accounts)` summary row (`edAskedEarlyNote_`); none of these rows counts in C19's
+      numbers. The tab's write is kept in the run's time before the reviews, and the rows that wait are kept in up to 10
+      cache values with their counts in `ED_TAB_WAIT_MAN` (a dropped value is counted as not recorded); C51 says how many
+      wait once they pass 200. The SLRR alerts table's two rules are written beside its name and tested. Suite:
+      1,279 of 1,279 passed.
+      How a later step writes its Engine column: `engAdd_(key, n)` at the place it counts (a number, summed until the
+      next check's row) or `engSet_(key, text)`; the keys are in `ENG_COLS_` (`carried`, `lost`, `groupN`, `groupS`,
+      `batch`, `batchS`, `cardsWait`, `gb`, `aiif`, `grounded`, `evict`, `qRaised`, and RQ8's `alone`, `codePass`,
+      `gated`, `asked`, `qPass`, `failed`, `notReached`, `quickS`, `tokens`, `refused`, `codeMs`); the daily row's line
+      is `engDayNote_`. The `ranked` reason (`it waited 3 hours while N more serious stories were reviewed first`) is in
+      `edNeverWhy_` for step S5. Choices: (1) the rows that are no ending (`Check skipped`, `Asked early`) are laid out on
+      the tab but never go through `edNote_`, so C19's sum is untouched; (2) a skipped check is said once for each due
+      check; (3) the Engine tab's numbers between checks and the day's sums live in one property, `ENGINE_ACC`, with at
+      most 12 rows waiting (the rest counted in a `not recorded` row). Left out, and why: the `Sources` column (step S9
+      builds it: the posts carry no source today); `Single post` as a kind (step S19b); `Update noted in its card's
+      thread` (step S16's growth notes); the early-ask summary's caller (step S11 makes the early asks); the daily row's
+      faster / wider / accurate measures (they need the later steps' records: the row gives the day's sums and a line).
 - [ ] **S4** The bot's own cards never make Burson look busy
 - [ ] **S5** Ranking in place of the allowance
 - [ ] **S6** Checks every 5 minutes

@@ -1937,7 +1937,8 @@ function edDrainQueue_(ctx, report) {
   let other = 0;  // signals that left the queue here in a way `out` has no count for
   let list = prune();
   while (list.length && reviews < EW_DRAIN_MAX_PER_RUN_) {
-    if (left() < EW_DRAIN_MIN_LEFT_MS_) break;
+    // the open engine (row 51): the Early Detection tab's write is kept in the run's time before the reviews take it
+    if (left() < EW_DRAIN_MIN_LEFT_MS_ + (typeof openOn_ === 'function' && openOn_() ? EDT_MIN_LEFT_MS_ : 0)) break;
     if (typeof runOwned_ === 'function' && !runOwned_()) break;
     if (typeof apiGuardAllowBackground_ === 'function' && !apiGuardAllowBackground_('any', !!ctx.slaBusy)) break;
     const entry = list[0];
@@ -1990,6 +1991,7 @@ function edDrainQueue_(ctx, report) {
         if (typeof OE_BG_ !== 'undefined') OE_BG_ = false;
         // row 51: one more toward the day's stop, a review that failed too (the stop catches fast-failing loops)
         if (typeof openCountReview_ === 'function') openCountReview_(1);
+        if (typeof engAdd_ === 'function') engAdd_('reviews', 1);  // the Engine tab (row 51 only)
       }
     }
     if (res && res.retry) {  // an early-watch signal whose review failed: no card; one more try, then it is dropped

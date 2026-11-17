@@ -121,7 +121,9 @@ function edOutcomeGroup_(outcome) {
  * stored row was gone), 'long' (its row was too big to store); and the allowance's (BigQuery.gs edAllowance_): 'check'
  * (more than EW_MAX_PER_CHECK_ in one check), 'hour' (the clock hour's EW_MAX_PER_HOUR_), 'hourOrdinary' (the hour's
  * reviews for ordinary stories) and 'dayReviews' (the day's reviews), each with the limit in force (`n`; without it, the
- * one the settings give). '' for any other. Pure but for the settings.
+ * one the settings give); and the open engine's (Control row 51, OpenEngine.gs): 'stop' (the day's safety stop), 'pace'
+ * (the day's run time nearly used) and 'ranked' (`n` more serious stories went first; step S5 ranks). '' for any other.
+ * Pure but for the settings.
  */
 function edNeverWhy_(cause, n) {
   const hours = Math.round(ED_QUEUE_MAX_AGE_MS_ / 3600000);
@@ -148,6 +150,9 @@ function edNeverWhy_(cause, n) {
     failed: 'its review failed twice',
     lost: 'its saved details were gone when its turn came',
     long: 'its details were too long to keep for a review',
+    stop: `today's safety stop of ${Number(typeof openCfg_ === 'function' ? openCfg_().stop : 2000).toLocaleString('en-US')} reviews was reached (Burson's alerts went on)`,
+    pace: 'the day\'s run time was nearly used, so only serious stories were reviewed',
+    ranked: `it waited ${hours} hours while ${limit(n, 0).toLocaleString('en-US')} more serious stor${limit(n, 0) === 1 ? 'y was' : 'ies were'} reviewed first`,
   };
   return why[cause] || '';
 }
@@ -190,6 +195,81 @@ function edNote_(ctx, row, outcome, why, extra) {
     return rec.slice();
   } catch (e) {
     console.error('early detection: could not note what became of a signal: ' + ((e && e.message) || e));
+    return null;
+  }
+}
+
+// Rows the Early Detection tab shows under the open engine (Control row 51) that are no signal's ending: never counted
+// in today's numbers (C19's sum stays what it is), never logged here, only laid out on the tab
+const ED_TAB_ONLY_ = {
+  skipped: 'Check skipped',
+  asked: 'Asked early (2-4 accounts)',
+};
+const ED_SKIP_PROP_ = 'ED_CHECK_SKIPPED_AT';  // when the last "Check skipped" row was noted (one a due check)
+
+/** One row for the tab only (no ending: not counted, nothing logged). Never throws. */
+function edTabOnlyNote_(outcome, why, story, kind, now) {
+  try {
+    const one = (v, n) => edCut_(edWhole_(v).replace(/[\u0000-\u001f\u007f\s]+/g, ' ').trim(), n);
+    const rec = edNoteFit_([Math.round(Number(now) || Date.now()), '', outcome, one(edNoteSentence_(why), ED_NOTE_WHY_MAX_),
+      one(story || '', ED_NOTE_STORY_MAX_), '', String(kind || ''), 0, '', '', '', '']);
+    ED_NOTES_RUN_.push(rec);
+    if (ED_NOTES_RUN_.length > ED_NOTES_RUN_MAX_) ED_NOTES_RUN_ = ED_NOTES_RUN_.slice(-ED_NOTES_RUN_MAX_);
+    if (typeof edTabHandOver_ === 'function') edTabHandOver_();
+    return rec.slice();
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Under row 51: a check that was due (its 15 minutes passed: ED_AT_PROP_) but is not made this run gets one row "Check
+ * skipped" on the tab, with why (`cause`: 'busy' Burson's alerts were waiting, 'guard' ApiGuard, 'pace' the day's run
+ * time), at most one a check's interval; counted on the Engine tab. Row 51 OFF: nothing (a silent skip, as before).
+ * Never throws.
+ */
+function edCheckSkipped_(ctx, cause) {
+  try {
+    if (typeof openOn_ !== 'function' || !openOn_()) return false;
+    const props = PropertiesService.getScriptProperties();
+    const now = ctx && typeof ctx.now === 'function' ? ctx.now() : Date.now();
+    const last = Number(props.getProperty(ED_AT_PROP_)) || 0;
+    if (last && now >= last && now - last < EW_EVERY_MS_) return false;  // no check was due
+    const told = Number(props.getProperty(ED_SKIP_PROP_)) || 0;
+    if (told && now >= told && now - told < EW_EVERY_MS_) return false;  // said once for this check
+    const why = {
+      busy: 'Burson\'s alerts were waiting (the check runs again next minute)',
+      guard: 'too many outside calls in the last hour, so ApiGuard held background work (the check runs again next minute)',
+      pace: 'the day\'s run time or outside calls are nearly used, so Burson\'s alerts keep the rest (the check runs again once they allow)',
+    }[cause];
+    if (!why) return false;
+    props.setProperty(ED_SKIP_PROP_, String(now));
+    edTabOnlyNote_(ED_TAB_ONLY_.skipped, why, '', 'Check', now);
+    if (typeof engAdd_ === 'function') engAdd_('skipped', 1);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * The early asks' summary row of a check (step S11 asks Gemini about stories of 2 to 4 accounts): "14 stories, 2
+ * raised. Nearest misses: "Pixel 10 battery drain" (severity medium 48% sure, about Google 92%)". `misses`: [{story,
+ * severity, sure, google}] (the nearest first; as many as fit). Row 51 only; not counted. Never throws.
+ */
+function edAskedEarlyNote_(asked, raised, misses, now) {
+  try {
+    if (typeof openOn_ !== 'function' || !openOn_() || !(Number(asked) > 0)) return null;
+    const pct = v => `${Math.round(Number(v) * 100)}%`;
+    let why = `${Number(asked)} stor${Number(asked) === 1 ? 'y' : 'ies'}, ${Number(raised) || 0} raised.`;
+    const near = (misses || []).filter(m => m && m.story).map(m => `"${String(m.story)}" (severity ${m.severity || 'low'} ${pct(m.sure)} sure, about Google ${pct(m.google)})`);
+    if (near.length) {
+      let list = '';
+      near.forEach(t => { const next = list ? `${list}; ${t}` : t; if (`${why} Nearest misses: ${next}`.length <= ED_NOTE_WHY_MAX_) list = next; });
+      if (list) why = `${why} Nearest misses: ${list}`;
+    }
+    return edTabOnlyNote_(ED_TAB_ONLY_.asked, why, '', 'Early asks', now);
+  } catch (e) {
     return null;
   }
 }
@@ -564,7 +644,9 @@ function edNoteDropped_(ctx, props, x, now) {
       return edNote_(ctx, row, card.outcome, card.why, { waited: true, title: card.title, tag: card.tag, card: card.card });
     }
     edSeenForget_(props, d.row, now);
-    return edNote_(ctx, row, ED_OUT_.never, edNeverWhy_(d.cause), { waited: true, logged: true });
+    // the open engine (row 51): a signal that waited out its hours while its reviews were held says why they were
+    const held = d.cause === 'stale' && typeof openHeldCause_ === 'function' ? openHeldCause_(now) : '';
+    return edNote_(ctx, row, ED_OUT_.never, edNeverWhy_(held || d.cause), { waited: true, logged: true });
   } catch (e) {
     console.error('early detection: could not note a signal the queue gave up on: ' + ((e && e.message) || e));
     return null;

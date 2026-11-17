@@ -2238,6 +2238,7 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
         const res = pwPostStories_(items, read.pre, read.recent || recent,
           { dest, now, max, timeLeft, done, doneThreadIds, mark, same, rows });
         out.posted = res.posted;
+        if (typeof engAdd_ === 'function') engAdd_('watch', res.posted);  // the Engine tab (row 51 only)
         out.grouped = res.grouped;
         out.held = res.held;
         out.repeats = res.repeats;

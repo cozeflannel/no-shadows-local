@@ -66,6 +66,11 @@ const EDT_TODAY_PROP_ = 'ED_TAB_TODAY';
 // This run's rows, handed over as each is noted (edTabHandOver_): a run that ends before its last block leaves them here,
 // and the next run puts them with the rows that wait (edTabTakeOver_)
 const EDT_RUN_KEY_ = 'ed_tab_run';
+// Control row 51 (the open engine, OpenEngine.gs): the rows that wait go in up to EDT_WAIT_CHUNKS_ cache values (the
+// first is EDT_WAIT_KEY_ as ever, the others EDT_WAIT_KEY_ + ':1' ...), with the row counts of the others in one script
+// property (EDT_WAIT_MAN_PROP_), so a value the cache dropped is counted as rows not recorded. Row 51 OFF: one value
+const EDT_WAIT_CHUNKS_ = 10;
+const EDT_WAIT_MAN_PROP_ = 'ED_TAB_WAIT_MAN';
 const EDT_WIDTHS_ = [[1, 130], [2, 230], [3, 320], [4, 360], [5, 110], [6, 170], [7, 80], [8, 120], [9, 280], [10, 300]];
 
 /** The setting early_detection_tab: on unless it is false. */
@@ -295,14 +300,45 @@ function ensureEdTab_(ss) {
 function edTabWaiting_() {
   const none = { rows: [], lost: 0, lostAt: 0 };
   try {
-    const raw = CacheService.getScriptCache().get(EDT_WAIT_KEY_);
-    if (!raw) return none;
-    const v = JSON.parse(raw);
-    const rows = (Array.isArray(v && v.r) ? v.r : [])
-      .filter(r => Array.isArray(r) && r.length === ED_NOTE_FIELDS_.length && typeof r[2] === 'string');
-    return { rows, lost: Math.max(0, Math.round(Number(v && v.n) || 0)), lostAt: Number(v && v.la) || 0 };
+    const cache = CacheService.getScriptCache();
+    const ok = r => Array.isArray(r) && r.length === ED_NOTE_FIELDS_.length && typeof r[2] === 'string';
+    const raw = cache.get(EDT_WAIT_KEY_);
+    let v = null;
+    try { v = raw ? JSON.parse(raw) : null; } catch (e) { v = null; }
+    const out = v ? { rows: (Array.isArray(v.r) ? v.r : []).filter(ok), lost: Math.max(0, Math.round(Number(v.n) || 0)), lostAt: Number(v.la) || 0 }
+      : { rows: [], lost: 0, lostAt: 0 };
+    // row 51's other values (edTabWait_): each one the cache dropped is counted as its rows, not recorded
+    const man = edTabWaitMan_();
+    man.c.forEach((n, i) => {
+      let more = null;
+      try { more = JSON.parse(cache.get(`${EDT_WAIT_KEY_}:${i + 1}`) || 'null'); } catch (e) { more = null; }
+      if (Array.isArray(more)) out.rows = out.rows.concat(more.filter(ok));
+      else { out.lost += n; out.lostAt = Math.max(out.lostAt, man.at); }
+    });
+    if (!raw && !man.c.length) return none;
+    return out;
   } catch (e) {
     return none;
+  }
+}
+
+/** Row 51's record of the other waiting values: {c: [rows in value 1, ...], at}. Never throws. */
+function edTabWaitMan_() {
+  try {
+    const m = JSON.parse(PropertiesService.getScriptProperties().getProperty(EDT_WAIT_MAN_PROP_) || 'null');
+    return { c: Array.isArray(m && m.c) ? m.c.map(n => Math.max(0, Math.round(Number(n) || 0))).slice(0, EDT_WAIT_CHUNKS_ - 1) : [],
+      at: Number(m && m.at) || 0 };
+  } catch (e) {
+    return { c: [], at: 0 };
+  }
+}
+
+/** The rows waiting for the tab, for C51 (row 51). Never throws. */
+function edTabWaitingCount_() {
+  try {
+    return edTabWaiting_().rows.length;
+  } catch (e) {
+    return 0;
   }
 }
 
@@ -333,6 +369,21 @@ function edTabWait_(rows, lost, lostAt) {
       keep = keep.slice(k);
       n += k;
     };
+    // row 51: the oldest go to values of their own (at most EDT_WAIT_CHUNKS_ - 1 more), the newest stay in the first
+    const chunks = [];
+    const open = typeof openOn_ === 'function' && openOn_();
+    if (open) {
+      if (keep.length > EDT_WAIT_ROWS_ * EDT_WAIT_CHUNKS_) drop(keep.length - EDT_WAIT_ROWS_ * EDT_WAIT_CHUNKS_);
+      while (keep.length > EDT_WAIT_ROWS_ && chunks.length < EDT_WAIT_CHUNKS_ - 1) {
+        let part = keep.slice(0, Math.min(EDT_WAIT_ROWS_, keep.length - EDT_WAIT_ROWS_));
+        while (part.length > 1 && (JSON.stringify(part).length > EDT_WAIT_CHARS_ || edTabBytes_(JSON.stringify(part)) > EDT_WAIT_CHARS_)) {
+          part = part.slice(0, part.length - 1);
+        }
+        chunks.push(part);
+        keep = keep.slice(part.length);
+      }
+    }
+    if (open || chunks.length || edTabWaitMan_().c.length) edTabWaitChunks_(cache, chunks);
     if (keep.length > EDT_WAIT_ROWS_) drop(keep.length - EDT_WAIT_ROWS_);
     const value = () => JSON.stringify(n ? { r: keep, n, la } : { r: keep });
     while (keep.length && (value().length > EDT_WAIT_CHARS_ || edTabBytes_(value()) > EDT_WAIT_CHARS_)) drop(1);
@@ -345,6 +396,23 @@ function edTabWait_(rows, lost, lostAt) {
   } catch (e) {
     console.error('Early Detection tab: the rows could not be kept for the next run: ' + ((e && e.message) || e));
     return 0;
+  }
+}
+
+/**
+ * Row 51: puts `chunks` (lists of rows) in the cache values EDT_WAIT_KEY_ + ':1' ... and their row counts in
+ * EDT_WAIT_MAN_PROP_; values no longer needed are removed, and with none the property goes. Never throws.
+ */
+function edTabWaitChunks_(cache, chunks) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const was = edTabWaitMan_();
+    chunks.forEach((part, i) => cache.put(`${EDT_WAIT_KEY_}:${i + 1}`, JSON.stringify(part), EDT_WAIT_SECONDS_));
+    for (let i = chunks.length; i < was.c.length; i++) cache.remove(`${EDT_WAIT_KEY_}:${i + 1}`);
+    if (chunks.length) props.setProperty(EDT_WAIT_MAN_PROP_, JSON.stringify({ c: chunks.map(p => p.length), at: Date.now() }));
+    else if (was.c.length) props.deleteProperty(EDT_WAIT_MAN_PROP_);
+  } catch (e) {
+    console.error('Early Detection tab: the rows could not be kept in parts: ' + ((e && e.message) || e));
   }
 }
 

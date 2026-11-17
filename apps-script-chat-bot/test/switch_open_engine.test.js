@@ -42,7 +42,8 @@ module.exports = H => {
     eq(w.b.openMayStart_('review', null, { serious: true }), { ok: false, why: 'today\'s safety stop was reached (2,000 background reviews)', wall: '' });
     eq([w.b.openMayStart_('card', null, {}).ok, w.b.openMayStart_('batch', null, {}).ok, w.b.openMayStart_('quick', null, {}).ok, w.b.openStopReached_()], [false, false, true, true]);
     w.b.openDaySave_();
-    eq(w.day(), { d: w.b.openEtDay_(NOW), rev: 2000, ql: 0, wc: 0, gb: 0, w: {}, stop: { k: 'rev', at: NOW } });
+    // (h: the last background start the stop held, step S3's reason for a signal that waited out its hours)
+    eq(w.day(), { d: w.b.openEtDay_(NOW), rev: 2000, ql: 0, wc: 0, gb: 0, w: {}, stop: { k: 'rev', at: NOW }, h: { k: 'stop', at: NOW } });
     // the next Eastern day starts from zero
     w.g.clock.now = NOW + 24 * HOUR;
     w.b.openRunStart_(w.g.clock.now);
