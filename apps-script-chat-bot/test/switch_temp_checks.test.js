@@ -689,4 +689,32 @@ module.exports = H => {
       [false, true, true]);
     eq(B.tempCheckRequestOf_(Object.assign(ctx(true), { spaces: { burson: { id: REAL, externalUserAllowed: true } } }), m), null);
   });
+
+  test('temp checks (new sources step 2c): with rows 49 and 19 ON the mentions a temp check reads are counted in BWL_DAY (Temp checks\' part of "all features"); its requests, its email and its thread posts are byte for byte those of a check with the rows OFF, also when the count cannot be saved', () => {
+    const run = mode => {
+      const w = world(true);
+      const b = w.t.bot;
+      let day = null;  // BWL_DAY right after the temp check (later in the run, row 49 OFF on this tab stops the count)
+      const orig = b.runTempChecks_;
+      b.runTempChecks_ = function () {
+        if (mode !== 'off') b.ewsRunSwitches_({ edBwLive: true, earlyWave: true });  // as rows 49 and 19 ON set them
+        const r = orig.apply(this, arguments);
+        day = JSON.parse(w.t.g.props.get('BWL_DAY') || 'null');
+        return r;
+      };
+      if (mode === 'fail') {
+        const set = w.t.g.props.set.bind(w.t.g.props);
+        w.t.g.props.set = (k, v) => { if (k === 'BWL_DAY') throw new Error('Service invoked too many times: properties'); return set(k, v); };
+      }
+      ask(w, ASK);
+      return { calls: w.bw.calls.map(c => c.url), mails: JSON.stringify(mails(w.t)), posts: JSON.stringify(posts(w.t, MIRROR).map(m => m.text)), day };
+    };
+    const off = run('off');
+    const on = run('on');
+    const fail = run('fail');
+    eq([on.calls, on.mails, on.posts], [off.calls, off.mails, off.posts]);
+    eq([fail.calls, fail.mails, fail.posts], [off.calls, off.mails, off.posts]);
+    assert.ok(JSON.parse(off.mails).length === 1, 'the temp check went out');
+    eq([off.day, fail.day, on.day.af], [null, null, { temp: 7 + 2 }]);  // its two reads of mentions returned 7 and 2
+  });
 };

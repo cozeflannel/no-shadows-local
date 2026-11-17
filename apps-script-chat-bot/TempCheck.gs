@@ -419,6 +419,7 @@ function tempCheckDo_(job, deadline, tokenOf) {
     `${mentions}&pageSize=${TC_TOP_}`,
     `${mentions}&pageSize=${TC_NEG_}&sentiment=negative`,
   ]);
+  if (typeof bwCountMentions_ === 'function') bwCountMentions_([got[4], got[5]].reduce((n, b) => n + ((b && Array.isArray(b.results)) ? b.results.length : 0), 0), 'temp');  // the one count of every feature's Brandwatch mentions (row 49)
   const sentiment = tcValues_(got[0]);
   const sources = tcSourceCounts_(got[1]);
   const mentionTypes = tcMentionTypeCounts_(got[2]);

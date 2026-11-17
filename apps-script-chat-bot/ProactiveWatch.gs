@@ -1303,6 +1303,7 @@ function pwBwMentions_(token, from, until, left) {
       out.err = 'Brandwatch\'s answer had no list of mentions';
       break;
     }
+    if (typeof bwCountMentions_ === 'function') bwCountMentions_(results.length, 'watch');  // the one count of every feature's Brandwatch mentions (row 49)
     let older = false;
     results.forEach(m => {
       const k = keyOf(m);

@@ -37,7 +37,19 @@ one line under it: what was built, the suite's count, and anything left out with
       49 rows (the help still starts at row 53); with no query ticked C49 shows only the ON text's waiting words (the
       note no longer repeats them); the "no mentions for N h" warning adds the plan's "(usually about N an hour)" from
       yesterday's count when there was one.
-- [ ] **2c** One count of every Brandwatch mention; C19's warning when a new source fails
+- [x] **2c** One count of every Brandwatch mention; C19's warning when a new source fails
+      Built `bwCountMentions_` (BrandwatchLive.gs; one line in the Watch's `pwBwMentions_`, one in Temp checks after its
+      two reads of mentions; the reader counts its own as it reads), shown in C49 ("the bot read N Brandwatch mentions
+      today, all features"), the log line and the tab's "all features" slot; and C19's ending " · ⚠️ a new source is
+      failing (row N)" (`nsrcFailingEnd_` in NewSources.gs, one call in BigQuery.gs `noteEarlyWave_`). New file
+      `test/switch_ed_c19_new_sources.test.js`. Suite: 1,222 of 1,222 passed. Choices: the count runs only while rows 49 and
+      19 are ON, so rows OFF store nothing new (the plan's E1 and E3); it says "since this row went ON" until it has run
+      over midnight Eastern, then "today", and stops (its numbers go, the reader's own day counts stay) when row 49 goes
+      OFF or waits for row 19; C49 shows it only when the Watch or Temp checks read some, so it never repeats the
+      reader's own number. Failing, for C19: the AMIE table stopped, paused or failing; Brandwatch live stopped,
+      failing, or paused because Brandwatch refused the key or the read (a wait for the shared login or a 429 is not a
+      failure). To keep every number whole, `edDayNoteText_` takes the ending as an option and keeps room for it (with
+      no ending its text is unchanged), beyond the one call the brief names.
 - [ ] **3a** Every post of a carded story is claimed
 - [ ] **3b** Control row 50: the AMIE table as a source of the Watch
 

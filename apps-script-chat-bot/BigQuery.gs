@@ -4023,6 +4023,9 @@ function edDayNumbers_(props, state) {
  */
 function edDayNoteText_(s, n, o) {
   const x = o || {};
+  // o.end (step 2d of the new sources, nsrcFailingEnd_): an ending after everything else, room kept for it; none: as before
+  const end = String(x.end || '');
+  const max = ED_C19_MAX_CHARS_ - end.length;
   const num = k => String(Math.max(0, Math.round(Number(n && n[k]) || 0)));
   const counts = `today: ${num('found')} found, ${num('cards')} card${num('cards') === '1' ? '' : 's'}, ` +
     `${num('under')} under another alert, ${num('letgo')} let go, ${num('never')} never reviewed, ${num('waiting')} waiting`;
@@ -4031,10 +4034,11 @@ function edDayNoteText_(s, n, o) {
   const stop = String(x.stop || '');
   const line = (why, last) => `last check ${(s && s.at) || ''}${why ? ` (${why})` : ''} · ${counts}${last ? ` · ${last}` : ''}`;
   const fits = [line(again, stop || (x.tab ? ED_TAB_POINTER_ : '')), line(again, stop), line(problem, stop), line(problem, '')]
-    .find(text => text.length <= ED_C19_MAX_CHARS_);
-  if (fits) return fits;
-  const room = ED_C19_MAX_CHARS_ - line('', '').length - 3;
-  return line(room > 1 ? truncate_(problem, room) : '', '');
+    .find(text => text.length <= max);
+  if (fits) return fits + end;
+  if (end && line('', '').length > max) return edDayNoteText_(s, n, Object.assign({}, x, { end: '' }));  // no room: no number is cut
+  const room = max - line('', '').length - 3;
+  return line(room > 1 ? truncate_(problem, room) : '', '') + end;
 }
 
 /**
@@ -4100,7 +4104,7 @@ function noteEarlyWave_(props, clusters, velocity, problem, o) {
     const stop = s.limit ? (s.queued >= s.limit ? `today's limit of ${s.limit} reviews is reached, more after midnight ET` : '')
       : s.queued >= EW_MAX_PER_DAY_ ? `daily cap of ${EW_MAX_PER_DAY_} reached, more tomorrow` : '';
     noteSwitch_('earlyWave', edDayNoteText_({ at: s.at || nowLabel_(), problem: s.problem }, edDayNumbers_(props, s),
-      { stop, tab: edTabPointed_() }));
+      { stop, tab: edTabPointed_(), end: typeof nsrcFailingEnd_ === 'function' ? nsrcFailingEnd_() : '' }));
   } catch (e) {
     ED_COUNT_UNSAVED_ = pending.concat(ED_COUNT_UNSAVED_);
     console.error('could not count early detection alerts: ' + ((e && e.message) || e));

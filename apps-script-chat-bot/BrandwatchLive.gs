@@ -143,7 +143,10 @@ function bwlDay_(props, now) {
   const day = bwlEtDay_(now);
   if (d.day !== day) {
     const prev = d.day && d.src && typeof d.src === 'object' ? d.src : null;
+    // the count of every feature's mentions (step 2c) ran over midnight: today's covers the whole day (as: 0)
+    const counting = !!d.day && (d.as === 0 || Number(d.as) > 0);
     d = { day, prev: prev || {} };
+    if (counting) d.as = 0;
   }
   ['calls', 'mentions', 'used', 'x', 'rep', 'lost'].forEach(k => { d[k] = Math.max(0, Number(d[k]) || 0); });
   ['nw', 'src', 'q', 'prev'].forEach(k => { d[k] = d[k] && typeof d[k] === 'object' && !Array.isArray(d[k]) ? d[k] : {}; });
@@ -461,6 +464,7 @@ function bwlRead_(token, queries, sources, cfg, st, day, now, left) {
       }
       out.n += results.length;
       day.mentions += results.length;
+      bwlCountInto_(day, results.length, 'live', now);
       let fresh = 0;
       results.forEach(m => {
         const at = pwBwTime_(m && m.added);
@@ -665,6 +669,7 @@ function bwlParcelDrop_(parts) {
  */
 function bwLiveOff_(sw) {
   try {
+    bwlCountsStop_();
     if (typeof ewsNewSourceOff_ === 'function') ewsNewSourceOff_('bwl', sw || {});
     const props = PropertiesService.getScriptProperties();
     const raw = props.getProperty(BWL_STATE_PROP_);
@@ -769,8 +774,9 @@ function bwlReadLog_(out, st, day) {
   const login = st.login ? `login ${st.login.used}/${st.login.limit || '?'}` : 'login unknown';
   if (o.stop) return `bw live read: stopped: ${o.stop.why}`;
   if (o.fail) return `bw live read: ${o.fail.why}`;
+  const all = bwlAllFeatures_(day, 'log');
   return `bw live read: ${o.n || 0} mentions, ${o.calls || 0} call${o.calls === 1 ? '' : 's'}, ${login}, ` +
-    `today ${nsrcNum_(day.mentions)} mentions (this reader)`;
+    `today ${nsrcNum_(day.mentions)} mentions${all ? `, ${all}` : ''}`;
 }
 
 /**
@@ -887,7 +893,8 @@ function bwlNote_(o) {
   const most = nsrcMedianBucket_(day.dl);
   const usual = most >= 0 ? `usually ${['within 15 min', '15-60 min', '1-3 h', '3-12 h', 'over 12 h'][most]} after posting` : '';
   const capped = Number(tk.of) > Number(tk.n) ? `${nsrcNum_(tk.n)} of ${nsrcNum_(tk.of)} ticked queries read (at most ${nsrcNum_(tk.n)})` : '';
-  const parts = warning ? [warning, read, counts, short] : [read, counts, short, capped, usual, `${NSRC_TAB_} tab`];
+  const all = bwlAllFeatures_(day, 'note');
+  const parts = warning ? [warning, read, counts, short] : [read, counts, short, all, capped, usual, `${NSRC_TAB_} tab`];
   let note = '';
   let haveCounts = false;
   parts.filter(Boolean).forEach((p, i) => {
@@ -927,7 +934,7 @@ function nsrcBwlRow_(o) {
     'none today',
     `${nsrcNum_(Object.keys(day.nw || {}).reduce((n, k) => n + (Number(day.nw[k]) || 0), 0))} / ${nsrcNum_(day.x)} / —`,
     `${nsrcNum_(s.st)} / ${nsrcNum_(s.sb)} / ${nsrcNum_(s.lf)} (${nsrcNum_(s.lfs)} / ${nsrcNum_(s.lfn)})`,
-    `${nsrcNum_(day.calls)} / ${nsrcNum_(day.mentions)} of ${nsrcNum_(BWL_ACCOUNT_DAY_)} (the account's allowance) / — · shared login: ${login}`,
+    `${nsrcNum_(day.calls)} / ${nsrcNum_(day.mentions)} of ${nsrcNum_(BWL_ACCOUNT_DAY_)} (the account's allowance) / ${bwlAllFeatures_(day, 'tab') || '—'} · shared login: ${login}`,
     '—',
   ];
 }
@@ -963,3 +970,77 @@ function bwlWriteNote_(st, day, now) {
     noteSwitch_('edBwLive', bwlNote_({ st: s, day: day || bwlDay_(props, now), now, stories }));
   } catch (e) { /* the note waits for the next look */ }
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// One count of every Brandwatch mention the bot reads, all features (the plan's Q3; step 2c)
+// ---------------------------------------------------------------------------------------------------------------
+
+/** The features that read Brandwatch's mentions: this reader, the Watch (ProactiveWatch.gs), Temp checks (TempCheck.gs). */
+const BWL_FEATURES_ = ['live', 'watch', 'temp'];
+
+/**
+ * Adds `n` mentions read by `feature` to `day` (BWL_DAY: af, by feature), and keeps when the count began (as: ms; 0 when
+ * it covers the whole day) unless it already runs. Pure (but for `day`).
+ */
+function bwlCountInto_(day, n, feature, now) {
+  const add = Math.max(0, Math.round(Number(n) || 0));
+  if (!day || !add || BWL_FEATURES_.indexOf(feature) < 0) return;
+  day.af = day.af && typeof day.af === 'object' && !Array.isArray(day.af) ? day.af : {};
+  day.af[feature] = (Number(day.af[feature]) || 0) + add;
+  if (!(day.as === 0 || Number(day.as) > 0)) day.as = Number(now) || Date.now();
+}
+
+/**
+ * Counts `n` mentions Brandwatch returned to `feature` ('watch' or 'temp'; this reader counts its own as it reads), one
+ * line in each of those readers. Counted only while rows 49 and 19 are ON (the run's switches, ewsRunSwitches_), so rows
+ * that are OFF store nothing new; the count then says "since this row went ON" until it has run over midnight Eastern.
+ * Never throws and returns nothing: a failing write loses the count, never the reader's answer.
+ */
+function bwCountMentions_(n, feature) {
+  try {
+    if (!(Number(n) > 0) || BWL_FEATURES_.indexOf(feature) < 0) return;
+    const sw = typeof ewsRunSwitches_ === 'function' ? ewsRunSwitches_() : {};
+    if (sw.edBwLive !== true || sw.earlyWave !== true) return;
+    const props = PropertiesService.getScriptProperties();
+    const now = Date.now();
+    const day = bwlDay_(props, now);
+    bwlCountInto_(day, n, feature, now);
+    bwlSaveDay_(props, day);
+  } catch (e) { /* the count waits; the feature's own read goes on */ }
+}
+
+/**
+ * Row 49 OFF, or waiting for row 19: the count of every feature's mentions stops (BWL_DAY's af and as go; this reader's
+ * own day counts stay), so the next ON starts it afresh. Writes only when there is a count to stop. Never throws.
+ */
+function bwlCountsStop_() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const raw = props.getProperty(BWL_DAY_PROP_);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    if (!d || typeof d !== 'object' || (d.af === undefined && d.as === undefined)) return;
+    delete d.af;
+    delete d.as;
+    props.setProperty(BWL_DAY_PROP_, JSON.stringify(d));
+  } catch (e) { /* stopped at the next look */ }
+}
+
+/**
+ * The count of every feature's mentions in words, '' when none was counted: `form` 'note' (C49: "the bot read 41,200
+ * Brandwatch mentions today, all features", only when another feature read some, so the note never says this reader's
+ * number twice), 'log' ("all features 41,200") or 'tab' ("41,200"); each says "since this row went ON" while the count
+ * has not yet run over midnight Eastern. Pure.
+ */
+function bwlAllFeatures_(day, form) {
+  const af = (day && day.af) || {};
+  const all = BWL_FEATURES_.reduce((n, k) => n + (Number(af[k]) || 0), 0);
+  if (!(all > 0)) return '';
+  const since = day.as === 0 ? '' : ' since this row went ON';
+  if (form === 'note') {
+    if (!((Number(af.watch) || 0) + (Number(af.temp) || 0) > 0)) return '';
+    return `the bot read ${nsrcNum_(all)} Brandwatch mentions ${since ? since.trim() : 'today'}, all features`;
+  }
+  return form === 'log' ? `all features ${nsrcNum_(all)}${since}` : `${nsrcNum_(all)}${since}`;
+}
+

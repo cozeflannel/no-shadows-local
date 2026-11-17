@@ -468,6 +468,7 @@ function nsrcAfterCheck_(props, st, nx, now, read) {
  * writes only when row 48 has a note. Never throws.
  */
 function nsrcWaiting_(key) {
+  if (key === 'edBwLive' && typeof bwlCountsStop_ === 'function') bwlCountsStop_();  // and its count of every feature's mentions stops
   try {
     const notes = JSON.parse(PropertiesService.getScriptProperties().getProperty(SWITCH_NOTES_PROP_) || '{}') || {};
     if (notes[key] && notes[key].text) noteSwitch_(key, '');
@@ -606,3 +607,33 @@ function nsrcBwlQueryRows_(list, day, now) {
     console.warn(`New sources: couldn't write Brandwatch's part of the ${NSRC_TAB_} tab: ${nsrcScrub_((e && e.message) || e, 200)}`);
   }
 }
+
+/**
+ * The ending of Control C19's note while a new source is ON and failing (step 2d): " · ⚠️ a new source is failing (row
+ * N)", N the lowest such row: 48 while the AMIE table is stopped, paused or failing (ewsAmiStatus_ with a problem), 49
+ * while Brandwatch live is stopped, failing, or paused because Brandwatch refused the key or the read (a pause for the
+ * shared login's count or a 429 is waiting, not failing). '' otherwise, and always while rows 48 to 50 are OFF, so C19
+ * is then what it was. Never throws.
+ */
+function nsrcFailingEnd_() {
+  try {
+    const sw = typeof ewsRunSwitches_ === 'function' ? ewsRunSwitches_() : {};
+    if (!sw.edAmie && !sw.edBwLive) return '';
+    const now = Date.now();
+    let row = 0;
+    if (sw.edAmie) {
+      const s = ewsAmiStatus_(now);
+      if (['stopped', 'paused', 'failing'].indexOf(s.state) >= 0) row = 48;
+    }
+    if (!row && sw.edBwLive) {
+      const raw = PropertiesService.getScriptProperties().getProperty(BWL_STATE_PROP_);
+      const st = raw ? JSON.parse(raw) : null;
+      const p = st && st.pause && Number(st.pause.until) > now ? st.pause : null;
+      if (st && (st.stop || st.fail || (p && (p.kind === 'key' || p.kind === 'refused')))) row = 49;
+    }
+    return row ? ` · ⚠️ a new source is failing (row ${row})` : '';
+  } catch (e) {
+    return '';
+  }
+}
+

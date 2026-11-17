@@ -358,7 +358,11 @@ module.exports = H => {
     const before = w.day();
     eq([before.mentions, before.src.reddit, before.calls > 0], [4, 4, true]);
     w.t.bot.bwLiveOff_();
-    eq([w.state(), w.t.g.cache.has('ews:bwl:p:0'), w.day()], [null, false, before]);
+    // (step 2c) only the count of every feature's mentions (af, as) stops at OFF; this reader's own day counts stay
+    const own = Object.assign({}, before);
+    delete own.af;
+    delete own.as;
+    eq([w.state(), w.t.g.cache.has('ews:bwl:p:0'), w.day()], [null, false, own]);
     w.t.g.clock.now += 26 * 60 * MIN;
     w.bw.mentions = seq(2, w.now() - 4 * MIN, MIN);
     w.run();
@@ -694,5 +698,92 @@ module.exports = H => {
     cases.forEach(c => run(Object.assign({}, healthy, c), day));
     // most of one source without its words: the longest source name
     run(healthy, Object.assign({}, day, { nw: { facebook_public: 999999 } }));
+  });
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // Step 2c: one count of every Brandwatch mention the bot reads, all features
+  // -----------------------------------------------------------------------------------------------------------------
+
+  test('bw live (2c): one count of every Brandwatch mention the bot reads, by feature (this reader, the Watch, Temp checks), kept in BWL_DAY only while rows 49 and 19 are ON; C49, the log line and the tab say "since this row went ON" until the count has run over midnight Eastern, then "today"', () => {
+    const w = world();
+    const b = w.t.bot;
+    // rows OFF, or row 19 OFF: nothing counted, nothing stored
+    [{}, { edBwLive: true }, { earlyWave: true }].forEach(sw => { b.ewsRunSwitches_(sw); b.bwCountMentions_(20, 'watch'); });
+    eq(w.t.g.props.get('BWL_DAY') || null, null);
+    b.ewsRunSwitches_(ON);
+    const t0 = w.now();
+    b.bwCountMentions_(20, 'watch');
+    b.bwCountMentions_(5, 'temp');
+    [[0, 'watch'], [-3, 'temp'], ['x', 'watch'], [4, 'another'], [null, 'temp']].forEach(([n, f]) => b.bwCountMentions_(n, f));
+    eq([w.day().af, w.day().as], [{ watch: 20, temp: 5 }, t0]);
+    // the reader counts its own as it reads
+    w.ready([2005000001]);
+    w.bw.mentions = seq(3, w.now() - 8 * MIN, MIN);
+    w.run(null, w.now() + 11 * MIN);
+    eq(w.day().af, { watch: 20, temp: 5, live: 3 });
+    const note = b.bwlNote_({ st: w.state(), day: w.day(), now: w.now() });
+    assert.match(note, /^read .*: 3 new · today: 3 mentions, 0 used · the bot read 28 Brandwatch mentions since this row went ON, all features · /);
+    eq(b.bwlReadLog_({ n: 3, calls: 1 }, w.state(), w.day()), 'bw live read: 3 mentions, 1 call, login 37/600, today 3 mentions, all features 28 since this row went ON');
+    assert.ok(b.nsrcBwlRow_({ st: w.state(), day: w.day(), now: w.now() }).join(' | ').includes('3 of 600,000 (the account\'s allowance) / 28 since this row went ON · shared login'));
+    // with only this reader's mentions the note doesn't say the same number twice
+    const own = Object.assign({}, w.day(), { af: { live: 3 } });
+    assert.ok(!/all features/.test(b.bwlNote_({ st: w.state(), day: own, now: w.now() })));
+    // past midnight Eastern the count starts at 0 and covers the whole day: "today"
+    w.t.g.clock.now = Date.UTC(2026, 9, 15, 4, 1);
+    b.bwCountMentions_(7, 'watch');
+    eq([w.day().day, w.day().af, w.day().as, w.day().mentions], ['2026-10-15', { watch: 7 }, 0, 0]);
+    eq(b.bwlReadLog_({ n: 0, calls: 1 }, w.state(), w.day()), 'bw live read: 0 mentions, 1 call, login 37/600, today 0 mentions, all features 7');
+    w.ready([2005000001]);
+    const later = b.bwlNote_({ st: Object.assign(w.state(), { lr: { at: w.now(), n: 0 }, lm: w.now() }), day: w.day(), now: w.now() });
+    assert.match(later, / · the bot read 7 Brandwatch mentions today, all features/);
+  });
+
+  test('bw live (2c): the count stops when row 49 goes OFF (bwLiveOff_) or waits for row 19, keeping this reader\'s own day counts; ON again it starts afresh "since this row went ON"; a day record that was never counting is never written', () => {
+    const w = world();
+    const b = w.t.bot;
+    b.ewsRunSwitches_(ON);
+    b.bwCountMentions_(20, 'watch');
+    const d = Object.assign(w.day(), { mentions: 40, used: 9 });
+    b.bwlSaveDay_(b.PropertiesService.getScriptProperties(), d);
+    w.t.g.clock.now += 5 * MIN;
+    b.bwLiveOff_({});
+    eq([w.day().af, w.day().as, w.day().mentions, w.day().used], [undefined, undefined, 40, 9]);
+    const raw = w.t.g.props.get('BWL_DAY');
+    b.bwLiveOff_({});  // nothing more to stop: not written again
+    eq(w.t.g.props.get('BWL_DAY'), raw);
+    b.ewsRunSwitches_(ON);
+    b.bwCountMentions_(4, 'temp');
+    eq([w.day().af, w.day().as], [{ temp: 4 }, w.now()]);
+    // row 19 OFF while row 49 is ON: the run says it waits (ewsRunSwitches_), and the count stops too
+    b.ewsRunSwitches_({ edBwLive: true });
+    eq([w.day().af, w.day().as, w.day().mentions], [undefined, undefined, 40]);
+  });
+
+  test('bw live (2c): the Watch\'s Brandwatch reader (pwBwMentions_) counts every mention Brandwatch returned to it while rows 49 and 19 are ON; its requests and its result are byte for byte those with the rows OFF, also when the count cannot be saved', () => {
+    const run = mode => {
+      const w = world();
+      const b = w.t.bot;
+      const until = w.now() - MIN;
+      w.bw.mentions = Array.from({ length: 25 }, (_, i) => bwMention(i + 1, until - (i + 1) * 30 * 1000, { queryId: b.ev('PW_BW_QUERY_') }));
+      b.ewsRunSwitches_(mode === 'off' ? {} : ON);
+      if (mode === 'fail') {
+        const set = w.t.g.props.set.bind(w.t.g.props);
+        w.t.g.props.set = (k, v) => { if (k === 'BWL_DAY') throw new Error('Service invoked too many times: properties'); return set(k, v); };
+      }
+      const props = b.PropertiesService;
+      if (mode === 'throw') b.PropertiesService = { getScriptProperties: () => { throw new Error('Service invoked too many times: properties'); } };
+      const out = b.pwBwMentions_('TOKEN', until - 20 * MIN, until, () => 10 * MIN);
+      b.PropertiesService = props;
+      return { calls: w.bw.calls.map(c => c.url), out: JSON.stringify(out), day: JSON.parse(w.t.g.props.get('BWL_DAY') || 'null') };
+    };
+    const off = run('off');
+    const on = run('on');
+    const fail = run('fail');
+    const thrown = run('throw');  // the properties service itself throws: the count gives up, the read goes on
+    eq([on.calls, on.out], [off.calls, off.out]);
+    eq([fail.calls, fail.out], [off.calls, off.out]);
+    eq([thrown.calls, thrown.out], [off.calls, off.out]);
+    eq([off.calls.length, JSON.parse(off.out).list.length], [2, 25]);  // a first page of 20, then a page of 100 that held all 25
+    eq([off.day, fail.day, thrown.day, on.day.af], [null, null, null, { watch: 45 }]);
   });
 };

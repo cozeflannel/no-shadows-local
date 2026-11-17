@@ -518,7 +518,11 @@ module.exports = H => {
     checks(w, 1);  // the read leaves a parcel for the next check
     const parcelItems = () => Array.from(t.g.cache.keys()).filter(k => k.startsWith('ews:bwl:p:'));
     eq([!!JSON.parse(t.g.props.get('BWL_STATE')).parcel, parcelItems().length > 0, JSON.parse(t.g.props.get('BWL_DAY')).mentions], [true, true, 3]);
-    const day = t.g.props.get('BWL_DAY');
+    // the day's own counts; the count of every feature's mentions (af, as, step 2c) stops at OFF
+    const dayOwn = JSON.parse(t.g.props.get('BWL_DAY'));
+    delete dayOwn.af;
+    delete dayOwn.as;
+    const day = JSON.stringify(dayOwn);
     sh.getRange(49, 2).setValue('OFF');
     checks(w, 1);
     const tab = t.sheet().getSheetByName('New sources');
