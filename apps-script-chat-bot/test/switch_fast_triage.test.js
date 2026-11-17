@@ -1233,7 +1233,7 @@ module.exports = function (H) {
 
     // 2. Control C19 ON text derives dynamically from EW_EVERY_MS_
     const ewSwitch = bot.ev('CONTROL_SWITCHES_').find(s => s.key === 'earlyWave');
-    assert.match(ewSwitch.on(), /^✓ ON: every 15 min, groups new low-reach posts/);
+    assert.match(ewSwitch.on(), /^✓ ON: every 15 min, groups new posts from small accounts into stories/);
     eq(
       bot.ev('(() => { const was = EW_EVERY_MS_; return `every ${Math.round((5 * 60 * 1000) / 60000)} min (now ${Math.round(was / 60000)} min)`; })()'),
       'every 5 min (now 15 min)'
