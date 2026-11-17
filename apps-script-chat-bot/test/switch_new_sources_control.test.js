@@ -1,9 +1,10 @@
-// The new sources' Control rows (Control.gs, Main.gs, EarlyWaveSource.gs): row 48, "Early Detection: also read the AMIE
-// table", written OFF and never set ON by the bot; "How it works" moved once to row 53 (rows 49, 50 and 51 kept blank
-// for three more switches, row 52 the blank row above the help); the seam that tells Early Detection's source which new
-// rows are ON (ewsRunSwitches_, set right after the Control tab is read); and what a row turned OFF forgets
-// (ewsAmieOff_). With row 48 OFF nothing new happens anywhere; with it ON the AMIE table is read by a job of its own
-// (its tests are in switch_ed_amie.test.js), and column C says so plainly.
+// The new sources' Control rows (Control.gs, Main.gs, EarlyWaveSource.gs, BrandwatchLive.gs): row 48, "Early
+// Detection: also read the AMIE table", and row 49, "Early Detection: also read Brandwatch live (not X)", each written
+// OFF and never set ON by the bot; "How it works" moved once to row 53 (rows 50 and 51 kept blank for two more
+// switches, row 52 the blank row above the help); the seam that tells Early Detection's source which new rows are ON
+// (ewsRunSwitches_, set right after the Control tab is read); and what a row turned OFF forgets (ewsAmieOff_,
+// bwLiveOff_). With rows 48 and 49 OFF nothing new happens anywhere; with one ON its source is read (the AMIE table's
+// tests are in switch_ed_amie.test.js, Brandwatch live's in switch_bw_live.test.js), and column C says so plainly.
 'use strict';
 
 module.exports = H => {
@@ -15,6 +16,9 @@ module.exports = H => {
   const WAITING = '✓ ON, but waiting: it needs Early wave & velocity check (row 19) ON, which it adds posts to';
   const ON_TEXT = '✓ ON: each Early Detection check also reads new rows of the AMIE table (Brandwatch\'s alert feeds, X with its words)';
   const ON_OFF = ['ON', 'OFF'];
+  // row 49 (step 2b of the new sources): Brandwatch live, written OFF
+  const LABEL49 = 'Early Detection: also read Brandwatch live (not X)';
+  const OFF49 = 'OFF (Early Detection does not call Brandwatch)';
   const cells = (sh, r) => [1, 2, 3].map(c => sh.cell(r, c));
   const lists = sh => Object.fromEntries(Object.entries(sh.validations).map(([k, v]) => [k, v && v.values]));
   const EWS_COLS = ['kind', 'lane', 'mid', 'url', 'platform', 'author', 'audience', 'eng', 'posted_ms', 'seen_ms', 'txt', 'topic',
@@ -61,14 +65,14 @@ module.exports = H => {
   // E27: the row, its help line, and the help at row 53
   // -----------------------------------------------------------------------------------------------------------------
 
-  test('new sources control (E27): a new Control tab has row 48, "Early Detection: also read the AMIE table", OFF with its ON / OFF dropdown and what OFF means in C48 (starting "OFF ("); rows 49-52 are blank and "How it works" is at row 53 with a help line for the row', () => {
+  test('new sources control (E27): a new Control tab has row 48, "Early Detection: also read the AMIE table", OFF with its ON / OFF dropdown and what OFF means in C48 (starting "OFF ("), row 49 (Brandwatch live) the same; rows 50-52 are blank and "How it works" is at row 53 with a help line for each row', () => {
     const { t, sh } = world();
     eq(cells(sh, 48), [LABEL, 'OFF', OFF_TEXT]);
     assert.match(sh.cell(48, 3), /^OFF \(/);
     eq(sh.validations['48,2'].values, ON_OFF);
-    eq([cells(sh, 49), cells(sh, 50), cells(sh, 51), cells(sh, 52), sh.cell(53, 1)], [['', '', ''], ['', '', ''], ['', '', ''], ['', '', ''], 'How it works']);
-    eq([sh.validations['49,2'], sh.validations['50,2'], sh.validations['51,2'], sh.validations['52,2']], [undefined, undefined, undefined, undefined]);
-    eq([B.ev('CONTROL_HELP_ROW_'), B.switchRows_().slice(-2), B.ev('CONTROL_SWITCHES_').slice(-1)[0].key], [53, [46, 48], 'edAmie']);
+    eq([cells(sh, 49), cells(sh, 50), cells(sh, 51), cells(sh, 52), sh.cell(53, 1)], [[LABEL49, 'OFF', OFF49], ['', '', ''], ['', '', ''], ['', '', ''], 'How it works']);
+    eq([sh.validations['49,2'].values, sh.validations['50,2'], sh.validations['51,2'], sh.validations['52,2']], [ON_OFF, undefined, undefined, undefined]);
+    eq([B.ev('CONTROL_HELP_ROW_'), B.switchRows_().slice(-3), B.ev('CONTROL_SWITCHES_').slice(-2).map(s => s.key)], [53, [46, 48, 49], ['edAmie', 'edBwLive']]);
     const help = B.ev('CONTROL_HELP_');
     eq(help.map((_, i) => sh.cell(54 + i, 1)), help);
     assert.ok(B.ev('CONTROL_HELP_ROWS_') >= help.length + 1, 'the rows kept for the help hold its title and every line');
@@ -76,8 +80,13 @@ module.exports = H => {
     eq(line.length, 1);
     assert.match(line[0], /row 48, OFF until you turn it ON; it needs Early wave & velocity check \(row 19\) ON/);
     assert.match(line[0], /never go to S-F Burson/);
-    assert.ok(help.some(l => /^• Rows 11-24, 27-29, 32, 34, 36-40, 46 and 48 are switches/.test(l)));
-    assert.ok(help.some(l => /^• Early wave & velocity check: row 19.*with row 48 ON, posts from the AMIE table can start a story too/.test(l)));
+    assert.ok(help.some(l => /^• Rows 11-24, 27-29, 32, 34, 36-40, 46, 48 and 49 are switches/.test(l)));
+    assert.ok(help.some(l => /^• Early wave & velocity check: row 19.*with row 48 or 49 ON, posts from the AMIE table or Brandwatch can start a story too/.test(l)));
+    const line49 = help.filter(l => l.startsWith(`• ${LABEL49}: `));
+    eq(line49.length, 1);
+    assert.match(line49[0], /row 49, OFF until you turn it ON; it needs Early wave & velocity check \(row 19\) ON/);
+    assert.match(line49[0], /never X and never LinkedIn/);
+    assert.match(line49[0], /never go to S-F Burson/);
     // every switch's OFF text starts "OFF (" and every label has its help line (row 48's too)
     B.ev('CONTROL_SWITCHES_').forEach(s => {
       assert.match(B.switchOffText_(s), /^OFF \(/, s.key);
@@ -88,10 +97,10 @@ module.exports = H => {
     eq([cells(sh, 48), t.bot.readControl_(sh).switches.edAmie], [[LABEL, 'OFF', OFF_TEXT], false]);
   });
 
-  test('new sources control (E27): a Control tab from before row 48 (row 48 blank, "How it works" at row 49, help lines from row 50) gets row 48 OFF on its next run without setup(); rows 49-52 are left blank (no old help text), the help is at row 53, and no row from 11 to 47 moves or changes (values people set, switches ON, dropdowns)', () => {
+  test('new sources control (E27): a Control tab from before row 48 (row 48 blank, "How it works" at row 49, help lines from row 50) gets rows 48 and 49 OFF on its next run without setup(); rows 50-52 are left blank (no old help text), the help is at row 53, and no row from 11 to 47 moves or changes (values people set, switches ON, dropdowns)', () => {
     const { t, sh } = world();
     // the tab as the build before this one left it: row 48 blank, "How it works" at row 49, its help from row 50
-    const oldHelp = B.ev('CONTROL_HELP_').filter(l => !l.startsWith(`• ${LABEL}: `)).concat(['• An old help line']);
+    const oldHelp = B.ev('CONTROL_HELP_').filter(l => !l.startsWith(`• ${LABEL}: `) && !l.startsWith(`• ${LABEL49}: `)).concat(['• An old help line']);
     sh.rows = sh.rows.slice(0, 47);
     sh.rows[47] = [''];
     sh.rows[48] = ['How it works'];
@@ -108,9 +117,9 @@ module.exports = H => {
     const lists0 = lists(sh);
     t.poll();
     eq(JSON.stringify(above()), before);
-    eq(lists(sh), Object.assign({}, lists0, { '48,2': ON_OFF }));
+    eq(lists(sh), Object.assign({}, lists0, { '48,2': ON_OFF, '49,2': ON_OFF }));
     eq(cells(sh, 48), [LABEL, 'OFF', OFF_TEXT]);
-    eq([cells(sh, 49), cells(sh, 50), cells(sh, 51), cells(sh, 52), sh.cell(53, 1)], [['', '', ''], ['', '', ''], ['', '', ''], ['', '', ''], 'How it works']);
+    eq([cells(sh, 49), cells(sh, 50), cells(sh, 51), cells(sh, 52), sh.cell(53, 1)], [[LABEL49, 'OFF', OFF49], ['', '', ''], ['', '', ''], ['', '', ''], 'How it works']);
     const help = B.ev('CONTROL_HELP_');
     eq(help.map((_, i) => sh.cell(54 + i, 1)), help);
     for (let r = 54 + help.length; r <= sh.rows.length; r++) eq(cells(sh, r), ['', '', ''], `row ${r}`);
@@ -136,17 +145,19 @@ module.exports = H => {
   });
 
   // -----------------------------------------------------------------------------------------------------------------
-  // The help at row 53 (rows 49-51 kept for three switches, row 52 the blank row above it): one move for every live tab,
-  // at its next run, without setup(). Only the bot's own old help is cleared from rows 49-52; a person's cells stay.
+  // The help at row 53 (row 49 Brandwatch live's switch, rows 50-51 kept for two more, row 52 the blank row above it):
+  // one move for every live tab, at its next run, without setup(). Only the bot's own old help is cleared from rows
+  // 50-52; a person's cells stay.
   // -----------------------------------------------------------------------------------------------------------------
 
   // The first build's help lines: today's, without row 48's line and without what row 48 added to two lines
   const firstBuildHelp = () => B.ev('CONTROL_HELP_')
-    .filter(l => !l.startsWith(`• ${LABEL}: `))
-    .map(l => l.replace('; with row 48 ON, posts from the AMIE table can start a story too', '')
-      .replace('36-40, 46 and 48 are switches', '36-40 and 46 are switches'));
-  // A person's cells beside the old help: column B and C of rows 49-52, and one column-A note of their own in row 51
-  const PEOPLE = { '49,2': 'note B49', '49,3': 'note C49', '50,2': 'note B50', '51,3': 'note C51', '52,2': 'note B52', '52,3': 'note C52' };
+    .filter(l => !l.startsWith(`• ${LABEL}: `) && !l.startsWith(`• ${LABEL49}: `))
+    .map(l => l.replace('; with row 48 or 49 ON, posts from the AMIE table or Brandwatch can start a story too', '')
+      .replace('36-40, 46, 48 and 49 are switches', '36-40 and 46 are switches'));
+  // A person's cells beside the old help: column B and C of rows 50-52 (row 49 is a switch since step 2b of the new
+  // sources: its A to C are written as every new switch row's are), and one column-A note of their own in row 51
+  const PEOPLE = { '50,2': 'note B50', '51,3': 'note C51', '52,2': 'note B52', '52,3': 'note C52' };
   const putPeople = sh => Object.entries(PEOPLE).forEach(([k, v]) => { const [r, c] = k.split(',').map(Number); sh.getRange(r, c).setValue(v); });
   const peopleKept = sh => Object.keys(PEOPLE).map(k => { const [r, c] = k.split(',').map(Number); return sh.cell(r, c); });
   const helpAt53 = (sh, when) => {
@@ -156,10 +167,10 @@ module.exports = H => {
     eq(sh.rows.filter(r => String(r[0]).trim() === 'How it works').length, 1, when);
   };
 
-  test('new sources control (help at row 53): a tab from the first build ("How it works" at row 49, the first build\'s help lines from row 50, row 48 blank) gets row 48 OFF, rows 49-52 with no old help and the help at row 53 at its next run without setup(); the old help is cleared only where it was (a person\'s note in A51 and their cells in B49:C52 stay); rows 11-47 do not change', () => {
+  test('new sources control (help at row 53): a tab from the first build ("How it works" at row 49, the first build\'s help lines from row 50, row 48 blank) gets rows 48 and 49 OFF, rows 50-52 with no old help and the help at row 53 at its next run without setup(); the old help is cleared only where it was (a person\'s note in A51 and their cells in B50:C52 stay); rows 11-47 do not change', () => {
     const { t, sh } = world();
     const old = firstBuildHelp();
-    eq(old.length, 46);
+    eq(old.length, 46);  // today's 48 lines less rows 48's and 49's
     assert.ok(old.some(l => l.startsWith('• The Early Detection tab lists every story')), 'the first build\'s line for its tab');
     sh.rows = sh.rows.slice(0, 47);
     sh.rows[47] = [''];
@@ -175,7 +186,8 @@ module.exports = H => {
     eq(above(), before);
     eq(cells(sh, 48), [LABEL, 'OFF', OFF_TEXT]);
     eq(sh.validations['48,2'].values, ON_OFF);
-    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], ['', '', 'Ask the leads before turning row 19 ON', '']);
+    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], [LABEL49, '', 'Ask the leads before turning row 19 ON', '']);
+    eq(cells(sh, 49), [LABEL49, 'OFF', OFF49]);
     eq(peopleKept(sh), Object.values(PEOPLE));
     helpAt53(sh, 'first build');
     assert.ok(!sh.rows.slice(48, 52).some(r => /^•/.test(String(r[0]))), 'no old help line in rows 49-52');
@@ -183,20 +195,21 @@ module.exports = H => {
     // and it stays so: setup() and more runs change nothing there
     t.bot.setup();
     t.poll();
-    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], ['', '', 'Ask the leads before turning row 19 ON', '']);
+    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], [LABEL49, '', 'Ask the leads before turning row 19 ON', '']);
     eq(peopleKept(sh), Object.values(PEOPLE));
     helpAt53(sh, 'after setup()');
   });
 
-  test('new sources control (help at row 53): a tab with the help at row 52 (rows 49-51 blank, as the first stage of the new sources wrote it) gets the help at row 53 at its next run without setup(); row 52\'s old title is cleared, a person\'s cells in B49:C52 stay, and row 48 keeps a person\'s ON', () => {
+  test('new sources control (help at row 53): a tab with the help at row 52 (rows 49-51 blank, as the first stage of the new sources wrote it) gets the help at row 53 at its next run without setup(); row 52\'s old title is cleared, a person\'s cells in B50:C52 stay, row 49 gets its switch, and row 48 keeps a person\'s ON', () => {
     const { t, sh } = world();
     const help = B.ev('CONTROL_HELP_');
+    const stage1Help = help.filter(l => !l.startsWith(`• ${LABEL49}: `));
     sh.rows = sh.rows.slice(0, 48);
     sh.rows[48] = [''];
     sh.rows[49] = [''];
     sh.rows[50] = [''];
     sh.rows[51] = ['How it works'];
-    help.forEach((l, i) => { sh.rows[52 + i] = [l]; });
+    stage1Help.forEach((l, i) => { sh.rows[52 + i] = [l]; });
     putPeople(sh);
     sh.getRange(48, 2).setValue('ON');
     const above = () => JSON.stringify(sh.rows.slice(10, 48).map(r => [r[0], r[1]]));
@@ -204,15 +217,15 @@ module.exports = H => {
     t.poll();
     eq(above(), before);
     eq([sh.cell(48, 2), t.bot.readControl_(sh).switches.edAmie], ['ON', true]);
-    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], ['', '', '', '']);
+    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], [LABEL49, '', '', '']);
     eq(peopleKept(sh), Object.values(PEOPLE));
     helpAt53(sh, 'help at row 52');
     for (let r = 54 + help.length; r <= sh.rows.length; r++) eq(cells(sh, r), ['', '', ''], `row ${r}`);
   });
 
-  test('new sources control (help at row 53): a new tab has rows 49-52 blank and the help at row 53; writing the help again writes nothing in rows 49-52 (nothing of the bot\'s is there)', () => {
+  test('new sources control (help at row 53): a new tab has row 49 OFF, rows 50-52 blank and the help at row 53; writing the help again writes nothing in rows 49-52', () => {
     const { t, sh } = world();
-    eq([cells(sh, 49), cells(sh, 50), cells(sh, 51), cells(sh, 52)], [['', '', ''], ['', '', ''], ['', '', ''], ['', '', '']]);
+    eq([cells(sh, 49), cells(sh, 50), cells(sh, 51), cells(sh, 52)], [[LABEL49, 'OFF', OFF49], ['', '', ''], ['', '', ''], ['', '', '']]);
     helpAt53(sh, 'new tab');
     const writes = [];
     const orig = sh.getRange.bind(sh);
@@ -248,14 +261,13 @@ module.exports = H => {
     Object.entries(notes).forEach(([k, v]) => { const [r, c] = k.split(',').map(Number); sh.getRange(r, c).setValue(v); });
     t.g.logs.length = 0;
     t.poll();
-    eq(helpEnd(), 100);
+    eq(helpEnd(), 101);  // (100 before row 49's help line: the help area grows by a row for each new switch's line)
     helpAt53(sh, 'first build with notes');
-    eq([sh.cell(96, 2), sh.cell(101, 1), sh.cell(102, 1), sh.cell(60, 2), sh.cell(70, 3)],
-      ['note B96', 'note A101', 'note A102', 'note B60', 'note C70']);
-    eq(notesBelow(sh, 100), ['note A101', 'note A102', 'note A96', 'note A97']);
-    eq([sh.cell(103, 1), sh.cell(104, 1)], ['note A96', 'note A97']);
+    eq([sh.cell(96, 2), sh.cell(102, 1), sh.cell(60, 2), sh.cell(70, 3)], ['note B96', 'note A102', 'note B60', 'note C70']);
+    eq(notesBelow(sh, 101), ['note A102', 'note A96', 'note A97', 'note A101']);
+    eq([sh.cell(103, 1), sh.cell(104, 1), sh.cell(105, 1)], ['note A96', 'note A97', 'note A101']);
     eq(t.g.logs.filter(l => /person's text there was kept below it/.test(l)),
-      ['Control tab: "How it works" now fills rows 53-100 of column A; a person\'s text there was kept below it (A96 to A103, A97 to A104)']);
+      ['Control tab: "How it works" now fills rows 53-101 of column A; a person\'s text there was kept below it (A96 to A103, A97 to A104, A101 to A105)']);
     const snap = JSON.stringify(sh.rows.slice(47));  // row 48 down (the status rows above change each run)
     t.poll();
     eq(JSON.stringify(sh.rows.slice(47)), snap, 'a second run');
@@ -266,7 +278,7 @@ module.exports = H => {
 
   test('new sources control (help at row 53): on a tab with the help at row 52 as the first stage of the new sources wrote it (46 lines, to row 98), a person\'s notes in A99 and A100 are kept below the help at its next run, in the first blank cells of column A below row 100 (a blank A101 first, then past the last row), unchanged and in order; a second run changes nothing', () => {
     const { t, sh } = world();
-    const stage1 = B.ev('CONTROL_HELP_').filter(l => !l.startsWith('• The Early Detection tab lists every story'));
+    const stage1 = B.ev('CONTROL_HELP_').filter(l => !l.startsWith('• The Early Detection tab lists every story') && !l.startsWith(`• ${LABEL49}: `));
     eq(stage1.length, 46);
     sh.rows = sh.rows.slice(0, 48);
     sh.rows[48] = [''];
@@ -281,8 +293,9 @@ module.exports = H => {
     sh.getRange(102, 1).setValue('note A102');
     t.poll();
     helpAt53(sh, 'first stage with notes');
-    eq([sh.cell(101, 1), sh.cell(101, 2), sh.cell(102, 1), sh.cell(103, 1)], ['note A99', 'note B101', 'note A102', 42]);
-    eq(notesBelow(sh, 100), ['note A99', 'note A102', 42]);
+    // (with the help to row 101 since row 49's help line, A101 is the help's: the notes go below it)
+    eq([sh.cell(101, 2), sh.cell(102, 1), sh.cell(103, 1), sh.cell(104, 1)], ['note B101', 'note A102', 'note A99', 42]);
+    eq(notesBelow(sh, 101), ['note A102', 'note A99', 42]);
     const snap = JSON.stringify(sh.rows.slice(47));  // row 48 down (the status rows above change each run)
     t.poll();
     eq(JSON.stringify(sh.rows.slice(47)), snap, 'a second run');
@@ -298,7 +311,7 @@ module.exports = H => {
       B.controlHelpOwn_('• Early wave is noisy today, ask Sam')],
     [true, true, false, false, false, true, true, true, false]);
     const { t, sh } = world();
-    const stage1 = B.ev('CONTROL_HELP_').filter(l => !l.startsWith('• The Early Detection tab lists every story'));
+    const stage1 = B.ev('CONTROL_HELP_').filter(l => !l.startsWith('• The Early Detection tab lists every story') && !l.startsWith(`• ${LABEL49}: `));
     sh.rows = sh.rows.slice(0, 48);
     sh.rows[48] = ['• Rows 11-24, 27-29, 32, 34, 36-40 and 46 are switches for what the bot may do on its own.'];
     sh.rows[49] = [''];
@@ -311,8 +324,8 @@ module.exports = H => {
     sh.getRange(100, 1).setValue('• my note under the help');
     t.poll();
     helpAt53(sh, 'bullet notes');
-    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], ['', '', '• my own bullet note', '']);
-    eq(notesBelow(sh, 100), ['• my note under the help']);
+    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], [LABEL49, '', '• my own bullet note', '']);
+    eq(notesBelow(sh, 101), ['• my note under the help']);
   });
 
   test('new sources control: row 48\'s help line says in plain numbers how many stories only the AMIE table lifts go for review, the same numbers the bot uses (ewsNewCfg_: early_wave_new_lifted_per_hour and _per_day), and where the rest are listed', () => {
@@ -370,7 +383,7 @@ module.exports = H => {
   // E1 (the part that exists after this step) and E3: nothing new happens
   // -----------------------------------------------------------------------------------------------------------------
 
-  test('new sources control (E1): row 48 OFF and row 19 ON, six checks: no Secret Manager or Brandwatch call, no table read or dry run, nothing names the AMIE table, exactly two BigQuery jobs a check (US and us-central1) whose bodies are the ones recorded at commit 3be2e06, no New sources tab, no new property or cache item, C48 the OFF text', () => {
+  test('new sources control (E1): rows 48 and 49 OFF and row 19 ON, six checks: no Secret Manager or Brandwatch call, no table read or dry run, nothing names the AMIE table, exactly two BigQuery jobs a check (US and us-central1) whose bodies are the ones recorded at commit 3be2e06, no New sources tab, no new property or cache item, C48 and C49 the OFF texts (row 50 not built yet: blank)', () => {
     const w = world();
     const { t, sh } = w;
     sh.getRange(19, 2).setValue('ON');
@@ -387,6 +400,8 @@ module.exports = H => {
     const st = JSON.parse(t.g.props.get('EWS_STATE'));
     eq([['nk', 'sn'].filter(k => k in st), Object.keys(st.marks).filter(k => /ami|bwl/.test(k))], [[], []]);
     eq([cells(sh, 48), t.bot.readControl_(sh).switches.edAmie], [[LABEL, 'OFF', OFF_TEXT], false]);
+    eq([cells(sh, 49), t.bot.readControl_(sh).switches.edBwLive, cells(sh, 50)], [[LABEL49, 'OFF', OFF49], false, ['', '', '']]);
+    eq(Array.from(t.g.cache.keys()).filter(k => /^ews:bwl:|^bwl:/.test(k)), []);
   });
 
   test('new sources control (E3): row 48 ON with row 19 OFF reads nothing at all (no BigQuery job, no table read, no Brandwatch or Secret Manager call, no Early Detection state); with row 19 ON too, the US job is byte for byte the one with row 48 OFF and the us-central1 job only gains its list of the big posts Sonar knew; here the AMIE table\'s check finds none of its columns, so it is checked once and not read (no dry run, no AMIE job) and no trial starts', () => {
@@ -435,6 +450,130 @@ module.exports = H => {
     eq([['nk', 'sn'].filter(k => k in st), Array.from(amie.t.g.cache.keys()).filter(k => /^ews1:(nk:|sn:|carry)/.test(k)),
       amie.t.g.props.get('EWS_SRC_DAY')], [[], [], dayRecord]);
     eq(amie.sh.cell(48, 3), OFF_TEXT);
+  });
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // Row 49 (Brandwatch live) in a run: what it calls and when
+  // -----------------------------------------------------------------------------------------------------------------
+
+  const { installBrandwatch, bwMention } = require('./fake_brandwatch.js');
+  const WAITING49 = '✓ ON, but waiting: it needs Early wave & velocity check (row 19) ON, which it adds posts to';
+  const NONE_TICKED = '✓ ON, but waiting: tick Read = ON for at least one query on the New sources tab';
+  const ON49 = '✓ ON: reads new Brandwatch mentions (never X) from the queries ticked on the New sources tab, for Early Detection (row 19)';
+  /** Ticks Read = ON on the New sources tab for the queries with these ids, as the owner would. */
+  const tickQueries = (t, ids) => {
+    const tab = t.sheet().getSheetByName('New sources');
+    for (let r = 9; r <= tab.getLastRow(); r++) {
+      if (ids.map(String).indexOf(String(tab.cell(r, 8) || '').replace(/^'/, '')) >= 0) tab.getRange(r, 1).setValue('ON');
+    }
+  };
+
+  test('new sources control (E3, row 49): row 49 ON with row 19 OFF does nothing at all (no Secret Manager or Brandwatch call, no BWL_ value, no tab, no new job) and C49 says it waits for row 19; with row 19 ON it lists the queries, waits for a tick (C49 says so, once) and never reads the AMIE table; row 48 ON with row 49 OFF never calls Secret Manager or Brandwatch', () => {
+    const a = world();
+    const bwA = installBrandwatch(a.t.g);
+    a.sh.getRange(49, 2).setValue('ON');
+    checks(a, 3);
+    eq([bwA.calls, jobs(a), newState(a), a.t.sheet().getSheetByName('New sources')], [[], [], [], null]);
+    eq([a.sh.cell(49, 3), a.t.bot.readControl_(a.sh).switches.edBwLive], [WAITING49, true]);
+
+    const b = world();
+    const bwB = installBrandwatch(b.t.g);
+    b.sh.getRange(19, 2).setValue('ON');
+    b.sh.getRange(49, 2).setValue('ON');
+    checks(b, 3);
+    eq(bwB.calls.filter(c => /\/data\/mentions$/.test(c.path)), []);  // nothing ticked: nothing read
+    assert.ok(bwB.calls.some(c => /\/queries\/summary$/.test(c.path)), 'the query list was read');
+    eq(bwB.calls.every(c => c.method === 'get' && !c.payload), true);
+    eq([b.bq.filter(c => /all_sundar_mentions|"dryRun"/.test(c.payload + c.url)), b.t.g.fetches.filter(f => /\/tables\//.test(f.url))], [[], []]);
+    eq(jobs(b).map(c => c.lane).filter(l => l !== 'us' && l !== 'c1'), []);
+    eq(b.sh.cell(49, 3), NONE_TICKED);
+    const tab = b.t.sheet().getSheetByName('New sources');
+    eq([tab.cell(9, 1), tab.cell(9, 2), tab.cell(10, 1), tab.cell(11, 1)], ['OFF', 'Google Pixel complaints', 'OFF', 'OFF']);
+    // ticked: the next run reads, and C49 says what it does
+    bwB.mentions = [1, 2, 3].map(i => bwMention(i, b.t.g.clock.now - (12 - i) * MIN));
+    tickQueries(b.t, [2005000001]);
+    checks(b, 1);
+    eq(bwB.calls.filter(c => /\/data\/mentions$/.test(c.path)).length, 1);
+    assert.ok(b.sh.cell(49, 3).startsWith(`${ON49} · read `), b.sh.cell(49, 3));
+    assert.ok(b.sh.cell(49, 3).length <= ON49.length + 3 + 200, b.sh.cell(49, 3));
+
+    const c = world();
+    const bwC = installBrandwatch(c.t.g);
+    c.sh.getRange(19, 2).setValue('ON');
+    c.sh.getRange(48, 2).setValue('ON');
+    checks(c, 3);
+    eq(bwC.calls, []);
+    eq([c.sh.cell(49, 3), Object.keys(JSON.parse(c.t.g.props.get('EWS_STATE') || '{}').jobs || {}).filter(k => k === 'bwl')], [OFF49, []]);
+  });
+
+  test('new sources control (OFF, row 49): a run with row 49 OFF forgets where Brandwatch live had read to (BWL_STATE) and the parcel waiting (its cache items); the day\'s counts (BWL_DAY), the query list and the owner\'s ticks stay, C49 is the OFF text, and ON again reads from the last 30 minutes', () => {
+    const w = world();
+    const { t, sh } = w;
+    const bw = installBrandwatch(t.g);
+    sh.getRange(19, 2).setValue('ON');
+    sh.getRange(49, 2).setValue('ON');
+    checks(w, 1);
+    tickQueries(t, [2005000001]);
+    bw.mentions = [1, 2, 3].map(i => bwMention(i, t.g.clock.now - (12 - i) * MIN));
+    checks(w, 1);  // the read leaves a parcel for the next check
+    const parcelItems = () => Array.from(t.g.cache.keys()).filter(k => k.startsWith('ews:bwl:p:'));
+    eq([!!JSON.parse(t.g.props.get('BWL_STATE')).parcel, parcelItems().length > 0, JSON.parse(t.g.props.get('BWL_DAY')).mentions], [true, true, 3]);
+    const day = t.g.props.get('BWL_DAY');
+    sh.getRange(49, 2).setValue('OFF');
+    checks(w, 1);
+    const tab = t.sheet().getSheetByName('New sources');
+    eq([t.g.props.get('BWL_STATE') || null, parcelItems(), t.g.props.get('BWL_DAY'), tab.cell(9, 1), sh.cell(49, 3)], [null, [], day, 'ON', OFF49]);
+    eq(Object.keys(JSON.parse(t.g.props.get('EWS_STATE') || '{}').jobs || {}).filter(k => k === 'bwl'), []);
+    const calls = bw.calls.length;
+    checks(w, 2);
+    eq(bw.calls.length, calls);  // OFF: nothing more is asked
+    sh.getRange(49, 2).setValue('ON');
+    checks(w, 1);
+    const read = bw.calls.filter(c => /\/data\/mentions$/.test(c.path)).slice(-1)[0];
+    eq(Date.parse(read.params.sinceAdded[0]), t.g.clock.now - 30 * MIN);
+  });
+
+  test('new sources control (row 49 in a run): Brandwatch live reads only after the Watch\'s block (row 34), and the Watch\'s own requests, results and timing are exactly those of a run with row 49 OFF; Burson\'s own alert in the same runs is handled the same, at the same time', () => {
+    const run = row49 => {
+      const w = world();
+      const { t, sh } = w;
+      const bw = installBrandwatch(t.g);
+      bw.mentions = [1, 2, 3, 4].map(i => bwMention(i, t.g.clock.now - (20 - i) * MIN));
+      sh.getRange(19, 2).setValue('ON');
+      sh.getRange(34, 2).setValue('ON');
+      sh.getRange(49, 2).setValue(row49);
+      const order = [];
+      const watchRuns = [];
+      const b = t.bot;
+      const watch = b.runProactiveWatch_;
+      b.runProactiveWatch_ = function () {
+        const at = t.g.clock.now;
+        const n = { bq: w.bq.length, bw: bw.calls.length, f: t.g.fetches.length };
+        order.push('watch');
+        const r = watch.apply(this, arguments);
+        watchRuns.push({ at, ms: t.g.clock.now - at, result: JSON.stringify(r === undefined ? null : r),
+          bq: w.bq.slice(n.bq).map(c => c.payload || c.url), bw: bw.calls.slice(n.bw).map(c => c.url), f: t.g.fetches.slice(n.f).map(x => x.url) });
+        return r;
+      };
+      const live = b.bwLiveRun_;
+      b.bwLiveRun_ = function () { order.push('bw live'); return live.apply(this, arguments); };
+      t.chat.say(H.TEST_FEED, H.F.MISTAKES, ZAPIER);  // Burson's own alert in the first run
+      checks(w, 1);
+      t.sheet().getSheetByName('Watches').getRange(2, 2).setValue('ON');  // the first watch ON, so the Watch looks
+      if (row49 === 'ON') tickQueries(t, [2005000001]);
+      checks(w, 3);
+      const answered = t.chat.botPosts(H.TRIAGED).map(m => [m.text, m.createTime]);
+      return { order, watchRuns, bw, answered };
+    };
+    const off = run('OFF');
+    const on = run('ON');
+    eq(off.order, ['watch', 'watch', 'watch', 'watch']);
+    eq(on.order, ['watch', 'bw live', 'watch', 'bw live', 'watch', 'bw live', 'watch', 'bw live']);
+    eq(on.watchRuns, off.watchRuns);
+    assert.ok(off.watchRuns.some(r => r.bq.length + r.bw.length + r.f.length > 0), JSON.stringify(off.watchRuns).slice(0, 300));
+    assert.ok(on.bw.calls.some(c => /\/data\/mentions$/.test(c.path)), 'Brandwatch live did read');
+    eq(on.answered, off.answered);
+    assert.ok(off.answered.length > 0, 'Burson\'s alert was handled');
   });
 
   // -----------------------------------------------------------------------------------------------------------------
@@ -609,6 +748,17 @@ module.exports = H => {
       if (method !== 'post' || !/\/queries$/.test(u) || labels.purpose !== 'early-wave') return prev(url, params);
       if (body.dryRun === true) return resp({ jobComplete: true, totalBytesProcessed: '80000000' });
       const now = t.g.clock.now;
+      if (labels.lane === 'bwl') {  // Brandwatch live's job: every mention of its @bwl passes (no test runs SQL)
+        const p = (body.queryParameters || []).find(x => x.name === 'bwl');
+        const bwlRows = ((p && p.parameterValue.arrayValues) || []).map(a => {
+          const v = k => (a.structValues[k] || {}).value;
+          return { kind: 'post', lane: 'bwl', mid: v('mid'), url: v('url'), platform: v('platform'), author: v('author'), audience: v('audience'),
+            posted_ms: v('posted_ms'), seen_ms: v('seen_ms'), txt: v('raw'), topic: v('topic'), chash: `c${v('mid')}`, sig: `s${v('mid')}`, risk: '', brand: true };
+        });
+        return resp({ jobComplete: true, jobReference: { projectId: 'brand-social-central-data', jobId: `e26_bwl_${now}`, location: body.location },
+          schema: { fields: COLS16.map(c => ({ name: c[0], type: c[1] || 'STRING' })) },
+          rows: bwlRows.map(r => ({ f: COLS16.map(c => ({ v: r[c[0]] === undefined || r[c[0]] === null ? null : String(r[c[0]]) })) })) });
+      }
       const rows = labels.lane !== 'ami' ? [] : ++amieJobs > 1 ? [{ kind: 'amark', lane: 'ami', seen_ms: now - 2 * MIN }]
         : AMIE_POSTS.map((p, i) => ({ kind: 'post', lane: 'ami', mid: `AMI|e26p${i}`, url: p.url, platform: 'Reddit', author: p.author,
           audience: 140, posted_ms: now - (12 + i * 3) * MIN, seen_ms: now - 4 * MIN, txt: p.txt, topic: 'Google Wallet', chash: `e26c${i}`,
@@ -623,6 +773,27 @@ module.exports = H => {
     return { jobs: () => amieJobs };
   }
 
+  const BW_STORY = 'Google Fit stopped syncing my steps with my watch since the update this morning';
+  const BW_QUERY = 'Fit sync complaints (made up)';
+  const BW_POSTS = ['one', 'two', 'three', 'four', 'five'].map((x, i) => ({
+    url: `https://www.reddit.com/r/googlefit/comments/1fit${i}/sync/`, author: `fitwalker${i}`, txt: `${BW_STORY} ${x}` }));
+  /**
+   * Row 49 ON (with row 19, which amieOn turns ON) in a world `t`: Brandwatch faked, its project's one query BW_QUERY;
+   * returns tick(), the owner's step after the first run listed the query: it ticks it, and five mentions of one story
+   * by five accounts are added in the 10 minutes before (the first read reaches 30 minutes back).
+   */
+  function bwlOn(t, sh) {
+    const bw = installBrandwatch(t.g, { queries: [{ id: 2005000009, name: BW_QUERY, contentSources: ['reddit'], languages: ['en'] }] });
+    sh.getRange(49, 2).setValue('ON');
+    const tick = () => {
+      const now = t.g.clock.now;
+      bw.mentions = BW_POSTS.map((p, i) => bwMention(i + 1, now - (10 - i * 2) * MIN, { url: p.url, author: p.author, snippet: p.txt,
+        queryId: 2005000009, queryName: BW_QUERY, date: now - (14 - i * 2) * MIN }));
+      tickQueries(t, [2005000009]);
+    };
+    return { bw, tick };
+  }
+
   /** What the bot put where Burson sees it: its posts in S-F Burson (B25) and the Burson test copy, and the outbox tab. */
   function bursonSide(t, spaces) {
     const posts = [].concat(...spaces.filter(s => s && t.chat.spaces.has(s)).map(s => t.chat.botPosts(s).map(m => m.text || '')));
@@ -634,17 +805,21 @@ module.exports = H => {
   const mails = t => t.g.gmail.sentMessages().concat(t.g.gmail.allDrafts())
     .map(m => [].concat(m.to || [], m.cc || [], m.bcc || [], [m.subject || '', m.text || '', m.html || '']).join(' | '));
 
-  /** None of it holds a new-lane post's words or link, "AMIE", "Brandwatch" or the AMIE table's name. */
+  /** None of it holds a new-lane post's words or link, a query's name, "AMIE", "Brandwatch" or the AMIE table's name. */
   function assertNothingNew(what, side) {
     const leaks = side.posts.concat(side.outbox).filter(text => /amie|brandwatch|all_sundar|social_alerts_dataset/i.test(text) ||
-      text.includes(STORY.slice(0, 30)) || AMIE_POSTS.some(p => text.includes(p.url) || text.includes(p.author)));
+      text.includes(STORY.slice(0, 30)) || AMIE_POSTS.some(p => text.includes(p.url) || text.includes(p.author)) ||
+      text.includes(BW_STORY.slice(0, 30)) || text.includes(BW_QUERY) || BW_POSTS.some(p => text.includes(p.url) || text.includes(p.author)));
     eq([what, leaks], [what, []]);
   }
 
-  test('new sources control (E26): a full run with row 48 ON, in the one-space setup, beside a Mirror space and in the main flow: the AMIE table\'s story is found and reviewed where the bot works, but no outbox row, relay post, post in S-F Burson (B25), the Burson test copy (B26) or the Other alerts space (B33), and no email sent or drafted, holds a new-lane post\'s words or link, "AMIE" or "Brandwatch"', () => {
+  test('new sources control (E26): full runs with rows 48 and 49 ON, in the one-space setup, beside a Mirror space and in the main flow: the AMIE table\'s story and Brandwatch live\'s are found and reviewed where the bot works, but no outbox row, relay post, post in S-F Burson (B25), the Burson test copy (B26) or the Other alerts space (B33), and no email sent or drafted, holds a new-lane post\'s words or link, a query\'s name, "AMIE" or "Brandwatch"', () => {
     const run = (t, sh) => {
       amieOn(t, sh);
+      const bwl = bwlOn(t, sh);
       t.chat.say(golden.spaces.REAL, H.F.MISTAKES, ZAPIER);  // Burson's own alert: the relay and the outbox have work too
+      checks({ t }, 1);
+      bwl.tick();
       checks({ t }, 6);
     };
     const one = golden.world.oneSpaceWorld({});  // B10 alone; B25 the live Burson space, read only
@@ -661,6 +836,7 @@ module.exports = H => {
       const day = JSON.parse(t.g.props.get('EWS_SRC_DAY') || '{}');
       const today = Object.keys(day.d || {}).sort().slice(-1)[0];
       eq([what, (((day.d || {})[today] || {}).ami || {}).used], [what, 5]);  // the AMIE table's five posts came in
+      eq([what, JSON.parse(t.g.props.get('BWL_DAY') || '{}').used], [what, 5]);  // and Brandwatch live's five
       // beside the Mirror space the test copy does get Burson's corrected alert: the way to Burson is open, and holds nothing new
       if (what === 'mirror') assert.ok(bursonSide(t, [golden.spaces.COPY]).posts.length > 0, 'the test copy has posts');
       assertNothingNew(what, bursonSide(t, [golden.spaces.REAL, golden.spaces.COPY]));
@@ -668,6 +844,7 @@ module.exports = H => {
       // worlds the bot sends none and posts nothing there, so any that a later change makes must hold nothing new
       assertNothingNew(`${what}: Other alerts space and emails`, { posts: bursonSide(t, [OTHER]).posts.concat(mails(t)), outbox: [] });
       if (where) assert.ok(t.chat.botPosts(where).some(m => /EARLY DETECTION/.test(m.text || '') && AMIE_POSTS.some(p => (m.text || '').includes(p.url))), `${what}: the story's card is where the bot works`);
+      if (where) assert.ok(t.chat.botPosts(where).some(m => /EARLY DETECTION/.test(m.text || '') && BW_POSTS.some(p => (m.text || '').includes(p.url))), `${what}: Brandwatch live's story's card is where the bot works`);
     });
   });
 };

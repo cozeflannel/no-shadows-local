@@ -137,14 +137,18 @@ const EWS_NEW_LANES_ = ['ami', 'amis', 'bwl', 'bwls'];
 // metadata hourly, a dry run daily and after a failure) are ewsAmiChecks_, and its job goes out at the next check.
 const EWS_NEW_LANE_DEFS_ = [
   { key: 'ami', location: 'US', sw: 'edAmie', src: 'ami', ready: st => ewsAmiReady_(st, Date.now()),
-    query: (st, until) => ewsAmiQuery_(st, until), done: (st, lane, now, nx) => ewsAmiDone_(st, lane, now, nx),
+    query: (st, until) => ewsAmiQuery_(st, until, ewsBwlSkipNets_()), done: (st, lane, now, nx) => ewsAmiDone_(st, lane, now, nx),
     failed: (st, lane, now, nx) => ewsAmiFailed_(st, lane, now, nx), checks: (st, now, deadline) => ewsAmiChecks_(st, now, deadline) },
+  // Brandwatch live (row 49, BrandwatchLive.gs): its job goes out only while a parcel the reader left waits for it
+  { key: 'bwl', location: 'US', sw: 'edBwLive', src: 'bwl', ready: () => ewsBwlReady_(),
+    query: (st, until) => ewsBwlLaneQuery_(until), done: (st, lane, now, nx) => ewsBwlDone_(st, lane, now, nx),
+    failed: (st, lane, now, nx) => ewsBwlFailed_(st, lane, now, nx) },
 ];
 const EWS_NEW_SWITCHES_ = { edAmie: 'ami', edBwLive: 'bwl' };  // a new source's Control switch -> the source
 // Each new source's marks in EWS_STATE's `marks`, forgotten when its row is OFF (ewsNewSourceOff_); the step that
 // builds a source adds its own here ('ami': the newest ingestion time taken from the AMIE table; 'amiq': the AMIE
 // table's checks, a stop or a pause and why, so ON again checks the table afresh)
-const EWS_SRC_MARKS_ = { ami: ['ami', 'amiq'], bwl: [] };
+const EWS_SRC_MARKS_ = { ami: ['ami', 'amiq'], bwl: [] };  // (Brandwatch live keeps its marks in BWL_STATE: BrandwatchLive.gs)
 // The AMIE table (Control row 48; "ami" in code): Brandwatch's alert feeds, X posts with their words, read only
 const EWS_AMI_TABLE_ = 'brand-social-central-data.social_alerts_dataset.all_sundar_mentions';  // US
 // The columns the AMIE job needs (a column missing or of another type stops it for the day), and the ones it reads when
@@ -372,6 +376,7 @@ function ewsRunSwitches_(switches) {
     if (switches && typeof switches === 'object') Object.keys(switches).forEach(k => { if (switches[k] === true) out[k] = true; });
     EWS_RUN_SW_ = out;
     if (out.edAmie && !out.earlyWave && typeof nsrcWaiting_ === 'function') nsrcWaiting_('edAmie');
+    if (out.edBwLive && !out.earlyWave && typeof nsrcWaiting_ === 'function') nsrcWaiting_('edBwLive');
   }
   return Object.assign({}, EWS_RUN_SW_ || {});
 }
@@ -762,6 +767,7 @@ function ewsLaneQuery_(laneKey, st, until, ownDue, firstMins, opts) {
 
 /** A query parameter as BigQuery takes it; one with `array` (an element type) is a list of `value`'s items. Pure. */
 function ewsParam_(p) {
+  if (p.struct) return pwParam_(p);  // an array of structs (Brandwatch live's parcel, @bwl)
   if (p.array) {
     return { name: p.name, parameterType: { type: 'ARRAY', arrayType: { type: p.array } },
       parameterValue: { arrayValues: (Array.isArray(p.value) ? p.value : []).map(v => ({ value: String(v) })) } };
@@ -2751,7 +2757,7 @@ function ewsAmiSql_(opt, staffRx) {
  * It reads from amie_overlap_minutes before its mark (st.marks.ami, the newest ingestion time taken; never more than
  * EWS_AMI_MAX_BACK_MS_ back) and, with no mark yet, the last hour (EWS_AMI_FIRST_MS_). Pure (reads GEN).
  */
-function ewsAmiQuery_(st, until) {
+function ewsAmiQuery_(st, until, skipNets) {
   const cfg = ewsAmiCfg_();
   const marks = (st && st.marks) || {};
   const q = marks.amiq && typeof marks.amiq === 'object' ? marks.amiq : {};
@@ -2764,7 +2770,8 @@ function ewsAmiQuery_(st, until) {
     params: [
       p('ami_from_ms', 'INT64', from), p('until_ms', 'INT64', until), p('ami_mark_ms', 'INT64', markMs),
       p('ami_take', 'INT64', cfg.take), p('late_min', 'INT64', ewsNewCfg_().lateMinutes),
-      { name: 'skip_nets', array: 'STRING', value: [] },  // the networks Brandwatch live reads (stage 2): none yet
+      // the networks Brandwatch live delivers while it is ON and healthy (ewsBwlSkipNets_): AMIE leaves them to it
+      { name: 'skip_nets', array: 'STRING', value: Array.isArray(skipNets) ? skipNets : [] },
       p('max_audience', 'INT64', EWS_MAX_AUDIENCE_), p('eng_ceiling', 'INT64', EWS_ENG_CEILING_),
       p('min_chars', 'INT64', EWS_MIN_CHARS_), p('min_tokens', 'INT64', EWS_MIN_TOKENS_),
       p('min_distinct', 'INT64', EWS_MIN_DISTINCT_TOKENS_), p('ami_over', 'INT64', EWS_AMI_OVERLAP_ROWS_),
@@ -3524,5 +3531,116 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     st.last = last;
     ewsSaveState_(props, st);
     return { emitted: 0, error: `Early wave check failed: ${String((e && e.message) || e).replace(/Not found:\s*(Table|Dataset)/gi, 'missing $1').slice(0, 200)}` };
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Brandwatch live's job (Control row 49): the parcel the reader left (BrandwatchLive.gs) through the shared gates
+// ---------------------------------------------------------------------------------------------------------------
+
+// The parcel's rows as the job's parameter @bwl (BrandwatchLive.gs bwlRow_); a number not known travels as -1
+const EWS_BWL_STRUCT_ = [['mid', 'STRING'], ['url', 'STRING'], ['platform', 'STRING'], ['author', 'STRING'],
+  ['audience', 'INT64'], ['eng', 'INT64'], ['posted_ms', 'INT64'], ['seen_ms', 'INT64'], ['raw', 'STRING'],
+  ['topic', 'STRING'], ['lang', 'STRING'], ['sentiment', 'STRING']];
+// AMIE's network names for the sources Brandwatch live asks for (what AMIE leaves to it while it is healthy)
+const EWS_BWL_NETS_ = { reddit: 'reddit', bluesky: 'bluesky', facebook: 'facebook', facebook_public: 'facebook', instagram: 'instagram',
+  instagram_public: 'instagram', tiktok: 'tiktok', youtube: 'youtube', threads: 'threads', tumblr: 'tumblr', forum: 'forums' };
+
+/**
+ * The Brandwatch job's SQL (the plan's Q1 and Q4): the parcel's rows (@bwl, never in the SQL text) as a new lane, bwl,
+ * or bwls when it was added more than early_wave_new_late_minutes after it was posted; never X or LinkedIn; not
+ * positive; English by its tag, and by its words when the tag is empty; it names Google, or its query is one of
+ * Google's; then the shared gates once (small accounts, the length, the spam and homonym rules, the age) and the post
+ * select, with nothing else feeding it. Pure.
+ */
+function ewsBwlSql_() {
+  return [
+    `-- ews:bwl (early wave: Brandwatch live, never X; read-only)`,
+    `WITH bwl_in AS (`,
+    `  SELECT c.mid, c.url, c.platform, c.author, NULLIF(c.audience, -1) AS audience, NULLIF(c.eng, -1) AS eng,`,
+    `    TIMESTAMP_MILLIS(NULLIF(c.posted_ms, -1)) AS posted, TIMESTAMP_MILLIS(NULLIF(c.seen_ms, -1)) AS seen,`,
+    `    c.raw, c.topic, c.lang, c.sentiment`,
+    `  FROM UNNEST(@bwl) c`,
+    `),`,
+    `lanes AS (`,
+    `  SELECT IF(TIMESTAMP_DIFF(seen, posted, MINUTE) > @late_min, 'bwls', 'bwl') AS lane, mid, url, platform,`,
+    `    LOWER(TRIM(REGEXP_REPLACE(IFNULL(author, ''), r'^@+|^/?u/', ''))) AS author, audience, eng, posted, seen, raw, topic`,
+    `  FROM bwl_in`,
+    `  WHERE LOWER(IFNULL(platform, '')) NOT IN ('twitter', 'x') AND NOT STARTS_WITH(LOWER(IFNULL(platform, '')), 'linkedin')`,
+    `    AND LOWER(IFNULL(sentiment, '')) != 'positive'`,
+    `    AND ${englishLangSql_('lang')} AND (TRIM(IFNULL(lang, '')) != '' OR ${ewsEnglishWordsSql_('raw')})`,
+    `    AND (REGEXP_CONTAINS(LOWER(IFNULL(raw, '')), r'${EWS_ENTITY_RX_}')`,
+    `      OR REGEXP_CONTAINS(LOWER(IFNULL(topic, '')), r'${EWS_GOOGLE_CONFIG_RX_}'))`,
+    `),`,
+    ewsGateCtes_('lanes', ['bwls']),
+    ewsPostSelectSql_(['bwls']),
+  ].join('\n');
+}
+
+/**
+ * The Brandwatch job for a parcel (`rows`: bwlRow_'s; `to`: the parcel's mark), at `until`. The post select's caps are
+ * the parcel's size, so it never cuts. Pure.
+ */
+function ewsBwlQuery_(rows, until, to) {
+  const list = (Array.isArray(rows) ? rows : []).map(r => Object.assign({}, r, {
+    posted_ms: Number(r.posted_ms) > 0 ? Number(r.posted_ms) : -1, seen_ms: Number(r.seen_ms) > 0 ? Number(r.seen_ms) : -1,
+    audience: Number(r.audience) >= 0 ? Number(r.audience) : -1, eng: Number(r.eng) >= 0 ? Number(r.eng) : -1,
+  }));
+  const p = (name, type, value) => ({ name, type, value });
+  const cap = Math.max(1, list.length);
+  return {
+    sql: ewsBwlSql_(),
+    params: [
+      { name: 'bwl', struct: EWS_BWL_STRUCT_, rows: list },
+      p('until_ms', 'INT64', until), p('late_min', 'INT64', ewsNewCfg_().lateMinutes),
+      p('max_audience', 'INT64', EWS_MAX_AUDIENCE_), p('eng_ceiling', 'INT64', EWS_ENG_CEILING_),
+      p('min_chars', 'INT64', EWS_MIN_CHARS_), p('min_tokens', 'INT64', EWS_MIN_TOKENS_),
+      p('min_distinct', 'INT64', EWS_MIN_DISTINCT_TOKENS_), p('rt_max', 'INT64', cap), p('slow_max', 'INT64', cap),
+    ],
+    win: { since: until, until },
+    flags: { to: Number(to) || 0, n: list.length },
+  };
+}
+
+/** True while a parcel of Brandwatch live waits for its job (BWL_STATE). Never throws. */
+function ewsBwlReady_() {
+  try { return !!bwlState_(PropertiesService.getScriptProperties()).parcel; } catch (e) { return false; }
+}
+
+/** The job of the waiting parcel, or null when none waits (its cache items gone: it is read again from Brandwatch). */
+function ewsBwlLaneQuery_(until) {
+  const parcel = bwlParcelTake_();
+  return parcel && parcel.rows.length ? ewsBwlQuery_(parcel.rows, until, parcel.to) : null;
+}
+
+/** The Brandwatch job was collected: the reader's mark moves (bwlParcelCollected_), and its line goes to the log. */
+function ewsBwlDone_(st, lane, now, nx) {
+  const props = PropertiesService.getScriptProperties();
+  const before = bwlState_(props);
+  if (!bwlParcelCollected_(props, now)) return;
+  console.log(bwlCheckLog_(before.lr, before.parcel && before.parcel.to, before.login));
+}
+
+/** The Brandwatch job failed: tried again with the next check, dropped after its second failure (bwlParcelFailed_). */
+function ewsBwlFailed_(st, lane, now, nx) {
+  bwlParcelFailed_(PropertiesService.getScriptProperties(), (lane && lane.why) || 'the job failed', now);
+}
+
+/**
+ * The networks the AMIE job leaves to Brandwatch live (the plan's Q6): the ones Brandwatch live asks for, in AMIE's
+ * names, while row 49 is ON, Brandwatch live is not stopped and its last read (st.lr, a read that answered) is under an
+ * hour old; else none, so AMIE reads every network again. Never throws.
+ */
+function ewsBwlSkipNets_() {
+  try {
+    if (!ewsRunSwitches_().edBwLive) return [];
+    const now = Date.now();
+    const st = bwlState_(PropertiesService.getScriptProperties());
+    const at = Number(st.lr && st.lr.at);
+    if (st.stop || !(at > 0) || now - at >= BWL_HOUR_MS_) return [];
+    const asked = bwlSources_(bwLiveCfg_().sources, Array.isArray(st.srcs) ? st.srcs : null);
+    return Array.from(new Set(asked.map(s => EWS_BWL_NETS_[s]).filter(Boolean)));
+  } catch (e) {
+    return [];
   }
 }

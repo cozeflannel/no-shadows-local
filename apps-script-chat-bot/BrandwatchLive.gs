@@ -658,12 +658,14 @@ function bwlParcelDrop_(parts) {
 }
 
 /**
- * Row 49 OFF: its marks, parcel, overlap ids, stops, pauses and failures go, so ON again starts from the last
+ * Row 49 OFF (`sw`: the run's switches): its marks, parcel, overlap ids, stops, pauses and failures go, and a job of its
+ * own left running in Early Detection's state, so ON again starts from the last
  * bw_live_first_minutes; the day's counts (BWL_DAY) and the ticks on the tab stay. Writes only when there is something
  * to clear. Never throws.
  */
-function bwLiveOff_() {
+function bwLiveOff_(sw) {
   try {
+    if (typeof ewsNewSourceOff_ === 'function') ewsNewSourceOff_('bwl', sw || {});
     const props = PropertiesService.getScriptProperties();
     const raw = props.getProperty(BWL_STATE_PROP_);
     if (!raw) return;
@@ -720,6 +722,7 @@ function bwLiveRun_(runStart, switches) {
       st.fail = { kind: 'secret', why: `the bot can't read the shared Brandwatch key (${nsrcScrub_((e && e.message) || e, 120)})`, since: (st.fail && st.fail.kind === 'secret' && st.fail.since) || now };
       st.last = now;
       bwlSaveState_(props, st);
+      bwlWriteNote_(st, bwlDay_(props, now), now);
       return { read: false, why: 'key' };
     }
     const q = bwlQueries_(token, st, day, now, cfg);
@@ -729,6 +732,7 @@ function bwLiveRun_(runStart, switches) {
       st.last = now;
       bwlSaveState_(props, st);
       bwlSaveDay_(props, day);
+      bwlWriteNote_(st, day, now);
       return { read: false, why: 'foreign tab' };
     }
     delete st.nsf;
@@ -747,6 +751,7 @@ function bwLiveRun_(runStart, switches) {
     bwlSaveState_(props, st);
     bwlSaveDay_(props, day);
     nsrcBwlQueryRows_(q.list, day, now);
+    bwlWriteNote_(st, day, now);
     return { read: !!out, why: ticked.length ? '' : 'no query ticked', out };
   } catch (e) {
     console.warn(`Brandwatch live: ${nsrcScrub_((e && e.message) || e, 200)}`);
@@ -847,7 +852,10 @@ function bwlWarning_(o) {
   }
   if (Number(st.last) > 0 && Number(st.lm) > 0 && now - Number(st.lm) >= BWL_STALE_MS_) {
     const hours = Math.floor((now - Number(st.lm)) / 3600000);
-    return `⚠️ no Brandwatch mentions for ${hours} h. Check the queries ticked Read = ON on the ${NSRC_TAB_} tab`;
+    // how many usually come in an hour: yesterday's mentions (BWL_DAY.prev) over 24 hours, when there were any
+    const perHour = Math.round(Object.keys(day.prev || {}).reduce((n, s) => n + (Number(day.prev[s]) || 0), 0) / 24);
+    const usual = perHour >= 1 ? ` (usually about ${nsrcNum_(perHour)} an hour)` : '';
+    return fit(() => `⚠️ no Brandwatch mentions for ${hours} h${usual}. Check the queries ticked Read = ON on the ${NSRC_TAB_} tab`);
   }
   const worst = Object.keys(day.nw || {}).find(s => (Number(day.src[s]) || 0) >= 10 && Number(day.nw[s]) * 2 > Number(day.src[s]));
   if (worst) return `⚠️ most ${bwlSourceWords_(worst)} mentions came without their words today, so they can't be used`;
@@ -869,7 +877,8 @@ function bwlNote_(o) {
   const lr = st.lr || {};
   const tk = st.tk || {};
   if (!warning && !(Number(st.last) > 0)) return 'waiting for its first read';
-  if (!warning && Number(tk.of) === 0) return `waiting: tick Read = ON for at least one query on the ${NSRC_TAB_} tab`;
+  // nothing ticked: row 49's ON text says so ("✓ ON, but waiting: tick Read = ON …"), so the note adds nothing
+  if (!warning && Number(tk.of) === 0) return '';
   const read = Number(lr.at) > 0 ? `read ${nsrcWhen_(lr.at, now)}: ${nsrcNum_(lr.n)} new` : '';
   const s = x.stories || {};
   const counts = `today: ${nsrcNum_(day.mentions)} mentions, ${nsrcNum_(day.used)} used` +
@@ -930,4 +939,27 @@ function bwlSourcesQuiet_(day) {
   const seen = new Set(Object.keys(prev).filter(k => Number(prev[k]) > 0).map(k => bwlSourceWords_(k)));
   if (!Object.keys(prev).length) return [];
   return Array.from(new Set(asked.map(bwlSourceWords_))).filter(n => !seen.has(n));
+}
+
+/** True when the reader's last look found no query ticked Read = ON (row 49's waiting text). Never throws. */
+function bwlNoneTicked_() {
+  try {
+    const st = bwlState_(PropertiesService.getScriptProperties());
+    return !!(st.tk && Number(st.tk.of) === 0);
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Column C of row 49 (Control.gs noteSwitch_): bwlNote_ with the stories the source's posts are in today (EWS_SRC_DAY).
+ * Written after each look of the reader and at the end of each Early Detection check, so it never ages out. Never throws.
+ */
+function bwlWriteNote_(st, day, now) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const s = st || bwlState_(props);
+    const stories = nsrcDay_(ewsSrcDay_(props), 'bwl', ewsUtcDay_(now));
+    noteSwitch_('edBwLive', bwlNote_({ st: s, day: day || bwlDay_(props, now), now, stories }));
+  } catch (e) { /* the note waits for the next look */ }
 }

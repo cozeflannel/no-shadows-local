@@ -39,7 +39,7 @@ module.exports = H => {
   // Row 37: the "Group test emails" switch (Control.gs, BrandSafetyGroups.gs), OFF, as every tab gets it
   const GT37 = () => { const s = B.ev('CONTROL_SWITCHES_').find(x => x.row === 37); return [s.label, 'OFF', B.switchOffText_(s)]; };
   // Rows 38-40, 46: Fast triage and early_wave BigQuery switches (Control.gs, FastTriage.gs), OFF, as every tab gets them
-  const BLANK = ['', '', ''];  // rows 49-52: blank (49-51 kept for three more switches), "How it works" from row 53
+  const BLANK = ['', '', ''];  // rows 50-52: blank (50-51 kept for two more switches), "How it works" from row 53
   const FT = r => { const s = B.ev('CONTROL_SWITCHES_').find(x => x.row === r); return [s.label, 'OFF', B.switchOffText_(s)]; };
   const BAR_SPECS = B.ev('FT_BAR_SPECS_');
   const BAR = r => { const s = BAR_SPECS.find(x => x.row === r); return [s.label, s.seedText, B.ftBarFrom_(s, s.seedText).note]; };
@@ -167,7 +167,7 @@ module.exports = H => {
     eq([row(sh, 32), row(sh, 33), row(sh, 34), row(sh, 35), row(sh, 36), row(sh, 37), row(sh, 38), row(sh, 39), row(sh, 40),
       row(sh, 41), row(sh, 42), row(sh, 43), row(sh, 44), row(sh, 45), row(sh, 46), row(sh, 47), row(sh, 48), row(sh, 49), row(sh, 50), row(sh, 51), row(sh, 52), sh.cell(53, 1)],
       [SW32(), OS33(), SW34(), WA35(), TC36(), GT37(), FT(38), FT(39), FT(40),
-        BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), BAR(47), FT(48), BLANK, BLANK, BLANK, BLANK, 'How it works']);
+        BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), BAR(47), FT(48), FT(49), BLANK, BLANK, BLANK, 'How it works']);
     eq(help.map((_, i) => sh.cell(54 + i, 1)), help);
     for (let r = 54 + help.length; r <= Math.max(sh.rows.length, 86); r++) eq(row(sh, r), ['', '', ''], `row ${r}`);
     assert.ok(!sh.rows.some(r => /An old help line/.test(String(r[0]))));
@@ -198,7 +198,7 @@ module.exports = H => {
       other.sh.validations['31,2'].allowInvalid,
       other.t.bot.readControl_(other.sh).bqLookback],
     [['BigQuery lookback', '60 minutes', OK_60], SW32(), OS33(), SW34(), WA35(), TC36(), GT37(), FT(38), FT(39), FT(40),
-      BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), BAR(47), FT(48), BLANK, BLANK, BLANK, BLANK, 'How it works', CHOICES, false,
+      BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), BAR(47), FT(48), FT(49), BLANK, BLANK, BLANK, 'How it works', CHOICES, false,
       '60 minutes']);
     eq(help.map((_, i) => other.sh.cell(54 + i, 1)), help);
   });
@@ -217,7 +217,7 @@ module.exports = H => {
       row(sh, 36), row(sh, 37), row(sh, 38), row(sh, 39), row(sh, 40),
       row(sh, 41), row(sh, 42), row(sh, 43), row(sh, 44), row(sh, 45), row(sh, 46), row(sh, 47), row(sh, 48), row(sh, 49), row(sh, 50), row(sh, 51), row(sh, 52), sh.cell(53, 1)],
       [['BigQuery lookback', '60 minutes', OK_60], CHOICES, false, SW32(), OS33(), SW34(), WA35(), TC36(), GT37(), FT(38), FT(39), FT(40),
-        BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), BAR(47), FT(48), BLANK, BLANK, BLANK, BLANK, 'How it works']);
+        BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), BAR(47), FT(48), FT(49), BLANK, BLANK, BLANK, 'How it works']);
     eq(writes.filter(w => w[1] <= 31 && w[1] + w[3] - 1 >= 31), []);
   });
 
@@ -255,7 +255,7 @@ module.exports = H => {
     eq([row(sh, 31), row(sh, 32), row(sh, 33), row(sh, 34), row(sh, 35), row(sh, 36), row(sh, 37), row(sh, 38), row(sh, 39), row(sh, 40),
       row(sh, 41), row(sh, 42), row(sh, 43), row(sh, 44), row(sh, 45), row(sh, 46), row(sh, 47), row(sh, 48), row(sh, 49), row(sh, 50), row(sh, 51), row(sh, 52), sh.cell(53, 1)],
       [['BigQuery lookback', '60 minutes', OK_60], SW32(), OS33(), SW34(), WA35(), TC36(), GT37(), FT(38), FT(39), FT(40),
-        BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), BAR(47), FT(48), BLANK, BLANK, BLANK, BLANK, 'How it works']);
+        BAR(41), BAR(42), BAR(43), BAR(44), BAR(45), FT(46), BAR(47), FT(48), FT(49), BLANK, BLANK, BLANK, 'How it works']);
   });
 
   test('BigQuery lookback: readControl_ reads B31 only on the BigQuery lookback row itself (trimmed; a time cell as it is): \'\' when A31 is blank or something else, as on a tab from before the row', () => {

@@ -26,7 +26,17 @@ one line under it: what was built, the suite's count, and anything left out with
       count only once it is handed over; a parcel of 300 mentions with 1,500 characters of words can be larger than 6
       cache items, so the read then hands over fewer and the next read starts after the last one handed over; Brandwatch
       down or slow (5xx, no answer) is tried again at the next read, any other refusal waits an hour.
-- [ ] **2b** Control row 49 and the wiring into Early Detection
+- [x] **2b** Control row 49 and the wiring into Early Detection
+      Built row 49 (`edBwLive`, written OFF and never set ON, its help line and the row-19 help addition, the live-ops
+      tool's switch rows), `bwLiveRun_` called right after the Watch's block with `bwLiveOff_` while the row is OFF, the
+      job `bwl` that takes the parcel into Early Detection's next check (the mentions only in `@bwl`, the shared gates,
+      the mark moved when the job is collected, the parcel dropped after two failed jobs), what the AMIE job skips while
+      Brandwatch live reads, C49's note after each read and check, the dry run in `verifyNewSourcesLive`, and the README.
+      Suite: 1,215 of 1,215 passed. Choices: AMIE leaves Brandwatch's networks to it only while row 49 is ON, it is not
+      stopped and its last read that answered is under an hour old (the plan's Q6 words); the help area grew from 48 to
+      49 rows (the help still starts at row 53); with no query ticked C49 shows only the ON text's waiting words (the
+      note no longer repeats them); the "no mentions for N h" warning adds the plan's "(usually about N an hour)" from
+      yesterday's count when there was one.
 - [ ] **2c** One count of every Brandwatch mention; C19's warning when a new source fails
 - [ ] **3a** Every post of a carded story is claimed
 - [ ] **3b** Control row 50: the AMIE table as a source of the Watch
@@ -76,3 +86,5 @@ one line under it: what was built, the suite's count, and anything left out with
   new mentions only in one request; the real names and form of the shared login's call-count headers; the shape of
   `/metrics`' list of sources; how long after posting it adds a mention; whether Reddit mentions come with their words.
 - That a parcel of full-length mentions fits the script cache as measured in the harness (6 items of 90,000 characters).
+- That the `bwl` job's SQL runs in BigQuery with a real array of structs as `@bwl` (the live check's dry run with three
+  made-up mentions shows it compiles), and how long a Brandwatch read takes late in a real run.

@@ -210,7 +210,14 @@ module.exports = H => {
       'CHECK from posting to the AMIE table: median 22 h, 90% within 3 days (slower than 2 hours: most of its posts would only join stories)',
       'OK Early Detection\'s AMIE job passes a dry run: 0.08 GB a read (its limit is 1 GB)',
       'OK Early Detection\'s us-central1 job with its list of big posts (sent only while a new row is ON) passes a dry run: 0.08 GB',
+      'OK Early Detection\'s Brandwatch live job with three made-up mentions passes a dry run',
     ]);
+    // (step 2b) the Brandwatch job goes as a dry run with its three made-up mentions in @bwl, an array of structs, never in the SQL text
+    const bwlDry = env.w.calls.filter(c => c.kind === 'jobDry' && c.body.labels.lane === 'bwl');
+    eq(bwlDry.length, 1);
+    const bwlParam = bwlDry[0].body.queryParameters.find(x => x.name === 'bwl');
+    eq([bwlParam.parameterType.type, bwlParam.parameterType.arrayType.type, bwlParam.parameterValue.arrayValues.length], ['ARRAY', 'STRUCT', 3]);
+    assert.ok(!bwlDry[0].body.query.includes('restarting') && !bwlDry[0].body.query.includes('example_1'), 'no mention in the SQL text');
     // the X mention the day read did not ask for never came (pageType honoured); query 333 was never asked for
     const mentionCalls = env.w.calls.filter(c => c.part === 'test' || c.part === 'day');
     eq(mentionCalls.map(c => c.params.getAll('queryId')), [['111', '222'], ['111', '222']]);
@@ -342,7 +349,7 @@ module.exports = H => {
     env2.w.secret = { code: 403, message: `Permission denied for ${ADDRESS}` };
     const r2 = run(env2);
     eq(line(r2, /Secret Manager/), 'PROBLEM the bot could not read the shared Brandwatch key from Secret Manager (Secret Manager HTTP 403 reading the shared Brandwatch token: Permission denied for [address]), so Brandwatch was not asked anything');
-    eq([env2.w.calls.filter(c => c.host === 'brandwatch').length, env2.w.calls.filter(c => c.host === 'bigquery').length], [0, 5]);
+    eq([env2.w.calls.filter(c => c.host === 'brandwatch').length, env2.w.calls.filter(c => c.host === 'bigquery').length], [0, 6]);
   });
 
   test('new sources live check: the AMIE table with a needed column missing, a column of another type, access denied, or a read over 1 GB (then no SELECT is sent)', () => {
@@ -355,7 +362,7 @@ module.exports = H => {
     eq([line(r, /no column/), line(r, /optional columns/)], [
       'PROBLEM the AMIE table has no column "snippet", which the plan needs',
       'CHECK the AMIE table\'s optional columns: followers (INTEGER), KOF (STRING), product (STRING), engagement missing (read as empty)']);
-    eq(env.w.calls.filter(c => c.host === 'bigquery').map(c => c.kind), ['tables.get', 'dryRun', 'select', 'jobDry', 'jobDry']);
+    eq(env.w.calls.filter(c => c.host === 'bigquery').map(c => c.kind), ['tables.get', 'dryRun', 'select', 'jobDry', 'jobDry', 'jobDry']);
     // postTime as STRING: said; the read counts by it, so nothing is sent after the metadata
     env = world();
     env.w.table.schema.fields.find(f => f.name === 'postTime').type = 'STRING';
@@ -363,7 +370,7 @@ module.exports = H => {
     eq([line(r, /"postTime"/), line(r, /one-day read was not sent/)], [
       'PROBLEM the AMIE table\'s column "postTime" holds text (STRING), but the plan needs a time (TIMESTAMP)',
       'CHECK the AMIE table\'s one-day read was not sent: a column it counts by is missing or of another type (above)']);
-    eq(env.w.calls.filter(c => c.host === 'bigquery').map(c => c.kind), ['tables.get', 'jobDry', 'jobDry']);
+    eq(env.w.calls.filter(c => c.host === 'bigquery').map(c => c.kind), ['tables.get', 'jobDry', 'jobDry', 'jobDry']);
     // not partitioned on ingestionTimestamp, and stale
     env = world();
     env.w.table.timePartitioning = { type: 'DAY' };
@@ -382,14 +389,14 @@ module.exports = H => {
       'PROBLEM the AMIE table\'s metadata: BigQuery won\'t let the bot read the AMIE table (access denied: Access Denied: Table brand-social-central-data:social_alerts_dataset.all_sundar_mentions: User does not have permission ([address]))',
       'PROBLEM the dry run of the AMIE table\'s one-day read: BigQuery won\'t let the bot read the AMIE table (access denied: Access Denied: Table brand-social-central-data:social_alerts_dataset.all_sundar_mentions: User does not have permission ([address]))',
       'PROBLEM the dry run of Early Detection\'s AMIE job: BigQuery won\'t let the bot read the AMIE table (access denied: Access Denied: Table brand-social-central-data:social_alerts_dataset.all_sundar_mentions: User does not have permission ([address]))']);
-    eq(env.w.calls.filter(c => c.host === 'bigquery').map(c => c.kind), ['tables.get', 'dryRun', 'jobDry', 'jobDry']);
+    eq(env.w.calls.filter(c => c.host === 'bigquery').map(c => c.kind), ['tables.get', 'dryRun', 'jobDry', 'jobDry', 'jobDry']);
     assert.ok(!r.report.includes('@') && !r.logs.includes('@'));
     // the dry run says 3.2 GB: no SELECT
     env = world();
     env.w.bytes = 3.2e9;
     r = run(env);
     eq(line(r, /would scan/), 'PROBLEM one day of the AMIE table would scan 3.20 GB (the limit is 1 GB), so the read was not sent');
-    eq(env.w.calls.filter(c => c.host === 'bigquery').map(c => c.kind), ['tables.get', 'dryRun', 'jobDry', 'jobDry']);
+    eq(env.w.calls.filter(c => c.host === 'bigquery').map(c => c.kind), ['tables.get', 'dryRun', 'jobDry', 'jobDry', 'jobDry']);
     // the Brandwatch part is not stopped by any of it
     assert.ok(line(r, /^OK the read of the last 24 hours/));
   });
@@ -424,7 +431,7 @@ module.exports = H => {
     assert.ok(env.w.calls.filter(c => c.host !== 'brandwatch').every(c => !JSON.stringify([c.url, c.headers, c.payload]).includes(TOKEN)));
     // BigQuery: the table's metadata (GET), one dry run, one SELECT with its bytes capped; nothing else
     const bq = env.w.calls.filter(c => c.host === 'bigquery');
-    eq(bq.map(c => [c.kind, c.method]), [['tables.get', 'get'], ['dryRun', 'post'], ['select', 'post'], ['jobDry', 'post'], ['jobDry', 'post']]);
+    eq(bq.map(c => [c.kind, c.method]), [['tables.get', 'get'], ['dryRun', 'post'], ['select', 'post'], ['jobDry', 'post'], ['jobDry', 'post'], ['jobDry', 'post']]);
     const [, dry, sel, amiDry, c1Dry] = bq;
     // the dry runs of Early Detection's new jobs: the AMIE job (US, with the optional columns the metadata found, its own
     // byte limit) and the us-central1 job with its big posts' part, both exactly as a check builds them
@@ -459,7 +466,7 @@ module.exports = H => {
     eq([b.nsvQuantile_([], 0.5), b.nsvQuantile_([1, 2, 3, 4], 0.5), b.nsvQuantile_([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 0.9)], [null, 2, 9]);
     eq([0, 14, 60, 190, 2879, 2880, 4400].map(m => b.nsvMinutes_(m)), ['0 min', '14 min', '1 h', '3 h 10 min', '47 h 59 min', '2 days', '3 days 1 h']);
     // the new jobs' dry runs (step 2b adds the Brandwatch job's): with no BigQuery answer each says so plainly
-    eq(b.nsvNewJobDryRuns_('TOKEN').length, 2);
+    eq(b.nsvNewJobDryRuns_('TOKEN').length, 3);
   });
 
   test('new sources live check: an address or the key late in a long outside text or in a header is scrubbed before anything cuts it short', () => {
@@ -628,41 +635,46 @@ module.exports = H => {
     // the SELECT refused (bytes billed over the cap) or thrown
     let o = go(w => { w.selectFail = { code: 400, message: 'Query exceeded limit for bytes billed: 1000000000. 2000000000 or higher required.' }; });
     eq(amie(o.r), ['PROBLEM the AMIE table\'s one-day read: BigQuery refused (HTTP 400: Query exceeded limit for bytes billed: 1000000000. 2000000000 or higher required.)']);
-    eq(o.kinds, ['tables.get', 'dryRun', 'select', 'jobDry', 'jobDry']);
+    eq(o.kinds, ['tables.get', 'dryRun', 'select', 'jobDry', 'jobDry', 'jobDry']);
     o = go(w => { w.selectFail = 'throw'; });
     eq(amie(o.r), ['PROBLEM the AMIE table\'s one-day read: the call to BigQuery did not complete (BigQuery unreachable for [address])']);
     // the metadata read failed (500 with a body that is not JSON, or thrown): said; the dry run and the bounded SELECT still go
     o = go(w => { w.tableFail = { code: 500, text: '<html>Backend Error</html>' }; });
     eq(amie(o.r), ['PROBLEM the AMIE table\'s metadata: BigQuery refused (HTTP 500: <html>Backend Error</html>)']);
-    eq(o.kinds, ['tables.get', 'dryRun', 'select', 'jobDry', 'jobDry']);
+    eq(o.kinds, ['tables.get', 'dryRun', 'select', 'jobDry', 'jobDry', 'jobDry']);
     assert.ok(line(o.r, /^OK the AMIE table, last 24 hours: 24,000 rows/));
     o = go(w => { w.tableFail = 'throw'; });
     eq(amie(o.r), ['PROBLEM the AMIE table\'s metadata: the call to BigQuery did not complete (BigQuery unreachable for [address])']);
-    eq(o.kinds, ['tables.get', 'dryRun', 'select', 'jobDry', 'jobDry']);
+    eq(o.kinds, ['tables.get', 'dryRun', 'select', 'jobDry', 'jobDry', 'jobDry']);
     // the dry run refused (500) or thrown: no SELECT
     o = go(w => { w.dryFail = { code: 500, message: 'Backend error' }; });
     eq(amie(o.r), ['PROBLEM the dry run of the AMIE table\'s one-day read: BigQuery refused (HTTP 500: Backend error)']);
-    eq(o.kinds, ['tables.get', 'dryRun', 'jobDry', 'jobDry']);
+    eq(o.kinds, ['tables.get', 'dryRun', 'jobDry', 'jobDry', 'jobDry']);
     o = go(w => { w.dryFail = 'throw'; });
     eq(amie(o.r), ['PROBLEM the dry run of the AMIE table\'s one-day read: the call to BigQuery did not complete (BigQuery unreachable for [address])']);
-    eq(o.kinds, ['tables.get', 'dryRun', 'jobDry', 'jobDry']);
+    eq(o.kinds, ['tables.get', 'dryRun', 'jobDry', 'jobDry', 'jobDry']);
     // the dry run says nothing about bytes: no SELECT
     o = go(w => { w.bytes = undefined; });
-    eq(o.kinds, ['tables.get', 'dryRun', 'jobDry', 'jobDry']);
+    eq(o.kinds, ['tables.get', 'dryRun', 'jobDry', 'jobDry', 'jobDry']);
     // the SELECT not complete at first: its own job is asked again, at most twice, with a GET
     o = go(w => { w.incomplete = 2; });
-    eq(o.kinds, ['tables.get', 'dryRun', 'select', 'results', 'results', 'jobDry', 'jobDry']);
+    eq(o.kinds, ['tables.get', 'dryRun', 'select', 'results', 'results', 'jobDry', 'jobDry', 'jobDry']);
     eq(amie(o.r), []);
     assert.ok(line(o.r, /^OK the AMIE table, last 24 hours: 24,000 rows/));
     o = go(w => { w.incomplete = 3; });
-    eq(o.kinds, ['tables.get', 'dryRun', 'select', 'results', 'results', 'jobDry', 'jobDry']);
+    eq(o.kinds, ['tables.get', 'dryRun', 'select', 'results', 'results', 'jobDry', 'jobDry', 'jobDry']);
     eq(amie(o.r), ['CHECK the AMIE table\'s one-day read did not finish in time; run the check again']);
     o = go(w => { w.incomplete = 1; w.resultsFail = { code: 404, message: 'Not found: Job nsv_1' }; });
-    eq(o.kinds, ['tables.get', 'dryRun', 'select', 'results', 'jobDry', 'jobDry']);
+    eq(o.kinds, ['tables.get', 'dryRun', 'select', 'results', 'jobDry', 'jobDry', 'jobDry']);
     eq(amie(o.r), ['PROBLEM the AMIE table\'s one-day read: the AMIE table was not found (HTTP 404: Not found: Job nsv_1)']);
+    // (step 2b) the Brandwatch job's dry run refused or thrown: said plainly, the rest goes on
+    o = go(w => { w.jobDryFail = { bwl: { code: 400, message: 'Unrecognized name: bwl_x' } }; });
+    eq(line(o.r, /Brandwatch live job/), 'PROBLEM the dry run of Early Detection\'s Brandwatch live job with three made-up mentions: BigQuery refused (HTTP 400: Unrecognized name: bwl_x)');
+    o = go(w => { w.jobDryFail = { bwl: 'throw' }; });
+    eq(line(o.r, /Brandwatch live job/), 'PROBLEM the dry run of Early Detection\'s Brandwatch live job with three made-up mentions: the call to BigQuery did not complete (BigQuery unreachable for [address])');
     // a counted column missing: only the metadata is read
     o = go(w => { w.table.schema.fields = w.table.schema.fields.filter(f => f.name !== 'ingestionTimestamp'); });
-    eq(o.kinds, ['tables.get', 'jobDry', 'jobDry']);
+    eq(o.kinds, ['tables.get', 'jobDry', 'jobDry', 'jobDry']);
     eq(amie(o.r).slice(0, 1), ['PROBLEM the AMIE table has no column "ingestionTimestamp", which the plan needs']);
     // the type words
     const b = loadBot(makeGoogle(NOW).services);

@@ -412,11 +412,19 @@ function nsrcWrite_(sh, rows) {
  * day record was saved): the line its read leaves in the log, the New sources tab (made when missing; left alone when a
  * person's tab has its name, and then `st.nsf` is set so the source waits; cleared when the tab is the bot's), and
  * column C of its row (noteSwitch_, every check, so the note never ages out while the source is ON). `read`: the
- * check's lanes (ewsReadLanes_). Only the AMIE table (row 48) has all of this yet. Never throws.
+ * check's lanes (ewsReadLanes_). With row 49 ON, Brandwatch live's row, its query list and C49 too (its reads' own
+ * log lines are BrandwatchLive.gs's). Never throws.
  */
 function nsrcAfterCheck_(props, st, nx, now, read) {
   try {
-    if (!nx || !Array.isArray(nx.sources) || nx.sources.indexOf('ami') < 0) return;
+    if (!nx || !Array.isArray(nx.sources)) return;
+    // Brandwatch live alone (row 49 ON, row 48 OFF): its tab and its note (with both, the AMIE part below writes the tab)
+    if (nx.sources.indexOf('bwl') >= 0 && nx.sources.indexOf('ami') < 0) {
+      nsrcBwlQueryRows_(null, null, now);
+      bwlWriteNote_(null, null, now);
+      return;
+    }
+    if (nx.sources.indexOf('ami') < 0) return;
     const amiq = (st.marks && st.marks.amiq) || {};
     const lane = read && read.ami;
     if (lane && lane.state === 'done') {
@@ -448,6 +456,7 @@ function nsrcAfterCheck_(props, st, nx, now, read) {
       }
     }
     noteSwitch_('edAmie', nsrcAmiNote_({ status, day: d, trial: nsrcTrial_(rec, 'ami', day), now, foreign: !!st.nsf }));
+    if (nx.sources.indexOf('bwl') >= 0) bwlWriteNote_(null, null, now);
   } catch (e) {
     console.warn(`New sources: ${nsrcScrub_((e && e.message) || e, 200)}`);
   }

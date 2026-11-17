@@ -337,7 +337,7 @@ function poll() {
     alertMemoryStart_(ss, { deadline: runStart + RUN_HARD_STOP_MS_ });
     if (typeof syncBrandSafetyGroups_ === 'function') syncBrandSafetyGroups_(ss);
     control = controlTab_(ss) || ensureControlTab_(ss, Session.getEffectiveUser().getEmail());
-    ensureSwitchRows_(control);  // rows 11-24, 27-29, 32, 34, 36-40, 46 and 48 on a tab from before them (OFF)
+    ensureSwitchRows_(control);  // rows 11-24, 27-29, 32, 34, 36-40, 46, 48 and 49 on a tab from before them (OFF)
     ensureSfBursonRow_(control);  // row 25 (S-F Burson space, blank) on a tab from before it
     ensureTestCopyRow_(control);  // row 26 (Burson test copy, blank) on a tab from before it
     ensureTestersRow_(control);   // row 30 (Testing: send to, blank) on a tab from before it
@@ -346,7 +346,7 @@ function poll() {
     ensureWatchAlertsRow_(control);  // row 35 (Watch alerts, OFF) on a tab from before it
     ensureFtBarRows_(control);    // rows 41-45 and 47 (fast-triage bars, seeds) on a tab from before them; the help is at row 53
     wanted = readControl_(control);
-    ewsRunSwitches_(wanted.switches);  // EarlyWaveSource.gs: which new sources' rows (48) are ON this run; unset: all OFF
+    ewsRunSwitches_(wanted.switches);  // EarlyWaveSource.gs: which new sources' rows (48, 49) are ON this run; unset: all OFF
     testers = testersFor_(wanted.testers, control);  // C30 is kept current even while the bot is paused
     lookback = bqLookbackFor_(wanted.bqLookback, control);  // and C31
     ftBars = ftBarsFor_(wanted.ftBars, control);  // and C41:C45, C47
@@ -724,6 +724,11 @@ function poll() {
           proactiveWatchOff_();
           pwAlertsIdle_(control, wanted.watchAlerts, false);
         }
+        // Early Detection: also read Brandwatch live (Control row 49, BrandwatchLive.gs): right after the Watch, never in
+        // front of it; it reads only while rows 49 and 19 are ON, and hands what it read to Early Detection's next check.
+        // OFF forgets where it had read to (never the day's counts or the ticks). Never throws
+        if (wanted.switches.edBwLive) bwLiveRun_(runStart, wanted.switches);
+        else bwLiveOff_(wanted.switches);
         // Early Detection: also read the AMIE table (Control row 48, EarlyWaveSource.gs): OFF forgets where it had read to
         // and the posts it had set aside (never the day's counts or the date its trial started). Never throws
         if (!wanted.switches.edAmie) ewsAmieOff_(wanted.switches);

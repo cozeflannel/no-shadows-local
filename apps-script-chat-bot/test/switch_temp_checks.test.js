@@ -268,12 +268,12 @@ module.exports = H => {
       'Hold-back: about_google at or below', 'Hold-back: routine_noise at or above', 'Hold-back and early watch: answer confidence at or above',
       'Early watch: about_google and brand_risk, each at or above', 'Early watch: distinct accounts, at least',
       'Write early-wave records to BigQuery', 'Early watch: independent_reports at or above', 'Early Detection: also read the AMIE table',
-      '', '', '', '', 'How it works']);
+      'Early Detection: also read Brandwatch live (not X)', '', '', '', 'How it works']);
     const help = t.control().rows.slice(53).map(r => String(r[0] || ''));
     assert.ok(help.some(l => /^• Temp checks: row 36, OFF until you turn it ON\. In a thread in the Mirror space or the Other alerts space \(B33\)/.test(l)));
-    assert.ok(help.some(l => /^• Rows 11-24, 27-29, 32, 34, 36-40, 46 and 48 are switches/.test(l)));
-    eq([SWITCHES.length, SWITCHES[SWITCHES.length - 7].key, SWITCHES[SWITCHES.length - 6].key, B.switchRows_().slice(-7)],
-      [26, 'tempChecks', 'bsgTestEmails', [36, 37, 38, 39, 40, 46, 48]]);
+    assert.ok(help.some(l => /^• Rows 11-24, 27-29, 32, 34, 36-40, 46, 48 and 49 are switches/.test(l)));
+    eq([SWITCHES.length, SWITCHES[SWITCHES.length - 8].key, SWITCHES[SWITCHES.length - 7].key, B.switchRows_().slice(-8)],
+      [27, 'tempChecks', 'bsgTestEmails', [36, 37, 38, 39, 40, 46, 48, 49]]);
     // The deployed layout: row 36 blank, "How it works" at row 37
     t.control().getRange(36, 1, 1, 3).setValues([['', '', '']]);
     t.control().getRange(37, 1, 1, 3).setValues([['How it works', '', '']]);
@@ -282,7 +282,7 @@ module.exports = H => {
     eq([t.control().cell(35, 2), t.control().cell(36, 1), t.control().cell(36, 2), t.control().cell(37, 1), t.control().cell(37, 2), t.control().cell(38, 1),
       t.control().cell(39, 1), t.control().cell(40, 1), t.control().cell(46, 1), t.control().cell(47, 1), t.control().cell(48, 1), t.control().cell(49, 1),
       t.control().cell(53, 1)],
-    ['Mirror space (B9)', 'Temp checks', 'OFF', 'Group test emails', 'OFF', 'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise', 'Write early-wave records to BigQuery', 'Early watch: independent_reports at or above', 'Early Detection: also read the AMIE table', '', 'How it works']);
+    ['Mirror space (B9)', 'Temp checks', 'OFF', 'Group test emails', 'OFF', 'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise', 'Write early-wave records to BigQuery', 'Early watch: independent_reports at or above', 'Early Detection: also read the AMIE table', 'Early Detection: also read Brandwatch live (not X)', 'How it works']);
     t.control().getRange(36, 2).setValue('ON');
     t.poll();
     t.poll();

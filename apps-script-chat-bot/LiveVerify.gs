@@ -795,8 +795,8 @@ function nsvAmieRead_(token, lines, schema, now) {
  * Dry runs of the new Early Detection jobs' SQL, as the plan's Q4 says, each sent with dryRun: true (BigQuery checks the
  * names, the types and the access, scans nothing and says the bytes) and reported as one OK or PROBLEM line: the AMIE
  * job exactly as a check builds it (ewsAmiQuery_, with the optional columns the metadata found in `schema`, or none),
- * and the us-central1 job with its list of the big posts Sonar knew (only sent while a new row is ON). STEP 2b ADDS
- * HERE the Brandwatch job's dry run with three made-up @bwl rows. `now`: the check's time (default the clock).
+ * and the us-central1 job with its list of the big posts Sonar knew (only sent while a new row is ON), and the Brandwatch
+ * job with three made-up mentions as @bwl (the SQL compiles with the array of structs). `now`: the check's time.
  */
 function nsvNewJobDryRuns_(token, schema, now) {
   const at = Number(now) || Date.now();
@@ -822,5 +822,14 @@ function nsvNewJobDryRuns_(token, schema, now) {
   const what = 'Early Detection\'s us-central1 job with its list of big posts (sent only while a new row is ON)';
   if (c1.code !== 200 || !c1.body) out.push(`PROBLEM the dry run of ${what}: ${c1.code ? `BigQuery refused (HTTP ${c1.code}: ${c1.why})` : `the call to BigQuery did not complete (${c1.why})`}`);
   else out.push(`OK ${what} passes a dry run${hasBytes(c1) ? `: ${gbOf(c1)}` : ''}`);
+  // the Brandwatch job (row 49) with three made-up mentions as @bwl: the SQL compiles with the array of structs
+  const sample = i => ({ mid: `BWL|dry${i}`, url: `https://www.reddit.com/r/example/comments/dry${i}/`, platform: 'reddit',
+    author: `example_${i}`, audience: 120, eng: 4, posted_ms: until - (30 + i) * 60000, seen_ms: until - 5 * 60000,
+    raw: 'My Google Pixel keeps restarting after the latest update, anyone else seeing this?', topic: 'Google Pixel',
+    lang: 'en', sentiment: 'negative' });
+  const bwl = dry({ key: 'bwl', location: 'US' }, ewsBwlQuery_([sample(1), sample(2), sample(3)], until, until));
+  const bwWhat = 'Early Detection\'s Brandwatch live job with three made-up mentions';
+  if (bwl.code !== 200 || !bwl.body) out.push(`PROBLEM the dry run of ${bwWhat}: ${bwl.code ? `BigQuery refused (HTTP ${bwl.code}: ${bwl.why})` : `the call to BigQuery did not complete (${bwl.why})`}`);
+  else out.push(`OK ${bwWhat} passes a dry run`);
   return out;
 }

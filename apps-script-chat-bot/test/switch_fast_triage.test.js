@@ -566,7 +566,7 @@ module.exports = function (H) {
       eq([sh.cell(40, 1), sh.cell(40, 2), sh.validations['40,2'].values], ['Fast triage: hold back noise', 'OFF', ['ON', 'OFF']]);
       eq([sh.cell(46, 1), sh.cell(46, 2), sh.validations['46,2'].values], ['Write early-wave records to BigQuery', 'OFF', ['ON', 'OFF']]);
       eq([sh.cell(47, 1), sh.cell(48, 1), sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1), sh.cell(53, 1)],
-        ['Early watch: independent_reports at or above', 'Early Detection: also read the AMIE table', '', '', '', '', 'How it works']);
+        ['Early watch: independent_reports at or above', 'Early Detection: also read the AMIE table', 'Early Detection: also read Brandwatch live (not X)', '', '', '', 'How it works']);
 
       if (disableFastTriageHooks) {
         t.bot.ftStart_ = () => null;
@@ -1431,7 +1431,7 @@ module.exports = function (H) {
     ]);
     const PROBS = ['0.05', '0.10', '0.15', '0.20', '0.25', '0.30', '0.35', '0.40', '0.45', '0.50', '0.55', '0.60', '0.65', '0.70', '0.75', '0.80', '0.85', '0.90', '0.95'];
     eq(specs.map(s => s.choices), [PROBS, PROBS, PROBS, PROBS, ['2', '3', '4'], PROBS]);
-    eq([sh.cell(46, 1), sh.cell(48, 1), sh.cell(52, 1), sh.cell(53, 1)], ['Write early-wave records to BigQuery', 'Early Detection: also read the AMIE table', '', 'How it works']);
+    eq([sh.cell(46, 1), sh.cell(48, 1), sh.cell(49, 1), sh.cell(52, 1), sh.cell(53, 1)], ['Write early-wave records to BigQuery', 'Early Detection: also read the AMIE table', 'Early Detection: also read Brandwatch live (not X)', '', 'How it works']);
 
     // 1. Every bar row has strict dropdown validation (allowInvalid === false) and seed value on setup()
     for (const s of specs) {
@@ -1495,7 +1495,7 @@ module.exports = function (H) {
       ['Hold-back and early watch: answer confidence at or above', '0.55'],
       ['Early watch: about_google and brand_risk, each at or above', '0.70'], ['Early watch: distinct accounts, at least', '4'],
       ['Write early-wave records to BigQuery', 'ON'], ['Early watch: independent_reports at or above', '0.30'],
-      ['Early Detection: also read the AMIE table', 'OFF'], ['', ''], ['', ''], ['', ''], ['', ''], ['How it works', '']]);
+      ['Early Detection: also read the AMIE table', 'OFF'], ['Early Detection: also read Brandwatch live (not X)', 'OFF'], ['', ''], ['', ''], ['', ''], ['How it works', '']]);
     assert.match(first.tab.cell(43, 3), /^✓ Hold-back \(row 40\) and early watch \(row 39\) require answer confidence at or above 0\.55/);
     eq(first.tab.rows.filter(r => String(r[0]).trim() === 'How it works').length, 1);
     eq(first.o.bot.ftBarsFor_(first.o.bot.readControl_(first.tab).ftBars).values, { about: 0.10, noise: 0.90, conf: 0.55, watch: 0.70, accounts: 4, independent: 0.30 });
