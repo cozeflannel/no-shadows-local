@@ -16,7 +16,8 @@
  *     THREAD_NOTE_HEADS_): the bot then knows it as its own with no message id and never answers it, and the wider
  *     guard (Outbox.gs) holds it on any way to S-F Burson;
  *   - its key hasn't been posted (once per key), the card has fewer than AC_NOTE_PER_CARD_ notes in its life and the run
- *     fewer than AC_NOTE_PER_RUN_, of all kinds together.
+ *     fewer than AC_NOTE_PER_RUN_, of all kinds together; but a note no cap refuses (acNoteUncapped_: the "final"
+ *     requirement line) is never refused by either and counts against neither.
  * Otherwise nothing is posted and it returns false: the caller only counts and logs, and learns why from
  * acThreadNoteLast_ (a code, never the log's words).
  *
@@ -168,15 +169,17 @@ function acThreadNote_(from, card, text, key) {
       return true;
     }
     const run = acNoteRun_(check.ctx);
-    if (run.n >= AC_NOTE_PER_RUN_) {  // (before anything is read for it)
+    // A note no cap refuses (acNoteUncapped_): posted once per key where a note may go, with nothing read or counted
+    const capped = !acNoteUncapped_(k);
+    if (capped && run.n >= AC_NOTE_PER_RUN_) {  // (before anything is read for it)
       acNoteSave_(state);
       return refuse('run_full', `this run already posted ${AC_NOTE_PER_RUN_} notes`);
     }
     // a card whose thread this run couldn't count in is not asked about again in this run
-    if (run.dark[cardHash]) return refuse(acNoteDarkCode_(run.dark[cardHash]), run.dark[cardHash]);
+    if (capped && run.dark[cardHash]) return refuse(acNoteDarkCode_(run.dark[cardHash]), run.dark[cardHash]);
     // The notes its card has: what the counts say; a card they have nothing for has none only if its thread is younger
     // than they are and than 25 hours; any other card's notes are counted in its thread, once
-    let had = state.c[cardHash] ? state.c[cardHash][0] : null;
+    let had = !capped ? 0 : state.c[cardHash] ? state.c[cardHash][0] : null;
     let counted = false;  // its thread was read for this very note
     if (had === null) {
       const born = acNoteThreadBorn_(check, card);
@@ -203,7 +206,7 @@ function acThreadNote_(from, card, text, key) {
         }
       }
     }
-    if (had >= AC_NOTE_PER_CARD_) {
+    if (capped && had >= AC_NOTE_PER_CARD_) {
       // A full card: a key the counts no longer have may be one of the notes that are there. Its thread, when it was
       // just read, has shown that it isn't; otherwise Chat is asked for the note by its id, once a run for a key
       if (!counted && !run.absent[keyHash] && !acNoteAskRefusal_(run, check.ctx)) {
@@ -230,8 +233,10 @@ function acThreadNote_(from, card, text, key) {
       return true;
     }
     if (msg.thread && msg.thread !== check.thread) say(`thread note: Chat started a new thread for it (its card's thread ${check.thread} is gone)`);
-    state.c[cardHash] = [had + 1, now];
-    run.n++;
+    if (capped) {
+      state.c[cardHash] = [had + 1, now];
+      run.n++;
+    }
     AC_NOTE_LAST_.posted = true;
     acNoteSave_(state);
     return true;
@@ -253,6 +258,24 @@ function acThreadNoteLast_() {
 /** The code (AC_NOTE_LAST_) of a card whose notes this run couldn't count (`why`: its run.dark words). Pure. */
 function acNoteDarkCode_(why) {
   return /no longer in the space/.test(String(why || '')) ? 'card_gone' : 'unread';
+}
+
+/**
+ * True for the key of a note that no cap refuses and that counts against none: the "*Alert requirements, final:*" line
+ * (RequirementLine.gs requirementFinal_, 'reqfinal:'), which corrects what the review's own note said and comes at most
+ * once an alert. It is posted once per key where a note may go (acThreadNoteCheck_), never takes another note's place,
+ * and a count of a card's thread leaves it out (acNoteReviewIds_). Pure.
+ */
+function acNoteUncapped_(key) {
+  return /^reqfinal:/.test(String(key === undefined || key === null ? '' : key));
+}
+
+/**
+ * True for a message in the shape of a note no cap refuses (acNoteUncapped_), as a count of a card's thread finds it
+ * with no id to go by: the "final" requirement line. Pure.
+ */
+function acNoteUncappedText_(text) {
+  return /^(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?Alert requirements, final:/.test(String(text || '').trim());
 }
 
 /** This run's counts for the notes (see AC_NOTE_RUN_): started afresh for a new run. */
@@ -288,10 +311,13 @@ function acNoteId_(space, key) {
  * the card itself for one reviewed in place and Burson's own message, the row's source_message, for a corrected copy).
  * That note can be just its last line, "*Alert requirements:* …" (RequirementLine.gs), which starts as a note of this
  * helper does; it is the review's, not one of the notes under another alert's card, so counting a thread leaves it out.
+ * So does the "final" line that may follow it (requirementFinal_: keyed 'reqfinal:' + the same message), which counts
+ * against no cap (acNoteUncapped_).
  */
 function acNoteReviewIds_(check, card) {
-  return [check.message, card && card.source_message].filter(Boolean)
-    .map(name => CLIENT_ID_PREFIX_ + sha256Hex_(`${check.space}|chg:${name}`).slice(0, 40));
+  const names = [check.message, card && card.source_message].filter(Boolean);
+  return names.map(name => CLIENT_ID_PREFIX_ + sha256Hex_(`${check.space}|chg:${name}`).slice(0, 40))
+    .concat(names.map(name => acNoteId_(check.space, `reqfinal:${name}`)));
 }
 
 /** True when the note with `key` is in `space` already: Chat has a message under the id that note was given. Never throws. */
@@ -392,7 +418,7 @@ function acNoteThread_(check, ownId, run, reviewIds) {
         if (!m.threadReply || m.name === check.message) return;
         if (ownId && m.clientId === ownId) out.own = m.name;
         if (m.clientId && (reviewIds || []).indexOf(m.clientId) >= 0) return;
-        if (isThreadNoteText_(m.text) && (!bot || m.senderName === bot) && !asked(m.text)) {
+        if (isThreadNoteText_(m.text) && (!bot || m.senderName === bot) && !asked(m.text) && !acNoteUncappedText_(m.text)) {
           out.notes++;
           if (!out.same && acNotePlain_(m.text) === mine) out.same = m.name;
         }
