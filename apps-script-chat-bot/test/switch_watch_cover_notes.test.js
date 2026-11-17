@@ -295,7 +295,7 @@ module.exports = H => {
     eq(on.out.chat.filter(c => NOTE_RX.test(c.text)), []);
   });
 
-  test('watch cover notes: in the one-space setup a Watch alert whose story keeps growing takes 3 notes in its thread (its "Same story" replies, the helper\'s cap); later flags on that story are closed at once as repeats of the alerted story (a: \'r\', C35 "repeats of an alerted story held back"), never left waiting: no pre-read reads them again, none is dropped after 3 hours, nothing more is posted', () => {
+  test('watch cover notes: in the one-space setup a Watch alert whose story keeps growing lists each later post in its thread: its "Same story" replies have no cap of the helper\'s (as before the notes) and take no note\'s place, so the card still takes its 3 other notes; a reply the helper refuses for a reason that will not lift (its card\'s thread is not in the Auto-correct space) closes its flags at once as repeats of the alerted story (a: \'r\', C35 "repeats of an alerted story held back"), never left waiting: no pre-read reads them again, none is dropped after 3 hours, nothing more is posted', () => {
     const w = oneSpace();
     const { t } = w;
     sameStory(t);
@@ -305,14 +305,34 @@ module.exports = H => {
     look(w, [storyFlag(2), storyFlag(1)]);
     const card = watchCard(t);
     [3, 4, 5, 6].forEach(n => look(w, [storyFlag(n)]));
-    const keys = keysOf(t);
-    eq([1, 3, 4, 5, 6].map(n => keys[`${P(n)}|${BRAND}`].a), ['g', 'g', 'g', 'r', 'r']);
+    let keys = keysOf(t);
+    eq([1, 3, 4, 5, 6].map(n => keys[`${P(n)}|${BRAND}`].a), ['g', 'g', 'g', 'g', 'g']);
     const replies = threadOf(t, card).filter(([, text]) => /^🔗 \*Same story: /.test(text));
-    eq(replies.map(([id]) => id), ['client-bqa-', 'client-bqa-', 'client-bqa-']);
-    assert.match(c35(t), /, \+3 in their story's thread, 2 repeats of an alerted story held back/);
+    eq(replies.map(([id]) => id), ['client-bqa-', 'client-bqa-', 'client-bqa-', 'client-bqa-', 'client-bqa-']);
+    assert.match(c35(t), /, \+5 in their story's thread/);
+    assert.ok(!/waiting|repeats/.test(c35(t)), c35(t));
+    // the replies take no note's place: the card still takes 3 notes of other kinds, from its thread (the counts gone)
+    t.g.cache.delete('ac_thread_notes');
+    t.bot.__took = null;
+    t.bot.ev('runOnce_ = (orig => function (ctx) { const r = orig(ctx); if (__took === null) __took = [5, 6, 7, 8].map(n => acThreadNote_(ctx, ' +
+      `{ thread: ${JSON.stringify(card.thread.name)}, message: ${JSON.stringify(card.name)} }, ` +
+      '`\u{1F517} *Part of a story:* ${n} small accounts tell it (story card)`, `story:test:${n}`)); return r; })(runOnce_)');
+    t.poll();
+    eq(t.bot.__took, [true, true, true, false]);
+
+    // a reply the helper refuses for a reason that will not lift: its flags are closed as repeats, never left waiting
+    t.bot.ev('acThreadNoteCheck_ = (orig => function (from, c, text) { return /Same story/.test(String(text)) ? ' +
+      '{ ok: false, why: "the card\'s thread is not in the Auto-correct space" } : orig(from, c, text); })(acThreadNoteCheck_)');
+    const posts = t.chat.botPosts(AC).length;
+    [7, 8].forEach(n => look(w, [storyFlag(n)]));
+    keys = keysOf(t);
+    eq([7, 8].map(n => [keys[`${P(n)}|${BRAND}`].a, keys[`${P(n)}|${BRAND}`].rf]),
+      [['r', 'its story\'s Watch alert (it is not in the Auto-correct space)'], ['r', 'its story\'s Watch alert (it is not in the Auto-correct space)']]);
+    assert.match(c35(t), /2 repeats of an alerted story held back/);
     assert.ok(!/waiting/.test(c35(t)), c35(t));
-    assert.ok(t.g.logs.some(l => l === 'Watch alerts: 1 flag not listed in their story\'s Watch alert\'s thread ("' + STORY + '"): its card ' +
-      'already has 3 notes, the most it takes; that alert covers the story'), 'its log line');
+    assert.ok(t.g.logs.some(l => l === 'Watch alerts: 1 flag not listed in their story\'s Watch alert\'s thread ("' + STORY + '"): ' +
+      'it is not in the Auto-correct space; that alert covers the story'), 'its log line');
+    eq(t.chat.botPosts(AC).length, posts);
     // the runs after (three hours and more): no pre-read, no flag dropped, nothing posted
     const before = [reads, t.chat.botPosts(AC).length];
     for (let i = 0; i < 10; i++) {
@@ -320,7 +340,7 @@ module.exports = H => {
       t.poll();
     }
     eq([reads, t.chat.botPosts(AC).length], before);
-    eq([5, 6].map(n => keysOf(t)[`${P(n)}|${BRAND}`].a), ['r', 'r']);
+    eq([7, 8].map(n => keysOf(t)[`${P(n)}|${BRAND}`].a), ['r', 'r']);
     assert.ok(!/dropped/.test(c35(t)), c35(t));
   });
 

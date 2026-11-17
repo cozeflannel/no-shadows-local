@@ -1647,17 +1647,21 @@ function pwPostStories_(items, pre, recent, c) {
   const heldEntry = h => ({ q: h, a: pwAlertOfRow_(h.v, h.k), p: null });
   // P4b (setting cross_alert_notes, the Auto-correct space only: pwCrossNotesOn_): the same-story reply is a note under
   // its alert's card, posted through the one helper (ThreadNotes.gs acThreadNote_) as the bot's own message, so the
-  // bot's flow never answers it; false when the helper posted nothing for a reason that can pass (the run's 6 notes, its
-  // checks, the thread unread, Chat): the flags wait. 'full' when the card already has its 3 notes, which never lifts:
-  // the flags are closed then as repeats of the story that alert covers (a: 'r'), not left to be read again each run.
-  // Everywhere else it is posted as before. `born`: when the alert's card was posted (ms), when this run posted it
+  // bot's flow never answers it. No cap of the helper's refuses it or is used up by it (its key starts 'pwg:':
+  // acNoteUncapped_), so a growing story lists each later post, as it always did. False when the helper posted nothing
+  // for a reason that passes (the run's time, Chat): the flags wait. 'closed' when the helper refused it for a reason
+  // that will not lift (acThreadNoteLast_: the card is gone, its thread can't be read, it is not in the Auto-correct
+  // space): the flags are closed then as repeats of the story that alert covers (a: 'r'), not left to be read again each
+  // run. Everywhere else it is posted as before. `born`: when the alert's card was posted (ms), when this run posted it
   const asNote = pwCrossNotesOn_(c.dest);
-  const full = (entries, story) => {
-    entries.forEach(e => c.mark(e.q, Object.assign({ a: 'r' }, at, { rf: 'its story\'s Watch alert (its thread is full)' })));
+  const CLOSED_WHY = { card_full: 'its thread is full', card_gone: 'its card is gone', unread: 'its thread can\'t be read',
+    not_here: 'it is not in the Auto-correct space', no_note: 'the note was refused' };
+  const closed = (entries, story, code) => {
+    const why = CLOSED_WHY[code] || 'the note was refused';
+    entries.forEach(e => c.mark(e.q, Object.assign({ a: 'r' }, at, { rf: `its story's Watch alert (${why})` })));
     res.repeats += entries.length;
     console.log(`Watch alerts: ${entries.length} flag${entries.length === 1 ? '' : 's'} not listed in their story's Watch alert's ` +
-      `thread${story ? ` ("${truncate_(String(story), 80)}")` : ''}: its card already has ${AC_NOTE_PER_CARD_} notes, the most ` +
-      'it takes; that alert covers the story');
+      `thread${story ? ` ("${truncate_(String(story), 80)}")` : ''}: ${why}; that alert covers the story`);
   };
   const join = (entries, thread, alertName, later, story, born) => {
     const text = pwStoryReplyText_(entries.map(e => pwStoryView_(e, e.p)), later);
@@ -1666,9 +1670,9 @@ function pwPostStories_(items, pre, recent, c) {
     if (asNote) {
       const note = pwThreadNote_(c.dest, Object.assign({ thread, message: alertName }, Number(born) > 0 ? { createTime: Number(born) } : {}),
         text, key);
-      if (note.full) {
-        full(entries, story);
-        return 'full';
+      if (!note.ok && note.lasting) {
+        closed(entries, story, note.why);
+        return 'closed';
       }
       if (!note.ok) return false;
     } else {

@@ -17,7 +17,7 @@
  *     guard (Outbox.gs) holds it on any way to S-F Burson;
  *   - its key hasn't been posted (once per key), the card has fewer than AC_NOTE_PER_CARD_ notes in its life and the run
  *     fewer than AC_NOTE_PER_RUN_, of all kinds together; but a note no cap refuses (acNoteUncapped_: the "final"
- *     requirement line) is never refused by either and counts against neither.
+ *     requirement line, the watch's "Same story" reply) is never refused by either and counts against neither.
  * Otherwise nothing is posted and it returns false: the caller only counts and logs, and learns why from
  * acThreadNoteLast_ (a code, never the log's words).
  *
@@ -263,19 +263,22 @@ function acNoteDarkCode_(why) {
 /**
  * True for the key of a note that no cap refuses and that counts against none: the "*Alert requirements, final:*" line
  * (RequirementLine.gs requirementFinal_, 'reqfinal:'), which corrects what the review's own note said and comes at most
- * once an alert. It is posted once per key where a note may go (acThreadNoteCheck_), never takes another note's place,
- * and a count of a card's thread leaves it out (acNoteReviewIds_). Pure.
+ * once an alert; and the watch's "Same story: N more posts" reply under its own alert (WatchAlerts.gs pwPostStories_,
+ * 'pwg:'), which had no cap before the notes (the watch keeps its own PW_STORY_REPLIES_MAX_ a run). Each is posted once
+ * per key where a note may go (acThreadNoteCheck_), never takes another note's place, and a count of a card's thread
+ * leaves it out (acNoteReviewIds_, acNoteUncappedText_). Pure.
  */
 function acNoteUncapped_(key) {
-  return /^reqfinal:/.test(String(key === undefined || key === null ? '' : key));
+  return /^(?:reqfinal|pwg):/.test(String(key === undefined || key === null ? '' : key));
 }
 
 /**
  * True for a message in the shape of a note no cap refuses (acNoteUncapped_), as a count of a card's thread finds it
- * with no id to go by: the "final" requirement line. Pure.
+ * with no id to go by: the "final" requirement line, and the watch's "Same story: N more posts" reply. Pure.
  */
 function acNoteUncappedText_(text) {
-  return /^(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?Alert requirements, final:/.test(String(text || '').trim());
+  return /^(?:[^\x00-\x7F]{1,8}[ \t]+)?\*?(?:Alert requirements, final:|Same story: \d[\d,]* more posts?(?![A-Za-z0-9]))/
+    .test(String(text || '').trim());
 }
 
 /** This run's counts for the notes (see AC_NOTE_RUN_): started afresh for a new run. */
