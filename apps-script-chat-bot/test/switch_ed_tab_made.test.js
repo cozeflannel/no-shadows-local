@@ -27,7 +27,9 @@ module.exports = H => {
     const look = w.run('08:01', []);
     const tab = w.t.sheet().getSheetByName(TAB);
     assert.ok(tab, 'the tab is made at the first run');
-    eq([tab.cell(1, 1), tab.cell(3, 1), tab.rows[3][0], tab.rows.length], [TITLE, 'Today: nothing yet.', 'When (ET)', 4]);
+    // ("Today: nothing yet." when it is made; the run's end, with time, writes the day's numbers there)
+    eq([tab.cell(1, 1), tab.cell(3, 1), tab.rows[3][0], tab.rows.length], [TITLE,
+      'Today (2026-10-14): 0 found · 0 cards · 0 under another alert · 0 let go · 0 never reviewed · 0 waiting. Updated 8:01 AM ET.', 'When (ET)', 4]);
     assert.match(look.c19, /today: 0 found, 0 cards, 0 under another alert, 0 let go, 0 never reviewed, 0 waiting · the Early Detection tab lists each one$/);
     eq(w.t.g.props.get('ED_TAB_MADE'), 'true');
     const calls = spy(w);

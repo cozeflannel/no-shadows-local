@@ -1,7 +1,7 @@
 // The Early Detection tab (EarlyDetectionTab.gs), after its review: the "tab in the way" sentence in Status (B5) goes
 // once that tab is renamed even when no row is left to write; the ownership check reads only A1 and then row 4 of a tab,
 // and a Sheets error during it is not taken for a tab in the way; every text cell is written as text (a leading
-// apostrophe), so Sheets never makes a number or a date of it; row 3 is as of the last write.
+// apostrophe), so Sheets never makes a number or a date of it; row 3 says what C19 says after a run with time.
 'use strict';
 
 module.exports = H => {
@@ -191,7 +191,7 @@ module.exports = H => {
   // Row 3
   // ---------------------------------------------------------------------------------------------------------------
 
-  test('early detection tab (review): row 3 is as of the last write (its date and time say when): a run with no row leaves it as it is, the next write brings it up to date', () => {
+  test('early detection tab (review): row 3 is as of the last write (its date and time say when): a run with no row and time brings it up to date (one cell) when the numbers changed, the next write too', () => {
     const w = world();
     const ss = sheetOf(w);
     note(w, NOW, sig(1), 'Reviewed and dismissed', 'Nothing for Google to act on');
@@ -202,7 +202,7 @@ module.exports = H => {
     w.bot.edNotesStart_();
     w.g.clock.now = NOW + 24 * HOUR;
     w.bot.maybeWriteEdTab_(ss, ctxAt(NOW + 24 * HOUR), { deadline: NOW + 24 * HOUR + 4 * MIN });
-    eq(tab.cell(3, 1), first);
+    assert.match(tab.cell(3, 1), /^Today \(2026-10-15\): 0 found .* Updated 8:00 AM ET\.$/);  // a new day: its numbers
     note(w, NOW + 24 * HOUR, sig(2), 'Not English', 'Most of its posts are not in English');
     w.bot.maybeWriteEdTab_(ss, ctxAt(NOW + 24 * HOUR), { deadline: NOW + 24 * HOUR + 4 * MIN });
     assert.match(tab.cell(3, 1), /^Today \(2026-10-15\): 1 found .* Updated 8:00 AM ET\.$/);

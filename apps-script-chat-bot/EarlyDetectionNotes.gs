@@ -93,6 +93,8 @@ const ED_RISK_WORDS_ = {
 /** A new run: its record starts empty (Main.gs poll(), beside outboxRunStart_). */
 function edNotesStart_() {
   ED_NOTES_RUN_ = [];
+  // rows an earlier run handed over but never wrote (it ended first) wait for the tab now (EarlyDetectionTab.gs)
+  if (typeof edTabTakeOver_ === 'function') edTabTakeOver_();
 }
 
 /** The rows this run recorded so far (copies, oldest first): what became of each signal that ended in it. */
@@ -178,6 +180,7 @@ function edNote_(ctx, row, outcome, why, extra) {
     const rec = edNoteRow_(r, outcome, why, x, ctx && typeof ctx.now === 'function' ? ctx.now() : Date.now());
     ED_NOTES_RUN_.push(rec);
     if (ED_NOTES_RUN_.length > ED_NOTES_RUN_MAX_) ED_NOTES_RUN_ = ED_NOTES_RUN_.slice(-ED_NOTES_RUN_MAX_);
+    if (typeof edTabHandOver_ === 'function') edTabHandOver_();  // kept at once: a run that dies leaves it for the tab
     if (!x.logged && ctx && typeof ctx.log === 'function') {
       const told = edNoteObj_(rec);
       ctx.log(`early detection: ${outcome} \u00b7 "${told.story}" \u00b7 ${told.why}`);

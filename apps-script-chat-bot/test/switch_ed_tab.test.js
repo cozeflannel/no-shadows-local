@@ -296,7 +296,7 @@ module.exports = H => {
     w.g.services.CacheService.getScriptCache = () => Object.assign({}, c, { put: (k, v, s) => { puts.push([k, s]); return put(k, v, s); } });
     note(w, NOW, sig(1), 'Reviewed and dismissed', 'Nothing for Google to act on');
     eq([w.bot.maybeWriteEdTab_(ss, ctxAt(w, NOW), { deadline: NOW + 29999 }), tabOf(ss), puts], [{ written: 0, waiting: 1, blocked: false }, null,
-      [['ed_tab_waiting', 21600]]]);
+      [['ed_tab_run', 21600], ['ed_tab_waiting', 21600]]]);  // the row was handed over as it was noted, then left waiting
     // a run catching up on alerts (a flow held an alert for the next run): the same
     w.bot.edNotesStart_();
     note(w, NOW + MIN, sig(2), 'Not English', 'Most of its posts are not in English');
