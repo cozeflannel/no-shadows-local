@@ -2,7 +2,7 @@
 // poll takes a BSIP post for its size or because its author is on one of the feed's influencer lists (the row's `kof`
 // column), yet the card it posted always said "[KOF]: No". In the Auto-correct flow only (ctx.sourceReadOnly), and unless
 // the setting requirement_line is off, the line now says what the feed says:
-//   [KOF]: Yes (<the list's name, without its own brackets>)   when the column names a list that Alert.gs
+//   [KOF]: Yes (<the list's name, without its bracketed part>) when the column names a list that Alert.gs
 //                                                             RX_NOT_KOF_LIST_ does not exclude
 //   [KOF]: No                                                 otherwise (no list, a Google-owned channel, a Google rep)
 // A card that says Yes is a KOF's alert for its review: it gets its Social Alert at any size, as Burson's alerts do.
@@ -47,7 +47,7 @@ module.exports = H => {
     '',
     '[Code]: Product - Other/general criticism,620,gadgetdesk,-,Pixel,NEW',
   ].join('\n');
-  const KOF_LINE = '[KOF]: Yes (Viral KOFs KOFs)';
+  const KOF_LINE = '[KOF]: Yes (Viral KOFs)';
   const KOF_CARD = BASE_CARD.replace('[KOF]: No', KOF_LINE);
 
   // The poll's BSIP read with the feed's KOF column, in the order the query selects (BigQuery.gs bqBsipCandidates_)
@@ -73,18 +73,19 @@ module.exports = H => {
   const cardsIn = (out, run) => out.chat.filter(m => m.run === run && !m.reply && /\*\[BigQuery · BSIP\]\*/.test(m.text));
   const rowsOf = t => t.bot.sheetBackend_(t.sheet()).loadAlerts();
 
-  test('BSIP KOF line: the value. "Google Owned Channels" and a Google rep are no KOF: No. "Viral KOFs (KOFs)": Yes, with the name kept and its brackets taken out. A list without the words KOF or INF: Yes. Several lists: the ones that count, each name whole. No list at all: No. Without the flag the card says "[KOF]: No" whatever the feed says, exactly as before; with it only that one line differs', () => {
+  test('BSIP KOF line: the value. "Google Owned Channels" and a Google rep are no KOF: No. "Viral KOFs (KOFs)": Yes, with the name kept and its bracketed part dropped whole ("Viral KOFs"); a name that is only a bracket keeps its words. A list without the words KOF or INF: Yes. Several lists: the ones that count, each name whole. No list at all: No. Without the flag the card says "[KOF]: No" whatever the feed says, exactly as before; with it only that one line differs', () => {
     const value = kof => B.bsipKofValue_(kof);
     eq(['Google Owned Channels', 'google owned channel', 'Google Reps', 'Google Rep (EMEA)', '', '   ', null, undefined, 'No', 'none', '-', 'n/a'].map(value),
       Array(12).fill('No'));
-    eq([value('Viral KOFs (KOFs)'), value('Tech Reviewers'), value('CAM Tech/AI (INFs)'), value('I/O 2026 KOFs')],
-      ['Yes (Viral KOFs KOFs)', 'Yes (Tech Reviewers)', 'Yes (CAM Tech/AI INFs)', 'Yes (I/O 2026 KOFs)']);
+    eq([value('Viral KOFs (KOFs)'), value('Tech Reviewers'), value('CAM Tech/AI (INFs)'), value('I/O 2026 KOFs'), value('(KOFs)'),
+      value('Viral KOFs ((KOFs))')],
+    ['Yes (Viral KOFs)', 'Yes (Tech Reviewers)', 'Yes (CAM Tech/AI)', 'Yes (I/O 2026 KOFs)', 'Yes (KOFs)', 'Yes (Viral KOFs)']);
     // several lists (apart by a comma, a semicolon, a bar or a line break, as the parser splits a list of names): the ones
     // that count, each name whole; a comma inside a name's own brackets goes with the brackets
     eq([value('Exec following #4 (INFs), CAM Tech/AI (INFs)'), value('Google Owned Channels, Viral KOFs (KOFs)'),
       value('Viral KOFs (KOFs) | Tech Reviewers; Google Reps\nI/O 2026 KOFs'), value('KOFs (US, Tech)'), value('No Limits Creators (INFs)')],
-    ['Yes (Exec following #4 INFs, CAM Tech/AI INFs)', 'Yes (Viral KOFs KOFs)', 'Yes (Viral KOFs KOFs, Tech Reviewers, I/O 2026 KOFs)',
-      'Yes (KOFs US Tech)', 'Yes (No Limits Creators INFs)']);
+    ['Yes (Exec following #4, CAM Tech/AI)', 'Yes (Viral KOFs)', 'Yes (Viral KOFs, Tech Reviewers, I/O 2026 KOFs)',
+      'Yes (KOFs)', 'Yes (No Limits Creators)']);
     eq(B.ev('RX_NOT_KOF_LIST_').source, '^google (?:owned channels?|reps?\\b)');
 
     // the card: without the flag it is the card of before, whatever the row's KOF column says
@@ -105,7 +106,7 @@ module.exports = H => {
     const before = read(BASE_CARD);
     const after = read(KOF_CARD);
     assert.ok(B.detectAlert_(KOF_CARD, after, '') && B.detectAlert_(BASE_CARD, before, ''));
-    eq([before.fields.kof, before.fields.kof_lists, after.fields.kof, after.fields.kof_lists], [false, undefined, true, ['Viral KOFs KOFs']]);
+    eq([before.fields.kof, before.fields.kof_lists, after.fields.kof, after.fields.kof_lists], [false, undefined, true, ['Viral KOFs']]);
     const rest = p => Object.assign({}, p.fields, { kof: null, kof_lists: null });
     eq(rest(after), rest(before));
     eq([after.missing, after.flags, after.matched - before.matched], [before.missing, before.flags, 1]);  // one more field: the lists
@@ -114,7 +115,7 @@ module.exports = H => {
     const lists = kof => read(B.formatBsipSonarAlertText_(kofRow({ kof }), { kof: true })).fields;
     eq([lists('Exec following #4 (INFs), CAM Tech/AI (INFs)').kof_lists, lists('Tech Reviewers').kof_lists, lists('Tech Reviewers').kof,
       lists('Google Owned Channels').kof, lists('Google Owned Channels').kof_lists],
-    [['Exec following #4 INFs', 'CAM Tech/AI INFs'], ['Tech Reviewers'], true, false, undefined]);
+    [['Exec following #4', 'CAM Tech/AI'], ['Tech Reviewers'], true, false, undefined]);
     // (written the way the feed has it, the name would be lost: what the brackets are taken out for)
     eq(read(BASE_CARD.replace('[KOF]: No', '[KOF]: Yes (Viral KOFs (KOFs))')).fields.kof_lists, undefined);
 
@@ -156,13 +157,13 @@ module.exports = H => {
     eq(on.out.emails.map(e => [e.run, e.kind, e.to, e.cc, e.bcc]), [['the cards are reviewed', 'sent', [TESTER], [], []]]);
     const mail = on.out.emails[0];
     assert.ok(mail.subject.indexOf('[Auto-correct test] ') === 0 && mail.subject.includes('Pixel 10 camera app crashes on video'), mail.subject);
-    assert.ok(/(^|\n)KOF: Yes \(Viral KOFs KOFs\)(\n|$)/.test(mail.text), mail.text);
+    assert.ok(/(^|\n)KOF: Yes \(Viral KOFs\)(\n|$)/.test(mail.text), mail.text);
     assert.ok(mail.text.includes(KOF_URL) && !mail.text.includes(OWNED_URL), mail.text);
     // their Alert-log rows: a KOF's alert that went out, and one with no email
     const key = url => on.t.bot.recordKey_({ post_url: url });
     const row = url => rowsOf(on.t).find(r => r.record_key === key(url));
     eq([KOF_URL, OWNED_URL].map(u => [row(u).ingested, row(u).email_status || '', row(u).forwarded_fields.kof, row(u).forwarded_fields.kof_lists || []]),
-      [['BSIP', 'sent', true, ['Viral KOFs KOFs']], ['BSIP', '', false, []]]);
+      [['BSIP', 'sent', true, ['Viral KOFs']], ['BSIP', '', false, []]]);
     eq(row(KOF_URL).email_input.escalation.reasons, ['KOF']);
 
     // the setting off (alone, and with every new setting off): the cards of before, and the outcome of before

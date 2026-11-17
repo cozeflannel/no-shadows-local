@@ -1668,14 +1668,18 @@ function bsipProduct_(names) {
 /**
  * A BSIP card's [KOF] value from the feed's KOF column (`kof`: the influencer lists Pendulum has the author on, as
  * bqBsipCandidates_ reads them): "Yes (<the lists>)" when it names a list that Alert.gs RX_NOT_KOF_LIST_ does not
- * exclude (a Google-owned channel or a Google rep is no KOF), else "No". A list's name goes without its own brackets
- * and commas ("Viral KOFs (KOFs)" -> "Viral KOFs KOFs"): inside "Yes (...)" a bracket would end the list early for
- * both parsers (Alert.gs RX_COMPOUND_KOF_, triage_agent/qa/parser.py) and the name would be lost. Pure.
+ * exclude (a Google-owned channel or a Google rep is no KOF), else "No". A list's name goes without its bracketed
+ * part ("Viral KOFs (KOFs)" -> "Viral KOFs"; a name that is only a bracket keeps its words) and without commas: inside
+ * "Yes (...)" a bracket would end the list early for both parsers (Alert.gs RX_COMPOUND_KOF_,
+ * triage_agent/qa/parser.py) and the name would be lost. Pure.
  */
 function bsipKofValue_(kof) {
   const none = s => FALSE_.indexOf(s.toLowerCase()) >= 0 || NULL_.indexOf(s.toLowerCase()) >= 0;  // "No", "-", "n/a": no list
   const lists = splitTopLevel_(String(kof === null || kof === undefined ? '' : kof), true)
-    .map(s => s.replace(/[(),\r]/g, ' ').replace(/\s+/g, ' ').trim())
+    .map(s => {
+      const plain = t => t.replace(/[(),\r]/g, ' ').replace(/\s+/g, ' ').trim();
+      return plain(s.replace(/\([^()]*\)/g, ' ')) || plain(s);  // "Viral KOFs (KOFs)" -> "Viral KOFs"
+    })
     .filter(s => s && !none(s) && !RX_NOT_KOF_LIST_.test(s));
   return lists.length ? `Yes (${lists.join(', ')})` : 'No';
 }
