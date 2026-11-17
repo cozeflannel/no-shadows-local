@@ -356,7 +356,15 @@ one line under it: what was built, the suite's count, and anything left out with
       (rule 4: Burson's alerts are never slowed). Left out, and why: "one config rule" (Brandwatch mentions' 7 configs
       read by `EWS_GOOGLE_CONFIG_RX_` instead): it changes the Watch's SQL, which this step must not change; the Watch
       sources tab's description of Brandwatch mentions still says 1,000 a day (it is written when the file loads).
-- [ ] **S19c** One path with the Watch, and growth
+- [ ] **S19c** One path with the Watch, and growth (built in part: see below; left unticked)
+      Built, under row 51 with `open_requirements_first`: `otherCollected_` (OtherAlerts.gs) counts a Sensitive Topic as
+      collected whatever the engagements (the alert requirements set no bar for it), for the Watch's cards and the
+      Other alerts space; row 51 OFF or the setting false: as before. Suite: 1,350 of 1,350 passed. Left out, and why:
+      `RQ_PENDING` and the Watch's one-check hold for a queued pass, the grown read (Sonar re-receipts, Tubular on change)
+      and one more review per tier, same-story replies and the story card as a reply under a carded main post: each
+      works on step S19b's list of passes and its cards, not built (no pass is ever queued or carded today, so a hold
+      would wait for nothing); the tests `switch_rq_watch.test.js`'s queued-pass and held-flag cases and
+      `switch_rq_growth.test.js` with them.
 - [ ] **S19f** Every size grouped
 - [ ] **S18** "Why not this post?"
 - [ ] **S19g** Misses counted

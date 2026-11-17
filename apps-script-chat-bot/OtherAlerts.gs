@@ -766,11 +766,14 @@ function otherEngagement_(parsed) {
 
 /**
  * Would SLRR's collection have taken this post? true (P0 tag, a KOF author, or 100+ engagements), false (fewer, as far
- * as the bot can count), or null (it can't tell: a tier like 0-199 and no count). Pure.
+ * as the bot can count), or null (it can't tell: a tier like 0-199 and no count). Under requirements first (row 51 with
+ * open_requirements_first, step S19c) a Sensitive Topic counts too: the alert requirements set no engagement bar for it.
+ * Pure (reads the switches).
  */
 function otherCollected_(fields, eng) {
   const tag = lookupTag_(fields.exposure_tag);
   if ((tag && tag.priority === 'P0') || fields.kof === true || asList_(fields.kof_lists).length) return true;
+  if (typeof rqOn_ === 'function' && rqOn_() && asList_(fields.risk_tags).length) return true;
   if ((eng.min || 0) >= OTHER_COLLECT_MIN_) return true;
   if (eng.n !== null) return eng.n >= OTHER_COLLECT_MIN_;
   if (eng.max !== null && eng.max < OTHER_COLLECT_MIN_) return false;
