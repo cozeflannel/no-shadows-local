@@ -188,7 +188,19 @@ one line under it: what was built, the suite's count, and anything left out with
       min" (rule: no existing Control row changes its text); the Engine tab's "Gap (min)" column (S3) gives the real gap
       between checks. Changed expected texts: row 51's ON text and C51's day part in switch_open_engine; a check "not
       due" in switch_ed_tab's row-51 test is now 2 minutes old.
-- [ ] **S7** Ingest capacity
+- [ ] **S7** Ingest capacity (built in part: see below; left unticked)
+      Built, under row 51 (`openEws_`): 80 texts an embedding call (Vectors.gs), no count of 400 embeddings a check or
+      20,000 a day (the check's own time bounds them), up to 5,000 posts a lane a read (real-time and slow), and up to 50
+      signals of a kind a check (`ewsPromote_`, `ewsVelocity_`). With row 51 OFF and a new source ON, the new lanes'
+      rules (their carry, their shares of embedding and the pool) are exactly as at the base. Suite: 1,300 of 1,300
+      passed (`switch_open_capacity.test.js`). Left out, and why: the carry of posts not embedded for every lane, the
+      chunked `acc` and `x`, Stage B's slice with its `nd` carry, the cursor carry at the last complete timestamp and the
+      gap read of up to 24 hours at 2 hours a check. Each changes how the producer stores and re-reads its own state
+      (EarlyWaveSource.gs, its marks and cache items). Built without them, a check that runs out of time would lose its
+      posts silently. Built hastily, they could lose or double-count posts on the live tables, which the tests here
+      cannot show. They need a step of their own with the producer's state tests (switch_early_wave_source) extended
+      first. Until then, under row 51, posts the check has no time to embed are dropped from that check as today (only
+      the new lanes carry theirs), and a lane's 5,000 rows have no cursor carry.
 - [ ] **S8** Velocity made correct
 - [ ] **S9** Equal standing
 - [ ] **S10** The new sources' rules amended under row 51

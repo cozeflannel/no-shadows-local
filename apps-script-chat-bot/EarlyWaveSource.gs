@@ -745,7 +745,8 @@ function ewsLaneQuery_(laneKey, st, until, ownDue, firstMins, opts) {
     p('since_ms', 'INT64', since), p('until_ms', 'INT64', until), p('max_audience', 'INT64', EWS_MAX_AUDIENCE_),
     p('eng_ceiling', 'INT64', EWS_ENG_CEILING_), p('min_chars', 'INT64', EWS_MIN_CHARS_),
     p('min_tokens', 'INT64', EWS_MIN_TOKENS_), p('min_distinct', 'INT64', EWS_MIN_DISTINCT_TOKENS_),
-    p('rt_max', 'INT64', EWS_RT_MAX_ROWS_), p('slow_max', 'INT64', EWS_SLOW_MAX_ROWS_),
+    p('rt_max', 'INT64', typeof openEws_ === 'function' ? openEws_('rt') : EWS_RT_MAX_ROWS_),
+    p('slow_max', 'INT64', typeof openEws_ === 'function' ? openEws_('slow') : EWS_SLOW_MAX_ROWS_),
   ];
   if (laneKey === 'us') {
     const yesterday = ewsUtcDay_(until - 24 * 3600 * 1000);
@@ -1623,7 +1624,7 @@ function ewsPromote_(clusters, priors, now, lim) {
   const kept = allowed.filter(a => !allowed.some(b => b !== a && (b.authors > a.authors || (b.authors === a.authors && b.id < a.id)) &&
     a.vec && b.vec && ewsDot_(a.vec, b.vec) >= EWS_STORY_SIM_));
   return kept.sort((a, b) => ewsPri_(a.priority) - ewsPri_(b.priority) || b.authors - a.authors ||
-    b.platforms.length - a.platforms.length || b.end - a.end || (a.id < b.id ? -1 : 1)).slice(0, EWS_MAX_ALERTS_);
+    b.platforms.length - a.platforms.length || b.end - a.end || (a.id < b.id ? -1 : 1)).slice(0, typeof openEws_ === 'function' ? openEws_('alerts') : EWS_MAX_ALERTS_);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1769,7 +1770,7 @@ function ewsVelocity_(acc, roll, clusters, priors, now) {
       posts: x.posts, raw, ratio, priority: tier || (ratio >= 5 ? 'P1' : 'P2') });
   });
   return out.sort((a, b) => ewsPri_(a.priority) - ewsPri_(b.priority) || b.ratio - a.ratio || b.current - a.current ||
-    (a.grain < b.grain ? -1 : a.grain > b.grain ? 1 : a.key < b.key ? -1 : 1)).slice(0, EWS_MAX_ALERTS_);
+    (a.grain < b.grain ? -1 : a.grain > b.grain ? 1 : a.key < b.key ? -1 : 1)).slice(0, typeof openEws_ === 'function' ? openEws_('alerts') : EWS_MAX_ALERTS_);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -3097,7 +3098,10 @@ function ewsAmiStatus_(now, st) {
 function ewsEmbed_(posts, known, st, now, deadline, nlCfg) {
   const day = ewsUtcDay_(now);
   if (st.day.key !== day) st.day = { key: day, embedded: 0 };
-  const room = Math.max(0, Math.min(EWS_EMBED_PER_CHECK_, EWS_EMBED_PER_DAY_ - (Number(st.day.embedded) || 0)));
+  // the open engine (row 51, step S7): no count a check or a day; the check's time (`deadline`) bounds the embeddings
+  const perCheck = typeof openEws_ === 'function' ? openEws_('embCheck') : EWS_EMBED_PER_CHECK_;
+  const perDay = typeof openEws_ === 'function' ? openEws_('embDay') : EWS_EMBED_PER_DAY_;
+  const room = Math.max(0, Math.min(perCheck, perDay - (Number(st.day.embedded) || 0)));
   const shared = {};
   posts.forEach(p => { shared[p.chash] = (shared[p.chash] || 0) + 1; });
   posts.forEach(p => { if (!p.vec && known.has(p.chash)) p.vec = known.get(p.chash); });

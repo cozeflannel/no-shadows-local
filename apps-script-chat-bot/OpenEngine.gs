@@ -412,6 +412,24 @@ function openProducerMs_() {
   }
 }
 
+/**
+ * The producer's capacity under row 51 (step S7), `name`: 'rt' real-time posts a lane a read (5,000; else 1,500),
+ * 'slow' slow-lane posts a read (5,000; else 600), 'alerts' signals of a kind a check (50; else 8), 'embCheck' and
+ * 'embDay' embeddings a check and a day (none: the check's time bounds them; else 400 and 20,000), 'batch' texts an
+ * embedding call (80; else 25). Never throws.
+ */
+function openEws_(name) {
+  const off = { rt: EWS_RT_MAX_ROWS_, slow: EWS_SLOW_MAX_ROWS_, alerts: EWS_MAX_ALERTS_, embCheck: EWS_EMBED_PER_CHECK_,
+    embDay: EWS_EMBED_PER_DAY_, batch: VEC_BATCH_ }[name];
+  try {
+    if (!openOn_()) return off;
+    const on = { rt: 5000, slow: 5000, alerts: 50, embCheck: Infinity, embDay: Infinity, batch: 80 }[name];
+    return on === undefined ? off : on;
+  } catch (e) {
+    return off;
+  }
+}
+
 /** The review queue's size: open_queue_max (24) under row 51, else today's 12 (BigQuery.gs ED_QUEUE_MAX_). Never throws. */
 function openQueueMax_() {
   try {

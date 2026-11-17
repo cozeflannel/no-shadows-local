@@ -154,7 +154,8 @@ function vecFetch_(items, o) {
   for (let attempt = 1; attempt <= VEC_TRIES_ && pending.length; attempt++) {
     if (o && o.deadline && Date.now() > Number(o.deadline) - VEC_MIN_LEFT_MS_) break;
     const batches = [];
-    for (let i = 0; i < pending.length; i += VEC_BATCH_) batches.push(pending.slice(i, i + VEC_BATCH_));
+    const per = typeof openEws_ === 'function' ? openEws_('batch') : VEC_BATCH_;  // row 51: 80 (step S7)
+    for (let i = 0; i < pending.length; i += per) batches.push(pending.slice(i, i + per));
     let token = '';
     try { token = ScriptApp.getOAuthToken(); } catch (e) { console.warn(`Vertex AI embeddings: no OAuth token: ${e}`); return result; }
     const requests = batches.map(b => ({
