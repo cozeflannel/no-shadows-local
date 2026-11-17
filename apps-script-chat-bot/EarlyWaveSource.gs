@@ -352,7 +352,7 @@ function ewsNewCfg_() {
     poolMax: n('early_wave_new_pool_max', 300),
     poolMinutes: n('early_wave_new_pool_minutes', 120),
     carryMax: n('early_wave_new_carry_max', 100),
-    trialDays: n('early_wave_new_trial_days', 7),
+    trialDays: n('early_wave_new_trial_days', 0),
     liftedPerHour: n('early_wave_new_lifted_per_hour', 2),
     liftedPerDay: n('early_wave_new_lifted_per_day', 20),
   };

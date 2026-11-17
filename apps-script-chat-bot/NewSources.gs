@@ -322,12 +322,23 @@ function nsrcAmiRow_(s, d, now, foreign, lastRows) {
 }
 
 /**
+ * How a trial is named for people: "first week" for 7 days (early_wave_new_trial_days), "first N days" for another
+ * number, and "trial" once the setting is 0 (a story noted in an earlier trial). Pure (reads GEN).
+ */
+function nsrcTrialWords_() {
+  const n = ewsNewCfg_().trialDays;
+  if (!(n > 0)) return 'trial';
+  return n === 7 ? 'first week' : `first ${n} day${n === 1 ? '' : 's'}`;
+}
+
+/**
  * The tab's rows, from row 1: the title, the summary, the source rows' header, one row a source (`sources`, each a row of
  * NSRC_HEADER_; the slots of NSRC_SOURCE_ROWS_ not used are blank), a blank row, then the lifted stories (`lifted`:
  * EarlyWaveSource.gs ewsLiftedStories_, newest last there, newest first here). `calls`: the calls the new sources made
- * today. Pure (but for the time zone).
+ * today. `trial`: true while a source is in its trial (nsrcTrial_), the only time the list's title speaks of one. Pure
+ * (but for the time zone).
  */
-function nsrcRows_(sources, lifted, calls, now) {
+function nsrcRows_(sources, lifted, calls, now, trial) {
   const width = NSRC_HEADER_.length;
   const pad = r => r.concat(Array(Math.max(0, width - r.length)).fill('')).slice(0, width);
   const rows = [
@@ -341,15 +352,15 @@ function nsrcRows_(sources, lifted, calls, now) {
   rows.push(pad([]));
   // (a later step puts Brandwatch's query list here, from row NSRC_QUERY_ROW_, and the lifted stories after it)
   const list = (lifted || []).slice().reverse();
-  rows.push(pad([`Stories only the new sources lifted over the bar, newest first (${list.length}; in a source's first week ` +
-    'they are noted here, not sent for review)']));
+  rows.push(pad([`Stories only the new sources lifted over the bar, newest first (${list.length}` +
+    (trial ? `; in a source's ${nsrcTrialWords_()} they are noted here, not sent for review)` : ')')]));
   rows.push(pad(NSRC_LIFT_HEADER_.slice()));
   list.forEach(e => rows.push(pad([
     nsrcStamp_(e.at),
     nsrcScrub_(e.headline) || '(no headline)',
     nsrcNum_(e.accounts),
     nsrcNum_(e.links),
-    e.sent ? 'sent for review' : e.trial ? 'noted, not sent: the source\'s first week' : 'noted, not sent: the hour\'s or day\'s limit was reached',
+    e.sent ? 'sent for review' : e.trial ? `noted, not sent: the source's ${nsrcTrialWords_()}` : 'noted, not sent: the hour\'s or day\'s limit was reached',
     (e.sources || []).map(x => NSRC_SHORT_NAMES_[x] || x).join(', '),
   ])));
   return rows.map(r => r.map(nsrcCell_));
@@ -416,7 +427,8 @@ function nsrcAfterCheck_(props, st, nx, now, read) {
         st.nsf = st.nsf || now;
       } else if (tab && tab.sh) {
         delete st.nsf;
-        const rows = nsrcRows_([nsrcAmiRow_(status, d, now, false, Number(amiq.lr) || 0)], ewsLiftedStories_(), d.calls, now);
+        const rows = nsrcRows_([nsrcAmiRow_(status, d, now, false, Number(amiq.lr) || 0)], ewsLiftedStories_(), d.calls, now,
+          !!nsrcTrial_(rec, 'ami', day));
         nsrcWrite_(tab.sh, rows);
       }
     }

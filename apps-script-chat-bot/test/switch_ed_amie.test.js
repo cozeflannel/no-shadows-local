@@ -69,6 +69,9 @@ module.exports = H => {
       return origAll(reqs);
     };
     const b = loadBot(g.services, g.clock);
+    // these checks were written with a 7-day trial, the setting's default until it became 0: it is set here, so they keep
+    // testing the trial; a test without one sets early_wave_new_trial_days to 0
+    Object.assign(b.ev('GEN').settings, { early_wave_new_trial_days: 7 });
     b.ewsRunSwitches_(opts.sw || { edAmie: true });
     const env = { g, b, w };
     // The table's checks are made at the end of a check (ewsAmiChecks_), so the AMIE job goes out from the check after
@@ -912,7 +915,7 @@ module.exports = H => {
       eq(row[2], B.nsrcWhen_(s.read, env.g.clock.now));
       assert.ok(tab.rows[1][0].startsWith(`Calls today: ${n(d.calls)} to BigQuery for the AMIE table`), tab.rows[1][0]);
       // C48: the same numbers, from the same record
-      eq(env.note(), B.nsrcAmiNote_({ status: s, day: B.nsrcDay_(env.rec(), 'ami', DAY), trial: B.nsrcTrial_(env.rec(), 'ami', DAY), now: env.g.clock.now }));
+      eq(env.note(), B.nsrcAmiNote_({ status: s, day: B.nsrcDay_(env.rec(), 'ami', DAY), trial: env.b.nsrcTrial_(env.rec(), 'ami', DAY), now: env.g.clock.now }));
       return d;
     };
     let d = check();
@@ -995,6 +998,39 @@ module.exports = H => {
     assert.match(env.note(), /^trial until Oct 21: 1 story it alone lifted was noted, not sent for review \(New sources tab\)/);
     const all = [JSON.stringify(Array.from(env.g.props.entries())), JSON.stringify(tab.rows), env.g.logs.join('\n')].join('\n');
     assert.ok(!all.includes('help.desk@example.test'));
+  });
+
+  test('ed amie (trial setting): with the default early_wave_new_trial_days (0) a story only the AMIE table lifted goes for review from the first day and no text speaks of a trial (C48, the New sources tab); a value above 0 (3 days) still gives a trial: the story is noted, not signalled, and C48 and the tab say so with its length', () => {
+    const story = 'Google Photos backup stopped uploading anything on my phone overnight and the app says it is done';
+    const lifts = (body, check) => (check === 1 ? ['alpha', 'bravo', 'charlie', 'delta', 'echo'].map((x, i) => ami({ mid: `AMI|tri${i}`,
+      url: `https://www.reddit.com/r/googlephotos/comments/1tri${i}/t/`, platform: 'Reddit', author: `tri_${i}`, txt: `${story} ${x}`,
+      chash: `tr${i}`, posted_ms: NOW - (10 + i * 2) * MIN, seen_ms: NOW - 3 * MIN })).concat([amark(NOW - 2 * MIN, 5)]) : [amark(NOW - 2 * MIN, 0)]);
+    const texts = env => [JSON.stringify(env.tab().rows), env.note()].join('\n');
+    // the default: no trial
+    eq(B.ev('GEN').settings.early_wave_new_trial_days, 0);
+    const none = sheetEnv();
+    Object.assign(none.b.ev('GEN').settings, { early_wave_new_trial_days: B.ev('GEN').settings.early_wave_new_trial_days });
+    none.w.rows.ami = lifts;
+    eq(none.run().filter(r => r.signal_type === 'CLUSTER_EMERGENCE').length, 1);
+    let lifted = none.b.ewsLiftedStories_();
+    eq([lifted.length, lifted[0].sent, lifted[0].trial], [1, true, false]);
+    let tab = none.tab();
+    let head = tab.rows.findIndex(r => /^Stories only the new sources lifted/.test(r[0]));
+    eq(tab.rows[head][0], 'Stories only the new sources lifted over the bar, newest first (1)');
+    eq(tab.rows[head + 2].slice(4, 6), ['sent for review', 'the AMIE table']);
+    assert.ok(!/trial|first week|first \d+ day/i.test(texts(none)), texts(none));
+    // a trial of 3 days: noted, not signalled, and said where a person reads it
+    const three = sheetEnv();
+    Object.assign(three.b.ev('GEN').settings, { early_wave_new_trial_days: 3 });
+    three.w.rows.ami = lifts;
+    eq(three.run().filter(r => r.signal_type === 'CLUSTER_EMERGENCE').length, 0);
+    lifted = three.b.ewsLiftedStories_();
+    eq([lifted.length, lifted[0].sent, lifted[0].trial], [1, false, true]);
+    tab = three.tab();
+    head = tab.rows.findIndex(r => /^Stories only the new sources lifted/.test(r[0]));
+    eq(tab.rows[head][0], 'Stories only the new sources lifted over the bar, newest first (1; in a source\'s first 3 days they are noted here, not sent for review)');
+    eq(tab.rows[head + 2].slice(4, 6), ['noted, not sent: the source\'s first 3 days', 'the AMIE table']);
+    assert.match(three.note(), /^trial until Oct 17: 1 story it alone lifted was noted, not sent for review \(New sources tab\)/);
   });
 
   test('ed amie (Q13, Q12): the day record holds everything the tab shows and stays under 8,800 characters in its worst case (7 days, both sources, every count of steps 1b, 1c and 1d at its largest, 20 lifted stories), with nothing dropped', () => {

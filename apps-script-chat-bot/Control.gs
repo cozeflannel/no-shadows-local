@@ -313,8 +313,8 @@ const CONTROL_HELP_ = [
   '• Early Detection: also read the AMIE table: row 48, OFF until you turn it ON; it needs Early wave & velocity ' +
     'check (row 19) ON, which it adds posts to. Each Early Detection check then also reads the new rows of the AMIE ' +
     'table (Brandwatch\'s alert feeds, X posts with their words), read only, with no call to Brandwatch. Those posts ' +
-    'join stories like the other sources\' posts and can start one; a story only they lift is listed on the New sources ' +
-    'tab for its first week instead of going for review. They never go to S-F Burson. Turning it OFF forgets where it ' +
+    'join stories like the other sources\' posts and can start one; a story only they lift goes for review like the ' +
+    'others, within a limit an hour and a day (the rest are listed on the New sources tab). They never go to S-F Burson. Turning it OFF forgets where it ' +
     'had read to (the day\'s counts stay); ON again starts from the last hour. C48 says what it is doing.',
 ];
 // "How it works" starts here (rows 11-24 the switches, 25 S-F Burson space, 26 Burson test copy, 27-29 three more

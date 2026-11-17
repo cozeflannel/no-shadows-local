@@ -126,7 +126,7 @@ burson_qa:
   early_wave_new_pool_max: 300          # of the 1,200 unjoined posts kept to start stories, at most this many from the new sources...
   early_wave_new_pool_minutes: 120      # ...each kept this long at most
   early_wave_new_carry_max: 100         # new sources' posts not embedded in a check, kept for the next check (2 hours at most)
-  early_wave_new_trial_days: 7          # days after a source is first read when stories only it lifts over the bar are listed, not sent for review, and stories only it lifts to the early watch are not asked about (0: no trial)
+  early_wave_new_trial_days: 0          # no trial: stories only a new source lifts go for review from its first day, within the two limits below; above 0, the days after a source is first read when stories only it lifts over the bar are listed, not sent for review, and stories only it lifts to the early watch are not asked about
   early_wave_new_lifted_per_hour: 2     # after the trial: stories only the new sources lift over the bar, sent for review in an hour at most...
   early_wave_new_lifted_per_day: 20     # ...and in a day (the rest are listed, not sent)
   # The AMIE table in Early Detection (Control row 48, OFF until the owner turns it on): Brandwatch's alert feeds, X with

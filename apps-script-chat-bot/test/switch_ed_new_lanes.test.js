@@ -158,22 +158,24 @@ module.exports = H => {
     eq(env.bq.filter(c => c.job === 'fk').length, 1);
   });
 
-  test('new lanes: the settings of the new sources are in GEN.settings with their defaults (config/default_config.yaml, BursonQAConfig), and ewsNewCfg_ reads them: 0 is kept (no trial), a missing or bad one is its default', () => {
+  test('new lanes: the settings of the new sources are in GEN.settings with their defaults (config/default_config.yaml, BursonQAConfig; no trial, 0, by default), and ewsNewCfg_ reads them: a trial of 3 days is kept, a missing or bad one is its default', () => {
     const S = B.ev('GEN').settings;
     const defaults = { early_wave_new_embed_per_check: 100, early_wave_new_embed_per_day: 5000, early_wave_new_late_minutes: 180,
-      early_wave_new_pool_max: 300, early_wave_new_pool_minutes: 120, early_wave_new_carry_max: 100, early_wave_new_trial_days: 7,
+      early_wave_new_pool_max: 300, early_wave_new_pool_minutes: 120, early_wave_new_carry_max: 100, early_wave_new_trial_days: 0,
       early_wave_new_lifted_per_hour: 2, early_wave_new_lifted_per_day: 20 };
     eq(Object.fromEntries(Object.keys(defaults).map(k => [k, S[k]])), defaults);
     eq(B.ewsNewCfg_(), { embedPerCheck: 100, embedPerDay: 5000, lateMinutes: 180, poolMax: 300, poolMinutes: 120, carryMax: 100,
-      trialDays: 7, liftedPerHour: 2, liftedPerDay: 20 });
+      trialDays: 0, liftedPerHour: 2, liftedPerDay: 20 });
     const b = loadBot(makeGoogle(NOW).services);
     const s = b.ev('GEN').settings;
-    s.early_wave_new_trial_days = 0;
+    s.early_wave_new_trial_days = 3;
     s.early_wave_new_pool_max = 'many';
     s.early_wave_new_embed_per_check = -5;
     delete s.early_wave_new_lifted_per_day;
     const c = b.ewsNewCfg_();
-    eq([c.trialDays, c.poolMax, c.embedPerCheck, c.liftedPerDay], [0, 300, 100, 20]);
+    eq([c.trialDays, c.poolMax, c.embedPerCheck, c.liftedPerDay], [3, 300, 100, 20]);
+    delete s.early_wave_new_trial_days;
+    eq(b.ewsNewCfg_().trialDays, 0);
   });
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -619,6 +621,9 @@ module.exports = H => {
 
   function liftRun(fkRows, o) {
     const env = makeEnv(job => (job === 'fk' ? fkRows : job === 'c1' ? (o && o.c1) || [] : []));
+    // these checks were written with a 7-day trial, the setting's default until it became 0: it is set here, so they keep
+    // testing the trial; a test without one says early_wave_new_trial_days: 0
+    Object.assign(env.b.ev('GEN').settings, { early_wave_new_trial_days: 7 });
     if (o && o.settings) Object.assign(env.b.ev('GEN').settings, o.settings);
     if (o && o.srcDay) env.g.props.set('EWS_SRC_DAY', JSON.stringify(o.srcDay));
     addFakeLane(env.b, { src: 'bwl' });
@@ -829,6 +834,7 @@ module.exports = H => {
   test('new lanes (promotion): a story only a new lane lifted, noted in its trial, stays held back once every new row is OFF (its posts stay in the story), and the hour cap still holds then; the next hour, after the trial, it goes for review', () => {
     let check = 1;
     let env = makeEnv(job => (check === 1 && job === 'fk' ? liftRows(0, 5) : []));
+    Object.assign(env.b.ev('GEN').settings, { early_wave_new_trial_days: 7 });  // a 7-day trial, as in liftRun
     addFakeLane(env.b, { src: 'bwl' });
     env.b.ewsRunSwitches_({ edFake: true });
     eq(signals(env.b.bqEarlyDetectionRows_(30)).length, 0);
@@ -1089,6 +1095,7 @@ module.exports = H => {
   const watchEnv = (batches, o) => {
     let i = 0;
     const env = makeEnv(job => (batches[Math.min(i, batches.length - 1)] || {})[job] || []);
+    Object.assign(env.b.ev('GEN').settings, { early_wave_new_trial_days: 7 });  // a 7-day trial, as in liftRun
     if (o && o.settings) Object.assign(env.b.ev('GEN').settings, o.settings);
     if (o && o.srcDay) env.g.props.set('EWS_SRC_DAY', JSON.stringify(o.srcDay));
     addFakeLane(env.b, { src: 'bwl', ready: () => !(o && o.notReady && o.notReady(i)) });

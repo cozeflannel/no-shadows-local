@@ -67,7 +67,7 @@ const GEN = {
   "early_wave_new_pool_max": 300,
   "early_wave_new_pool_minutes": 120,
   "early_wave_new_carry_max": 100,
-  "early_wave_new_trial_days": 7,
+  "early_wave_new_trial_days": 0,
   "early_wave_new_lifted_per_hour": 2,
   "early_wave_new_lifted_per_day": 20,
   "amie_rows_per_check": 300,
