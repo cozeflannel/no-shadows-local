@@ -4319,10 +4319,16 @@ function edDeferredSave_(props, list, rows) {
   }
 }
 
-/** Why a signal left for a later check that no check read again in time was never reviewed (`code`: ED_DEFERRED_CAUSES_'s). Pure but for the settings. */
-function edDeferredWhy_(code) {
+/**
+ * Why a signal left for a later check was never reviewed (`code`: ED_DEFERRED_CAUSES_'s): no check read it again in
+ * time, or, with `full`, the list of those signals was full (ED_DEFERRED_MAX_) and it was one of the oldest. Pure but
+ * for the settings.
+ */
+function edDeferredWhy_(code, full) {
   const cause = Object.keys(ED_DEFERRED_CAUSES_).find(k => ED_DEFERRED_CAUSES_[k] === code) || 'check';
-  return `${edNoteSentence_(edNeverWhy_(cause))} No later check read it again in time (checks were skipped, or busier stories came first).`;
+  return `${edNoteSentence_(edNeverWhy_(cause))} ${full
+    ? 'Too many stories were waiting for a later check, so the oldest ones were let go.'
+    : 'No later check read it again in time (checks were skipped, or busier stories came first).'}`;
 }
 
 /**
@@ -4660,7 +4666,7 @@ function earlyWaveCheck_(ctx) {
     delete deferredRows[h];
     deferredChanged = true;
   };
-  const endDeferred = (h, entry) => {
+  const endDeferred = (h, entry, full) => {
     const e = Array.isArray(entry) ? entry : [];
     const kept = deferredRows[h] && typeof deferredRows[h] === 'object' ? deferredRows[h] : null;
     const row = kept ? Object.assign({}, kept) : { unique_low_tier_authors: ewCount_(e[2]) };
@@ -4681,7 +4687,7 @@ function earlyWaveCheck_(ctx) {
         return;
       }
     }
-    edNote_(ctx, row, ED_OUT_.never, edDeferredWhy_(e[1]), row.alert_id ? { title } : { title, key: `deferred:${h}` });
+    edNote_(ctx, row, ED_OUT_.never, edDeferredWhy_(e[1], full), row.alert_id ? { title } : { title, key: `deferred:${h}` });
   };
   if (Object.keys(deferredList).length) {
     const readNow = new Set((rows || []).map(idHashOf).filter(Boolean));
@@ -5007,7 +5013,7 @@ function earlyWaveCheck_(ctx) {
       if (h && deferredList[h] && seen.hasHash(h)) forgetDeferred(h);
     });
     const before = Object.assign({}, deferredList);
-    edDeferredTrim_(deferredList).forEach(h => endDeferred(h, before[h]));
+    edDeferredTrim_(deferredList).forEach(h => endDeferred(h, before[h], true));
     edDeferredSave_(props, deferredList, deferredRows);
   }
   // At the day's limit the check stops looking: every signal it read and has not marked as seen was never reviewed

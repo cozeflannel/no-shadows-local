@@ -205,9 +205,16 @@ module.exports = H => {
     const look = w.run('09:31', rows);
     const recs = recsOf(w);
     eq(look.waiting + recs.filter(r => /^Card posted/.test(r.outcome)).length, 5);  // five queued (two reviewed in this run)
-    const ended = recs.filter(r => /read it again in time/.test(r.why));
+    const ended = recs.filter(r => /Too many stories were waiting for a later check/.test(r.why));
     eq(ended.length, 20);
-    ended.forEach(r => eq([r.outcome, r.story, r.id], ['Never reviewed', 'A story whose details are gone', '']));
+    ended.forEach(r => eq([r.outcome, r.story, r.id, r.why], ['Never reviewed', 'A story whose details are gone', '',
+      'More than 5 stories arrived in 15 minutes; higher-ranked ones went first. Too many stories were waiting for a later check, so the oldest ones were let go.']));
+    eq(recs.filter(r => /read it again in time/.test(r.why)).length, 0);  // no later check was involved
+    // either reason, for each cause, stays under the 180 characters a reason keeps
+    ['k', 'h', 'o'].forEach(c => [false, true].forEach(f => {
+      const why = w.t.bot.edDeferredWhy_(c, f);
+      assert.ok(why.length <= w.t.bot.ev('ED_NOTE_WHY_MAX_'), `${why.length}: ${why}`);
+    }));
     const kept = JSON.parse(w.t.g.props.get('EARLY_DETECTION_DEFERRED'));
     eq(Object.keys(kept).length, 150);
     Array.from({ length: 20 }, (_, i) => `0000${String(i).padStart(4, '0')}:30`).forEach(h => assert.ok(!kept[h], h));
