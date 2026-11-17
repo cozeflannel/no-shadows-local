@@ -1982,7 +1982,7 @@ function ewsWatchAsk_(cache, props, st, now, cands, watch, record) {
         rec.ld[1] = Number(rec.ld[1]) + 1;
         const before = rec.ls.find(e => e[1] === x.cid);
         if (before) rec.ls.splice(rec.ls.indexOf(before), 1);
-        rec.ls.push([now, x.cid, x.authors, Number(x.lift.links) || 0, truncate_(String(x.row.headline || ''), 100), 1, (x.lift.sources || []).join(','), 0]);
+        rec.ls.push([now, x.cid, x.authors, Number(x.lift.links) || 0, nsrcScrub_(x.row.headline, 100), 1, (x.lift.sources || []).join(','), 0]);
         rec.ls = rec.ls.slice(-EWS_LIFTED_KEPT_);
         lift.up = true;
       }
@@ -2455,7 +2455,7 @@ function ewsLiftGate_(promoted, nx, now, props) {
     if (send) { rec.lh[1] = Number(rec.lh[1]) + 1; rec.ld[1] = Number(rec.ld[1]) + 1; }
     else promoted.splice(promoted.indexOf(x), 1);
     if (isNew) srcs.forEach(s => { ewsNewCount_(nx, s, 'lf'); ewsNewCount_(nx, s, send ? 'lfs' : 'lfn'); });
-    const entry = [now, x.id, x.authors, x.urls, truncate_(String(x.c.lab || ''), 100), send ? 1 : 0, srcs.join(','), trial ? 1 : 0];
+    const entry = [now, x.id, x.authors, x.urls, nsrcScrub_(x.c.lab, 100), send ? 1 : 0, srcs.join(','), trial ? 1 : 0];
     if (before) rec.ls.splice(rec.ls.indexOf(before), 1);
     rec.ls.push(entry);
   });

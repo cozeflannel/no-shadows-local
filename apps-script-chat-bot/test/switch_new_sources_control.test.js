@@ -351,17 +351,31 @@ module.exports = H => {
   test('new sources control (Q12): the bot\'s own New sources tab stays its own when a person hides it or protects it: it is written at each check, never made twice, never shown again or unprotected; turning row 48 OFF leaves the tab as it is (nothing more is written to it)', () => {
     const w = world();
     const { t, sh } = w;
-    sh.getRange(19, 2).setValue('ON');
-    sh.getRange(48, 2).setValue('ON');
+    const amie = amieOn(t, sh);  // the AMIE table answers as it should: it is read at each check
     checks(w, 1);
     const tab = t.sheet().getSheetByName('New sources');
-    eq([tab.cell(1, 1), tab.protections.map(p => p.warningOnly)], [TITLE, [true]]);
+    eq([tab.cell(1, 1), tab.protections.map(p => p.warningOnly), amie.jobs()], [TITLE, [true], 1]);
     tab.hideSheet();
     tab.protect().setDescription('Only the owner');
     const summary = tab.cell(2, 1);
     checks(w, 1);
     eq([t.sheet().sheets.filter(x => x.name === 'New sources').length, tab.isSheetHidden(), tab.protections.length], [1, true, 2]);
     assert.ok(tab.cell(2, 1) !== summary && /^Calls today: /.test(tab.cell(2, 1)), tab.cell(2, 1));  // written again: its time moved
+    // a person renames the bot's tab and makes one of that name while the AMIE table is being read: the check that
+    // finds it leaves it alone, and from the next check the AMIE table waits (no job) until it is renamed in turn
+    tab.setName('New sources (old)');
+    const theirs = t.sheet().insertSheet('New sources');
+    theirs.getRange(1, 1).setValue('Mine now');
+    checks(w, 1);
+    const amiJobs = amie.jobs();
+    checks(w, 2);
+    eq([amie.jobs(), theirs.rows], [amiJobs, [['Mine now']]]);
+    assert.ok(sh.cell(48, 3).startsWith(`${ON_TEXT} · ${FOREIGN_NOTE}`), sh.cell(48, 3));
+    theirs.setName('Mine');
+    tab.setName('New sources');
+    checks(w, 2);
+    eq(amie.jobs(), amiJobs + 1);  // the check after the one that found its own tab again reads the AMIE table
+    assert.ok(!sh.cell(48, 3).includes('a tab named'), sh.cell(48, 3));
     // OFF: the tab stays, as it was; the bot writes no more there
     sh.getRange(48, 2).setValue('OFF');
     const rows = JSON.stringify(tab.rows);
@@ -418,6 +432,7 @@ module.exports = H => {
     t.bot.bqEarlyDetectionRows_ = (minutes, opts) => t.bot.ewsRows_(minutes, opts);
     sh.getRange(19, 2).setValue('ON');
     sh.getRange(48, 2).setValue('ON');
+    return { jobs: () => amieJobs };
   }
 
   /** What the bot put where Burson sees it: its posts in S-F Burson (B25) and the Burson test copy, and the outbox tab. */

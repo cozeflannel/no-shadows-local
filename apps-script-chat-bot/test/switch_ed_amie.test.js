@@ -866,6 +866,27 @@ module.exports = H => {
       ['to [address], cut [address], @handle stays, token [token]']);
   });
 
+  test('ed amie (Q12, Q13): a story only the AMIE table lifted in its trial week is noted, not signalled, and listed on the tab; its headline (a post\'s words) is kept in the day record and shown with any address in it made [address]', () => {
+    const env = sheetEnv();
+    const story = 'Google Wallet will not load my boarding pass, write to help.desk@example.test they said, still broken';
+    env.w.rows.ami = (body, check) => (check === 1 ? ['alpha', 'bravo', 'charlie', 'delta', 'echo'].map((x, i) => ami({ mid: `AMI|lift${i}`,
+      url: `https://www.reddit.com/r/googlewallet/comments/1lift${i}/t/`, platform: 'Reddit', author: `lift_${i}`, txt: `${story} ${x}`,
+      chash: `lf${i}`, posted_ms: NOW - (10 + i * 2) * MIN, seen_ms: NOW - 3 * MIN })).concat([amark(NOW - 2 * MIN, 5)]) : [amark(NOW - 2 * MIN, 0)]);
+    const rows = env.run();
+    eq(rows.filter(r => r.signal_type === 'CLUSTER_EMERGENCE').length, 0);
+    const lifted = env.b.ewsLiftedStories_();
+    eq([lifted.length, lifted[0].sent, lifted[0].trial, lifted[0].sources], [1, false, true, ['ami']]);
+    const kept = env.g.props.get('EWS_SRC_DAY');
+    assert.ok(!/@example\.test/.test(kept) && /\[address\]/.test(kept), kept.slice(0, 300));
+    const tab = env.tab();
+    const at = tab.rows.findIndex(r => r[0] === 'Time (ET)');
+    eq(tab.rows[at + 1].slice(2, 6), ['5', '5', 'noted, not sent: the source\'s first week', 'the AMIE table']);
+    assert.ok(/\[address\]/.test(tab.rows[at + 1][1]) && !/@/.test(tab.rows[at + 1][1]), tab.rows[at + 1][1]);
+    assert.match(env.note(), /^trial until Oct 21: 1 story it alone lifted was noted, not sent for review \(New sources tab\)/);
+    const all = [JSON.stringify(Array.from(env.g.props.entries())), JSON.stringify(tab.rows), env.g.logs.join('\n')].join('\n');
+    assert.ok(!all.includes('help.desk@example.test'));
+  });
+
   test('ed amie (Q13, Q12): the day record holds everything the tab shows and stays under 8,800 characters in its worst case (7 days, both sources, every count of steps 1b, 1c and 1d at its largest, 20 lifted stories), with nothing dropped', () => {
     const keys = ['in', 'used', 'same', 'sl', 'big', 'ex', 'al', 'rp', 'sf', 'ne', 'emb', 'st', 'sb', 'lf', 'lfs', 'lfn', 'rows', 'npt', 'rep', 'lc', 'le', 'calls'];
     const big = Object.fromEntries(keys.map(k => [k, 999999]));
