@@ -2,8 +2,8 @@
 // table", written OFF and never set ON by the bot; "How it works" moved once to row 52 (rows 49 and 50 kept blank for
 // the next two switches, row 51 the blank row above the help); the seam that tells Early Detection's source which new
 // rows are ON (ewsRunSwitches_, set right after the Control tab is read); and what a row turned OFF forgets
-// (ewsAmieOff_). With row 48 OFF nothing new happens anywhere; with it ON nothing reads the AMIE table yet (the read is
-// the next step), and column C says so plainly.
+// (ewsAmieOff_). With row 48 OFF nothing new happens anywhere; with it ON the AMIE table is read by a job of its own
+// (its tests are in switch_ed_amie.test.js), and column C says so plainly.
 'use strict';
 
 module.exports = H => {
@@ -196,7 +196,7 @@ module.exports = H => {
     eq([cells(sh, 48), t.bot.readControl_(sh).switches.edAmie], [[LABEL, 'OFF', OFF_TEXT], false]);
   });
 
-  test('new sources control (E3): row 48 ON with row 19 OFF reads nothing at all (no BigQuery job, no table read, no Brandwatch or Secret Manager call, no Early Detection state); with row 19 ON too, nothing reads the AMIE table yet: the same two jobs, byte for byte, as with row 48 OFF, and no trial starts (the source is not read)', () => {
+  test('new sources control (E3): row 48 ON with row 19 OFF reads nothing at all (no BigQuery job, no table read, no Brandwatch or Secret Manager call, no Early Detection state); with row 19 ON too, the US job is byte for byte the one with row 48 OFF and the us-central1 job only gains its list of the big posts Sonar knew; here the AMIE table\'s check finds none of its columns, so it is checked once and not read (no dry run, no AMIE job) and no trial starts', () => {
     const on = world();
     on.sh.getRange(48, 2).setValue('ON');
     for (let i = 0; i < 3; i++) { on.t.g.clock.now += 15 * MIN; on.t.poll(); }
@@ -213,11 +213,20 @@ module.exports = H => {
     };
     const off = run('OFF');
     const amie = run('ON');
-    eq(jobs(amie).map(c => c.payload), jobs(off).map(c => c.payload));
-    eq([jobs(amie).length, newCalls(amie), amie.t.sheet().getSheetByName('New sources')], [6, [], null]);
+    const of = (w, lane) => jobs(w).filter(c => c.lane === lane).map(c => JSON.parse(c.payload));
+    eq(jobs(amie).filter(c => c.lane === 'us').map(c => c.payload), jobs(off).filter(c => c.lane === 'us').map(c => c.payload));
+    // us-central1: the same body but for the 'xbig' part at the end of its SQL (only while a new row is ON)
+    const big = B.ewsC1BigSql_().join('\n');
+    eq(of(amie, 'c1').map(b => b.query), of(off, 'c1').map(b => `${b.query}\n${big}`));
+    eq(of(amie, 'c1').map(b => Object.assign(b, { query: '' })), of(off, 'c1').map(b => Object.assign(b, { query: '' })));
+    eq([jobs(amie).length, jobs(amie).filter(c => c.lane !== 'us' && c.lane !== 'c1'), amie.t.sheet().getSheetByName('New sources')], [6, [], null]);
+    // the AMIE table's check (its metadata, read once): this fake answers with other columns, so it stops for the day
+    eq(newCalls(amie).map(c => [c.method, c.url.replace(/^.*\/projects\//, '')]),
+      [['get', 'brand-social-central-data/datasets/social_alerts_dataset/tables/all_sundar_mentions']]);
+    eq([amie.t.bot.ewsAmiStatus_().state, amie.t.bot.ewsAmiStatus_().kind], ['stopped', 'column']);
     eq(amie.sh.cell(48, 3), ON_TEXT);
     // the new-lane rules of EarlyWaveSource.gs run while a new row is ON (their own day record and index), but with no
-    // AMIE job the source is never read, so its trial has no first day
+    // AMIE job collected the source is never read, so its trial has no first day
     const day = JSON.parse(amie.t.g.props.get('EWS_SRC_DAY') || '{}');
     eq(Object.keys(day.on || {}), []);
     // turned OFF again: the next run forgets the new lanes' index and signatures (the day record stays)

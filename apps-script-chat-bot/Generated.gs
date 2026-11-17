@@ -70,6 +70,11 @@ const GEN = {
   "early_wave_new_trial_days": 7,
   "early_wave_new_lifted_per_hour": 2,
   "early_wave_new_lifted_per_day": 20,
+  "amie_rows_per_check": 300,
+  "amie_overlap_minutes": 60,
+  "amie_max_gb": 1.0,
+  "amie_stale_hours": 3.0,
+  "amie_staff_feeds_rx": "kof|kol|\\binfs?\\b|exec|googler|reps|posts by google",
   "resources": [
    {
     "name": "SLRR Collection Requirements",

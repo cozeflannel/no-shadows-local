@@ -11,6 +11,8 @@
  *                raw_data.brandwatch_raw_mentions_base                    slow lane: yesterday's batch, read once after it loads
  *                reporting_data.sprinklr_outbound_reporting               Google's own accounts (their posts are left out)
  *                DSD.DSD-story-selection                                  posts already alerted (HIGH / KOF) and KOF authors (left out)
+ *   US, own job  social_alerts_dataset.all_sundar_mentions (the AMIE table) only while Control row 48 is ON: Brandwatch's
+ *                alert feeds, X posts with their words (approved by the owner on 16 November 2026, for this read)
  * (all in brand-social-central-data except sonar_raw). One BigQuery job a location a check (cross-region joins can't be
  * made, so the US lane's exclusions are applied here to both lanes), each a temporary result, never a write.
  *
@@ -93,7 +95,8 @@
  * stories and the 3-hour buffer, all packed under 100 KB an item (about 60 items at most). Losing the cache only costs
  * continuity (stories and the pool start again), never an error. Nothing here writes to BigQuery, a sheet or a space.
  *
- * New lanes (more sources, each behind its own Control row, OFF by default; none is read yet): a new source's job is
+ * New lanes (more sources, each behind its own Control row, OFF by default; the AMIE table is the first, row 48, read by
+ * its own job in the same fetchAll: see "The AMIE table" below): a new source's job is
  * one more entry of ewsLanes_ in the same fetchAll, its posts come in under the lanes EWS_NEW_LANES_ (marked nl) and,
  * only while one of their switches is ON (ewsRunSwitches_), follow their own rules: no velocity, a share of the pool
  * and of embedding with a day bar and a carry ('carry'), their own same-author signatures ('sn:N'), stitching against
@@ -123,16 +126,41 @@ const EWS_LANES_ = [{ key: 'us', location: 'US' }, { key: 'c1', location: 'us-ce
 // early_wave_new_late_minutes after posting) are marked `nl` and kept apart where the rules below say.
 const EWS_SLOW_LANES_ = ['bw', 'tub', 'amis', 'bwls'];
 const EWS_NEW_LANES_ = ['ami', 'amis', 'bwl', 'bwls'];
-// The new sources' jobs, one entry each, added by the step that builds the source (none yet): {key (the job's name,
-// as 'us' / 'c1'), location, sw (its Control switch key), ready(st) (optional: false = nothing to read this check),
-// query(st, until, firstMins) -> {sql, params, win, flags} (pure; null = nothing to read), done(st, lane, now)
-// (optional: the job was collected, move its mark), src ('ami' | 'bwl': whose trial and day counts)}. ewsLanes_ adds
-// an entry only while its switch is ON. A new lane's post ids start with its source and a pipe ('AMI|…', 'BWL|…').
-const EWS_NEW_LANE_DEFS_ = [];
+// The new sources' jobs, one entry each, added by the step that builds the source: {key (the job's name, as 'us' /
+// 'c1'), location, sw (its Control switch key), ready(st) (optional: false = nothing to read this check),
+// query(st, until, firstMins) -> {sql, params, win, flags, maxBytes?} (pure; null = nothing to read), done(st, lane,
+// now, nx) (optional: the job was collected, move its mark), failed(st, lane, now) (optional: the job failed), src
+// ('ami' | 'bwl': whose trial and day counts)}. ewsLanes_ adds an entry only while its switch is ON. A new lane's post
+// ids start with its source and a pipe ('AMI|…', 'BWL|…'). The AMIE table (row 48): its ready() also makes the
+// table's checks (the metadata hourly, a dry run daily and after a failure: ewsAmiReady_).
+const EWS_NEW_LANE_DEFS_ = [
+  { key: 'ami', location: 'US', sw: 'edAmie', src: 'ami', ready: st => ewsAmiReady_(st, Date.now()),
+    query: (st, until) => ewsAmiQuery_(st, until), done: (st, lane, now, nx) => ewsAmiDone_(st, lane, now, nx),
+    failed: (st, lane, now) => ewsAmiFailed_(st, lane, now) },
+];
 const EWS_NEW_SWITCHES_ = { edAmie: 'ami', edBwLive: 'bwl' };  // a new source's Control switch -> the source
 // Each new source's marks in EWS_STATE's `marks`, forgotten when its row is OFF (ewsNewSourceOff_); the step that
-// builds a source adds its own here ('ami': the newest ingestion time taken from the AMIE table)
-const EWS_SRC_MARKS_ = { ami: ['ami'], bwl: [] };
+// builds a source adds its own here ('ami': the newest ingestion time taken from the AMIE table; 'amiq': the AMIE
+// table's checks, a stop or a pause and why, so ON again checks the table afresh)
+const EWS_SRC_MARKS_ = { ami: ['ami', 'amiq'], bwl: [] };
+// The AMIE table (Control row 48; "ami" in code): Brandwatch's alert feeds, X posts with their words, read only
+const EWS_AMI_TABLE_ = 'brand-social-central-data.social_alerts_dataset.all_sundar_mentions';  // US
+// The columns the AMIE job needs (a column missing or of another type stops it for the day), and the ones it reads when
+// they are there (missing, or of a type it can't use: read as empty)
+const EWS_AMI_NEEDED_ = { url: 'STRING', alert_source: 'STRING', snippet: 'STRING', authorHandle: 'STRING',
+  SocialNetwork: 'STRING', Sentiment: 'STRING', postTime: 'TIMESTAMP', ingestionTimestamp: 'TIMESTAMP' };
+const EWS_AMI_OPTIONAL_ = { followers: ['STRING', 'INTEGER', 'INT64', 'FLOAT', 'FLOAT64', 'NUMERIC', 'BIGNUMERIC'],
+  KOF: ['STRING'], product: ['STRING'], engagement: ['STRING'] };
+// The old pipeline's Google feeds (analytics/early_detection 01, BMIE_GOOGLE_FEEDS): their posts need no Google word
+const EWS_AMI_GOOGLE_FEEDS_RX_ = '^(chrome overall|chrome execs|chrome kofs|slrr kofs chrome mentions|this week in android|' +
+  'google spikes|apac google|all sundar|search|gemini|antigravity|ai digest - google|googlers posting on x|google reps & execs|v2 policy.*)$';
+const EWS_AMI_KOF_RX_ = '(?i)^(yes|true|1)|\\b(KOFs?|INFs?|KOLs?)\\b';  // the KOF column read as a KOF (the old pipeline's test)
+const EWS_AMI_STAFF_RX_ = 'kof|kol|\\binfs?\\b|exec|googler|reps|posts by google';  // amie_staff_feeds_rx's default
+const EWS_AMI_FIRST_MS_ = 60 * 60 * 1000;      // a first read (or after the row was OFF) starts an hour back
+const EWS_AMI_MAX_BACK_MS_ = 6 * 3600 * 1000;  // never more than 6 hours back
+const EWS_AMI_POSTS_MAX_ = 300;                // its posts a lane (ami, amis) a read at most
+const EWS_AMI_CHECK_MS_ = 60 * 60 * 1000;      // the table's metadata is read again this often
+const EWS_AMI_PAUSE_MS_ = 60 * 60 * 1000;      // a failed read pauses the AMIE table this long (then a dry run first)
 const EWS_NEW_DAY_CAP_ = 15000;            // new lanes embed only while the day's total is under min(this, the day's pace)
 const EWS_CARRY_MS_ = 2 * 3600 * 1000;     // a new lane's post not embedded is carried to the next checks this long
 const EWS_SRC_DAY_PROP_ = 'EWS_SRC_DAY';   // the new sources' day record: first ON date, counts per day (7 days), lifted stories
@@ -604,9 +632,12 @@ function ewsUsSql_() {
 /**
  * The us-central1 job: posts Sonar first saw in (since, until] (not seen in the 24 hours before; the first copy's
  * payload), low tier, English, not a KOF, not praise / lifestyle / functional use; and Tubular's videos first seen
- * since @tub_from_ms when due (@tub_on). Pure.
+ * since @tub_from_ms when due (@tub_on). With `xbig` (only while a new source's Control row is ON), it also returns the
+ * links of the English posts Sonar first saw in the window that are too big for Early Detection (more followers than
+ * @max_audience, @eng_ceiling engagements or more, or on an influencer list) as 'xbig' rows, so a new source's copy of
+ * such a post is left out; without it the text is exactly today's. Pure.
  */
-function ewsC1Sql_() {
+function ewsC1Sql_(xbig) {
   const json = path => `JSON_VALUE(s.payload, '${path}')`;
   return [
     `-- ews:c1 (early wave: Sonar first seen, Tubular; read-only)`,
@@ -659,14 +690,35 @@ function ewsC1Sql_() {
     `lanes AS (SELECT * FROM sonar UNION ALL SELECT * FROM tub),`,
     ewsGateCtes_('lanes'),
     ewsPostSelectSql_(),
-  ].join('\n');
+  ].concat(xbig ? ewsC1BigSql_() : []).join('\n');
+}
+
+/** The us-central1 job's 'xbig' part (ewsC1Sql_ with `xbig`): one row a big post's link, in the 16 columns. Pure. */
+function ewsC1BigSql_() {
+  const nul = t => `CAST(NULL AS ${t})`;
+  return [
+    `UNION ALL`,
+    `SELECT 'xbig', 'sonar', ${nul('STRING')}, s.post_url, ${nul('STRING')}, ${nul('STRING')}, ${nul('INT64')}, ${nul('INT64')},`,
+    `  ${nul('INT64')}, UNIX_MILLIS(s.received_at), ${nul('STRING')}, ${nul('STRING')}, ${nul('STRING')}, ${nul('STRING')},`,
+    `  ${nul('STRING')}, ${nul('BOOL')}`,
+    `FROM \`${EWS_SONAR_TABLE_}\` s`,
+    `JOIN fs ON fs.post_url = s.post_url AND fs.first_at = s.received_at`,
+    `WHERE s.received_at > TIMESTAMP_MILLIS(@since_ms) AND s.received_at <= TIMESTAMP_MILLIS(@until_ms)`,
+    `  AND ${englishLangSql_('s.language')}`,
+    `  AND (IFNULL(SAFE_CAST(s.follower_count AS INT64), 0) > @max_audience`,
+    `    OR IFNULL(s.engagement_likes, 0) + IFNULL(s.engagement_comments, 0) + IFNULL(s.engagement_shares, 0) >= @eng_ceiling`,
+    `    OR IFNULL(ARRAY_LENGTH(JSON_QUERY_ARRAY(s.payload, '$.detail.classification.influencer_list_names')), 0) > 0`,
+    `    OR TRIM(IFNULL(s.influencer_list, '')) != '')`,
+    `QUALIFY ROW_NUMBER() OVER (PARTITION BY s.post_url ORDER BY s.received_at) = 1`,
+  ];
 }
 
 /**
  * A lane's job for a window: {sql, params: [{name, type, value}], win: {since, until}, flags} (the slow lanes and
- * Google's own accounts only when due). Pure.
+ * Google's own accounts only when due). `opts` (optional): {xbig: true} adds the us-central1 job's big posts
+ * (ewsC1Sql_), only while a new source is ON. Pure.
  */
-function ewsLaneQuery_(laneKey, st, until, ownDue, firstMins) {
+function ewsLaneQuery_(laneKey, st, until, ownDue, firstMins, opts) {
   const marks = (st && st.marks) || {};
   const have = Number(marks[laneKey === 'us' ? 'spk' : 'sonar']) || 0;
   const firstMs = isFinite(Number(firstMins)) && Number(firstMins) > 0 ? Math.round(Number(firstMins)) * 60 * 1000 : EWS_FIRST_MS_;
@@ -691,26 +743,30 @@ function ewsLaneQuery_(laneKey, st, until, ownDue, firstMins) {
   const tubFrom = Math.max(Number(marks.tub) || 0, until - 48 * 3600 * 1000);
   const tubOn = !(Number(marks.tubAt) > 0) || until - Number(marks.tubAt) >= EWS_TUBULAR_EVERY_MS_;
   return {
-    sql: ewsC1Sql_(),
+    sql: ewsC1Sql_(!!(opts && opts.xbig)),
     params: common.concat([p('tub_on', 'BOOL', tubOn), p('tub_from_ms', 'INT64', tubFrom)]),
     win: { since, until },
     flags: { tub: tubOn },
   };
 }
 
-/** A query parameter as BigQuery takes it. Pure. */
+/** A query parameter as BigQuery takes it; one with `array` (an element type) is a list of `value`'s items. Pure. */
 function ewsParam_(p) {
+  if (p.array) {
+    return { name: p.name, parameterType: { type: 'ARRAY', arrayType: { type: p.array } },
+      parameterValue: { arrayValues: (Array.isArray(p.value) ? p.value : []).map(v => ({ value: String(v) })) } };
+  }
   return { name: p.name, parameterType: { type: p.type }, parameterValue: { value: String(p.value) } };
 }
 
-/** The jobs.query request for a lane (for UrlFetchApp.fetchAll). */
+/** The jobs.query request for a lane (for UrlFetchApp.fetchAll); a job's own byte limit (`q.maxBytes`) when it has one. */
 function ewsJobRequest_(lane, q, token) {
   return {
     url: `${BQ_API_BASE_}${GCP_PROJECT}/queries`, method: 'post', contentType: 'application/json', muteHttpExceptions: true,
     headers: { Authorization: 'Bearer ' + token },
     payload: JSON.stringify({
       query: q.sql, useLegacySql: false, location: lane.location, timeoutMs: EWS_BQ_WAIT_MS_, parameterMode: 'NAMED',
-      maximumBytesBilled: EWS_MAX_BYTES_, maxResults: 5000, queryParameters: q.params.map(ewsParam_),
+      maximumBytesBilled: q.maxBytes || EWS_MAX_BYTES_, maxResults: 5000, queryParameters: q.params.map(ewsParam_),
       labels: { purpose: 'early-wave', tool: 'burson-qa-bot', lane: lane.key },
     }),
   };
@@ -755,12 +811,13 @@ function ewsCancel_(job) {
 
 /**
  * The jobs of this check: today's two (EWS_LANES_), then each new source's (EWS_NEW_LANE_DEFS_) while its Control switch
- * is ON in `sw` (ewsRunSwitches_) and it has something to read (`ready`), as {key, location, def}. With no new switch ON
- * exactly today's two entries. Never throws.
+ * is ON in `sw` (ewsRunSwitches_) and it has something to read (`ready`), as {key, location, def}. While a new switch
+ * is ON the us-central1 entry carries `xbig` (its job also returns the big posts Sonar knew: ewsC1Sql_). With no new
+ * switch ON exactly today's two entries. Never throws.
  */
 function ewsLanes_(sw, st) {
   const on = sw && typeof sw === 'object' ? sw : {};
-  const out = EWS_LANES_.slice();
+  const out = EWS_LANES_.map(l => (l.key === 'c1' && ewsNewSources_(on).length ? Object.assign({}, l, { xbig: true }) : l));
   EWS_NEW_LANE_DEFS_.forEach(d => {
     if (!d || !d.key || !d.sw || on[d.sw] !== true || out.some(l => l.key === d.key)) return;
     let ready = true;
@@ -804,7 +861,7 @@ function ewsReadLanes_(st, now, deadline, ownDue, firstMins, lanes) {
       }
       if (!q || !q.sql) { out[lane.key] = { state: 'idle', rows: [] }; return; }
     } else {
-      q = ewsLaneQuery_(lane.key, st, until, ownDue, firstMins);
+      q = ewsLaneQuery_(lane.key, st, until, ownDue, firstMins, lane.xbig ? { xbig: true } : undefined);
     }
     submit.push({ lane, q });
     out[lane.key] = { state: 'pending', rows: [], q: { win: q.win, flags: q.flags } };
@@ -2260,8 +2317,10 @@ function ewsNewLeaveOut_(cache, now) {
  *   5. a new lane's post whose key is a big post Sonar knew (`big`) is dropped, and so is one by an excluded author;
  *   6. a new lane's post the alert memory has seen (`seen(url)`) is dropped.
  * `ctx`: {index: {hour: [entry]} (updated: every kept post's entry is added, today's lanes' under 't<hour>'), clusters,
- * pool, big: Set, authors: Set, seen: url -> true, now}. Returns {posts, replaced: [{post, cluster, member, gap}], poolGone: [pool post], drops:
- * {source: {same, big, ex, al, sl}}}. Pure (but for `ctx.index`, the members it replaces and `k` on the posts).
+ * pool, big: Set, authors: Set, seen: url -> true, now, marks: {source: its last mark} (optional: a post in the index
+ * seen before its source's mark is that source's own repeat, counted 'rep', not 'same')}. Returns {posts, replaced:
+ * [{post, cluster, member, gap}], poolGone: [pool post], drops: {source: {same, rep, big, ex, al, sl}}}. Pure (but for
+ * `ctx.index`, the members it replaces and `k` on the posts).
  */
 function ewsStitch_(posts, ctx) {
   const c = ctx || {};
@@ -2330,7 +2389,13 @@ function ewsStitch_(posts, ctx) {
       (c.pool || []).forEach(q => { if (!gone.has(q)) add(poolKeys, ewsPostKey_(q), ewsWho_(String(q.ak || '').replace(/^[^:]*:/, ''), q.chash)); });
     }
     if (same(todayKeys.get(k))) { drop(p, 'same'); drop(p, 'sl'); return; }
-    if ((!p._carry && same(index.get(k))) || same(members.get(k)) || same(poolKeys.get(k)) || same(keptNew.get(k))) { drop(p, 'same'); return; }
+    if (!p._carry && same(index.get(k))) {
+      // a source's own repeat: seen before its last mark (the AMIE table's overlap reads its last hour again)
+      const mark = Number((c.marks || {})[ewsSrcOfLane_(p.lane)]) || 0;
+      drop(p, mark > 0 && Number(p.seen) > 0 && Number(p.seen) <= mark ? 'rep' : 'same');
+      return;
+    }
+    if (same(members.get(k)) || same(poolKeys.get(k)) || same(keptNew.get(k))) { drop(p, 'same'); return; }
     if (c.big && c.big.has(k)) { drop(p, 'big'); return; }
     if (c.authors && c.authors.has(String(p.author || '').toLowerCase())) { drop(p, 'ex'); return; }
     let seen = false;
@@ -2484,6 +2549,433 @@ function ewsNewDayClose_(props, nx, now) {
   }
 }
 
+/**
+ * Adds this check's leave-out rows to the new lanes' lists (`leave`: ewsNewLeaveOut_'s sets, updated) and keeps them
+ * for the next checks: 'xbig' rows (links of the big posts Sonar knew, as post-key hashes, cache 'xb', 24 hours) and
+ * 'xkof' rows (the AMIE table's staff and KOF authors, as a new lane names an account, cache 'ak', 7 days). Each item
+ * keeps the newest entries one cache item holds, and is written only when this check brought something. Today's lanes
+ * are never filtered by these lists. Never throws.
+ */
+function ewsNewLeaveAdd_(cache, now, leave, rows) {
+  try {
+    const big = [];
+    const authors = [];
+    (rows || []).forEach(r => {
+      if (!r) return;
+      if (r.kind === 'xbig' && r.url) {
+        const k = ewsKeyHash_(typeof amPostKey_ === 'function' ? amPostKey_(String(r.url)) : '');
+        if (k) big.push(k);
+      } else if (r.kind === 'xkof' && String(r.author || '').trim()) {
+        const url = String(r.url || '').trim();
+        const a = ewsNewAuthor_(ewsNewPlatform_(url), r.author, url).toLowerCase();
+        if (a) authors.push(a);
+      }
+    });
+    const keep = (name, list, ms) => {
+      if (!list.length) return;
+      const at = new Map();
+      const raw = ewsCacheGet_(cache, name);
+      (Array.isArray(raw) ? raw : []).forEach(e => {
+        if (!Array.isArray(e) || !e[0] || !(now - (Number(e[1]) || 0) < ms)) return;
+        const k = String(e[0]).toLowerCase();
+        at.set(k, Math.max(at.get(k) || 0, Number(e[1]) || 0));
+      });
+      list.forEach(k => at.set(k, now));
+      let out = Array.from(at.entries()).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+      while (out.length > 1 && JSON.stringify(out).length > EWS_CACHE_ITEM_CHARS_) {
+        out = out.slice(0, Math.max(1, Math.floor(out.length * EWS_CACHE_ITEM_CHARS_ / JSON.stringify(out).length) - 1));
+      }
+      ewsCachePut_(cache, { [name]: out });
+    };
+    keep('xb', Array.from(new Set(big)), EWS_XB_MS_);
+    keep('ak', Array.from(new Set(authors)), EWS_XA_MS_);
+    if (leave) {
+      big.forEach(k => leave.big && leave.big.add(k));
+      authors.forEach(a => leave.authors && leave.authors.add(a));
+    }
+  } catch (e) {
+    console.warn(`Early wave: the new sources' leave-out lists: ${ewsScrub_((e && e.message) || e)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The AMIE table (Control row 48): its own job in the check, its checks, its mark
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * A text from outside (BigQuery's error message) made safe to keep, log or show: anything shaped like an email address
+ * (whole, URL-encoded or cut short) becomes [address]; one line; cut to `max` characters (default 240). Pure.
+ */
+function ewsScrub_(s, max) {
+  const t = String(s === undefined || s === null ? '' : s)
+    .replace(/[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/gi, '[address]')
+    .replace(/[^\s()[\]<>"',;]*(?:@|%40)[^\s()[\]<>"',;]*/gi, '[address]')
+    .replace(/\s+/g, ' ').trim();
+  return truncate_(t, max > 0 ? max : 240);
+}
+
+/** A setting's regular expression for the SQL (no quote, no line break, it compiles), else `dflt`. Pure. */
+function ewsAmiRx_(v, dflt) {
+  const s = String(v === undefined || v === null ? '' : v).trim();
+  if (!s || s.length > 400 || /['\n\r]/.test(s) || /\\$/.test(s)) return dflt;
+  try { new RegExp(s); } catch (e) { return dflt; }
+  return s;
+}
+
+/**
+ * The AMIE table's settings (config/default_config.yaml burson_qa, GEN.settings): {take (amie_rows_per_check: new rows
+ * a read at most), overlapMin (amie_overlap_minutes: read again before the mark), maxGb / maxBytes (amie_max_gb: what one
+ * read may scan), staleHours / staleMs (amie_stale_hours: no new row for this long is said), staffRx
+ * (amie_staff_feeds_rx: the alert feeds of Google's staff and KOFs)}. A setting missing or not usable is its default.
+ * Pure (reads GEN).
+ */
+function ewsAmiCfg_() {
+  const s = (typeof GEN !== 'undefined' && GEN && GEN.settings) || {};
+  const num = (name, d, min) => {
+    const v = s[name];
+    const n = Number(v);
+    return v === null || v === undefined || v === '' || typeof v === 'boolean' || !isFinite(n) || n < min ? d : n;
+  };
+  const maxGb = num('amie_max_gb', 1, 0.001);
+  const staleHours = num('amie_stale_hours', 3, 0.1);
+  return {
+    take: Math.min(5000, Math.floor(num('amie_rows_per_check', 300, 1))),
+    overlapMin: Math.min(360, Math.floor(num('amie_overlap_minutes', 60, 0))),
+    maxGb, maxBytes: Math.round(maxGb * 1e9),
+    staleHours, staleMs: Math.round(staleHours * 3600 * 1000),
+    staffRx: ewsAmiRx_(s.amie_staff_feeds_rx, EWS_AMI_STAFF_RX_),
+  };
+}
+
+/** The social networks' domains (GEN.platform_domains) as one RE2 pattern on a lowercased link. Pure (reads GEN). */
+function ewsAmiSocialRx_() {
+  const doms = [];
+  const pd = (typeof GEN !== 'undefined' && GEN && GEN.platform_domains) || {};
+  Object.keys(pd).forEach(k => (Array.isArray(pd[k]) ? pd[k] : []).forEach(d => {
+    const v = String(d || '').trim().toLowerCase();
+    if (/^[a-z0-9.-]+$/.test(v) && doms.indexOf(v) < 0) doms.push(v);
+  }));
+  return `^https?://([^/?#]*\\.)?(${doms.map(d => d.replace(/\./g, '\\.')).join('|')})([/?#:]|$)`;
+}
+
+/**
+ * The AMIE job's SQL (a US job of its own, read-only): `opt`, the optional columns the table has (the others read as
+ * NULL); `staffRx`, amie_staff_feeds_rx. Rows taken: the overlap before the mark (@ami_from_ms to @ami_mark_ms) again,
+ * then the oldest @ami_take rows after the mark. One post a link and author across the alert feeds; left out: the
+ * positive and the non-Google feeds, the staff and KOF feeds and authors with a KOF (returned as 'xkof' rows), MODERATE
+ * and HIGH tiers, positive posts, no posting time, links off the social networks (forums aside), the networks in
+ * @skip_nets, posts that don't name Google (but in the old Google feeds), and posts with no English words; a post first
+ * seen more than @late_min minutes after it was posted is slow ('amis'). Then the shared gates (ewsGateCtes_), once,
+ * and the post select, with an 'amark' row: new rows taken (audience), of them with no posting time (eng), rows taken in
+ * all (posted_ms), the newest ingestion time taken (seen_ms). Pure (reads GEN).
+ */
+function ewsAmiSql_(opt, staffRx) {
+  const have = new Set((Array.isArray(opt) ? opt : []).map(String));
+  const col = (name, as) => `${have.has(name) ? name : 'CAST(NULL AS STRING)'} AS ${as}`;
+  const nul = t => `CAST(NULL AS ${t})`;
+  const staff = ewsAmiRx_(staffRx, EWS_AMI_STAFF_RX_);
+  return [
+    `-- ews:ami (early wave: the AMIE table, Brandwatch's alert feeds; read-only)`,
+    `WITH ami_raw AS (`,
+    `  SELECT url, alert_source, snippet, authorHandle, SocialNetwork, Sentiment, postTime, ingestionTimestamp,`,
+    `    ${col('followers', 'followers')}, ${col('KOF', 'KOF')}, ${col('product', 'product')}, ${col('engagement', 'tier')}`,
+    `  FROM \`${EWS_AMI_TABLE_}\``,
+    `  WHERE ingestionTimestamp > TIMESTAMP_MILLIS(@ami_from_ms)`,
+    `    AND ingestionTimestamp <= TIMESTAMP_MILLIS(@until_ms) AND url IS NOT NULL`,
+    `),`,
+    `ami_taken AS (`,
+    `  SELECT * FROM ami_raw WHERE ingestionTimestamp <= TIMESTAMP_MILLIS(@ami_mark_ms)`,
+    `  UNION ALL`,
+    `  SELECT * FROM (SELECT * FROM ami_raw WHERE ingestionTimestamp > TIMESTAMP_MILLIS(@ami_mark_ms)`,
+    `    ORDER BY ingestionTimestamp, url LIMIT @ami_take)`,
+    `),`,
+    `ami_posts AS (`,
+    `  SELECT url, LOWER(TRIM(REGEXP_REPLACE(IFNULL(authorHandle, ''), r'^@+|^/?u/', ''))) AS h,`,
+    `    MIN(postTime) AS posted, MIN(ingestionTimestamp) AS seen,`,
+    `    ARRAY_AGG(snippet IGNORE NULLS ORDER BY CHAR_LENGTH(snippet) DESC LIMIT 1)[SAFE_OFFSET(0)] AS raw,`,
+    `    ANY_VALUE(SocialNetwork) AS net, MAX(SAFE_CAST(followers AS INT64)) AS audience,`,
+    `    COALESCE(ANY_VALUE(NULLIF(TRIM(product), '')), ANY_VALUE(alert_source), 'Unclassified') AS topic,`,
+    `    LOGICAL_OR(REGEXP_CONTAINS(LOWER(TRIM(IFNULL(alert_source, ''))), r'${EWS_AMI_GOOGLE_FEEDS_RX_}')) AS gfeed,`,
+    `    LOGICAL_OR(REGEXP_CONTAINS(LOWER(IFNULL(alert_source, '')), r'${staff}')`,
+    `      OR REGEXP_CONTAINS(IFNULL(KOF, ''), r'${EWS_AMI_KOF_RX_}')) AS kof,`,
+    `    LOGICAL_OR(UPPER(IFNULL(tier, '')) IN ('MODERATE', 'HIGH')) AS big,`,
+    `    LOGICAL_AND(LOWER(IFNULL(Sentiment, '')) != 'positive') AS notpos`,
+    `  FROM ami_taken`,
+    `  WHERE NOT REGEXP_CONTAINS(LOWER(IFNULL(alert_source, '')), r'positive')`,
+    `    AND NOT REGEXP_CONTAINS(LOWER(TRIM(IFNULL(alert_source, ''))), r'${BQ_NON_GOOGLE_SOURCES_RX_}')`,
+    `  GROUP BY url, h`,
+    `),`,
+    `lanes AS (`,
+    `  SELECT IF(TIMESTAMP_DIFF(seen, posted, MINUTE) > @late_min, 'amis', 'ami') AS lane,`,
+    `    CONCAT('AMI|', SUBSTR(TO_HEX(SHA256(CONCAT(url, '|', h))), 1, 24)) AS mid, url, net AS platform, h AS author,`,
+    `    audience, CAST(NULL AS INT64) AS eng, posted, seen, raw, topic`,
+    `  FROM ami_posts`,
+    `  WHERE NOT kof AND NOT big AND notpos AND posted IS NOT NULL`,
+    `    AND (REGEXP_CONTAINS(LOWER(url), r'${ewsAmiSocialRx_()}') OR REGEXP_CONTAINS(LOWER(IFNULL(net, '')), r'^forums?$'))`,
+    `    AND NOT (LOWER(IFNULL(net, '')) IN UNNEST(@skip_nets))`,
+    `    AND (gfeed OR REGEXP_CONTAINS(LOWER(IFNULL(raw, '')), r'${EWS_ENTITY_RX_}'))`,
+    `    AND ${ewsEnglishWordsSql_('raw')}`,
+    `),`,
+    ewsGateCtes_('lanes', ['amis']),
+    ewsPostSelectSql_(['amis']),
+    `UNION ALL`,
+    `SELECT 'amark', 'ami', ${nul('STRING')}, ${nul('STRING')}, ${nul('STRING')}, ${nul('STRING')},`,
+    `  COUNTIF(ingestionTimestamp > TIMESTAMP_MILLIS(@ami_mark_ms)),`,
+    `  COUNTIF(ingestionTimestamp > TIMESTAMP_MILLIS(@ami_mark_ms) AND postTime IS NULL), COUNT(*), UNIX_MILLIS(MAX(ingestionTimestamp)),`,
+    `  ${nul('STRING')}, ${nul('STRING')}, ${nul('STRING')}, ${nul('STRING')}, ${nul('STRING')}, ${nul('BOOL')}`,
+    `FROM ami_taken`,
+    `UNION ALL`,
+    `SELECT DISTINCT 'xkof', 'ami', ${nul('STRING')}, url, net, h, ${nul('INT64')}, ${nul('INT64')}, ${nul('INT64')}, ${nul('INT64')},`,
+    `  ${nul('STRING')}, ${nul('STRING')}, ${nul('STRING')}, ${nul('STRING')}, ${nul('STRING')}, ${nul('BOOL')}`,
+    `FROM ami_posts`,
+    `WHERE kof AND h != ''`,
+  ].join('\n');
+}
+
+/**
+ * The AMIE job for a check (EWS_NEW_LANE_DEFS_'s query): {sql, params, win: {since, until}, flags: {mark}, maxBytes}.
+ * It reads from amie_overlap_minutes before its mark (st.marks.ami, the newest ingestion time taken; never more than
+ * EWS_AMI_MAX_BACK_MS_ back) and, with no mark yet, the last hour (EWS_AMI_FIRST_MS_). Pure (reads GEN).
+ */
+function ewsAmiQuery_(st, until) {
+  const cfg = ewsAmiCfg_();
+  const marks = (st && st.marks) || {};
+  const q = marks.amiq && typeof marks.amiq === 'object' ? marks.amiq : {};
+  const mark = Number(marks.ami) || 0;
+  const from = mark > 0 ? Math.max(mark - cfg.overlapMin * 60000, until - EWS_AMI_MAX_BACK_MS_) : until - EWS_AMI_FIRST_MS_;
+  const markMs = mark > 0 ? Math.max(mark, from) : from;
+  const p = (name, type, value) => ({ name, type, value });
+  return {
+    sql: ewsAmiSql_(Array.isArray(q.opt) ? q.opt : [], cfg.staffRx),
+    params: [
+      p('ami_from_ms', 'INT64', from), p('until_ms', 'INT64', until), p('ami_mark_ms', 'INT64', markMs),
+      p('ami_take', 'INT64', cfg.take), p('late_min', 'INT64', ewsNewCfg_().lateMinutes),
+      { name: 'skip_nets', array: 'STRING', value: [] },  // the networks Brandwatch live reads (stage 2): none yet
+      p('max_audience', 'INT64', EWS_MAX_AUDIENCE_), p('eng_ceiling', 'INT64', EWS_ENG_CEILING_),
+      p('min_chars', 'INT64', EWS_MIN_CHARS_), p('min_tokens', 'INT64', EWS_MIN_TOKENS_),
+      p('min_distinct', 'INT64', EWS_MIN_DISTINCT_TOKENS_), p('rt_max', 'INT64', EWS_AMI_POSTS_MAX_),
+      p('slow_max', 'INT64', EWS_AMI_POSTS_MAX_),
+    ],
+    win: { since: from, until },
+    flags: { mark },
+    maxBytes: String(cfg.maxBytes),
+  };
+}
+
+/** The AMIE table's checks in EWS_STATE (st.marks.amiq), made when missing. */
+function ewsAmiQ_(st) {
+  const m = st.marks && typeof st.marks === 'object' ? st.marks : (st.marks = {});
+  if (!m.amiq || typeof m.amiq !== 'object' || Array.isArray(m.amiq)) m.amiq = {};
+  return m.amiq;
+}
+
+/**
+ * Records a problem of the AMIE table (`kind`, a plain reason `why`): since when (kept while the same kind goes on), and
+ * either a stop for the UTC day (`stop`) or a pause of EWS_AMI_PAUSE_MS_ after which a dry run must pass first. Today's
+ * lanes go on either way. Logged once when it starts.
+ */
+function ewsAmiProblem_(q, kind, why, now, stop) {
+  const same = q.prob && q.prob.k === kind;
+  q.prob = { k: kind, w: ewsScrub_(why, 200), at: same ? Number(q.prob.at) || now : now };
+  if (stop) { q.sd = ewsUtcDay_(now); delete q.pu; } else { q.pu = now + EWS_AMI_PAUSE_MS_; q.nd = 1; }
+  if (!same) console.warn(`Early wave: the AMIE table: ${q.prob.w}`);
+}
+
+/** BigQuery's refusal in plain words for the AMIE table: ['access' | 'gone' | 'failed', why]. Pure. */
+function ewsAmiRefusal_(code, text, what) {
+  const t = ewsScrub_(text, 400);
+  if (code === 403 || /access denied|permission/i.test(t)) return ['access', 'BigQuery won\'t let the bot read the AMIE table (access denied), so it isn\'t read'];
+  if (code === 404 || /missing Table|not found: (?:Table|Dataset)/i.test(t)) return ['gone', 'BigQuery can\'t find the AMIE table, so it isn\'t read'];
+  return ['failed', `${what} (${truncate_(t || (code ? `HTTP ${code}` : 'no answer'), 60)})`];
+}
+
+/**
+ * The AMIE table's metadata (tables.get, no bytes): the needed columns and their types, the optional ones there, the
+ * day partitioning on ingestionTimestamp, when it last changed. A needed column missing or of another type, access
+ * refused, the table gone or no longer split by day stops it for the UTC day; no answer pauses it. True when it may
+ * be read. Never throws.
+ */
+function ewsAmiMeta_(q, now) {
+  const [project, dataset, table] = EWS_AMI_TABLE_.split('.');
+  let code = 0;
+  let text = '';
+  let body = null;
+  try {
+    if (typeof apiGuardNote_ === 'function') apiGuardNote_('bigquery', 1);
+    const resp = UrlFetchApp.fetch(`${BQ_API_BASE_}${project}/datasets/${dataset}/tables/${table}`, { method: 'get', muteHttpExceptions: true,
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } });
+    code = resp.getResponseCode();
+    text = String(resp.getContentText() || '');
+    try { body = JSON.parse(text); } catch (e) { body = null; }
+    if (code !== 200 && body && body.error && body.error.message) text = body.error.message;
+  } catch (e) {
+    text = String((e && e.message) || e);
+  }
+  if (code !== 200) {
+    const [kind, why] = ewsAmiRefusal_(code, text, 'BigQuery didn\'t answer the check of the AMIE table');
+    ewsAmiProblem_(q, kind, why, now, kind !== 'failed');
+    return false;
+  }
+  const fields = body && body.schema && Array.isArray(body.schema.fields) ? body.schema.fields : null;
+  if (!fields) { ewsAmiProblem_(q, 'failed', 'BigQuery didn\'t say which columns the AMIE table has', now, false); return false; }
+  const cols = {};
+  fields.forEach(f => { if (f && f.name) cols[String(f.name).toLowerCase()] = { type: String(f.type || '').toUpperCase(), mode: String(f.mode || '').toUpperCase() }; });
+  const words = { STRING: 'text', TIMESTAMP: 'a time' };
+  for (const name of Object.keys(EWS_AMI_NEEDED_)) {
+    const c = cols[name.toLowerCase()];
+    if (!c) { ewsAmiProblem_(q, 'column', `the AMIE table has no column "${name}" any more, so it isn't read`, now, true); return false; }
+    if (c.type !== EWS_AMI_NEEDED_[name] || c.mode === 'REPEATED') {
+      ewsAmiProblem_(q, 'column', `the AMIE table's column "${name}" no longer holds ${words[EWS_AMI_NEEDED_[name]]}, so it isn't read`, now, true);
+      return false;
+    }
+  }
+  const part = body.timePartitioning || null;
+  if (!part || String(part.field || '').toLowerCase() !== 'ingestiontimestamp' || ['DAY', 'HOUR'].indexOf(String(part.type || 'DAY').toUpperCase()) < 0) {
+    ewsAmiProblem_(q, 'partition', 'the AMIE table is no longer split by day, so one read would scan all of it; it isn\'t read today', now, true);
+    return false;
+  }
+  q.opt = Object.keys(EWS_AMI_OPTIONAL_).filter(name => {
+    const c = cols[name.toLowerCase()];
+    return !!c && c.mode !== 'REPEATED' && EWS_AMI_OPTIONAL_[name].indexOf(c.type) >= 0;
+  });
+  q.chg = Number(body.lastModifiedTime) || 0;
+  q.mt = now;
+  return true;
+}
+
+/**
+ * The AMIE job sent as a dry run (jobs.query with dryRun: checks names and access, scans nothing, says the bytes):
+ * access refused or the table gone stops it for the UTC day, and so does a read over amie_max_gb; any other refusal
+ * pauses it. True when it passed (q.dd: the day, q.gb: the gigabytes). Never throws.
+ */
+function ewsAmiDryRun_(st, q, now) {
+  const cfg = ewsAmiCfg_();
+  let a;
+  try {
+    const job = ewsAmiQuery_(st, now - EWS_SETTLE_MS_);
+    const req = ewsJobRequest_({ key: 'ami', location: 'US' }, job, ScriptApp.getOAuthToken());
+    const body = JSON.parse(req.payload);
+    body.dryRun = true;
+    if (typeof apiGuardNote_ === 'function') apiGuardNote_('bigquery', 1);
+    a = ewsAnswer_(UrlFetchApp.fetch(req.url, { method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: req.headers, payload: JSON.stringify(body) }));
+  } catch (e) {
+    a = { ok: false, why: String((e && e.message) || e) };
+  }
+  if (!a.ok) {
+    const code = Number((String(a.why || '').match(/^HTTP (\d{3})/) || [])[1]) || 0;
+    const [kind, why] = ewsAmiRefusal_(code, String(a.why || '').replace(/^HTTP \d{3}:\s*/, ''), 'BigQuery refused the AMIE read');
+    ewsAmiProblem_(q, kind, why, now, kind !== 'failed');
+    return false;
+  }
+  const bytes = Number(a.res && a.res.totalBytesProcessed);
+  if (!(a.res && a.res.totalBytesProcessed !== undefined && a.res.totalBytesProcessed !== null) || !isFinite(bytes)) {
+    ewsAmiProblem_(q, 'failed', 'BigQuery refused the AMIE read (its dry run didn\'t say how much it would scan)', now, false);
+    return false;
+  }
+  if (bytes > cfg.maxBytes) {
+    ewsAmiProblem_(q, 'cost', `one read of the AMIE table would scan ${(bytes / 1e9).toFixed(1)} GB (the limit is ${cfg.maxGb} GB)`, now, true);
+    return false;
+  }
+  q.dd = ewsUtcDay_(now);
+  q.gb = Math.round((bytes / 1e9) * 100) / 100;
+  delete q.nd;
+  return true;
+}
+
+/**
+ * Whether the AMIE job goes out this check (EWS_NEW_LANE_DEFS_'s ready; only while row 48 is ON): not while it is
+ * stopped for the UTC day or paused; first the table's metadata (at the first check after the row goes ON, then
+ * hourly, and on a new day after a stop) and a dry run (once a UTC day, and after any failure). What they find stays in
+ * st.marks.amiq for the note (ewsAmiStatus_). Never throws.
+ */
+function ewsAmiReady_(st, now) {
+  try {
+    const q = ewsAmiQ_(st);
+    const day = ewsUtcDay_(now);
+    if (q.sd) {
+      if (q.sd === day) return false;
+      delete q.sd;  // a new UTC day: the table is checked afresh
+      q.mt = 0;
+      q.nd = 1;
+    }
+    if (Number(q.pu) > now) return false;
+    delete q.pu;
+    const mt = Number(q.mt) || 0;
+    if (!(mt > 0) || now - mt >= EWS_AMI_CHECK_MS_ || now < mt) { if (!ewsAmiMeta_(q, now)) return false; }
+    if (q.dd !== day || q.nd) { if (!ewsAmiDryRun_(st, q, now)) return false; }
+    return true;
+  } catch (e) {
+    console.warn(`Early wave: the AMIE table's checks: ${ewsScrub_((e && e.message) || e)}`);
+    return false;
+  }
+}
+
+/**
+ * The AMIE job was collected: its mark moves to the newest ingestion time taken (its 'amark' row; never back, and not
+ * at all when nothing was taken), the problem it had is over, and the day record counts the rows ('rows': new rows
+ * taken, 'npt': of them with no posting time, never a post).
+ */
+function ewsAmiDone_(st, lane, now, nx) {
+  const am = ((lane && lane.rows) || []).find(r => r && r.kind === 'amark');
+  const newest = am ? Number(am.seen_ms) || 0 : 0;
+  if (newest > (Number(st.marks.ami) || 0)) st.marks.ami = newest;
+  const q = ewsAmiQ_(st);
+  q.rd = now;
+  delete q.prob;
+  delete q.pu;
+  delete q.sd;
+  if (nx && am) {
+    ewsNewCount_(nx, 'ami', 'rows', Number(am.audience) || 0);
+    ewsNewCount_(nx, 'ami', 'npt', Number(am.eng) || 0);
+  }
+}
+
+/** The AMIE job failed (refused, or its answer could not be read): a pause of an hour, then a dry run before the next. */
+function ewsAmiFailed_(st, lane, now) {
+  const q = ewsAmiQ_(st);
+  const code = Number((String((lane && lane.why) || '').match(/^HTTP (\d{3})/) || [])[1]) || 0;
+  const why = ewsAmiRefusal_(code, String((lane && lane.why) || '').replace(/^HTTP \d{3}:\s*/, ''), 'BigQuery refused the AMIE read')[1];
+  ewsAmiProblem_(q, 'failed', why.replace(/, so it isn't read$/, ''), now, false);
+}
+
+/**
+ * The AMIE table's state for its Control note and the New sources tab (step 1d words them): {state: 'starting' (not
+ * read yet) | 'ok' | 'stopped' (for the UTC day) | 'paused' (until `until`) | 'failing' (a problem not cleared by a read
+ * yet), kind: '' | 'column' | 'access' | 'gone' | 'partition' | 'cost' | 'failed' | 'stale', why (plain words, no
+ * warning sign or time), since (ms the problem began, 0), until (ms the stop or pause ends, 0), read (ms of the last
+ * read collected, 0), mark (the newest ingestion time taken, ms or null), changed (the table's last change, ms or null),
+ * newest (the later of the two, ms or null), stale (no new row for amie_stale_hours), gb (the last dry run's GB or
+ * null)}. A stop or pause comes before stale (one warning). `st`: EWS_STATE (read when not given). Never throws.
+ */
+function ewsAmiStatus_(now, st) {
+  const t = Number(now) || Date.now();
+  let s = st;
+  if (!s) { try { s = ewsState_(PropertiesService.getScriptProperties()); } catch (e) { s = { marks: {} }; } }
+  const marks = (s && s.marks) || {};
+  const q = marks.amiq && typeof marks.amiq === 'object' ? marks.amiq : {};
+  const mark = Number(marks.ami) || 0;
+  const changed = Number(q.chg) || 0;
+  const newest = Math.max(mark, changed);
+  const out = { state: Number(q.rd) > 0 ? 'ok' : 'starting', kind: '', why: '', since: 0, until: 0, read: Number(q.rd) || 0,
+    mark: mark || null, changed: changed || null, newest: newest || null,
+    stale: newest > 0 && t - newest > ewsAmiCfg_().staleMs, gb: typeof q.gb === 'number' ? q.gb : null };
+  const prob = q.prob && typeof q.prob === 'object' ? q.prob : null;
+  if (prob) {
+    out.kind = String(prob.k || 'failed');
+    out.why = String(prob.w || '');
+    out.since = Number(prob.at) || 0;
+    if (q.sd === ewsUtcDay_(t)) { out.state = 'stopped'; out.until = Date.parse(`${q.sd}T00:00:00Z`) + 24 * 3600 * 1000; }
+    else if (Number(q.pu) > t) { out.state = 'paused'; out.until = Number(q.pu); }
+    else out.state = 'failing';
+  } else if (out.stale) {
+    out.kind = 'stale';
+    out.why = 'the AMIE table has had no new rows';
+    out.since = newest;
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // The check
 // ---------------------------------------------------------------------------------------------------------------
@@ -2595,9 +3087,14 @@ function ewsProduce_(props, st, now, firstMins, opts) {
       posts = posts.concat(carried.posts.filter(p => !known.has(p.id) && !ids.has(p.id)));
       // stitching: one post through several sources is one post, and today's lanes' copy always wins
       const leave = ewsNewLeaveOut_(cache, now);
+      // this check's own leave-out rows: the big posts Sonar knew ('xbig', us-central1) and the AMIE table's staff and
+      // KOF authors ('xkof'), kept for the next checks too
+      ewsNewLeaveAdd_(cache, now, leave, newRows.concat(c1Done ? (read.c1.rows || []).filter(r => r && r.kind === 'xbig') : []));
       nx.leave = leave;
       nx.index = ewsLoadSigs_(cache, Number(st.nk) || 0, 'nk');
-      const sx = ewsStitch_(posts, { index: nx.index, clusters, pool, big: leave.big, authors: leave.authors, now,
+      const amiMark = Number(st.marks.ami) || 0;  // the AMIE table's mark before this check's read
+      const amiEdge = amiMark - 0.75 * ewsAmiCfg_().overlapMin * 60000;
+      const sx = ewsStitch_(posts, { index: nx.index, clusters, pool, big: leave.big, authors: leave.authors, now, marks: { ami: amiMark },
         seen: url => { const m = typeof alertMemory_ === 'function' ? alertMemory_() : null; return !!(m && typeof m.seenPost === 'function' && m.seenPost(url)); } });
       posts = sx.posts;
       nx.replaced = sx.replaced;
@@ -2611,6 +3108,12 @@ function ewsProduce_(props, st, now, firstMins, opts) {
         if (!p.nl || p._carry) return;
         ewsNewCount_(nx, ewsSrcOfLane_(p.lane), 'used');
         if (p.seen > 0 && p.t > 0) ewsNewBucket_(nx, ewsSrcOfLane_(p.lane), 'dl', p.seen - p.t);
+        // a late row the AMIE table's overlap caught (landed after the last read though taken in before its mark), and
+        // one caught in the oldest quarter of the overlap (often: the overlap is too short)
+        if (amiMark > 0 && ewsSrcOfLane_(p.lane) === 'ami' && p.seen > 0 && p.seen <= amiMark) {
+          ewsNewCount_(nx, 'ami', 'lc');
+          if (p.seen < amiEdge) ewsNewCount_(nx, 'ami', 'le');
+        }
       });
     } else if (clusters.some(c => (c.m || []).some(m => m.nl)) || pool.some(p => p.nl)) {
       // every new row OFF, but stories or the pool still hold new lanes' posts: a later copy from today's lanes still
@@ -2902,8 +3405,10 @@ function ewsProduce_(props, st, now, firstMins, opts) {
       if (read.us.q.flags && read.us.q.flags.bw) st.marks.bw = read.us.q.flags.bw;
     }
     newLanes.forEach(l => {
-      if (read[l.key].state !== 'done' || typeof l.def.done !== 'function') return;
-      try { l.def.done(st, read[l.key], now); } catch (e) { console.warn(`Early wave: ${l.key}: ${(e && e.message) || e}`); }
+      const state = read[l.key].state;
+      const hook = state === 'done' ? l.def.done : state === 'failed' ? l.def.failed : null;
+      if (typeof hook !== 'function') return;
+      try { hook(st, read[l.key], now, nx); } catch (e) { console.warn(`Early wave: ${l.key}: ${ewsScrub_((e && e.message) || e)}`); }
     });
     if (c1Done) {
       st.marks.sonar = read.c1.q.win.until;
@@ -2919,7 +3424,7 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     const problems = EWS_LANES_.filter(l => read[l.key].state === 'failed').map(l => `${l.key}: ${read[l.key].why}`);
     const pending = EWS_LANES_.filter(l => read[l.key].state === 'pending').map(l => l.key);
     // a new source's failure is named in the log line only: C19 (last.problem, the error) keeps today's lanes
-    const newProblems = newLanes.filter(l => read[l.key].state === 'failed').map(l => `${l.key}: ${read[l.key].why}`);
+    const newProblems = newLanes.filter(l => read[l.key].state === 'failed').map(l => `${l.key}: ${ewsScrub_(read[l.key].why)}`);
     last.stories = tidy.length;
     last.pool = Math.min(EWS_POOL_MAX_, total);
     last.problem = problems.join('; ');

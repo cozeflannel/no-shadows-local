@@ -1,5 +1,6 @@
-// EarlyWaveSource.gs: in-Apps-Script low-tier embedding cluster & velocity producer over the 6 approved BigQuery social
-// tables + Vertex AI text-embedding-005 (Vectors.gs), feeding BigQuery.gs bqEarlyDetectionRows_ (Control row 19).
+// EarlyWaveSource.gs: in-Apps-Script low-tier embedding cluster & velocity producer over the 7 approved BigQuery social
+// tables (the AMIE table only while Control row 48 is ON) + Vertex AI text-embedding-005 (Vectors.gs), feeding
+// BigQuery.gs bqEarlyDetectionRows_ (Control row 19).
 'use strict';
 
 module.exports = H => {
@@ -57,7 +58,7 @@ module.exports = H => {
     brand: true,
   }, o || {});
 
-  test('EarlyWaveSource SQL: strict 6-table & cross-region isolation, read-only temporary queries, B31 initial window', () => {
+  test('EarlyWaveSource SQL: strict 7-table & cross-region isolation (the AMIE table in its own US job, only while row 48 is ON), read-only temporary queries, B31 initial window', () => {
     const T = Date.UTC(2026, 10, 11, 14, 0);
     const us = B.ewsLaneQuery_('us', { marks: {} }, T, true, 45);
     const c1 = B.ewsLaneQuery_('c1', { marks: {} }, T, true, 45);
@@ -71,6 +72,15 @@ module.exports = H => {
     assert.ok(c1.sql.includes('`brand-social-central-data.google_tubular_mentions.tubular_videos`'));
     assert.ok(!/reporting_data|raw_data|DSD|vw_chatbot_pending_early_alerts/.test(c1.sql));
     assert.ok(!/\b(INSERT|UPDATE|DELETE|MERGE|CREATE\s+TABLE)\b/i.test(us.sql + '\n' + c1.sql));
+    // the AMIE table: named by no job of today's two; with row 48 ON its own US job names it and no other table
+    assert.ok(!/all_sundar_mentions|social_alerts_dataset/.test(us.sql + '\n' + c1.sql));
+    const ami = B.ewsAmiQuery_({ marks: {} }, T);
+    const tables = ami.sql.match(/`[^`]+`/g);
+    eq(Array.from(new Set(tables)), ['`brand-social-central-data.social_alerts_dataset.all_sundar_mentions`']);
+    assert.ok(!/bsip-s-bsip-gg-26-2cf3|tubular_videos|reporting_data|raw_data|DSD|vw_chatbot_pending_early_alerts/.test(ami.sql));
+    assert.ok(!/\b(INSERT|UPDATE|DELETE|MERGE|CREATE\s+TABLE)\b/i.test(ami.sql));
+    eq(B.ewsLanes_({ edAmie: true }, { marks: { amiq: { pu: 8.64e15 } } }).map(l => [l.key, l.location]), [['us', 'US'], ['c1', 'us-central1']]);  // paused: no AMIE job
+    eq(B.ewsLanes_({}, {}).map(l => l.key), ['us', 'c1']);
   });
 
   test('EarlyWaveSource producer (ewsRows_): embeds low-tier posts via Vertex AI, drops evergreen noise & DSD/own exclusions, promotes cross-platform cluster, enforces cooldown & property/cache caps', () => {

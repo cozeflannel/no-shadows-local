@@ -647,6 +647,16 @@ class BursonQAConfig(ConfigModel):
     # After the trial: such lifted stories sent for review in an hour, and in a day, at most (the rest are listed).
     early_wave_new_lifted_per_hour: int = 2
     early_wave_new_lifted_per_day: int = 20
+    # The AMIE table in Early Detection (Control row 48, OFF until the owner turns it on). None of these does anything
+    # while row 48 is OFF. New rows read a check at most; how many minutes each read starts before the newest row it
+    # last took (rows that land late); the gigabytes one read may scan (a dry run checks it each day); the hours with no
+    # new row after which the row's note says so; and the alert feeds of Google's staff and KOFs, left out (a regular
+    # expression on the feed's name).
+    amie_rows_per_check: int = 300
+    amie_overlap_minutes: int = 60
+    amie_max_gb: float = 1
+    amie_stale_hours: float = 3
+    amie_staff_feeds_rx: str = r"kof|kol|\binfs?\b|exec|googler|reps|posts by google"
     # What the Resources tab of the bot's sheet starts with: documents the bot links when Burson asks about the alert
     # requirements. After that the tab is what the bot uses (people edit it there). Only links Burson can open.
     resources: list[BursonResource] = Field(default_factory=list)
