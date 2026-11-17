@@ -1598,6 +1598,26 @@ function formatBmieEarnedAlertText_(row) {
 // ---------------------------------------------------------------------------------------------------------------
 
 const BQ_POLL_CANDIDATES_ = 15;              // candidates read per source a check (only BQ_POLL_MAX_PER_RUN_ are posted)
+const BQ_OPEN_CANDIDATES_ = 50;              // the open engine (Control row 51, step S14): candidates a source a check
+
+/** Candidates read per source a check: BQ_OPEN_CANDIDATES_ under row 51, else BQ_POLL_CANDIDATES_. Never throws. */
+function bqPollCandidates_() {
+  try {
+    return typeof openOn_ === 'function' && openOn_() ? BQ_OPEN_CANDIDATES_ : BQ_POLL_CANDIDATES_;
+  } catch (e) {
+    return BQ_POLL_CANDIDATES_;
+  }
+}
+
+/**
+ * The order the open engine (row 51, step S14) posts Direct candidates in, across sources: a KOF's post first, then the
+ * most engagements (the feed's count). Pure.
+ */
+function bqDirectRank_(a, b) {
+  const kof = c => { const k = String((c && c.row && c.row.kof) || '').trim().toLowerCase(); return k && k !== 'no' && k !== 'false' ? 1 : 0; };
+  const eng = c => Number((c && c.row && (c.row.total || c.row.total_comments)) || 0) || 0;
+  return kof(b) - kof(a) || eng(b) - eng(a);
+}
 const BQ_DIRECT_EVERY_MS_ = 5 * 60 * 1000;   // a check at most every 5 minutes (each one reads several tables)
 const BQ_DIRECT_MIN_LEFT_MS_ = 120 * 1000;   // with less of the run left than this, no check: the Burson space comes first
 const BQ_DIRECT_PIC_LEFT_MS_ = 60 * 1000;    // a card gets the post's picture (bqPostCard_) only with this much left
@@ -1838,7 +1858,7 @@ function bqDirectUsSql_(sprinklr, bmie) {
       '  WHERE v.total_comments >= 30 AND v.negative_sentiment_ratio >= 0.30',
       `    AND ${bqGoogleTextSql_('CONCAT(IFNULL(v.account_name, ""), " ", IFNULL(v.Product, ""), " ", IFNULL(v.brand, ""), " ", IFNULL(v.post_caption, ""))')}`,
       '    AND NOT EXISTS (SELECT 1 FROM existing_slrr e WHERE e.url = v.post_url)',
-      `  ORDER BY v.post_published_date DESC LIMIT ${BQ_POLL_CANDIDATES_}`,
+      `  ORDER BY v.post_published_date DESC LIMIT ${bqPollCandidates_()}`,
       ')',
     ], [
       'sprinklr_top AS (',
@@ -1946,7 +1966,7 @@ function bqDirectUsSql_(sprinklr, bmie) {
       '    0 AS neg_comments, 0.0 AS neg_pct, snippet, post_time, kof, tier, followers, CAST(NULL AS STRING) AS top_neg_comments',
       '  FROM (SELECT * FROM dsd_earned UNION ALL SELECT * FROM bwm_earned)',
       '  QUALIFY ROW_NUMBER() OVER (PARTITION BY url ORDER BY is_dsd DESC, seen_at DESC) = 1',
-      `  ORDER BY is_dsd DESC, seen_at DESC LIMIT ${BQ_POLL_CANDIDATES_}`,
+      `  ORDER BY is_dsd DESC, seen_at DESC LIMIT ${bqPollCandidates_()}`,
       ')',
     ]);
   }
@@ -1994,7 +2014,7 @@ function bqBsipCandidates_(minutes) {
     '  HAVING post_ts >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @max_age_hours HOUR)',
     '    AND (total >= @min_total OR kof IS NOT NULL)',
     `    AND EXISTS (SELECT 1 FROM UNNEST(smart_tags) t WHERE TRIM(IFNULL(t, "")) != "" AND NOT REGEXP_CONTAINS(LOWER(t), r"${BQ_BSIP_POSITIVE_TAG_RX_}"))`,
-    `  ORDER BY total DESC, last_received_at DESC LIMIT ${BQ_POLL_CANDIDATES_ * 2}`,
+    `  ORDER BY total DESC, last_received_at DESC LIMIT ${bqPollCandidates_() * 2}`,
     '),',
     'sonar_json AS (',
     '  SELECT s.post_url,',
@@ -2042,7 +2062,7 @@ function bqBsipCandidates_(minutes) {
     '  issue_name, language, post_time, kof',
     'FROM (SELECT * FROM sonar_candidates UNION ALL SELECT * FROM tubular_candidates)',
     'QUALIFY ROW_NUMBER() OVER (PARTITION BY url ORDER BY total DESC, seen_at DESC) = 1',
-    `ORDER BY total DESC, seen_at DESC LIMIT ${BQ_POLL_CANDIDATES_}`,
+    `ORDER BY total DESC, seen_at DESC LIMIT ${bqPollCandidates_()}`,
   ].join('\n');
   return bqQuery_(sql, {
     minutes: bqLookbackMinutes_({ bq_lookback_minutes: minutes }),
@@ -2819,8 +2839,10 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
     });
   };
   // Sprinklr, then BMIE: one US query each, so one refused never silences the other. A later source isn't read once the
-  // earlier ones have BQ_POLL_MAX_PER_RUN_ candidates (any Step 1 leaves out is remembered: the next check reads it)
-  const enough = () => candidates.length >= BQ_POLL_MAX_PER_RUN_;
+  // earlier ones have BQ_POLL_MAX_PER_RUN_ candidates (any Step 1 leaves out is remembered: the next check reads it).
+  // The open engine (Control row 51, step S14): every source is read, its candidates ranked across sources below
+  const open = typeof openOn_ === 'function' && openOn_();
+  const enough = () => !open && candidates.length >= BQ_POLL_MAX_PER_RUN_;
   [['sprinklr', 'SPRINKLR'], ['bmie', 'BMIE']].forEach(([k, kind]) => {
     if (!want(k) || enough() || !timeLeft(60 * 1000)) return;
     const label = BQ_SOURCE_LABELS_[kind];
@@ -2911,7 +2933,14 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
     return false;
   });
 
-  // Then the cards, BQ_POLL_MAX_PER_RUN_ at most, each count a real one: the feed's, else the post's (bqRealEngagement_)
+  // Then the cards, BQ_POLL_MAX_PER_RUN_ at most, each count a real one: the feed's, else the post's (bqRealEngagement_).
+  // The open engine (row 51, step S14): no count a check; a KOF's post first, then the most engagements, across sources,
+  // while fewer than BQ_DIRECT_MAX_WAITING_ of the poll's cards wait unreviewed and 120 s of the flow is left; a
+  // candidate not posted is not marked (the next check weighs it again while it is in the lookback)
+  if (open) keep.sort(bqDirectRank_);
+  const waitingN = open ? bqDirectWaiting_(ctx, msgs) : 0;
+  const full = () => (open ? waitingN + total() >= BQ_DIRECT_MAX_WAITING_ || !timeLeft(120 * 1000)
+    : total() >= BQ_POLL_MAX_PER_RUN_ || !timeLeft(30 * 1000));
   let lookups = 0;
   const realCount = url => {
     if (lookups >= BQ_DIRECT_LOOKUPS_MAX_ || !timeLeft(45 * 1000)) return 0;
@@ -2919,7 +2948,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
     return bqRealEngagement_(ctx, url);
   };
   for (const c of keep) {
-    if (total() >= BQ_POLL_MAX_PER_RUN_ || !timeLeft(30 * 1000)) break;
+    if (full()) break;
     const r = c.row;
     let text = null;
     if (c.kind === 'SPRINKLR') {  // its rule goes by Sprinklr's comments and negativity (plus outbound engagements when present)

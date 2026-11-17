@@ -393,7 +393,13 @@ one line under it: what was built, the suite's count, and anything left out with
       it can be counted from what the bot keeps today.
 
 ### The rest (plan 2; briefs 26 to 29)
-- [ ] **S14** Direct BigQuery by time
+- [x] **S14** Direct BigQuery by time
+      Built, under row 51: the Direct poll reads every source (a later one is no longer skipped once the earlier ones
+      found 2), asks for 50 candidates a source (`bqPollCandidates_`; 15 OFF), ranks the candidates Step 1 keeps across
+      sources (`bqDirectRank_`: a KOF's post first, then the most engagements), and posts while fewer than 3 of its cards
+      wait unreviewed (`BQ_DIRECT_MAX_WAITING_`, kept) and 120 s of the flow is left; a candidate not posted is not marked
+      and comes back at the next check. The 500 engagements and the "Burson first" skip are unchanged; row 51 OFF: 2 a
+      check, 15 a source, as before. Suite: 1,357 of 1,357 passed. Left out: nothing of the step's row.
 - [ ] **S16** Growth notes
 - [ ] **S17** Readability on a busy day
 - [ ] **S1** The same-story check and the engine measurements, run by hand
