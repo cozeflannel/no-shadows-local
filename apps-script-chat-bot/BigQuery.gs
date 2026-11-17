@@ -4290,7 +4290,8 @@ function edDeferredTrim_(list) {
 
 /**
  * Saves the signals left for a later check (`list`), and their rows (`rows`, by the same hashes) in the script cache for
- * 6 hours, at most ED_DEFERRED_CACHE_CHARS_ (the oldest rows go first). An empty list takes both out. Never throws.
+ * 6 hours, at most ED_DEFERRED_CACHE_CHARS_ (the oldest rows go first). An empty list takes both out. False when the
+ * list itself could not be saved (the cache is a nicety: its rows only word the tab). Never throws.
  */
 function edDeferredSave_(props, list, rows) {
   const keys = Object.keys(list || {});
@@ -4302,12 +4303,13 @@ function edDeferredSave_(props, list, rows) {
     }
   } catch (e) {
     console.error('Early detection: couldn\'t remember the signals left for a later check: ' + ((e && e.message) || e));
+    return false;
   }
   try {
     const cache = CacheService.getScriptCache();
     if (!keys.length) {
       cache.remove(ED_DEFERRED_CACHE_);
-      return;
+      return true;
     }
     let kept = keys.filter(h => rows && rows[h]).sort((a, b) => Number(list[b][0]) - Number(list[a][0]));
     const build = () => { const m = {}; kept.forEach(h => { m[h] = rows[h]; }); return JSON.stringify(m); };
@@ -4317,16 +4319,20 @@ function edDeferredSave_(props, list, rows) {
   } catch (e) {
     console.warn('Early detection: couldn\'t keep the details of the signals left for a later check: ' + ((e && e.message) || e));
   }
+  return true;
 }
 
 /**
  * Why a signal left for a later check was never reviewed (`code`: ED_DEFERRED_CAUSES_'s): no check read it again in
- * time, or, with `full`, the list of those signals was full (ED_DEFERRED_MAX_) and it was one of the oldest. Pure but
- * for the settings.
+ * time; with `how` true (or 'full'), the list of those signals was full (ED_DEFERRED_MAX_) and it was one of the oldest;
+ * with 'now', the list could not be saved, so it ended in the check that put it off (its cause alone). Pure but for the
+ * settings.
  */
-function edDeferredWhy_(code, full) {
+function edDeferredWhy_(code, how) {
   const cause = Object.keys(ED_DEFERRED_CAUSES_).find(k => ED_DEFERRED_CAUSES_[k] === code) || 'check';
-  return `${edNoteSentence_(edNeverWhy_(cause))} ${full
+  const first = edNoteSentence_(edNeverWhy_(cause));
+  if (how === 'now') return first;
+  return `${first} ${how
     ? 'Too many stories were waiting for a later check, so the oldest ones were let go.'
     : 'No later check read it again in time (checks were skipped, or busier stories came first).'}`;
 }
@@ -4666,7 +4672,7 @@ function earlyWaveCheck_(ctx) {
     delete deferredRows[h];
     deferredChanged = true;
   };
-  const endDeferred = (h, entry, full) => {
+  const endDeferred = (h, entry, how) => {
     const e = Array.isArray(entry) ? entry : [];
     const kept = deferredRows[h] && typeof deferredRows[h] === 'object' ? deferredRows[h] : null;
     const row = kept ? Object.assign({}, kept) : { unique_low_tier_authors: ewCount_(e[2]) };
@@ -4687,7 +4693,7 @@ function earlyWaveCheck_(ctx) {
         return;
       }
     }
-    edNote_(ctx, row, ED_OUT_.never, edDeferredWhy_(e[1], full), row.alert_id ? { title } : { title, key: `deferred:${h}` });
+    edNote_(ctx, row, ED_OUT_.never, edDeferredWhy_(e[1], how), row.alert_id ? { title } : { title, key: `deferred:${h}` });
   };
   if (Object.keys(deferredList).length) {
     const readNow = new Set((rows || []).map(idHashOf).filter(Boolean));
@@ -4878,6 +4884,7 @@ function earlyWaveCheck_(ctx) {
   // rows a check reads), the first check after it left the window ends it (the sweep before the loops). True when the
   // day's limit refused one.
   let deferred = 0;  // under the allowance: signals left for the next check (the check's 5, the hour's limits)
+  const deferredNow = new Set();  // their ids' hashes (the remembered list's keys)
   let queuedSaved = 0;  // under the allowance: signals queued whose count is saved already (edAllowSaveQueued_)
   const queueByAllowance = () => {
     let dayStop = false;
@@ -4982,6 +4989,7 @@ function earlyWaveCheck_(ctx) {
             Math.min(999999, ewCount_(c.row.unique_low_tier_authors))];
           deferredRows[h] = edDeferredRow_(c.row, c.dec);
           deferredChanged = true;
+          deferredNow.add(h);
         }
         continue;
       }
@@ -5014,7 +5022,11 @@ function earlyWaveCheck_(ctx) {
     });
     const before = Object.assign({}, deferredList);
     edDeferredTrim_(deferredList).forEach(h => endDeferred(h, before[h], true));
-    edDeferredSave_(props, deferredList, deferredRows);
+    // the list could not be saved: the ones put off in this check would be lost with no ending, so they end now, with
+    // their cause alone (the stored list is as the check found it: the ones the sweep ended are marked as seen)
+    if (!edDeferredSave_(props, deferredList, deferredRows)) {
+      deferredNow.forEach(h => { if (deferredList[h]) endDeferred(h, deferredList[h], 'now'); });
+    }
   }
   // At the day's limit the check stops looking: every signal it read and has not marked as seen was never reviewed
   if (capped && !allow) {

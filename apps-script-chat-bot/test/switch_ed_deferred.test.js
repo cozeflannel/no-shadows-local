@@ -61,6 +61,7 @@ module.exports = H => {
     const sizes = [];
     times('09:01', o.until || '12:30').forEach(time => {
       clock = time;
+      if (o.before) o.before(w, time);
       const look = w.run(time);
       recsOf(w).forEach(r => {
         (endings[r.id] = endings[r.id] || []).push(r.outcome);
@@ -122,6 +123,24 @@ module.exports = H => {
     const swept = r.log.filter(x => x[2] === 'Seen before, nothing new' && /-202610141330$/.test(x[1]) && x[0] > '10:00');
     assert.ok(swept.length >= 10, `${swept.length} swept as repeats`);
     swept.forEach(x => assert.ok(/^Its card of .* had 9 accounts; 5 now, nothing new/.test(x[3]), x.join(' | ')));
+    eq(r.deferred, null);
+  });
+
+  test('early detection deferred: when the list of signals left for a later check cannot be saved, the ones put off in that check end at once ("Never reviewed" with their cause alone), so none is lost; C19 adds up', () => {
+    const r = day({ batches: [['09:30', 1, 25]], skip: [['10:15', '10:40']], before: (w, time) => {
+      if (time !== '09:31') return;
+      const p = w.t.g.props;
+      const set = p.set.bind(p);
+      p.set = (k, v) => { if (k === 'EARLY_DETECTION_DEFERRED') throw new Error('quota (test)'); return set(k, v); };
+    } });
+    eq(r.read.size, 25);
+    everyReadEndsOnce(r, 'the list not saved');
+    const now = r.log.filter(x => x[2] === 'Never reviewed');
+    assert.ok(now.length >= 1, 'some were put off');
+    now.forEach(x => {
+      assert.ok(!/later check/.test(x[3]), x.join(' | '));
+      assert.ok(/^This hour's|^More than 5/.test(x[3]), x.join(' | '));
+    });
     eq(r.deferred, null);
   });
 
