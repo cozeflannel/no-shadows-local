@@ -217,11 +217,41 @@ module.exports = H => {
     // Pixel card (EarlyDetectionCross.gs). Without exactly those, the scenario is what it was at f93e31a
     const step12 = x => /^12 /.test(String(x.run || ''));
     const watchNote = x => /^🔭 \*Also flagged by the watch /.test(String(x.text || ''));
-    const others = out => [out.chat.filter(x => step12(x) || watchNote(x)).length, out.reactions.filter(step12).length];
     const without = out => Object.assign({}, out, { chat: out.chat.filter(x => !step12(x) && !watchNote(x)),
       reactions: out.reactions.filter(x => !step12(x)) });
     const one = golden.oneSpace(ON);
-    eq(others(one), [4, 1]);
+    // ...and exactly what they are (the same in switch_bq_bigger_post, switch_bq_story_notes): the Watch's note under
+    // the Maps card, and step 12's story card, its review note and its note under the Pixel card, with the emoji on the card
+    const OTHERS = [
+      { run: '10 the Maps card is reviewed and the watch flags the Maps post too', space: 'spaces/AAQAonespace01', thread: 'spaces/AAQAonespace01/threads/t9', reply: true,
+        text: '🔭 *Also flagged by the watch “Google brand safety (all)”.* No separate Watch alert: this card already covers the post.' },
+      { run: '12 a story whose main post is the Pixel post', space: 'spaces/AAQAonespace01', thread: 'spaces/AAQAonespace01/threads/t14', reply: false,
+        text: '🚨 *EARLY DETECTION* · New story\n' +
+        '*Pixel 10 owners say batteries are swelling after the update*\n' +
+        '*Product:* Pixel\n' +
+        '*Exposure Tag:* Product - Other/general criticism (P2)\n' +
+        '*Sensitive Topic:* None\n' +
+        '*KOF:* No (5 small, non-KOF accounts)\n' +
+        '\n' +
+        '*What\'s happening:* Owners describe <https://x.com/pixelcritic/status/2150000000000000001|swollen batteries> on X and <https://www.reddit.com/r/GooglePixel/comments/1p9xyz/battery_swelling/|Reddit>.\n' +
+        '*Post:* "My Pixel 10 battery swelled up after the latest update, the back cover is lifting."\n' +
+        '*Call:* 👍 Monitor build-up: Several independent owners describe the same hardware safety symptom\n' +
+        '*Activity:* 5 small accounts on X and Reddit posted about this 6 times at 7:42 AM ET\n' +
+        '*Next steps:*\n' +
+        '1. Keep monitoring for volume growth and re-check in 2 hours.\n' +
+        '*Posts:* <https://x.com/pixelcritic/status/2150000000000000001|@pixelcritic> (X) · <https://x.com/droidfan22/status/2150000000000000022|@droidfan22> (X) · <https://www.reddit.com/r/GooglePixel/comments/1p9xyz/battery_swelling/|@u_pixel_owner> (Reddit)' },
+      { run: '12 a story whose main post is the Pixel post', space: 'spaces/AAQAonespace01', thread: 'spaces/AAQAonespace01/threads/t14', reply: true,
+        text: '🤖 *Early Detection Review: 👍 Monitor build-up* · medium (86% sure)\n' +
+        '*Why:* Several independent owners describe the same hardware safety symptom.\n' +
+        '• *SLRR:* Product - Other/general criticism (P2) · Pixel.\n' +
+        '• *Draft Temp Check query:* `"Pixel 10" AND (battery OR swelling OR swollen)` (Last 6 hours across X and Reddit)\n' +
+        '• *Escalate if:* An official statement or press pickup.\n' +
+        '*Related alert:* its main post already has a card (QA-1002 · BigQuery · BSIP, 8:07 AM ET)' },
+      { run: '12 a story whose main post is the Pixel post', space: 'spaces/AAQAonespace01', thread: 'spaces/AAQAonespace01/threads/t5', reply: true,
+        text: '🔗 *Part of a story:* 5 small accounts on X and Reddit tell it (story card QA-1006)' },
+    ];
+    const OTHER_REACTIONS = [{ run: '12 a story whose main post is the Pixel post', on: 'spaces/AAQAonespace01/messages/m14', emoji: '👍' }];
+    eq([one.chat.filter(x => step12(x) || watchNote(x)), one.reactions.filter(step12)], [OTHERS, OTHER_REACTIONS]);
     eq(golden.differences(without(one), golden.recorded.one_space), []);
     eq(golden.differences(golden.mirror(ON), golden.recorded.mirror), []);
   });
