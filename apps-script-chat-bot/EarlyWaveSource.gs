@@ -158,7 +158,10 @@ const EWS_AMI_KOF_RX_ = '(?i)^(yes|true|1)|\\b(KOFs?|INFs?|KOLs?)\\b';  // the K
 const EWS_AMI_STAFF_RX_ = 'kof|kol|\\binfs?\\b|exec|googler|reps|posts by google';  // amie_staff_feeds_rx's default
 const EWS_AMI_FIRST_MS_ = 60 * 60 * 1000;      // a first read (or after the row was OFF) starts an hour back
 const EWS_AMI_MAX_BACK_MS_ = 6 * 3600 * 1000;  // never more than 6 hours back
-const EWS_AMI_POSTS_MAX_ = 300;                // its posts a lane (ami, amis) a read at most
+// The overlap's rows read again at most (its newest: late rows land close to the mark). A read's posts are never cut
+// after that: each lane may return as many posts as rows were taken (amie_rows_per_check + this), so a new row's post
+// is never pushed out by a repeat from the overlap
+const EWS_AMI_OVERLAP_ROWS_ = 2000;
 const EWS_AMI_CHECK_MS_ = 60 * 60 * 1000;      // the table's metadata is read again this often
 const EWS_AMI_PAUSE_MS_ = 60 * 60 * 1000;      // a failed read pauses the AMIE table this long (then a dry run first)
 const EWS_NEW_DAY_CAP_ = 15000;            // new lanes embed only while the day's total is under min(this, the day's pace)
@@ -2660,8 +2663,8 @@ function ewsAmiSocialRx_() {
 
 /**
  * The AMIE job's SQL (a US job of its own, read-only): `opt`, the optional columns the table has (the others read as
- * NULL); `staffRx`, amie_staff_feeds_rx. Rows taken: the overlap before the mark (@ami_from_ms to @ami_mark_ms) again,
- * then the oldest @ami_take rows after the mark. One post a link and author across the alert feeds; left out: the
+ * NULL); `staffRx`, amie_staff_feeds_rx. Rows taken: the overlap before the mark (@ami_from_ms to @ami_mark_ms) again
+ * (its newest @ami_over rows at most), then the oldest @ami_take rows after the mark. One post a link and author across the alert feeds; left out: the
  * positive and the non-Google feeds, the staff and KOF feeds and authors with a KOF (returned as 'xkof' rows), MODERATE
  * and HIGH tiers, positive posts, no posting time, links off the social networks (forums aside), the networks in
  * @skip_nets, posts that don't name Google (but in the old Google feeds), and posts with no English words; a post first
@@ -2684,7 +2687,8 @@ function ewsAmiSql_(opt, staffRx) {
     `    AND ingestionTimestamp <= TIMESTAMP_MILLIS(@until_ms) AND url IS NOT NULL`,
     `),`,
     `ami_taken AS (`,
-    `  SELECT * FROM ami_raw WHERE ingestionTimestamp <= TIMESTAMP_MILLIS(@ami_mark_ms)`,
+    `  SELECT * FROM (SELECT * FROM ami_raw WHERE ingestionTimestamp <= TIMESTAMP_MILLIS(@ami_mark_ms)`,
+    `    ORDER BY ingestionTimestamp DESC, url LIMIT @ami_over)`,
     `  UNION ALL`,
     `  SELECT * FROM (SELECT * FROM ami_raw WHERE ingestionTimestamp > TIMESTAMP_MILLIS(@ami_mark_ms)`,
     `    ORDER BY ingestionTimestamp, url LIMIT @ami_take)`,
@@ -2753,8 +2757,9 @@ function ewsAmiQuery_(st, until) {
       { name: 'skip_nets', array: 'STRING', value: [] },  // the networks Brandwatch live reads (stage 2): none yet
       p('max_audience', 'INT64', EWS_MAX_AUDIENCE_), p('eng_ceiling', 'INT64', EWS_ENG_CEILING_),
       p('min_chars', 'INT64', EWS_MIN_CHARS_), p('min_tokens', 'INT64', EWS_MIN_TOKENS_),
-      p('min_distinct', 'INT64', EWS_MIN_DISTINCT_TOKENS_), p('rt_max', 'INT64', EWS_AMI_POSTS_MAX_),
-      p('slow_max', 'INT64', EWS_AMI_POSTS_MAX_),
+      p('min_distinct', 'INT64', EWS_MIN_DISTINCT_TOKENS_), p('ami_over', 'INT64', EWS_AMI_OVERLAP_ROWS_),
+      // the post select's caps: as many posts as rows taken, so it never cuts (a post is at least one row)
+      p('rt_max', 'INT64', cfg.take + EWS_AMI_OVERLAP_ROWS_), p('slow_max', 'INT64', cfg.take + EWS_AMI_OVERLAP_ROWS_),
     ],
     win: { since: from, until },
     flags: { mark },

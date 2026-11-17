@@ -184,7 +184,7 @@ module.exports = H => {
     assert.ok(!/\b(INSERT|UPDATE|DELETE|MERGE|CREATE|DROP|ALTER|TRUNCATE)\b/i.test(sql));
     // the window and the rows taken: the overlap again, then the oldest new rows after the mark; the partition filter
     assert.match(sql, /WHERE ingestionTimestamp > TIMESTAMP_MILLIS\(@ami_from_ms\)\n    AND ingestionTimestamp <= TIMESTAMP_MILLIS\(@until_ms\) AND url IS NOT NULL/);
-    assert.match(sql, /SELECT \* FROM ami_raw WHERE ingestionTimestamp <= TIMESTAMP_MILLIS\(@ami_mark_ms\)\n  UNION ALL\n  SELECT \* FROM \(SELECT \* FROM ami_raw WHERE ingestionTimestamp > TIMESTAMP_MILLIS\(@ami_mark_ms\)\n    ORDER BY ingestionTimestamp, url LIMIT @ami_take\)/);
+    assert.match(sql, /SELECT \* FROM \(SELECT \* FROM ami_raw WHERE ingestionTimestamp <= TIMESTAMP_MILLIS\(@ami_mark_ms\)\n    ORDER BY ingestionTimestamp DESC, url LIMIT @ami_over\)\n  UNION ALL\n  SELECT \* FROM \(SELECT \* FROM ami_raw WHERE ingestionTimestamp > TIMESTAMP_MILLIS\(@ami_mark_ms\)\n    ORDER BY ingestionTimestamp, url LIMIT @ami_take\)/);
     // one post a link and author across the feeds; the rules of the plan's Q6
     for (const rule of [
       'GROUP BY url, h',
@@ -219,8 +219,47 @@ module.exports = H => {
     eq(B.ewsParam_(q.params.find(p => p.name === 'skip_nets')), { name: 'skip_nets', parameterType: { type: 'ARRAY', arrayType: { type: 'STRING' } }, parameterValue: { arrayValues: [] } });
     eq(Object.fromEntries(q.params.filter(p => !p.array).map(p => [p.name, p.value])), {
       ami_from_ms: until - HOUR, until_ms: until, ami_mark_ms: until - HOUR, ami_take: 300, late_min: 180, max_audience: 5000, eng_ceiling: 500,
-      min_chars: 40, min_tokens: 7, min_distinct: 5, rt_max: 300, slow_max: 300 });
+      min_chars: 40, min_tokens: 7, min_distinct: 5, ami_over: 2000, rt_max: 2300, slow_max: 2300 });
     eq([q.maxBytes, q.win, q.flags], ['1000000000', { since: until - HOUR, until }, { mark: 0 }]);
+  });
+
+  test('ed amie (Q6): the overlap read again never pushes a new row\'s post out: the overlap\'s newest rows only (@ami_over), and each lane may return as many posts as rows were taken, also with other settings', () => {
+    const q = B.ewsAmiQuery_({ marks: { ami: NOW - 10 * MIN } }, NOW - MIN);
+    const v = name => Number(q.params.find(p => p.name === name).value);
+    eq([v('ami_over'), v('ami_take'), v('rt_max'), v('slow_max')], [B.ev('EWS_AMI_OVERLAP_ROWS_'), 300, 2300, 2300]);
+    assert.ok(v('rt_max') >= v('ami_over') + v('ami_take') && v('slow_max') >= v('ami_over') + v('ami_take'));
+    // the post select's cap is the only cut after the rows are taken: by lane, at those parameters
+    assert.ok(q.sql.includes("<= IF(lane IN ('bw', 'tub', 'amis'), @slow_max, @rt_max)"));
+    const b2 = loadBot(makeGoogle(NOW).services);
+    b2.ev('GEN').settings.amie_rows_per_check = 900;
+    const q2 = b2.ewsAmiQuery_({ marks: { ami: NOW - 10 * MIN } }, NOW - MIN);
+    eq(['ami_take', 'rt_max', 'slow_max'].map(n => Number(q2.params.find(p => p.name === n).value)), [900, 2900, 2900]);
+  });
+
+  test('ed amie (E10): an AMIE post first seen more than 3 hours after it was posted comes as amis: alone it starts no story, is not pooled and adds no velocity row; it joins a story that exists', () => {
+    const topic = 'Gmail inbox keeps deleting archived messages without warning since yesterday morning sync';
+    const words = ['alpha', 'bravo', 'charlie', 'delta', 'echo'];
+    const late = (tag, n) => words.slice(0, n).map((w, i) => ami({ mid: `AMI|late${tag}${i}`, url: `https://www.reddit.com/r/gmail/comments/l${tag}${i}/t/`,
+      platform: 'Reddit', author: `late${tag}${i}`, txt: `${topic} ${w}`, chash: `l${tag}${i}`, sig: `l${tag}${i}`,
+      posted_ms: NOW - 5 * HOUR - i * MIN, seen_ms: NOW - 2 * MIN }));
+    // five accounts, alone (the job said 'ami'; the producer splits it as late)
+    const env = amieEnv();
+    Object.assign(env.b.ev('GEN').settings, { early_wave_new_trial_days: 0 });
+    env.w.rows.ami = [...late('a', 5), amark(NOW - 2 * MIN, 5)];
+    const rows = env.run();
+    const st = env.state();
+    eq([rows.filter(r => r.signal_type === 'CLUSTER_EMERGENCE').length, st.last.formed, st.last.pool, JSON.parse(env.g.cache.get('ews1:acc')).rows.length],
+      [0, 0, 0, 0]);
+    eq(env.ids().filter(i => /^AMI/.test(i)), []);
+    // a story of three Sonar accounts exists: the late AMIE posts join it, as slow members
+    const env2 = amieEnv();
+    env2.w.rows.c1 = (body, check) => (check === 1 ? words.slice(0, 3).map((w, i) => sonar({ mid: `SONAR|j${i}`, author: `sj${i}`,
+      url: `https://x.com/sj${i}/status/2191000000000000${i}`, txt: `${topic} ${w} sonar`, chash: `j${i}`, sig: `j${i}`, posted_ms: NOW - (20 + i) * MIN })) : []);
+    env2.w.rows.ami = (body, check) => (check === 1 ? [amark(NOW - 20 * MIN, 0)] : [...late('b', 3), amark(NOW + 10 * MIN, 3)]);
+    env2.run();
+    env2.next();
+    const members = env2.members().filter(m => /^AMI\|late/.test(m.i));
+    eq([members.length, members.filter(m => m.sl && m.nl).length, env2.state().last.joined], [3, 3, 3]);
   });
 
   test('ed amie (E15): an optional column the metadata did not find (or of a type the job can\'t use) is read as an empty value; one it found is read; a staff-feeds setting that could break the SQL is not used (the default is)', () => {
