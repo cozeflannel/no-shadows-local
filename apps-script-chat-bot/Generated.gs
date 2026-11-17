@@ -97,6 +97,7 @@ const GEN = {
   "bw_live_calls_per_10min": 20,
   "bw_live_pause_at_used": 450,
   "bw_live_source_type_new": true,
+  "early_detection_claim_members": true,
   "resources": [
    {
     "name": "SLRR Collection Requirements",

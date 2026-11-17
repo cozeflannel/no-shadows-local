@@ -280,6 +280,14 @@ setting that turns it off (see "Settings" below).
 | A story let go or never reviewed | Nothing in the space: it is counted on C19 and has its row on the Early Detection tab |
 | A watch flag that isn't posted | Nothing in the space: it is counted on C35, has its row on the Watch detections tab, and one line in the run log says why |
 
+**Every post of a story card, once the Watch reads the AMIE table** (Control row 50, step 3b of the new sources, and the
+setting `early_detection_claim_members`). Until then a post a story card links, other than its main post, is no post's
+own alert anywhere: it can get its own Direct BigQuery card or Watch alert, with the `🔗 *Part of a story:*` note. While
+row 50 is ON, every post a story card links (an update's new posts too) is remembered as that card's, as its main post
+is, so the Watch and the Direct BigQuery poll treat each one exactly as the main post: a story card that went out as a
+Social Alert is the alert on each of them (no Watch alert, no Direct BigQuery card of their own); one that sent no
+Social Alert leaves them their own cards where stories go first, and elsewhere counts as the alert on each.
+
 **The card's header is not the decision.** A corrected Burson alert and a Direct BigQuery card keep Burson's own
 format, header included, so a card can read `🚨THIS ALERT MEETS P0 CRITERIA🚨` or `🟨SOCIAL ALERT🟨` while the line under
 it says `not met`. The `Alert requirements` line is what the bot did. On an ongoing issue whose author is not a KOF,
@@ -1760,6 +1768,7 @@ Auto-correct space (the Early Detection tab lists every space's stories, so `ear
 | Setting | Default | What it switches | Turned off (`false` or `0`) gives back |
 |---|---|---|---|
 | `early_detection_first` | `true` | In the one-space setup, Early Detection's check and reviews run before the Direct BigQuery poll; and a story card that sent no Social Alert doesn't stop the post's own BigQuery card or close a watch flag on its post | The poll first, as before; a story card stops the post's own BigQuery card and closes the watch flag |
+| `early_detection_claim_members` | `true` | While Control row 50 (the Watch's AMIE source) is ON, every post a story card links is remembered as that card's, as its main post is (see "Every post of a story card" above). With row 50 OFF it does nothing |
 | `early_wave_reviews_per_hour` | `6` | The review allowance: ordinary stories taken for review in a clock hour (with 10 an hour of every kind, 5 a check, serious stories first) | `0`: the old rule, 40 queued a day, exactly as before (the topic rule then stops too) |
 | `early_wave_reviews_per_day` | `150` | The allowance's stories queued a day (only while the hourly rule is on) | `0`: the old rule too, as with the hourly setting at 0 |
 | `early_wave_topic_min_ratio` | `3` | A topic only busier than usual (a head count under 3 times its usual) that isn't serious is noted, not reviewed (only while the hourly rule is on) | `0`: such topic counts are queued and reviewed, as before |

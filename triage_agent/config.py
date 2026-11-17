@@ -681,6 +681,9 @@ class BursonQAConfig(ConfigModel):
     bw_live_calls_per_10min: int = 20
     bw_live_pause_at_used: int = 450
     bw_live_source_type_new: bool = True
+    # Step 3a of the new sources: while Control row 50 is ON, every post a carded Early Detection story links is seen by
+    # that card in the alert memory, as its main post is. With row 50 OFF nothing changes.
+    early_detection_claim_members: bool = True
     # What the Resources tab of the bot's sheet starts with: documents the bot links when Burson asks about the alert
     # requirements. After that the tab is what the bot uses (people edit it there). Only links Burson can open.
     resources: list[BursonResource] = Field(default_factory=list)

@@ -50,6 +50,8 @@
  *                                another window), a card a producer claimed included. A post seen or claimed also has
  *                                ids (the alerts that saw it, the latest AM_IDS_KEPT_ at most) and claim (the
  *                                producer whose card was posted for it, '' for none)
+ *   .notePosts(row, urls)        the posts a story's card links besides its main post: each seen by the card's Alert-log
+ *                                row as its main post is (noteRow), so every check that asks seenPost treats them alike
  *   .claim(url, flow, info)      a producer ('watch', 'bq', …) is about to post a card for the post: true when it's now
  *                                claimed for it, false when the post was already seen (don't post it). info: {author,
  *                                network, engagement}
@@ -118,7 +120,7 @@ const AM_OFF_ = Object.freeze({
   active: false, ok: false, problem: '',
   seenPost: () => null, claim: () => true, storyMatch: () => null, facts: () => null,
   sendCheck: () => ({ ok: true }), claimSend: () => false, recordSend: () => false, releaseSend: () => false,
-  noteRow: () => {}, seedRows: () => {}, noteHeld: () => {}, storyRec: () => null, recentStories: () => [],
+  noteRow: () => {}, notePosts: () => 0, seedRows: () => {}, noteHeld: () => {}, storyRec: () => null, recentStories: () => [],
   nearStories: vecs => (vecs || []).map(() => []),
   flush: () => null, counts: () => ({ held: 0, folded: 0, updates: 0 }),
 });
@@ -1228,6 +1230,41 @@ function makeAlertMemory_(ss, opts) {
         assignStory(key, row);
       }
       touch(key);
+    },
+
+    /**
+     * The posts a story's card links (step 3a of the new sources: EarlyDetection.gs edNoteMembers_), each seen by the
+     * card's Alert-log row `row` exactly as its main post is (noteRow): the card's id among the alerts that saw it, its
+     * time and its flow. So the Watch and the Direct BigQuery poll treat a linked post as they treat the main post: where
+     * stories go first, a card that sent no Social Alert is still no post's own alert (BigQuery.gs bqOnlyStoryCards_),
+     * and one that went out as a Social Alert is the alert on each. Not a producer's claim, which those checks would take
+     * for the post's own card. `urls`: the card's post links (its main post and repeats are left out). How many were
+     * noted. Never throws.
+     */
+    notePosts(row, urls) {
+      try {
+        if (!row || !row.alert_id || !load()) return 0;
+        const own = amRowKey_(row);
+        const t = Number(row.created_at) || now();
+        const fl = amFlowOf_(row.space);
+        const done = new Set();
+        (Array.isArray(urls) ? urls : []).forEach(u => {
+          const key = u ? amPostKey_(u) : '';
+          if (!key || key === own || done.has(key)) return;
+          done.add(key);
+          const p = post(key, true);
+          delete p.seed;
+          p.f = p.f || t;
+          p.l = Math.max(Number(p.l) || 0, t);
+          p.ids = uniqPush(p.ids, String(row.alert_id));
+          if (fl && String(p.fl || '').indexOf(fl) < 0) p.fl = String(p.fl || '') + fl;
+          if (!p.url) p.url = truncate_(String(u), 300);
+          touch(key);
+        });
+        return done.size;
+      } catch (e) {
+        return 0;
+      }
     },
 
     /** A Social Alert the memory held back (v: amVerdict_'s): counted; a fold is listed on its story. */

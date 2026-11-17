@@ -50,7 +50,24 @@ one line under it: what was built, the suite's count, and anything left out with
       failing, or paused because Brandwatch refused the key or the read (a wait for the shared login or a 429 is not a
       failure). To keep every number whole, `edDayNoteText_` takes the ending as an option and keeps room for it (with
       no ending its text is unchanged), beyond the one call the brief names.
-- [ ] **3a** Every post of a carded story is claimed
+- [x] **3a** Every post of a carded story is claimed
+      Built `notePosts` in the alert memory and `edNoteMembers_` in `edAct_` (EarlyDetection.gs): every post a story's
+      card links, an update's new posts too, is seen by that card's Alert-log row as its main post is, only once the
+      card is in the space. New file `test/switch_ed_claim_members.test.js`. Suite: 1,229 of 1,229 passed. What I found:
+      a producer's `claim()` (the plan's word) makes `seenPost` answer "claimed", which the Direct BigQuery poll and the
+      Watch take for the post's own card (`bqOnlyStoryCards_` is false), so a linked post would not be treated as the
+      main post; it is noted as seen by the card's id instead, and then every check the fix plan built (where stories
+      go first, `bqOnlyStoryCards_` / `pwStoryCardOnly_`; a card that went out as a Social Alert is the alert on it)
+      treats it exactly as the main post. But the fix plan's own tests pin the opposite for linked posts today (a linked
+      post is never "already alerted": its own Direct BigQuery card and note in every setup, and a Watch alert whose
+      review sends no second email), so with the claim always on, 9 of them fail. Choice, from rule 2 (each step behind
+      its switch and its own setting) and the plan's precondition ("before stage 3 is switched on"): the claim acts only
+      while Control row 50 (key `watchAmie`, built in 3b) is ON and the setting `early_detection_claim_members` (true) is
+      on. With row 50 OFF the bot is as it was and every fix-plan test passes unchanged; with it ON a linked post is the
+      main post's equal (where stories do not go first, it then gets no Direct BigQuery card of its own). Left as it is:
+      the memory rebuilt from the Alert log (its tab lost) learns only main posts, as the row keeps only record keys; a
+      linked post of a story whose email went out is "seen" for 24 hours (or the window a late source asks), not
+      "emailed" for 14 days as the main post is.
 - [ ] **3b** Control row 50: the AMIE table as a source of the Watch
 
 ### Open engine (plan 2; briefs 6 to 16)

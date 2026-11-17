@@ -328,6 +328,9 @@ function edAct_(ctx, m, d, report) {
     ingested: ED_ALERT_INGESTED_,
   }, d.draft || {}));
 
+  // every post the card links is seen by its row as its main post is (step 3a of the new sources, while row 50 is ON),
+  // so the Watch and the Direct BigQuery poll treat each one as they treat the main post
+  edNoteMembers_(ctx, row, d.ed);
   if (d.draft) watchDraft_(ctx, alertId);
   if (twoSpace) report.forwarded = (report.forwarded || 0) + 1;
   report.early_detection_alerts = (report.early_detection_alerts || 0) + 1;
@@ -350,6 +353,25 @@ function edAct_(ctx, m, d, report) {
   }
   ctx.store.markDone(m.name, 'alert', alertId);
   return row;
+}
+
+/**
+ * The posts card `ed` links (edPostsOf_: its members as the card knows them, an update's new ones too) into the alert
+ * memory as seen by the card's Alert-log row `row` (AlertMemory.gs notePosts); its main post is noted with the row
+ * itself (Store.gs addAlert). Only for a card that is in the space: edAct_ runs once the card is posted. Only while
+ * Control row 50 (the Watch's AMIE source, key watchAmie: the plan's stage 3, which needs it) is ON and the setting
+ * early_detection_claim_members is on: with row 50 OFF the bot is as it was (a linked post is no post's own alert
+ * anywhere, as the fix plan built it). Never throws.
+ */
+function edNoteMembers_(ctx, row, ed) {
+  try {
+    const sw = typeof ewsRunSwitches_ === 'function' ? ewsRunSwitches_() : {};
+    const S = (typeof GEN !== 'undefined' && GEN && GEN.settings) || {};
+    if (sw.watchAmie !== true || S.early_detection_claim_members === false) return;
+    const mem = typeof amOf_ === 'function' ? amOf_(ctx) : null;
+    if (!mem || !mem.active || typeof mem.notePosts !== 'function' || !row) return;
+    mem.notePosts(row, edPostsOf_(ed || {}).map(p => p && p.url).filter(Boolean));
+  } catch (e) { /* the memory learns them from nothing else: the posts are treated as before */ }
 }
 
 /** Finishes an Early Detection card recorded on an interrupted run without re-triaging or double-sending. */
