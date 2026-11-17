@@ -201,7 +201,17 @@ one line under it: what was built, the suite's count, and anything left out with
       cannot show. They need a step of their own with the producer's state tests (switch_early_wave_source) extended
       first. Until then, under row 51, posts the check has no time to embed are dropped from that check as today (only
       the new lanes carry theirs), and a lane's 5,000 rows have no cursor carry.
-- [ ] **S8** Velocity made correct
+- [ ] **S8** Velocity made correct (built in part: see below; left unticked)
+      Built, under row 51 with the setting `open_velocity_fix` (true): points 1 and 2 of the plan's velocity section. A
+      post whose hour was already counted for good (a late post) gives no velocity row, and a post the bot read more
+      than `open_velocity_lag_minutes` (60) after it was posted gives none, so the baseline and the current count hold
+      the same kind of posts (`ewsVelocityCounts_`). With row 51 OFF, or the setting false, velocity is as before. Suite:
+      1,302 of 1,302 passed (`switch_open_velocity.test.js`). Left out, and why: points 3 to 7 (each lane family's own
+      warm-up baseline in `EWS_ROLL_<lane>`, rows that know their lanes, coverage per lane, one topic vocabulary with
+      split topic properties, and the requirements-first file's `big` lane family). The plan puts "storage first": an
+      `acc` row gains a field, so `acc` must be chunked first (step S7), and S7's chunking is left out (see S7). Without
+      it a bigger row would fill the one cache item sooner and lose velocity rows. The reviewers' warm-up scenarios
+      (WR-M1, WR-M2) wait for those points.
 - [ ] **S9** Equal standing
 - [ ] **S10** The new sources' rules amended under row 51
 - [ ] **S11** Quick looks for every candidate, from 2 accounts

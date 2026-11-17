@@ -694,6 +694,8 @@ class BursonQAConfig(ConfigModel):
     open_burson_pickup_p90_s: float = 120
     open_check_minutes: int = 5
     open_queue_max: int = 24
+    open_velocity_fix: bool = True
+    open_velocity_lag_minutes: int = 60
     # What the Resources tab of the bot's sheet starts with: documents the bot links when Burson asks about the alert
     # requirements. After that the tab is what the bot uses (people edit it there). Only links Burson can open.
     resources: list[BursonResource] = Field(default_factory=list)

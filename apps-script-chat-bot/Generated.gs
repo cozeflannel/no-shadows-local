@@ -106,6 +106,8 @@ const GEN = {
   "open_burson_pickup_p90_s": 120.0,
   "open_check_minutes": 5,
   "open_queue_max": 24,
+  "open_velocity_fix": true,
+  "open_velocity_lag_minutes": 60,
   "resources": [
    {
     "name": "SLRR Collection Requirements",

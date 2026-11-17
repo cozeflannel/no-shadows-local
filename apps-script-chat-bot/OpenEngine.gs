@@ -430,6 +430,23 @@ function openEws_(name) {
   }
 }
 
+/**
+ * Step S8 (velocity made correct, the part built): under row 51 with the setting open_velocity_fix (true), {lagMs}: a
+ * post counts for velocity only when the bot read it within open_velocity_lag_minutes (60) of posting; null when the
+ * fix is off (row 51 OFF, or the setting false): velocity as before. Never throws.
+ */
+function openVelocityFix_() {
+  try {
+    if (!openOn_()) return null;
+    const S = (typeof GEN !== 'undefined' && GEN && GEN.settings) || {};
+    if (S.open_velocity_fix === false) return null;
+    const m = Number(S.open_velocity_lag_minutes);
+    return { lagMs: (m > 0 ? m : 60) * 60 * 1000 };
+  } catch (e) {
+    return null;
+  }
+}
+
 /** The review queue's size: open_queue_max (24) under row 51, else today's 12 (BigQuery.gs ED_QUEUE_MAX_). Never throws. */
 function openQueueMax_() {
   try {

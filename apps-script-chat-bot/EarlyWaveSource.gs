@@ -1647,6 +1647,20 @@ function ewsAcc_(raw) {
   return { rows };
 }
 
+/**
+ * Under step S8's fix (`fix`: {lagMs}): does post `p` count for velocity? Not when its hour was already counted for good
+ * (it ended more than EWS_OPEN_HOURS_ ago: a late post never changes a closed hour), nor when the bot read it more than
+ * fix.lagMs after it was posted (like with like: the baseline and the current count both hold only posts read soon).
+ * A post with no read time counts. Pure.
+ */
+function ewsVelocityCounts_(p, now, fix) {
+  if (!p || !fix) return true;
+  const t = Number(p.t) || 0;
+  if (Math.floor(t / 3600000) < Math.floor(Number(now) / 3600000) - EWS_OPEN_HOURS_) return false;
+  const seen = Number(p.seen) || 0;
+  return !(seen > 0 && seen - t > fix.lagMs);
+}
+
 /** The accounts as stored: the keys as indexes into one list. Pure. */
 function ewsAccStored_(acc) {
   const keys = [];
@@ -3268,7 +3282,10 @@ function ewsProduce_(props, st, now, firstMins, opts) {
 
     // Velocity counts: every real-time post of today's lanes kept (not evergreen noise), with its keys; a new lane's
     // posts add no velocity row (velocity from the new sources is not in this round)
-    const realTime = posts.filter(p => !p.slow && !p.nl && !evergreenGone.has(p.id));
+    // the open engine (row 51, step S8, setting open_velocity_fix): a post of an hour already counted for good (a late
+    // post) and one the bot read more than an hour after it was posted give no velocity row (ewsVelocityCounts_)
+    const vfix = typeof openVelocityFix_ === 'function' ? openVelocityFix_() : null;
+    const realTime = posts.filter(p => !p.slow && !p.nl && !evergreenGone.has(p.id) && (!vfix || ewsVelocityCounts_(p, now, vfix)));
     const rowOf = new Map();
     realTime.forEach(p => {
       const row = [Math.floor(p.t / 60000), ewsFnv_(p.ak), p.platform, ewsKeysOf_(p), ewsFnv_(p.id)];
