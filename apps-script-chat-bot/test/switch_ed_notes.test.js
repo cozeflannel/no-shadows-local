@@ -66,7 +66,7 @@ module.exports = H => {
     ['08:31', 'Reviewed and dismissed', BENIGN, problem(7), 'Story', 5, RISK, ''],
     ['08:32', 'Not English', 'The posts are not in English (Portuguese).', problem(8), 'Story', 5, RISK, ''],
     ['08:32', 'Seen before, nothing new', 'Already alerted as a known issue (QA-4228, "Pixel camera crash"): nothing materially new.',
-      problem(9), 'Story', 5, RISK, ''],
+      problem(9), 'Story', 5, RISK, 'QA-4228'],  // the alert the review matched it to, in the Card column
     ['08:33', 'Reviewed and dismissed', 'Its topic is always around in the listening data ("Shot on Pixel showcase").',
       problem(11), 'Story', 5, RISK, ''],
     ['08:46', 'Seen before, nothing new', 'First seen 8:31 AM ET with 5 accounts; 8 now, not yet twice as many.',
@@ -217,7 +217,9 @@ module.exports = H => {
           const from = byId.get(r.id);
           assert.ok(from, `${name}: ${r.id}`);
           eq([r.link, r.platforms], r.story === 'A story whose details are gone' ? ['', ''] : [from.primary_url, from.platforms_csv], `${name}: ${r.id}`);
-          eq(r.message.indexOf(`${w.space}/messages/`) === 0, r.card !== '', `${name}: ${r.id} ${r.message}`);
+          // (a card the review matched by its id alone, not in this flow's Alert log, has no message to link)
+          const matchedOnly = r.outcome === 'Seen before, nothing new' && r.card !== '' && r.why.includes(r.card) && !r.message;
+          eq(r.message.indexOf(`${w.space}/messages/`) === 0 || matchedOnly, r.card !== '', `${name}: ${r.id} ${r.message}`);
           assert.ok(JSON.stringify(FIELDS.map(f => r[f])).length <= 448, `${name}: ${r.id}`);
         });
         // every outcome the code can reach today is in the day (two wait for the parts of the plan that come next)

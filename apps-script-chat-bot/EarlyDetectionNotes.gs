@@ -218,8 +218,14 @@ function edNoteReviewed_(ctx, entry, row, res) {
     return edNote_(ctx, row, ED_OUT_.notEnglish, `The posts are not in English${lang ? ` (${lang})` : ''}`, x);
   }
   if (res.held) {
+    // the alert the review matched it to, in the Card column as for the other repeats (linked when this flow's Alert log
+    // has it; else its id only)
+    const matched = (/\bQA-\d+\b/.exec(String(res.held)) || [])[0] || '';
+    let known = null;
+    try { known = matched ? ((ctx && ctx.store && ctx.store.alerts) || []).find(a => a && String(a.alert_id || '') === matched) : null; } catch (e) { known = null; }
     return edNote_(ctx, row, ED_OUT_.repeat,
-      String(res.held).replace(/,\s*SLRR alert log/gi, '').replace(/\bSLRR alert log\b/gi, 'the alert log'), x);
+      String(res.held).replace(/,\s*SLRR alert log/gi, '').replace(/\bSLRR alert log\b/gi, 'the alert log'),
+      matched ? Object.assign(x, { card: known ? edAlertCard_(known) : { id: matched, message: '' } }) : x);
   }
   if (res.dismissed) {
     const topic = call.basis === 'evergreen' ? (/"([^"]+)"/.exec(String(res.dismissed)) || [])[1] || '' : '';
