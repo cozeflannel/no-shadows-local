@@ -5,6 +5,7 @@
 // property, written over by other checks and trimmed): the note's own marks then still keep a later signal of the same
 // story at the same size from being reviewed again and adding a second note under the same card (its key names the
 // signal, so a new signal would get a new key).
+// Also case b of the decision, through the whole flow: a repeat of the same post, found by the review.
 'use strict';
 
 module.exports = H => {
@@ -76,5 +77,49 @@ module.exports = H => {
     const mine = recs.filter(r => /clu_maps_bridge/.test(r.id));
     eq(mine.map(r => r.outcome), ['Added under another alert\'s card', 'Seen before, nothing new'],
       JSON.stringify(mine.map(r => [r.id, r.outcome])));
+  });
+
+  // Case b of the decision: a repeat by 'same_post'. A story whose MAIN post had a Social Alert in the last 24 hours is
+  // added under that card at the check, before any review (P4a); one whose main post went out longer ago (but within
+  // the novelty window) is reviewed, and the review finds the same post already alerted.
+  test('story under its alert, same post: a story whose main post went out as a Social Alert 25 hours earlier is reviewed, ends as a repeat of that alert and is added under its card with one note; no story card, no second email; with cross_alert_notes off no note', () => {
+    const go = overrides => {
+      const w = W.oneSpaceWorld(overrides);
+      w.t.g.vertex.earlyDetection = review;
+      const recs = [];
+      const step = (label, min, fn) => {
+        w.rec.step(label, min, fn);
+        w.t.bot.edNotesOfRun_().forEach(r => recs.push(w.t.bot.edNoteObj_(r)));
+        const n = w.t.bot.edDayNumbers_(w.t.g.services.PropertiesService.getScriptProperties());
+        eq(n.found, n.cards + n.under + n.letgo + n.never + n.waiting, `after "${label}": ${JSON.stringify(n)}`);
+      };
+      w.rec.collect('setup');
+      step('first', 1);
+      step('chk', 5);
+      step('chk', 5);
+      step('bq', 5, () => { w.feed.bsip = [golden.rows.mapsRow()]; });
+      after(3).forEach(([l, m]) => step(l, m));
+      step('a day later', 25 * 60);
+      step('story', 15, () => { w.feed.stories = [Object.assign(story('202610151300'), { primary_url: MAPS })]; });
+      after(6).forEach(([l, m]) => step(l, m));
+      const out = w.rec.out();
+      const all = w.t.bot.sheetBackend_(w.t.sheet()).loadAlerts();
+      const card = all.find(a => a.ingested === 'BSIP');
+      const notes = w.t.chat.spaces.get(AC).messages.filter(m => m.threadReply && m.thread.name === card.forward_thread &&
+        String(m.text).indexOf(NOTE) === 0 && /closed bridge/.test(String(m.text)));
+      return { notes, card, reviews: reviews(w.t), mine: recs.filter(r => /clu_maps_bridge/.test(r.id)),
+        cards: all.filter(a => a.ingested === 'Early detection'),
+        sent: out.emails.filter(e => e.kind === 'sent' && /SOCIAL ALERT/.test(String(e.subject))) };
+    };
+    const on = go({});
+    assert.ok(on.reviews >= 1, `reviews: ${on.reviews}`);
+    eq(on.notes.length, 1, JSON.stringify(on.notes.map(m => m.text)));
+    eq(on.mine.map(r => r.outcome), ['Added under another alert\'s card'], JSON.stringify(on.mine));
+    eq([on.mine[0].card, on.mine[0].message], [on.card.alert_id, on.card.forward_message]);
+    assert.match(on.mine[0].why, new RegExp(`^One of its posts already had a Social Alert, ${on.card.alert_id} `));
+    eq([on.cards.length, on.sent.length], [0, 1]);
+    const off = go({ cross_alert_notes: false });
+    eq(off.notes.length, 0);
+    assert.ok(off.mine.length > 0 && off.mine.every(r => r.outcome !== 'Added under another alert\'s card'), JSON.stringify(off.mine));
   });
 };
