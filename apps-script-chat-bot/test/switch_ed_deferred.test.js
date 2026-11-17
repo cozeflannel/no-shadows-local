@@ -36,9 +36,9 @@ module.exports = H => {
   const day = o => {
     const w = ends.world({ flow: 'one-space', row46: false, settings: o.settings || {} });
     const rows = [];
-    o.batches.forEach(([at, first, n, au]) => {
+    o.batches.forEach(([at, first, n, au, kind]) => {
       for (let i = 0; i < n; i++) {
-        const r = (i % 2 ? ordinary : serious)(first + i, at);
+        const r = (kind === 'serious' || !(i % 2) ? serious : ordinary)(first + i, at);
         if (au) r.unique_low_tier_authors = au;
         rows.push(r);
       }
@@ -56,19 +56,23 @@ module.exports = H => {
     w.t.bot.__edDeferredSkip = () => (o.skip || []).some(s => clock >= s[0] && clock <= s[1]);
     w.t.bot.ev('earlyWaveCheck_ = (check => function (ctx) { return __edDeferredSkip() ? null : check(ctx); })(earlyWaveCheck_)');
     const endings = {};
+    const log = [];  // [time, id, outcome, why]
     const queued = new Set();
     const sizes = [];
     times('09:01', o.until || '12:30').forEach(time => {
       clock = time;
       const look = w.run(time);
-      recsOf(w).forEach(r => { (endings[r.id] = endings[r.id] || []).push(r.outcome); });
+      recsOf(w).forEach(r => {
+        (endings[r.id] = endings[r.id] || []).push(r.outcome);
+        log.push([time, r.id, r.outcome, r.why]);
+      });
       w.t.bot.edQueueList_(props(w)).forEach(e => queued.add(e.id));
       const n = w.t.bot.edDayNumbers_(props(w));
       eq(n.found, n.cards + n.under + n.letgo + n.never + n.waiting, `the run at ${time}: ${JSON.stringify(n)}`);
       assert.ok(!look.logs.map(String).some(l => /did not add up/.test(l)), `the run at ${time}`);
       sizes.push(String(w.t.g.props.get('EARLY_DETECTION_DEFERRED') || '').length);
     });
-    return { w, read, endings, queued, n: w.t.bot.edDayNumbers_(props(w)), tab: tabRows(w), sizes,
+    return { w, read, endings, log, queued, n: w.t.bot.edDayNumbers_(props(w)), tab: tabRows(w), sizes,
       deferred: w.t.g.props.get('EARLY_DETECTION_DEFERRED') || null };
   };
 
@@ -100,6 +104,24 @@ module.exports = H => {
     eq(r.read.size, 35);
     everyReadEndsOnce(r, 'a full read');
     assert.ok(r.tab.some(x => /read it again in time/.test(x.why)));
+    eq(r.deferred, null);
+  });
+
+  test('early detection deferred: 25 stories at 09:30 with 5 accounts, then newer serious signals of stories 6-25 at 09:40 with 9 accounts that get cards: an older signal of a carded story that no check read again ends as a repeat under that card, the same as one read again; "Never reviewed" counts only stories with no card', () => {
+    const r = day({ batches: [['09:30', 1, 25], ['09:40', 6, 20, 9, 'serious']], cap: 25 });
+    everyReadEndsOnce(r, 'a carded story');
+    const story = id => (String(id).match(/clu_ends\d+/) || [''])[0];
+    const cardAt = {};
+    r.log.filter(x => /^Card posted/.test(x[2])).forEach(x => { if (!cardAt[story(x[1])]) cardAt[story(x[1])] = x[0]; });
+    assert.ok(Object.keys(cardAt).length >= 10, JSON.stringify(cardAt));
+    const never = r.log.filter(x => x[2] === 'Never reviewed');
+    eq(never.filter(x => cardAt[story(x[1])] && cardAt[story(x[1])] <= x[0]).map(x => x.join(' | ')), [],
+      'never reviewed, though its story had a card');
+    eq(r.n.never, never.length);
+    // the older signals of the carded stories that were swept end as repeats under their story's card
+    const swept = r.log.filter(x => x[2] === 'Seen before, nothing new' && /-202610141330$/.test(x[1]) && x[0] > '10:00');
+    assert.ok(swept.length >= 10, `${swept.length} swept as repeats`);
+    swept.forEach(x => assert.ok(/^Its card of .* had 9 accounts; 5 now, nothing new/.test(x[3]), x.join(' | ')));
     eq(r.deferred, null);
   });
 
@@ -150,13 +172,23 @@ module.exports = H => {
     const rows = {};
     Object.keys(list).forEach((h, i) => {
       rows[h] = t.bot.edDeferredRow_({ alert_id: `ED-VEL-PRIORITY_TOPIC-${'x'.repeat(60)}-${i}`, signal_type: 'VELOCITY_SPIKE',
-        velocity_grain: 'PRIORITY_TOPIC', signal_key: 'k'.repeat(300), velocity_ratio: 1.4, unique_low_tier_authors: 9999999,
+        velocity_grain: 'PRIORITY_TOPIC', signal_key: 'k'.repeat(300), cluster_id: `clu_${'c'.repeat(300)}`,
+        velocity_ratio: 1.4, unique_low_tier_authors: 9999999,
         platforms_csv: 'X, Reddit, TikTok, YouTube, Instagram, Facebook, Threads', primary_url: `https://x.com/${'a'.repeat(120)}/status/1`,
         row: {} }, { c: 'c'.repeat(300), cp: 0.33, l: 4 });
     });
     t.bot.edDeferredSave_(p, list, rows);
     const cached = String(t.g.services.CacheService.getScriptCache().get('ed_deferred_rows'));
     assert.ok(cached.length <= 90000, `${cached.length}`);
+    // most rows fit even then (the oldest give up their details first), each with its story's key cut to 80 characters
+    // (the signal key is kept only for a signal without a cluster: edRowKeys_)
+    const kept = JSON.parse(cached);
+    assert.ok(Object.keys(kept).length >= 115, `${Object.keys(kept).length} rows kept`);
+    Object.keys(kept).forEach(h => {
+      assert.ok(kept[h].cluster_id.length > 0 && kept[h].cluster_id.length <= 80, kept[h].cluster_id);
+      eq(kept[h].signal_key, undefined);
+    });
+    eq(t.bot.edDeferredRow_({ alert_id: 'ED-VEL-x', signal_type: 'VELOCITY_SPIKE', signal_key: 's'.repeat(300) }, null).signal_key.length, 80);
     // an empty list takes the property and the cache value out
     t.bot.edDeferredSave_(p, {}, {});
     eq(t.g.props.get('EARLY_DETECTION_DEFERRED') || null, null);

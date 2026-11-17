@@ -4252,7 +4252,7 @@ function edDeferredRowsRead_() {
 
 /**
  * The few fields of a signal left for a later check that its row on the Early Detection tab needs (EarlyDetectionNotes.gs
- * edNoteRow_), with its title as the record would word it (`title`). `dec`: the fast triage's answers, for its first
+ * edNoteRow_) and its story keys need (edRowKeys_), with its title as the record would word it (`title`). `dec`: the fast triage's answers, for its first
  * guess at the Exposure Tag. Pure but for the answers kept.
  */
 function edDeferredRow_(row, dec) {
@@ -4269,6 +4269,11 @@ function edDeferredRow_(row, dec) {
     title: edCut_(edNoteStory_(r), ED_NOTE_STORY_MAX_),
   };
   if (guess && guess !== '-') out.tag_guess = edCut_(guess, ED_NOTE_TAG_MAX_);
+  // its story as the same-story dedup knows it (edRowKeys_, edRowStory_: the signal key counts only without a cluster),
+  // so the sweep can tell a repeat of a story carded since (earlyWaveCheck_)
+  const cid = String(r.cluster_id || '').trim();
+  if (cid) out.cluster_id = truncate_(cid, 80);
+  else if (String(r.signal_key || '').trim()) out.signal_key = truncate_(String(r.signal_key).trim(), 80);
   return out;
 }
 
@@ -4638,9 +4643,11 @@ function earlyWaveCheck_(ctx) {
   const isWatch = r => typeof EWS_WATCH_SIGNAL_ !== 'undefined' && String(r.signal_type || '').trim().toUpperCase() === EWS_WATCH_SIGNAL_;
   const watchRoom = Math.max(0, EW_WATCH_QUEUE_PER_DAY_ - (Number(today.watchq) || 0));
   // The signals an earlier check under the allowance left for a later one (edDeferredRead_; the list is empty with the
-  // allowance off): one this check did not read and that has left the window it reads ends now, "Never reviewed", once
-  // (it was never counted); its own id is marked as seen, never its story's keys. One marked as seen since is forgotten.
-  // With its details gone from the cache its row names no story and it is counted by its hash
+  // allowance off): one this check did not read and that has left the window it reads ends now, once (it was never
+  // counted): "Never reviewed", or, when its story has been carded or queued since with nothing new in it, "Seen before,
+  // nothing new" under that card, as it would end had a check read it again (edStoryVerdict_); its own id is marked as
+  // seen, never its story's keys. One marked as seen since is forgotten. With its details gone from the cache its row
+  // names no story, it is counted by its hash and it ends "Never reviewed"
   const idHashOf = r => {
     const k = r && typeof r === 'object' ? edRowKeys_(r).find(x => x.indexOf('id:') === 0) : '';
     return k ? hashText_(k) : '';
@@ -4662,6 +4669,18 @@ function earlyWaveCheck_(ctx) {
     forgetDeferred(h);
     seen.addHash(h, now);
     marked++;
+    const keys = kept ? edRowKeys_(row) : [];
+    const idKey = keys.find(k => k.indexOf('id:') === 0) || '';
+    const storyKeys = keys.filter(k => k !== idKey);
+    if (storyKeys.length) {
+      readStore();
+      const v = edStoryVerdict_(row, ledger, seen.authors(storyKeys), now);
+      if (v.hold) {
+        repeats++;
+        edNote_(ctx, row, ED_OUT_.repeat, edRepeatWhy_(row, v, seen.first(storyKeys), now), { title, card: edPriorCard_(v) });
+        return;
+      }
+    }
     edNote_(ctx, row, ED_OUT_.never, edDeferredWhy_(e[1]), row.alert_id ? { title } : { title, key: `deferred:${h}` });
   };
   if (Object.keys(deferredList).length) {
