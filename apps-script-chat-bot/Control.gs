@@ -678,7 +678,8 @@ const CONTROL_SWITCHES_ = [
       ? '✓ ON, but waiting: it needs Early wave & velocity check (row 19) ON, whose records it writes'
       : '✓ ON: writes each early-wave check\'s stories, posts, signals, events and fast-triage verdicts to brand-social-central-data.early_wave') },
   // Row 48, below the sixth fast-triage bar (47): Early Detection also reads the AMIE table (EarlyWaveSource.gs, which
-  // learns the run's switches from ewsRunSwitches_, Main.gs). Rows 49 and 50 are kept for the next two new sources
+  // learns the run's switches from ewsRunSwitches_, Main.gs). Rows 49, 50 and 51 are kept for three more switches (49
+  // and 50 for the next two new sources); row 52 is the blank row above the help
   { key: 'edAmie', label: 'Early Detection: also read the AMIE table', row: 48,
     off: 'OFF (Early Detection does not read the AMIE table)',
     on: (standIn, live, sw) => (!(sw && sw.earlyWave)
