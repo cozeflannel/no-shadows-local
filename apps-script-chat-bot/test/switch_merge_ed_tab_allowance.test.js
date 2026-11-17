@@ -57,7 +57,9 @@ module.exports = H => {
     cover(w, s1, 'QA-0901');
     step('08:16', [s1]);
     step('09:01', [2, 3, 4, 5, 6].map(n => ordinary(n, '09:01')));
-    step('09:16', [7, 8, 9, 10].map(n => ordinary(n, '09:16')));
+    // made 45 minutes before the check: out of the next check's window, so the three the hour's 6 ordinary ones turn away
+    // end here (a younger one would be left for the next check)
+    step('09:16', [7, 8, 9, 10].map(n => ordinary(n, '08:31')));
     for (const time of ['09:17', '09:18', '09:19', '09:20']) step(time);
     const end = step('09:21');
 

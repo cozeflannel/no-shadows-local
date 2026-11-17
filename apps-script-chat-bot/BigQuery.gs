@@ -3317,6 +3317,7 @@ const EW_MAX_PER_DAY_ = 40;                   // max signals queued per day: eac
 const EW_MAX_PER_HOUR_ = 10;                  // signals queued in one clock hour (Eastern), serious ones included
 const EW_ALLOW_PER_DAY_ = 150;                // signals queued a day when the setting early_wave_reviews_per_day can't be read
 const EW_SEEN_ID_MS_ = 3.5 * 3600 * 1000;     // under the allowance, a seen entry that is only a signal's id goes after this
+const EW_AGE_MARGIN_MS_ = 5 * 60 * 1000;     // under the allowance, a signal left for the next check must be read there with this to spare (edAgesOut_)
                                               // (the producer's buffer keeps a signal 3 hours), so the map keeps story keys
 const EW_DRAIN_MAX_PER_RUN_ = 2;              // max signals reviewed and posted per run (EarlyDetection.gs edDrainQueue_)
 const EW_DRAIN_MIN_LEFT_MS_ = 90 * 1000;      // a review starts only with this much of the run left (median review ~40 s)
@@ -4071,6 +4072,22 @@ function edAllowance_(ctx, today, now) {
 }
 
 /**
+ * Under the allowance, a signal turned away by the check's EW_MAX_PER_CHECK_ or by an hourly limit is left for the next
+ * check (unmarked, no ending): the producer hands it over again while it is in the window a check reads. True when it
+ * will not be (so it must end now): when it was made (`created_utc`) longer ago than the next check's window
+ * (edLookbackMinutes_ with a check EW_EVERY_MS_ from now) less one check and EW_AGE_MARGIN_MS_; and when its time can't
+ * be read. Pure.
+ */
+function edAgesOut_(row, settings, now) {
+  const raw = String((row && row.created_utc) || '').trim();
+  const made = raw ? Date.parse(raw.replace(/\s+UTC$/i, 'Z').replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}(?::\d{2})?)/, '$1T$2')) : NaN;
+  if (!isFinite(made) || !(made > 0)) return true;
+  const t = Number(now) || 0;
+  const window = edLookbackMinutes_(settings, t, t + EW_EVERY_MS_) * 60000;
+  return made + window < t + EW_EVERY_MS_ + EW_AGE_MARGIN_MS_;
+}
+
+/**
  * True when signal `row` is only a head count on a topic that is busier than usual, short of `min` times its usual
  * count (the setting early_wave_topic_min_ratio): a pace jump on a topic label (VELOCITY_SPIKE, grain PRIORITY_TOPIC)
  * whose ratio is under `min`. False for `min` 0 (off), a ratio that can't be read, and every other kind (a story, a
@@ -4289,8 +4306,9 @@ function ewLogCheck_(ctx, props, left) {
  *
  * The Auto-correct flow's allowance (edAllowance_: setting early_wave_reviews_per_hour above 0; every other flow, and the
  * setting at 0, keep the rules above word for word): no 40 a day; the check always reads, the fast triage always starts
- * and the producer always tells the risk facts; every row read for the first time is ended or queued in that check
- * (queueByAllowance below), serious signals first (FastTriage.gs edSerious_), at most EW_MAX_PER_CHECK_ a check,
+ * and the producer always tells the risk facts; every row read for the first time is ended or queued in that check, or
+ * left for the next one when only the check's or the hour's limits stand in its way (queueByAllowance below: it ends
+ * once it would leave the window a check reads, edAgesOut_), serious signals first (FastTriage.gs edSerious_), at most EW_MAX_PER_CHECK_ a check,
  * early_wave_reviews_per_day a day, EW_MAX_PER_HOUR_ a clock hour and early_wave_reviews_per_hour ordinary ones in it.
  * There a pace jump on a topic under early_wave_topic_min_ratio times its usual count that is not serious is noted as a
  * topic count and not reviewed (edTopicCount_).
@@ -4558,10 +4576,13 @@ function earlyWaveCheck_(ctx) {
   // hold-back ends some, a head count on a topic that is not serious ends others ("Topic busier than usual, not a story":
   // setting early_wave_topic_min_ratio, edTopicCount_), the serious ones (FastTriage.gs edSerious_) go first, then the
   // fast triage's order (row 39) or
-  // the producer's. They are queued in that order; each one refused is "Never reviewed" with its cause (edNeverWhy_:
-  // the check's 5, the day's limit, the early watch's 8, the hour's 10, the hour's ordinary ones) and finished: its own id
-  // is marked as seen, never its story's keys, so the story comes back when the producer sends it again. True when the
-  // day's limit refused one.
+  // the producer's. They are queued in that order. One turned away by the check's 5 or an hourly limit (the hour's 10,
+  // the hour's ordinary ones) is left for the next check: not marked, not ended, not counted; the producer hands it over
+  // again and it takes its place in that check's order (the serious first). It ends only when it would leave the window
+  // a check reads (edAgesOut_): then, as one refused by a limit that holds for the day (the day's limit, the early
+  // watch's 8), it is "Never reviewed" with its cause (edNeverWhy_) and finished: its own id is marked as seen, never its
+  // story's keys, so the story comes back when the producer sends it again. True when the day's limit refused one.
+  let deferred = 0;  // under the allowance: signals left for the next check (the check's 5, the hour's limits)
   const queueByAllowance = () => {
     let dayStop = false;
     const cands = [];
@@ -4654,6 +4675,12 @@ function earlyWaveCheck_(ctx) {
           : isWatch(c.row) && kinds.watch >= watchRoom ? 'watchDay'
             : allow.all >= EW_MAX_PER_HOUR_ ? 'hour'
               : !c.serious && allow.ord >= allow.perHour ? 'hourOrdinary' : '';
+      // the check's 5 and the hour's limits pass: such a signal is left for the next check (no mark, no ending, not
+      // counted), where the serious ones go first again; it ends only when it would leave the window a check reads
+      if ((cause === 'check' || cause === 'hour' || cause === 'hourOrdinary') && !edAgesOut_(c.row, ctx.settings, now)) {
+        deferred++;
+        continue;
+      }
       if (cause) {
         if (c.idKey) seen.add(c.idKey, now);
         marked++;
@@ -4694,6 +4721,7 @@ function earlyWaveCheck_(ctx) {
       `${kinds.watch ? `, ${kinds.watch} early watch` : ''}` +
       `${updates ? `; ${updates} update${updates === 1 ? '' : 's'} to earlier cards` : ''})`);
   }
+  if (deferred) ctx.log(`early detection: ${deferred} signal(s) left for the next check (this check's ${EW_MAX_PER_CHECK_} or this hour's limits)`);
   noteEarlyWave_(props, 0, 0, failed ? `${failed} couldn't be queued` : '', Object.assign({ queued, repeats, triaged, watchQueued: kinds.watch },
     allow ? { dayLimit: allow.perDay, hour: { key: allow.key, all: allow.all, ord: allow.ord } } : {}));
   ftFinish_(ft, props);

@@ -1,9 +1,11 @@
 // Early Detection's allowance in the Auto-correct flow (BigQuery.gs edAllowance_ and earlyWaveCheck_'s
 // queueByAllowance; FastTriage.gs edSerious_): with the setting early_wave_reviews_per_hour above 0 (6 by default) the
 // review queue no longer stops at 40 signals a day. Every signal read for the first time is ended or queued in that
-// check; serious ones go first; at most 5 are queued a check, 150 a day (early_wave_reviews_per_day), 10 in a clock
-// hour (Eastern) and, of those, 6 ordinary ones; each one refused is "Never reviewed" with its cause and marks only its
-// own id. Every other flow, and the setting at 0, keep the old rule word for word.
+// check, or left for the next one; serious ones go first; at most 5 are queued a check, 150 a day
+// (early_wave_reviews_per_day), 10 in a clock hour (Eastern) and, of those, 6 ordinary ones. One turned away by the
+// check's 5 or an hour's limit comes back at the next check (no ending, no count) until it would leave the window a
+// check reads; then, as one refused by the day's limit, it is "Never reviewed" with its cause and marks only its own
+// id. Every other flow, and the setting at 0, keep the old rule word for word.
 'use strict';
 
 module.exports = H => {
@@ -165,39 +167,49 @@ module.exports = H => {
     assert.match(old.runs[old.runs.length - 1].look.c19, /daily cap of 40 reached, more tomorrow$/);
   });
 
-  test('early detection allowance: an hour with 9 ordinary signals queues 6 and notes 3 as never reviewed; a serious one passes the used-up hour; the hour after has room again, and a refused story comes back when the producer sends it again (only its id was marked)', () => {
+  test('early detection allowance: an hour with 9 ordinary signals queues 6 and leaves 3 for the next checks (no ending, not counted); a serious one passes the used-up hour; the hour after has room again and the 3 are queued then; an ordinary one that would leave the window a check reads before the hour has room is never reviewed', () => {
     const w = checked();
     let look = w.step('09:01', [1, 2, 3, 4, 5].map(n => ordinary(n, '09:01')));
     eq([look.recs.filter(r => r.outcome === 'Never reviewed'), look.day.hr], [[], ['2026-10-14 09', 5, 5]]);
-    look = w.step('09:16', [6, 7, 8, 9].map(n => ordinary(n, '09:16')));
-    eq(brief(look.recs.filter(r => r.outcome === 'Never reviewed')),
-      [['7', 'Never reviewed', NEVER_ORDINARY], ['8', 'Never reviewed', NEVER_ORDINARY], ['9', 'Never reviewed', NEVER_ORDINARY]]);
-    eq(look.day.hr, ['2026-10-14 09', 6, 6]);
-    // read again at the next check: nothing new is noted
-    look = w.step('09:31', [6, 7, 8, 9].map(n => ordinary(n, '09:16')).concat([serious(10, '09:31')]));
+    const left = [6, 7, 8, 9].map(n => ordinary(n, '09:16'));
+    look = w.step('09:16', left);
+    eq([look.recs.filter(r => r.outcome === 'Never reviewed'), look.day.hr, look.n.found], [[], ['2026-10-14 09', 6, 6], 6]);
+    assert.ok(look.logs.map(String).includes('early detection: 3 signal(s) left for the next check (this check\'s 5 or this hour\'s limits)'));
+    // read again at the next checks: left again, nothing noted; the serious one is queued
+    look = w.step('09:31', left.concat([serious(10, '09:31')]));
     eq([look.recs.filter(r => r.outcome === 'Never reviewed'), look.day.hr], [[], ['2026-10-14 09', 7, 6]]);
     assert.ok(w.t.bot.edQueueList_(props(w)).some(e => e.id === serious(10, '09:31').alert_id && e.ser === 1) ||
       look.recs.some(r => storyOf(r.id) === '10' && /^Card posted/.test(r.outcome)), 'the serious one was queued');
-    // the next hour: story 7 again (a new signal of the same story, as many accounts) is no repeat and is queued
-    look = w.step('10:01', [ordinary(7, '10:01')]);
-    eq([look.recs.filter(r => /^Seen before|^Never/.test(r.outcome)), look.day.hr], [[], ['2026-10-14 10', 1, 1]]);
+    look = w.step('09:46', left);
+    eq([look.recs.filter(r => r.outcome === 'Never reviewed'), look.day.hr], [[], ['2026-10-14 09', 7, 6]]);
+    // the next hour: the three are queued (an hour of room; they are still in the window the check reads)
+    look = w.step('10:01', left);
+    eq([look.recs.filter(r => /^Seen before|^Never/.test(r.outcome)), look.day.hr], [[], ['2026-10-14 10', 3, 3]]);
     // every one of them was reviewed in the end: a card each (the review's usual call)
     for (const time of ['10:02', '10:03', '10:04', '10:05']) w.step(time);
-    eq(w.t.bot.edDayNumbers_(props(w)), { found: 11, cards: 8, under: 0, letgo: 0, never: 3, waiting: 0 });
+    eq(w.t.bot.edDayNumbers_(props(w)), { found: 10, cards: 10, under: 0, letgo: 0, never: 0, waiting: 0 });
+    // the hour's 6 ordinary ones used again: a new one is left for later, one made 51 minutes ago would be out of the
+    // next check's window (an hour), so it ends now: never reviewed, for this hour's 6
+    w.step('10:16', [11, 12, 13].map(n => ordinary(n, '10:16')));
+    look = w.step('10:31', [ordinary(14, '09:40'), ordinary(15, '10:31')]);
+    eq(brief(look.recs.filter(r => r.outcome === 'Never reviewed')), [['14', 'Never reviewed', NEVER_ORDINARY]]);
+    eq(look.day.hr, ['2026-10-14 10', 6, 6]);
+    assert.ok(!w.t.bot.edQueueList_(props(w)).some(e => e.id === ordinary(15, '10:31').alert_id), 'story 15 waits for the next check');
   });
 
-  test('early detection allowance: at most 5 queued a check (the rest are never reviewed, their ids marked: no second row); the hour\'s 10 of any kind; the day\'s limit (150, or the setting), with C19\'s stop', () => {
+  test('early detection allowance: at most 5 queued a check (the rest are left for the next check, where the serious ones go first again: no ending, no count); the hour\'s 10 of any kind; the day\'s limit (150, or the setting), with C19\'s stop', () => {
     const w = checked();
     w.busy = true;  // no review: the queue fills
     let look = w.step('09:01', [1, 2, 3, 4, 5, 6, 7].map(n => serious(n, '09:01')));
-    const CHECK = 'More than 5 stories arrived in 15 minutes; higher-ranked ones went first.';
-    eq(brief(look.recs), [['6', 'Never reviewed', CHECK], ['7', 'Never reviewed', CHECK]]);
-    eq([look.waiting, look.day.hr], [5, ['2026-10-14 09', 5, 0]]);
+    eq([look.recs, look.waiting, look.day.hr, look.n.found], [[], 5, ['2026-10-14 09', 5, 0], 5]);
+    // 6 and 7 come back with five new ones: 6, 7, 8, 9 and 10 are queued, 11 and 12 are left for later
     look = w.step('09:16', [1, 2, 3, 4, 5, 6, 7].map(n => serious(n, '09:01')).concat([8, 9, 10, 11, 12].map(n => serious(n, '09:16'))));
     eq([look.recs, look.waiting, look.day.hr], [[], 10, ['2026-10-14 09', 10, 0]]);
+    eq(w.t.bot.edQueueList_(props(w)).map(e => storyOf(e.id)).sort((a, b) => a - b), ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']);
+    // the hour's 10 are used: a new one is left for the next check too
     look = w.step('09:31', [serious(13, '09:31')]);
-    eq(brief(look.recs), [['13', 'Never reviewed', 'This hour\'s 10 reviews were used.']]);
-    // the day's limit
+    eq([look.recs, look.waiting], [[], 10]);
+    // the day's limit holds for the day: it ends them
     w.setDay({ queued: 150 });
     look = w.step('10:01', [serious(14, '10:01'), ordinary(15, '10:01')]);
     eq(brief(look.recs), [['14', 'Never reviewed', 'Today\'s limit of 150 reviews was reached.'],
@@ -223,7 +235,8 @@ module.exports = H => {
     const p0 = ends.signal(9, { at: '09:16', risk: 'privacy_data_leak', words: 'Private photos exposed after a data breach, story 9' });
     const early = ends.signal(10, { au: 3, type: 'EARLY_WATCH', at: '09:16' });
     look = w.step('09:16', [ordinary(6, '09:16'), ordinary(7, '09:16'), raised, p0, early]);
-    eq(brief(look.recs), [['10', 'Never reviewed', 'Early signals are switched OFF (row 39).'], ['7', 'Never reviewed', NEVER_ORDINARY]]);
+    // (7 is left for the next check: the hour's 6 ordinary ones are used)
+    eq(brief(look.recs), [['10', 'Never reviewed', 'Early signals are switched OFF (row 39).']]);
     const queue = w.t.bot.edQueueList_(props(w));
     eq(queue.slice(0, 2).map(e => [storyOf(e.id), e.ser]), [['8', 1], ['9', 1]]);
     eq([queue.length, look.day.hr], [8, ['2026-10-14 09', 8, 6]]);
@@ -244,9 +257,8 @@ module.exports = H => {
     };
     const kept = outcomes(false);
     eq(outcomes(true), kept);
-    eq(kept.filter(x => /^Never|^Held/.test(x[2])).map(x => x.slice(0, 3)),
-      [['09:16', '7', 'Never reviewed'], ['09:16', '8', 'Never reviewed'], ['09:16', '9', 'Never reviewed'],
-        ['09:31', '11', 'Held back as noise (no review)']]);
+    // (7, 8 and 9 were left for the next check at 09:16: the hour's 6 ordinary ones were used)
+    eq(kept.filter(x => /^Never|^Held/.test(x[2])).map(x => x.slice(0, 3)), [['09:31', '11', 'Held back as noise (no review)']]);
   });
 
   test('early detection allowance: Gemini Decisions is asked at most 15 times a check (the rest go on without an answer, never held back for it) and at most 300 times a day', () => {
@@ -254,7 +266,7 @@ module.exports = H => {
     w.busy = true;
     const look = w.step('09:01', Array.from({ length: 20 }, (_, i) => ordinary(500 + i, '09:01')));
     eq(w.calls.decisions, 15);
-    eq([look.waiting, look.recs.length, look.recs.every(r => r.outcome === 'Never reviewed')], [5, 15, true]);
+    eq([look.waiting, look.recs.length], [5, 0]);  // the other 15 are left for the next check
     assert.ok(look.logs.map(String).includes('fast triage: 5 signals without an answer (15 calls this check): handled as before'));
     // the day's calls: at most DEC_MAX_PER_DAY_ (300); past them no call is made
     const st = w.t.bot.decState_(props(w), w.t.g.clock.now);
@@ -352,7 +364,8 @@ module.exports = H => {
 
   // What becomes of each signal of ed_endings.js's long mixed day in the one-space setup under the allowance: [run, story,
   // outcome, why]. Most of its signals are serious (the fast triage's usual answer is severity medium), so the hour's 10
-  // and the check's 5 are what refuse; the day's 40 is no limit any more.
+  // and the check's 5 are what hold them up: they wait for a later check, and are reviewed; the day's 40 is no limit
+  // any more.
   const DAY = [
     ['08:16', '5', 'Not English', 'Most of its posts are not in English.'],
     ['08:16', '6', 'Its main post already has an alert', 'QA-0906 (BigQuery · BSIP, 8:01 AM ET).'],
@@ -369,26 +382,31 @@ module.exports = H => {
     ['08:32', '9', 'Seen before, nothing new', 'Already alerted as a known issue (QA-4228, "Pixel camera crash"): nothing materially new.'],
     ['08:33', '11', 'Reviewed and dismissed', 'Its topic is always around in the listening data ("Shot on Pixel showcase").'],
     ['08:46', '7', 'Seen before, nothing new', 'First seen 8:31 AM ET with 5 accounts; 8 now, nothing new.'],
-    ['08:46', '17', 'Never reviewed', 'This hour\'s 10 reviews were used.'],
-    ['08:46', '16', 'Never reviewed', 'This hour\'s 10 reviews were used.'],
     ['08:46', '15', 'Card posted: Monitor build-up', 'Early reports worth watching.'],
     ['08:46', '1', 'Update added to its earlier card', '14 accounts now, up from 6; now also on TikTok.'],
-    ['09:01', '19', 'Card posted: Monitor build-up', 'Early reports worth watching.'],
-    ['09:01', '19', 'Seen before, nothing new', 'Its card of 9:01 AM ET had 12 accounts; 5 now, nothing new.'],
+    // 16 and 17 met the hour's 10 at 08:46: left for the next check, they are queued in the new hour
+    ['09:01', '17', 'Card posted: Monitor build-up', 'Early reports worth watching.'],
+    ['09:01', '16', 'Reviewed and dismissed', 'Benign chatter, nothing for Google to act on.'],
+    ['09:02', '19', 'Card posted: Monitor build-up', 'Early reports worth watching.'],
+    ['09:02', '19', 'Seen before, nothing new', 'Its card of 9:02 AM ET had 12 accounts; 5 now, nothing new.'],
     ['09:17', '21', 'Never reviewed', 'Its review failed twice.'],
     ['09:20', '20', 'Never reviewed', 'Its review failed twice.'],
     ['09:20', '22', 'Reviewed, but its card could not be posted', 'Chat gave no message back for the card.'],
-    ['09:31', '36', 'Never reviewed', 'More than 5 stories arrived in 15 minutes; higher-ranked ones went first.'],
-    ['09:31', '37', 'Never reviewed', 'More than 5 stories arrived in 15 minutes; higher-ranked ones went first.'],
-    ['09:46', '38', 'Never reviewed', 'This hour\'s 10 reviews were used.'],
-    ['09:46', '39', 'Never reviewed', 'This hour\'s 10 reviews were used.'],
-    ['09:46', '40', 'Never reviewed', 'This hour\'s 10 reviews were used.'],
-  ].concat([31, 32, 33, 34, 35].map(n => ['12:35', String(n), 'Never reviewed', 'Waited 3 hours while the bot worked on alerts.']), [
+    // the busy morning: the ones the check's 5 and the hour's 10 turned away come back and fill the queue; two later
+    // ones find it full (a wall that is not the check's or the hour's: they end there)
+    ['10:16', '42', 'Never reviewed', 'The review queue was full.'],
+    ['10:16', '43', 'Never reviewed', 'The review queue was full.'],
+  ].concat([31, 32, 33].map(n => ['12:35', String(n), 'Never reviewed', 'Waited 3 hours while the bot worked on alerts.']), [
     ['12:35', '44', 'Card posted: Monitor build-up', 'Early reports worth watching.'],
     ['12:35', '41', 'Card posted: Monitor build-up', 'Early reports worth watching.'],
-    ['12:36', '42', 'Card posted: Monitor build-up', 'Early reports worth watching.'],
-    ['12:36', '43', 'Card posted: Monitor build-up', 'Early reports worth watching.'],
+    ['12:36', '34', 'Card posted: Monitor build-up', 'Early reports worth watching.'],
+    ['12:36', '35', 'Card posted: Monitor build-up', 'Early reports worth watching.'],
+    ['12:37', '36', 'Reviewed and dismissed', 'Benign chatter, nothing for Google to act on.'],
+    ['12:37', '37', 'Reviewed and dismissed', 'Benign chatter, nothing for Google to act on.'],
+    ['12:38', '38', 'Reviewed and dismissed', 'Benign chatter, nothing for Google to act on.'],
+    ['12:38', '39', 'Reviewed and dismissed', 'Benign chatter, nothing for Google to act on.'],
     ['12:51', '51', 'Never reviewed', 'Early signals are switched OFF (row 39).'],
+    ['12:51', '40', 'Reviewed and dismissed', 'Benign chatter, nothing for Google to act on.'],
     ['13:05', '52', 'Never reviewed', 'Early signals are switched OFF (row 39).'],
     ['13:20', '53', 'Never reviewed', 'Today\'s 8 early signals were used.'],
     ['23:40', '67', 'Its main post already has an alert', 'QA-0967 (BigQuery · BSIP, 1:50 PM ET).'],
