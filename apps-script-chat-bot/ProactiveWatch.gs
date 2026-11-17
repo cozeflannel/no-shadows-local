@@ -376,6 +376,34 @@ function pwWhen_(ms, zone) {
 }
 
 /**
+ * Why a look failed as a whole, in plain words for C34 and the Watch sources tab (`what`: the error's own text, which
+ * only the run log keeps): "BigQuery refused access (a permission is missing)", "BigQuery could
+ * not find a table the look reads", "BigQuery reached a quota or rate limit", "BigQuery had a problem of its own",
+ * "BigQuery refused the look's query", "BigQuery could not be reached", "the shared Brandwatch key could not be read"
+ * or "... is empty"; the bot's own words ("BigQuery took more than 4 minutes", "BigQuery gave no job to collect") as
+ * they are; anything else "an unexpected error (the run log has its words)". Pure.
+ */
+function pwPlainWhy_(what) {
+  const s = String(what === null || what === undefined ? '' : what).replace(/\s+/g, ' ').trim();
+  if (/^BigQuery took more than \d+ minutes?$/.test(s) || s === 'BigQuery gave no job to collect') return s;
+  if (/^Secret Manager HTTP /.test(s)) return 'the shared Brandwatch key could not be read';
+  if (/Brandwatch token in Secret Manager is empty/.test(s)) return 'the shared Brandwatch key is empty';
+  const http = s.match(/^BigQuery HTTP (\d{3})(?::|$)/);
+  if (http) {
+    const code = Number(http[1]);
+    if (code === 401 || code === 403 || /access denied|permission|forbidden/i.test(s)) {
+      return 'BigQuery refused access (a permission is missing)';
+    }
+    if (code === 404 || /not found/i.test(s)) return 'BigQuery could not find a table the look reads';
+    if (code === 429 || /quota|rate limit|exceeded|too many/i.test(s)) return 'BigQuery reached a quota or rate limit';
+    if (code >= 500) return 'BigQuery had a problem of its own';
+    return 'BigQuery refused the look\'s query';
+  }
+  if (/timed? ?out|address unavailable|dns|connection|unreachable/i.test(s)) return 'BigQuery could not be reached';
+  return 'an unexpected error (the run log has its words)';
+}
+
+/**
  * A watch from its row on the Watches tab ([Watch, On, question, rubric, topics, bar, networks, status]; `row` its row
  * number): {row, name, on, cond, rubric, topics, bar, nets, problem ('' when it can be watched)}; null for a row with no
  * name. A blank rubric or topics take the defaults; a bar outside 1-10 or unreadable is PW_DEFAULT_BAR_. Pure.
@@ -1730,7 +1758,7 @@ function pwLastGoodAt_(last) {
  */
 function pwSourceStatus_(src, st, now, fail) {
   if (fail) {
-    return { kind: 'error', text: `⚠️ failing: ${pwFailWords_([src.lane])} ${pwTime_(fail.since)} ET: ${fail.why} ` +
+    return { kind: 'error', text: `⚠️ failing: ${pwFailWords_([src.lane])} ${pwWhen_(fail.since, true)}: ${fail.why} ` +
       '(tried again at the next look)' };
   }
   if (!st || !st.at) return { kind: 'waiting', text: '... waiting for its first look' };
@@ -1813,7 +1841,7 @@ function pwToday_(props, day) {
  * Column C of the switch, from today's numbers, the last looks (`last`: {at, checked, flagged, near}; `timeLabel`: when
  * the latest of them was collected) and the sources (`sources`: pwSourcesSummary_). While a look fails as a whole
  * (`fails`: pwLaneFails_) the note says so between the last look and today's counts, behind a warning sign (the cell
- * starts with the switch's tick): "⚠️ the look at Sonar and Tubular has failed since Oct 14, 8:04 AM: <why>" (every
+ * starts with the switch's tick): "⚠️ the look at Sonar and Tubular has failed since Oct 14, 8:04 AM EDT: <why>" (every
  * look failing: "⚠️ the looks at all 8 sources have failed since", from when the later of them began to, with its
  * reason, and no last look). It then stays within PW_NOTE_CHARS_, where a note is cut: the reason is shortened to the
  * room there is (never through a character: WatchAlerts.gs pwCut_), and when under PW_FAIL_WHY_MIN_ characters of it
@@ -1830,7 +1858,7 @@ function pwNoteText_(today, last, timeLabel, sources, fails) {
   const failing = PW_LANES_.map(l => l.key).filter(k => (fails || {})[k]);
   if (!failing.length) return `${looked} · ${counts}${tail}`;
   const f = failing.map(k => fails[k]).reduce((a, b) => (b.since > a.since ? b : a));
-  const said = `⚠️ ${pwFailWords_(failing)} ${pwWhen_(f.since)}: `;
+  const said = `⚠️ ${pwFailWords_(failing)} ${pwWhen_(f.since, true)}: `;
   const leads = failing.length >= PW_LANES_.length ? [''] : [`${looked} · `].concat(at ? [`${at} · `] : [], ['']);
   const room = lead => PW_NOTE_CHARS_ - lead.length - said.length - ' · '.length - counts.length;
   const lead = leads.find(l => !l || room(l) >= PW_FAIL_WHY_MIN_);
@@ -1938,7 +1966,8 @@ function pwFailed_(props, lane, job, why) {
     if (!Number(props.getProperty(lane.sinceProp))) props.setProperty(lane.sinceProp, String(job.since));  // retried from its start
   }
   const now = Date.now();
-  const last = pwLastWith_(props, lane, { fail: { since: now, why: what.replace(/\s+/g, ' ').trim() } });
+  // what C34 and the Watch sources tab say is why in plain words (pwPlainWhy_); the error's own text is in the log above
+  const last = pwLastWith_(props, lane, { fail: { since: now, why: pwPlainWhy_(what) } });
   const fails = pwLaneFails_(last);
   noteSwitch_('proactiveWatch', pwNoteText_(pwToday_(props, dayKey_()), last, last.at ? pwWhen_(last.at, true) : '',
     pwSourcesSummary_(pwSourceStats_(props), now, fails), fails));

@@ -1668,14 +1668,18 @@ function bsipProduct_(names) {
 /**
  * A BSIP card's [KOF] value from the feed's KOF column (`kof`: the influencer lists Pendulum has the author on, as
  * bqBsipCandidates_ reads them): "Yes (<the lists>)" when it names a list that Alert.gs RX_NOT_KOF_LIST_ does not
- * exclude (a Google-owned channel or a Google rep is no KOF), else "No". A list's name goes without its own brackets
- * and commas ("Viral KOFs (KOFs)" -> "Viral KOFs KOFs"): inside "Yes (...)" a bracket would end the list early for
- * both parsers (Alert.gs RX_COMPOUND_KOF_, triage_agent/qa/parser.py) and the name would be lost. Pure.
+ * exclude (a Google-owned channel or a Google rep is no KOF), else "No". A list's name goes without its bracketed
+ * part ("Viral KOFs (KOFs)" -> "Viral KOFs"; a name that is only a bracket keeps its words) and without commas: inside
+ * "Yes (...)" a bracket would end the list early for both parsers (Alert.gs RX_COMPOUND_KOF_,
+ * triage_agent/qa/parser.py) and the name would be lost. Pure.
  */
 function bsipKofValue_(kof) {
   const none = s => FALSE_.indexOf(s.toLowerCase()) >= 0 || NULL_.indexOf(s.toLowerCase()) >= 0;  // "No", "-", "n/a": no list
   const lists = splitTopLevel_(String(kof === null || kof === undefined ? '' : kof), true)
-    .map(s => s.replace(/[(),\r]/g, ' ').replace(/\s+/g, ' ').trim())
+    .map(s => {
+      const plain = t => t.replace(/[(),\r]/g, ' ').replace(/\s+/g, ' ').trim();
+      return plain(s.replace(/\([^()]*\)/g, ' ')) || plain(s);  // "Viral KOFs (KOFs)" -> "Viral KOFs"
+    })
     .filter(s => s && !none(s) && !RX_NOT_KOF_LIST_.test(s));
   return lists.length ? `Yes (${lists.join(', ')})` : 'No';
 }
@@ -2186,16 +2190,45 @@ function bqCountNotPosted_(s, list) {
 }
 
 /**
+ * Takes the posts that got their card at this check (`keys`: their record keys) out of today's "not posted" counts of
+ * C15 (s.a, s.b) on the record `s` (bqDirectDay_), so that no post is listed both as posted and as not posted on one
+ * day: a post counted as not posted at an earlier check (one under the bar, on a story already alerted) whose card the
+ * poll posts later (it has grown into a bigger post). A post is known as counted today as bqCountNotPosted_ knows it
+ * (the day's record or its cache key); one that both have lost can't be taken out. Never throws.
+ */
+function bqUncountPosted_(s, keys) {
+  let cache = null;
+  try { cache = CacheService.getScriptCache(); } catch (e) { cache = null; }
+  (keys || []).forEach(key => {
+    if (!key) return;
+    ['a', 'b'].forEach(why => {
+      const id = why + hashText_(String(key));
+      const cacheKey = `bqnp:${s.day}:${id}`;
+      let counted = s.k.indexOf(id) >= 0;
+      try {
+        counted = counted || !!(cache && cache.get(cacheKey));
+        if (cache) cache.remove(cacheKey);
+      } catch (e) { /* the day's record alone says */ }
+      if (!counted) return;
+      s[why] = Math.max(0, s[why] - 1);
+      s.k = s.k.filter(x => x !== id);
+    });
+  });
+}
+
+/**
  * Direct BigQuery alerts: counts today's posts (`posted`) and the posts that were not posted (`notPosted`:
- * bqCountNotPosted_), and puts C15's note (bqDirectNoteText_) in the switch's column C, with what went wrong
+ * bqCountNotPosted_), takes the posts that got their card at this check (`postedKeys`) out of the "not posted" counts
+ * (bqUncountPosted_), and puts C15's note (bqDirectNoteText_) in the switch's column C, with what went wrong
  * (`problem`, '' when nothing did). Never throws.
  */
-function noteBqDirect_(props, posted, problem, notPosted) {
+function noteBqDirect_(props, posted, problem, notPosted, postedKeys) {
   try {
     const was = props.getProperty(BQ_DIRECT_DAY_PROP_);
     const s = bqDirectDay_(was);
     s.n += posted || 0;
     bqCountNotPosted_(s, notPosted);
+    bqUncountPosted_(s, postedKeys);
     const next = JSON.stringify(s);
     if (next !== was) props.setProperty(BQ_DIRECT_DAY_PROP_, next);
     noteSwitch_('directBq', bqDirectNoteText_(s, nowLabel_(), problem));
@@ -2698,6 +2731,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
   const total = () => counts.SPRINKLR + counts.BMIE + counts.BSIP;
   const posted = [];  // [hash of the message name, source]
   const cards = [];   // the cards this check posted: [{key, url, msg}], for the story notes (bqStoryNotes_)
+  const postedKeys = [];  // the record keys of the posts this check posted, for C15 (bqUncountPosted_)
   let skipped = 0;    // not about Google, taken before, in a log, or already waiting in the space
   let step1Out = 0;   // left out by Step 1 of the 3-step evaluation
   let noCount = 0;    // no true engagement count for the card (never made up): tried again at the next check
@@ -2719,6 +2753,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
       if (mem && mem.active) mem.claim(url, 'bq', info);
       seen.add(key);
       counts[kind]++;
+      postedKeys.push(key);
       if (msg && msg.name) posted.push([hashText_(String(msg.name)), BQ_SOURCE_LABELS_[kind]]);
       if (msg && msg.name) cards.push({ key, url, msg });
     } catch (e) {
@@ -2934,7 +2969,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
     const problem = [refusedFor.length ? `BigQuery refused the query for ${names(refusedFor)}` : '',
       lateFor.length ? `BigQuery didn't finish the query for ${names(lateFor)} in time` : '',
       notPosted ? `${notPosted} couldn't be posted` : ''].filter(Boolean).join(', ');
-    noteBqDirect_(props, total(), problem, already);
+    noteBqDirect_(props, total(), problem, already, postedKeys);
   }
   return { sprinklr: counts.SPRINKLR, bmie: counts.BMIE, bsip: counts.BSIP, skipped_duplicates: skipped,
     skipped_step1: step1Out, skipped_no_count: noCount };
@@ -3321,6 +3356,7 @@ const EW_MAX_PER_DAY_ = 40;                   // max signals queued per day: eac
 const EW_MAX_PER_HOUR_ = 10;                  // signals queued in one clock hour (Eastern), serious ones included
 const EW_ALLOW_PER_DAY_ = 150;                // signals queued a day when the setting early_wave_reviews_per_day can't be read
 const EW_SEEN_ID_MS_ = 3.5 * 3600 * 1000;     // under the allowance, a seen entry that is only a signal's id goes after this
+const EW_AGE_MARGIN_MS_ = 5 * 60 * 1000;     // under the allowance, a signal left for the next check must be read there with this to spare (edAgesOut_)
                                               // (the producer's buffer keeps a signal 3 hours), so the map keeps story keys
 const EW_DRAIN_MAX_PER_RUN_ = 2;              // max signals reviewed and posted per run (EarlyDetection.gs edDrainQueue_)
 const EW_DRAIN_MIN_LEFT_MS_ = 90 * 1000;      // a review starts only with this much of the run left (median review ~40 s)
@@ -3333,6 +3369,12 @@ const EW_SEEN_MAX_ = 200;                     // cap stored hashes well under Sc
 const EW_SEEN_MAX_CHARS_ = 8800;              // the seen map's JSON (ScriptProperties: 9 KB a value)
 const ED_AT_PROP_ = 'EARLY_DETECTION_AT';     // timestamp (ms) when last poll started
 const ED_SEEN_PROP_ = 'EARLY_DETECTION_SEEN'; // {hash: ms | [ms, authors]} of recently queued early-detection signals
+// Under the allowance (a check passes EW_SEEN_ID_MS_) the seen map is kept in three properties, so a day of story keys
+// fits: the signals' own ids apart (EARLY_DETECTION_SEEN_IDS, {hash: ms}), the story keys in EARLY_DETECTION_SEEN and,
+// the older ones that don't fit there, EARLY_DETECTION_SEEN_2; each at most EW_SEEN_MAX_CHARS_ (earlyWaveSeen_)
+const ED_SEEN_IDS_PROP_ = 'EARLY_DETECTION_SEEN_IDS';
+const ED_SEEN_MORE_PROP_ = 'EARLY_DETECTION_SEEN_2';
+const EW_SEEN_MAX_ALLOW_ = 500;               // story keys kept under the allowance (a day at 150 queued has about 300)
 const ED_DAY_PROP_ = 'EARLY_DETECTION_TODAY'; // {day, clusters, velocity, queued, repeats, dismissed, at, problem} for Control C19
 // ... and what became of every signal today: {found, cards, under, letgo, never, noted} (edDayState_, edCount_); C19's
 // line is made of these (edDayNoteText_), and `limit` is the day's limit the last check ran under (noteEarlyWave_)
@@ -3619,13 +3661,60 @@ function edRowKeys_(row) {
  * held back as it always was; null when none of them is seen). `first(keys)` is that same entry with its time: {at (ms),
  * au}, or null (EarlyDetectionNotes.gs: "First seen 10:51 AM ET with 5 accounts").
  * `idMs` (the check under the allowance passes EW_SEEN_ID_MS_): save() then lets an entry that is only a signal's id go
- * once it is that old (pruneEarlyWaveSeen_).
+ * once it is that old (pruneEarlyWaveSeen_), and keeps the map in three properties: the signals' ids (`id:` keys) in
+ * ED_SEEN_IDS_PROP_ (the newest EW_SEEN_MAX_), the story keys in ED_SEEN_PROP_ and the older ones that don't fit there in
+ * ED_SEEN_MORE_PROP_ (EW_SEEN_MAX_ALLOW_ in all), each at most EW_SEEN_MAX_CHARS_, so a day of story keys stays known.
+ * `idMs` 0 (a check under the old rule) keeps the one property as it always was (the other two are taken out); `idMs`
+ * not given (edSeenForget_ outside a check) keeps whichever of the two the stored map has. Every read takes all three.
  */
 function earlyWaveSeen_(props, now, idMs) {
-  let map = {};
-  try { map = JSON.parse(props.getProperty(ED_SEEN_PROP_) || '{}') || {}; } catch (e) { map = {}; }
-  if (typeof map !== 'object' || Array.isArray(map)) map = {};
+  const read = name => {
+    let m = {};
+    try { m = JSON.parse(props.getProperty(name) || '{}') || {}; } catch (e) { m = {}; }
+    return typeof m === 'object' && !Array.isArray(m) ? m : {};
+  };
+  const ids = read(ED_SEEN_IDS_PROP_);
+  const more = read(ED_SEEN_MORE_PROP_);
+  const split = idMs > 0 || (idMs === undefined && (Object.keys(ids).length > 0 || Object.keys(more).length > 0));
+  const map = Object.assign({}, more, read(ED_SEEN_PROP_), ids);
+  const idHashes = new Set(Object.keys(ids));
   const live = v => { const at = edSeenAt_(v); return !!at && now - at < EW_SEEN_MS_; };
+  const save = () => {
+    if (!split) {  // the one property, as it always was
+      props.setProperty(ED_SEEN_PROP_, JSON.stringify(pruneEarlyWaveSeen_(map, now, idMs)));
+      [ED_SEEN_IDS_PROP_, ED_SEEN_MORE_PROP_].forEach(k => { if (props.getProperty(k) !== null) props.deleteProperty(k); });
+      return;
+    }
+    const life = idMs > 0 ? idMs : EW_SEEN_ID_MS_;
+    const idPart = {};
+    const storyPart = {};
+    Object.keys(map).forEach(h => { (idHashes.has(h) ? idPart : storyPart)[h] = map[h]; });
+    const keptIds = pruneEarlyWaveSeen_(idPart, now, life);
+    const stories = pruneEarlyWaveSeen_(storyPart, now, life, EW_SEEN_MAX_ALLOW_, 2 * EW_SEEN_MAX_CHARS_);
+    // the newest story keys in the first property, as many as fit; the rest in the second (cut to fit, the oldest go)
+    const first = {};
+    const rest = {};
+    let size = 2;
+    let full = false;
+    Object.keys(stories).forEach(h => {
+      const add = JSON.stringify(h).length + 1 + JSON.stringify(stories[h]).length + 1;
+      if (!full && size + add <= EW_SEEN_MAX_CHARS_) {
+        first[h] = stories[h];
+        size += add;
+      } else {
+        full = true;
+        rest[h] = stories[h];
+      }
+    });
+    const restKept = pruneEarlyWaveSeen_(rest, now, life, EW_SEEN_MAX_ALLOW_, EW_SEEN_MAX_CHARS_);
+    props.setProperty(ED_SEEN_PROP_, JSON.stringify(first));
+    const put = (name, m) => {
+      if (Object.keys(m).length) props.setProperty(name, JSON.stringify(m));
+      else if (props.getProperty(name) !== null) props.deleteProperty(name);
+    };
+    put(ED_SEEN_MORE_PROP_, restKept);
+    put(ED_SEEN_IDS_PROP_, keptIds);
+  };
   return {
     has: key => live(map[hashText_(key)]),
     authors: keys => {
@@ -3651,7 +3740,10 @@ function earlyWaveSeen_(props, now, idMs) {
     add: (key, ms, authors) => {
       if (!key) return;
       const au = Math.round(Number(authors) || 0);
-      map[hashText_(key)] = au > 0 ? [ms, au] : ms;
+      const h = hashText_(key);
+      map[h] = au > 0 ? [ms, au] : ms;
+      if (String(key).indexOf('id:') === 0 && !(au > 0)) idHashes.add(h);
+      else idHashes.delete(h);
     },
     // takes a story key out, only while it is still marked with `authors` accounts: the mark of the signal that had
     // them (a bigger signal queued on the same story has put its own mark there: that one stays); true when taken out
@@ -3661,9 +3753,10 @@ function earlyWaveSeen_(props, now, idMs) {
       if (v === undefined) return false;
       if (Array.isArray(v) && Math.round(Number(v[1]) || 0) !== Math.round(Number(authors) || 0)) return false;
       delete map[h];
+      idHashes.delete(h);
       return true;
     },
-    save: () => props.setProperty(ED_SEEN_PROP_, JSON.stringify(pruneEarlyWaveSeen_(map, now, idMs))),
+    save,
   };
 }
 
@@ -3703,14 +3796,16 @@ function edSeenAt_(v) {
 }
 
 /**
- * Prunes the seen early-detection map to the newest `EW_SEEN_MAX_` entries within `EW_SEEN_MS_` (either entry format),
- * fewer when its JSON would pass EW_SEEN_MAX_CHARS_. With `idMs` (the allowance: EW_SEEN_ID_MS_), an entry that is only a
- * time (a signal's id, or a story key from before the counts were kept) goes once it is that old. Pure.
+ * Prunes the seen early-detection map to the newest `EW_SEEN_MAX_` entries (or `max`) within `EW_SEEN_MS_` (either entry
+ * format), fewer when its JSON would pass EW_SEEN_MAX_CHARS_ (or `maxChars`). With `idMs` (the allowance:
+ * EW_SEEN_ID_MS_), an entry that is only a time (a signal's id, or a story key from before the counts were kept) goes
+ * once it is that old. Pure.
  */
-function pruneEarlyWaveSeen_(map, now, idMs) {
+function pruneEarlyWaveSeen_(map, now, idMs, max, maxChars) {
   const life = v => (idMs > 0 && !Array.isArray(v) ? Math.min(idMs, EW_SEEN_MS_) : EW_SEEN_MS_);
+  const chars = maxChars > 0 ? maxChars : EW_SEEN_MAX_CHARS_;
   let ks = Object.keys(map || {}).filter(k => { const at = edSeenAt_(map[k]); return at > 0 && now - at < life(map[k]); })
-    .sort((a, b) => edSeenAt_(map[b]) - edSeenAt_(map[a])).slice(0, EW_SEEN_MAX_);
+    .sort((a, b) => edSeenAt_(map[b]) - edSeenAt_(map[a])).slice(0, max > 0 ? max : EW_SEEN_MAX_);
   const build = list => {
     const keep = {};
     list.forEach(k => {
@@ -3720,7 +3815,7 @@ function pruneEarlyWaveSeen_(map, now, idMs) {
     return keep;
   };
   let keep = build(ks);
-  while (ks.length > 1 && JSON.stringify(keep).length > EW_SEEN_MAX_CHARS_) {
+  while (ks.length > 1 && JSON.stringify(keep).length > chars) {
     ks = ks.slice(0, Math.floor(ks.length * 0.9));
     keep = build(ks);
   }
@@ -3806,38 +3901,82 @@ function edNoteKey_(row) {
  *     with an ending since it was queued (false);
  *   - a signal that ended without waiting is found and goes up in its group, the first time only: a signal remembered
  *     in any way (an ending today or on an earlier day, or waiting in the queue) is not counted again (false).
- * False when nothing was counted (the caller then records nothing). Never throws: when the counts can't be saved the
- * signal still has its ending (true), and the numbers are put right at the next check (noteEarlyWave_).
+ * False when nothing was counted (the caller then records nothing). Never throws: when the counts can't be saved (a
+ * second try fails too) the signal still has its ending (true), and its count is kept for this run (ED_COUNT_UNSAVED_):
+ * the next count, noteEarlyWave_ and edDayNumbers_ put it in first, so the numbers are right with the true ending.
  */
 function edCount_(props, group, waited, key) {
+  const item = { group: group || '', waited: !!waited, key: key ? String(key) : '' };
+  let pending = [];
   try {
     const was = props.getProperty(ED_DAY_PROP_);
     const s = Object.assign({}, edDayState_(props, !!group && !waited, !group ? -1 : waited ? 1 : 0));
-    const list = Array.isArray(s.noted) ? s.noted.slice() : [];
-    const h = key ? hashText_(String(key)) : '';
-    const at = h ? list.findIndex(e => String(e).replace(/=[^=]*$/, '') === h) : -1;
-    const had = at >= 0 ? (/=([^=]*)$/.exec(String(list[at])) || [])[1] || '' : null;
-    const groupOf = letter => Object.keys(ED_NOTED_GROUPS_).find(g => ED_NOTED_GROUPS_[g] === letter) || '';
-    if (!group) {
-      const earlier = had ? groupOf(had) : '';
-      if (earlier && (Number(s[earlier]) || 0) > 0) s[earlier] = Number(s[earlier]) - 1;
-      else s.found = (Number(s.found) || 0) + 1;
-    } else if (waited) {
-      if (had && groupOf(had)) return false;
-      s[group] = (Number(s[group]) || 0) + 1;
-    } else {
-      if (had !== null) return false;
-      s[group] = (Number(s[group]) || 0) + 1;
-      s.found = (Number(s.found) || 0) + 1;
-    }
-    if (h) {
-      if (at >= 0) list.splice(at, 1);
-      s.noted = list.concat([`${h}=${group ? ED_NOTED_GROUPS_[group] || '-' : 'w'}`]).slice(-ED_NOTED_MAX_);
-    }
+    // the counts an earlier save of this run could not keep go in first, in the order they were made
+    pending = edCountTake_();
+    pending.forEach(p => edCountApply_(s, p));
+    const counted = edCountApply_(s, item);
     const next = JSON.stringify(s);
-    if (next !== was) props.setProperty(ED_DAY_PROP_, next);
+    if (next !== was && !edCountSave_(props, next)) {
+      ED_COUNT_UNSAVED_ = pending.concat(counted ? [item] : []);
+    }
+    return counted;
   } catch (e) {
+    ED_COUNT_UNSAVED_ = pending.concat(ED_COUNT_UNSAVED_);
     console.error('could not count an early detection signal: ' + ((e && e.message) || e));
+  }
+  return true;
+}
+
+// The counts of this run that could not be saved (edCount_: a save and its second try failed), in the order they were
+// made: {group, waited, key} each. Put in first by the next count, noteEarlyWave_ and edDayNumbers_; gone with the run
+let ED_COUNT_UNSAVED_ = [];
+
+/** The counts waiting to be saved (ED_COUNT_UNSAVED_), taken out of the list: the caller saves them or puts them back. */
+function edCountTake_() {
+  const out = ED_COUNT_UNSAVED_;
+  ED_COUNT_UNSAVED_ = [];
+  return Array.isArray(out) ? out : [];
+}
+
+/** Saves today's counts (`next`: their JSON), with one more try when the first fails. True when saved. Never throws. */
+function edCountSave_(props, next) {
+  for (let i = 0; i < 2; i++) {
+    try {
+      props.setProperty(ED_DAY_PROP_, next);
+      return true;
+    } catch (e) {
+      console.error(`could not save today's early detection counts${i ? ' (second try)' : ''}: ${(e && e.message) || e}`);
+    }
+  }
+  return false;
+}
+
+/**
+ * One count (edCount_'s rules: {group, waited, key}) put in today's counts `s` (changed in place). False when the
+ * signal was counted before and nothing changed. Pure.
+ */
+function edCountApply_(s, item) {
+  const group = item.group;
+  const list = Array.isArray(s.noted) ? s.noted.slice() : [];
+  const h = item.key ? hashText_(String(item.key)) : '';
+  const at = h ? list.findIndex(e => String(e).replace(/=[^=]*$/, '') === h) : -1;
+  const had = at >= 0 ? (/=([^=]*)$/.exec(String(list[at])) || [])[1] || '' : null;
+  const groupOf = letter => Object.keys(ED_NOTED_GROUPS_).find(g => ED_NOTED_GROUPS_[g] === letter) || '';
+  if (!group) {
+    const earlier = had ? groupOf(had) : '';
+    if (earlier && (Number(s[earlier]) || 0) > 0) s[earlier] = Number(s[earlier]) - 1;
+    else s.found = (Number(s.found) || 0) + 1;
+  } else if (item.waited) {
+    if (had && groupOf(had)) return false;
+    s[group] = (Number(s[group]) || 0) + 1;
+  } else {
+    if (had !== null) return false;
+    s[group] = (Number(s[group]) || 0) + 1;
+    s.found = (Number(s.found) || 0) + 1;
+  }
+  if (h) {
+    if (at >= 0) list.splice(at, 1);
+    s.noted = list.concat([`${h}=${group ? ED_NOTED_GROUPS_[group] || '-' : 'w'}`]).slice(-ED_NOTED_MAX_);
   }
   return true;
 }
@@ -3848,7 +3987,11 @@ function edCount_(props, group, waited, key) {
  * when the caller has them (edDayState_). Never throws.
  */
 function edDayNumbers_(props, state) {
-  const s = state || edDayState_(props, true);
+  let s = state;
+  if (!s) {  // with the counts of this run that could not be saved yet (ED_COUNT_UNSAVED_)
+    s = Object.assign({}, edDayState_(props, true));
+    (ED_COUNT_UNSAVED_ || []).forEach(p => edCountApply_(s, p));
+  }
   const n = k => Math.max(0, Math.round(Number(s[k]) || 0));
   return { found: n('found'), cards: n('cards'), under: n('under'), letgo: n('letgo'), never: n('never'),
     waiting: edQueueList_(props).length };
@@ -3892,15 +4035,22 @@ function edDayNoteText_(s, n, o) {
  * The day's stop: once EW_MAX_PER_DAY_ signals were queued, "daily cap of 40 reached, more tomorrow". A check that runs
  * under another daily limit passes it (o.dayLimit: the number of reviews a day); it is kept with the counts until the
  * next check, and the line then says "today's limit of 150 reviews is reached, more after midnight ET" once that many
- * were queued. The pointer to the Early Detection tab is there only with the setting early_detection_tab on. Every
- * caller is at rest (every signal counted is where the queue says it is), so the numbers add up here; when they don't
- * (a count that could not be saved) found is set to what the others add up to, and the log says so. Never throws.
+ * were queued. The pointer to the Early Detection tab is there only with the setting early_detection_tab on and the
+ * bot's tab made (EarlyDetectionTab.gs edTabPointed_: never a pointer to a tab that isn't there). Every
+ * caller is at rest (every signal counted is where the queue says it is), so the numbers add up here: the counts this
+ * run could not save yet (edCount_) go in first and are saved with the rest. Only when a count was lost for good (the
+ * run that kept it ended first) they don't: then found is made to add up (set to what the others add up to), and the
+ * log says so. Never throws.
  */
 function noteEarlyWave_(props, clusters, velocity, problem, o) {
   const opt = o || {};
+  let pending = [];
   try {
     const was = props.getProperty(ED_DAY_PROP_);
     const s = Object.assign({}, edDayState_(props, true));
+    // the counts of this run that could not be saved (edCount_) go in first, so an ending they hold is not lost
+    pending = edCountTake_();
+    pending.forEach(p => edCountApply_(s, p));
     s.clusters = (Number(s.clusters) || 0) + (clusters || 0);
     s.velocity = (Number(s.velocity) || 0) + (velocity || 0);
     s.queued = (Number(s.queued) || 0) + (opt.queued || 0);
@@ -3919,22 +4069,25 @@ function noteEarlyWave_(props, clusters, velocity, problem, o) {
         s.hr = [String(opt.hour.key), Math.max(0, Math.round(Number(opt.hour.all) || 0)), Math.max(0, Math.round(Number(opt.hour.ord) || 0))];
       }
     }
-    // At rest the numbers add up; when a count could not be saved they don't, and found is put right here
+    // At rest the numbers add up. Only when a count was lost for good (it could not be saved, and the run that kept it
+    // ended before it could be saved) they don't: then, as a last resort, found is made to add up here
     const told = edDayNumbers_(props, s);
     const sum = told.cards + told.under + told.letgo + told.never + told.waiting;
     if (told.found !== sum) {
       console.warn(`early detection: today's numbers did not add up (${told.found} found, but ${told.cards} cards, ` +
         `${told.under} under another alert, ${told.letgo} let go, ${told.never} never reviewed and ${told.waiting} waiting), ` +
-        `so found is now ${sum}`);
+        `so found is made to add up: ${sum}`);
       s.found = sum;
     }
     const next = JSON.stringify(s);
-    if (next !== was) props.setProperty(ED_DAY_PROP_, next);
+    if (next !== was && !edCountSave_(props, next)) ED_COUNT_UNSAVED_ = pending.concat(ED_COUNT_UNSAVED_);
+    pending = [];
     const stop = s.limit ? (s.queued >= s.limit ? `today's limit of ${s.limit} reviews is reached, more after midnight ET` : '')
       : s.queued >= EW_MAX_PER_DAY_ ? `daily cap of ${EW_MAX_PER_DAY_} reached, more tomorrow` : '';
     noteSwitch_('earlyWave', edDayNoteText_({ at: s.at || nowLabel_(), problem: s.problem }, edDayNumbers_(props, s),
-      { stop, tab: GEN.settings.early_detection_tab !== false }));
+      { stop, tab: edTabPointed_() }));
   } catch (e) {
+    ED_COUNT_UNSAVED_ = pending.concat(ED_COUNT_UNSAVED_);
     console.error('could not count early detection alerts: ' + ((e && e.message) || e));
   }
 }
@@ -3990,8 +4143,8 @@ function edQueueUnser_(props) {
  * The allowance of the Auto-correct flow (ctx.sourceReadOnly; setting early_wave_reviews_per_hour above 0), in place of
  * the old rule's EW_MAX_PER_DAY_ a day: at most EW_MAX_PER_CHECK_ signals queued a check, early_wave_reviews_per_day a
  * day, EW_MAX_PER_HOUR_ in one clock hour (Eastern) and, of those, early_wave_reviews_per_hour ordinary ones (a serious
- * signal, FastTriage.gs edSerious_, passes that last one). null when the old rule applies (another flow, or the setting
- * at 0). Else {perHour, perDay, key (this clock hour: "yyyy-MM-dd HH" Eastern), all and ord (signals, and ordinary
+ * signal, FastTriage.gs edSerious_, passes that last one). null when the old rule applies (another flow, or either
+ * setting at 0). Else {perHour, perDay, key (this clock hour: "yyyy-MM-dd HH" Eastern), all and ord (signals, and ordinary
  * ones, queued in this hour so far: `today.hr`), dayQueued (signals queued today so far)}. `today`: edDayState_'s.
  * Never throws.
  */
@@ -4004,6 +4157,8 @@ function edAllowance_(ctx, today, now) {
     const d = Number(S.early_wave_reviews_per_day);
     const perDay = S.early_wave_reviews_per_day !== undefined && S.early_wave_reviews_per_day !== null && isFinite(d) && d >= 0
       ? Math.round(d) : EW_ALLOW_PER_DAY_;
+    // the day's setting at 0 keeps the old rule too, as the config's rollback note says (not a day without reviews)
+    if (!(perDay > 0)) return null;
     const key = Utilities.formatDate(new Date(Number(now) || Date.now()), GEN.timezone, 'yyyy-MM-dd HH:mm').slice(0, 13);
     const t = today || {};
     const hr = Array.isArray(t.hr) && String(t.hr[0]) === key ? t.hr : null;
@@ -4013,6 +4168,43 @@ function edAllowance_(ctx, today, now) {
     console.warn('Early detection: could not read the allowance, so the old rule applies: ' + ((e && e.message) || e));
     return null;
   }
+}
+
+/**
+ * Under the allowance, right after a signal is queued: the day's count of signals queued (`queued`, which the day's limit
+ * counts) one up, and this clock hour's counts (`hr`: [hour, all, ordinary], from `allow`, already counting it) saved,
+ * so a check stopped part-way still counts what it queued against the hour and the day. True when saved (the end of the
+ * check then leaves it out of its own count); false when the save failed (the end of the check counts it). Never throws.
+ */
+function edAllowSaveQueued_(props, allow) {
+  try {
+    const s = Object.assign({}, edDayState_(props, true));
+    (ED_COUNT_UNSAVED_ || []).forEach(p => edCountApply_(s, p));
+    s.queued = (Number(s.queued) || 0) + 1;
+    s.hr = [String(allow.key), Math.max(0, Math.round(Number(allow.all) || 0)), Math.max(0, Math.round(Number(allow.ord) || 0))];
+    if (!edCountSave_(props, JSON.stringify(s))) return false;
+    ED_COUNT_UNSAVED_ = [];
+    return true;
+  } catch (e) {
+    console.error('could not count a queued early detection signal: ' + ((e && e.message) || e));
+    return false;
+  }
+}
+
+/**
+ * Under the allowance, a signal turned away by the check's EW_MAX_PER_CHECK_ or by an hourly limit is left for the next
+ * check (unmarked, no ending): the producer hands it over again while it is in the window a check reads. True when it
+ * will not be (so it must end now): when it was made (`created_utc`) longer ago than the next check's window
+ * (edLookbackMinutes_ with a check EW_EVERY_MS_ from now) less one check and EW_AGE_MARGIN_MS_; and when its time can't
+ * be read. Pure.
+ */
+function edAgesOut_(row, settings, now) {
+  const raw = String((row && row.created_utc) || '').trim();
+  const made = raw ? Date.parse(raw.replace(/\s+UTC$/i, 'Z').replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}(?::\d{2})?)/, '$1T$2')) : NaN;
+  if (!isFinite(made) || !(made > 0)) return true;
+  const t = Number(now) || 0;
+  const window = edLookbackMinutes_(settings, t, t + EW_EVERY_MS_) * 60000;
+  return made + window < t + EW_EVERY_MS_ + EW_AGE_MARGIN_MS_;
 }
 
 /**
@@ -4234,8 +4426,9 @@ function ewLogCheck_(ctx, props, left) {
  *
  * The Auto-correct flow's allowance (edAllowance_: setting early_wave_reviews_per_hour above 0; every other flow, and the
  * setting at 0, keep the rules above word for word): no 40 a day; the check always reads, the fast triage always starts
- * and the producer always tells the risk facts; every row read for the first time is ended or queued in that check
- * (queueByAllowance below), serious signals first (FastTriage.gs edSerious_), at most EW_MAX_PER_CHECK_ a check,
+ * and the producer always tells the risk facts; every row read for the first time is ended or queued in that check, or
+ * left for the next one when only the check's or the hour's limits stand in its way (queueByAllowance below: it ends
+ * once it would leave the window a check reads, edAgesOut_), serious signals first (FastTriage.gs edSerious_), at most EW_MAX_PER_CHECK_ a check,
  * early_wave_reviews_per_day a day, EW_MAX_PER_HOUR_ a clock hour and early_wave_reviews_per_hour ordinary ones in it.
  * There a pace jump on a topic under early_wave_topic_min_ratio times its usual count that is not serious is noted as a
  * topic count and not reviewed (edTopicCount_).
@@ -4503,10 +4696,14 @@ function earlyWaveCheck_(ctx) {
   // hold-back ends some, a head count on a topic that is not serious ends others ("Topic busier than usual, not a story":
   // setting early_wave_topic_min_ratio, edTopicCount_), the serious ones (FastTriage.gs edSerious_) go first, then the
   // fast triage's order (row 39) or
-  // the producer's. They are queued in that order; each one refused is "Never reviewed" with its cause (edNeverWhy_:
-  // the check's 5, the day's limit, the early watch's 8, the hour's 10, the hour's ordinary ones) and finished: its own id
-  // is marked as seen, never its story's keys, so the story comes back when the producer sends it again. True when the
-  // day's limit refused one.
+  // the producer's. They are queued in that order. One turned away by the check's 5 or an hourly limit (the hour's 10,
+  // the hour's ordinary ones) is left for the next check: not marked, not ended, not counted; the producer hands it over
+  // again and it takes its place in that check's order (the serious first). It ends only when it would leave the window
+  // a check reads (edAgesOut_): then, as one refused by a limit that holds for the day (the day's limit, the early
+  // watch's 8), it is "Never reviewed" with its cause (edNeverWhy_) and finished: its own id is marked as seen, never its
+  // story's keys, so the story comes back when the producer sends it again. True when the day's limit refused one.
+  let deferred = 0;  // under the allowance: signals left for the next check (the check's 5, the hour's limits)
+  let queuedSaved = 0;  // under the allowance: signals queued whose count is saved already (edAllowSaveQueued_)
   const queueByAllowance = () => {
     let dayStop = false;
     const cands = [];
@@ -4599,6 +4796,12 @@ function earlyWaveCheck_(ctx) {
           : isWatch(c.row) && kinds.watch >= watchRoom ? 'watchDay'
             : allow.all >= EW_MAX_PER_HOUR_ ? 'hour'
               : !c.serious && allow.ord >= allow.perHour ? 'hourOrdinary' : '';
+      // the check's 5 and the hour's limits pass: such a signal is left for the next check (no mark, no ending, not
+      // counted), where the serious ones go first again; it ends only when it would leave the window a check reads
+      if ((cause === 'check' || cause === 'hour' || cause === 'hourOrdinary') && !edAgesOut_(c.row, ctx.settings, now)) {
+        deferred++;
+        continue;
+      }
       if (cause) {
         if (c.idKey) seen.add(c.idKey, now);
         marked++;
@@ -4612,6 +4815,8 @@ function earlyWaveCheck_(ctx) {
       if (queued > before) {
         allow.all++;
         if (!c.serious) allow.ord++;
+        // saved at once, so a check stopped part-way still counts it against the hour and the day
+        if (edAllowSaveQueued_(props, allow)) queuedSaved++;
       }
     }
     return dayStop;
@@ -4639,7 +4844,8 @@ function earlyWaveCheck_(ctx) {
       `${kinds.watch ? `, ${kinds.watch} early watch` : ''}` +
       `${updates ? `; ${updates} update${updates === 1 ? '' : 's'} to earlier cards` : ''})`);
   }
-  noteEarlyWave_(props, 0, 0, failed ? `${failed} couldn't be queued` : '', Object.assign({ queued, repeats, triaged, watchQueued: kinds.watch },
+  if (deferred) ctx.log(`early detection: ${deferred} signal(s) left for the next check (this check's ${EW_MAX_PER_CHECK_} or this hour's limits)`);
+  noteEarlyWave_(props, 0, 0, failed ? `${failed} couldn't be queued` : '', Object.assign({ queued: queued - queuedSaved, repeats, triaged, watchQueued: kinds.watch },
     allow ? { dayLimit: allow.perDay, hour: { key: allow.key, all: allow.all, ord: allow.ord } } : {}));
   ftFinish_(ft, props);
   if (rec) {

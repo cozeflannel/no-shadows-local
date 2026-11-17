@@ -93,6 +93,8 @@ const ED_RISK_WORDS_ = {
 /** A new run: its record starts empty (Main.gs poll(), beside outboxRunStart_). */
 function edNotesStart_() {
   ED_NOTES_RUN_ = [];
+  // rows an earlier run handed over but never wrote (it ended first) wait for the tab now (EarlyDetectionTab.gs)
+  if (typeof edTabTakeOver_ === 'function') edTabTakeOver_();
 }
 
 /** The rows this run recorded so far (copies, oldest first): what became of each signal that ended in it. */
@@ -178,6 +180,7 @@ function edNote_(ctx, row, outcome, why, extra) {
     const rec = edNoteRow_(r, outcome, why, x, ctx && typeof ctx.now === 'function' ? ctx.now() : Date.now());
     ED_NOTES_RUN_.push(rec);
     if (ED_NOTES_RUN_.length > ED_NOTES_RUN_MAX_) ED_NOTES_RUN_ = ED_NOTES_RUN_.slice(-ED_NOTES_RUN_MAX_);
+    if (typeof edTabHandOver_ === 'function') edTabHandOver_();  // kept at once: a run that dies leaves it for the tab
     if (!x.logged && ctx && typeof ctx.log === 'function') {
       const told = edNoteObj_(rec);
       ctx.log(`early detection: ${outcome} \u00b7 "${told.story}" \u00b7 ${told.why}`);
@@ -219,8 +222,14 @@ function edNoteReviewed_(ctx, entry, row, res) {
     return edNote_(ctx, row, ED_OUT_.under, res.under.why, Object.assign(x, { card: res.under.card }));
   }
   if (res.held) {
+    // the alert the review matched it to, in the Card column as for the other repeats (linked when this flow's Alert log
+    // has it; else its id only)
+    const matched = (/\bQA-\d+\b/.exec(String(res.held)) || [])[0] || '';
+    let known = null;
+    try { known = matched ? ((ctx && ctx.store && ctx.store.alerts) || []).find(a => a && String(a.alert_id || '') === matched) : null; } catch (e) { known = null; }
     return edNote_(ctx, row, ED_OUT_.repeat,
-      String(res.held).replace(/,\s*SLRR alert log/gi, '').replace(/\bSLRR alert log\b/gi, 'the alert log'), x);
+      String(res.held).replace(/,\s*SLRR alert log/gi, '').replace(/\bSLRR alert log\b/gi, 'the alert log'),
+      matched ? Object.assign(x, { card: known ? edAlertCard_(known) : { id: matched, message: '' } }) : x);
   }
   if (res.dismissed) {
     const topic = call.basis === 'evergreen' ? (/"([^"]+)"/.exec(String(res.dismissed)) || [])[1] || '' : '';
@@ -411,23 +420,28 @@ function edNoiseWhy_(dec, why) {
 
 /**
  * Why a signal is a repeat with nothing new (the same-story dedup's `verdict`: EarlyDetection.gs edStoryVerdict_): "Its
- * card of 8:16 AM ET had 6 accounts; 8 now, nothing new", "Its card is already in the space", or, for a story that was
- * queued and has no card, "First seen 10:51 AM ET with 5 accounts; 8 now, nothing new" (`first`: the seen map's entry
+ * card of 8:16 AM ET had 12 accounts; 8 now, nothing new" ("6 accounts; 8 now, not yet twice as many" when it has more
+ * accounts, not enough to be new), "Its card is already in the space", or, for a story that was queued and has no card,
+ * "First seen 10:51 AM ET with 5 accounts; 8 now, not yet twice as many" (`first`: the seen map's entry
  * for its story, earlyWaveSeen_ first()). Pure but for the time zone.
  */
 function edRepeatWhy_(row, verdict, first, now) {
   const r = row || {};
   const au = ewCount_(r.unique_low_tier_authors);
   const accounts = n => `${fmtInt_(n)} account${n === 1 ? '' : 's'}`;
+  // more accounts than before, but not the growth that makes a story new (EarlyDetection.gs edStoryVerdict_: twice the
+  // accounts and 3 more, or a new platform): said so, never "nothing new" beside a bigger number
+  const grown = was => (au > was ? (au < 2 * was ? 'not yet twice as many' : 'not enough more to be new') : 'nothing new');
   const prior = verdict && verdict.prior;
   if (prior && prior.latest) {
     if (r.alert_id && prior.latest.ed === String(r.alert_id)) return 'Its card is already in the space';
     const when = edCardTime_(prior.latest.at, now);
-    return `Its card${when ? ` of ${when}` : ''} had ${accounts(Number(prior.au) || 0)}; ${fmtInt_(au)} now, nothing new`;
+    const was = Number(prior.au) || 0;
+    return `Its card${when ? ` of ${when}` : ''} had ${accounts(was)}; ${fmtInt_(au)} now, ${grown(was)}`;
   }
   if (first && first.at) {
     const when = edCardTime_(first.at, now);
-    return isFinite(first.au) ? `First seen ${when} with ${accounts(first.au)}; ${fmtInt_(au)} now, nothing new`
+    return isFinite(first.au) ? `First seen ${when} with ${accounts(first.au)}; ${fmtInt_(au)} now, ${grown(first.au)}`
       : `First seen ${when}; nothing new since`;
   }
   return 'Seen in the last 24 hours, nothing new';

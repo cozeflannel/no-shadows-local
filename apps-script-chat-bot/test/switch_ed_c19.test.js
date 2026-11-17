@@ -119,6 +119,7 @@ module.exports = H => {
     const note = () => JSON.parse(g.props.get('SWITCH_NOTES')).earlyWave.text.replace(/^last check [^·]+· /, '');
     const day = () => JSON.parse(g.props.get('EARLY_DETECTION_TODAY'));
     const zero = counts(0, 0, 0, 0, 0, 0);
+    g.props.set('ED_TAB_MADE', 'true');  // the bot's tab is there (poll() makes it at the first run with row 19 ON)
     // the old rule
     bot.noteEarlyWave_(props, 0, 0, '', { queued: 39 });
     eq(note(), `${zero} · ${POINTER}`);
@@ -148,6 +149,14 @@ module.exports = H => {
     g.props.delete('EARLY_DETECTION_TODAY');
     bot.noteEarlyWave_(props, 0, 0, '');
     eq(note(), `${zero} · ${POINTER}`);
+    // ... and the tab: no pointer while the bot has not made it, nor while a tab of that name it didn't make is in the way
+    g.props.delete('ED_TAB_MADE');
+    bot.noteEarlyWave_(props, 0, 0, '');
+    eq(note(), zero);
+    g.props.set('ED_TAB_MADE', 'true');
+    g.props.set('ED_TAB_BLOCKED', 'true');
+    bot.noteEarlyWave_(props, 0, 0, '');
+    eq(note(), zero);
   });
 
   test('early detection C19: the note is written again whenever a signal leaves the queue: also when its stored row was gone or Chat gave no message for its card, which no other count shows, and when a signal is dropped after a card was posted in the same run', () => {

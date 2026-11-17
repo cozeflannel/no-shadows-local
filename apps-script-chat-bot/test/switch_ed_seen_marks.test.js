@@ -105,7 +105,7 @@ module.exports = H => {
       eq([w.run('09:46', [first]).waiting, notes(w)], [1, []]);
       // (while it waits, its story is marked as before: a second signal with nothing new is a repeat)
       const mid = ends.signal(90, { au: 7, at: '10:01', words: say('the torch flickers', 90) });
-      eq([w.run('10:01', [first, mid]).waiting, notes(w)], [1, [[mid.alert_id, HELD, 'First seen 9:46 AM ET with 5 accounts; 7 now, nothing new.']]]);
+      eq([w.run('10:01', [first, mid]).waiting, notes(w)], [1, [[mid.alert_id, HELD, 'First seen 9:46 AM ET with 5 accounts; 7 now, not yet twice as many.']]]);
       w.busy = false;
       let look = w.run('12:35', []);
       eq(notes(w), [[first.alert_id, NEVER, 'Waited 3 hours while the bot worked on alerts.']]);
@@ -132,7 +132,7 @@ module.exports = H => {
     // the story is still marked with the bigger signal's 12 accounts: 13 accounts are nothing new
     const next = ends.signal(90, { au: 13, pri: 'P2', at: '10:31', words: say('the torch flickers REVDISMISS', 90) });
     const look = w.run('10:31', fill.concat([small, big, pusher, next]));
-    eq(notes(w), [[next.alert_id, HELD, 'First seen 10:01 AM ET with 12 accounts; 13 now, nothing new.']]);
+    eq(notes(w), [[next.alert_id, HELD, 'First seen 10:01 AM ET with 12 accounts; 13 now, not yet twice as many.']]);
     eq([look.waiting, adds(look)], [12, true]);
   });
 

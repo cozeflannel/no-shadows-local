@@ -1,6 +1,6 @@
 // Early Detection: a signal is counted once, whatever comes round again (EarlyDetectionNotes.gs edNote_, BigQuery.gs
-// edCount_ and its `noted` list with the day's counts), a count that could not be saved is put right at the next
-// check (noteEarlyWave_), and a card already in the space is counted as a card, never as a repeat or as never reviewed.
+// edCount_ and its `noted` list with the day's counts), a count that could not be saved is tried again and kept for
+// the run (noteEarlyWave_ saves it), and a card already in the space is counted as a card, never as a repeat or as never reviewed.
 //
 // Each sequence checks after every run that the day's numbers add up AND that found is the number of different
 // signals the day has counted (each one that got a row, or waits in the queue): a signal counted twice would add up
@@ -131,18 +131,18 @@ module.exports = H => {
       assert.ok(look.logs.map(String).includes(`early detection: dropped ${first.alert_id} (2 reviews started without finishing)`));
       const again = ends.signal(90, { au: 7, at: '09:31', words: say('the keyboard lags', 90) });
       look = w.step('09:31', [first, again]);
-      eq(brief(look.recs), [['90', 'Seen before, nothing new', 'First seen 9:16 AM ET with 5 accounts; 7 now, nothing new.']]);
+      eq(brief(look.recs), [['90', 'Seen before, nothing new', 'First seen 9:16 AM ET with 5 accounts; 7 now, not yet twice as many.']]);
       w.step('09:32', null);
       const stories = w.t.chat.botPosts(w.space).filter(m => /^client-zeda-/.test(String(m.clientAssignedMessageId || '')) && !m.threadReply);
       eq(stories.length, 1);
     }
   });
 
-  test('early detection: a count that could not be saved leaves the numbers wrong for one moment at most: the signal just queued is counted right when the day\'s first save failed, and when an ending\'s count is lost the next note of C19 puts found right and says so in the log', () => {
-    const failing = (w, when) => {
+  test('early detection: a count that could not be saved leaves the numbers wrong for one moment at most: the signal just queued is counted right when the day\'s first save failed; an ending\'s count whose save fails is saved by the second try, or kept for the run and saved by the next note of C19 with its true ending; only one lost for good (its run ended first) makes found add up, and the log says so', () => {
+    const failing = (w, when, times) => {
       const ps = w.t.g.services.PropertiesService;
       const real = ps.getScriptProperties;
-      let armed = 1;
+      let armed = times || 1;
       ps.getScriptProperties = () => {
         const p = real();
         return {
@@ -170,20 +170,42 @@ module.exports = H => {
       eq([look.n, look.logs.map(String).filter(l => /did not add up/.test(l))],
         [{ found: 1, cards: 0, under: 0, letgo: 0, never: 0, waiting: 1 }, []]);
     }
-    {  // the count of a signal dropped after 3 hours is lost
+    // the count of a signal dropped after 3 hours: its save fails once (the second try saves it), twice (kept for the
+    // run: the drain's note of C19 saves it), or four times (both saves fail: kept, then lost with the run's end)
+    const dropped = (times, lose) => {
       const w = ends.world({ flow: 'one-space', row46: false });
       w.busy = true;
       w.run('08:16', [ends.signal(241, { at: '08:16' })]);
-      failing(w, (next, was) => Number(next.never) > Number(was.never || 0));
+      failing(w, (next, was) => Number(next.never) > Number(was.never || 0), times);
       w.busy = false;
       const look = w.run('11:31', []);
       const n = numbers(w);
-      eq([n, look.logs.map(String).filter(l => /early detection: (dropped|today's numbers)/.test(l))],
-        [{ found: 0, cards: 0, under: 0, letgo: 0, never: 0, waiting: 0 }, [
-          `early detection: dropped ${ends.signal(241, { at: '08:16' }).alert_id} (not reviewed within 3 hours of being queued)`,
-          'early detection: today\'s numbers did not add up (1 found, but 0 cards, 0 under another alert, 0 let go, 0 never reviewed and 0 waiting), so found is now 0',
-        ]]);
-      assert.ok(/today: 0 found, 0 cards, 0 under another alert, 0 let go, 0 never reviewed, 0 waiting/.test(look.c19), look.c19);
+      if (lose) w.t.bot.ev('ED_COUNT_UNSAVED_ = []');  // the run ended: what it kept in memory is gone
+      const next = lose ? w.run('11:46', []) : null;
+      return { w, look, next, n, kept: numbers(w), told: look.logs.concat(next ? next.logs : []).map(String)
+        .filter(l => /early detection: (dropped|today's numbers)|could not save today's early detection counts/.test(l)) };
+    };
+    const DROP = `early detection: dropped ${ends.signal(241, { at: '08:16' }).alert_id} (not reviewed within 3 hours of being queued)`;
+    const FAILED = 'ERROR could not save today\'s early detection counts: scripted: Service error: Properties';
+    const FAILED2 = 'ERROR could not save today\'s early detection counts (second try): scripted: Service error: Properties';
+    const ONE = { found: 1, cards: 0, under: 0, letgo: 0, never: 1, waiting: 0 };
+    {
+      const r = dropped(1);
+      eq([r.n, r.told], [ONE, [DROP, FAILED]]);
+      assert.ok(/today: 1 found, 0 cards, 0 under another alert, 0 let go, 1 never reviewed, 0 waiting/.test(r.look.c19), r.look.c19);
+    }
+    {
+      const r = dropped(2);
+      eq([r.n, r.told], [ONE, [DROP, FAILED, FAILED2]]);
+      eq(JSON.parse(r.w.t.g.props.get('EARLY_DETECTION_TODAY')).never, 1);  // saved by the note of C19
+      assert.ok(/today: 1 found, 0 cards, 0 under another alert, 0 let go, 1 never reviewed, 0 waiting/.test(r.look.c19), r.look.c19);
+    }
+    {
+      const r = dropped(4, true);
+      eq([r.n, r.kept, r.told], [ONE, { found: 0, cards: 0, under: 0, letgo: 0, never: 0, waiting: 0 }, [DROP, FAILED, FAILED2, FAILED, FAILED2,
+        'early detection: today\'s numbers did not add up (1 found, but 0 cards, 0 under another alert, 0 let go, 0 never reviewed and 0 waiting), so found is made to add up: 0',
+      ]]);
+      assert.ok(/today: 0 found, 0 cards, 0 under another alert, 0 let go, 0 never reviewed, 0 waiting/.test(r.next.c19), r.next.c19);
     }
     // the day's state without found (its first save failed): a signal that waited is counted as having left the queue
     {

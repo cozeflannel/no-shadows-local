@@ -28,12 +28,17 @@
  * EDT_WAIT_ROWS_ rows and EDT_WAIT_CHARS_ characters (and as many bytes), the newest kept; the ones that had to go are
  * counted, and the next write adds one row "N outcomes were not recorded (the runs were full)". A run without a row to
  * write makes no Sheets call at all, except while Status says a tab is in the way (EDT_BLOCKED_PROP_): then a run with
- * time looks at the tab of that name once (edTabRecheck_), so the sentence goes as soon as that tab is renamed. The tab is
- * made the first time there is a row to write, after the last of the report tabs, so no tab moves. Never throws.
+ * time looks at the tab of that name once (edTabRecheck_), so the sentence goes as soon as that tab is renamed; and until
+ * the bot has made its tab (EDT_MADE_PROP_): poll() makes it at the start of the first run with Early Detection (row 19)
+ * ON and the setting on, before any flow writes Control C19, with its header rows and "Today: nothing yet."
+ * (maybeMakeEdTab_), so C19, which points at the tab only once it is made (edTabPointed_), never points at a tab that
+ * isn't there. The tab goes after the last of the report tabs, so no tab moves. Never throws.
  *
- * Row 3 is as of the last write (its date and time say when): a run that writes no row doesn't touch it, so on a quiet
- * day it can be behind Control C19. Rows that wait live only in the cache value: if the cache drops it, they are gone
- * without a "not recorded" row.
+ * Row 3 is as of the last write (its date and time say when); a run with time and no row writes that one cell again
+ * when the numbers changed since (edTabTodayRefresh_), so it says what Control C19 says. Each row is handed to the
+ * script cache as it is noted (edTabHandOver_), so a run that ends before its last block leaves its rows to the next run
+ * (edTabTakeOver_). Rows that wait live only in the cache: if the cache drops them, they are gone without a "not
+ * recorded" row.
  */
 
 const EDT_NAME_ = 'Early Detection';
@@ -42,7 +47,7 @@ const EDT_TITLE_ = 'Early Detection: every story it found and what happened to e
 const EDT_ABOUT_ = 'What\'s listed: each story Early Detection (Control row 19) found in posts from small accounts: several ' +
   'accounts saying the same thing, or a jump in how many accounts post on one topic. Newest first, the last 2,000. Outcome ' +
   'says what the bot did and Why gives the reason. Only rows that start "Card posted", "Update added" or "Added under" are ' +
-  'in the space; the others were looked at and let go.';
+  'in the space; the others were not posted, and Why says why ("Never reviewed": the bot did not get to review it).';
 const EDT_HEADER_ = ['When (ET)', 'Outcome', 'Story', 'Why', 'Card', 'Kind', 'Accounts', 'Platforms',
   'Exposure Tag (first guess)', 'Id'];
 const EDT_HEAD_ROW_ = 4;                     // the column names; data from the row under it
@@ -54,6 +59,13 @@ const EDT_WAIT_ROWS_ = 200;
 const EDT_WAIT_CHARS_ = 90000;               // characters, and UTF-8 bytes: the cache may count either
 // 'true' while a tab named "Early Detection" that the bot didn't make is in the way (Status, B5, says so)
 const EDT_BLOCKED_PROP_ = 'ED_TAB_BLOCKED';
+// 'true' once the bot has made its tab (or found its own): Control C19 points at the tab only then (edTabPointed_)
+const EDT_MADE_PROP_ = 'ED_TAB_MADE';
+// The day and numbers row 3 shows, as last written (edTabTodayKey_): row 3 is written again only when they change
+const EDT_TODAY_PROP_ = 'ED_TAB_TODAY';
+// This run's rows, handed over as each is noted (edTabHandOver_): a run that ends before its last block leaves them here,
+// and the next run puts them with the rows that wait (edTabTakeOver_)
+const EDT_RUN_KEY_ = 'ed_tab_run';
 const EDT_WIDTHS_ = [[1, 130], [2, 230], [3, 320], [4, 360], [5, 110], [6, 170], [7, 80], [8, 120], [9, 280], [10, 300]];
 
 /** The setting early_detection_tab: on unless it is false. */
@@ -82,8 +94,10 @@ function maybeWriteEdTab_(ss, ctx, opts) {
     const deadline = Number(o.deadline) || Number(ctx && ctx.deadline) || 0;
     const noTime = () => !ss || headStartRunBusy_(ctx, o.flows) || (deadline && deadline - now < EDT_MIN_LEFT_MS_);
     if (!all.length && !kept.lost) {
-      // nothing to write: no Sheets call, unless Status says a tab is in the way and this run has time to look again
+      // nothing to write: no Sheets call, unless Status says a tab is in the way and this run has time to look again,
+      // or today's numbers changed since row 3 was written (then that one cell, on the bot's own tab)
       if (edTabBlocked_() && !noTime()) edTabRecheck_(ss);
+      else if (!noTime()) edTabTodayRefresh_(ss, now);
       return out;
     }
     if (!noTime()) {
@@ -91,6 +105,7 @@ function maybeWriteEdTab_(ss, ctx, opts) {
         const done = writeEdTab_(ss, all, kept, now);
         if (done.written) {
           edTabWait_([], 0, 0);
+          edTabRunDone_();
           out.written = done.written;
           return out;
         }
@@ -100,6 +115,7 @@ function maybeWriteEdTab_(ss, ctx, opts) {
       }
     }
     out.waiting = edTabWait_(all, kept.lost, kept.lostAt);
+    edTabRunDone_();
     return out;
   } catch (e) {
     console.error('Early Detection tab: ' + ((e && e.message) || e));
@@ -140,7 +156,10 @@ function writeEdTab_(ss, rows, lost, now) {
     throw e;
   }
   const fmt = f => { try { f(); } catch (e) { /* formatting only */ } };
-  fmt(() => sh.getRange(3, 1).setValue(speedText_(edTabTodayText_(now))));
+  fmt(() => {
+    sh.getRange(3, 1).setValue(speedText_(edTabTodayText_(now)));
+    edTabTodayNoted_(edTabTodayKey_(now));
+  });
   // the new rows' own formats: in Sheets a new row takes its neighbour's (the bold header's), so they are set here
   fmt(() => sh.getRange(first, 1, n, EDT_HEADER_.length).setFontWeight('normal').setFontStyle('normal').setBackground(null)
     .setFontColor(null).setWrap(false).setVerticalAlignment('top'));
@@ -151,6 +170,7 @@ function writeEdTab_(ss, rows, lost, now) {
   } catch (e) {
     console.error('Early Detection tab: its oldest rows could not be deleted: ' + ((e && e.message) || e));
   }
+  noteEdTabMade_();
   return { blocked: false, written: n };
 }
 
@@ -345,6 +365,7 @@ function edTabBytes_(s) {
 /** The setting is off: nothing waits, and Status no longer speaks of the tab. Never throws. */
 function edTabOff_() {
   try { CacheService.getScriptCache().remove(EDT_WAIT_KEY_); } catch (e) { /* nothing to keep */ }
+  try { CacheService.getScriptCache().remove(EDT_RUN_KEY_); } catch (e) { /* nothing to keep */ }
   noteEdTabBlocked_(false);
 }
 
@@ -365,10 +386,165 @@ function edTabBlocked_() {
 function edTabRecheck_(ss) {
   try {
     const found = ss.getSheetByName(EDT_NAME_);
-    if ((found ? edTabOwner_(found) : 'bot') === 'bot') noteEdTabBlocked_(false);
+    const owner = found ? edTabOwner_(found) : 'bot';
+    if (owner === 'bot') noteEdTabBlocked_(false);
+    if (found && owner === 'bot') noteEdTabMade_();
   } catch (e) {
     console.error('Early Detection tab: could not look at it again: ' + ((e && e.message) || e));
   }
+}
+
+/**
+ * From poll(), at the start of a run with Early Detection (Control row 19) ON, before any flow writes Control C19: the
+ * tab, made once (edTabMakeOnce_) when the setting is on and the bot has not made it yet (EDT_MADE_PROP_), nor been told
+ * a tab of that name is in the way. After that no Sheets call. Never throws.
+ */
+function maybeMakeEdTab_(ss) {
+  try {
+    if (!edTabOn_() || edTabMade_() || edTabBlocked_()) return;
+    edTabMakeOnce_(ss);
+  } catch (e) {
+    console.error('Early Detection tab: ' + ((e && e.message) || e));
+  }
+}
+
+/**
+ * The tab, made once without a row to write (maybeMakeEdTab_): its first four rows with "Today: nothing yet."
+ * (ensureEdTab_), so Control C19's pointer never leads to a tab that isn't there. The bot's own tab already there is only
+ * remembered. A tab of that name the bot didn't make is left as it is (never read past its first four rows, cleared or
+ * written): Status says it is in the way, and C19 has no pointer. Sheets not answering changes nothing (the next run
+ * tries again). Never throws.
+ */
+function edTabMakeOnce_(ss) {
+  try {
+    if (!ss) return;
+    const found = ss.getSheetByName(EDT_NAME_);
+    const owner = found ? edTabOwner_(found) : 'bot';
+    if (owner === 'unknown') return;
+    if (owner === 'other') {
+      noteEdTabBlocked_(true);
+      return;
+    }
+    if (found || ensureEdTab_(ss)) noteEdTabMade_();
+  } catch (e) {
+    console.error('Early Detection tab: could not be made: ' + ((e && e.message) || e));
+  }
+}
+
+/** The day and the numbers row 3 shows at `now` ("2026-11-15|12|3|0|6|1|2"), without its time. Never throws. */
+function edTabTodayKey_(now) {
+  try {
+    const tz = (typeof GEN !== 'undefined' && GEN && GEN.timezone) || 'America/New_York';
+    const n = edDayNumbers_(PropertiesService.getScriptProperties());
+    return [Utilities.formatDate(new Date(Number(now) || Date.now()), tz, 'yyyy-MM-dd'), n.found, n.cards, n.under, n.letgo,
+      n.never, n.waiting].join('|');
+  } catch (e) {
+    return '';
+  }
+}
+
+/** Remembers what row 3 was written with (EDT_TODAY_PROP_). Never throws. */
+function edTabTodayNoted_(key) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (key && props.getProperty(EDT_TODAY_PROP_) !== key) props.setProperty(EDT_TODAY_PROP_, key);
+  } catch (e) { /* the next run writes row 3 again */ }
+}
+
+/**
+ * A run with time and no row to write: row 3 brought up to date with today's numbers (the ones Control C19 shows), one
+ * cell, only when they changed since row 3 was last written (EDT_TODAY_PROP_: no Sheets call while they are the same) and
+ * only on the bot's own tab (made, and found to be its own: edTabOwner_). Never throws.
+ */
+function edTabTodayRefresh_(ss, now) {
+  try {
+    if (!ss || !edTabMade_()) return;
+    const key = edTabTodayKey_(now);
+    if (!key || PropertiesService.getScriptProperties().getProperty(EDT_TODAY_PROP_) === key) return;
+    const sh = ss.getSheetByName(EDT_NAME_);
+    if (!sh || edTabOwner_(sh) !== 'bot') return;
+    sh.getRange(3, 1).setValue(speedText_(edTabTodayText_(now)));
+    edTabTodayNoted_(key);
+  } catch (e) {
+    console.error('Early Detection tab: today\'s numbers not brought up to date: ' + ((e && e.message) || e));
+  }
+}
+
+/**
+ * From EarlyDetectionNotes.gs edNote_, as each row is noted: the run's rows so far, kept in the script cache
+ * (EDT_RUN_KEY_, the newest EDT_WAIT_ROWS_ that fit EDT_WAIT_CHARS_), so a run that ends before its last block
+ * (maybeWriteEdTab_) does not lose the rows of endings it already counted: the next run puts them with the rows that
+ * wait (edTabTakeOver_). Nothing with the setting off. Never throws.
+ */
+function edTabHandOver_() {
+  try {
+    if (!edTabOn_()) return;
+    let rows = edNotesOfRun_().slice(-EDT_WAIT_ROWS_);
+    if (!rows.length) return;
+    while (rows.length > 1 && (JSON.stringify(rows).length > EDT_WAIT_CHARS_ || edTabBytes_(JSON.stringify(rows)) > EDT_WAIT_CHARS_)) {
+      rows = rows.slice(1);
+    }
+    CacheService.getScriptCache().put(EDT_RUN_KEY_, JSON.stringify(rows), EDT_WAIT_SECONDS_);
+  } catch (e) {
+    console.error('Early Detection tab: this run\'s rows could not be kept: ' + ((e && e.message) || e));
+  }
+}
+
+/**
+ * From EarlyDetectionNotes.gs edNotesStart_, when a run starts: rows an earlier run handed over (edTabHandOver_) and did
+ * not write or leave waiting itself (it ended first) join the rows that wait (edTabWait_), without a row twice. Never
+ * throws.
+ */
+function edTabTakeOver_() {
+  try {
+    if (!edTabOn_()) return;
+    const cache = CacheService.getScriptCache();
+    const raw = cache.get(EDT_RUN_KEY_);
+    if (!raw) return;
+    cache.remove(EDT_RUN_KEY_);
+    let rows = [];
+    try { rows = JSON.parse(raw); } catch (e) { rows = []; }
+    rows = (Array.isArray(rows) ? rows : []).filter(r => Array.isArray(r) && r.length === ED_NOTE_FIELDS_.length && typeof r[2] === 'string');
+    if (!rows.length) return;
+    const kept = edTabWaiting_();
+    edTabWait_(edTabMerge_(kept.rows, rows), kept.lost, kept.lostAt);
+  } catch (e) {
+    console.error('Early Detection tab: an earlier run\'s rows could not be taken over: ' + ((e && e.message) || e));
+  }
+}
+
+/** The run's rows are written or left waiting: what it handed over (EDT_RUN_KEY_) is no longer needed. Never throws. */
+function edTabRunDone_() {
+  try {
+    if (edNotesOfRun_().length) CacheService.getScriptCache().remove(EDT_RUN_KEY_);
+  } catch (e) { /* the next run takes them over: they are on the tab or waiting, and none is written twice */ }
+}
+
+/** Has the bot made its tab (EDT_MADE_PROP_)? Never throws. */
+function edTabMade_() {
+  try {
+    return PropertiesService.getScriptProperties().getProperty(EDT_MADE_PROP_) === 'true';
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Remembers that the bot's tab is there (EDT_MADE_PROP_), once. Never throws. */
+function noteEdTabMade_() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (props.getProperty(EDT_MADE_PROP_) !== 'true') props.setProperty(EDT_MADE_PROP_, 'true');
+  } catch (e) {
+    console.error('could not note the Early Detection tab: ' + ((e && e.message) || e));
+  }
+}
+
+/**
+ * Control C19 ends with its pointer to the tab only when the tab is there to be read: the setting on, the bot's tab made
+ * (EDT_MADE_PROP_) and no tab of that name in its way. Never throws.
+ */
+function edTabPointed_() {
+  return edTabOn_() && edTabMade_() && !edTabBlocked_();
 }
 
 /** Remembers whether a tab named "Early Detection" that the bot didn't make is in the way (EDT_BLOCKED_PROP_). Never throws. */

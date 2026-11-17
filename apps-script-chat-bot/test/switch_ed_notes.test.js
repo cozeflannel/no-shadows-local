@@ -55,7 +55,7 @@ module.exports = H => {
       'Product - Other/general criticism', 'QA-1002'],
     ['08:17', 'Card posted: Needs a human look', 'AI review unavailable, so a person makes the call.',
       posting(5, 'Pixel owners say the screen flickers at night REVFAIL, story 3'), 'Story', 5, RISK, 'QA-1003'],
-    ['08:31', 'Seen before, nothing new', 'Its card of 8:16 AM ET had 6 accounts; 8 now, nothing new.',
+    ['08:31', 'Seen before, nothing new', 'Its card of 8:16 AM ET had 6 accounts; 8 now, not yet twice as many.',
       posting(8, 'Pixel owners say the camera app crashes after the update, story 1'), 'Story', 8, '-', 'QA-1001'],
     ['08:31', 'Held back as noise (no review)', 'Looks unrelated to Google (94% likely), severity none (70% sure).',
       posting(5, 'A pixel art contest draws a crowd DECOFF, story 12'), 'Story', 5,
@@ -66,10 +66,10 @@ module.exports = H => {
     ['08:31', 'Reviewed and dismissed', BENIGN, problem(7), 'Story', 5, RISK, ''],
     ['08:32', 'Not English', 'The posts are not in English (Portuguese).', problem(8), 'Story', 5, RISK, ''],
     ['08:32', 'Seen before, nothing new', 'Already alerted as a known issue (QA-4228, "Pixel camera crash"): nothing materially new.',
-      problem(9), 'Story', 5, RISK, ''],
+      problem(9), 'Story', 5, RISK, 'QA-4228'],  // the alert the review matched it to, in the Card column
     ['08:33', 'Reviewed and dismissed', 'Its topic is always around in the listening data ("Shot on Pixel showcase").',
       problem(11), 'Story', 5, RISK, ''],
-    ['08:46', 'Seen before, nothing new', 'First seen 8:31 AM ET with 5 accounts; 8 now, nothing new.',
+    ['08:46', 'Seen before, nothing new', 'First seen 8:31 AM ET with 5 accounts; 8 now, not yet twice as many.',
       posting(8, 'Pixel owners say the weather widget looks odd REVDISMISS, story 7'), 'Story', 8, '-', ''],
     ['08:46', CARD, WATCHING, problem(15), EARLY, 3, RAISED, 'QA-1005'],
     ['08:46', 'Update added to its earlier card', '14 accounts now, up from 6; now also on TikTok.', problem(1), 'Story', 14, RISK, 'QA-1001'],
@@ -217,7 +217,9 @@ module.exports = H => {
           const from = byId.get(r.id);
           assert.ok(from, `${name}: ${r.id}`);
           eq([r.link, r.platforms], r.story === 'A story whose details are gone' ? ['', ''] : [from.primary_url, from.platforms_csv], `${name}: ${r.id}`);
-          eq(r.message.indexOf(`${w.space}/messages/`) === 0, r.card !== '', `${name}: ${r.id} ${r.message}`);
+          // (a card the review matched by its id alone, not in this flow's Alert log, has no message to link)
+          const matchedOnly = r.outcome === 'Seen before, nothing new' && r.card !== '' && r.why.includes(r.card) && !r.message;
+          eq(r.message.indexOf(`${w.space}/messages/`) === 0 || matchedOnly, r.card !== '', `${name}: ${r.id} ${r.message}`);
           assert.ok(JSON.stringify(FIELDS.map(f => r[f])).length <= 448, `${name}: ${r.id}`);
         });
         // every outcome the code can reach today is in the day (two wait for the parts of the plan that come next)
@@ -502,13 +504,13 @@ module.exports = H => {
       'Looks unrelated to Google (94% likely), severity none (70% sure)');
     const at = NOW + 2 * HOUR + 51 * MIN;  // 10:51 AM Eastern
     const later = NOW + 5 * HOUR;
-    eq(bot.edRepeatWhy_(sig(1, { au: 8 }), {}, { at, au: 5 }, later), 'First seen 10:51 AM ET with 5 accounts; 8 now, nothing new');
-    eq(bot.edRepeatWhy_(sig(1, { au: 8 }), {}, { at, au: 1 }, later), 'First seen 10:51 AM ET with 1 account; 8 now, nothing new');
+    eq(bot.edRepeatWhy_(sig(1, { au: 8 }), {}, { at, au: 5 }, later), 'First seen 10:51 AM ET with 5 accounts; 8 now, not yet twice as many');
+    eq(bot.edRepeatWhy_(sig(1, { au: 8 }), {}, { at, au: 1 }, later), 'First seen 10:51 AM ET with 1 account; 8 now, not enough more to be new');
     eq(bot.edRepeatWhy_(sig(1, { au: 8 }), {}, { at, au: Infinity }, later), 'First seen 10:51 AM ET; nothing new since');
     eq(bot.edRepeatWhy_(sig(1, { au: 8 }), {}, null, later), 'Seen in the last 24 hours, nothing new');
     const prior = ed => ({ prior: { au: 6, latest: { at, row: 'QA-1001', ed, msg: 'spaces/AAQAcards0001/messages/abc.def' } } });
-    eq(bot.edRepeatWhy_(sig(1, { au: 8 }), prior('ED-CLU-other'), null, later), 'Its card of 10:51 AM ET had 6 accounts; 8 now, nothing new');
-    eq(bot.edRepeatWhy_(sig(1, { au: 8 }), prior('ED-CLU-other'), null, later + 24 * HOUR), 'Its card of Oct 14, 10:51 AM ET had 6 accounts; 8 now, nothing new');
+    eq(bot.edRepeatWhy_(sig(1, { au: 8 }), prior('ED-CLU-other'), null, later), 'Its card of 10:51 AM ET had 6 accounts; 8 now, not yet twice as many');
+    eq(bot.edRepeatWhy_(sig(1, { au: 8 }), prior('ED-CLU-other'), null, later + 24 * HOUR), 'Its card of Oct 14, 10:51 AM ET had 6 accounts; 8 now, not yet twice as many');
     eq(bot.edRepeatWhy_(sig(1, { au: 8 }), prior(sig(1, { au: 8 }).alert_id), null, later), 'Its card is already in the space');
     eq([bot.edPriorCard_(prior('x')), bot.edPriorCard_({})], [{ id: 'QA-1001', message: 'spaces/AAQAcards0001/messages/abc.def' }, null]);
     const alert = (ingested, o) => Object.assign({ alert_id: 'QA-1001', created_at: NOW + 8 * MIN, ingested,

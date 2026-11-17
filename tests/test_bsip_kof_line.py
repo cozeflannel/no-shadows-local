@@ -1,7 +1,7 @@
 """The BSIP card's [KOF] line (apps-script-chat-bot/BigQuery.gs formatBsipSonarAlertText_ with opts.kof, bsipKofValue_).
 
 In the Auto-correct flow the Direct BigQuery card of a BSIP post says what the feed's KOF column says:
-"[KOF]: Yes (<the list's name, without its own brackets>)", or "No". The Python parser (triage_agent/qa/parser.py) is
+"[KOF]: Yes (<the list's name, without its bracketed part>)", or "No". The Python parser (triage_agent/qa/parser.py) is
 the twin of the bot's (Alert.gs): it must read the card with the new line as the bot does, with the same fields as the
 card of before except KOF, and the rules must then treat it as a KOF's alert.
 """
@@ -39,12 +39,12 @@ ROW = {
 
 # What the feed's KOF column can say -> the card's line, and what both parsers must read from it
 KOF_VALUES: dict[str, tuple[str, bool, list[str]]] = {
-    "Viral KOFs (KOFs)": ("[KOF]: Yes (Viral KOFs KOFs)", True, ["Viral KOFs KOFs"]),
+    "Viral KOFs (KOFs)": ("[KOF]: Yes (Viral KOFs)", True, ["Viral KOFs"]),
     "Tech Reviewers": ("[KOF]: Yes (Tech Reviewers)", True, ["Tech Reviewers"]),
     "Exec following #4 (INFs), CAM Tech/AI (INFs)": (
-        "[KOF]: Yes (Exec following #4 INFs, CAM Tech/AI INFs)",
+        "[KOF]: Yes (Exec following #4, CAM Tech/AI)",
         True,
-        ["Exec following #4 INFs", "CAM Tech/AI INFs"],
+        ["Exec following #4", "CAM Tech/AI"],
     ),
     "Google Owned Channels": ("[KOF]: No", False, []),
     "": ("[KOF]: No", False, []),

@@ -17,7 +17,7 @@ module.exports = H => {
   const ABOUT = 'What\'s listed: each story Early Detection (Control row 19) found in posts from small accounts: several ' +
     'accounts saying the same thing, or a jump in how many accounts post on one topic. Newest first, the last 2,000. Outcome ' +
     'says what the bot did and Why gives the reason. Only rows that start "Card posted", "Update added" or "Added under" are ' +
-    'in the space; the others were looked at and let go.';
+    'in the space; the others were not posted, and Why says why ("Never reviewed": the bot did not get to review it).';
   const HEADER = ['When (ET)', 'Outcome', 'Story', 'Why', 'Card', 'Kind', 'Accounts', 'Platforms', 'Exposure Tag (first guess)', 'Id'];
   const NOTE = '⚠️ The Early Detection tab isn\'t being updated: a tab named "Early Detection" that the bot didn\'t make is in the way ' +
     '(or its title in A1 or a column name was changed). Rename that tab, and the bot makes its own.';
@@ -296,7 +296,7 @@ module.exports = H => {
     w.g.services.CacheService.getScriptCache = () => Object.assign({}, c, { put: (k, v, s) => { puts.push([k, s]); return put(k, v, s); } });
     note(w, NOW, sig(1), 'Reviewed and dismissed', 'Nothing for Google to act on');
     eq([w.bot.maybeWriteEdTab_(ss, ctxAt(w, NOW), { deadline: NOW + 29999 }), tabOf(ss), puts], [{ written: 0, waiting: 1, blocked: false }, null,
-      [['ed_tab_waiting', 21600]]]);
+      [['ed_tab_run', 21600], ['ed_tab_waiting', 21600]]]);  // the row was handed over as it was noted, then left waiting
     // a run catching up on alerts (a flow held an alert for the next run): the same
     w.bot.edNotesStart_();
     note(w, NOW + MIN, sig(2), 'Not English', 'Most of its posts are not in English');
