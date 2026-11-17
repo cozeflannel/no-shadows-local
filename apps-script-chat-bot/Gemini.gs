@@ -274,14 +274,19 @@ function webGroundingMode_() {
   if (!GROUNDING_TOOLS_[mode]) return '';
   try {
     if (CacheService.getScriptCache().get('grounding_off:' + mode)) return '';
+    // Control row 51: a refusal met by background work turns the web search off for background work only
+    if (typeof OE_BG_ !== 'undefined' && OE_BG_ && CacheService.getScriptCache().get('grounding_off_bg:' + mode)) return '';
   } catch (e) {}
   return mode;
 }
 
 /** Vertex AI refused the web-search tool: say why, and leave it off for a while (the call is retried without it). */
 function groundingRefused_(mode, why) {
-  console.warn(`Gemini web grounding (${mode}) was refused, so it's off for ${GROUNDING_OFF_SEC_ / 3600} h: ${why}`);
-  try { CacheService.getScriptCache().put('grounding_off:' + mode, '1', GROUNDING_OFF_SEC_); } catch (e) {}
+  // Control row 51 (OpenEngine.gs): refused during background work, it is off for background work only, so Burson's
+  // alerts keep their web search
+  const bg = typeof OE_BG_ !== 'undefined' && OE_BG_ && typeof openOn_ === 'function' && openOn_();
+  console.warn(`Gemini web grounding (${mode}) was refused, so it's off for ${GROUNDING_OFF_SEC_ / 3600} h${bg ? ' for background work' : ''}: ${why}`);
+  try { CacheService.getScriptCache().put((bg ? 'grounding_off_bg:' : 'grounding_off:') + mode, '1', GROUNDING_OFF_SEC_); } catch (e) {}
 }
 
 function geminiUrl_(model, location, project) {

@@ -684,6 +684,14 @@ class BursonQAConfig(ConfigModel):
     # Step 3a of the new sources: while Control row 50 is ON, every post a carded Early Detection story links is seen by
     # that card in the alert memory, as its main post is. With row 50 OFF nothing changes.
     early_detection_claim_members: bool = True
+    # The open engine (Control row 51, OpenEngine.gs; step S2): the day's safety stop and the run-time and outside-call
+    # guards. Blank budgets come from the account type, read by the bot once a day.
+    open_daily_stop: int = 2000
+    open_runtime_budget_hours: float | None = None
+    open_runtime_other_hours: float = 1.5
+    open_lock_loss_seconds: float = 2
+    open_fetch_day: int | None = None
+    open_burson_pickup_p90_s: float = 120
     # What the Resources tab of the bot's sheet starts with: documents the bot links when Burson asks about the alert
     # requirements. After that the tab is what the bot uses (people edit it there). Only links Burson can open.
     resources: list[BursonResource] = Field(default_factory=list)

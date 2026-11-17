@@ -112,6 +112,7 @@ function runOnce_(ctx) {
     if (report.handled >= S.max_messages_per_run) break;
     if (!runOwned_()) { ctx.deadline = ctx.now(); break; }  // another run took over (Main.gs): it does the rest, not this one
     report.handled++;
+    if (typeof openPickup_ === 'function') openPickup_(m.createTime, ctx.now());  // its pick-up time, for the run's record (in memory)
     // Its tries were used up by runs that ended partway through it (crashGuard_ counted them): given up on now, as a
     // message whose tries all failed with an error is (forwarded to analysts as received, never dropped)
     const tried = guard.on ? ctx.store.attempts(m.name) : 0;

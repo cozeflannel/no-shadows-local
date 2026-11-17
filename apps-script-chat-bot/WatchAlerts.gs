@@ -2215,8 +2215,23 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
         items.push({ q, a: pwAlertOfRow_(q.v, q.k) });
       }
       const recent = pwRecentStories_(block, dest, now, PW_STORY_POOL_MAX_).concat(pwBrewing_(block, now, PW_BREW_POOL_MAX_));
+      // the open engine (Control row 51, OpenEngine.gs): the day's safety stop, the run-time and outside-call steps (a
+      // KOF's or a 2,000+ post's flag is serious) and Burson first; with row 51 OFF it always says yes
+      const may = items.length && typeof openMayStart_ === 'function'
+        ? openMayStart_('card', null, { serious: items.some(it => (it.q.k.x && it.q.k.x.k === true) || (Number(it.q.v[PW_COL_.eng - 1]) || 0) >= 2000) })
+        : { ok: true };
       // the Auto-correct space's cards get the write-up and the web search (B5); everywhere else as before
-      const read = pwPreReadFor_(items, recent, timeLeft, now, dest.choice === 'autocorrect');
+      let read = { pre: null, recent, wait: may.ok ? '' : may.why };
+      if (may.ok) {
+        if (typeof OE_BG_ !== 'undefined') OE_BG_ = true;  // background work (Gemini's web search protection)
+        try {
+          read = pwPreReadFor_(items, recent, timeLeft, now, dest.choice === 'autocorrect');
+        } finally {
+          if (typeof OE_BG_ !== 'undefined') OE_BG_ = false;
+        }
+        // row 51: a pre-read sent is one background review toward the day's stop
+        if (items.length && !read.wait && typeof openCountReview_ === 'function') openCountReview_(1);
+      }
       if (read.wait) {
         problem = read.wait;
       } else {

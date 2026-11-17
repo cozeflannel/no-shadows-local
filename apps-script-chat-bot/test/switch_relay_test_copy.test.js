@@ -114,8 +114,8 @@ module.exports = H => {
     const row36 = [sw36.label, 'OFF', B.switchOffText_(sw36)];  // Temp checks, OFF
     const sw37 = B.ev('CONTROL_SWITCHES_').find(s => s.row === 37);
     const row37 = [sw37.label, 'OFF', B.switchOffText_(sw37)];  // Group test emails, OFF
-    const ft = r => { const s = B.ev('CONTROL_SWITCHES_').find(x => x.row === r); return [s.label, 'OFF', B.switchOffText_(s)]; };  // rows 38-40, 46, 48-50: Fast triage, early_wave BigQuery, the AMIE table, Brandwatch live and the Watch's AMIE source, OFF
-    const BLANK3 = ['', '', ''];  // rows 51-52: blank, "How it works" from row 53
+    const ft = r => { const s = B.ev('CONTROL_SWITCHES_').find(x => x.row === r); return [s.label, 'OFF', B.switchOffText_(s)]; };  // rows 38-40, 46, 48-51: Fast triage, early_wave BigQuery, the AMIE table, Brandwatch live, the Watch's AMIE source and the open engine, OFF
+    const BLANK3 = ['', '', ''];  // row 52: blank, "How it works" from row 53
     const barSpecs = B.ev('FT_BAR_SPECS_');
     const bar = r => { const s = barSpecs.find(x => x.row === r); return [s.label, s.seedText, B.ftBarFrom_(s, s.seedText).note]; };
     eq([cells(26), sh.cell(27, 1), sh.cell(28, 1), sh.cell(29, 1), cells(30).slice(0, 2), cells(31), cells(32), cells(33), cells(34),
@@ -123,7 +123,7 @@ module.exports = H => {
       cells(41), cells(42), cells(43), cells(44), cells(45), cells(46), cells(47), cells(48), cells(49), cells(50), cells(51), cells(52), sh.cell(53, 1), t.bot.testCopyId_()],
     [['Burson test copy', '', BLANK], 'Draft follow-ups', 'Draft answers to questions', 'Safety valve', ['Testing: send to', ''],
       lookback, row32, row33, row34, row35, row36, row37, ft(38), ft(39), ft(40),
-      bar(41), bar(42), bar(43), bar(44), bar(45), ft(46), bar(47), ft(48), ft(49), ft(50), BLANK3, BLANK3, 'How it works', '']);
+      bar(41), bar(42), bar(43), bar(44), bar(45), ft(46), bar(47), ft(48), ft(49), ft(50), ft(51), BLANK3, 'How it works', '']);
     const help = B.ev('CONTROL_HELP_');
     eq(help.map((_, i) => sh.cell(54 + i, 1)), help);
     assert.ok(help.some(l => /^• Burson test copy \(B26\): a Google-only space that plays S-F Burson while Testing/.test(l)));
@@ -185,7 +185,7 @@ module.exports = H => {
     eq([cells(26), cells(30).slice(0, 2), cells(31), cells(32), cells(33), cells(34), cells(35), cells(36), cells(37), cells(38), cells(39), cells(40),
       cells(41), cells(42), cells(43), cells(44), cells(45), cells(46), cells(47), cells(48), cells(49), cells(50), cells(51), cells(52), sh.cell(53, 1)],
     [['Burson test copy', COPY_NAME, OK_NOTE], ['Testing: send to', ''], lookback, row32, row33, row34, row35, row36, row37, ft(38), ft(39), ft(40),
-      bar(41), bar(42), bar(43), bar(44), bar(45), ft(46), bar(47), ft(48), ft(49), ft(50), BLANK3, BLANK3, 'How it works']);
+      bar(41), bar(42), bar(43), bar(44), bar(45), ft(46), bar(47), ft(48), ft(49), ft(50), ft(51), BLANK3, 'How it works']);
 
     // A dry run: nothing is copied or sent there, and C26 says so
     const GEN = t.bot.ev('GEN');
@@ -223,7 +223,7 @@ module.exports = H => {
    * bot uses), row 32 the Work directly in B25 switch (OFF, with its dropdown), row 33 the Other alerts space (blank),
    * row 34 the Proactive watch switch (OFF, with its dropdown), row 35 Watch alerts (OFF, with its dropdown), row 36
    * the Temp checks switch (OFF, with its dropdown), row 37 Group test emails (OFF, with its dropdown), rows 38-40 the three Fast triage
-   * switches (OFF, with their dropdowns), rows 41-45 and 47 the bar cells, row 46 early_wave BigQuery (OFF), row 48 the AMIE table (OFF), row 49 Brandwatch live (OFF), row 50 the Watch's AMIE source (OFF), rows 51-52 blank, "How it works" from row 53;
+   * switches (OFF, with their dropdowns), rows 41-45 and 47 the bar cells, row 46 early_wave BigQuery (OFF), row 48 the AMIE table (OFF), row 49 Brandwatch live (OFF), row 50 the Watch's AMIE source (OFF), row 51 the open engine (OFF), row 52 blank, "How it works" from row 53;
    * the other dropdowns as they were;
    * the switches, B25 and B26 read as the tab has them. Column C of a switch is the bot's own text, written every run:
    * what it's doing (ON) or what OFF means (this build's words: C11 names the testers in B30).
@@ -258,7 +258,7 @@ module.exports = H => {
       [sw(37).label, 'OFF', B.switchOffText_(sw(37))], [sw(38).label, 'OFF', B.switchOffText_(sw(38))], [sw(39).label, 'OFF', B.switchOffText_(sw(39))],
       [sw(40).label, 'OFF', B.switchOffText_(sw(40))],
       bar(41), bar(42), bar(43), bar(44), bar(45), [sw(46).label, 'OFF', B.switchOffText_(sw(46))], bar(47),
-      [sw(48).label, 'OFF', B.switchOffText_(sw(48))], [sw(49).label, 'OFF', B.switchOffText_(sw(49))], [sw(50).label, 'OFF', B.switchOffText_(sw(50))], ['', '', ''], ['', '', ''], 'How it works'], when);
+      [sw(48).label, 'OFF', B.switchOffText_(sw(48))], [sw(49).label, 'OFF', B.switchOffText_(sw(49))], [sw(50).label, 'OFF', B.switchOffText_(sw(50))], [sw(51).label, 'OFF', B.switchOffText_(sw(51))], ['', '', ''], 'How it works'], when);
     assert.match(sh.cell(30, 3), /^Blank: while Testing, /, when);
     const help = B.ev('CONTROL_HELP_');
     eq(help.map((_, i) => sh.cell(54 + i, 1)), help, when);
@@ -266,7 +266,7 @@ module.exports = H => {
     eq(lists(sh), Object.assign({}, variant.validations, { '27,2': ['ON', 'OFF'], '28,2': ['ON', 'OFF'], '29,2': ['ON', 'OFF'],
       '31,2': ['15 minutes', '30 minutes', '45 minutes', '60 minutes'], '32,2': ['ON', 'OFF'], '34,2': ['ON', 'OFF'],
       '35,2': ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)', 'Auto-correct space (B10)'], '36,2': ['ON', 'OFF'], '37,2': ['ON', 'OFF'],
-      '38,2': ['ON', 'OFF'], '39,2': ['ON', 'OFF'], '40,2': ['ON', 'OFF'] }, barVals, { '46,2': ['ON', 'OFF'], '48,2': ['ON', 'OFF'], '49,2': ['ON', 'OFF'], '50,2': ['ON', 'OFF'] }), when);
+      '38,2': ['ON', 'OFF'], '39,2': ['ON', 'OFF'], '40,2': ['ON', 'OFF'] }, barVals, { '46,2': ['ON', 'OFF'], '48,2': ['ON', 'OFF'], '49,2': ['ON', 'OFF'], '50,2': ['ON', 'OFF'], '51,2': ['ON', 'OFF'] }), when);
     const read = t.bot.readControl_(sh);
     eq([read.switches, read.sfBurson, read.testCopy, read.testers, read.bqLookback],
       [keysOn(variant.on), variant.b25, b26 ? b26.value : '', '', '60 minutes'], when);

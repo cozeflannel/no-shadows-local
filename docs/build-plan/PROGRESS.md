@@ -84,7 +84,38 @@ one line under it: what was built, the suite's count, and anything left out with
       for a stop for the day.
 
 ### Open engine (plan 2; briefs 6 to 16)
-- [ ] **S2** Row 51, the record of run time and outside calls, the safety stop, the guards, C51
+- [x] **S2** Row 51, the record of run time and outside calls, the safety stop, the guards, C51
+      Built Control row 51 (`openEngine`, written OFF, needs row 19, its help line, C51) and `OpenEngine.gs`: the record of
+      run time and outside calls (`RUN_LEDGER`, row 51 OFF too, only records: 24 hourly buckets of run seconds, outside
+      calls with each request of a fetchAll counted once, runs, and starts that found the lock taken; a run that died,
+      from its claim's start; Burson's pick-up times and its busiest pass; at most 8,800 characters; one property read
+      and one write a run; never throws) and, under row 51, the day's safety stop with its derived ceilings (`OPEN_DAY`),
+      the graded steps on run time and on outside calls, Burson's reserve, yield to Burson and the pick-up gauge,
+      ApiGuard's runaway ceilings, the 10-minute wait after a 429, the web search off for background work only, C51 and
+      C19's ending `safety stop reached`. Suite: 1,267 of 1,267 passed.
+      For later steps (each never throws; what each returns is in `OpenEngine.gs`'s header): `openOn_()`,
+      `openUsage_(now)`, `openMayStart_(kind, ctx, o)` -> `{ok, why, wall}` (kind 'review', 'card', 'quick', 'batch';
+      `o.serious`), `openCountReview_(n)`, `openCount_(kind, n)` ('ql', 'wc', 'gb'), `openStopReached_()`,
+      `openSerious_(row)`, `openYield_(ctx)`, `openShrinkMs_(usage)`, `openWall_(name)`, `openC51Text_(now)`,
+      `openC51Add_(fn)` (fn(usage, day, now) -> a short part), `openFetches_()` and `openBursonPass_(before)`.
+      C51's texts (characters): ON 113, waiting 67, OFF 72 (and, once a minute is recorded, `run time today: 1 h 20 of
+      4 h 30 (last 24 h) · Burson pick-up 40 s (p90)`), the stop 168, the quick-look ceiling 153, run time ahead of pace
+      105 and nearly used 95, outside calls ahead of pace 96 and nearly used 98, the day's line 85; every state at most
+      200, the warning first. Choices: (1) the guard asks where background work starts today: Early Detection's drain (a
+      review counted when it is sent, a failed one too), the Watch's pre-read (one call is one background review; serious
+      = a KOF's or a 2,000+ post's flag), the Direct BigQuery poll (no check past the stop, from the 0.90 step, or with a
+      Burson alert waiting), the story quick look in Decisions ('quick', counted toward the 20,000), and the Other alerts
+      space's triage (counted; past the stop left for a person, with the reason; the pace steps and the yield are not
+      put on it, since it is an alert flow of its own); (2) the stop and the steps need row 19 too (the plan: "only while
+      row 51 is ON (and row 19 is ON)"); (3) a wall is counted once a run (C51's "Burson first 3×" is three runs);
+      (4) Burson's reserve of outside calls (requirements-first F-P1): twice its busiest pass of the last 7 days, at
+      most half the day's calls, off the budget first; (5) the account type: a consumer account is tested on its
+      domain alone, since the rules allow made-up addresses only on .test and the safety scan refuses any other, even
+      one put together at run time. Left out, and why: the Direct poll's serious-only rule between 0.80 and 0.90 (the
+      poll is gated as a whole; step S14 rebuilds it by candidate); counting the reviews of the bot's own Watch and
+      Direct cards in the Auto-correct space (telling them from Burson's copies there is step S4's); the per-post quick
+      look's own ceiling, min(150 x the stop, half the call budget) (step S19d builds that look); the pick-up gauge on
+      the Engine tab (step S3 builds the tab).
 - [ ] **S3** The Engine tab and the new endings
 - [ ] **S4** The bot's own cards never make Burson look busy
 - [ ] **S5** Ranking in place of the allowance
@@ -130,3 +161,8 @@ one line under it: what was built, the suite's count, and anything left out with
 - That a parcel of full-length mentions fits the script cache as measured in the harness (6 items of 90,000 characters).
 - That the `bwl` job's SQL runs in BigQuery with a real array of structs as `@bwl` (the live check's dry run with three
   made-up mentions shows it compiles), and how long a Brandwatch read takes late in a real run.
+- That Apps Script lets the bot wrap `UrlFetchApp` for a run, so outside calls are counted (if not, the record says
+  so, C51 shows no call count and only the run-time guard acts); the account's real daily trigger run time and outside
+  calls (Google's figures as the plan remembered them, not verified); what a run that found the lock taken really costs.
+- That `Session.getEffectiveUser().getEmail()` answers in a trigger run of this deployment (if it throws, the bot takes
+  the lower budgets, 1.5 hours and 20,000 calls, until the settings are filled in).

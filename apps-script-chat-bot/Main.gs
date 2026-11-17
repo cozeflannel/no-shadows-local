@@ -284,6 +284,7 @@ function tryAlert() {
 // ---------------------------------------------------------------------------------------------------------------
 
 function poll() {
+  openEntry_();  // the run-time record (OpenEngine.gs, always): a run that finds the lock taken is counted too
   const lock = LockService.getScriptLock();
   try {
     if (!lock.tryLock(1000)) return;  // the previous run is still going
@@ -296,6 +297,8 @@ function poll() {
     lock.releaseLock();
     return;
   }
+  openRunStart_(runStart);  // this run's record: its outside calls are counted (OpenEngine.gs)
+  const tookOver = runTookOver_;  // a run that died: the record counts it from its claim's start
   if (runTookOver_) {  // the run before ended partway (out of memory, a time limit): a failed run, as an error makes one
     try {
       healthFail_(new Error(`the run that started at ${runOwnerWhen_(runTookOver_)} ended without finishing: Apps Script ` +
@@ -337,7 +340,7 @@ function poll() {
     alertMemoryStart_(ss, { deadline: runStart + RUN_HARD_STOP_MS_ });
     if (typeof syncBrandSafetyGroups_ === 'function') syncBrandSafetyGroups_(ss);
     control = controlTab_(ss) || ensureControlTab_(ss, Session.getEffectiveUser().getEmail());
-    ensureSwitchRows_(control);  // rows 11-24, 27-29, 32, 34, 36-40, 46 and 48-50 on a tab from before them (OFF)
+    ensureSwitchRows_(control);  // rows 11-24, 27-29, 32, 34, 36-40, 46 and 48-51 on a tab from before them (OFF)
     ensureSfBursonRow_(control);  // row 25 (S-F Burson space, blank) on a tab from before it
     ensureTestCopyRow_(control);  // row 26 (Burson test copy, blank) on a tab from before it
     ensureTestersRow_(control);   // row 30 (Testing: send to, blank) on a tab from before it
@@ -346,7 +349,7 @@ function poll() {
     ensureWatchAlertsRow_(control);  // row 35 (Watch alerts, OFF) on a tab from before it
     ensureFtBarRows_(control);    // rows 41-45 and 47 (fast-triage bars, seeds) on a tab from before them; the help is at row 53
     wanted = readControl_(control);
-    ewsRunSwitches_(wanted.switches);  // EarlyWaveSource.gs: which new sources' rows (48-50) are ON this run; unset: all OFF
+    ewsRunSwitches_(wanted.switches);  // EarlyWaveSource.gs: which new rows (48-51) are ON this run; unset: all OFF
     testers = testersFor_(wanted.testers, control);  // C30 is kept current even while the bot is paused
     lookback = bqLookbackFor_(wanted.bqLookback, control);  // and C31
     ftBars = ftBarsFor_(wanted.ftBars, control);  // and C41:C45, C47
@@ -569,7 +572,9 @@ function poll() {
         console.error('direct BigQuery alerts: ' + ((e && e.message) || e));
       }
     }
+    const oeBefore = openFetches_();  // Burson's pass: its outside calls, for Burson's reserve (OpenEngine.gs)
     const report = runOnce_(ctx);
+    openBursonPass_(oeBefore);
     const slaBusy = !!(report && (report.held > 0 || report.handled >= ctx.settings.max_messages_per_run ||
       (report.errors || []).some(e => /^time budget/.test(String(e)))));
     ctx.slaBusy = slaBusy;
@@ -784,6 +789,9 @@ function poll() {
       if (testers && testers.testers) extra.testers = testers.testers;
       if (direct) extra.directB25 = { state: direct.state, name: direct.name };  // C32: Work directly in B25
       if (wanted) extra.watchAlerts = pwAlertsChoice_(wanted.watchAlerts);  // C34: where the watch's flags go (row 35)
+      // the open engine (Control row 51, OpenEngine.gs): the day's counts, then C51's note, before column C is written
+      openDaySave_();
+      openWriteNote_(Date.now());
       if (control && wanted) writeSwitchStatuses_(control, wanted.switches, live, extra);
     } catch (e) {
       console.error('could not update the switches on the Control tab: ' + ((e && e.message) || e));
@@ -792,6 +800,9 @@ function poll() {
     // The shared alert memory (AlertMemory.gs): what every flow learned this run, written once (never throws), then gone
     alertMemoryFlush_();
     alertMemoryEnd_();
+    // the run-time and outside-call record (RUN_LEDGER, always: it only records), then UrlFetchApp as it was
+    openLedgerRecord_(runStart, Date.now(), tookOver);
+    openRunEnd_();
     releaseRun_();  // RUN_OWNER, if this run still holds it
     lock.releaseLock();
   }

@@ -378,7 +378,13 @@ function handleOtherAlert_(ctx, m, other, report) {
     } catch (e) {}
   }
   const preNonEn = otherNonEnglishWhy_(parsed, null);
-  const { llm, llmError, held } = preNonEn ? { llm: null, llmError: '', held: null } : guardedAssess_(ctx, m, parsed, now);
+  // the open engine (Control row 51, OpenEngine.gs): once today's safety stop is reached no new triage starts until
+  // midnight ET (the alert is left for a person, saying why); every triage started is one toward it. Row 51 OFF: as before
+  const oeStop = !preNonEn && typeof openStopReached_ === 'function' && openStopReached_();
+  const { llm, llmError, held } = preNonEn ? { llm: null, llmError: '', held: null }
+    : oeStop ? { llm: null, llmError: 'today\'s safety stop was reached: no Gemini triage until midnight ET', held: null }
+      : guardedAssess_(ctx, m, parsed, now);
+  if (!preNonEn && !oeStop && typeof openCountReview_ === 'function') openCountReview_(1);
   const tri = otherTriageOf_(llm, parsed);
   if (!tri && llm) ctx.log('Gemini\'s triage came back without its call: the alert is left for a person');
   const d = otherDecide_(ctx, parsed, tri, llm, history, now);

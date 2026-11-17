@@ -22,6 +22,9 @@ module.exports = H => {
   // row 50 (step 3b): the Watch's AMIE source, written OFF
   const LABEL50 = 'Proactive watch: also read the AMIE table';
   const OFF50 = 'OFF (the Watch does not read the AMIE table)';
+  // row 51 (step S2 of the open-engine plan): the open engine, written OFF
+  const LABEL51 = 'Open engine: judgment in place of caps';
+  const OFF51 = 'OFF (Early Detection, the Watch and Direct BigQuery keep today\'s limits)';
   const cells = (sh, r) => [1, 2, 3].map(c => sh.cell(r, c));
   const lists = sh => Object.fromEntries(Object.entries(sh.validations).map(([k, v]) => [k, v && v.values]));
   const EWS_COLS = ['kind', 'lane', 'mid', 'url', 'platform', 'author', 'audience', 'eng', 'posted_ms', 'seen_ms', 'txt', 'topic',
@@ -73,9 +76,9 @@ module.exports = H => {
     eq(cells(sh, 48), [LABEL, 'OFF', OFF_TEXT]);
     assert.match(sh.cell(48, 3), /^OFF \(/);
     eq(sh.validations['48,2'].values, ON_OFF);
-    eq([cells(sh, 49), cells(sh, 50), cells(sh, 51), cells(sh, 52), sh.cell(53, 1)], [[LABEL49, 'OFF', OFF49], [LABEL50, 'OFF', OFF50], ['', '', ''], ['', '', ''], 'How it works']);
-    eq([sh.validations['49,2'].values, sh.validations['50,2'].values, sh.validations['51,2'], sh.validations['52,2']], [ON_OFF, ON_OFF, undefined, undefined]);
-    eq([B.ev('CONTROL_HELP_ROW_'), B.switchRows_().slice(-4), B.ev('CONTROL_SWITCHES_').slice(-3).map(s => s.key)], [53, [46, 48, 49, 50], ['edAmie', 'edBwLive', 'watchAmie']]);
+    eq([cells(sh, 49), cells(sh, 50), cells(sh, 51), cells(sh, 52), sh.cell(53, 1)], [[LABEL49, 'OFF', OFF49], [LABEL50, 'OFF', OFF50], [LABEL51, 'OFF', OFF51], ['', '', ''], 'How it works']);
+    eq([sh.validations['49,2'].values, sh.validations['50,2'].values, sh.validations['51,2'].values, sh.validations['52,2']], [ON_OFF, ON_OFF, ON_OFF, undefined]);
+    eq([B.ev('CONTROL_HELP_ROW_'), B.switchRows_().slice(-5), B.ev('CONTROL_SWITCHES_').slice(-4).map(s => s.key)], [53, [46, 48, 49, 50, 51], ['edAmie', 'edBwLive', 'watchAmie', 'openEngine']]);
     const help = B.ev('CONTROL_HELP_');
     eq(help.map((_, i) => sh.cell(54 + i, 1)), help);
     assert.ok(B.ev('CONTROL_HELP_ROWS_') >= help.length + 1, 'the rows kept for the help hold its title and every line');
@@ -83,7 +86,7 @@ module.exports = H => {
     eq(line.length, 1);
     assert.match(line[0], /row 48, OFF until you turn it ON; it needs Early wave & velocity check \(row 19\) ON/);
     assert.match(line[0], /never go to S-F Burson/);
-    assert.ok(help.some(l => /^• Rows 11-24, 27-29, 32, 34, 36-40, 46 and 48-50 are switches/.test(l)));
+    assert.ok(help.some(l => /^• Rows 11-24, 27-29, 32, 34, 36-40, 46 and 48-51 are switches/.test(l)));
     assert.ok(help.some(l => /^• Early wave & velocity check: row 19.*with row 48 or 49 ON, posts from the AMIE table or Brandwatch can start a story too/.test(l)));
     const line49 = help.filter(l => l.startsWith(`• ${LABEL49}: `));
     eq(line49.length, 1);
@@ -100,10 +103,10 @@ module.exports = H => {
     eq([cells(sh, 48), t.bot.readControl_(sh).switches.edAmie], [[LABEL, 'OFF', OFF_TEXT], false]);
   });
 
-  test('new sources control (E27): a Control tab from before row 48 (row 48 blank, "How it works" at row 49, help lines from row 50) gets rows 48-50 OFF on its next run without setup(); rows 51-52 are left blank (no old help text), the help is at row 53, and no row from 11 to 47 moves or changes (values people set, switches ON, dropdowns)', () => {
+  test('new sources control (E27): a Control tab from before row 48 (row 48 blank, "How it works" at row 49, help lines from row 50) gets rows 48-51 OFF on its next run without setup(); row 52 is left blank (no old help text), the help is at row 53, and no row from 11 to 47 moves or changes (values people set, switches ON, dropdowns)', () => {
     const { t, sh } = world();
     // the tab as the build before this one left it: row 48 blank, "How it works" at row 49, its help from row 50
-    const oldHelp = B.ev('CONTROL_HELP_').filter(l => !l.startsWith(`• ${LABEL}: `) && !l.startsWith(`• ${LABEL49}: `) && !l.startsWith(`• ${LABEL50}: `)).concat(['• An old help line']);
+    const oldHelp = B.ev('CONTROL_HELP_').filter(l => !l.startsWith(`• ${LABEL}: `) && !l.startsWith(`• ${LABEL49}: `) && !l.startsWith(`• ${LABEL50}: `) && !l.startsWith(`• ${LABEL51}: `)).concat(['• An old help line']);
     sh.rows = sh.rows.slice(0, 47);
     sh.rows[47] = [''];
     sh.rows[48] = ['How it works'];
@@ -122,7 +125,7 @@ module.exports = H => {
     eq(JSON.stringify(above()), before);
     eq(lists(sh), Object.assign({}, lists0, { '48,2': ON_OFF, '49,2': ON_OFF }));
     eq(cells(sh, 48), [LABEL, 'OFF', OFF_TEXT]);
-    eq([cells(sh, 49), cells(sh, 50), cells(sh, 51), cells(sh, 52), sh.cell(53, 1)], [[LABEL49, 'OFF', OFF49], [LABEL50, 'OFF', OFF50], ['', '', ''], ['', '', ''], 'How it works']);
+    eq([cells(sh, 49), cells(sh, 50), cells(sh, 51), cells(sh, 52), sh.cell(53, 1)], [[LABEL49, 'OFF', OFF49], [LABEL50, 'OFF', OFF50], [LABEL51, 'OFF', OFF51], ['', '', ''], 'How it works']);
     const help = B.ev('CONTROL_HELP_');
     eq(help.map((_, i) => sh.cell(54 + i, 1)), help);
     for (let r = 54 + help.length; r <= sh.rows.length; r++) eq(cells(sh, r), ['', '', ''], `row ${r}`);
@@ -155,13 +158,13 @@ module.exports = H => {
 
   // The first build's help lines: today's, without row 48's line and without what row 48 added to two lines
   const firstBuildHelp = () => B.ev('CONTROL_HELP_')
-    .filter(l => !l.startsWith(`• ${LABEL}: `) && !l.startsWith(`• ${LABEL49}: `) && !l.startsWith(`• ${LABEL50}: `))
+    .filter(l => !l.startsWith(`• ${LABEL}: `) && !l.startsWith(`• ${LABEL49}: `) && !l.startsWith(`• ${LABEL50}: `) && !l.startsWith(`• ${LABEL51}: `))
     .map(l => l.replace('; with row 48 or 49 ON, posts from the AMIE table or Brandwatch can start a story too', '')
-      .replace('36-40, 46 and 48-50 are switches', '36-40 and 46 are switches'));
-  // A person's cells beside the old help: column B and C of rows 51-52 (rows 49 and 50 are switches since steps 2b and 3b
-  // of the new sources: their A to C are written as every new switch row's are), and one column-A note of their own in
-  // row 51
-  const PEOPLE = { '51,3': 'note C51', '52,2': 'note B52', '52,3': 'note C52' };
+      .replace('36-40, 46 and 48-51 are switches', '36-40 and 46 are switches'));
+  // A person's cells beside the old help: column B and C of row 52 (rows 49 to 51 are switches since steps 2b and 3b of
+  // the new sources and S2 of the open engine: their A to C are written as every new switch row's are), and one
+  // column-A note of their own in row 52
+  const PEOPLE = { '52,2': 'note B52', '52,3': 'note C52' };
   const putPeople = sh => Object.entries(PEOPLE).forEach(([k, v]) => { const [r, c] = k.split(',').map(Number); sh.getRange(r, c).setValue(v); });
   const peopleKept = sh => Object.keys(PEOPLE).map(k => { const [r, c] = k.split(',').map(Number); return sh.cell(r, c); });
   const helpAt53 = (sh, when) => {
@@ -171,7 +174,7 @@ module.exports = H => {
     eq(sh.rows.filter(r => String(r[0]).trim() === 'How it works').length, 1, when);
   };
 
-  test('new sources control (help at row 53): a tab from the first build ("How it works" at row 49, the first build\'s help lines from row 50, row 48 blank) gets rows 48-50 OFF, rows 51-52 with no old help and the help at row 53 at its next run without setup(); the old help is cleared only where it was (a person\'s note in A51 and their cells in B51:C52 stay); rows 11-47 do not change', () => {
+  test('new sources control (help at row 53): a tab from the first build ("How it works" at row 49, the first build\'s help lines from row 50, row 48 blank) gets rows 48-51 OFF, row 52 with no old help and the help at row 53 at its next run without setup(); the old help is cleared only where it was (a person\'s note in A52 and their cells in B52:C52 stay); rows 11-47 do not change', () => {
     const { t, sh } = world();
     const old = firstBuildHelp();
     eq(old.length, 46);  // today's 48 lines less rows 48's and 49's
@@ -182,7 +185,7 @@ module.exports = H => {
     old.forEach((l, i) => { sh.rows[49 + i] = [l]; });
     delete sh.validations['48,2'];
     putPeople(sh);
-    sh.getRange(51, 1).setValue('Ask the leads before turning row 19 ON');  // a person's own note over an old help line
+    sh.getRange(52, 1).setValue('Ask the leads before turning row 19 ON');  // a person's own note over an old help line
     sh.getRange(19, 2).setValue('ON');
     const above = () => JSON.stringify(sh.rows.slice(10, 47).map(r => [r[0], r[1]]));
     const before = above();
@@ -190,7 +193,7 @@ module.exports = H => {
     eq(above(), before);
     eq(cells(sh, 48), [LABEL, 'OFF', OFF_TEXT]);
     eq(sh.validations['48,2'].values, ON_OFF);
-    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], [LABEL49, LABEL50, 'Ask the leads before turning row 19 ON', '']);
+    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], [LABEL49, LABEL50, LABEL51, 'Ask the leads before turning row 19 ON']);
     eq(cells(sh, 49), [LABEL49, 'OFF', OFF49]);
     eq(peopleKept(sh), Object.values(PEOPLE));
     helpAt53(sh, 'first build');
@@ -199,15 +202,15 @@ module.exports = H => {
     // and it stays so: setup() and more runs change nothing there
     t.bot.setup();
     t.poll();
-    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], [LABEL49, LABEL50, 'Ask the leads before turning row 19 ON', '']);
+    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], [LABEL49, LABEL50, LABEL51, 'Ask the leads before turning row 19 ON']);
     eq(peopleKept(sh), Object.values(PEOPLE));
     helpAt53(sh, 'after setup()');
   });
 
-  test('new sources control (help at row 53): a tab with the help at row 52 (rows 49-51 blank, as the first stage of the new sources wrote it) gets the help at row 53 at its next run without setup(); row 52\'s old title is cleared, a person\'s cells in B51:C52 stay, rows 49 and 50 get their switches, and row 48 keeps a person\'s ON', () => {
+  test('new sources control (help at row 53): a tab with the help at row 52 (rows 49-51 blank, as the first stage of the new sources wrote it) gets the help at row 53 at its next run without setup(); row 52\'s old title is cleared, a person\'s cells in B52:C52 stay, rows 49 to 51 get their switches, and row 48 keeps a person\'s ON', () => {
     const { t, sh } = world();
     const help = B.ev('CONTROL_HELP_');
-    const stage1Help = help.filter(l => !l.startsWith(`• ${LABEL49}: `) && !l.startsWith(`• ${LABEL50}: `));
+    const stage1Help = help.filter(l => !l.startsWith(`• ${LABEL49}: `) && !l.startsWith(`• ${LABEL50}: `) && !l.startsWith(`• ${LABEL51}: `));
     sh.rows = sh.rows.slice(0, 48);
     sh.rows[48] = [''];
     sh.rows[49] = [''];
@@ -221,15 +224,15 @@ module.exports = H => {
     t.poll();
     eq(above(), before);
     eq([sh.cell(48, 2), t.bot.readControl_(sh).switches.edAmie], ['ON', true]);
-    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], [LABEL49, LABEL50, '', '']);
+    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], [LABEL49, LABEL50, LABEL51, '']);
     eq(peopleKept(sh), Object.values(PEOPLE));
     helpAt53(sh, 'help at row 52');
     for (let r = 54 + help.length; r <= sh.rows.length; r++) eq(cells(sh, r), ['', '', ''], `row ${r}`);
   });
 
-  test('new sources control (help at row 53): a new tab has rows 49 and 50 OFF, rows 51-52 blank and the help at row 53; writing the help again writes nothing in rows 49-52', () => {
+  test('new sources control (help at row 53): a new tab has rows 49 to 51 OFF, row 52 blank and the help at row 53; writing the help again writes nothing in rows 49-52', () => {
     const { t, sh } = world();
-    eq([cells(sh, 49), cells(sh, 50), cells(sh, 51), cells(sh, 52)], [[LABEL49, 'OFF', OFF49], [LABEL50, 'OFF', OFF50], ['', '', ''], ['', '', '']]);
+    eq([cells(sh, 49), cells(sh, 50), cells(sh, 51), cells(sh, 52)], [[LABEL49, 'OFF', OFF49], [LABEL50, 'OFF', OFF50], [LABEL51, 'OFF', OFF51], ['', '', '']]);
     helpAt53(sh, 'new tab');
     const writes = [];
     const orig = sh.getRange.bind(sh);
@@ -265,13 +268,13 @@ module.exports = H => {
     Object.entries(notes).forEach(([k, v]) => { const [r, c] = k.split(',').map(Number); sh.getRange(r, c).setValue(v); });
     t.g.logs.length = 0;
     t.poll();
-    eq(helpEnd(), 102);  // (100 before rows 49 and 50's help lines: the help area grows by a row for each new switch's line)
+    eq(helpEnd(), 103);  // (100 before rows 49-51's help lines: the help area grows by a row for each new switch's line)
     helpAt53(sh, 'first build with notes');
     eq([sh.cell(96, 2), sh.cell(60, 2), sh.cell(70, 3)], ['note B96', 'note B60', 'note C70']);
-    eq(notesBelow(sh, 102), ['note A96', 'note A97', 'note A101', 'note A102']);
-    eq([sh.cell(103, 1), sh.cell(104, 1), sh.cell(105, 1), sh.cell(106, 1)], ['note A96', 'note A97', 'note A101', 'note A102']);
+    eq(notesBelow(sh, 103), ['note A96', 'note A97', 'note A101', 'note A102']);
+    eq([sh.cell(104, 1), sh.cell(105, 1), sh.cell(106, 1), sh.cell(107, 1)], ['note A96', 'note A97', 'note A101', 'note A102']);
     eq(t.g.logs.filter(l => /person's text there was kept below it/.test(l)),
-      ['Control tab: "How it works" now fills rows 53-102 of column A; a person\'s text there was kept below it (A96 to A103, A97 to A104, A101 to A105, A102 to A106)']);
+      ['Control tab: "How it works" now fills rows 53-103 of column A; a person\'s text there was kept below it (A96 to A104, A97 to A105, A101 to A106, A102 to A107)']);
     const snap = JSON.stringify(sh.rows.slice(47));  // row 48 down (the status rows above change each run)
     t.poll();
     eq(JSON.stringify(sh.rows.slice(47)), snap, 'a second run');
@@ -282,7 +285,7 @@ module.exports = H => {
 
   test('new sources control (help at row 53): on a tab with the help at row 52 as the first stage of the new sources wrote it (46 lines, to row 98), a person\'s notes in A99 and A100 are kept below the help at its next run, in the first blank cells of column A below row 100 (a blank A101 first, then past the last row), unchanged and in order; a second run changes nothing', () => {
     const { t, sh } = world();
-    const stage1 = B.ev('CONTROL_HELP_').filter(l => !l.startsWith('• The Early Detection tab lists every story') && !l.startsWith(`• ${LABEL49}: `) && !l.startsWith(`• ${LABEL50}: `));
+    const stage1 = B.ev('CONTROL_HELP_').filter(l => !l.startsWith('• The Early Detection tab lists every story') && !l.startsWith(`• ${LABEL49}: `) && !l.startsWith(`• ${LABEL50}: `) && !l.startsWith(`• ${LABEL51}: `));
     eq(stage1.length, 46);
     sh.rows = sh.rows.slice(0, 48);
     sh.rows[48] = [''];
@@ -297,9 +300,9 @@ module.exports = H => {
     sh.getRange(102, 1).setValue('note A102');
     t.poll();
     helpAt53(sh, 'first stage with notes');
-    // (with the help to row 102 since rows 49 and 50's help lines, A101 and A102 are the help's: the notes go below it)
-    eq([sh.cell(101, 2), sh.cell(103, 1), sh.cell(104, 1), sh.cell(105, 1)], ['note B101', 'note A99', 42, 'note A102']);
-    eq(notesBelow(sh, 102), ['note A99', 42, 'note A102']);
+    // (with the help to row 103 since rows 49-51's help lines, A101 and A102 are the help's: the notes go below it)
+    eq([sh.cell(101, 2), sh.cell(104, 1), sh.cell(105, 1), sh.cell(106, 1)], ['note B101', 'note A99', 42, 'note A102']);
+    eq(notesBelow(sh, 103), ['note A99', 42, 'note A102']);
     const snap = JSON.stringify(sh.rows.slice(47));  // row 48 down (the status rows above change each run)
     t.poll();
     eq(JSON.stringify(sh.rows.slice(47)), snap, 'a second run');
@@ -315,7 +318,7 @@ module.exports = H => {
       B.controlHelpOwn_('• Early wave is noisy today, ask Sam')],
     [true, true, false, false, false, true, true, true, false]);
     const { t, sh } = world();
-    const stage1 = B.ev('CONTROL_HELP_').filter(l => !l.startsWith('• The Early Detection tab lists every story') && !l.startsWith(`• ${LABEL49}: `) && !l.startsWith(`• ${LABEL50}: `));
+    const stage1 = B.ev('CONTROL_HELP_').filter(l => !l.startsWith('• The Early Detection tab lists every story') && !l.startsWith(`• ${LABEL49}: `) && !l.startsWith(`• ${LABEL50}: `) && !l.startsWith(`• ${LABEL51}: `));
     sh.rows = sh.rows.slice(0, 48);
     sh.rows[48] = ['• Rows 11-24, 27-29, 32, 34, 36-40 and 46 are switches for what the bot may do on its own.'];
     sh.rows[49] = [''];
@@ -328,8 +331,9 @@ module.exports = H => {
     sh.getRange(100, 1).setValue('• my note under the help');
     t.poll();
     helpAt53(sh, 'bullet notes');
-    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], [LABEL49, LABEL50, '• my own bullet note', '']);
-    eq(notesBelow(sh, 102), ['• my note under the help']);
+    // (row 51 is a switch since step S2: the person's bullet line in A51 gives way to it, as rows 48-50's cells do)
+    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], [LABEL49, LABEL50, LABEL51, '']);
+    eq(notesBelow(sh, 103), ['• my note under the help']);
   });
 
   test('new sources control: row 48\'s help line says in plain numbers how many stories only the AMIE table lifts go for review, the same numbers the bot uses (ewsNewCfg_: early_wave_new_lifted_per_hour and _per_day), and where the rest are listed', () => {
@@ -405,6 +409,7 @@ module.exports = H => {
     eq([['nk', 'sn'].filter(k => k in st), Object.keys(st.marks).filter(k => /ami|bwl/.test(k))], [[], []]);
     eq([cells(sh, 48), t.bot.readControl_(sh).switches.edAmie], [[LABEL, 'OFF', OFF_TEXT], false]);
     eq([cells(sh, 49), t.bot.readControl_(sh).switches.edBwLive, cells(sh, 50), t.bot.readControl_(sh).switches.watchAmie], [[LABEL49, 'OFF', OFF49], false, [LABEL50, 'OFF', OFF50], false]);
+    eq([cells(sh, 51), t.bot.readControl_(sh).switches.openEngine], [[LABEL51, 'OFF', OFF51], false]);
     eq(Array.from(t.g.cache.keys()).filter(k => /^ews:bwl:|^bwl:/.test(k)), []);
   });
 

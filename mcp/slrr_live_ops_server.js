@@ -135,7 +135,7 @@ async function handleGetControlStatus(args) {
     };
   };
 
-  const switchRows = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 27, 28, 29, 32, 34, 36, 37, 38, 39, 40, 46, 48, 49, 50];
+  const switchRows = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 27, 28, 29, 32, 34, 36, 37, 38, 39, 40, 46, 48, 49, 50, 51];
   const switches = switchRows.map(r => ({
     row: r,
     label: cellText(r, 1),

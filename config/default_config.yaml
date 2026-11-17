@@ -152,6 +152,14 @@ burson_qa:
   # Detection story links is seen by that card in the alert memory, as its main post is, so the Watch and the Direct
   # BigQuery poll treat it as they treat the main post. With row 50 OFF nothing changes.
   early_detection_claim_members: true
+  # The open engine (Control row 51, OpenEngine.gs; step S2 of the open-engine plan). The record of run time and
+  # outside calls (RUN_LEDGER) runs with row 51 OFF too: it only records.
+  open_daily_stop: 2000                 # background reviews an Eastern day at most (Burson's alerts never count or stop); also 10x quick looks, 100x Watch post checks, 1.5 GB x BigQuery
+  open_runtime_budget_hours:            # the account's trigger run time a day; blank: 6 on a Workspace account, 1.5 on any other (the bot reads which, once a day)
+  open_runtime_other_hours: 1.5         # what other scripts on the account use, plus a margin (at most half the budget)
+  open_lock_loss_seconds: 2             # what a run that found the lock taken costs
+  open_fetch_day:                       # outside calls a day; blank: 100,000 on a Workspace account, 20,000 on any other
+  open_burson_pickup_p90_s: 120         # past this p90 of Burson's pick-up time, background work gives up 30 s more a run
   # What the Resources tab of the bot's sheet starts with. After that the tab is what the bot uses: edit it there.
   # The bot links these when Burson asks about the alert requirements, so only list documents Burson can open.
   resources:

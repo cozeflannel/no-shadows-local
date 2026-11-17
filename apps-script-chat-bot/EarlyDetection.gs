@@ -1970,15 +1970,26 @@ function edDrainQueue_(ctx, report) {
       continue;
     }
     if (verdict.update) row.update_of = verdict.update;
+    // the open engine (Control row 51, OpenEngine.gs): the day's safety stop, the run-time and outside-call steps,
+    // Burson first; with row 51 OFF it always says yes
+    if (row && typeof openMayStart_ === 'function') {
+      const may = openMayStart_('review', ctx, { serious: openSerious_(row) });
+      if (!may.ok) { ctx.log(`early detection: no more reviews this run: ${may.why}`); break; }
+    }
     const tries = edQueueTried_(props, entry.k);
     let res = null;
     if (row) {
       reviews++;
+      if (typeof OE_BG_ !== 'undefined') OE_BG_ = true;  // background work (Gemini's web search protection)
       try {
         res = edReviewAndPost_(ctx, row, report);
       } catch (e) {
         ctx.log(`early detection: couldn't review ${entry.id || 'a queued signal'} (it stays queued): ${(e && e.message) || e}`);
         break;
+      } finally {
+        if (typeof OE_BG_ !== 'undefined') OE_BG_ = false;
+        // row 51: one more toward the day's stop, a review that failed too (the stop catches fast-failing loops)
+        if (typeof openCountReview_ === 'function') openCountReview_(1);
       }
     }
     if (res && res.retry) {  // an early-watch signal whose review failed: no card; one more try, then it is dropped

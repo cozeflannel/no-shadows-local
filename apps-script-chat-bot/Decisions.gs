@@ -207,6 +207,12 @@ function decSkipWhy_(session, st, now) {
   if (st.asked >= perDay) return `${perDay} calls today`;
   if (typeof apiGuardAllowDecisions_ === 'function' && !apiGuardAllowDecisions_(now)) return 'too many calls lately';
   if (session.left() < DEC_MIN_LEFT_MS_) return 'too little of the run left';
+  // the open engine (Control row 51, OpenEngine.gs): the day's quick-look ceiling, the run-time and outside-call steps;
+  // with row 51 OFF it always says yes
+  if (typeof openMayStart_ === 'function') {
+    const may = openMayStart_('quick', null);
+    if (!may.ok) return may.why;
+  }
   return '';
 }
 
@@ -329,6 +335,7 @@ function decisionsAsk_(input, questions, session) {
       // Counted before the call is made: a run that dies mid-call still counts toward every cap
       s.asked++;
       st.asked++;
+      if (typeof openCount_ === 'function') openCount_('ql', 1);  // row 51: one toward the day's quick-look ceiling
       if ((s.perDay || DEC_MAX_PER_DAY_) !== DEC_MAX_PER_DAY_) st.cap = s.perDay; else delete st.cap;
       decSaveState_(props, st);
       if (typeof apiGuardNote_ === 'function') apiGuardNote_('decisions', 1);

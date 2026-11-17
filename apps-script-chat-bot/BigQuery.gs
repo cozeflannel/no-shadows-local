@@ -2637,6 +2637,14 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
     if (on) noteBqDirect_(props, 0, `not checked: ${busy}`);
     return nothing();
   }
+  // the open engine (Control row 51, OpenEngine.gs): no new card past the day's safety stop, while the day's run time
+  // or outside calls are nearly used, or with a Burson alert waiting; with row 51 OFF it always says yes
+  const may = typeof openMayStart_ === 'function' ? openMayStart_('card', ctx, { serious: true }) : { ok: true };
+  if (!may.ok) {
+    console.log(`BigQuery direct poll skipped: ${may.why}`);
+    if (on) noteBqDirect_(props, 0, `not checked: ${may.why}`);
+    return nothing();
+  }
   // The one-space setup with Early Detection first: a story's card that sent no Social Alert doesn't stand in for the
   // post's own card (see bqStoryCardRow_ above); everywhere else `past` is false and nothing below changes
   const past = !!(ctx && ctx.bqPastStoryCards === true);
@@ -4101,7 +4109,9 @@ function noteEarlyWave_(props, clusters, velocity, problem, o) {
     const next = JSON.stringify(s);
     if (next !== was && !edCountSave_(props, next)) ED_COUNT_UNSAVED_ = pending.concat(ED_COUNT_UNSAVED_);
     pending = [];
-    const stop = s.limit ? (s.queued >= s.limit ? `today's limit of ${s.limit} reviews is reached, more after midnight ET` : '')
+    // row 51 (OpenEngine.gs): today's safety stop reached ends the line in place of the tab pointer
+    const stop = typeof openStopReached_ === 'function' && openStopReached_() ? 'safety stop reached'
+      : s.limit ? (s.queued >= s.limit ? `today's limit of ${s.limit} reviews is reached, more after midnight ET` : '')
       : s.queued >= EW_MAX_PER_DAY_ ? `daily cap of ${EW_MAX_PER_DAY_} reached, more tomorrow` : '';
     noteSwitch_('earlyWave', edDayNoteText_({ at: s.at || nowLabel_(), problem: s.problem }, edDayNumbers_(props, s),
       { stop, tab: edTabPointed_(), end: typeof nsrcFailingEnd_ === 'function' ? nsrcFailingEnd_() : '' }));

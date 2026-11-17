@@ -30,6 +30,15 @@ const API_GUARD_BQ_60M_ = 180;
 const API_GUARD_DECISIONS_10M_ = 30;  // two full checks' worth (DEC_MAX_PER_CHECK_ a check, Decisions.gs)
 const API_GUARD_DECISIONS_60M_ = 90;  // as the Gemini 60-minute ceiling: one call a signal, like its one review
 
+// Control row 51 (the open engine, OpenEngine.gs): the rolling ceilings above stay only as a runaway guard, at these
+// (the open-engine plan's O3 row 20; Decisions' recorded live limit is about 285 calls a minute)
+const API_GUARD_OPEN_GEMINI_10M_ = 120;
+const API_GUARD_OPEN_GEMINI_60M_ = 500;
+const API_GUARD_OPEN_BQ_10M_ = 150;
+const API_GUARD_OPEN_BQ_60M_ = 700;
+const API_GUARD_OPEN_DECISIONS_10M_ = 600;
+const API_GUARD_OPEN_DECISIONS_60M_ = 2400;
+
 // Vertex AI HTTP 429 retry-storm cooldown (ms)
 const API_GUARD_V429_KEY_ = 'api_guard_v429';
 const API_GUARD_V429_MS_ = 30 * 1000;
@@ -114,8 +123,15 @@ function apiGuardAllowBackground_(kind, slaBusy, nowMs) {
   const c = apiGuardCounts_(nowMs);
   const checkGemini = !kind || kind === 'any' || kind === 'gemini';
   const checkBq = !kind || kind === 'any' || kind === 'bigquery';
-  if (checkGemini && (c.gemini10m >= API_GUARD_GEMINI_10M_ || c.gemini60m >= API_GUARD_GEMINI_60M_)) return false;
-  if (checkBq && (c.bq10m >= API_GUARD_BQ_10M_ || c.bq60m >= API_GUARD_BQ_60M_)) return false;
+  // Control row 51 (OpenEngine.gs): the rolling ceilings stay only as a runaway guard (API_GUARD_OPEN_*_); a 429 makes
+  // background work wait 10 minutes instead (openNote429_, openMayStart_). OFF: the ceilings as they were
+  const open = typeof openOn_ === 'function' && openOn_();
+  const g10 = open ? API_GUARD_OPEN_GEMINI_10M_ : API_GUARD_GEMINI_10M_;
+  const g60 = open ? API_GUARD_OPEN_GEMINI_60M_ : API_GUARD_GEMINI_60M_;
+  const b10 = open ? API_GUARD_OPEN_BQ_10M_ : API_GUARD_BQ_10M_;
+  const b60 = open ? API_GUARD_OPEN_BQ_60M_ : API_GUARD_BQ_60M_;
+  if (checkGemini && (c.gemini10m >= g10 || c.gemini60m >= g60)) { if (open) openWall_('guard'); return false; }
+  if (checkBq && (c.bq10m >= b10 || c.bq60m >= b60)) { if (open) openWall_('guard'); return false; }
   return true;
 }
 
@@ -140,7 +156,9 @@ function apiGuardDecisionsCounts_(nowMs) {
  */
 function apiGuardAllowDecisions_(nowMs) {
   const c = apiGuardDecisionsCounts_(nowMs);
-  return c.decisions10m < API_GUARD_DECISIONS_10M_ && c.decisions60m < API_GUARD_DECISIONS_60M_;
+  const open = typeof openOn_ === 'function' && openOn_();  // row 51: the runaway guard's ceilings
+  return c.decisions10m < (open ? API_GUARD_OPEN_DECISIONS_10M_ : API_GUARD_DECISIONS_10M_) &&
+    c.decisions60m < (open ? API_GUARD_OPEN_DECISIONS_60M_ : API_GUARD_DECISIONS_60M_);
 }
 
 /** True while Vertex AI is inside its brief post-429 retry-storm cooldown window. Never throws. */
@@ -162,6 +180,7 @@ function apiGuardNoteVertex429_(nowMs) {
     const now = Number(nowMs) || Date.now();
     const sec = Math.max(10, Math.ceil(API_GUARD_V429_MS_ / 1000) + 5);
     CacheService.getScriptCache().put(API_GUARD_V429_KEY_, String(now + API_GUARD_V429_MS_), sec);
+    if (typeof openNote429_ === 'function') openNote429_(now);  // row 51: background work waits 10 minutes
   } catch (e) {}
 }
 

@@ -1618,7 +1618,7 @@ module.exports = H => {
     const sh = t.control();
     const ROW = B.ev('CONTROL_HELP_ROW_');
     eq([ROW, sh.cell(ROW - 5, 1), sh.cell(ROW - 4, 1), sh.cell(ROW - 3, 1), sh.cell(ROW - 2, 1), sh.cell(ROW - 1, 1), sh.cell(ROW, 1)],
-      [53, 'Early Detection: also read the AMIE table', 'Early Detection: also read Brandwatch live (not X)', 'Proactive watch: also read the AMIE table', '', '', 'How it works']);
+      [53, 'Early Detection: also read the AMIE table', 'Early Detection: also read Brandwatch live (not X)', 'Proactive watch: also read the AMIE table', 'Open engine: judgment in place of caps', '', 'How it works']);
     eq(help.map((_, k) => sh.cell(ROW + 1 + k, 1)), help);
     eq([sh.cell(ROW + 1 + i, 1), sh.cell(ROW + 2 + i, 1), sh.rows.length, B.ev('CONTROL_HELP_ROWS_') >= help.length + 1],
       [help[i], help[i + 1], ROW + help.length, true]);

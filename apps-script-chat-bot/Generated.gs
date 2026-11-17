@@ -98,6 +98,12 @@ const GEN = {
   "bw_live_pause_at_used": 450,
   "bw_live_source_type_new": true,
   "early_detection_claim_members": true,
+  "open_daily_stop": 2000,
+  "open_runtime_budget_hours": null,
+  "open_runtime_other_hours": 1.5,
+  "open_lock_loss_seconds": 2.0,
+  "open_fetch_day": null,
+  "open_burson_pickup_p90_s": 120.0,
   "resources": [
    {
     "name": "SLRR Collection Requirements",
