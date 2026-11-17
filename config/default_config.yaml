@@ -104,7 +104,7 @@ burson_qa:
   # changes what the bot posts, queues or emails.
   early_detection_first: true    # the one-space setup: Early Detection runs before the Direct BigQuery poll (false: the poll first, as before)
   early_wave_reviews_per_hour: 6 # the Auto-correct flow: ordinary story signals queued for review in a clock hour (0: the old rule, 40 queued a day)
-  early_wave_reviews_per_day: 150  # ...and story signals queued a day at most (used only while the hourly rule is on)
+  early_wave_reviews_per_day: 150  # ...and story signals queued a day at most (used only while the hourly rule is on; 0: the old rule too)
   early_wave_topic_min_ratio: 3  # the Auto-correct flow: a topic's pace jump under this multiple of its usual count is noted, not reviewed (0: reviewed, as before)
   early_detection_tab: true      # the "Early Detection" tab: every story signal and what happened to it (false: no tab is made or written)
   cross_alert_notes: true        # the Auto-correct flow: a note under another alert's card when two alert types meet on one post or story (false: no note)

@@ -3986,8 +3986,8 @@ function edQueueUnser_(props) {
  * The allowance of the Auto-correct flow (ctx.sourceReadOnly; setting early_wave_reviews_per_hour above 0), in place of
  * the old rule's EW_MAX_PER_DAY_ a day: at most EW_MAX_PER_CHECK_ signals queued a check, early_wave_reviews_per_day a
  * day, EW_MAX_PER_HOUR_ in one clock hour (Eastern) and, of those, early_wave_reviews_per_hour ordinary ones (a serious
- * signal, FastTriage.gs edSerious_, passes that last one). null when the old rule applies (another flow, or the setting
- * at 0). Else {perHour, perDay, key (this clock hour: "yyyy-MM-dd HH" Eastern), all and ord (signals, and ordinary
+ * signal, FastTriage.gs edSerious_, passes that last one). null when the old rule applies (another flow, or either
+ * setting at 0). Else {perHour, perDay, key (this clock hour: "yyyy-MM-dd HH" Eastern), all and ord (signals, and ordinary
  * ones, queued in this hour so far: `today.hr`), dayQueued (signals queued today so far)}. `today`: edDayState_'s.
  * Never throws.
  */
@@ -4000,6 +4000,8 @@ function edAllowance_(ctx, today, now) {
     const d = Number(S.early_wave_reviews_per_day);
     const perDay = S.early_wave_reviews_per_day !== undefined && S.early_wave_reviews_per_day !== null && isFinite(d) && d >= 0
       ? Math.round(d) : EW_ALLOW_PER_DAY_;
+    // the day's setting at 0 keeps the old rule too, as the config's rollback note says (not a day without reviews)
+    if (!(perDay > 0)) return null;
     const key = Utilities.formatDate(new Date(Number(now) || Date.now()), GEN.timezone, 'yyyy-MM-dd HH:mm').slice(0, 13);
     const t = today || {};
     const hr = Array.isArray(t.hr) && String(t.hr[0]) === key ? t.hr : null;

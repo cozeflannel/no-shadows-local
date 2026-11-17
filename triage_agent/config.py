@@ -613,7 +613,8 @@ class BursonQAConfig(ConfigModel):
     # The Auto-correct flow: ordinary story signals queued for review in a clock hour (Eastern). 0: the old rule (40
     # queued a day, whatever they are).
     early_wave_reviews_per_hour: int = 6
-    # ...and story signals queued a day at most (used only while early_wave_reviews_per_hour is above 0).
+    # ...and story signals queued a day at most (used only while early_wave_reviews_per_hour is above 0). 0: the old
+    # rule too, as with early_wave_reviews_per_hour at 0.
     early_wave_reviews_per_day: int = 150
     # The Auto-correct flow: a pace jump on a whole topic under this multiple of its usual count is noted, not reviewed.
     # 0: every topic count is queued and reviewed, as before.
