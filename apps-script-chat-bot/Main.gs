@@ -360,6 +360,9 @@ function poll() {
       writeControlStatus_(control, { status: pausedStatusText_(), lastCheck: nowLabel_(), today: todayText_(readStats_(), dayKey_(), wanted.switches.noWait) });
       return;
     }
+    // The Early Detection tab (EarlyDetectionTab.gs, setting early_detection_tab): made once, with row 19 ON, before any
+    // flow writes C19, so C19 never points at a tab that isn't there; after that no Sheets call here. Never throws
+    if (wanted.switches.earlyWave) maybeMakeEdTab_(ss);
     // S-F Burson (Control tab B25), once this run, for every flow and Chat.gs (Config.gs setSfBurson_); C25 says what the
     // bot found. Blank or not found, everything that needs it is paused (fail closed). Never throws.
     sfb = sfBursonFor_(control, wanted);

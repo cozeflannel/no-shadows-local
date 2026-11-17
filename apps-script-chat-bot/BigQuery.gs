@@ -3996,7 +3996,8 @@ function edDayNoteText_(s, n, o) {
  * The day's stop: once EW_MAX_PER_DAY_ signals were queued, "daily cap of 40 reached, more tomorrow". A check that runs
  * under another daily limit passes it (o.dayLimit: the number of reviews a day); it is kept with the counts until the
  * next check, and the line then says "today's limit of 150 reviews is reached, more after midnight ET" once that many
- * were queued. The pointer to the Early Detection tab is there only with the setting early_detection_tab on. Every
+ * were queued. The pointer to the Early Detection tab is there only with the setting early_detection_tab on and the
+ * bot's tab made (EarlyDetectionTab.gs edTabPointed_: never a pointer to a tab that isn't there). Every
  * caller is at rest (every signal counted is where the queue says it is), so the numbers add up here: the counts this
  * run could not save yet (edCount_) go in first and are saved with the rest. Only when a count was lost for good (the
  * run that kept it ended first) they don't: then found is made to add up (set to what the others add up to), and the
@@ -4045,7 +4046,7 @@ function noteEarlyWave_(props, clusters, velocity, problem, o) {
     const stop = s.limit ? (s.queued >= s.limit ? `today's limit of ${s.limit} reviews is reached, more after midnight ET` : '')
       : s.queued >= EW_MAX_PER_DAY_ ? `daily cap of ${EW_MAX_PER_DAY_} reached, more tomorrow` : '';
     noteSwitch_('earlyWave', edDayNoteText_({ at: s.at || nowLabel_(), problem: s.problem }, edDayNumbers_(props, s),
-      { stop, tab: GEN.settings.early_detection_tab !== false }));
+      { stop, tab: edTabPointed_() }));
   } catch (e) {
     ED_COUNT_UNSAVED_ = pending.concat(ED_COUNT_UNSAVED_);
     console.error('could not count early detection alerts: ' + ((e && e.message) || e));

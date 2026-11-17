@@ -28,8 +28,11 @@
  * EDT_WAIT_ROWS_ rows and EDT_WAIT_CHARS_ characters (and as many bytes), the newest kept; the ones that had to go are
  * counted, and the next write adds one row "N outcomes were not recorded (the runs were full)". A run without a row to
  * write makes no Sheets call at all, except while Status says a tab is in the way (EDT_BLOCKED_PROP_): then a run with
- * time looks at the tab of that name once (edTabRecheck_), so the sentence goes as soon as that tab is renamed. The tab is
- * made the first time there is a row to write, after the last of the report tabs, so no tab moves. Never throws.
+ * time looks at the tab of that name once (edTabRecheck_), so the sentence goes as soon as that tab is renamed; and until
+ * the bot has made its tab (EDT_MADE_PROP_): poll() makes it at the start of the first run with Early Detection (row 19)
+ * ON and the setting on, before any flow writes Control C19, with its header rows and "Today: nothing yet."
+ * (maybeMakeEdTab_), so C19, which points at the tab only once it is made (edTabPointed_), never points at a tab that
+ * isn't there. The tab goes after the last of the report tabs, so no tab moves. Never throws.
  *
  * Row 3 is as of the last write (its date and time say when): a run that writes no row doesn't touch it, so on a quiet
  * day it can be behind Control C19. Rows that wait live only in the cache value: if the cache drops it, they are gone
@@ -54,6 +57,8 @@ const EDT_WAIT_ROWS_ = 200;
 const EDT_WAIT_CHARS_ = 90000;               // characters, and UTF-8 bytes: the cache may count either
 // 'true' while a tab named "Early Detection" that the bot didn't make is in the way (Status, B5, says so)
 const EDT_BLOCKED_PROP_ = 'ED_TAB_BLOCKED';
+// 'true' once the bot has made its tab (or found its own): Control C19 points at the tab only then (edTabPointed_)
+const EDT_MADE_PROP_ = 'ED_TAB_MADE';
 const EDT_WIDTHS_ = [[1, 130], [2, 230], [3, 320], [4, 360], [5, 110], [6, 170], [7, 80], [8, 120], [9, 280], [10, 300]];
 
 /** The setting early_detection_tab: on unless it is false. */
@@ -151,6 +156,7 @@ function writeEdTab_(ss, rows, lost, now) {
   } catch (e) {
     console.error('Early Detection tab: its oldest rows could not be deleted: ' + ((e && e.message) || e));
   }
+  noteEdTabMade_();
   return { blocked: false, written: n };
 }
 
@@ -365,10 +371,76 @@ function edTabBlocked_() {
 function edTabRecheck_(ss) {
   try {
     const found = ss.getSheetByName(EDT_NAME_);
-    if ((found ? edTabOwner_(found) : 'bot') === 'bot') noteEdTabBlocked_(false);
+    const owner = found ? edTabOwner_(found) : 'bot';
+    if (owner === 'bot') noteEdTabBlocked_(false);
+    if (found && owner === 'bot') noteEdTabMade_();
   } catch (e) {
     console.error('Early Detection tab: could not look at it again: ' + ((e && e.message) || e));
   }
+}
+
+/**
+ * From poll(), at the start of a run with Early Detection (Control row 19) ON, before any flow writes Control C19: the
+ * tab, made once (edTabMakeOnce_) when the setting is on and the bot has not made it yet (EDT_MADE_PROP_), nor been told
+ * a tab of that name is in the way. After that no Sheets call. Never throws.
+ */
+function maybeMakeEdTab_(ss) {
+  try {
+    if (!edTabOn_() || edTabMade_() || edTabBlocked_()) return;
+    edTabMakeOnce_(ss);
+  } catch (e) {
+    console.error('Early Detection tab: ' + ((e && e.message) || e));
+  }
+}
+
+/**
+ * The tab, made once without a row to write (maybeMakeEdTab_): its first four rows with "Today: nothing yet."
+ * (ensureEdTab_), so Control C19's pointer never leads to a tab that isn't there. The bot's own tab already there is only
+ * remembered. A tab of that name the bot didn't make is left as it is (never read past its first four rows, cleared or
+ * written): Status says it is in the way, and C19 has no pointer. Sheets not answering changes nothing (the next run
+ * tries again). Never throws.
+ */
+function edTabMakeOnce_(ss) {
+  try {
+    if (!ss) return;
+    const found = ss.getSheetByName(EDT_NAME_);
+    const owner = found ? edTabOwner_(found) : 'bot';
+    if (owner === 'unknown') return;
+    if (owner === 'other') {
+      noteEdTabBlocked_(true);
+      return;
+    }
+    if (found || ensureEdTab_(ss)) noteEdTabMade_();
+  } catch (e) {
+    console.error('Early Detection tab: could not be made: ' + ((e && e.message) || e));
+  }
+}
+
+/** Has the bot made its tab (EDT_MADE_PROP_)? Never throws. */
+function edTabMade_() {
+  try {
+    return PropertiesService.getScriptProperties().getProperty(EDT_MADE_PROP_) === 'true';
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Remembers that the bot's tab is there (EDT_MADE_PROP_), once. Never throws. */
+function noteEdTabMade_() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (props.getProperty(EDT_MADE_PROP_) !== 'true') props.setProperty(EDT_MADE_PROP_, 'true');
+  } catch (e) {
+    console.error('could not note the Early Detection tab: ' + ((e && e.message) || e));
+  }
+}
+
+/**
+ * Control C19 ends with its pointer to the tab only when the tab is there to be read: the setting on, the bot's tab made
+ * (EDT_MADE_PROP_) and no tab of that name in its way. Never throws.
+ */
+function edTabPointed_() {
+  return edTabOn_() && edTabMade_() && !edTabBlocked_();
 }
 
 /** Remembers whether a tab named "Early Detection" that the bot didn't make is in the way (EDT_BLOCKED_PROP_). Never throws. */
