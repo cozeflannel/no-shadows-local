@@ -256,10 +256,34 @@ one line under it: what was built, the suite's count, and anything left out with
       precision measure (it needs the Engine tab's daily row to know which early cards were later dismissed, from S3's
       records over days). No test catches the early watch's caps being kept: a run with more than 5 early-watch stories
       needs the producer's own scenario, which this harness does not build.
-- [ ] **S12** Story reviews side by side
+- [ ] **S12** Story reviews side by side (not built: see below)
+      Not built, and why: the step splits the story review (`edReviewAndPost_`) into prepare, one fetchAll of K Gemini
+      reviews through a new `geminiGenerateMany_`, and decide-and-post, with the same-story check run again before each
+      card, answers stored on the queued row before posting, K growing from 3 to 6 and halved on a 429, and one at a time
+      after a run died. The fix plan's four "one issue, one Social Alert email" timelines must hold at K = 6. That
+      rebuilds the one review path every story card and its emails go through, and Gemini's reply parsing that Burson's
+      reviews share (GEM:406-449). Done in part, it would leave two review paths, and a fault there would reach
+      Burson's own reviews. Under row 51 the reviews stay one at a time, with no count a run (S5), bounded by the run's
+      time, the safety stop and the pace (S2), and the 10-minute back-off after a 429 for background calls (S2). Steps
+      that depend on S12 here: none of those that follow need it to run.
 
 ### Requirements first (plan 3, and plan 4 for S19h; briefs 17 to 25)
-- [ ] **S19a** The code check, counted only
+- [ ] **S19a** The code check, counted only (built in part: see below; left unticked)
+      Built, under row 51 with the setting `open_requirements_first` (true): `RequirementsFirst.gs`, `rqCheckPost_` (the
+      plan's RQ2 steps 0-3 through `escalation_`, no number copied: a post already seen is not checked alone; Google's own
+      post passes at 30 comments and 30% negative and fails below either; the rules alone with the source's KOF lists
+      (less `RX_NOT_KOF_LIST_`), its official tag or topic, 2,000+ or a tier HIGH; a KOF sheet hit is a code pass
+      (`KOF_SHEET`) without setting `kof`; a post no judgment could pass fails with its exclusion; else a judgment, gated
+      under 40 characters), `rqKofIndex_` / `rqKofSheetHit_` (a profile link on its network, a bare handle on any), and
+      `rqCountPosts_` in the producer after the same-author dedup: each post's `rq` and `rr` kept in memory and the Engine
+      tab's `alone`, `codePass`, `gated`, `failed` and `codeMs` columns filled. Nothing is posted, queued or reviewed
+      because of it. Suite: 1,318 of 1,318 passed. Left out, and why: the SQL columns (`kofl`, `stag`, `eng2`, `isnew`,
+      `big`) and the `gated` rows kept out of grouping, DSD's KOF authors as a list, the owned facts' US job, and reading
+      the KOF sheet's index from the knowledge cache (each changes the producer's requests or its stored state, the
+      ground S7 and S9 leave out; the posts carry only today's columns, so today the check sees engagements and text, and
+      a source's KOF list or tag only where a later step adds them); the seen set (it needs S19g's records); the
+      "MR cases and RQ2 table give the same track as escalation_" test (the check calls escalation_ itself, so the
+      track is escalation_'s by construction); request bodies with the setting false (no request changes here).
 - [ ] **S19b** Code passes reviewed and carded
 - [ ] **S19d** The quick look for single posts, and quick passes, live from the first day (the plan's S19d and S19e together)
 - [ ] **S19h** The first screen

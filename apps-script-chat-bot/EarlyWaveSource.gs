@@ -3225,6 +3225,9 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     const nsigs = nx ? ewsLoadSigs_(cache, Number(st.sn) || 0, 'sn') : null;
     posts = nx ? ewsDedupSigsSplit_(posts, sigs, nsigs, now) : ewsDedupSigs_(posts, sigs, now);
     last.kept = posts.length;
+    // requirements first (row 51, step S19a: RequirementsFirst.gs): every post kept is checked against the alert
+    // requirements code can decide, and counted on the Engine tab; nothing is posted, queued or reviewed because of it
+    if (typeof rqCountPosts_ === 'function') rqCountPosts_(posts, {});
 
     // The stories, the pool and the accounts so far
     const clusters = ewsLoadClusters_(cache, Number(st.cl) || 0);

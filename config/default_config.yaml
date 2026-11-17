@@ -167,6 +167,7 @@ burson_qa:
   open_fresh_minutes: 180               # ...a post read later than this after posting is late
   open_lane_bars: ''                    # measured same-story bars by source (JSON); blank: the script property OPEN_LANE_BARS, else today's bars
   open_hold_none_at: 0.8                # under row 51 (step S11): a signal whose most probable severity is none at this or more is held back
+  open_requirements_first: true         # under row 51 (step S19a): every post read is checked against the alert requirements code can decide (counted)
   open_queue_max: 24                    # the review queue under row 51 (step S5); a story that does not fit waits for a later check
   # What the Resources tab of the bot's sheet starts with. After that the tab is what the bot uses: edit it there.
   # The bot links these when Burson asks about the alert requirements, so only list documents Burson can open.
