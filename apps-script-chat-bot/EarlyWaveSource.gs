@@ -130,6 +130,9 @@ const EWS_NEW_LANES_ = ['ami', 'amis', 'bwl', 'bwls'];
 // an entry only while its switch is ON. A new lane's post ids start with its source and a pipe ('AMI|…', 'BWL|…').
 const EWS_NEW_LANE_DEFS_ = [];
 const EWS_NEW_SWITCHES_ = { edAmie: 'ami', edBwLive: 'bwl' };  // a new source's Control switch -> the source
+// Each new source's marks in EWS_STATE's `marks`, forgotten when its row is OFF (ewsNewSourceOff_); the step that
+// builds a source adds its own here ('ami': the newest ingestion time taken from the AMIE table)
+const EWS_SRC_MARKS_ = { ami: ['ami'], bwl: [] };
 const EWS_NEW_DAY_CAP_ = 15000;            // new lanes embed only while the day's total is under min(this, the day's pace)
 const EWS_CARRY_MS_ = 2 * 3600 * 1000;     // a new lane's post not embedded is carried to the next checks this long
 const EWS_SRC_DAY_PROP_ = 'EWS_SRC_DAY';   // the new sources' day record: first ON date, counts per day (7 days), lifted stories
@@ -1960,6 +1963,56 @@ function ewsNewSources_(sw) {
     if (d && d.sw && on[d.sw] === true) { const src = ewsSrcOfDef_(d); if (out.indexOf(src) < 0) out.push(src); }
   });
   return out;
+}
+
+/**
+ * The AMIE table's Control row (48, `edAmie`) is OFF this run (Main.gs, beside the Watch's own OFF call): its read is
+ * forgotten (ewsNewSourceOff_), so ON again starts afresh. Never throws.
+ */
+function ewsAmieOff_(sw) { ewsNewSourceOff_('ami', sw); }
+
+/**
+ * A new source whose Control row is OFF this run (`src`: 'ami' | 'bwl'; `sw`: the run's switches): its marks in
+ * EWS_STATE (EWS_SRC_MARKS_) and a job of its own left running are forgotten; once no new source is ON at all, also the
+ * new lanes' shared items: the posts carried to the next check ('carry'), the post-key index ('nk:N') and their own
+ * same-author signatures ('sn:N'). Never the day counts or the trial date (EWS_SRC_DAY, st.day), and never the
+ * leave-out lists ('xb', 'ak': they expire on their own, and a check with every row OFF still uses them for the
+ * new-lane posts left in stories). Reads EWS_STATE only; writes it (and touches the cache) only when something of the
+ * new sources is there, so with the rows always OFF nothing is written. Never throws.
+ */
+function ewsNewSourceOff_(src, sw) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (!props.getProperty(EWS_STATE_PROP_)) return;
+    const st = ewsState_(props);
+    let changed = false;
+    (EWS_SRC_MARKS_[src] || []).forEach(k => {
+      if (Object.prototype.hasOwnProperty.call(st.marks, k)) { delete st.marks[k]; changed = true; }
+    });
+    EWS_NEW_LANE_DEFS_.filter(d => d && d.key && ewsSrcOfDef_(d) === src).forEach(d => {
+      const job = st.jobs[d.key];
+      if (!job) return;
+      if (job.id) ewsCancel_(job);
+      delete st.jobs[d.key];
+      changed = true;
+    });
+    const items = [];
+    if (!ewsNewSources_(sw).length && ('nk' in st || 'sn' in st)) {
+      items.push('carry');
+      for (let i = 0; i < (Number(st.nk) || 0); i++) items.push(`nk:${i}`);
+      for (let i = 0; i < (Number(st.sn) || 0); i++) items.push(`sn:${i}`);
+      delete st.nk;
+      delete st.sn;
+      changed = true;
+    }
+    if (items.length) {
+      const cache = ewsCache_();
+      try { if (cache) cache.removeAll(items.map(k => EWS_CACHE_PREFIX_ + k)); } catch (e) { /* they expire */ }
+    }
+    if (changed) ewsSaveState_(props, st);
+  } catch (e) {
+    console.warn(`Early wave: couldn't forget the ${src} source's read: ${(e && e.message) || e}`);
+  }
 }
 
 /** The source of a new lane's def: its `src`, else the source of its switch (EWS_NEW_SWITCHES_), else 'new'. Pure. */

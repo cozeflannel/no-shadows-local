@@ -1,0 +1,289 @@
+// The new sources' Control rows (Control.gs, Main.gs, EarlyWaveSource.gs): row 48, "Early Detection: also read the AMIE
+// table", written OFF and never set ON by the bot; "How it works" moved once to row 52 (rows 49 and 50 kept blank for
+// the next two switches, row 51 the blank row above the help); the seam that tells Early Detection's source which new
+// rows are ON (ewsRunSwitches_, set right after the Control tab is read); and what a row turned OFF forgets
+// (ewsAmieOff_). With row 48 OFF nothing new happens anywhere; with it ON nothing reads the AMIE table yet (the read is
+// the next step), and column C says so plainly.
+'use strict';
+
+module.exports = H => {
+  const { test, eq, assert, B, NOW, e2e, makeGoogle, loadBot } = H;
+  const MIN = 60 * 1000;
+  const BASE = require('./ed_new_lanes_base_requests.json');
+  const LABEL = 'Early Detection: also read the AMIE table';
+  const OFF_TEXT = 'OFF (Early Detection does not read the AMIE table)';
+  const WAITING = '✓ ON, but waiting: it needs Early wave & velocity check (row 19) ON, which it adds posts to';
+  const ON_TEXT = '✓ ON: each Early Detection check also reads new rows of the AMIE table (Brandwatch\'s alert feeds, X with its words)';
+  const ON_OFF = ['ON', 'OFF'];
+  const cells = (sh, r) => [1, 2, 3].map(c => sh.cell(r, c));
+  const lists = sh => Object.fromEntries(Object.entries(sh.validations).map(([k, v]) => [k, v && v.values]));
+  const EWS_COLS = ['kind', 'lane', 'mid', 'url', 'platform', 'author', 'audience', 'eng', 'posted_ms', 'seen_ms', 'txt', 'topic',
+    'chash', 'sig', 'risk', 'brand'];
+
+  // A world after setup(), with BigQuery answering every early-wave job at once with no rows; every request body kept.
+  const world = () => {
+    const t = e2e();
+    t.bot.setup();
+    t.set('B30', 'tester@testing.test');
+    const bq = [];
+    const orig = t.g.services.UrlFetchApp.fetch;
+    t.g.services.UrlFetchApp.fetch = (url, params) => {
+      if (!String(url).startsWith('https://bigquery.googleapis.com/')) return orig(url, params);
+      const payload = (params && params.payload) || '';
+      let body = {};
+      try { body = JSON.parse(payload || '{}'); } catch (e) { body = {}; }
+      bq.push({ url: String(url), lane: (body.labels && body.labels.lane) || '', location: body.location, payload, method: (params && params.method) || 'get' });
+      return {
+        getResponseCode: () => 200,
+        getHeaders: () => ({}),
+        getContentText: () => JSON.stringify({
+          jobComplete: true,
+          jobReference: { projectId: 'brand-social-central-data', jobId: `job_${bq.length}`, location: body.location || 'US' },
+          schema: { fields: EWS_COLS.map(name => ({ name, type: 'STRING' })) },
+          rows: [],
+        }),
+      };
+    };
+    return { t, bq, sh: t.control() };
+  };
+  // Early Detection's jobs (each names its lane in a label: 'us', 'c1', or a new source's); the bot's other BigQuery
+  // reads (sends, alerts) are not Early Detection's
+  const jobs = w => w.bq.filter(c => c.method === 'post' && /\/queries$/.test(c.url) && c.lane);
+  // anything sent to Secret Manager or Brandwatch, a BigQuery table read (tables.get) or a dry run, or naming the AMIE table
+  const newCalls = w => w.t.g.fetches.filter(f => /secretmanager|api\.brandwatch\.com|\/tables\//.test(f.url))
+    .concat(w.bq.filter(c => /all_sundar_mentions|"dryRun"/.test(c.payload + c.url)));
+  const newState = w => {
+    const names = Array.from(w.t.g.props.keys()).concat(Array.from(w.t.g.cache.keys()));
+    return names.filter(n => /^EWS_SRC_DAY$|^BWL_|^ews1:(carry|nk:|sn:|xb|ak|bwl)/.test(n));
+  };
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // E27: the row, its help line, and the help at row 52
+  // -----------------------------------------------------------------------------------------------------------------
+
+  test('new sources control (E27): a new Control tab has row 48, "Early Detection: also read the AMIE table", OFF with its ON / OFF dropdown and what OFF means in C48 (starting "OFF ("); rows 49-51 are blank and "How it works" is at row 52 with a help line for the row', () => {
+    const { t, sh } = world();
+    eq(cells(sh, 48), [LABEL, 'OFF', OFF_TEXT]);
+    assert.match(sh.cell(48, 3), /^OFF \(/);
+    eq(sh.validations['48,2'].values, ON_OFF);
+    eq([cells(sh, 49), cells(sh, 50), cells(sh, 51), sh.cell(52, 1)], [['', '', ''], ['', '', ''], ['', '', ''], 'How it works']);
+    eq([sh.validations['49,2'], sh.validations['50,2'], sh.validations['51,2']], [undefined, undefined, undefined]);
+    eq([B.ev('CONTROL_HELP_ROW_'), B.switchRows_().slice(-2), B.ev('CONTROL_SWITCHES_').slice(-1)[0].key], [52, [46, 48], 'edAmie']);
+    const help = B.ev('CONTROL_HELP_');
+    eq(help.map((_, i) => sh.cell(53 + i, 1)), help);
+    assert.ok(B.ev('CONTROL_HELP_ROWS_') >= help.length + 1, 'the rows kept for the help hold its title and every line');
+    const line = help.filter(l => l.startsWith(`• ${LABEL}: `));
+    eq(line.length, 1);
+    assert.match(line[0], /row 48, OFF until you turn it ON; it needs Early wave & velocity check \(row 19\) ON/);
+    assert.match(line[0], /never go to S-F Burson/);
+    assert.ok(help.some(l => /^• Rows 11-24, 27-29, 32, 34, 36-40, 46 and 48 are switches/.test(l)));
+    assert.ok(help.some(l => /^• Early wave & velocity check: row 19.*with row 48 ON, posts from the AMIE table can start a story too/.test(l)));
+    // every switch's OFF text starts "OFF (" and every label has its help line (row 48's too)
+    B.ev('CONTROL_SWITCHES_').forEach(s => {
+      assert.match(B.switchOffText_(s), /^OFF \(/, s.key);
+      assert.ok(help.some(l => l.startsWith(`• ${s.label}: `)), s.label);
+    });
+    // a run keeps it so: OFF, C48 the OFF text, the switch read as OFF
+    t.poll();
+    eq([cells(sh, 48), t.bot.readControl_(sh).switches.edAmie], [[LABEL, 'OFF', OFF_TEXT], false]);
+  });
+
+  test('new sources control (E27): a Control tab from before row 48 (row 48 blank, "How it works" at row 49, help lines from row 50) gets row 48 OFF on its next run without setup(); rows 49-51 are left blank (no old help text), the help is at row 52, and no row from 11 to 47 moves or changes (values people set, switches ON, dropdowns)', () => {
+    const { t, sh } = world();
+    // the tab as the build before this one left it: row 48 blank, "How it works" at row 49, its help from row 50
+    const oldHelp = B.ev('CONTROL_HELP_').filter(l => !l.startsWith(`• ${LABEL}: `)).concat(['• An old help line']);
+    sh.rows = sh.rows.slice(0, 47);
+    sh.rows[47] = [''];
+    sh.rows[48] = ['How it works'];
+    oldHelp.forEach((l, i) => { sh.rows[49 + i] = [l]; });
+    delete sh.validations['48,2'];
+    // what people set above it: switches ON, a bar, the lookback
+    sh.getRange(19, 2).setValue('ON');
+    sh.getRange(46, 2).setValue('ON');
+    sh.getRange(34, 2).setValue('ON');
+    sh.getRange(45, 2).setValue('4');
+    sh.getRange(31, 2).setValue('30 minutes');
+    const above = () => sh.rows.slice(10, 47).map(r => [r[0], r[1]]);
+    const before = JSON.stringify(above());
+    const lists0 = lists(sh);
+    t.poll();
+    eq(JSON.stringify(above()), before);
+    eq(lists(sh), Object.assign({}, lists0, { '48,2': ON_OFF }));
+    eq(cells(sh, 48), [LABEL, 'OFF', OFF_TEXT]);
+    eq([cells(sh, 49), cells(sh, 50), cells(sh, 51), sh.cell(52, 1)], [['', '', ''], ['', '', ''], ['', '', ''], 'How it works']);
+    const help = B.ev('CONTROL_HELP_');
+    eq(help.map((_, i) => sh.cell(53 + i, 1)), help);
+    for (let r = 53 + help.length; r <= sh.rows.length; r++) eq(cells(sh, r), ['', '', ''], `row ${r}`);
+    assert.ok(!sh.rows.some(r => /An old help line/.test(String(r[0]))));
+    eq(sh.rows.filter(r => String(r[0]).trim() === 'How it works').length, 1);
+    eq(t.bot.readControl_(sh).switches, Object.assign(B.switchesOff_(), { earlyWave: true, proactiveWatch: true, earlyWaveBq: true }));
+
+    // a person's ON is kept through setup() and more runs; so is their OFF afterwards: the bot writes only OFF
+    sh.getRange(48, 2).setValue('ON');
+    t.bot.setup();
+    t.poll();
+    t.poll();
+    eq([sh.cell(48, 2), t.bot.readControl_(sh).switches.edAmie, sh.cell(52, 1)], ['ON', true, 'How it works']);
+    sh.getRange(48, 2).setValue('OFF');
+    t.bot.setup();
+    t.poll();
+    eq([sh.cell(48, 2), sh.cell(48, 3)], ['OFF', OFF_TEXT]);
+    // a label someone cleared is put back, OFF (the row reads OFF until then)
+    sh.getRange(48, 1, 1, 2).setValues([['', 'ON']]);
+    eq(t.bot.readControl_(sh).switches.edAmie, false);
+    t.poll();
+    eq(cells(sh, 48), [LABEL, 'OFF', OFF_TEXT]);
+  });
+
+  test('new sources control: column C of row 48 while ON says it is waiting while row 19 is OFF, and otherwise the ON text (115 characters); OFF it is the OFF text whatever row 19 says', () => {
+    const texts = sw => B.switchStatusTexts_(sw, '', {}, NOW)[B.switchRows_().indexOf(48)];
+    eq([texts({ edAmie: true }), texts({ edAmie: true, earlyWave: true }), texts({ earlyWave: true }), texts({})],
+      [WAITING, ON_TEXT, OFF_TEXT, OFF_TEXT]);
+    eq(ON_TEXT.length, 115);
+    const { t, sh } = world();
+    sh.getRange(48, 2).setValue('ON');
+    t.poll();
+    eq(sh.cell(48, 3), WAITING);
+    sh.getRange(19, 2).setValue('ON');
+    t.poll();
+    eq(sh.cell(48, 3), ON_TEXT);
+  });
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // The seam: which new rows are ON, as Early Detection's source learns them
+  // -----------------------------------------------------------------------------------------------------------------
+
+  test('new sources control (seam): each run tells Early Detection\'s source the switches it read right after the Control tab (ewsRunSwitches_): row 48 ON is edAmie, OFF is absent; a run that never read the tab leaves every new row OFF', () => {
+    const { t, sh } = world();
+    eq(t.bot.ewsRunSwitches_(), {});  // nothing set yet: all OFF (fail closed)
+    t.poll();
+    eq(t.bot.ewsRunSwitches_(), {});
+    sh.getRange(48, 2).setValue('ON');
+    sh.getRange(19, 2).setValue('ON');
+    t.poll();
+    eq(t.bot.ewsRunSwitches_(), { earlyWave: true, edAmie: true });
+    eq(t.bot.ewsNewSources_(t.bot.ewsRunSwitches_()), ['ami']);
+    sh.getRange(48, 2).setValue('OFF');
+    t.poll();
+    eq(t.bot.ewsRunSwitches_(), { earlyWave: true });
+    // the line sits right after the Control tab is read, and nowhere else in Main.gs
+    const main = require('fs').readFileSync(require('path').join(__dirname, '..', 'Main.gs'), 'utf8');
+    assert.match(main, /\n    wanted = readControl_\(control\);\n    ewsRunSwitches_\(wanted\.switches\);/);
+    eq((main.match(/ewsRunSwitches_\(/g) || []).length, 1);
+    eq((main.match(/ewsAmieOff_\(/g) || []).length, 1);
+  });
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // E1 (the part that exists after this step) and E3: nothing new happens
+  // -----------------------------------------------------------------------------------------------------------------
+
+  test('new sources control (E1): row 48 OFF and row 19 ON, six checks: no Secret Manager or Brandwatch call, no table read or dry run, nothing names the AMIE table, exactly two BigQuery jobs a check (US and us-central1) whose bodies are the ones recorded at commit 3be2e06, no New sources tab, no new property or cache item, C48 the OFF text', () => {
+    const w = world();
+    const { t, sh } = w;
+    sh.getRange(19, 2).setValue('ON');
+    sh.getRange(31, 2).setValue('30 minutes');  // the recorded checks read 30 minutes first
+    // the recording's two checks: 12:00 and 12:15 UTC (the run's clock moves a minute before it starts)
+    t.g.clock.now = NOW - MIN;
+    t.poll();
+    t.g.clock.now = NOW + 14 * MIN;
+    t.poll();
+    eq(jobs(w).map(c => c.payload), BASE.bodies.map(b => b.payload));
+    for (let i = 0; i < 4; i++) { t.g.clock.now += 15 * MIN; t.poll(); }
+    eq([jobs(w).length, jobs(w).map(c => c.lane).filter(l => l !== 'us' && l !== 'c1')], [12, []]);
+    eq([newCalls(w), newState(w), t.sheet().getSheetByName('New sources')], [[], [], null]);
+    const st = JSON.parse(t.g.props.get('EWS_STATE'));
+    eq([['nk', 'sn'].filter(k => k in st), Object.keys(st.marks).filter(k => /ami|bwl/.test(k))], [[], []]);
+    eq([cells(sh, 48), t.bot.readControl_(sh).switches.edAmie], [[LABEL, 'OFF', OFF_TEXT], false]);
+  });
+
+  test('new sources control (E3): row 48 ON with row 19 OFF reads nothing at all (no BigQuery job, no table read, no Brandwatch or Secret Manager call, no Early Detection state); with row 19 ON too, nothing reads the AMIE table yet: the same two jobs, byte for byte, as with row 48 OFF, and no trial starts (the source is not read)', () => {
+    const on = world();
+    on.sh.getRange(48, 2).setValue('ON');
+    for (let i = 0; i < 3; i++) { on.t.g.clock.now += 15 * MIN; on.t.poll(); }
+    eq([jobs(on), newCalls(on), newState(on), on.t.g.props.get('EWS_STATE') === undefined || on.t.g.props.get('EWS_STATE') === null],
+      [[], [], [], true]);
+    eq(on.sh.cell(48, 3), WAITING);
+
+    const run = row48 => {
+      const w = world();
+      w.sh.getRange(19, 2).setValue('ON');
+      w.sh.getRange(48, 2).setValue(row48);
+      for (let i = 0; i < 3; i++) { w.t.g.clock.now += 15 * MIN; w.t.poll(); }
+      return w;
+    };
+    const off = run('OFF');
+    const amie = run('ON');
+    eq(jobs(amie).map(c => c.payload), jobs(off).map(c => c.payload));
+    eq([jobs(amie).length, newCalls(amie), amie.t.sheet().getSheetByName('New sources')], [6, [], null]);
+    eq(amie.sh.cell(48, 3), ON_TEXT);
+    // the new-lane rules of EarlyWaveSource.gs run while a new row is ON (their own day record and index), but with no
+    // AMIE job the source is never read, so its trial has no first day
+    const day = JSON.parse(amie.t.g.props.get('EWS_SRC_DAY') || '{}');
+    eq(Object.keys(day.on || {}), []);
+    // turned OFF again: the next run forgets the new lanes' index and signatures (the day record stays)
+    const onState = JSON.parse(amie.t.g.props.get('EWS_STATE'));
+    eq(['nk', 'sn'].filter(k => k in onState), ['nk', 'sn']);  // the new-lane rules kept their index and signatures while ON
+    const dayRecord = amie.t.g.props.get('EWS_SRC_DAY');
+    amie.sh.getRange(48, 2).setValue('OFF');
+    amie.t.poll();
+    const st = JSON.parse(amie.t.g.props.get('EWS_STATE'));
+    eq([['nk', 'sn'].filter(k => k in st), Array.from(amie.t.g.cache.keys()).filter(k => /^ews1:(nk:|sn:|carry)/.test(k)),
+      amie.t.g.props.get('EWS_SRC_DAY')], [[], [], dayRecord]);
+    eq(amie.sh.cell(48, 3), OFF_TEXT);
+  });
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // Turning row 48 OFF: what it forgets, and what it keeps
+  // -----------------------------------------------------------------------------------------------------------------
+
+  test('new sources control (OFF): a run with row 48 OFF forgets the AMIE table\'s mark and its job left running (cancelled), and, with no new row ON, the new lanes\' carry, post-key index and own signatures; the day counts, the trial date, the leave-out lists and today\'s lanes\' marks stay; the next run writes nothing', () => {
+    const w = world();
+    const { t, sh } = w;
+    const def = { key: 'amj', location: 'US', sw: 'edAmie', query: () => null };
+    t.bot.ev('EWS_NEW_LANE_DEFS_').push(def);
+    const st = { v: 1, at: NOW, marks: { sonar: NOW - 5 * MIN, spk: NOW - 6 * MIN, ami: NOW - 7 * MIN },
+      jobs: { us: { id: 'job_us', location: 'US', at: NOW }, amj: { id: 'job_amj', location: 'US', at: NOW, project: 'brand-social-central-data' } },
+      day: { key: '2026-10-14', embedded: 40, nl: 12 }, nk: 2, sn: 1, cl: 0, sg: 0 };
+    t.g.props.set('EWS_STATE', JSON.stringify(st));
+    const srcDay = JSON.stringify({ v: 1, on: { ami: '2026-10-13' }, d: { '2026-10-14': { ami: { in: 5 } } } });
+    t.g.props.set('EWS_SRC_DAY', srcDay);
+    ['carry', 'nk:0', 'nk:1', 'sn:0', 'xb', 'ak', 'cl:0'].forEach(k => t.g.cache.set(`ews1:${k}`, '[]'));
+    t.poll();
+    const after = JSON.parse(t.g.props.get('EWS_STATE'));
+    eq([after.marks, Object.keys(after.jobs), after.day, 'nk' in after, 'sn' in after],
+      [{ sonar: NOW - 5 * MIN, spk: NOW - 6 * MIN }, ['us'], st.day, false, false]);
+    eq(t.g.props.get('EWS_SRC_DAY'), srcDay);
+    eq(Array.from(t.g.cache.keys()).filter(k => /^ews1:/.test(k)).sort(), ['ews1:ak', 'ews1:cl:0', 'ews1:xb']);
+    eq(w.bq.filter(c => /\/jobs\/job_amj\/cancel/.test(c.url)).map(c => c.method), ['post']);
+    eq(w.bq.filter(c => /\/cancel/.test(c.url) && !/job_amj/.test(c.url)), []);
+    // nothing left to forget: the next runs write nothing
+    const saved = t.g.props.get('EWS_STATE');
+    const writes = [];
+    const set = t.g.props.set.bind(t.g.props);
+    t.g.props.set = (k, v) => { if (k === 'EWS_STATE') writes.push(v); return set(k, v); };
+    t.poll();
+    t.poll();
+    eq([writes, t.g.props.get('EWS_STATE')], [[], saved]);
+    eq(sh.cell(48, 2), 'OFF');
+  });
+
+  test('new sources control (OFF): with another new source still ON, turning the AMIE table OFF forgets only its own mark and job; the shared items stay; with no Early Detection state at all it writes nothing and never throws', () => {
+    const g = makeGoogle(NOW);
+    const b = loadBot(g.services, g.clock);
+    const st = { v: 1, marks: { sonar: 1, ami: 2 }, jobs: {}, day: {}, nk: 1, sn: 1 };
+    g.props.set('EWS_STATE', JSON.stringify(st));
+    g.cache.set('ews1:carry', '[]');
+    g.cache.set('ews1:nk:0', '[]');
+    b.ewsAmieOff_({ edBwLive: true });
+    eq(JSON.parse(g.props.get('EWS_STATE')), { v: 1, marks: { sonar: 1 }, jobs: {}, day: {}, nk: 1, sn: 1 });
+    eq(Array.from(g.cache.keys()).sort(), ['ews1:carry', 'ews1:nk:0']);
+    const empty = makeGoogle(NOW);
+    const b2 = loadBot(empty.services, empty.clock);
+    b2.ewsAmieOff_({});
+    b2.ewsAmieOff_(undefined);
+    eq([Array.from(empty.props.keys()), Array.from(empty.cache.keys())], [[], []]);
+    empty.props.set('EWS_STATE', '{not json');
+    b2.ewsAmieOff_({});
+    eq(empty.props.get('EWS_STATE'), '{not json');
+  });
+};
