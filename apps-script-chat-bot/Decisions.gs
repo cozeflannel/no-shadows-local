@@ -636,6 +636,67 @@ function decCompact_(answers) {
   return out;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// The quick look at one post (requirements-first step S19d): four questions, no link, handle, follower count,
+// engagement or id sent
+// ---------------------------------------------------------------------------------------------------------------
+
+const DEC_Q_SENSITIVE_ = 'sensitive';
+const DEC_POST_TEXT_CHARS_ = 600;
+const DEC_POST_MIN_CHARS_ = 20;
+const DEC_NO_SENSITIVE_ = 'none';
+
+/** One post as the quick look reads it: {signal, platform, posted_at, text}; '' when its clean text is under 20 characters. Pure. */
+function decPostInput_(post) {
+  const p = post || {};
+  const text = decCleanText_(p.text, DEC_POST_TEXT_CHARS_);
+  if (!text || text.length < DEC_POST_MIN_CHARS_) return '';
+  const out = { signal: 'one post' };
+  const platform = decPlatform_(p.platform);
+  const at = decTime_(p.posted_at || (Number(p.t) > 0 ? new Date(Number(p.t)).toISOString() : ''));
+  if (platform) out.platform = platform;
+  if (at) out.posted_at = at;
+  out.text = text;
+  return JSON.stringify(out);
+}
+
+/** The Sensitive Topics as options (GEN's names and descriptions), and "none". Pure. */
+function decSensitiveOptions_() {
+  const out = {};
+  ((typeof GEN !== 'undefined' && GEN && GEN.sensitive_topics) || []).forEach(t => {
+    const name = String((t && t.name) || '').replace(/\s+/g, ' ').trim();
+    if (name && name.length <= 128 && !Object.prototype.hasOwnProperty.call(out, name)) out[name] = String((t && t.description) || '').replace(/\s+/g, ' ').trim();
+  });
+  out[DEC_NO_SENSITIVE_] = 'None of these topics: the post touches no sensitive topic.';
+  return out;
+}
+
+/** The four questions about one post: about_google, category (the Exposure Tags), sensitive, severity. Pure. */
+function decPostQuestions_() {
+  const s = decSignalQuestions_();
+  const q = {};
+  q[DEC_Q_ABOUT_] = Object.assign({}, s[DEC_Q_ABOUT_], { instructions: 'Is the post in `text` about Google or Alphabet: the company, one of its ' +
+    'executives, or one of its products or services?' });
+  q[DEC_Q_CATEGORY_] = Object.assign({}, s[DEC_Q_CATEGORY_], { instructions: 'Which of Google\'s brand-safety Exposure Tags best describes what the post in `text` is about?' });
+  q[DEC_Q_SENSITIVE_] = { type: 'choice', instructions: 'Which Sensitive Topic, if any, does the post in `text` touch?', criteria: decSensitiveOptions_() };
+  q[DEC_Q_SEVERITY_] = Object.assign({}, s[DEC_Q_SEVERITY_], { instructions: 'How severe, for Google\'s reputation, is what the post in `text` describes?' });
+  return q;
+}
+
+/** The post's answers as kept: {g, c, cp, p0, st, stp, sp0, l, sc}; null when one is missing. Pure. */
+function decPostCompact_(answers) {
+  const a = answers || {};
+  const r2 = v => Math.round(Number(v) * 100) / 100;
+  const ab = a[DEC_Q_ABOUT_];
+  const cat = a[DEC_Q_CATEGORY_];
+  const sen = a[DEC_Q_SENSITIVE_];
+  const sev = a[DEC_Q_SEVERITY_];
+  if (!ab || ab.type !== 'noul' || !cat || cat.type !== 'choice' || !sen || sen.type !== 'choice' || !sev || sev.type !== 'score') return null;
+  const probs = sen.probabilities || {};
+  return { g: r2(ab.p), c: truncate_(String(cat.choice), 128), cp: r2(cat.p), p0: decP0Mass_(cat), st: truncate_(String(sen.choice), 64),
+    stp: r2(sen.p), sp0: r2(1 - (Number(probs[DEC_NO_SENSITIVE_]) || 0)), l: sev.level, sc: r2(sev.confidence) };
+}
+
 /**
  * Many asks at once (step S11, under the open engine): `items` [{input, questions}] (any question set, any input shape)
  * sent side by side in ONE UrlFetchApp.fetchAll, within `session` and decSkipWhy_ (checked once, for the whole batch);

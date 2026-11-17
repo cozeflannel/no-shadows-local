@@ -165,6 +165,7 @@ function rqCountPosts_(posts, facts) {
       else if (res.rq === 'f') n.failed++;
       else n.judge++;
     });
+    rqKeepJudge_(posts);  // for this run's quick looks (rqJudgeRun_, step S19d)
     if (typeof engAdd_ === 'function') {
       engAdd_('alone', n.alone);
       engAdd_('codePass', n.codePass);
@@ -175,5 +176,110 @@ function rqCountPosts_(posts, facts) {
     return n;
   } catch (e) {
     return null;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The quick look at single posts (step S19d), counted: every post the code check left to a judgment is asked, in
+// batches side by side within the run's slice; its verdict is counted at four bars, and nothing is queued (the list
+// of passes waits for step S19b)
+// ---------------------------------------------------------------------------------------------------------------
+
+const RQ_BARS_ = [0.30, 0.35, 0.40, 0.50];
+const RQ_SLICE_MS_ = 20 * 1000;      // the most of a run the looks may take
+const RQ_LEFT_MS_ = 30 * 1000;       // a new batch starts only with this much of the flow left beyond it
+let RQ_RUN_JUDGE_ = [];              // this run's posts the code check left to a judgment (the producer hands them over)
+
+/**
+ * The verdict from one post's answers (`dec`, decPostCompact_) at P0-share bar `bar` (the plan's rqDecide_): not about
+ * Google under 0.20 fails; the tag is the most probable P0 tag when the P0 share is at the bar, else the chosen tag at
+ * 0.80; the topic is the top one when its probability, or the share on any topic, is at the bar; a share of about
+ * Google of 0.50 lifts "Google as a verb"; then escalation_: a track is a quick pass. 'pass' | 'fail'. Pure (reads GEN).
+ */
+function rqDecide_(dec, post, bar) {
+  try {
+    const d = dec || {};
+    if (!(Number(d.g) >= 0.20)) return 'fail';
+    const b = Number(bar) || 0.35;
+    const p0Tag = Number(d.p0) >= b ? (lookupTag_(d.c) && lookupTag_(d.c).priority === 'P0' ? d.c : rqP0Tag_()) : '';
+    const tag = p0Tag || (Number(d.cp) >= 0.80 && lookupTag_(d.c) ? d.c : '');
+    if (tag && /owned social post/i.test(tag) && !p0Tag) return 'fail';  // the owned-post tag needs Sprinklr's numbers
+    const topic = d.st && d.st !== DEC_NO_SENSITIVE_ && (Number(d.stp) >= b || Number(d.sp0) >= b) ? d.st : '';
+    const text = String((post && post.text) || '');
+    const fields = { post_content: Number(d.g) >= 0.50 ? text.replace(/\bgoogl(e|ed|ing)\b/gi, 'search') : text, issue_status: 'NEW',
+      product: String((post && post.product) || '') };
+    if (tag) fields.exposure_tag = tag;
+    if (topic) fields.risk_tags = [topic];
+    const e = escalation_(fields, {});
+    return e && e.track ? 'pass' : 'fail';
+  } catch (e) {
+    return 'fail';
+  }
+}
+
+/** Keeps this run's posts left to a judgment (rqCountPosts_), for rqJudgeRun_. */
+function rqKeepJudge_(posts) {
+  RQ_RUN_JUDGE_ = (posts || []).filter(p => p && (p.rq === 'j' || p.rq === 'g')).map(p => ({ id: p.id, text: p.text, platform: p.platform,
+    t: p.t, chash: p.chash, risk: p.risk || [], eng: p.eng }));
+}
+
+/**
+ * The run's quick looks at single posts (the last background step of the Auto-correct flow): this run's posts left to
+ * a judgment, a P0 risk-term group first, then most engagements, asked in batches side by side (decisionsAskMany_, a
+ * batch starting at 10, growing by 10 to 50 while a batch is quick) while the slice and the flow's time allow and the
+ * open engine allows a quick look; each verdict counted at the four bars on the Engine tab. Off: nothing. Never throws.
+ */
+function rqJudgeRun_(ctx) {
+  const out = { asked: 0, passes: {}, short: 0, notReached: 0 };
+  try {
+    if (!rqOn_() || !RQ_RUN_JUDGE_.length) return out;
+    const start = Date.now();
+    const deadline = Number(ctx && ctx.deadline) || 0;
+    const p0 = p => (p.risk || []).some(g => typeof ftP0Group_ === 'function' && ftP0Group_({ risk_groups: g }));
+    const todo = RQ_RUN_JUDGE_.slice().sort((a, b) => (p0(b) ? 1 : 0) - (p0(a) ? 1 : 0) || (Number(b.eng) || 0) - (Number(a.eng) || 0));
+    const seen = new Set();
+    const items = [];
+    todo.forEach(p => {
+      if (p.chash && seen.has(p.chash)) return;
+      if (p.chash) seen.add(p.chash);
+      const input = decPostInput_(p);
+      if (!input) { out.short++; return; }
+      items.push({ p, input });
+    });
+    RQ_BARS_.forEach(b => { out.passes[b] = 0; });
+    const session = decSession_(() => (deadline ? deadline - Date.now() : Infinity), !!(ctx && ctx.slaBusy));
+    let size = 10;
+    let i = 0;
+    while (i < items.length) {
+      if (Date.now() - start >= RQ_SLICE_MS_ || (deadline && deadline - Date.now() < RQ_LEFT_MS_)) break;
+      const may = typeof openMayStart_ === 'function' ? openMayStart_('quick', null) : { ok: true };
+      if (!may.ok) break;
+      const part = items.slice(i, i + size);
+      const t0 = Date.now();
+      const res = decisionsAskMany_(part.map(x => ({ input: x.input, questions: decPostQuestions_() })), session);
+      i += part.length;
+      res.forEach((r, j) => {
+        if (!r || !r.ok) return;
+        const dec = decPostCompact_(r.answers);
+        if (!dec) return;
+        out.asked++;
+        RQ_BARS_.forEach(b => { if (rqDecide_(dec, part[j].p, b) === 'pass') out.passes[b]++; });
+      });
+      if (res.every(r => r && r.skipped)) break;
+      size = Date.now() - t0 < 3000 ? Math.min(50, size + 10) : 0;
+      if (!size) break;  // a slow batch: no more asks this run
+    }
+    out.notReached = items.length - Math.min(i, items.length);
+    if (typeof engAdd_ === 'function') {
+      engAdd_('asked', out.asked);
+      engAdd_('qPass', out.passes[0.35]);
+      engAdd_('notReached', out.notReached);
+      engAdd_('quickS', Math.round((Date.now() - start) / 100) / 10);
+      engSet_('note', `quick passes at 0.30 / 0.35 / 0.40 / 0.50: ${RQ_BARS_.map(b => out.passes[b]).join(' / ')}`);
+    }
+    RQ_RUN_JUDGE_ = [];
+    return out;
+  } catch (e) {
+    return out;
   }
 }

@@ -182,6 +182,9 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
       pollDirect();
       earlyDetection();
     }
+    // requirements first (row 51, step S19d, RequirementsFirst.gs): the quick looks at this run's single posts the code
+    // check left to a judgment, last, in what is left of the slice; counted only. Off: nothing
+    if (typeof rqJudgeRun_ === 'function' && !slaBusy) rqJudgeRun_(ctx);
     ctx.recent.save();
     const today = bumpAutoCorrectStats_(props, report, dayKey_());
     const issues = report.errors.filter(e => !/^time budget/.test(e));

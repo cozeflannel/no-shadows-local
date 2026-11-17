@@ -284,8 +284,32 @@ one line under it: what was built, the suite's count, and anything left out with
       a source's KOF list or tag only where a later step adds them); the seen set (it needs S19g's records); the
       "MR cases and RQ2 table give the same track as escalation_" test (the check calls escalation_ itself, so the
       track is escalation_'s by construction); request bodies with the setting false (no request changes here).
-- [ ] **S19b** Code passes reviewed and carded
-- [ ] **S19d** The quick look for single posts, and quick passes, live from the first day (the plan's S19d and S19e together)
+- [ ] **S19b** Code passes reviewed and carded (not built: see below)
+      Not built, and why: the step reviews a code pass alone with Burson's own review (`reviewAlert_`, `escalationFor_`,
+      `aiVeto_`) inside the drain, posts a card only when a requirement is met (Direct format with `[Why now]`), hands it
+      to `handleNewAlert_` with the stored review, and claims the post in the alert memory, so it alerts once. Its code
+      passes today would be only the 2,000+ posts: the KOF lists, the source tags and the owned facts come from the
+      producer's SQL columns S19a leaves out. The Direct BigQuery poll already cards 2,000+ posts (with its own Social
+      Alert path), so a second carding path for the same posts would break "one post, one path" until S19c joins them.
+      It also adds a path that sends Social Alert emails. Built on a check that sees only part of the requirements, that
+      path cannot be shown safe by these tests.
+- [ ] **S19d** The quick look for single posts, and quick passes, live from the first day (the plan's S19d and S19e together) (part one built, counted: see below; left unticked)
+      Built (part one, under row 51 with `open_requirements_first`): `decPostInput_` (the platform, the time and the
+      cleaned text, at most 600 characters, nothing under 20; no link, handle, follower count, engagement or id),
+      `decPostQuestions_` (about Google; the Exposure Tags and their own descriptions; the Sensitive Topics with GEN's
+      descriptions and "none"; the severity scale), `decPostCompact_`, the verdict `rqDecide_` (not about Google under
+      0.20; a P0 share at the bar gives a P0 tag; the chosen tag at 0.80; a topic at the bar, alone or as the share on
+      any topic; about Google 0.50 lifts "Google as a verb"; the owned-post tag alone never; then `escalation_`), and
+      `rqJudgeRun_`, the Auto-correct flow's last background step: this run's posts the code check left to a judgment,
+      a P0 risk-term group first, then most engagements, one call per distinct text, asked side by side
+      (`decisionsAskMany_`) in batches from 10 growing by 10 to 50 while a batch takes under 3 s, stopping at a slower
+      one, within a 20-second slice, with 30 s of the flow kept, and only while the open engine allows a quick look; its
+      verdicts counted at 0.30 / 0.35 / 0.40 / 0.50 on the Engine tab (`asked`, `qPass` at 0.35, `notReached`,
+      `quickS`, the four counts in the day's note). Nothing is queued from it. Suite: 1,321 of 1,321 passed. Left out, and
+      why: quick passes into the list, their rank, the back-pressure, the bar guard and the daily audit (part two:
+      they need S19b's list and its review path, not built); the carry `rqj` and the answers `rqa` across runs (the
+      producer's stored state, as S7); its own ApiGuard kind and pause (`decisions_post`, `DECISIONS_POST_STATE`: the
+      looks share the story asks' session and pause today); C51's counting-only, paused and fetch texts.
 - [ ] **S19h** The first screen
 - [ ] **S13** The Watch: a single worrying post goes out alone
 - [ ] **S19c** One path with the Watch, and growth
