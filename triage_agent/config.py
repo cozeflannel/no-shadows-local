@@ -625,6 +625,28 @@ class BursonQAConfig(ConfigModel):
     cross_alert_notes: bool = True
     # The Auto-correct flow: the "Alert requirements" line in the note that follows each review. false: no such line.
     requirement_line: bool = True
+    # New sources in Early Detection (Control rows 48-49, OFF until the owner turns them on): how their posts share the
+    # check with today's sources. None of these does anything while those rows are OFF.
+    # Of the 400 texts embedded a check, the new sources' share (today's sources keep the rest; room one side leaves
+    # goes to the other).
+    early_wave_new_embed_per_check: int = 100
+    # The new sources' texts embedded a UTC day at most (they also stop once the day's total nears its pace).
+    early_wave_new_embed_per_day: int = 5000
+    # A new source's post first seen more than this many minutes after it was posted can only join a story.
+    early_wave_new_late_minutes: int = 180
+    # Of the 1,200 unjoined posts kept to start stories, at most this many from the new sources, each kept this many
+    # minutes at most.
+    early_wave_new_pool_max: int = 300
+    early_wave_new_pool_minutes: int = 120
+    # The new sources' posts not embedded in a check, kept for the next one (2 hours at most).
+    early_wave_new_carry_max: int = 100
+    # Days after a source is first read when stories only the new sources lift over the bar are listed, not sent
+    # for review, and stories only they lift to the early watch are not asked about. 0: no trial (sent from the
+    # first day, within the two caps below).
+    early_wave_new_trial_days: int = 7
+    # After the trial: such lifted stories sent for review in an hour, and in a day, at most (the rest are listed).
+    early_wave_new_lifted_per_hour: int = 2
+    early_wave_new_lifted_per_day: int = 20
     # What the Resources tab of the bot's sheet starts with: documents the bot links when Burson asks about the alert
     # requirements. After that the tab is what the bot uses (people edit it there). Only links Burson can open.
     resources: list[BursonResource] = Field(default_factory=list)
