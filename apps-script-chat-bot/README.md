@@ -1038,8 +1038,10 @@ it's watching, the last check and today's updates (the main run's, not the auto-
   queued or ends. It ends `Never reviewed` only when it is about to drop out of what a check reads (about 40 minutes
   after the producer made it, with B31 at 60 minutes) or when the day's 150 are used. The bot remembers each story it
   put off (at most 150), so one that no later check reads again (checks were skipped while the bot was busy, or busier
-  stories filled the 25 a check reads) still ends `Never reviewed` at the next check that runs, is counted once, and
-  has its row on the Early Detection tab. A topic that is only busier than
+  stories filled the 25 a check reads) still gets its ending at the next check that runs: `Seen before, nothing new`
+  under its card when its story was carded or queued in the meantime (as it would if a check had read it again),
+  otherwise `Never reviewed`. It is counted once and has its row on the Early Detection tab, so C19's never-reviewed
+  number covers only stories that have no card. A topic that is only busier than
   usual (a head count on a topic under 3 times its usual, setting `early_wave_topic_min_ratio`) and isn't serious is
   not reviewed: it ends `Topic busier than usual, not a story`; real jumps of 3 times or more, and serious ones, are
   reviewed. Gemini Decisions may make 300 calls a day here (150 elsewhere), 15 a check. Worst case a day: 150 stories
@@ -1083,7 +1085,9 @@ it's watching, the last check and today's updates (the main run's, not the auto-
   too long to keep for a review`. A story that was put off and then not read again has the reason it was put off for,
   followed by `No later check read it again in time (checks were skipped, or busier stories came first).`; when its
   saved details are gone by then (they are kept 6 hours), its row has no Id and reads `A story whose details are
-  gone`. A signal whose card reached the space but which the bot could not record is listed as
+  gone`. When more than 150 put-off stories are waiting, the oldest end at once with their reason followed by `Too many
+  stories were waiting for a later check, so the oldest ones were let go.`; and if the bot cannot save its list of
+  put-off stories, those put off in that check end there and then, with their reason alone. A signal whose card reached the space but which the bot could not record is listed as
   `Card posted: Needs a human look` (its story is not posted a second time). The run log has one line for an ending
   that had none before: `early detection: <outcome> · "<story>" · <why>`.
 - **Where**: the Mirror space (B9), a Google-only test feed (B3 → B4), or the Auto-correct space standing alone (B10,
