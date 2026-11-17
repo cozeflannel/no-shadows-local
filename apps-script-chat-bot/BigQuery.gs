@@ -4981,6 +4981,7 @@ function earlyWaveCheck_(ctx) {
       }
       cands.push({ row: r, keys, idKey, verdict, idx: cands.length });
     }
+    if (ft && typeof ftAskAll_ === 'function') ftAskAll_(ft, cands.map(c => c.row));  // row 51: side by side (S11)
     cands.forEach(c => { c.dec = ft ? ftAsk_(ft, c.row) : null; });
     const keep = cands.filter(c => {
       const why = ft && ft.hold ? ftHoldWhy_(c.row, c.dec, ft.bars) : '';

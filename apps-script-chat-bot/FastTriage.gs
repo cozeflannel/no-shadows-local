@@ -177,6 +177,9 @@ function ftBarFrom_(spec, raw) {
   const isDate = Object.prototype.toString.call(raw) === '[object Date]';
   const text = isDate ? '' : String(raw === undefined || raw === null ? '' : raw).trim();
   if (!isDate && !text) {
+    // the open engine (row 51, step S11): a blank accounts bar (B45) reads 2, so stories from 2 accounts are asked about
+    const open2 = spec.key === 'accounts' && typeof openOn_ === 'function' && openOn_();
+    if (open2) return { value: 2, blank: true, valid: false, note: `Blank: using 2 under the open engine (${spec.using(2)})` };
     return {
       value: spec.seed,
       blank: true,
@@ -432,6 +435,13 @@ function ftQueueUnrank_(props) {
 function ftHoldWhy_(row, dec, bars) {
   const b = Object.assign({}, FT_BAR_SEEDS_, bars || ftBars_());
   if (!dec || ftProtected_(row)) return '';
+  // the open engine (row 51, step S11): also held when its most probable severity is none at open_hold_none_at (0.80)
+  // or more (never with a P0 risk group or a raised hint: ftProtected_ above)
+  const noneAt = typeof openOn_ === 'function' && openOn_()
+    ? (Number(((typeof GEN !== 'undefined' && GEN && GEN.settings) || {}).open_hold_none_at) || 0.80) : null;
+  if (noneAt !== null && Number(dec.l) === 0 && Number(dec.sc) >= noneAt) {
+    return `most likely nothing (severity none ${dec.sc})`;
+  }
   if (!(Number(dec.l) <= EW_TRIAGE_HOLD_MAX_LEVEL_) || !(Number(dec.sc) >= b.conf)) return '';
   const level = ED_SEVERITIES_[dec.l] || String(dec.l);
   if (Number(dec.g) <= b.about) return `not about Google (about Google ${dec.g}, severity ${level} ${dec.sc})`;
@@ -542,6 +552,7 @@ function ftAsk_(ft, row) {
     const id = String(r.alert_id || '');
     const kept = ftRecall_(id);
     if (kept) return kept;
+    if (ft.batched && ft.batched.has(id)) return null;  // asked in this check's batch (ftAskAll_) without an answer
     const res = decSignalAsk_(r, ft.session);
     if (res.ok) {
       ft.asked++;
@@ -559,6 +570,40 @@ function ftAsk_(ft, row) {
   } catch (e) {
     return null;
   }
+}
+
+/**
+ * The open engine (row 51, step S11): every candidate of the check asked side by side before the loops (decSignalAskAll_,
+ * in batches of up to 50, one fetchAll each), its answers kept as ftAsk_ keeps them, so the loops read them back (ftAsk_
+ * then asks nothing again for a row the batch asked). Row 51 OFF: nothing (ftAsk_ asks one at a time, as before).
+ * Never throws.
+ */
+function ftAskAll_(ft, rows) {
+  try {
+    if (!ft || typeof openOn_ !== 'function' || !openOn_()) return;
+    const todo = (rows || []).filter(r => r && !(r.dec && typeof r.dec.s === 'number') && !ftRecall_(String(r.alert_id || '')));
+    ft.batched = ft.batched || new Set();
+    for (let i = 0; i < todo.length; i += 50) {
+      const part = todo.slice(i, i + 50);
+      const res = decSignalAskAll_(part, ft.session);
+      part.forEach((r, j) => {
+        const id = String(r.alert_id || '');
+        const x = res[j] || { ok: false, why: 'no answer' };
+        ft.batched.add(id);
+        if (x.ok) {
+          ft.asked++;
+          ftRemember_(id, x.dec);
+          ft.verdicts.push(ewBqVerdictRow_('signal', r, x, ft.rank ? 'ranked' : 'kept', ft.now()));
+          ft.log(`fast triage: ${id || 'a signal'} \u00b7 ${ftAnswerWords_(x.dec)} \u00b7 ${x.ms} ms (side by side)`);
+        } else {
+          if (!x.skipped) ft.verdicts.push(ewBqVerdictRow_('signal', r, x, null, ft.now()));
+          const why = String(x.why || 'no answer');
+          ft.missed[why] = (ft.missed[why] || 0) + 1;
+        }
+      });
+      if (res.every(x => x && x.skipped)) break;  // a pause or a ceiling: the rest wait
+    }
+  } catch (e) { /* the loops ask one at a time */ }
 }
 
 /** Marks the verdict for `row` in `ft.verdicts` as `'held_back'` when row 40 holds the signal back. Never throws. */

@@ -239,7 +239,23 @@ one line under it: what was built, the suite's count, and anything left out with
       ceiling and pacing were never built (A4). Suite: 1,309 of 1,309 passed. Left out, and why: the one-sided rules of
       50aa822 (platforms only from today's lanes, one-sided exclusions, today's copy always wins): they give way to S9's
       one platform rule and its copy rules, which are left out with S9's stitching.
-- [ ] **S11** Quick looks for every candidate, from 2 accounts
+- [ ] **S11** Quick looks for every candidate, from 2 accounts (built in part: see below; left unticked)
+      Built, under row 51: no count of 15 quick looks a check or 150 / 300 a day (`decSkipWhy_`; the day's quick-look
+      ceiling, ApiGuard's runaway ceilings and the run's time bound them); `decisionsAskMany_` (any question set, any
+      input shape: step S19d sends single posts through it) sends a batch side by side in one fetchAll, each call
+      counted before, a failure pausing nothing unless more than half the batch failed; `decSignalAskAll_` and
+      `ftAskAll_` ask a check's candidates in batches of up to 50 before the loops, which read the answers back and ask
+      nothing again; a blank B45 reads 2 accounts; the early watch's raise rule (about Google and brand risk at the watch
+      bar, medium-or-worse severity at the confidence bar, independent_reports no longer a bar) plus a P0 share of 0.35
+      (RQ5); the wider hold-back (severity none at `open_hold_none_at`, 0.80, never with a P0 risk group or a raised
+      hint); the early watch's caps of 5 a check, 60 a day and 20 looked at go. With row 51 OFF the fast triage and its
+      pinned tests are as before. Suite: 1,315 of 1,315 passed. Left out, and why: the Sensitive Topic question in the
+      story's early ask and its 0.35 raise (RQ5: a seventh question changes the request the recorded fixtures answer,
+      and there is no recorded answer to test it on), sending the early watch's own asks side by side (they go one at a
+      time inside the producer's loop, now without caps), the batch's growth from 10 to 50 by its speed, and the
+      precision measure (it needs the Engine tab's daily row to know which early cards were later dismissed, from S3's
+      records over days). No test catches the early watch's caps being kept: a run with more than 5 early-watch stories
+      needs the producer's own scenario, which this harness does not build.
 - [ ] **S12** Story reviews side by side
 
 ### Requirements first (plan 3, and plan 4 for S19h; briefs 17 to 25)

@@ -202,9 +202,12 @@ function decUrl_() {
 function decSkipWhy_(session, st, now) {
   if (session.busy) return 'the alerts come first';
   if (st.until > now) return `paused after a failure${st.why ? ` (${st.why})` : ''}`;
-  if (session.asked >= DEC_MAX_PER_CHECK_) return `${DEC_MAX_PER_CHECK_} calls this check`;
+  // the open engine (row 51, step S11): no count a check or a day; the day's quick-look ceiling (openMayStart_ below),
+  // ApiGuard's runaway ceilings and the run's time bound the calls. OFF: the counts, as before
+  const open = typeof openOn_ === 'function' && openOn_();
+  if (!open && session.asked >= DEC_MAX_PER_CHECK_) return `${DEC_MAX_PER_CHECK_} calls this check`;
   const perDay = session.perDay || DEC_MAX_PER_DAY_;
-  if (st.asked >= perDay) return `${perDay} calls today`;
+  if (!open && st.asked >= perDay) return `${perDay} calls today`;
   if (typeof apiGuardAllowDecisions_ === 'function' && !apiGuardAllowDecisions_(now)) return 'too many calls lately';
   if (session.left() < DEC_MIN_LEFT_MS_) return 'too little of the run left';
   // the open engine (Control row 51, OpenEngine.gs): the day's quick-look ceiling, the run-time and outside-call steps;
@@ -631,6 +634,102 @@ function decCompact_(answers) {
   out.sc = r2(sev.confidence);
   out.sp = sev.probabilities.map(r2);
   return out;
+}
+
+/**
+ * Many asks at once (step S11, under the open engine): `items` [{input, questions}] (any question set, any input shape)
+ * sent side by side in ONE UrlFetchApp.fetchAll, within `session` and decSkipWhy_ (checked once, for the whole batch);
+ * each call counted before it is sent. One result an item, as decisionsAsk_ gives it. A failed call (a 429 among
+ * them) is not asked again here and pauses nothing, unless more than half the batch failed: then every call pauses
+ * as after one failure today. Never throws.
+ */
+function decisionsAskMany_(items, session) {
+  const s = session || decSession_();
+  const list = Array.isArray(items) ? items : [];
+  const out = list.map(() => null);
+  let key = '';
+  const clean = v => {
+    const t = String(v === undefined || v === null ? '' : v);
+    return truncate_((key ? t.split(key).join('[key]') : t).replace(/\s+/g, ' ').trim(), 120);
+  };
+  try {
+    const todo = [];
+    list.forEach((it, i) => {
+      const text = it && typeof it.input === 'string' ? it.input.trim() : '';
+      if (!text || !it.questions || typeof it.questions !== 'object' || !Object.keys(it.questions).length) {
+        out[i] = { ok: false, skipped: true, why: 'nothing to ask' };
+      } else todo.push(i);
+    });
+    if (!todo.length) return out;
+    const props = PropertiesService.getScriptProperties();
+    const now = Date.now();
+    const st = decState_(props, now);
+    const skip = decSkipWhy_(s, st, now);
+    if (skip) {
+      todo.forEach(i => { out[i] = { ok: false, skipped: true, why: skip }; });
+      return out;
+    }
+    try {
+      key = s.key || decKey_();
+      s.key = key;
+    } catch (e) {
+      todo.forEach(i => { out[i] = { ok: false, why: clean((e && e.message) || e) || 'no API key' }; });
+      return out;
+    }
+    // Counted before the calls are made: a run that dies mid-batch still counts toward every ceiling
+    s.asked += todo.length;
+    st.asked += todo.length;
+    if (typeof openCount_ === 'function') openCount_('ql', todo.length);
+    if (typeof engAdd_ === 'function') engAdd_('qAsked', todo.length);
+    decSaveState_(props, st);
+    if (typeof apiGuardNote_ === 'function') apiGuardNote_('decisions', todo.length);
+    const t0 = Date.now();
+    let resps = [];
+    try {
+      resps = UrlFetchApp.fetchAll(todo.map(i => ({ url: decUrl_(), method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+        headers: { 'x-goog-api-key': key }, payload: JSON.stringify({ model: DEC_MODEL_, input: list[i].input.trim(), questions: list[i].questions }) })));
+    } catch (e) {
+      resps = [];
+      todo.forEach(i => { out[i] = { ok: false, why: clean((e && e.message) || e) || 'no answer' }; });
+    }
+    const ms = Date.now() - t0;
+    let failed = 0;
+    let why = '';
+    todo.forEach((i, j) => {
+      const r = resps[j];
+      if (!r) { if (!out[i]) out[i] = { ok: false, why: 'no answer' }; failed++; why = why || out[i].why; return; }
+      const res = decRead_(r.getResponseCode(), r.getContentText(), list[i].questions, ms);
+      if (!res.ok) {
+        res.why = clean(res.why);
+        if (res.refused) st.refused++;
+        else { failed++; why = why || res.why; }
+      }
+      out[i] = res;
+    });
+    if (failed) {
+      st.failed += failed;
+      if (failed * 2 > todo.length) {
+        const pause = typeof openCheckMs_ === 'function' ? openCheckMs_() : DEC_PAUSE_MS_;
+        st.until = Date.now() + pause;
+        st.why = why;
+        console.warn(`Gemini Decisions: ${failed} of ${todo.length} calls failed (${why}); no calls for ${Math.round(pause / 60000)} minutes`);
+      }
+    }
+    decSaveState_(props, st);
+    return out;
+  } catch (e) {
+    return out.map(x => x || { ok: false, why: clean((e && e.message) || e) || 'no answer' });
+  }
+}
+
+/** The six questions about many signals (`rows`) at once (decisionsAskMany_): one result a row, as decSignalAsk_. */
+function decSignalAskAll_(rows, session) {
+  const res = decisionsAskMany_((rows || []).map(r => ({ input: decSignalInput_(r), questions: decSignalQuestions_() })), session);
+  return res.map(r => {
+    if (!r || !r.ok) return r || { ok: false, why: 'no answer' };
+    const dec = decCompact_(r.answers);
+    return dec ? { ok: true, dec, answers: r.answers, tokens: r.tokens, ms: r.ms } : { ok: false, why: 'an answer that couldn\'t be read', ms: r.ms };
+  });
 }
 
 /**

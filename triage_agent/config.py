@@ -694,6 +694,7 @@ class BursonQAConfig(ConfigModel):
     open_burson_pickup_p90_s: float = 120
     open_check_minutes: int = 5
     open_queue_max: int = 24
+    open_hold_none_at: float = 0.8
     open_equal_lanes: bool = True
     open_fresh_minutes: int = 180
     open_lane_bars: str = ''

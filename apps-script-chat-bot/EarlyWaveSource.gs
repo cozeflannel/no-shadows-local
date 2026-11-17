@@ -1940,6 +1940,14 @@ function ewsWatchBars_(bars) {
 function ewsWatchRaise_(dec, bars) {
   if (!dec) return false;
   const b = ewsWatchBars_(bars);
+  // the open engine (row 51, step S11): about Google and brand risk at the watch bar, and the probability of medium
+  // severity or more at the confidence bar (independent_reports is shown, no longer a bar); or a P0 share of 0.35 or
+  // more (requirements-first RQ5)
+  if (typeof openOn_ === 'function' && openOn_()) {
+    const sp = Array.isArray(dec.sp) && dec.sp.length === 5 ? dec.sp.map(v => Number(v) || 0) : null;
+    const medUp = sp ? Math.round((sp[2] + sp[3] + sp[4]) * 1000) / 1000 : 0;
+    return (Number(dec.g) >= b.about && Number(dec.r) >= b.risk && medUp >= b.conf) || Number(dec.p0) >= 0.35;
+  }
   return Number(dec.g) >= b.about && Number(dec.r) >= b.risk && Number(dec.i) >= b.independent &&
     Number(dec.sc) >= b.conf && Number(dec.l) >= EWS_WATCH_MIN_LEVEL_;
 }
@@ -1996,7 +2004,7 @@ function ewsWatchPick_(clusters, priors, marks, now, minAuthors, lim) {
     out.push(x);
   });
   return out.sort((a, b) => (b.risk.length ? 1 : 0) - (a.risk.length ? 1 : 0) || b.authors - a.authors || b.end - a.end ||
-    (a.id < b.id ? -1 : 1)).slice(0, EWS_WATCH_PICK_MAX_);
+    (a.id < b.id ? -1 : 1)).slice(0, typeof openOn_ === 'function' && openOn_() ? Infinity : EWS_WATCH_PICK_MAX_);  // row 51: all (S11)
 }
 
 /** True when no older stored story tells what candidate `x` tells (none within EWS_STORY_SIM_ of its centroid). Pure. */
@@ -2040,7 +2048,8 @@ function ewsWatchAsk_(cache, props, st, now, cands, watch, record) {
     const raised = [];
     let lift = null;  // the new sources' day record, read only for a story only they lifted ({rec, cfg, up})
     for (const x of cands) {
-      if (asked >= EWS_WATCH_MAX_PER_CHECK_ || today >= EWS_WATCH_MAX_PER_DAY_) break;
+      // (the open engine, row 51, step S11: no count a check or a day; the session's ceilings and time bound the asks)
+      if (!(typeof openOn_ === 'function' && openOn_()) && (asked >= EWS_WATCH_MAX_PER_CHECK_ || today >= EWS_WATCH_MAX_PER_DAY_)) break;
       if (x.lift) {  // lifted by the new lanes alone: asked only while the hour's and the day's caps have room
         if (!lift) {
           const cfg = ewsNewCfg_();
