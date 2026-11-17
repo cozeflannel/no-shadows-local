@@ -342,8 +342,11 @@ function handleOtherAlert_(ctx, m, other, report) {
     try { parsed.bq = ctx.bq(parsed); } catch (e) { parsed.bq = null; }
   }
   const since = now - GEN.novelty_days * DAY_MS_;
-  const history = ctx.otherSpace && typeof ctx.store.recentForwardedAcrossSpaces === 'function'
-    ? ctx.store.recentForwardedAcrossSpaces(since) : ctx.store.recentForwarded(since);
+  const history = (ctx.otherSpace && typeof ctx.store.recentForwardedAcrossSpaces === 'function'
+    ? ctx.store.recentForwardedAcrossSpaces(since) : ctx.store.recentForwarded(since))
+    // (where stories go first, a story's card that sent no Social Alert is no earlier alert for the Watch alert of its
+    // own main post, as for a Direct BigQuery card: BigQuery.gs bqStoryOnOwnPost_; everywhere else every row stays in)
+    .filter(h => !bqStoryOnOwnPost_(ctx, other.watch ? PW_ALERT_INGESTED_ : '', recordKey_(parsed.fields), h, now));
   // Earlier alerts this one may repeat or follow up on (Escalate.gs): Gemini sees them, and the repeat rules use them
   if (S.follow_ups !== false) {
     parsed.earlier = earlierAlerts_(parsed.fields, history, parsed.bq, now, parsed.post, { includeSameDayLog: true });

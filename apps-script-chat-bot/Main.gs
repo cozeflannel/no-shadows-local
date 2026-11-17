@@ -706,6 +706,9 @@ function poll() {
             cfg,
             toAc ? pwAutoCorrectSpaceFor_(ac, wanted, cfg, sfbFlows || sfb) : null
           );
+          // where stories go first in the Auto-correct space, a story's card that sent no Social Alert is no post's own
+          // alert for the watch either (WatchAlerts.gs pwStoryCardOnly_); everywhere else the watch does as before
+          if (toAc && alerts && ac && ac.ctx && ac.ctx.bqPastStoryCards === true) alerts.bqPastStoryCards = true;
           const otherBusy = Boolean(toOther && os && os.report &&
             ((os.report.errors || []).some(e => /^time budget/.test(String(e))) || os.report.held > 0));
           const acBusy = Boolean(toAc && ac && ac.report &&

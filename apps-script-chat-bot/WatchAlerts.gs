@@ -924,6 +924,64 @@ function pwCoverCardOf_(cards, q, memSeen) {
 }
 
 /**
+ * Where stories go first (the one-space setup with early_detection_first on: `dest`.bqPastStoryCards, set in Main.gs
+ * from the Auto-correct flow's ctx.bqPastStoryCards only when the watch's alerts go to the Auto-correct space), a
+ * story's card that sent no Social Alert is not the post's own alert (BigQuery.gs bqStoryCardRow_), for the watch as for
+ * the Direct BigQuery poll: true when all the alert memory has seen of a flag's post (`seen`: its seenPost answer) is
+ * such cards, each a row of the Auto-correct flow's Alert log (`rows`: pwAlertedState_'s, all of the Alert log; the
+ * same test as BigQuery.gs bqOnlyStoryCards_). The flag then goes on as its own Watch alert. False everywhere else, with
+ * the setting off, for a Social Alert that went out (the story's too), and for any alert of another flow. Never throws.
+ */
+function pwStoryCardOnly_(dest, rows, seen, now) {
+  try {
+    if (!dest || dest.choice !== 'autocorrect' || dest.bqPastStoryCards !== true || !seen) return false;
+    const suffix = typeof AC_PARTITION_SUFFIX_ === 'string' ? AC_PARTITION_SUFFIX_ : ' (auto-correct)';
+    const byId = new Map();
+    (rows || []).forEach(r => {
+      if (r && r.alert_id && String(r.space || '').endsWith(suffix)) byId.set(String(r.alert_id), r);
+    });
+    return bqOnlyStoryCards_({ store: { alertById: id => byId.get(String(id)) || null } }, seen, now);
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Under the Watch alert a flag's post got because its only card was a story's card that sent no Social Alert
+ * (pwStoryCardOnly_): one note that points at that story's card, "🔗 *Part of a story:* 6 small accounts on X tell it
+ * (story card)" (BigQuery.gs bqStoryNoteText_), through the one helper (pwThreadNote_: an ordinary note, under the caps),
+ * only while the setting cross_alert_notes is on (`on`: pwCrossNotesOn_) and the run has PW_MIN_LEFT_MS_ left.
+ * `flags`: [{q, key}] (the flag, and the key this run writes for it: a: 'p' with its alert's message and thread);
+ * `rows`: the Alert log (pwAlertedState_'s). How many notes were posted. Never throws.
+ */
+function pwStoryNotes_(dest, flags, rows, now, left, on) {
+  let notes = 0;
+  try {
+    if (!on || !(flags || []).length) return 0;
+    const suffix = typeof AC_PARTITION_SUFFIX_ === 'string' ? AC_PARTITION_SUFFIX_ : ' (auto-correct)';
+    const ledger = edLedger_({ store: { alerts: (rows || []).filter(r => r && String(r.space || '').endsWith(suffix)) } }, now);
+    flags.forEach(f => {
+      try {
+        const k = f.key || {};
+        if (k.a !== 'p' || !k.m || !k.t) return;
+        const story = ledger.find(L => L.keys.has(String(f.q.k.k || '')));
+        if (!story) return;
+        const timeLeft = typeof left === 'function' ? left() : Infinity;
+        if (timeLeft < PW_MIN_LEFT_MS_) {
+          console.log(`Watch alerts: no note under the Watch alert of ${pwNoChatIds_(String(f.q.v[PW_COL_.post - 1] || '').replace(/^'/, ''), dest.space)}` +
+            ' pointing at its story\'s card: the run was short of time');
+          return;
+        }
+        const note = pwThreadNote_(dest, { forward_thread: String(k.t), forward_message: String(k.m), created_at: Number(k.at) || 0 },
+          bqStoryNoteText_(story), `wstory:${k.m}`, Date.now() + Math.max(0, timeLeft - PW_MIN_LEFT_MS_));
+        if (note.posted) notes++;
+      } catch (e) { /* this alert goes without its note */ }
+    });
+  } catch (e) { /* the alerts are posted: a note is never worth more than that */ }
+  return notes;
+}
+
+/**
  * The note under the card that covers a post the watch flagged (P4b), for the watches that flagged it in this run
  * (`names`, at most PW_COVER_NAMES_MAX_): "🔭 *Also flagged by the watch “Midterms 2026 × Google”.* No separate Watch
  * alert: this card already covers the post." (two or three: "… the watch “A” and the watch “B” …"). Its first words are
@@ -1618,7 +1676,9 @@ function pwPostStoryReply_(space, thread, text, key) {
  * null), `recent` (the stories the pre-read's R refs point into: the alerts posted lately, pwRecentStories_; the
  * build-ups still waiting, pwBrewing_; the stories already alerted, pwKnownStories_), `c` {dest, now, max, timeLeft,
  * done, doneThreadIds (pwAlertedState_'s, added to as this run posts), mark, same (same(q, kind, why): the flag isn't
- * posted, a: 'd'; `kind` says which of the day's counts it is, `why` its log line's reason: pwPostAlerts_)}. For each
+ * posted, a: 'd'; `kind` says which of the day's counts it is, `why` its log line's reason: pwPostAlerts_), rows (the
+ * Alert log, pwAlertedState_'s: a story's card that sent no Social Alert is no post's own alert where stories go first,
+ * pwStoryCardOnly_)}. For each
  * story, in this order:
  *   - one with an alert posted lately in this space goes in that alert's thread (but a flag that raises the stakes:
  *     pwStakesRose_);
@@ -1819,7 +1879,8 @@ function pwPostStories_(items, pre, recent, c) {
     const it = items[pick.i];
     const mem = typeof alertMemory_ === 'function' ? alertMemory_() : null;
     const seen = mem && mem.active ? mem.seenPost(it.a.url) : null;
-    if (seen) {
+    // (where stories go first, a story's card that sent no Social Alert is not the post's own alert: pwStoryCardOnly_)
+    if (seen && !pwStoryCardOnly_(c.dest, c.rows, seen, c.now)) {
       c.same(it.q, 'already', `it already had an alert: ${seen.why || 'the alert memory has it'}`);
       res.dup++;
       continue;
@@ -1964,6 +2025,9 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     const covered = [];   // [{q, card, why}]: flags on a post that has a card there, for the notes (below the filter)
     const coverWait = new Set();  // flags whose post was carded so lately that its card isn't in the Alert log yet: they wait
     const coverLater = new Set();  // flags whose note needed asking Chat about its card's notes with too little time left: they wait
+    // a story's card that sent no Social Alert covers no post (BigQuery.gs bqStoryCardRow_): its message, never a cover
+    const noAlertCards = cover ? new Set(rows.filter(r => bqStoryCardRow_(r, now)).map(r => String(r.forward_message || ''))) : null;
+    const storied = new Set();  // flags whose post's only card is such a story card, where stories go first (pwStoryCardOnly_)
     const writes = [];  // [index in the block, the key to write]
     // The small flags held on an earlier run (a: 'b') that this run takes out of that state, whatever it makes of them:
     // row -> when it was held. Those held today leave today's count of held flags (below)
@@ -1988,7 +2052,12 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
       const qUrl = linkOf(q);
       const qPid = postIdOf_(qUrl);
       const qSum = String(q.v[PW_COL_.summary - 1] || '').replace(/^'/, '').trim();
-      const memSeen = typeof alertMemory_ === 'function' ? alertMemory_().seenPost(qUrl) : null;
+      let memSeen = typeof alertMemory_ === 'function' ? alertMemory_().seenPost(qUrl) : null;
+      // where stories go first, a story's card that sent no Social Alert is not the post's own alert: the flag goes on
+      if (memSeen && !done.has(q.k.k) && pwStoryCardOnly_(dest, rows, memSeen, now)) {
+        storied.add(q.i);
+        memSeen = null;
+      }
       const bursonAt = String(q.v[PW_COL_.bursonAt - 1] || '').trim();
       const alerted = done.has(q.k.k) || memSeen || bursonAt || (qPid && doneThreadIds.has(qPid));
       if (alerted) {
@@ -1999,7 +2068,9 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
               : `a post of its thread already had an alert: ${doneThreadIds.get(qPid)}`;
         // P4b: its post's card in the Auto-correct space gets a note (below); a post carded in the last minutes whose
         // card isn't in the Alert log yet waits for it (but no longer than any flag waits)
-        const card = cover ? pwCoverCardOf_(cover, q, memSeen) : null;
+        let card = cover ? pwCoverCardOf_(cover, q, memSeen) : null;
+        // never "this card already covers the post" under a story's card that sent no Social Alert
+        if (card && noAlertCards && noAlertCards.has(String(card.forward_message))) card = null;
         const young = now - Math.max(Number(q.k.s) || 0, Number(q.k.rq) || 0) <= PW_ALERT_MAX_AGE_MS_;
         if (card) {
           covered.push({ q, card, why });
@@ -2105,7 +2176,7 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
         problem = read.wait;
       } else {
         const res = pwPostStories_(items, read.pre, read.recent || recent,
-          { dest, now, max, timeLeft, done, doneThreadIds, mark, same });
+          { dest, now, max, timeLeft, done, doneThreadIds, mark, same, rows });
         out.posted = res.posted;
         out.grouped = res.grouped;
         out.held = res.held;
@@ -2115,6 +2186,12 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
         out.empty = res.empty;
         if (res.problem) problem = res.problem;
         stopped = res.stopped || stopped;
+        // the Watch alert of a post whose only card was a story's: one note pointing at that story's card
+        if (storied.size) {
+          const keyOf = new Map(writes.map(([i, k]) => [i, k]));
+          pwStoryNotes_(dest, fresh.filter(q => storied.has(q.i) && keyOf.has(q.i)).map(q => ({ q, key: keyOf.get(q.i) })),
+            rows, now, timeLeft, !!cover);
+        }
       }
     }
     // still waiting: the fresh flags this run decided nothing about (their key wasn't written)
