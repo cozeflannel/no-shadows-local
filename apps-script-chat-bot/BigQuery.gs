@@ -2471,8 +2471,11 @@ function bqStoryNotes_(ctx, cards, now, hasTime) {
  *     that were reviewed where they stand (the row's forward_message is the card itself; its source_at is when the
  *     card was posted);
  *   - the story's card is the newest Early Detection card of the last 24 hours that has the card's post and was there
- *     before the card was posted (EarlyDetection.gs edLedger_'s `at`, earlier than the row's source_at). A story that
- *     came after the card is none of this note's business: the note is only for a card posted into a story;
+ *     before the card was posted (EarlyDetection.gs edLedger_'s `at`, earlier than the row's source_at), or before the
+ *     card's Alert-log row was written (earlier than its created_at): a story's card posted while the card waited in
+ *     the space to be reviewed (the poll, overdue, went first in that run), whose review could not see the card and
+ *     so put no note under it. A story that came after the card's row is none of this note's business (the story's
+ *     own review points at the card: EarlyDetectionCross.gs edRelatedNote_);
  *   - the note is the one of the card's own check, under the same key, through ThreadNotes.gs acThreadNote_, which
  *     posts a key once: a card that has its note gets no second one, whatever the helper remembers. A card the helper
  *     would refuse in any case (acThreadNoteCheck_) is passed over.
@@ -2498,7 +2501,8 @@ function bqStoryNotesLate_(ctx, now, hasTime) {
     const posts = () => (typeof acNoteRun_ === 'function' ? Number(acNoteRun_(ctx).n) || 0 : 0);
     rows.forEach(a => {
       try {
-        const story = ledger.find(L => L.keys.has(String(a.record_key)) && Number(L.at) > 0 && Number(L.at) < posted(a));
+        const story = ledger.find(L => L.keys.has(String(a.record_key)) && Number(L.at) > 0 &&
+          (Number(L.at) < posted(a) || Number(L.at) < (Number(a.created_at) || 0)));
         if (!story || !time()) return;
         const text = bqStoryNoteText_(story);
         if (!acThreadNoteCheck_(ctx, a, text).ok) return;

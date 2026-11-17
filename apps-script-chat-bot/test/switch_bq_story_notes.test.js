@@ -8,7 +8,8 @@
 // every card of the check is posted and only with 45 seconds of the flow left; the note goes through the one helper
 // (ThreadNotes.gs acThreadNote_). A card that went without its note at its own check (the flow was short of time, or
 // the note could not be posted) gets it at a later check of its first hour (bqStoryNotesLate_), with nothing new kept
-// for that: only a card that was posted when the story's card was already there, only once, and only at a check that
+// for that: only a card that was posted when the story's card was already there (or whose story's card came while the
+// card waited to be reviewed: the poll first and the story in the same run), only once, and only at a check that
 // reads the Alert log anyway. With the setting off, in the Mirror flow and in every flow that is not the Auto-correct
 // flow, nothing is posted and nothing else changes.
 //
@@ -247,7 +248,7 @@ module.exports = H => {
     });
   });
 
-  test('story notes: a post the story\'s card links that is not its main post gets the note too, whether or not stories go first (such a post was never taken for already alerted): its Direct BigQuery card, then the note with the link to the story\'s card. A card posted before the story\'s card exists (the poll first, the story in the same run) gets none from the poll', () => {
+  test('story notes: a post the story\'s card links that is not its main post gets the note too, whether or not stories go first (such a post was never taken for already alerted): its Direct BigQuery card, then the note with the link to the story\'s card. A card posted before the story\'s card exists (the poll first, the story in the same run) gets none at its own check, and gets it at a later check (the story\'s card was there before the card\'s Alert-log row)', () => {
     [['stories first', FIRST], ['the poll first', NOTES]].forEach(([name, overrides]) => {
       const w = oneSpace(overrides);
       const { t } = w;
@@ -261,10 +262,13 @@ module.exports = H => {
       // the story's main post has no card of its own here: only the story's
       eq(botPosts(t, AC).filter(m => !m.threadReply).map(kind), ['story card', 'Direct BigQuery card']);
     });
-    // the poll first, and the story found in the same run: the card is posted before the story's card
+    // the poll first, and the story found in the same run: the card is posted before the story's card. Its own check has
+    // no note for it; a later check of its first hour adds it, once (the story's card was there before the card's row)
     const w = oneSpace(NOTES);
     const got = storyThenPost(w, otherRow(), 0);
-    eq([got.atCheck, got.notes.map(kind), got.after, said(w.t)], [['Direct BigQuery card', 'story card', 'story review note'], [], [], []]);
+    eq([got.atCheck, got.notes.map(kind), got.after, said(w.t), saidLate(w.t).length],
+      [['Direct BigQuery card', 'story card', 'story review note'], ['story note'], ['story note'], [], 1]);
+    eq(got.notes[0].text, `🔗 *Part of a story:* 6 small accounts on X and Reddit tell it (<${linkTo(got.story)}|story card>)`);
 
     // Two posts of the story in one check (where stories go first: its main post and the other one): two cards, and each
     // gets its own note, under its own card, with the same link
@@ -631,16 +635,19 @@ module.exports = H => {
     eq(B.ev('[BQ_STORY_NOTE_LATE_MS_, BQ_STORY_NOTE_LEFT_MS_]'), [HOUR, 45 * SEC]);
   });
 
-  test('story notes: a note is added later only under a card that was posted into a story: the story\'s card was there before the post\'s own card. A card posted before the story\'s card (the poll first and the story in the same run; or the story found a check after the card) never gets one from the poll, however many checks follow, with stories first or not: the poll\'s note is not for a story that comes after the card', () => {
-    // the poll first, the story found in the same run: the card is posted before the story's card
+  test('story notes: a note is added later only under a card that was posted into a story, or whose story\'s card came while the card waited to be reviewed: the story\'s card was there before the post\'s own card, or before the card\'s Alert-log row (the poll first and the story in the same run: one note, at a later check). A card whose row was written before the story\'s card (the story found a check after the card) never gets one from the poll, however many checks follow, with stories first or not: the poll\'s note is not for a story that comes after the card\'s review', () => {
+    // the poll first, the story found in the same run: the card is posted before the story's card, and reviewed after it
     const same = oneSpace(NOTES);
     const got = storyThenPost(same, otherRow(), 0);
-    eq([got.atCheck, got.notes.map(kind), storyNotes(same.t), saidLate(same.t)], [['Direct BigQuery card', 'story card', 'story review note'], [], [], []]);
-    // (the later look did see that card: it is one the poll posted in the last hour, and the story's card has its post)
+    eq([got.atCheck, got.notes.map(kind), storyNotes(same.t).length, saidLate(same.t).length],
+      [['Direct BigQuery card', 'story card', 'story review note'], ['story note'], 1, 1]);
+    // (the later look saw that card: it is one the poll posted in the last hour, the story's card has its post, and that
+    // card came before the card's row)
     const rows = alertRows(same.t);
     const [cardRow, storyRow] = [rows.find(r => r.ingested === 'BSIP'), rows.find(r => r.ingested === 'Early detection')];
     eq([cardRow.record_key, storyRow.forwarded_fields.early_detection.post_keys.indexOf(cardRow.record_key) >= 0, storyRow.created_at > cardRow.source_at,
-      same.t.g.clock.now - cardRow.source_at < HOUR], [same.t.bot.recordKey_({ post_url: OTHER }), true, true, true]);
+      storyRow.created_at < cardRow.created_at, same.t.g.clock.now - cardRow.source_at < HOUR],
+    [same.t.bot.recordKey_({ post_url: OTHER }), true, true, true, true]);
 
     // the story found a check after the card, where stories go first and where they don't
     [['stories first', FIRST], ['the poll first', NOTES]].forEach(([name, overrides]) => {
@@ -705,7 +712,7 @@ module.exports = H => {
     eq([under(t, card).map(kind), saidLate(t).length, storyNotes(t).length, mails(t)], [['card review note', 'story note'], 1, 1, [ALERT]]);
   });
 
-  test('story notes: the later look by hand (bqStoryNotesLate_), on a card of the last hour that was posted into a story and has no note. It posts nothing and logs nothing in a flow that is not the Auto-correct flow, in one that only looks like it, with the setting off and with no time; for a card older than an hour, one whose row doesn\'t say when it was posted, one that was not reviewed where it stands, one in another space, an alert that is no Direct BigQuery card, a post no story has, and a story whose card came with or after the post\'s card; an Alert log that can\'t be read throws nothing. Then the note is posted once, as the card\'s own check posts it; asked again, also with the helper\'s memory gone, and by the card\'s own check, nothing more is posted', () => {
+  test('story notes: the later look by hand (bqStoryNotesLate_), on a card of the last hour that was posted into a story and has no note. It posts nothing and logs nothing in a flow that is not the Auto-correct flow, in one that only looks like it, with the setting off and with no time; for a card older than an hour, one whose row doesn\'t say when it was posted, one that was not reviewed where it stands, one in another space, an alert that is no Direct BigQuery card, a post no story has, and a story whose card came with or after the post\'s card and its Alert-log row; an Alert log that can\'t be read throws nothing. Then the note is posted once, as the card\'s own check posts it; asked again, also with the helper\'s memory gone, and by the card\'s own check, nothing more is posted', () => {
     const w = oneSpace(OFF);  // the notes off: the story's card, then the card of the other post it links, without a note
     const { t } = w;
     storyThenPost(w, otherRow(), 5);
@@ -749,8 +756,8 @@ module.exports = H => {
           late(cardAs({ source_message: live.name, forward_message: live.name, forward_thread: live.thread.name })),  // a card in S-F Burson
           late(cardAs({ ingested: 'Early detection' })), late(cardAs({ ingested: 'Watch alert' })), late(cardAs({ ingested: '' })),
           late(cardAs({ record_key: '' })), late(cardAs({ record_key: 'x.com/status/1' })),  // a post no story's card has
-          late(cardAs({ source_at: storyRow.created_at })),           // the story's card came with the post's card,
-          late(cardAs({ source_at: storyRow.created_at - 1 })),       // ...or after it
+          late(cardAs({ source_at: storyRow.created_at, created_at: storyRow.created_at })),          // the story's card came with
+          late(cardAs({ source_at: storyRow.created_at - 1, created_at: storyRow.created_at - 1 })),  // the post's card and its row, or after
           late(withRows([cardRow])),                                  // no story's card at all
           late(broken), late(null), late(undefined), late({}),
         ],
