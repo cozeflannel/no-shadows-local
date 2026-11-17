@@ -43,8 +43,8 @@
  * What a note may cost. A run posts AC_NOTE_PER_RUN_ notes at most and asks Chat AC_NOTE_ASKS_PER_RUN_ times at most
  * about its cards' notes (a page of a card's thread, a look for a note by its id); a card whose thread couldn't be
  * counted in, and a key that wasn't found under a full card, are not asked about again in the same run; a thread is
- * read AC_NOTE_THREAD_PAGES_ pages far at most; and a flow with less than AC_NOTE_ASK_LEFT_MS_ of its time left asks
- * nothing (a note that needs no asking is still posted).
+ * read AC_NOTE_THREAD_PAGES_ pages far at most; and a flow (or the watch, by the deadline it hands over) with less than
+ * AC_NOTE_ASK_LEFT_MS_ of its time left asks nothing (a note that needs no asking is still posted).
  */
 
 const AC_NOTE_PER_CARD_ = 3;                 // notes under one card in its life, of all kinds together
@@ -169,6 +169,8 @@ function acThreadNote_(from, card, text, key) {
       return true;
     }
     const run = acNoteRun_(check.ctx);
+    // the time limit Chat is asked by: the flow's, or the watch's (`from`.deadline, ms: WatchAlerts.gs pwThreadNote_)
+    const limit = check.ctx || (from && !from.spaces && Number(from.deadline) > 0 ? from : null);
     // A note no cap refuses (acNoteUncapped_): posted once per key where a note may go, with nothing read or counted
     const capped = !acNoteUncapped_(k);
     if (capped && run.n >= AC_NOTE_PER_RUN_) {  // (before anything is read for it)
@@ -186,7 +188,7 @@ function acThreadNote_(from, card, text, key) {
       if (born > state.s && born >= now - AC_NOTE_KEEP_MS_) {
         had = 0;
       } else {
-        const noAsking = acNoteAskRefusal_(run, check.ctx);
+        const noAsking = acNoteAskRefusal_(run, limit);
         if (noAsking) return refuse('no_asking', noAsking);
         const there = acNoteThread_(check, acNoteId_(check.space, k), run, acNoteReviewIds_(check, card));
         if (!there || !there.card) {
@@ -209,7 +211,7 @@ function acThreadNote_(from, card, text, key) {
     if (capped && had >= AC_NOTE_PER_CARD_) {
       // A full card: a key the counts no longer have may be one of the notes that are there. Its thread, when it was
       // just read, has shown that it isn't; otherwise Chat is asked for the note by its id, once a run for a key
-      if (!counted && !run.absent[keyHash] && !acNoteAskRefusal_(run, check.ctx)) {
+      if (!counted && !run.absent[keyHash] && !acNoteAskRefusal_(run, limit)) {
         run.asks++;
         if (acNoteThere_(check.space, k)) {
           state.k[keyHash] = now;
@@ -291,7 +293,8 @@ function acNoteRun_(ctx) {
 
 /**
  * Why Chat may not be asked about a note now ('' when it may): the run has asked its AC_NOTE_ASKS_PER_RUN_ times, or the
- * flow (`ctx`, null for the watch) has less than AC_NOTE_ASK_LEFT_MS_ of its time left. Never throws.
+ * flow (`ctx`; for the watch its destination with the deadline it was handed, or null) has less than
+ * AC_NOTE_ASK_LEFT_MS_ of its time left. Never throws.
  */
 function acNoteAskRefusal_(run, ctx) {
   if (run.asks >= AC_NOTE_ASKS_PER_RUN_) return `this run already asked Chat ${AC_NOTE_ASKS_PER_RUN_} times about its cards' notes`;

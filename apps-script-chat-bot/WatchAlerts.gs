@@ -939,15 +939,18 @@ function pwAlsoFlaggedText_(names) {
 
 /**
  * The watch's note under a card in the Auto-correct space (P4b), through the one helper (ThreadNotes.gs acThreadNote_,
- * with `dest`, `card`, `text` and `key` as it takes them), and what came of it, as the helper says it
+ * with `dest`, `card`, `text` and `key` as it takes them; `deadline`: when the watch's share of the run ends, ms, so
+ * the helper asks Chat about the card's notes only with time left: none when left out), and what came of it, as the
+ * helper says it
  * (acThreadNoteLast_): {ok: the note is in the card's thread, posted: it was posted by this call (not one already there
  * under that key), full: it wasn't posted because the card already has its AC_NOTE_PER_CARD_ notes, why: the helper's
  * code for a refusal ('' when there was none), lasting: a refusal that will not lift (a full card, a card gone, a thread
  * that can't be read, a card or space the note may not go to)}. Never throws.
  */
-function pwThreadNote_(dest, card, text, key) {
+function pwThreadNote_(dest, card, text, key, deadline) {
   try {
-    const ok = acThreadNote_(dest, card, text, key) === true;
+    const from = Number(deadline) > 0 ? Object.assign({}, dest, { deadline: Number(deadline) }) : dest;
+    const ok = acThreadNote_(from, card, text, key) === true;
     const last = acThreadNoteLast_();
     return { ok, posted: ok && last.posted, full: !ok && last.code === 'card_full', why: ok ? '' : last.code, lasting: !ok && last.lasting };
   } catch (e) {
@@ -1669,7 +1672,7 @@ function pwPostStories_(items, pre, recent, c) {
     let reply = null;
     if (asNote) {
       const note = pwThreadNote_(c.dest, Object.assign({ thread, message: alertName }, Number(born) > 0 ? { createTime: Number(born) } : {}),
-        text, key);
+        text, key, Date.now() + Math.max(0, c.timeLeft() - PW_MIN_LEFT_MS_));
       if (!note.ok && note.lasting) {
         closed(entries, story, note.why);
         return 'closed';
@@ -1960,6 +1963,7 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     const cover = pwCrossNotesOn_(dest) ? pwCoverCards_(rows, block, dest.space) : null;
     const covered = [];   // [{q, card, why}]: flags on a post that has a card there, for the notes (below the filter)
     const coverWait = new Set();  // flags whose post was carded so lately that its card isn't in the Alert log yet: they wait
+    const coverLater = new Set();  // flags whose note needed asking Chat about its card's notes with too little time left: they wait
     const writes = [];  // [index in the block, the key to write]
     // The small flags held on an earlier run (a: 'b') that this run takes out of that state, whatever it makes of them:
     // row -> when it was held. Those held today leave today's count of held flags (below)
@@ -2037,11 +2041,21 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     });
     byCard.forEach((list, message) => {
       const names = Array.from(new Set(list.map(c => String(c.q.k.w || '')))).slice(0, PW_COVER_NAMES_MAX_);
-      const timeOk = (typeof left === 'function' ? left() : Infinity) >= PW_MIN_LEFT_MS_;
+      const timeLeft = typeof left === 'function' ? left() : Infinity;
+      const timeOk = timeLeft >= PW_MIN_LEFT_MS_;
       // only a note this run posted names this run's watches: one an earlier run put there (the same key: one a card)
-      // names that run's, so these flags stay "already alerted"
-      const noted = timeOk && pwThreadNote_(dest, list[0].card, pwAlsoFlaggedText_(names), `watch:${message}`).posted;
+      // names that run's, so these flags stay "already alerted". The helper asks Chat about the card's notes only with
+      // time left (the deadline); a note it left for want of time waits for the next run with its flags (but no longer
+      // than any flag waits)
+      const note = timeOk ? pwThreadNote_(dest, list[0].card, pwAlsoFlaggedText_(names), `watch:${message}`,
+        Date.now() + Math.max(0, timeLeft - PW_MIN_LEFT_MS_)) : null;
+      const noted = !!note && note.posted;
+      const later = !!note && !note.ok && note.why === 'no_asking';
       list.forEach(c => {
+        if (later && now - Math.max(Number(c.q.k.s) || 0, Number(c.q.k.rq) || 0) <= PW_ALERT_MAX_AGE_MS_) {
+          coverLater.add(c.q.i);
+          return;
+        }
         if (!noted || names.indexOf(String(c.q.k.w || '')) < 0) {
           same(c.q, 'already', c.why);
           return;
@@ -2105,7 +2119,7 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
     }
     // still waiting: the fresh flags this run decided nothing about (their key wasn't written)
     const decided = new Set(writes.map(w => w[0]));
-    out.waiting = fresh.filter(q => !decided.has(q.i)).length;
+    out.waiting = fresh.filter(q => !decided.has(q.i)).length + coverLater.size;
     out.problem = problem;
     writes.forEach(([i, k]) => sh.getRange(block.first + i, PW_COL_.key).setValue(JSON.stringify(k)));
     // (no Chat id in a log line: a space's, message's or thread's id is said as the space's name)
@@ -2126,6 +2140,8 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
           : stopped === 'note' ? 'their story\'s alert took no more notes in its thread this run' : 'they were not reached this run'), space), now);
       if (coverWait.size && out.waiting === coverWait.size) {
         pwWaitWhyKeep_('the card of their post was not in the Alert log yet, to put the note under it', now);
+      } else if (coverLater.size && out.waiting === coverLater.size) {
+        pwWaitWhyKeep_('the run was short of time to put the note under their post\'s card', now);
       }
     }
     if (out.held || out.repeats || out.offTopic) {
