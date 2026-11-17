@@ -158,7 +158,25 @@ one line under it: what was built, the suite's count, and anything left out with
       goes on to it instead of stopping): in this setup Burson's alerts are handled before this loop and sheet tests
       at its start, so nothing of Burson's can be behind the cards; whether a Direct candidate not posted for want of
       room is marked as posted is left to step S14, as the plan says.
-- [ ] **S5** Ranking in place of the allowance
+- [x] **S5** Ranking in place of the allowance
+      Built, under row 51 in the allowance's flow (BigQuery.gs, EarlyDetection.gs, EarlyWaveSource.gs, OpenEngine.gs):
+      the causes `check`, `hour`, `hourOrdinary`, `dayReviews` and `watchDay` are no refusals; in their place `stop`
+      (the day's safety stop), `pace` (run time step 4, ordinary signals) and `ranked` (the queue of 24 full, ordinary
+      signals); each waits unmarked in the list of signals left for a later check (`EARLY_DETECTION_DEFERRED`, at most
+      150, codes `s`, `p`, `r`, the full queue's count kept with `r`) and ends only when it would leave the producer's
+      180 minutes (`edAgesOut_`), with `it waited 3 hours while N more serious stories were reviewed first` and the
+      stop's and pace's words; serious first as before; the queue holds `open_queue_max` (24), and a serious signal may
+      take up to 4 places more, so an ordinary one is not pushed out for it (a fifth serious one at a full queue still
+      pushes the lowest-ranked one out, ending "pushed out" as before: with more places the stored rows' worst case would
+      pass 300 KB, `switch_open_storage.test.js`); the check reads every signal not yet ended in the 180
+      minutes (up to 300) and the producer's buffer keeps 300 rows in several cache items (`bf:N`, their counts in its
+      state; a dropped one counted lost on the Engine tab); the drain has no count a run. "Every signal read gets exactly
+      one ending, counted once" holds: a waiting signal has no ending until it is queued or leaves the window. Suite:
+      1,292 of 1,292 passed. Left out, and why: the seen map over 8 properties and the producer's stories told for 24 hours
+      in chunks (the seen map's three properties and the 60 stories told stay as the fix plan built them: with the queue
+      and checks of this step they hold, and step S7's carry is where the producer's items grow; a day's real counts
+      are a live-only number); "150 s of the flow left" for a batch (step S12 makes batches; a single review keeps the
+      90 s it has, plus the tab's 30 s from S3).
 - [ ] **S6** Checks every 5 minutes
 - [ ] **S7** Ingest capacity
 - [ ] **S8** Velocity made correct

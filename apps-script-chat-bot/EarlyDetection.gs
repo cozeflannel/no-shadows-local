@@ -1936,7 +1936,9 @@ function edDrainQueue_(ctx, report) {
   let reviews = 0;
   let other = 0;  // signals that left the queue here in a way `out` has no count for
   let list = prune();
-  while (list.length && reviews < EW_DRAIN_MAX_PER_RUN_) {
+  // the open engine (row 51, step S5): no count a run; the run's time, the stop, the pace and Burson bound it
+  const perRun = typeof openOn_ === 'function' && openOn_() ? Infinity : EW_DRAIN_MAX_PER_RUN_;
+  while (list.length && reviews < perRun) {
     // the open engine (row 51): the Early Detection tab's write is kept in the run's time before the reviews take it
     if (left() < EW_DRAIN_MIN_LEFT_MS_ + (typeof openOn_ === 'function' && openOn_() ? EDT_MIN_LEFT_MS_ : 0)) break;
     if (typeof runOwned_ === 'function' && !runOwned_()) break;

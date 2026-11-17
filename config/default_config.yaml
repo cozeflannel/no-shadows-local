@@ -160,6 +160,7 @@ burson_qa:
   open_lock_loss_seconds: 2             # what a run that found the lock taken costs
   open_fetch_day:                       # outside calls a day; blank: 100,000 on a Workspace account, 20,000 on any other
   open_burson_pickup_p90_s: 120         # past this p90 of Burson's pick-up time, background work gives up 30 s more a run
+  open_queue_max: 24                    # the review queue under row 51 (step S5); a story that does not fit waits for a later check
   # What the Resources tab of the bot's sheet starts with. After that the tab is what the bot uses: edit it there.
   # The bot links these when Burson asks about the alert requirements, so only list documents Burson can open.
   resources:

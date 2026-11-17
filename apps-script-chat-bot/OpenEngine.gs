@@ -381,7 +381,30 @@ function openSerious_(row) {
   }
 }
 
-const OE_BG_WAITING_MAX_ = 3;  // the bot's own cards waiting unreviewed in the Auto-correct space before a new one waits
+const OE_BG_WAITING_MAX_ = 3;
+const OE_QUEUE_MAX_ = 24;       // the review queue under row 51 (setting open_queue_max; step S5)
+const OE_QUEUE_SERIOUS_MORE_ = 4;  // places past it a serious signal may take (S5)
+const OE_ROWS_MAX_ = 300;       // signals a check reads and the producer's buffer keeps under row 51 (step S5)
+
+/** The review queue's size: open_queue_max (24) under row 51, else today's 12 (BigQuery.gs ED_QUEUE_MAX_). Never throws. */
+function openQueueMax_() {
+  try {
+    if (!openOn_()) return ED_QUEUE_MAX_;
+    const n = Math.round(Number(((typeof GEN !== 'undefined' && GEN && GEN.settings) || {}).open_queue_max));
+    return n > 0 ? n : OE_QUEUE_MAX_;
+  } catch (e) {
+    return ED_QUEUE_MAX_;
+  }
+}
+
+/** Under row 51: the run time is nearly used (step 4 or more: no background reviews but serious ones). Never throws. */
+function openPaceHeld_() {
+  try {
+    return openOn_() && openUsage_(Date.now()).step >= 4;
+  } catch (e) {
+    return false;
+  }
+}  // the bot's own cards waiting unreviewed in the Auto-correct space before a new one waits
 
 /**
  * Is one of the bot's own cards serious (step S4)? `kind` 'watch' (WatchAlerts.gs pwAlertOf_'s alert): a KOF, 2,000+

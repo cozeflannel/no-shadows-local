@@ -335,7 +335,7 @@ function ewsRows_(minutes, opts) {
   if (outcome && outcome.watch && outcome.watch.length && opts && opts.watch) {
     ewsWatchAsk_(ewsCache_(), props, st, now, outcome.watch, opts.watch, opts && opts.record);
   }
-  return ewsBufferRows_(ewsReadBuffer_(ewsCache_()), now, mins);
+  return ewsBufferRows_(ewsReadBuffer_(ewsCache_(), st), now, mins);
 }
 
 /**
@@ -1271,9 +1271,37 @@ function ewsLoadPool_(cache, index, now) {
 }
 
 /** The buffer (cache 'buf'): rows created in the last 3 hours. Never throws. */
-function ewsReadBuffer_(cache) {
+function ewsReadBuffer_(cache, st) {
+  // the open engine (Control row 51, step S5): the buffer is in several items ('bf:N', their row counts in the state's
+  // `bf`); an item the cache dropped is counted on the Engine tab as lost. Row 51 OFF: the one item 'buf', as before
+  if (st && Array.isArray(st.bf) && typeof openOn_ === 'function' && openOn_()) {
+    let rows = [];
+    st.bf.forEach((n, i) => {
+      const part = ewsCacheGet_(cache, `bf:${i}`);
+      if (Array.isArray(part)) rows = rows.concat(part.filter(r => r && r.alert_id));
+      else if (typeof engAdd_ === 'function') engAdd_('lost', Number(n) || 0);
+    });
+    return rows;
+  }
   const b = ewsCacheGet_(cache, 'buf');
   return Array.isArray(b) ? b.filter(r => r && r.alert_id) : [];
+}
+
+/**
+ * Puts the buffer's rows in `items` (written with the rest): under row 51 the newest OE_ROWS_MAX_ in items of their own
+ * ('bf:N', st.bf their row counts); else the newest EWS_BUFFER_MAX_ that fit one item ('buf'), as before. Never throws.
+ */
+function ewsBufferPut_(items, st, rows) {
+  if (typeof openOn_ === 'function' && openOn_()) {
+    const chunks = ewsChunks_((rows || []).slice(-OE_ROWS_MAX_));
+    chunks.forEach((ch, i) => { items[`bf:${i}`] = ch; });
+    st.bf = chunks.map(ch => ch.length);
+    return;
+  }
+  if (st && st.bf !== undefined) delete st.bf;
+  let buf = (rows || []).slice(-EWS_BUFFER_MAX_);
+  while (buf.length > 1 && JSON.stringify(buf).length > EWS_CACHE_ITEM_CHARS_) buf = buf.slice(1);
+  items.buf = buf;
 }
 
 /**
@@ -1281,7 +1309,8 @@ function ewsReadBuffer_(cache) {
  * P2, then velocity ratio, accounts, the oldest first (the old view's ORDER BY). Pure.
  */
 function ewsBufferRows_(buffer, now, minutes) {
-  const max = typeof EW_QUERY_MAX_ROWS_ === 'number' ? EW_QUERY_MAX_ROWS_ : 25;
+  // the open engine (row 51, step S5): every signal the producer kept, up to OE_ROWS_MAX_
+  const max = typeof openOn_ === 'function' && openOn_() ? OE_ROWS_MAX_ : typeof EW_QUERY_MAX_ROWS_ === 'number' ? EW_QUERY_MAX_ROWS_ : 25;
   return (buffer || []).filter(r => r && now - (Number(r._at) || 0) <= minutes * 60000 && Number(r._at) <= now + 60000)
     .sort((a, b) => ewsPri_(a.priority_hint) - ewsPri_(b.priority_hint) ||
       (Number(b.velocity_ratio) || 0) - (Number(a.velocity_ratio) || 0) ||
@@ -2012,9 +2041,7 @@ function ewsWatchAsk_(cache, props, st, now, cands, watch, record) {
     Object.keys(marks).sort((a, b) => marks[b][0] - marks[a][0]).slice(0, EWS_WATCH_MARKS_MAX_).forEach(k => { keep[k] = marks[k]; });
     const items = { wt: keep };
     if (raised.length) {
-      let buf = ewsReadBuffer_(cache).filter(r => raised.every(x => x.alert_id !== r.alert_id)).concat(raised).slice(-EWS_BUFFER_MAX_);
-      while (buf.length > 1 && JSON.stringify(buf).length > EWS_CACHE_ITEM_CHARS_) buf = buf.slice(1);
-      items.buf = buf;
+      ewsBufferPut_(items, st, ewsReadBuffer_(cache, st).filter(r => raised.every(x => x.alert_id !== r.alert_id)).concat(raised));
     }
     ewsCachePut_(cache, items);
     st.day = Object.assign({}, day, { watch: today });
@@ -3421,12 +3448,11 @@ function ewsProduce_(props, st, now, firstMins, opts) {
     }
 
     // Keep it all: the buffer first (what earlyWaveCheck_ reads), then the stories, the pool and the counts
-    const buffer = ewsReadBuffer_(cache).filter(r => now - (Number(r._at) || 0) < EWS_BUFFER_MS_ && rows.every(x => x.alert_id !== r.alert_id))
+    const buffer = ewsReadBuffer_(cache, st).filter(r => now - (Number(r._at) || 0) < EWS_BUFFER_MS_ && rows.every(x => x.alert_id !== r.alert_id))
       .concat(rows.map(r => Object.assign({ _at: now }, r)));
-    let buf = buffer.slice(-EWS_BUFFER_MAX_);
-    while (buf.length > 1 && JSON.stringify(buf).length > EWS_CACHE_ITEM_CHARS_) buf = buf.slice(1);
-    const items = { buf, story: stories.slice(-60).map(p => ({ id: p.id, cid: p.cid, at: p.at, au: p.au, pl: p.pl, v: p.v })),
+    const items = { story: stories.slice(-60).map(p => ({ id: p.id, cid: p.cid, at: p.at, au: p.au, pl: p.pl, v: p.v })),
       acc: ewsAccStored_(acc), x: { urls: ex.urls, kof: ex.kof, own: ex.own, at: ex.at, ownAt: ex.ownAt } };
+    ewsBufferPut_(items, st, buffer);  // 'buf' as before; under row 51 'bf:N' (step S5)
     // the same-author signatures: a day of them, packed into several items (one item no longer holds them)
     const sigChunks = ewsChunks_(ewsSigRecords_(sigs));
     sigChunks.forEach((ch, i) => { items[`sg:${i}`] = ch; });

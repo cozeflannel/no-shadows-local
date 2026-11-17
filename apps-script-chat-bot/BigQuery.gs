@@ -3376,7 +3376,7 @@ const ED_DEFERRED_PROP_ = 'EARLY_DETECTION_DEFERRED';
 const ED_DEFERRED_MAX_ = 150;
 const ED_DEFERRED_CACHE_ = 'ed_deferred_rows';
 const ED_DEFERRED_CACHE_CHARS_ = 90000;
-const ED_DEFERRED_CAUSES_ = { check: 'k', hour: 'h', hourOrdinary: 'o' };
+const ED_DEFERRED_CAUSES_ = { check: 'k', hour: 'h', hourOrdinary: 'o', stop: 's', pace: 'p', ranked: 'r' };  // the last three: row 51 (S5)
                                               // (the producer's buffer keeps a signal 3 hours), so the map keeps story keys
 const EW_DRAIN_MAX_PER_RUN_ = 2;              // max signals reviewed and posted per run (EarlyDetection.gs edDrainQueue_)
 const EW_DRAIN_MIN_LEFT_MS_ = 90 * 1000;      // a review starts only with this much of the run left (median review ~40 s)
@@ -3448,6 +3448,8 @@ function bqEarlyDetectionRows_(minutes, opts) {
  * The 24h seen keys keep a re-read alert from being posted twice. Pure.
  */
 function edLookbackMinutes_(settings, lastAt, now) {
+  // the open engine (row 51, step S5): every signal not yet ended in the producer's 180 minutes is read
+  if (typeof openOn_ === 'function' && openOn_()) return EW_LOOKBACK_MAX_MIN_;
   const base = bqLookbackMinutes_(settings);
   const last = Number(lastAt) || 0;
   if (!last || !(Number(now) > last)) return base;
@@ -4346,9 +4348,9 @@ function edDeferredSave_(props, list, rows) {
  * with 'now', the list could not be saved, so it ended in the check that put it off (its cause alone). Pure but for the
  * settings.
  */
-function edDeferredWhy_(code, how) {
+function edDeferredWhy_(code, how, n) {
   const cause = Object.keys(ED_DEFERRED_CAUSES_).find(k => ED_DEFERRED_CAUSES_[k] === code) || 'check';
-  const first = edNoteSentence_(edNeverWhy_(cause));
+  const first = edNoteSentence_(edNeverWhy_(cause, n));
   if (how === 'now') return first;
   return `${first} ${how
     ? 'Too many stories were waiting for a later check, so the oldest ones were let go.'
@@ -4461,10 +4463,14 @@ function edQueuePut_(props, row, now, rank) {
   };
   if (rank && typeof rank === 'object') Object.assign(entry, rank);
   const next = list.concat([entry]).sort(edQueueRank_);
-  const kept = next.slice(0, ED_QUEUE_MAX_);
+  // row 51 (step S5): 24; a serious signal may take the queue OE_QUEUE_SERIOUS_MORE_ places past it, so an ordinary one is
+  // not pushed out unreviewed for it (the stored rows' worst case stays under 300 KB: switch_open_storage.test.js)
+  const open = typeof openOn_ === 'function' && openOn_();
+  const max = open ? openQueueMax_() + (rank && rank.ser ? OE_QUEUE_SERIOUS_MORE_ : 0) : ED_QUEUE_MAX_;
+  const kept = next.slice(0, max);
   if (!kept.some(e => e.k === k)) return no('ranked out');
   edDayStart_(props);  // before the queue changes
-  const pushed = next.slice(ED_QUEUE_MAX_).map(e => ({ entry: e, row: edQueueRow_(props, e.k) }));
+  const pushed = next.slice(max).map(e => ({ entry: e, row: edQueueRow_(props, e.k) }));
   props.setProperty(ED_QUEUE_ROW_PREFIX_ + k, JSON.stringify(compact));
   pushed.forEach(p => props.deleteProperty(ED_QUEUE_ROW_PREFIX_ + p.entry.k));
   edQueueSave_(props, kept);
@@ -4716,7 +4722,7 @@ function earlyWaveCheck_(ctx) {
         return;
       }
     }
-    edNote_(ctx, row, ED_OUT_.never, edDeferredWhy_(e[1], how), row.alert_id ? { title } : { title, key: `deferred:${h}` });
+    edNote_(ctx, row, ED_OUT_.never, edDeferredWhy_(e[1], how, e[3]), row.alert_id ? { title } : { title, key: `deferred:${h}` });
   };
   if (Object.keys(deferredList).length) {
     const readNow = new Set((rows || []).map(idHashOf).filter(Boolean));
@@ -4995,21 +5001,30 @@ function earlyWaveCheck_(ctx) {
       return false;
     });
     go.sort((a, b) => (b.serious ? 1 : 0) - (a.serious ? 1 : 0) || (ft && ft.rank ? ftRank_(a, b) : a.idx - b.idx));
+    // the open engine (Control row 51, step S5): no refusal by a count; a signal waits (unmarked) only for the day's
+    // safety stop, the run time nearly used (ordinary ones), or a full queue of 24 (ordinary ones: a serious one takes
+    // the lowest-ranked place); serious first, as above. Row 51 OFF: the allowance's causes, as before
+    const open = typeof openOn_ === 'function' && openOn_();
+    const qmax = open ? openQueueMax_() : 0;
     for (const c of go) {
-      const cause = queued >= EW_MAX_PER_CHECK_ ? 'check'
-        : allow.dayQueued + queued >= allow.perDay ? 'dayReviews'
-          : isWatch(c.row) && kinds.watch >= watchRoom ? 'watchDay'
-            : allow.all >= EW_MAX_PER_HOUR_ ? 'hour'
-              : !c.serious && allow.ord >= allow.perHour ? 'hourOrdinary' : '';
+      const waiting = open ? edQueueList_(props).length : 0;
+      const cause = open
+        ? (openStopReached_() ? 'stop' : !c.serious && openPaceHeld_() ? 'pace' : !c.serious && waiting >= qmax ? 'ranked' : '')
+        : queued >= EW_MAX_PER_CHECK_ ? 'check'
+          : allow.dayQueued + queued >= allow.perDay ? 'dayReviews'
+            : isWatch(c.row) && kinds.watch >= watchRoom ? 'watchDay'
+              : allow.all >= EW_MAX_PER_HOUR_ ? 'hour'
+                : !c.serious && allow.ord >= allow.perHour ? 'hourOrdinary' : '';
       // the check's 5 and the hour's limits pass: such a signal is left for the next check (no mark, no ending, not
       // counted), where the serious ones go first again; it ends only when it would leave the window a check reads
-      if ((cause === 'check' || cause === 'hour' || cause === 'hourOrdinary') && !edAgesOut_(c.row, ctx.settings, now)) {
+      // (and under row 51 the stop, the pace and a full queue the same way)
+      if (['check', 'hour', 'hourOrdinary', 'stop', 'pace', 'ranked'].indexOf(cause) >= 0 && !edAgesOut_(c.row, ctx.settings, now)) {
         deferred++;
         // remembered, so that it still ends if no later check reads it again in time (the sweep above)
         const h = c.idKey ? hashText_(c.idKey) : '';
         if (h) {
           deferredList[h] = [Math.floor(edMadeAt_(c.row) / 60000), ED_DEFERRED_CAUSES_[cause],
-            Math.min(999999, ewCount_(c.row.unique_low_tier_authors))];
+            Math.min(999999, ewCount_(c.row.unique_low_tier_authors))].concat(cause === 'ranked' ? [waiting] : []);
           deferredRows[h] = edDeferredRow_(c.row, c.dec);
           deferredChanged = true;
           deferredNow.add(h);
@@ -5020,7 +5035,8 @@ function earlyWaveCheck_(ctx) {
         if (c.idKey) seen.add(c.idKey, now);
         marked++;
         if (cause === 'dayReviews') dayStop = true;
-        const n = cause === 'dayReviews' ? allow.perDay : cause === 'hour' ? EW_MAX_PER_HOUR_ : cause === 'hourOrdinary' ? allow.perHour : undefined;
+        const n = cause === 'dayReviews' ? allow.perDay : cause === 'hour' ? EW_MAX_PER_HOUR_ : cause === 'hourOrdinary' ? allow.perHour
+          : cause === 'ranked' ? waiting : undefined;
         edNote_(ctx, c.row, ED_OUT_.never, edNeverWhy_(cause, n), { dec: c.dec });
         continue;
       }
