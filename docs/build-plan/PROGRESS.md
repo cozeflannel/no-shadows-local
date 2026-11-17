@@ -366,7 +366,19 @@ one line under it: what was built, the suite's count, and anything left out with
       would wait for nothing); the tests `switch_rq_watch.test.js`'s queued-pass and held-flag cases and
       `switch_rq_growth.test.js` with them.
 - [ ] **S19f** Every size grouped
-- [ ] **S18** "Why not this post?"
+- [ ] **S18** "Why not this post?" (built in part: see below; left unticked)
+      Built, under row 51: `WhyNot.gs`; a person's `why not <link>` in the Auto-correct space (B10; Bot.gs
+      `pollAnalystMessages_`) is answered in its thread from what the bot holds, read-only and with no Gemini call: the
+      alert memory (a Social Alert or a card already went out), the bot's own Watch detections tab (the flag and what came
+      of it), Early Detection's stories (the story it joined and its accounts so far, when and from which source it was
+      read) and pool (it waits for company); else that nothing is held, and why that can be. Through the leak guard (a
+      story's words that trip it are left out; alert ids and path names are never written); `Why not:` is among the bot's
+      own first words (Voice.gs). Never in S-F Burson or the Burson test copy. Longest answer 161 characters. Suite:
+      1,355 of 1,355 passed. Left out, and why: the Early Detection tab and the producer's exclusion lists (DSD's alerted
+      posts and KOF authors) as stores, and the story's quick-look line ("Asked at 3 accounts: severity low, 81% sure"):
+      the answers are not kept with the story, and the lists are cached only inside a check; "which gate it fails" when
+      nothing is held (that would read the sources again, not read-only); the requirements-first texts of RQ8 (checked
+      alone, the first screen's) wait for the stores S19a (seen set) and S19d (carry, answers) leave out.
 - [ ] **S19g** Misses counted
 
 ### The rest (plan 2; briefs 26 to 29)

@@ -111,6 +111,7 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
     const cfg = autoCorrectCfg_(space, sfb.space);
     cfg.testers = mainCfg && Array.isArray(mainCfg.testers) ? mainCfg.testers : testersFor_(wanted ? wanted.testers : '').testers;
     const ctx = buildCtx_(cfg, ss, wanted && wanted.switches);
+    ctx.ss = ss;  // (read-only: "why not" answers read the Watch detections tab, WhyNot.gs)
     ctx.settings.bq_lookback_minutes = (opts && opts.lookbackMinutes) ||
       bqLookbackFrom_(wanted && wanted.bqLookback).minutes;
     ctx.allowEarlyWave = Boolean(opts && opts.allowEarlyWave);

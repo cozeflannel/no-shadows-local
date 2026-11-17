@@ -1971,6 +1971,15 @@ function pollAnalystMessages_(ctx, report) {
       advance(m);
       continue;
     }
+    // the open engine (row 51, step S18, WhyNot.gs): "why not <link>" from a person in the Auto-correct space is answered
+    // in its thread from what the bot holds about that post, read-only (no Gemini call)
+    const whyUrl = open && typeof whyNotLink_ === 'function' ? whyNotLink_(m.text) : '';
+    if (whyUrl && !ctx.store.isDone(m.name) && selfAnswerOk_(ctx, m)) {
+      whyNotAnswer_(ctx, m, whyUrl, report);
+      ctx.recent.add(m.name, m.createTime);
+      advance(m);
+      continue;
+    }
     const ack = isShortAck_(m.text);
     const wantsAnswer = mentioned || (!ack && isQuestion_(m.text)) ||
       (m.threadReply && !ack && (mentionsAnalystAction_(m.text) || mentionsAlertField_(m.text)));
