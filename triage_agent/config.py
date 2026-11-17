@@ -632,6 +632,38 @@ class BursonQAConfig(ConfigModel):
     # is on, an "Alert requirements: ...?" question asked under a card from the account the bot runs as is not taken for
     # one of the bot's notes. false: as before: no such line, the BSIP card's [KOF] line says No.
     requirement_line: bool = True
+    # New sources in Early Detection (Control rows 48-49, OFF until the owner turns them on): how their posts share the
+    # check with today's sources. None of these does anything while those rows are OFF.
+    # Of the 400 texts embedded a check, the new sources' share (today's sources keep the rest; room one side leaves
+    # goes to the other).
+    early_wave_new_embed_per_check: int = 100
+    # The new sources' texts embedded a UTC day at most (they also stop once the day's total nears its pace).
+    early_wave_new_embed_per_day: int = 5000
+    # A new source's post first seen more than this many minutes after it was posted can only join a story.
+    early_wave_new_late_minutes: int = 180
+    # Of the 1,200 unjoined posts kept to start stories, at most this many from the new sources, each kept this many
+    # minutes at most.
+    early_wave_new_pool_max: int = 300
+    early_wave_new_pool_minutes: int = 120
+    # The new sources' posts not embedded in a check, kept for the next one (2 hours at most).
+    early_wave_new_carry_max: int = 100
+    # Days after a source is first read when stories only the new sources lift over the bar are listed, not sent
+    # for review, and stories only they lift to the early watch are not asked about. 0: no trial (sent from the
+    # first day, within the two caps below).
+    early_wave_new_trial_days: int = 7
+    # After the trial: such lifted stories sent for review in an hour, and in a day, at most (the rest are listed).
+    early_wave_new_lifted_per_hour: int = 2
+    early_wave_new_lifted_per_day: int = 20
+    # The AMIE table in Early Detection (Control row 48, OFF until the owner turns it on). None of these does anything
+    # while row 48 is OFF. New rows read a check at most; how many minutes each read starts before the newest row it
+    # last took (rows that land late); the gigabytes one read may scan (a dry run checks it each day); the hours with no
+    # new row after which the row's note says so; and the alert feeds of Google's staff and KOFs, left out (a regular
+    # expression on the feed's name).
+    amie_rows_per_check: int = 300
+    amie_overlap_minutes: int = 60
+    amie_max_gb: float = 1
+    amie_stale_hours: float = 3
+    amie_staff_feeds_rx: str = r"kof|kol|\binfs?\b|exec|googler|reps|posts by google"
     # What the Resources tab of the bot's sheet starts with: documents the bot links when Burson asks about the alert
     # requirements. After that the tab is what the bot uses (people edit it there). Only links Burson can open.
     resources: list[BursonResource] = Field(default_factory=list)

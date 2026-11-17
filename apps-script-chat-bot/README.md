@@ -55,8 +55,8 @@ sheet, and its link is in the bot's first message in the analyst space. You don'
 | **Today** (B7) | Alerts reviewed, alerts sent back to Burson, questions answered. While the bot works alone in the Auto-correct space (B10 set, B9 blank, B3 or B4 blank): that space's own count, the one C10 shows | The bot |
 | **Runs as** (B8) | The account the bot posts as. It must be a member of both spaces | `setup()` |
 | **Mirror space**, **Auto-correct space** (B9, B10) | Optional test spaces (below) | You |
-| **The switches** (B11:B24, B27:B29, B32, B34, B36:B40, B46) | `ON` or `OFF`, all OFF to start: what the bot may do on its own (below) | You |
-| C11:C24, C27:C29, C32, C34, C36:C40, C46 | What each switch does when OFF, or what it is doing when ON | The bot, every minute |
+| **The switches** (B11:B24, B27:B29, B32, B34, B36:B40, B46, B48) | `ON` or `OFF`, all OFF to start: what the bot may do on its own (below) | You |
+| C11:C24, C27:C29, C32, C34, C36:C40, C46, C48 | What each switch does when OFF, or what it is doing when ON | The bot, every minute |
 | **S-F Burson space** (B25) | Which space is the real Burson space, S-F Burson: its link, id or exact name. Only this cell decides it; the code never names it. Blank to start (see "S-F Burson space (B25)" below) | You |
 | C25 | ✓ and the name of the space the bot found, ✗ and what to fix, or ⚠️ Not set and what waits for it | The bot |
 | **Burson test copy** (B26) | Optional. A Google-only space to practise the Relay in without touching S-F Burson: the bot copies S-F Burson there, and while it's set the Relay sends the analysts' side (and, with row 24 ON, the bot's own Burson replies and emojis) there instead of S-F Burson. Blank to start (see "Practising the Relay with a Burson test copy" below) | You |
@@ -66,7 +66,7 @@ sheet, and its link is in the bot's first message in the analyst space. You don'
 | **BigQuery lookback** (B31) | How far back Direct BigQuery alerts (row 15) and the Early wave check (row 19) look: 15, 30, 45 or 60 minutes (blank: 60). C31 shows what the bot is using | You |
 | **Other alerts space** (B33) | Optional. A Google-only space with other alerts (a campaign space, say) the bot works every minute beside the Mirror space, always in Testing (see "Other alerts space (B33)" below). C33 shows how it's doing | You |
 | **Fast triage bars** (B41:B45, B47) | The six hold-back and early-watch bars for rows 39 and 40 (seeds `0.10`, `0.90`, `0.55`, `0.80`, `3`, and `0.30` in B47; blank or invalid uses its seed). Column C shows what the bot is using | You |
-| **How it works** (from A49) | A plain-language guide to all of the above | `setup()` and the bot |
+| **How it works** (from A52; rows 49-51 are blank, 49 and 50 kept for the next switches) | A plain-language guide to all of the above | `setup()` and the bot |
 | **Watches**, **Watch detections** and **Watch sources** tabs | Only with Proactive watch ON (row 34): what to look for (one watch a row, each ON / OFF), what the watches would have flagged (with its source and a scorecard against Burson's alerts), and which sources are live, stale or failing (see "Proactive watch (row 34)" below) | You edit the watches and rate the rows; the bot writes the rest |
 | **Follow-up** tab | Only with Track post-alert outcomes ON (row 21): what came of the bot's Social Alerts, which teams replied, each alert's status and next step, and editable P0/P1/P2 reply deadlines in B5:B7 | The bot updates it; you can edit B5:B7 |
 | **Burson outbox** tab | Only with Post in S-F Burson ON (row 24) while LIVE: what the bot or the Relay would post in S-F Burson, each row waiting for you to set it to Send or Skip | The bot adds rows; you set Status |
@@ -422,8 +422,9 @@ after the other spaces:
   | Brandwatch: 2026 Election Alerts (Brandwatch's API: project 1998344909, query 2004167929) | US (a query parameter) | What Brandwatch added to the query since the last look (an hour back on a first look, 6 hours at most), posted within 72 hours, the newest added first (100 a page, 3 pages a look at most). Read with the shared token slrr-campaigns keeps in Secret Manager (`slrr-campaigns-bw-token`, read each look; never kept, logged or written). Brandwatch's API gives X posts without their text, author or link (X's licensing; about half of this query), so the bot reads those from X's public embed data (60 a look, the biggest accounts first); an X post X won't show is counted as not sent. 100 a look | Usually minutes after posting |
 
   Dropped Nov 1 as stale (no new rows): the daily Brandwatch export, DSD content vectors and Reddit Pulse. Dropped Nov 11
-  (not on the approved table list): BMIE alert mentions and Sprinklr's older outbound media export. A Watch sources tab
-  made before then loses their rows at its next update.
+  (not on the approved table list): the AMIE table (Brandwatch's alert mentions) and Sprinklr's older outbound media export. A Watch sources tab
+  made before then loses their rows at its next update. The owner approved the AMIE table (Brandwatch's alert feeds)
+  again on 16 November 2026: since then Early Detection reads it, behind Control row 48 (the Watch does not read it yet).
 
   Each source keeps its own place: Sonar and the comments go by the look's window; the others start after the newest
   item they last handed over (on a first look: an hour for the Other alerts space and the Brandwatch query, 2 hours for
@@ -677,9 +678,9 @@ The thread only gets a short note: `🌡️ Temp check sent: @asker (10/29) 2020
   OFF (as it starts), nothing changes: such a message is an analyst's message like any other.
 - C36 says how the last one went.
 
-### The switches: what the bot may do on its own (rows 11-24, 27-29, 32, 34, 36-40)
+### The switches: what the bot may do on its own (rows 11-24, 27-29, 32, 34, 36-40, 46, 48)
 
-Rows 11-24, 27-29, 32, 34 and 36-40 are ON / OFF switches (a dropdown in column B). Each starts **OFF**, and with every switch OFF the bot works
+Rows 11-24, 27-29, 32, 34, 36-40, 46 and 48 are ON / OFF switches (a dropdown in column B). Each starts **OFF**, and with every switch OFF the bot works
 exactly as the rest of this README describes (in S-F Burson itself, it posts nothing: row 24). Column C says what OFF
 means, or what an ON switch is doing (its counts today and its last check). The bot rewrites column C every run, paused
 or not.
@@ -711,13 +712,14 @@ or not.
 | 39 | Fast triage: rank and early watch | Queue order is priority, then accounts, then oldest; stories below the usual 5-account bar wait | Needs row 38 ON: orders candidates and the review queue by P0 risk group, tier, severity score and brand-risk probability (unanswered first, never ranked down), and asks about stories at the accounts bar (B45, seed `3`) below the 5-account promotion bar, raising an `EARLY_WATCH` signal (up to 8 a day) when B43:B44 hold and severity is `medium` or higher |
 | 40 | Fast triage: hold back noise | Every queued signal gets its full Gemini review | Needs row 38 ON: drops a signal without a review when it has no P0 risk group and no taxonomy raise, its severity level is `none` or `low` at or above the confidence bar (B43, seed `0.55`), and `about_google` is at or below B41 (seed `0.10`) or `routine_noise` is at or above B42 (seed `0.90`) (counted on C19 among the stories let go, and logged) |
 | 46 | Write early-wave records to BigQuery | Nothing is written to `brand-social-central-data.early_wave` | Writes each check's stories, posts, signals, events and fast-triage answers to `brand-social-central-data.early_wave` (`story_snapshots`, `story_posts`, `signals`, `signal_events`, `triage_verdicts`), batched once per table per check with deterministic `insertId`s and no emails, names or write-ups |
+| 48 | Early Detection: also read the AMIE table | Early Detection does not read the AMIE table | Needs row 19 ON (C48 says it is waiting while row 19 is OFF). Each Early Detection check also reads the new rows of the AMIE table (Brandwatch's alert feeds, X posts with their words) with a BigQuery job of its own, read only, with no call to Brandwatch: from an hour before the newest row it last took (to catch rows that land late), at most 300 new rows a check (`amie_rows_per_check`), small accounts only, not positive, English, Google's posts, never the staff and KOF feeds or a post the alert memory already has. It checks the table at the end of a check, after the other sources were read, so a slow answer never holds them up: its columns every hour and a dry run once a day (at most 1 GB a read, `amie_max_gb`). So its first read comes at the check after the row goes ON (about 15 minutes later). A missing column, refused access or a read too big stops it for the day; a failed read pauses it an hour; either way the other sources go on. Turning it OFF forgets where it had read to (the day's counts and the date its trial started stay) |
 
 What holds for every switch:
 
 - **ON only when it says so.** A switch is ON only when its row has the switch's own label and column B says ON. The
   bot never sets a switch ON: a row whose label is missing or changed is put back OFF. A Control tab from before the
-  switches gets rows 11-24, 27-29, 32, 34, 36-40 and 46 on the next run (no need to run `setup()`), all OFF, rows 41-45 and 47 set to their seed bars (`0.10`, `0.90`, `0.55`, `0.80`, `3`, `0.30`), row 25 (S-F Burson space) blank, row 26 (Burson test copy) blank, row 33 (Other alerts space) blank and row 35 (Watch alerts) OFF.
-  The values in B2:B10, B25:B26, B30:B31, B33, B35, B41:B45, B47, and any switch someone already set, are kept, and "How it works" moves to row 49. One exception, once: the confidence bar (B43) still at `0.80`, the seed the first build wrote there, moves to `0.55`; any other value in B43 is kept.
+  switches gets rows 11-24, 27-29, 32, 34, 36-40, 46 and 48 on the next run (no need to run `setup()`), all OFF, rows 41-45 and 47 set to their seed bars (`0.10`, `0.90`, `0.55`, `0.80`, `3`, `0.30`), row 25 (S-F Burson space) blank, row 26 (Burson test copy) blank, row 33 (Other alerts space) blank and row 35 (Watch alerts) OFF.
+  The values in B2:B10, B25:B26, B30:B31, B33, B35, B41:B45, B47, and any switch someone already set, are kept, and "How it works" moves to row 52 (rows 49-51 are left blank: 49 and 50 are kept for the next two switches, so the help does not move again). One exception, once: the confidence bar (B43) still at `0.80`, the seed the first build wrote there, moves to `0.55`; any other value in B43 is kept.
 - **Testing vs. LIVE is decided on the Control tab every run (`Main.gs` `runMode_`).**
   - The run is **LIVE** only when **Safety valve (row 29)** and **Group test emails (row 37)** are `OFF`, **Burson test copy (B26)** is blank, and **S-F Burson (B25)** is set and found (with alerts coming from S-F Burson via B3 or Mirror B9). While LIVE, Status (B5) starts with the LIVE badge, emails/drafts use real `Brand safety groups` recipients, the real T&S form is used, leads receive DMs, SLRR BigQuery write-back (row 16) writes to the shared tables, and the **Burson outbox** can send rows marked `Send` to S-F Burson.
   - Everything else (Safety valve `ON`, or Group test emails `ON`, or B26 set even if failing checks, or B25 blank/not found, or row 32 working directly in a Google-only B25) is **Testing** (fail closed): every email or draft goes only to the email addresses in `Control!B30` (`Testing: send to`; nothing is sent while `B30` is blank), except that with Group test emails `ON` each Social Alert goes to its group's test email in column C of `Brand safety groups` (a group with none is skipped and logged); only the test copy of the T&S form is submitted, and nothing is ever queued for or sent to live S-F Burson (any outbox row set to `Send` while in Testing is reset to `Pending` with a note). The **Auto-correct space (B10)** and the **Other alerts space (B33)** always stay in Testing even when the Mirror run is LIVE.
@@ -969,7 +971,8 @@ it's watching, the last check and today's updates (the main run's, not the auto-
   clusters small accounts' posts by meaning and spots fast-rising topics without knowing the topic in advance. After
   each run's alerts, at most every 15 minutes (`EW_EVERY_MS_`), it reads what is new in the approved source tables,
   read-only, with one BigQuery job per location (`US` and `us-central1`): Sonar's posts and Sprinklr's comments in real
-  time; Brandwatch and Tubular (every 6 hours) later, only to join a story that already exists. It embeds the posts it
+  time; Brandwatch and Tubular (every 6 hours) later, only to join a story that already exists. With row 48 ON a third
+  job, sent at the same time, reads the AMIE table (see row 48); its failure never stops the other two. It embeds the posts it
   hasn't seen (Vertex AI `text-embedding-005`), clusters them and checks their velocity in Apps Script, logs one line
   with the producer's time and the rolling 10- and 60-minute API counts (`ewLogCheck_`), and **queues** the new signals
   (script properties). Nothing is posted at that point and nothing is written to BigQuery.
@@ -1803,7 +1806,7 @@ The tests run the bot against fake Chat, Gemini, BigQuery and Sheets. These need
 | File | What it is |
 |---|---|
 | `Main.gs` | `setup()`, `status()`, `listMySpaces()`, `tryAlert()`, and `poll()`, the every-minute run (one at a time: a run that finds another still going skips) |
-| `Control.gs` | The Control tab (with its switches, rows 11-24, 27-29, 32, 34 and 36-40, and the S-F Burson space, row 25), and the Resources and Guidance tabs |
+| `Control.gs` | The Control tab (with its switches, rows 11-24, 27-29, 32, 34, 36-40, 46 and 48, and the S-F Burson space, row 25), and the Resources and Guidance tabs |
 | `Knowledge.gs` | The knowledge base: reads the Resources tab's documents, keeps them current in the bot's own hidden "Knowledge cache (bot)" tab, and picks the parts that bear on each alert or question |
 | `Config.gs` | Fixed settings: the Cloud project and what a new Control tab starts with; and this run's S-F Burson space, as the Control tab's B25 names it (no S-F Burson id is in the code) |
 | `Bot.gs` | One pass over the Burson space: alerts, resends, replies, copying analyst emojis |
@@ -1815,7 +1818,7 @@ The tests run the bot against fake Chat, Gemini, BigQuery and Sheets. These need
 | `WatchAlerts.gs` | Watch alerts (row 35, OFF to start): the Proactive watch's flags at a watch's bar posted as the bot's own alert card (`🔭 *WATCH* · <watch>`) in the Other alerts space (B33), the Mirror space (B9) or the Auto-correct space (B10), a few a run, each once; the space's flow works them like any alert (❌ for a repeat, else a Social Alert). Never in S-F Burson, the Burson test copy or a space people outside Google can join |
 | `TempCheck.gs` | Temp checks (row 36, OFF to start): "temp check <Brandwatch query>" in a thread of the Mirror space or B33, queued by its flow (never relayed to S-F Burson) and worked after the run's alerts: the query found by name, link or id in [SLRR] Private, counts by hour, sentiment, sources and mention types from Brandwatch's totals (GETs only), at most 35 posts (reposts excluded; X's words from X's embed data), Gemini's summary, drivers and themes, and the team's write-up in PT posted in the request's thread; "refresh" for the update; Brandwatch busy: waits up to 30 minutes |
 | `ProactiveWatch.gs` | Proactive watch (row 34): a watch over every source's new rows, read-only in BigQuery (two jobs, us-central1 and US: Sonar, Tubular, Brandwatch raw mentions, Sprinklr owned posts and comments, the DSD story selection feed, the Other alerts space's alerts from the Alert log, and the Brandwatch query "2026 Election Alerts" from Brandwatch's API, its X posts' text from X's embed data), Gemini's AI.IF, AI.SCORE and AI.CLASSIFY run inside BigQuery for each watch on the Watches tab, what they'd flag on the Watch detections tab, its scorecard against Burson's alerts, and the Watch sources tab; posts nothing itself (Watch alerts, row 35, post its flags only where B35 says) |
-| `EarlyWaveSource.gs` | Early wave & velocity producer (row 19): reads the 6 approved BigQuery source tables read-only (`US` and `us-central1`), embeds unseen low-tier posts, clusters them incrementally, checks velocity, keeps a 3-hour buffer, and (with row 39) asks about 3+ account early-watch stories |
+| `EarlyWaveSource.gs` | Early wave & velocity producer (row 19): reads the 7 approved BigQuery source tables read-only (`US` and `us-central1`; the AMIE table only with row 48 ON, in a job of its own), embeds unseen low-tier posts, clusters them incrementally, checks velocity, keeps a 3-hour buffer, and (with row 39) asks about 3+ account early-watch stories |
 | `EarlyDetection.gs` | Early detection review and story cards (row 19): drains queued signals, runs same-story dedup (including promoting a story first flagged early into its card's thread), runs the full Gemini review, filters out dismissals, posts one story card, and records signal lifecycle events for row 46 |
 | `EarlyDetectionNotes.gs` | What became of every Early Detection signal: the one place an ending is counted (C19's numbers) and recorded, and the wording of each record row |
 | `EarlyDetectionTab.gs` | The Early Detection tab: lays out the record rows, newest first, the last 2,000; made once, never touches a tab of that name it didn't make |

@@ -50,7 +50,10 @@
  *   B46                Write early-wave records to BigQuery: one more switch (FastTriage.gs): ON writes each check's
  *                      records to brand-social-central-data.early_wave; C46 what it is doing
  *   B47                Fast triage bars, the sixth: the early watch's independent_reports bar; C47 what the bot is using
- *   A49...             How it works (CONTROL_HELP_ROW_, below the blank row 48)
+ *   B48                Early Detection: also read the AMIE table: one more switch (EarlyWaveSource.gs); it needs row 19
+ *                      ON; C48 what it is doing
+ *   A49:A51            blank (rows 49 and 50 are kept free for the next two switches)
+ *   A52...             How it works (CONTROL_HELP_ROW_, below the blank row 51)
  *
  * Plus the Resources tab: the bot's knowledge base (Knowledge.gs). Name · Link · What it covers · Burson can see it? ·
  * Bot status. Gemini reads every document listed there to triage and action each alert and to answer questions; only
@@ -121,7 +124,7 @@ const CONTROL_HELP_ = [
     'search found sources) and the post\'s own picture, with what changed in its thread, and ' +
     'the bot works it there like an IM (emojis, the Social Alert email to the tester, the T&S test-form link, answers). ' +
     'It never posts or reacts in the Burson space. C10 shows how it is doing. Clear B10 to stop.',
-  '• Rows 11-24, 27-29, 32, 34, 36-40 and 46 are switches for what the bot may do on its own. Each starts OFF, and OFF keeps the bot ' +
+  '• Rows 11-24, 27-29, 32, 34, 36-40, 46 and 48 are switches for what the bot may do on its own. Each starts OFF, and OFF keeps the bot ' +
     'working as described above. Set one to ON to turn it on; column C says what it does when OFF, and what it is doing ' +
     'when ON. While Testing (row 29), every email still goes only to the tester and no live form is ever submitted.',
   '• Auto-send Social Alerts: the bot sends the Social Alert email itself, instead of leaving a Gmail draft for a person.',
@@ -147,7 +150,8 @@ const CONTROL_HELP_ = [
   '• Early wave & velocity check: row 19, OFF unless you turn it ON. Every 15 minutes the bot looks for a story that ' +
     'small accounts are starting to tell before any single post is big. It reads the new posts from small accounts in its ' +
     'approved BigQuery source tables (Sonar\'s posts and Sprinklr\'s comments as they arrive; Brandwatch and Tubular later, ' +
-    'only to add to a story), groups the posts that say the same thing into stories itself, and picks a story once ' +
+    'only to add to a story; with row 48 ON, posts from the AMIE table can start a story too), groups the posts that ' +
+    'say the same thing into stories itself, and picks a story once ' +
     'several different accounts tell it, or when the accounts on a topic jump well above the usual. A story gets a card only ' +
     'after Gemini is asked to review it (an ordinary story whose review fails gets a "needs a human look" card). ' +
     'Each one that passes its review goes out as ' +
@@ -305,14 +309,23 @@ const CONTROL_HELP_ = [
     'story_snapshots, story_posts, signals, signal_events and triage_verdicts to brand-social-central-data.early_wave ' +
     '(batched, at most one insert request per table per check, skipped while SLA triage is busy). An error is logged, ' +
     'shown in C46, and pauses writes for 15 minutes without delaying any review or card.',
+  '• Early Detection: also read the AMIE table: row 48, OFF until you turn it ON; it needs Early wave & velocity ' +
+    'check (row 19) ON, which it adds posts to. Each Early Detection check then also reads the new rows of the AMIE ' +
+    'table (Brandwatch\'s alert feeds, X posts with their words), read only, with no call to Brandwatch. Those posts ' +
+    'join stories like the other sources\' posts and can start one; a story only they lift is listed on the New sources ' +
+    'tab for its first week instead of going for review. They never go to S-F Burson. Turning it OFF forgets where it ' +
+    'had read to (the day\'s counts stay); ON again starts from the last hour. C48 says what it is doing.',
 ];
 // "How it works" starts here (rows 11-24 the switches, 25 S-F Burson space, 26 Burson test copy, 27-29 three more
 // switches, 30 Testing: send to, 31 BigQuery lookback, 32 one more switch (Work directly in B25), 33 Other alerts space,
 // 34 one more switch (Proactive watch), 35 Watch alerts, 36-37 two more switches (Temp checks, Group test emails), 38-40
 // three more switches (Fast triage), 41-45 five fast-triage bars, 46 one more switch (Write early-wave records to
-// BigQuery), 47 the sixth fast-triage bar, 48 blank)
-const CONTROL_HELP_ROW_ = 49;
-const CONTROL_HELP_ROWS_ = 47;  // rows kept for the help text (blank ones clear older, longer text)
+// BigQuery), 47 the sixth fast-triage bar, 48 one more switch (Early Detection: also read the AMIE table), 49-50 blank,
+// kept free for the next two switches so the help need not move again, 51 blank). It moved here from row 49 once, and a
+// tab from before that is brought up to date on its next run (ensureSwitchRows_ writes row 48, writeControlHelp_ blanks
+// rows 49-51 and writes the help from row 52)
+const CONTROL_HELP_ROW_ = 52;
+const CONTROL_HELP_ROWS_ = 48;  // rows kept for the help text (blank ones clear older, longer text)
 
 // Row 30: Testing: send to (B30). Up to 5 email addresses; blank holds test emails until filled in.
 const TESTERS_ROW_ = 30;
@@ -380,18 +393,27 @@ function ensureControlTab_(ss, owner) {
   return sh;
 }
 
-/** "How it works" from row 49 (CONTROL_HELP_ROW_), under a blank row (rewritten by setup(), so it stays current; nobody edits it). */
+/**
+ * "How it works" from row 52 (CONTROL_HELP_ROW_), under blank rows (rewritten by setup(), so it stays current; nobody
+ * edits it). Column A of every row between the last switch (row 48) and the help is written blank, so a tab from before
+ * the help moved (its "How it works" at row 49, a help line at row 50) keeps no old text there; a switch row is never
+ * blanked.
+ */
 function writeControlHelp_(sh) {
   const lines = [['How it works']].concat(CONTROL_HELP_.map(line => [line]));
   while (lines.length < CONTROL_HELP_ROWS_) lines.push(['']);
-  sh.getRange(CONTROL_HELP_ROW_ - 1, 1, lines.length + 1, 1).setValues([['']].concat(lines));
+  const from = Math.min(CONTROL_HELP_ROW_ - 1, Math.max.apply(null, switchRows_()) + 1);
+  const blanks = [];
+  for (let r = from; r < CONTROL_HELP_ROW_; r++) blanks.push(['']);
+  sh.getRange(from, 1, blanks.length + lines.length, 1).setValues(blanks.concat(lines));
+  if (from < CONTROL_HELP_ROW_ - 1) sh.getRange(from, 1, CONTROL_HELP_ROW_ - 1 - from, 1).setFontWeight('normal');
   sh.getRange(CONTROL_HELP_ROW_, 1).setFontWeight('bold');
   sh.getRange(CONTROL_HELP_ROW_ + 1, 1, lines.length - 1, 1).setFontWeight('normal');
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Switches (rows 11-24, then 27-29 below the two space cells, 32 below the BigQuery lookback, 34 below the Other
-// alerts space, 36-40 below Watch alerts, and 46 below the fast-triage bars): what the bot may do on its own. Each is ON / OFF and starts OFF; OFF is the bot as it was. Only a person
+// alerts space, 36-40 below Watch alerts, 46 below the fast-triage bars, and 48 below the sixth bar): what the bot may do on its own. Each is ON / OFF and starts OFF; OFF is the bot as it was. Only a person
 // turns one ON: the bot writes OFF on a row it adds or repairs, and never changes a switch's value. (A script property
 // SWITCH_DEFAULTS, left by a build that turned switches ON by itself, is never read, written or deleted.)
 // ---------------------------------------------------------------------------------------------------------------
@@ -583,6 +605,13 @@ const CONTROL_SWITCHES_ = [
     on: (standIn, live, sw) => (!(sw && sw.earlyWave)
       ? '✓ ON, but waiting: it needs Early wave & velocity check (row 19) ON, whose records it writes'
       : '✓ ON: writes each early-wave check\'s stories, posts, signals, events and fast-triage verdicts to brand-social-central-data.early_wave') },
+  // Row 48, below the sixth fast-triage bar (47): Early Detection also reads the AMIE table (EarlyWaveSource.gs, which
+  // learns the run's switches from ewsRunSwitches_, Main.gs). Rows 49 and 50 are kept for the next two new sources
+  { key: 'edAmie', label: 'Early Detection: also read the AMIE table', row: 48,
+    off: 'OFF (Early Detection does not read the AMIE table)',
+    on: (standIn, live, sw) => (!(sw && sw.earlyWave)
+      ? '✓ ON, but waiting: it needs Early wave & velocity check (row 19) ON, which it adds posts to'
+      : '✓ ON: each Early Detection check also reads new rows of the AMIE table (Brandwatch\'s alert feeds, X with its words)') },
 ];
 
 /**
@@ -605,10 +634,10 @@ function directB25OnText_(d, who) {
   return '✓ ON (the bot works right in B25 when only Google people can join it)';
 }
 
-/** Each switch's row, in CONTROL_SWITCHES_'s order: from row 11 on, or its own `row` (27-29, 32, 34, 36-40). Pure. */
+/** Each switch's row, in CONTROL_SWITCHES_'s order: from row 11 on, or its own `row` (27-29, 32, 34, 36-40, 46, 48). Pure. */
 function switchRows_() { return CONTROL_SWITCHES_.map((s, i) => s.row || SWITCH_FIRST_ROW_ + i); }
 
-/** The switch rows as runs of rows next to each other ([{start, idx: [switch index]}]: 11-24, 27-29, 32, 34, 36-40). Pure. */
+/** The switch rows as runs of rows next to each other ([{start, idx: [switch index]}]: 11-24, 27-29, 32, 34, 36-40, 46, 48). Pure. */
 function switchRowRuns_() {
   const runs = [];
   switchRows_().forEach((r, i) => {
@@ -653,7 +682,7 @@ function switchOffText_(s, switches, live, extra) {
 }
 
 /**
- * Rows 11-24, 27-29, 32, 34 and 36-40: one switch each, with its ON / OFF dropdown. A row that isn't its switch yet (a tab from
+ * Rows 11-24, 27-29, 32, 34, 36-40, 46 and 48: one switch each, with its ON / OFF dropdown. A row that isn't its switch yet (a tab from
  * before it: the help text or a blank row was there, or a label someone cleared) gets it, OFF; a switch already there
  * keeps its value. "How it works" moves below them. Never sets a switch ON, and never touches rows 25-26 (the space cells).
  */
@@ -680,7 +709,7 @@ function ensureSwitchRows_(sh) {
  * Row 25: S-F Burson space. A tab from before it (help text was here, or the blank row above "How it works") gets it on
  * its next run, without setup(), blank: only a person pastes S-F Burson there. Rows 1-24 never move; "How it works"
  * is written again below every row (the Burson test copy in row 26, TestCopy.gs ensureTestCopyRow_, and the rows after
- * it), at CONTROL_HELP_ROW_ (row 49).
+ * it), at CONTROL_HELP_ROW_ (row 52).
  * A value already in B25 is kept (a label someone cleared is put back).
  */
 function ensureSfBursonRow_(sh) {
@@ -789,7 +818,7 @@ function testersFrom_(raw) {
 
 /**
  * Row 30: Testing: send to. A tab from before it gets it on its next run, without setup(); a value already in B30 is
- * kept (a cleared label is put back), and "How it works" is written again below every row (CONTROL_HELP_ROW_, row 49).
+ * kept (a cleared label is put back), and "How it works" is written again below every row (CONTROL_HELP_ROW_, row 52).
  */
 function ensureTestersRow_(sh) {
   if (!sh) return;
@@ -882,7 +911,7 @@ function switchStatusTexts_(switches, standIn, notes, now, live, extra) {
 }
 
 /**
- * Writes column C of the switches (C11:C24, C27:C29, C32, C34 and C36:C40, each run of rows on its own: C25 and C26 are
+ * Writes column C of the switches (C11:C24, C27:C29, C32, C34, C36:C40, C46 and C48, each run of rows on its own: C25 and C26 are
  * the space cells' notes, and C30, C31, C33 and C35 belong to their own cells); writes nothing where it already says all
  * of it. live: this run is LIVE (Main.gs runMode_), or undefined when
  * this run doesn't know (paused, or it failed early). extra: see switchStatusTexts_.

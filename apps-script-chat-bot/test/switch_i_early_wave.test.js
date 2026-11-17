@@ -233,7 +233,7 @@ module.exports = H => {
   // 2. Parameterized SQL, view validation, card formatting & Burson leak-guard compliance
   // ===========================================================================================================
 
-  test('early detection SQL & cards: EarlyWaveSource parameterized US & us-central1 queries use only the 6 approved tables, clamp B31 lookback, format unknown clusters & multi-grain velocity with zero leak-guard hits, and ignore non-bot copies', () => {
+  test('early detection SQL & cards: EarlyWaveSource parameterized US & us-central1 queries use only the 7 approved tables (the AMIE table only in its own US job, row 48), clamp B31 lookback, format unknown clusters & multi-grain velocity with zero leak-guard hits, and ignore non-bot copies', () => {
     const usQ = B.ewsLaneQuery_('us', { marks: {} }, Date.UTC(2026, 9, 14, 12, 0), true, 30);
     const c1Q = B.ewsLaneQuery_('c1', { marks: {} }, Date.UTC(2026, 9, 14, 12, 0), true, 30);
     assert.ok(usQ.sql.includes('`brand-social-central-data.reporting_data.sprinklr_inbound_comments`'));
@@ -244,6 +244,11 @@ module.exports = H => {
     assert.ok(c1Q.sql.includes('`bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw`'));
     assert.ok(c1Q.sql.includes('`brand-social-central-data.google_tubular_mentions.tubular_videos`'));
     assert.ok(!/reporting_data|raw_data|DSD|vw_chatbot_pending_early_alerts/.test(c1Q.sql), c1Q.sql);
+    // with row 48 ON: the AMIE job (US) names the AMIE table and nothing else; today's two never name it
+    const amiQ = B.ewsAmiQuery_({ marks: {} }, Date.UTC(2026, 9, 14, 12, 0));
+    eq(Array.from(new Set(amiQ.sql.match(/`[^`]+`/g))), ['`brand-social-central-data.social_alerts_dataset.all_sundar_mentions`']);
+    assert.ok(!/bsip-s-bsip-gg-26-2cf3|sonar_raw|tubular_videos/.test(amiQ.sql), amiQ.sql);
+    assert.ok(!/all_sundar_mentions/.test(usQ.sql + c1Q.sql));
     eq(usQ.win.until - usQ.win.since, 30 * MIN);
     eq(c1Q.win.until - c1Q.win.since, 30 * MIN);
 
