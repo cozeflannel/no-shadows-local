@@ -170,3 +170,71 @@ function edRelatedNote_(ctx, other, row, card, logged) {
     return false;
   }
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// One issue, one new Social Alert email (edCrossOn_: the Auto-correct flow, setting cross_alert_notes). A story's card
+// and a post's own card (a Direct BigQuery card, a Watch alert) can be about one issue under two different names: the
+// story links the post without it being its main post. They are tied by the post's record key, never by the issue's
+// name. Whichever of them went out as a Social Alert first is an earlier alert on that post for the other, so the bot's
+// existing ongoing-issue path decides what the other sends (Escalate.gs followUpOf_ 'same_post' and followUpSkip_: a
+// repeat, so no new email, unless the stakes rose; then Drafts.gs escalationFor_ makes it an update on that email's
+// thread). An earlier alert that did not go out as a Social Alert ties nothing.
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * The earlier alert, as Escalate.gs earlierAlerts_ gives one (same_post: true, its Alert-log row in `row`), that shares
+ * a post with the alert being decided: the newest row of `history` (this flow's Alert log: recentForwarded) of the last
+ * novelty_days that went out as a Social Alert (earlierOutcome_ 'alerted') and
+ *   - `story` true (a story about to escalate; `keys`: the record keys of all its posts): is on one of those posts;
+ *   - `story` false (a post's own card; `keys`: [its post's record key]): is a story's card (ED_ALERT_INGESTED_) that
+ *     links that post without it being the card's main post (a row on the post itself is earlierAlerts_' own).
+ * null otherwise, and always outside edCrossOn_. Never throws.
+ */
+function edSharedPostAlert_(ctx, keys, history, now, story) {
+  try {
+    if (!edCrossOn_(ctx)) return null;
+    const want = new Set((keys || []).map(String).filter(Boolean));
+    if (!want.size) return null;
+    const t = Number(now) || Date.now();
+    const since = t - GEN.novelty_days * DAY_MS_;
+    const rows = (history || []).filter(h => {
+      if (!h || earlierOutcome_(h, t) !== 'alerted') return false;
+      const at = Number(h.created_at) || 0;
+      if (at < since || at > t) return false;
+      if (story) return !!h.record_key && want.has(String(h.record_key));
+      if (h.ingested !== ED_ALERT_INGESTED_ || want.has(String(h.record_key || ''))) return false;
+      // (a history row's forwarded fields are its `fields`: Store.gs recentForwarded; an Alert-log row's, forwarded_fields)
+      const f = [h.fields, h.forwarded_fields].find(x => x && typeof x === 'object') || {};
+      const snap = f.early_detection && typeof f.early_detection === 'object' ? f.early_detection : {};
+      return (Array.isArray(snap.post_keys) ? snap.post_keys : []).some(k => want.has(String(k)));
+    }).sort((a, b) => (Number(b.created_at) || 0) - (Number(a.created_at) || 0));
+    if (!rows.length) return null;
+    const h = rows[0];
+    const v = [h.fields, h.forwarded_fields].find(x => x && typeof x === 'object') || {};
+    const url = String(v.post_url || '');
+    const e = earlierAlerts_({ post_url: url }, [Object.assign({}, h, { record_key: recordKey_({ post_url: url }) || h.record_key })],
+      null, t, null)[0];
+    return e ? Object.assign(e, { same_post: true, in_thread: false, quoted: false, linked: false, row: h }) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * The earlier alerts of a post's own card (`earlier`: Escalate.gs earlierAlerts_'s, for the card's post `key`) with the
+ * story card that went out as a Social Alert and links that post (edSharedPostAlert_) put first, as an earlier alert on
+ * that very post, when the list has no Social Alert on the post yet; numbered again from 1 (Gemini's follow-up call
+ * names one by its number). `earlier` itself everywhere else. Never throws.
+ */
+function edWithSharedPost_(ctx, earlier, key, history, now) {
+  try {
+    const list = Array.isArray(earlier) ? earlier : [];
+    if (!edCrossOn_(ctx) || !key) return earlier;
+    if (list.some(e => e && e.same_post && e.outcome === 'alerted')) return earlier;
+    const shared = edSharedPostAlert_(ctx, [key], history, now, false);
+    if (!shared) return earlier;
+    return [shared].concat(list).map((e, i) => Object.assign(e, { n: i + 1 }));
+  } catch (e) {
+    return earlier;
+  }
+}

@@ -590,8 +590,17 @@ function edDecide_(ctx, parsed, rev, llm, history, now) {
     rev.disposition !== 'dismiss');
 
   if ((rev.disposition === 'escalate' && rev.confidence >= ED_ESCALATE_MIN_CONFIDENCE_) || p0Confirmed) {
+    // One issue, one new Social Alert email (the Auto-correct flow with cross_alert_notes on: EarlyDetectionCross.gs):
+    // a story one of whose posts already went out as a Social Alert is an ongoing issue of that alert
+    const fu0 = review.followUp;
+    let shared = null;
+    if (!(fu0 && fu0.by === 'same_post' && fu0.original && fu0.original.outcome === 'alerted')) {
+      shared = edSharedPostAlert_(ctx, edPostKeys_([ed.url].concat(edPosts.map(p => p.url))), history, now, true);
+      if (shared) review.followUp = { original: shared, by: 'same_post', adds_new: null, confidence: null, reason: '', corroborated: true };
+    }
     const built = edBuildEscalation_(ctx, review, history, rev, parsed.ed);
-    const escRepeat = followUpSkip_(review, built.esc) ||
+    const sharedSkip = followUpSkip_(review, built.esc);
+    const escRepeat = (shared && sharedSkip ? `one of its posts was already alerted (${shared.alert_id || shared.url || 'an earlier alert'})` : sharedSkip) ||
       (typeof knownIssueSkip_ === 'function' ? knownIssueSkip_(review, built.esc) : '') ||
       (typeof memorySkip_ === 'function' ? memorySkip_(review, built.esc) : '');
     if (escRepeat) return fin({ disposition: 'dismiss', basis: 'repeat', why: escRepeat });

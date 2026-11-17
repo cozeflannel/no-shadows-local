@@ -683,6 +683,11 @@ function handleAlert_(ctx, m, parsed, report) {
   // Earlier alerts this one may repeat or follow up on (same post, same author, or a post it replies under or quotes):
   // Gemini sees them too
   if (!isSheetTest && S.follow_ups !== false) parsed.earlier = earlierAlerts_(parsed.fields, history, parsed.bq, now, parsed.post);
+  // (a Direct BigQuery card whose post a story card that went out as a Social Alert links: that story's alert is an
+  // earlier alert on this post, in the Auto-correct flow with cross_alert_notes on: EarlyDetectionCross.gs)
+  if (!isSheetTest && S.follow_ups !== false && bqDirectSource_(ingested)) {
+    parsed.earlier = edWithSharedPost_(ctx, parsed.earlier, key, history, now);
+  }
   // The issues already alerted in the last 14 days most like this one (IssueNames.gs): Gemini says whether the alert is
   // one of them, so it keeps that issue's name instead of starting a second name for it
   if (!isSheetTest && S.follow_ups !== false) parsed.knownIssues = knownIssuesFor_(ctx, parsed, history, now);

@@ -350,6 +350,8 @@ function handleOtherAlert_(ctx, m, other, report) {
   // Earlier alerts this one may repeat or follow up on (Escalate.gs): Gemini sees them, and the repeat rules use them
   if (S.follow_ups !== false) {
     parsed.earlier = earlierAlerts_(parsed.fields, history, parsed.bq, now, parsed.post, { includeSameDayLog: true });
+    // (a Watch alert whose post a story card that went out as a Social Alert links: as for a Direct BigQuery card)
+    if (other.watch) parsed.earlier = edWithSharedPost_(ctx, parsed.earlier, recordKey_(parsed.fields), history, now);
     const slrrIssues = parsed.bq && Array.isArray(parsed.bq.recent_issues) ? parsed.bq.recent_issues
       : (typeof ctx.bq === 'function' && typeof recentSlrrIssues_ === 'function' ? recentSlrrIssues_(S) : []);
     parsed.knownIssues = recentKnownIssues_(parsed.fields, history, slrrIssues, parsed.earlier, now);
