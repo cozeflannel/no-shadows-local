@@ -288,6 +288,33 @@ module.exports = H => {
     eq(JSON.stringify(sh.rows.slice(47)), snap, 'a second run');
   });
 
+  test('new sources control (help at row 53): a person\'s own line that starts with "•" is theirs, not old help: in A51 above the help at row 52 it stays, and in A100 below it (after a blank row) it is kept below the new help; the bot\'s own old help lines, in today\'s words or an earlier build\'s, are still cleared from rows 49-52 and written over from row 53', () => {
+    eq([B.controlHelpOwn_('How it works'), B.controlHelpOwn_(B.ev('CONTROL_HELP_')[0]), B.controlHelpOwn_('• my own bullet note'),
+      B.controlHelpOwn_('Ask the leads'), B.controlHelpOwn_(''),
+      // earlier builds' words for two lines (b2ee90f's switch rows and row 19, an old tab's switch rows)
+      B.controlHelpOwn_('• Rows 11-24, 27-29, 32, 34, 36-40 and 46 are switches for what the bot may do on its own.'),
+      B.controlHelpOwn_('• Rows 11-21 are switches for what the bot may do on its own. Each is ON or OFF.'),
+      B.controlHelpOwn_('• Early wave & velocity check: row 19, OFF unless you turn it ON. Every 15 minutes (older words).'),
+      B.controlHelpOwn_('• Early wave is noisy today, ask Sam')],
+    [true, true, false, false, false, true, true, true, false]);
+    const { t, sh } = world();
+    const stage1 = B.ev('CONTROL_HELP_').filter(l => !l.startsWith('• The Early Detection tab lists every story'));
+    sh.rows = sh.rows.slice(0, 48);
+    sh.rows[48] = [''];
+    sh.rows[49] = ['• Rows 11-24, 27-29, 32, 34, 36-40 and 46 are switches for what the bot may do on its own.'];
+    sh.rows[50] = ['• my own bullet note'];
+    sh.rows[51] = ['How it works'];
+    stage1.forEach((l, i) => { sh.rows[52 + i] = [l]; });
+    sh.rows[60] = ['• Early wave & velocity check: row 19, OFF unless you turn it ON. Every 15 minutes (older words).'];
+    // a person's "•" line below the old help, after a blank row (one right under the old help's last line, with no
+    // blank between, can't be told from an old help line and is written over like one)
+    sh.getRange(100, 1).setValue('• my note under the help');
+    t.poll();
+    helpAt53(sh, 'bullet notes');
+    eq([sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1)], ['', '', '• my own bullet note', '']);
+    eq(notesBelow(sh, 100), ['• my note under the help']);
+  });
+
   test('new sources control: column C of row 48 while ON says it is waiting while row 19 is OFF, and otherwise the ON text (115 characters) with what the last check found after it; OFF it is the OFF text whatever row 19 says; row 19 turned OFF again leaves only the waiting words (no note of an earlier check)', () => {
     const texts = sw => B.switchStatusTexts_(sw, '', {}, NOW)[B.switchRows_().indexOf(48)];
     eq([texts({ edAmie: true }), texts({ edAmie: true, earlyWave: true }), texts({ earlyWave: true }), texts({})],

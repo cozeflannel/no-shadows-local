@@ -398,9 +398,10 @@ function ensureControlTab_(ss, owner) {
 /**
  * "How it works" from row 53 (CONTROL_HELP_ROW_), under blank rows (rewritten by setup(), so it stays current; nobody
  * edits it). In column A of the rows between the last switch (row 48) and the help, the bot's own old help is cleared
- * (controlHelpOwn_: its title or a help line), so a tab from before the help moved (its "How it works" at row 49, or at
- * row 52) keeps no old text there; anything else a person wrote there is left as it is, and a switch row is never
- * touched. In column A of the rows the help is written over (row 53 down, CONTROL_HELP_ROWS_ rows), a text that is not
+ * (controlHelpOwn_: its title or a help line, and any line starting with "• " in the old help's own rows, from its
+ * title down to the first blank cell), so a tab from before the help moved (its "How it works" at row 49, or at row 52)
+ * keeps no old text there; anything else a person wrote there is left as it is (their own "•" line above the old
+ * title too), and a switch row is never touched. In column A of the rows the help is written over (row 53 down, CONTROL_HELP_ROWS_ rows), a text that is not
  * the bot's own help is a person's (a tab whose help was higher up had room below it, rows 96-100): it is kept,
  * unchanged and in order, in the first blank cells of column A below the help, and the log says so. Other columns are
  * never touched.
@@ -412,11 +413,15 @@ function writeControlHelp_(sh) {
   const end = CONTROL_HELP_ROW_ + lines.length - 1;
   const col = sh.getRange(from, 1, end - from + 1, 1).getValues().map(v => (v ? v[0] : ''));
   const kept = [];
+  let oldHelp = false;  // in an old help's rows: from its title down to the first blank cell
   col.forEach((v, i) => {
     const row = from + i;
+    const text = String(v === undefined || v === null ? '' : v).trim();
+    oldHelp = text === 'How it works' || (oldHelp && text !== '');
+    const own = controlHelpOwn_(v) || (oldHelp && text.startsWith('\u2022 '));
     if (row < CONTROL_HELP_ROW_) {
-      if (controlHelpOwn_(v)) sh.getRange(row, 1).setValue('').setFontWeight('normal');
-    } else if (!controlCellBlank_(v) && !controlHelpOwn_(v)) {
+      if (own) sh.getRange(row, 1).setValue('').setFontWeight('normal');
+    } else if (!controlCellBlank_(v) && !own) {
       kept.push({ row, v });
     }
   });
@@ -457,10 +462,24 @@ function keepBelowControlHelp_(sh, end, kept) {
     `there was kept below it (${moved.join(', ')})`);
 }
 
-/** True when a cell holds the bot's own help text: the title "How it works" or a help line ("• ..."). Pure. */
+/**
+ * True when a cell holds the bot's own help text: the title "How it works", one of today's help lines, or a help line
+ * as an earlier build worded it: "• " and the same opening as one of today's lines (its words up to the first colon,
+ * comma, bracket or full stop, such as "• Early wave & velocity check" or "• To pause"), or the switch-rows line
+ * ("• Rows 11-... are switches"). A person's own line is not, even one that starts with "•". Pure.
+ */
 function controlHelpOwn_(v) {
   const text = String(v === undefined || v === null ? '' : v).trim();
-  return text === 'How it works' || text.startsWith('\u2022');
+  if (text === 'How it works' || CONTROL_HELP_.indexOf(text) >= 0) return true;
+  if (!text.startsWith('\u2022 ')) return false;
+  if (/^\u2022 Rows [0-9][0-9 ,and-]* are switches\b/.test(text)) return true;
+  const opening = controlHelpOpening_(text);
+  return CONTROL_HELP_.some(line => controlHelpOpening_(line) === opening);
+}
+
+/** A help line's opening: its words up to the first colon, comma, bracket or full stop ("• Fast triage"). Pure. */
+function controlHelpOpening_(line) {
+  return String(line).trim().match(/^[^:,(.]*/)[0].trim();
 }
 
 // ---------------------------------------------------------------------------------------------------------------
