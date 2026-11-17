@@ -981,6 +981,51 @@ function pwStoryNotes_(dest, flags, rows, now, left, on) {
   return notes;
 }
 
+const PW_STORY_NOTE_LATE_MS_ = 60 * 60 * 1000;  // a Watch alert that went without its story note is looked at again this long
+
+/**
+ * The story note of a Watch alert that went without it in the run that posted it (pwStoryNotes_: the run was short of
+ * time, or the helper refused it for a reason that passes: the run's share of notes, Chat, an error), in the same shape
+ * as BigQuery.gs bqStoryNotesLate_, with nothing new kept for it: the Watch alerts are the Auto-correct flow's Alert-log
+ * rows (`rows`: pwAlertedState_'s) of the last PW_STORY_NOTE_LATE_MS_; the story's card is the newest Early Detection
+ * card of the last 24 hours that has the alert's post, sent no Social Alert (BigQuery.gs bqStoryCardRow_) and was there
+ * before the alert's row was written; the note is pwStoryNotes_'s, under the same key, through the one helper
+ * (pwThreadNote_), which posts a key once (a key it has costs no Chat call). Only where stories go first
+ * (`dest`.bqPastStoryCards), with the setting cross_alert_notes on (`on`: pwCrossNotesOn_), and each note only with
+ * PW_MIN_LEFT_MS_ of the run left; it stops at the run's share of notes. How many notes were posted now. Never throws.
+ */
+function pwStoryNotesLate_(dest, rows, now, left, on) {
+  let notes = 0;
+  try {
+    if (!on || !dest || dest.choice !== 'autocorrect' || dest.bqPastStoryCards !== true) return 0;
+    const suffix = typeof AC_PARTITION_SUFFIX_ === 'string' ? AC_PARTITION_SUFFIX_ : ' (auto-correct)';
+    const ac = (rows || []).filter(r => r && String(r.space || '').endsWith(suffix));
+    const at = Number(now) || Date.now();
+    const alerts = ac.filter(a => a.ingested === PW_ALERT_INGESTED_ && a.record_key && a.forward_thread && a.forward_message &&
+      Number(a.created_at) > 0 && Number(a.created_at) <= at && at - Number(a.created_at) < PW_STORY_NOTE_LATE_MS_);
+    if (!alerts.length) return 0;
+    const byId = new Map(ac.map(r => [String(r.alert_id || ''), r]));
+    const ledger = edLedger_({ store: { alerts: ac } }, at);
+    for (const a of alerts) {
+      const story = ledger.find(L => L.keys.has(String(a.record_key)) && Number(L.at) > 0 && Number(L.at) < Number(a.created_at) &&
+        bqStoryCardRow_(byId.get(String(L.row || '')), at));
+      if (!story) continue;
+      const timeLeft = typeof left === 'function' ? left() : Infinity;
+      if (timeLeft < PW_MIN_LEFT_MS_) break;
+      const note = pwThreadNote_(dest, { forward_thread: String(a.forward_thread), forward_message: String(a.forward_message),
+        created_at: Number(a.source_at) || Number(a.created_at) || 0 }, bqStoryNoteText_(story), `wstory:${a.forward_message}`,
+      Date.now() + Math.max(0, timeLeft - PW_MIN_LEFT_MS_));
+      if (note.posted) {
+        notes++;
+        console.log(`Watch alerts: a note is under the Watch alert ${a.alert_id || ''} pointing at its story's card` +
+          `${story.row ? ` (${story.row})` : ''}: added at a later run`);
+      }
+      if (!note.ok && note.why === 'run_full') break;
+    }
+  } catch (e) { /* a note is never worth more than the run */ }
+  return notes;
+}
+
 /**
  * The note under the card that covers a post the watch flagged (P4b), for the watches that flagged it in this run
  * (`names`, at most PW_COVER_NAMES_MAX_): "🔭 *Also flagged by the watch “Midterms 2026 × Google”.* No separate Watch
@@ -2192,6 +2237,8 @@ function pwPostAlerts_(sh, dest, now, left, opts) {
           pwStoryNotes_(dest, fresh.filter(q => storied.has(q.i) && keyOf.has(q.i)).map(q => ({ q, key: keyOf.get(q.i) })),
             rows, now, timeLeft, !!cover);
         }
+        // and the one an earlier run's Watch alert went without (the run was short of time, or its share was used)
+        if (cover && dest.bqPastStoryCards === true) pwStoryNotesLate_(dest, rows, now, timeLeft, true);
       }
     }
     // still waiting: the fresh flags this run decided nothing about (their key wasn't written)
