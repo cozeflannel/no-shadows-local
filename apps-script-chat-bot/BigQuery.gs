@@ -4132,6 +4132,27 @@ function edAllowance_(ctx, today, now) {
 }
 
 /**
+ * Under the allowance, right after a signal is queued: the day's count of signals queued (`queued`, which the day's limit
+ * counts) one up, and this clock hour's counts (`hr`: [hour, all, ordinary], from `allow`, already counting it) saved,
+ * so a check stopped part-way still counts what it queued against the hour and the day. True when saved (the end of the
+ * check then leaves it out of its own count); false when the save failed (the end of the check counts it). Never throws.
+ */
+function edAllowSaveQueued_(props, allow) {
+  try {
+    const s = Object.assign({}, edDayState_(props, true));
+    (ED_COUNT_UNSAVED_ || []).forEach(p => edCountApply_(s, p));
+    s.queued = (Number(s.queued) || 0) + 1;
+    s.hr = [String(allow.key), Math.max(0, Math.round(Number(allow.all) || 0)), Math.max(0, Math.round(Number(allow.ord) || 0))];
+    if (!edCountSave_(props, JSON.stringify(s))) return false;
+    ED_COUNT_UNSAVED_ = [];
+    return true;
+  } catch (e) {
+    console.error('could not count a queued early detection signal: ' + ((e && e.message) || e));
+    return false;
+  }
+}
+
+/**
  * Under the allowance, a signal turned away by the check's EW_MAX_PER_CHECK_ or by an hourly limit is left for the next
  * check (unmarked, no ending): the producer hands it over again while it is in the window a check reads. True when it
  * will not be (so it must end now): when it was made (`created_utc`) longer ago than the next check's window
@@ -4643,6 +4664,7 @@ function earlyWaveCheck_(ctx) {
   // watch's 8), it is "Never reviewed" with its cause (edNeverWhy_) and finished: its own id is marked as seen, never its
   // story's keys, so the story comes back when the producer sends it again. True when the day's limit refused one.
   let deferred = 0;  // under the allowance: signals left for the next check (the check's 5, the hour's limits)
+  let queuedSaved = 0;  // under the allowance: signals queued whose count is saved already (edAllowSaveQueued_)
   const queueByAllowance = () => {
     let dayStop = false;
     const cands = [];
@@ -4754,6 +4776,8 @@ function earlyWaveCheck_(ctx) {
       if (queued > before) {
         allow.all++;
         if (!c.serious) allow.ord++;
+        // saved at once, so a check stopped part-way still counts it against the hour and the day
+        if (edAllowSaveQueued_(props, allow)) queuedSaved++;
       }
     }
     return dayStop;
@@ -4782,7 +4806,7 @@ function earlyWaveCheck_(ctx) {
       `${updates ? `; ${updates} update${updates === 1 ? '' : 's'} to earlier cards` : ''})`);
   }
   if (deferred) ctx.log(`early detection: ${deferred} signal(s) left for the next check (this check's ${EW_MAX_PER_CHECK_} or this hour's limits)`);
-  noteEarlyWave_(props, 0, 0, failed ? `${failed} couldn't be queued` : '', Object.assign({ queued, repeats, triaged, watchQueued: kinds.watch },
+  noteEarlyWave_(props, 0, 0, failed ? `${failed} couldn't be queued` : '', Object.assign({ queued: queued - queuedSaved, repeats, triaged, watchQueued: kinds.watch },
     allow ? { dayLimit: allow.perDay, hour: { key: allow.key, all: allow.all, ord: allow.ord } } : {}));
   ftFinish_(ft, props);
   if (rec) {
