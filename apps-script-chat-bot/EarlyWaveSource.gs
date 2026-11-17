@@ -131,12 +131,14 @@ const EWS_NEW_LANES_ = ['ami', 'amis', 'bwl', 'bwls'];
 // query(st, until, firstMins) -> {sql, params, win, flags, maxBytes?} (pure; null = nothing to read), done(st, lane,
 // now, nx) (optional: the job was collected, move its mark), failed(st, lane, now) (optional: the job failed), src
 // ('ami' | 'bwl': whose trial and day counts)}. ewsLanes_ adds an entry only while its switch is ON. A new lane's post
-// ids start with its source and a pipe ('AMI|…', 'BWL|…'). The AMIE table (row 48): its ready() also makes the
-// table's checks (the metadata hourly, a dry run daily and after a failure: ewsAmiReady_).
+// ids start with its source and a pipe ('AMI|…', 'BWL|…'). checks(st, now, deadline) (optional): the source's own
+// checks, made at the end of a check while its switch is ON, after today's lanes were read and embedded, so a slow
+// answer never costs them their posts. The AMIE table (row 48): ready() sends nothing (ewsAmiReady_); its checks (the
+// metadata hourly, a dry run daily and after a failure) are ewsAmiChecks_, and its job goes out at the next check.
 const EWS_NEW_LANE_DEFS_ = [
   { key: 'ami', location: 'US', sw: 'edAmie', src: 'ami', ready: st => ewsAmiReady_(st, Date.now()),
     query: (st, until) => ewsAmiQuery_(st, until), done: (st, lane, now, nx) => ewsAmiDone_(st, lane, now, nx),
-    failed: (st, lane, now, nx) => ewsAmiFailed_(st, lane, now, nx) },
+    failed: (st, lane, now, nx) => ewsAmiFailed_(st, lane, now, nx), checks: (st, now, deadline) => ewsAmiChecks_(st, now, deadline) },
 ];
 const EWS_NEW_SWITCHES_ = { edAmie: 'ami', edBwLive: 'bwl' };  // a new source's Control switch -> the source
 // Each new source's marks in EWS_STATE's `marks`, forgotten when its row is OFF (ewsNewSourceOff_); the step that
@@ -164,6 +166,9 @@ const EWS_AMI_MAX_BACK_MS_ = 6 * 3600 * 1000;  // never more than 6 hours back
 const EWS_AMI_OVERLAP_ROWS_ = 2000;
 const EWS_AMI_CHECK_MS_ = 60 * 60 * 1000;      // the table's metadata is read again this often
 const EWS_AMI_PAUSE_MS_ = 60 * 60 * 1000;      // a failed read pauses the AMIE table this long (then a dry run first)
+// The AMIE table's checks (each a call that may be slow) start only with this much of the check's time left; else at
+// the next check
+const EWS_AMI_ROOM_MS_ = 10 * 1000;
 const EWS_NEW_DAY_CAP_ = 15000;            // new lanes embed only while the day's total is under min(this, the day's pace)
 const EWS_CARRY_MS_ = 2 * 3600 * 1000;     // a new lane's post not embedded is carried to the next checks this long
 const EWS_SRC_DAY_PROP_ = 'EWS_SRC_DAY';   // the new sources' day record: first ON date, counts per day (7 days), lifted stories
@@ -901,6 +906,7 @@ function ewsReadLanes_(st, now, deadline, ownDue, firstMins, lanes) {
       else if (!o.job.id) break;
     }
     if (o.state === 'done') {
+      const t1 = Date.now();
       let res = o.res;
       let rows = parseBqRows_(res);
       let pages = 0;
@@ -912,6 +918,7 @@ function ewsReadLanes_(st, now, deadline, ownDue, firstMins, lanes) {
         pages++;
       }
       o.rows = rows;
+      if (lane.def) { o.got = rows.length; o.ms = Date.now() - t1; }  // a new source's: for its log line
       delete jobs[lane.key];
     } else if (o.state === 'pending' && o.job && o.job.id) {
       jobs[lane.key] = o.job;
@@ -2792,7 +2799,9 @@ function ewsAmiProblem_(q, kind, why, now, stop) {
 /** BigQuery's refusal in plain words for the AMIE table: ['access' | 'gone' | 'failed', why]. Pure. */
 function ewsAmiRefusal_(code, text, what) {
   const t = ewsScrub_(text, 400);
-  if (code === 403 || /access denied|permission/i.test(t)) return ['access', 'BigQuery won\'t let the bot read the AMIE table (access denied), so it isn\'t read'];
+  // BigQuery answers 403 for its quotas and rate limits too: those are a failure that passes, not refused access
+  const quota = /quota|rate ?limit/i.test(t) && !/access denied|permission/i.test(t);
+  if (!quota && (code === 403 || /access denied|permission/i.test(t))) return ['access', 'BigQuery won\'t let the bot read the AMIE table (access denied), so it isn\'t read'];
   if (code === 404 || /missing Table|not found: (?:Table|Dataset)/i.test(t)) return ['gone', 'BigQuery can\'t find the AMIE table, so it isn\'t read'];
   return ['failed', `${what} (${truncate_(t || (code ? `HTTP ${code}` : 'no answer'), 60)})`];
 }
@@ -2894,35 +2903,64 @@ function ewsAmiDryRun_(st, q, now) {
 }
 
 /**
- * Whether the AMIE job goes out this check (EWS_NEW_LANE_DEFS_'s ready; only while row 48 is ON): not while it is
- * stopped for the UTC day or paused; first the table's metadata (at the first check after the row goes ON, then
- * hourly, and on a new day after a stop) and a dry run (once a UTC day, and after any failure). What they find stays in
- * st.marks.amiq for the note (ewsAmiStatus_). Not while a tab named "New sources" that a person made is there
- * (st.nsf: NewSources.gs). Never throws.
+ * Whether the AMIE job goes out this check (EWS_NEW_LANE_DEFS_'s ready; only while row 48 is ON). It sends nothing: the
+ * table's checks are made at the end of a check (ewsAmiChecks_), so the job goes out once the metadata was read since
+ * the row went ON (or since a stop) and a dry run passed this UTC day with no failure since. Not while it is stopped for
+ * the UTC day or paused, nor while a tab named "New sources" that a person made is there (st.nsf: NewSources.gs). A job
+ * of its own still running is collected. Never throws.
  */
 function ewsAmiReady_(st, now) {
   try {
-    // a tab named "New sources" that a person made: the source waits until it is renamed (NewSources.gs, at the end of
-    // each check; asked here at the first check after the row goes ON, before anything is read)
     if (st.nsf) return false;
     const q = ewsAmiQ_(st);
-    if (!(Number(q.mt) > 0) && typeof nsrcForeign_ === 'function' && nsrcForeign_()) { st.nsf = now; return false; }
     const day = ewsUtcDay_(now);
     if (q.sd) {
       if (q.sd === day) return false;
-      delete q.sd;  // a new UTC day: the table is checked afresh
+      delete q.sd;  // a new UTC day: the table is checked afresh (at the end of this check)
       q.mt = 0;
       q.nd = 1;
     }
     if (Number(q.pu) > now) return false;
     delete q.pu;
-    const mt = Number(q.mt) || 0;
-    if (!(mt > 0) || now - mt >= EWS_AMI_CHECK_MS_ || now < mt) { if (!ewsAmiMeta_(q, now)) return false; }
-    if (q.dd !== day || q.nd) { if (!ewsAmiDryRun_(st, q, now)) return false; }
-    return true;
+    if (st.jobs && st.jobs.ami && st.jobs.ami.id) return true;
+    return Number(q.mt) > 0 && q.dd === day && !q.nd;
   } catch (e) {
     console.warn(`Early wave: the AMIE table's checks: ${ewsScrub_((e && e.message) || e)}`);
     return false;
+  }
+}
+
+/**
+ * The AMIE table's checks, at the end of a check while row 48 is ON (EWS_NEW_LANE_DEFS_'s checks): after today's lanes
+ * were read and embedded, so a slow answer never costs them their posts, and each only with EWS_AMI_ROOM_MS_ of the
+ * check's time (`deadline`) left (else at the next check). The metadata at the first check after the row goes ON (asking
+ * first whether a person's tab is named "New sources": then nothing is read), then hourly, and on a new UTC day after a
+ * stop; a dry run once a UTC day and after any failure. Not while stopped for the day or paused. When all it made
+ * passed, the problem before is over. What they find stays in st.marks.amiq (ewsAmiStatus_). Never throws.
+ */
+function ewsAmiChecks_(st, now, deadline) {
+  try {
+    if (st.nsf) return;
+    const q = ewsAmiQ_(st);
+    const day = ewsUtcDay_(now);
+    if (q.sd === day || Number(q.pu) > now) return;
+    const room = () => Number(deadline) - Date.now() >= EWS_AMI_ROOM_MS_;
+    if (!room()) return;
+    if (!(Number(q.mt) > 0) && typeof nsrcForeign_ === 'function' && nsrcForeign_()) { st.nsf = now; return; }
+    const mt = Number(q.mt) || 0;
+    let made = false;
+    if (!(mt > 0) || now - mt >= EWS_AMI_CHECK_MS_ || now < mt) {
+      if (!ewsAmiMeta_(q, now)) return;
+      made = true;
+    }
+    if (q.dd !== day || q.nd) {
+      if (made && !room()) return;
+      if (!ewsAmiDryRun_(st, q, now)) return;
+      made = true;
+    }
+    if (made) delete q.prob;
+  } catch (e) {
+    console.warn(`Early wave: the AMIE table's checks: ${ewsScrub_((e && e.message) || e)}`);
   }
 }
 
@@ -2949,13 +2987,16 @@ function ewsAmiDone_(st, lane, now, nx) {
   }
 }
 
-/** The AMIE job failed (refused, or its answer could not be read): a pause of an hour, then a dry run before the next. */
+/**
+ * The AMIE job failed: refused access or the table gone stops it for the UTC day (as its checks would); any other failure
+ * (refused, or its answer could not be read) is a pause of an hour, then a dry run before the next.
+ */
 function ewsAmiFailed_(st, lane, now, nx) {
   const q = ewsAmiQ_(st);
   if (nx) ewsNewCount_(nx, 'ami', 'calls');
   const code = Number((String((lane && lane.why) || '').match(/^HTTP (\d{3})/) || [])[1]) || 0;
-  const why = ewsAmiRefusal_(code, String((lane && lane.why) || '').replace(/^HTTP \d{3}:\s*/, ''), 'BigQuery refused the AMIE read')[1];
-  ewsAmiProblem_(q, 'failed', why.replace(/, so it isn't read$/, ''), now, false);
+  const [kind, why] = ewsAmiRefusal_(code, String((lane && lane.why) || '').replace(/^HTTP \d{3}:\s*/, ''), 'BigQuery refused the AMIE read');
+  ewsAmiProblem_(q, kind, why, now, kind !== 'failed');
 }
 
 /**
@@ -3439,6 +3480,11 @@ function ewsProduce_(props, st, now, firstMins, opts) {
       const hook = state === 'done' ? l.def.done : state === 'failed' ? l.def.failed : null;
       if (typeof hook !== 'function') return;
       try { hook(st, read[l.key], now, nx); } catch (e) { console.warn(`Early wave: ${l.key}: ${ewsScrub_((e && e.message) || e)}`); }
+    });
+    // a new source's own checks (the AMIE table's metadata and dry run): now, after today's lanes were read and embedded
+    EWS_NEW_LANE_DEFS_.forEach(d => {
+      if (!d || typeof d.checks !== 'function' || !sw || sw[d.sw] !== true) return;
+      try { d.checks(st, now, deadline); } catch (e) { console.warn(`Early wave: ${d.key}: ${ewsScrub_((e && e.message) || e)}`); }
     });
     if (c1Done) {
       st.marks.sonar = read.c1.q.win.until;

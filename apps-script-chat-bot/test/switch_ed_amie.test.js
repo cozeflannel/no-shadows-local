@@ -71,7 +71,18 @@ module.exports = H => {
     const b = loadBot(g.services, g.clock);
     b.ewsRunSwitches_(opts.sw || { edAmie: true });
     const env = { g, b, w };
-    env.run = () => { w.check++; return b.bqEarlyDetectionRows_(30); };
+    // The table's checks are made at the end of a check (ewsAmiChecks_), so the AMIE job goes out from the check after
+    // the row went ON. Unless `warm: false`, the world starts as if that earlier check had made them (the metadata and
+    // the dry run, recorded in w.calls like any call, just before the first check, with what the test set up by then);
+    // `warm: false` starts at the first check after the row went ON.
+    let warmed = opts.warm === false || (opts.sw || { edAmie: true }).edAmie !== true;
+    env.warm = () => {
+      if (warmed) return;
+      warmed = true;
+      b.ev('(() => { const p = PropertiesService.getScriptProperties(); const s = ewsState_(p); ' +
+        'ewsAmiChecks_(s, Date.now(), Date.now() + EWS_BUDGET_MS_); ewsSaveState_(p, s); })()');
+    };
+    env.run = () => { env.warm(); w.check++; return b.bqEarlyDetectionRows_(30); };
     env.next = (ms) => { g.clock.now += ms === undefined ? 15 * MIN : ms; return env.run(); };
     env.state = () => JSON.parse(g.props.get('EWS_STATE') || '{}');
     env.kinds = () => w.calls.filter(c => c.kind !== 'job' || c.lane).map(c => (c.kind === 'job' ? `job:${c.lane}` : c.kind));
@@ -131,36 +142,81 @@ module.exports = H => {
     eq(env.b.ewsAmiStatus_().state, 'starting');
   });
 
-  test('ed amie (E3): with row 48 ON the first check reads the table\'s metadata, sends the AMIE job as a dry run, then the AMIE job in the same fetchAll after today\'s two (US, its own 1 GB byte limit); the US job is byte for byte the one with row 48 OFF and the us-central1 job gains only its big posts\' part', () => {
+  test('ed amie (E3): with row 48 ON the first check reads the table\'s metadata and sends the AMIE job as a dry run at its end, after today\'s two jobs; the next check sends the AMIE job in the same fetchAll after today\'s two (US, its own 1 GB byte limit); the US job is byte for byte the one with row 48 OFF and the us-central1 job gains only its big posts\' part', () => {
     const off = amieEnv({ sw: {} });
     off.run();
-    const on = amieEnv();
+    off.next();
+    const on = amieEnv({ warm: false });
     on.run();
-    eq(on.kinds(), ['tables.get', 'dry', 'job:us', 'job:c1', 'job:ami']);
-    eq(on.w.fetchAll, [['us', 'c1', 'ami']]);
+    eq(on.kinds(), ['job:us', 'job:c1', 'tables.get', 'dry']);
+    on.next();
+    eq(on.kinds(), ['job:us', 'job:c1', 'tables.get', 'dry', 'job:us', 'job:c1', 'job:ami']);
+    eq(on.w.fetchAll, [['us', 'c1'], ['us', 'c1', 'ami']]);
     eq(on.w.calls.filter(c => c.kind === 'job' && c.lane === 'us').map(c => JSON.stringify(c.body)),
       off.w.calls.filter(c => c.kind === 'job' && c.lane === 'us').map(c => JSON.stringify(c.body)));
-    const [c1On] = on.jobBody('c1');
-    const [c1Off] = off.jobBody('c1');
-    eq(c1On.query, `${c1Off.query}\n${B.ewsC1BigSql_().join('\n')}`);
-    eq(Object.assign({}, c1On, { query: '' }), Object.assign({}, c1Off, { query: '' }));
+    const c1On = on.jobBody('c1');
+    const c1Off = off.jobBody('c1');
+    eq(c1On.length, 2);
+    c1On.forEach((b2, i) => {
+      eq(b2.query, `${c1Off[i].query}\n${B.ewsC1BigSql_().join('\n')}`);
+      eq(Object.assign({}, b2, { query: '' }), Object.assign({}, c1Off[i], { query: '' }));
+    });
     const [job] = on.jobBody('ami');
     eq([job.location, job.maximumBytesBilled, job.useLegacySql, job.parameterMode, job.labels], ['US', '1000000000', false, 'NAMED',
       { purpose: 'early-wave', tool: 'burson-qa-bot', lane: 'ami' }]);
+    // the dry run is the job as the first check would have sent it (the same SQL and parameters; its window then)
     const [dry] = on.w.calls.filter(c => c.kind === 'dry').map(c => c.body);
-    eq([dry.query, JSON.stringify(dry.queryParameters)], [job.query, JSON.stringify(job.queryParameters)]);
-    // the next check (15 minutes): no metadata, no dry run; an hour after the first: the metadata again; a new UTC day: a dry run
-    const n = on.kinds().length;
-    on.next();
-    eq(on.since(n), ['job:us', 'job:c1', 'job:ami']);
+    eq([dry.query, dry.queryParameters.map(x => x.name)], [job.query, job.queryParameters.map(x => x.name)]);
+    // the next check (15 minutes): no metadata, no dry run; an hour after the first: the metadata again, at the end; a
+    // new UTC day: the AMIE job waits one check for its day's dry run
     const n2 = on.kinds().length;
     on.next(45 * MIN);
-    eq(on.since(n2), ['tables.get', 'job:us', 'job:c1', 'job:ami']);
+    eq(on.since(n2), ['job:us', 'job:c1', 'job:ami', 'tables.get']);
     const n3 = on.kinds().length;
     on.g.clock.now = Date.UTC(2026, 9, 15, 0, 5);
     on.run();
-    eq(on.since(n3).slice(0, 2), ['tables.get', 'dry']);
+    eq(on.since(n3), ['job:us', 'job:c1', 'tables.get', 'dry']);
+    const n4 = on.kinds().length;
+    on.next();
+    eq(on.since(n4), ['job:us', 'job:c1', 'job:ami']);
     eq(on.b.ewsAmiStatus_().state, 'ok');
+  });
+
+  test('ed amie (section 0 rule 2): the table\'s checks never cost today\'s lanes their posts: a metadata read that takes 30 seconds or more comes after Sonar\'s post was embedded; one that leaves less than 10 seconds of the check leaves the dry run for the next check; with too little time left after today\'s jobs no check is made until the next check', () => {
+    const slow = ms => {
+      const env = amieEnv({ warm: false });
+      const fetch = env.g.services.UrlFetchApp.fetch;
+      env.g.services.UrlFetchApp.fetch = (url, params) => {
+        const r = fetch(url, params);
+        if (/\/tables\/all_sundar_mentions$/.test(String(url))) env.g.clock.now += ms;
+        return r;
+      };
+      env.w.rows.c1 = (body, check) => (check === 1 ? [sonar({ mid: 'SONAR|slowmeta', url: 'https://x.com/slowmeta/status/2299000000000000001', author: 'slowmeta' })] : []);
+      return env;
+    };
+    const envs = [0, 20000, 30000, 60000].map(ms => {
+      const env = slow(ms);
+      env.run();
+      const st = env.state();
+      eq([ms, env.ids(), st.last.embedded, st.marks.sonar], [ms, ['SONAR|slowmeta'], 1, NOW - MIN]);
+      return [ms, env];
+    });
+    for (const [ms, env] of envs) {
+      // more than 30 seconds: less than 10 seconds of the check's 40 are left, so the dry run waits for the next check
+      eq([ms, env.kinds()], [ms, ['job:us', 'job:c1', 'tables.get'].concat(ms > 30000 ? [] : ['dry'])]);
+      const n = env.kinds().length;
+      env.next();
+      eq([ms, env.since(n)], [ms, ms > 30000 ? ['job:us', 'job:c1', 'dry'] : ['job:us', 'job:c1', 'job:ami']]);
+    }
+    // today's jobs took the check's time: no check of the table at all this time; the next check makes them
+    const env = amieEnv({ warm: false });
+    const fetchAll = env.g.services.UrlFetchApp.fetchAll;
+    env.g.services.UrlFetchApp.fetchAll = reqs => { const r = fetchAll(reqs); env.g.clock.now += 31000; return r; };
+    env.run();
+    eq(env.kinds(), ['job:us', 'job:c1']);
+    env.g.services.UrlFetchApp.fetchAll = fetchAll;
+    env.next();
+    eq(env.kinds(), ['job:us', 'job:c1', 'job:us', 'job:c1', 'tables.get', 'dry']);
   });
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -420,7 +476,9 @@ module.exports = H => {
     env.w.table = Object.assign(table(), { lastModifiedTime: String(Date.UTC(2026, 9, 16, 0, 5)) });
     env.g.clock.now = Date.UTC(2026, 9, 16, 0, 10);
     env.run();
-    eq([env.b.ewsAmiStatus_().state, env.b.ewsAmiStatus_().kind], ['ok', '']);
+    eq([env.b.ewsAmiStatus_().state, env.b.ewsAmiStatus_().kind], ['starting', '']);  // the checks passed: the problem is over
+    env.next();
+    eq([env.b.ewsAmiStatus_().state, env.b.ewsAmiStatus_().kind, env.jobBody('ami').length], ['ok', '', 1]);
     // postTime as text: the same, in its own words
     const env2 = amieEnv();
     env2.w.table.schema.fields.find(f => f.name === 'postTime').type = 'STRING';
@@ -498,7 +556,9 @@ module.exports = H => {
     delete env.w.jobFail.ami;
     const n3 = env.kinds().length;
     env.next(16 * MIN);
-    eq(env.since(n3), ['tables.get', 'dry', 'job:us', 'job:c1', 'job:ami']);
+    eq(env.since(n3), ['job:us', 'job:c1', 'tables.get', 'dry']);
+    env.next();
+    eq(env.since(n3), ['job:us', 'job:c1', 'tables.get', 'dry', 'job:us', 'job:c1', 'job:ami']);
     s = env.b.ewsAmiStatus_();
     eq([s.state, s.kind, s.why], ['ok', '', '']);
     // a failed dry run (not access, not cost) pauses it too
@@ -507,6 +567,41 @@ module.exports = H => {
     env2.run();
     eq([env2.b.ewsAmiStatus_().state, env2.b.ewsAmiStatus_().why, env2.kinds()],
       ['paused', 'BigQuery refused the AMIE read (Backend error)', ['tables.get', 'dry', 'job:us', 'job:c1']]);
+  });
+
+  test('ed amie (E15): an AMIE job refused with access denied (HTTP 403) stops it for the UTC day at once, as its checks would (nothing asked about it again that day, the address nowhere); the table gone (404) the same; a 403 for a quota or a rate limit only pauses it an hour', () => {
+    const env = amieEnv();
+    env.w.rows.ami = [amark(NOW - 5 * MIN, 1)];
+    env.run();
+    env.w.jobFail.ami = { code: 403, message: `Access Denied: Table brand-social-central-data:social_alerts_dataset.all_sundar_mentions: User ${ADDRESS} does not have permission to query table` };
+    const t1 = env.g.clock.now + 15 * MIN;
+    env.next();
+    let s = env.b.ewsAmiStatus_();
+    eq([s.state, s.kind, s.why, s.since, s.until], ['stopped', 'access', 'BigQuery won\'t let the bot read the AMIE table (access denied), so it isn\'t read',
+      t1, Date.UTC(2026, 9, 15)]);
+    eq(env.state().marks.ami, NOW - 5 * MIN);
+    const n = env.kinds().length;
+    env.next();
+    env.next(3 * HOUR);
+    eq(env.since(n), ['job:us', 'job:c1', 'job:us', 'job:c1']);
+    const all = [JSON.stringify(Array.from(env.g.props.entries())), JSON.stringify(Array.from(env.g.cache.entries())), env.g.logs.join('\n')].join('\n');
+    assert.ok(!all.includes(ADDRESS) && !all.includes('@example'), all.slice(0, 400));
+    // the table gone
+    const env2 = amieEnv();
+    env2.run();
+    env2.w.jobFail.ami = { code: 404, message: 'Not found: Table brand-social-central-data:social_alerts_dataset.all_sundar_mentions was not found in location US' };
+    env2.next();
+    s = env2.b.ewsAmiStatus_();
+    eq([s.state, s.kind, s.why], ['stopped', 'gone', 'BigQuery can\'t find the AMIE table, so it isn\'t read']);
+    // a quota or a rate limit (BigQuery says 403 for those too): a pause of an hour, as any other failure
+    const env3 = amieEnv();
+    env3.run();
+    env3.w.jobFail.ami = { code: 403, message: 'Quota exceeded: Your project exceeded quota for concurrent queries' };
+    env3.next();
+    s = env3.b.ewsAmiStatus_();
+    eq([s.state, s.kind, s.why], ['paused', 'failed', 'BigQuery refused the AMIE read (Quota exceeded: Your project exceeded quota for concurrent…)']);
+    eq([B.ewsAmiRefusal_(403, 'Exceeded rate limits: too many api requests per user per method', 'x')[0], B.ewsAmiRefusal_(403, '', 'x')[0],
+      B.ewsAmiRefusal_(403, 'Access Denied: quota project', 'x')[0], B.ewsAmiRefusal_(500, 'Backend error', 'x')[0]], ['failed', 'access', 'access', 'failed']);
   });
 
   test('ed amie: the state for the note (ewsAmiStatus_) has its whole shape, a stop or pause before stale (one warning), and reads EWS_STATE when not given; it never throws', () => {
@@ -612,7 +707,9 @@ module.exports = H => {
     env.b.ewsRunSwitches_({ edAmie: true });
     const n = env.kinds().length;
     env.next();
-    eq(env.since(n), ['tables.get', 'dry', 'job:us', 'job:c1', 'job:ami']);
+    eq(env.since(n), ['job:us', 'job:c1', 'tables.get', 'dry']);
+    env.next();
+    eq(env.since(n), ['job:us', 'job:c1', 'tables.get', 'dry', 'job:us', 'job:c1', 'job:ami']);
     const body = env.jobBody('ami')[1];
     eq(env.param(body, 'ami_from_ms').value, String(env.g.clock.now - MIN - HOUR));
     // a job of its own still running when the row goes OFF: cancelled
@@ -762,7 +859,10 @@ module.exports = H => {
     env.w.rows.ami = (body, check) => (check === 1 ? [a, amark(NOW - 3 * MIN, 12)] : [amark(NOW - 3 * MIN, 0)]);
     env.run();
     const lines = () => env.g.logs.filter(l => /^early wave source ami: /.test(l));
-    eq(lines(), [`early wave source ami: 12 rows 10:59-11:57 UTC (overlap 60 min), 1 kept, 0 same post, 0 late caught, mark 11:57:00Z, 0.08 GB`]);
+    // ...and ends with the rows the job sent back and the time to fetch and read them (what the overlap costs)
+    eq(lines(), [`early wave source ami: 12 rows 10:59-11:57 UTC (overlap 60 min), 1 kept, 0 same post, 0 late caught, mark 11:57:00Z, 0.08 GB, 2 rows came back, read in 0.0 s`]);
+    eq(B.nsrcAmiLog_({ rows: 3 }, 0, 0, 60, null, { rows: 2300, ms: 1449 }),
+      'early wave source ami: 3 rows (overlap 60 min), 0 kept, 0 same post, 0 late caught, mark none yet, 2300 rows came back, read in 1.4 s');
     // paused (its job failed): no line for that check, and none while it is paused
     env.w.jobFail.ami = { code: 500, message: 'Backend error' };
     env.next();
@@ -864,6 +964,16 @@ module.exports = H => {
     eq([B.nsrcCell_('10:15 AM'), B.nsrcCell_('=1+1'), B.nsrcCell_('TRUE'), B.nsrcCell_('a\nb'), B.nsrcCell_('Status')], ['\'10:15 AM', '\'=1+1', '\'TRUE', 'a b', 'Status']);
     eq([B.nsrcScrub_('to a.person@example.test, cut b.person@exa…, @handle stays, token tok-123', 0, 'tok-123')],
       ['to [address], cut [address], @handle stays, token [token]']);
+  });
+
+  test('ed amie (Q12): every cell the tab writes is cut to 500 characters by the last step (nsrcCell_), also a text that never passed the scrub: 501 at most with the apostrophe that keeps it text', () => {
+    const long = 'a'.repeat(600);
+    const formula = `=${'b'.repeat(700)}`;
+    const rows = B.nsrcRows_([[long, formula, `line one\nline two ${'c'.repeat(800)}`]], [{ at: NOW, headline: 'h', accounts: 5, links: 2, sent: false, trial: true, sources: ['ami'] }], 3, NOW);
+    rows.forEach(r => r.forEach(c => assert.ok(c.length <= 500 || (c.length === 501 && c.startsWith('\'')), `${c.length}: ${c.slice(0, 40)}`)));
+    const [a, f, two] = rows[3];
+    eq([a.length, a.endsWith('…'), f.length, f.startsWith('\'='), two.length, /\n/.test(two)], [500, true, 501, true, 500, false]);
+    eq([B.nsrcCell_(long).length, B.nsrcCell_('x'.repeat(500)), B.nsrcCell_(null), B.nsrcCell_(undefined)], [500, 'x'.repeat(500), '', '']);
   });
 
   test('ed amie (Q12, Q13): a story only the AMIE table lifted in its trial week is noted, not signalled, and listed on the tab; its headline (a post\'s words) is kept in the day record and shown with any address in it made [address]', () => {

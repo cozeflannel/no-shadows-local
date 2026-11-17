@@ -232,16 +232,19 @@ function nsrcAmiStatusText_(s, now, foreign, lastRows) {
  * The line an AMIE read leaves in the log (one a check it was collected): "early wave source ami: 1240 rows
  * 10:00-10:14 UTC (overlap 60 min), 310 kept, 41 same post, 6 late caught, mark 10:13:58Z, 0.2 GB". `n`: this check's
  * counts of the source (ewsNewCount_'s nx.n.ami), `from` / `mark`: the mark before and after the read (ms), `gb`: the
- * last dry run's figure (or null). Pure.
+ * last dry run's figure (or null). `got` (optional): {rows: the rows the job sent back (its overlap's repeats and its
+ * other rows included), ms: the time to fetch and read them}, added at the end ("2300 rows came back, read in 1.4 s"),
+ * so the first live weeks show what the overlap costs. Pure.
  */
-function nsrcAmiLog_(n, from, mark, overlapMin, gb) {
+function nsrcAmiLog_(n, from, mark, overlapMin, gb, got) {
   const c = n || {};
   const hm = ms => (Number(ms) > 0 ? new Date(Number(ms)).toISOString().slice(11, 16) : '?');
   const span = Number(mark) > 0 ? ` ${hm(from)}-${hm(mark)} UTC` : '';
   const at = Number(mark) > 0 ? new Date(Number(mark)).toISOString().slice(11, 19) + 'Z' : 'none yet';
   return `early wave source ami: ${Math.round(Number(c.rows) || 0)} rows${span} (overlap ${Math.round(Number(overlapMin) || 0)} min), ` +
     `${Math.round(Number(c.used) || 0)} kept, ${Math.round(Number(c.same) || 0)} same post, ${Math.round(Number(c.lc) || 0)} late caught, ` +
-    `mark ${at}${typeof gb === 'number' ? `, ${gb} GB` : ''}`;
+    `mark ${at}${typeof gb === 'number' ? `, ${gb} GB` : ''}` +
+    (got && typeof got === 'object' ? `, ${Math.round(Number(got.rows) || 0)} rows came back, read in ${((Number(got.ms) || 0) / 1000).toFixed(1)} s` : '');
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -261,7 +264,7 @@ function nsrcStore_() {
 
 /**
  * True when the bot's sheet has a tab named "New sources" that the bot didn't make (EarlyWaveSource.gs asks at the
- * first check after a new source's row goes ON, before it reads anything). Reads only that tab's A1. Never throws.
+ * end of the first check after a new source's row goes ON, before it reads anything). Reads only that tab's A1. Never throws.
  */
 function nsrcForeign_() {
   try {
@@ -395,7 +398,7 @@ function nsrcAfterCheck_(props, st, nx, now, read) {
     if (lane && lane.state === 'done') {
       const before = Number(lane.q && lane.q.flags && lane.q.flags.mark) || Number(lane.q && lane.q.win && lane.q.win.since) || 0;
       console.log(nsrcAmiLog_((nx.n || {}).ami, before, Number(st.marks.ami) || 0, ewsAmiCfg_().overlapMin,
-        typeof amiq.gb === 'number' ? amiq.gb : null));
+        typeof amiq.gb === 'number' ? amiq.gb : null, { rows: Number(lane.got) || 0, ms: Number(lane.ms) || 0 }));
     }
     const rec = ewsSrcDay_(props);  // as saved: the tab's numbers are the day record's
     const status = ewsAmiStatus_(now, st);

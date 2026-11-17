@@ -351,8 +351,8 @@ module.exports = H => {
   test('new sources control (Q12): the bot\'s own New sources tab stays its own when a person hides it or protects it: it is written at each check, never made twice, never shown again or unprotected; turning row 48 OFF leaves the tab as it is (nothing more is written to it)', () => {
     const w = world();
     const { t, sh } = w;
-    const amie = amieOn(t, sh);  // the AMIE table answers as it should: it is read at each check
-    checks(w, 1);
+    const amie = amieOn(t, sh);  // the AMIE table answers as it should: it is read at each check from the second
+    checks(w, 2);                // (the first makes the table's checks, at its end)
     const tab = t.sheet().getSheetByName('New sources');
     eq([tab.cell(1, 1), tab.protections.map(p => p.warningOnly), amie.jobs()], [TITLE, [true], 1]);
     tab.hideSheet();
@@ -442,6 +442,10 @@ module.exports = H => {
     return { posts, outbox: outbox ? outbox.rows.slice(1).map(r => r.join(' | ')) : [] };
   }
 
+  /** Every email the bot sent or drafted, as words: whom to, the subject, the text and the HTML. */
+  const mails = t => t.g.gmail.sentMessages().concat(t.g.gmail.allDrafts())
+    .map(m => [].concat(m.to || [], m.cc || [], m.bcc || [], [m.subject || '', m.text || '', m.html || '']).join(' | '));
+
   /** None of it holds a new-lane post's words or link, "AMIE", "Brandwatch" or the AMIE table's name. */
   function assertNothingNew(what, side) {
     const leaks = side.posts.concat(side.outbox).filter(text => /amie|brandwatch|all_sundar|social_alerts_dataset/i.test(text) ||
@@ -449,7 +453,7 @@ module.exports = H => {
     eq([what, leaks], [what, []]);
   }
 
-  test('new sources control (E26): a full run with row 48 ON, in the one-space setup, beside a Mirror space and in the main flow: the AMIE table\'s story is found and reviewed where the bot works, but no outbox row, relay post or post in S-F Burson (B25) or the Burson test copy (B26) holds a new-lane post\'s words or link, "AMIE" or "Brandwatch"', () => {
+  test('new sources control (E26): a full run with row 48 ON, in the one-space setup, beside a Mirror space and in the main flow: the AMIE table\'s story is found and reviewed where the bot works, but no outbox row, relay post, post in S-F Burson (B25), the Burson test copy (B26) or the Other alerts space (B33), and no email sent or drafted, holds a new-lane post\'s words or link, "AMIE" or "Brandwatch"', () => {
     const run = (t, sh) => {
       amieOn(t, sh);
       t.chat.say(golden.spaces.REAL, H.F.MISTAKES, ZAPIER);  // Burson's own alert: the relay and the outbox have work too
@@ -459,8 +463,11 @@ module.exports = H => {
     run(one.t, one.sh);
     const mir = golden.world.mirrorWorld({});    // beside a Mirror space, Testing, with the Burson test copy
     run(mir.t, mir.sh);
-    const main = world();                        // the main flow: the test feed into the analysts' space, B25 set
+    const main = world();                        // the main flow: the test feed into the analysts' space, B25 and B33 set
     main.t.set('B25', golden.spaces.REAL);
+    const OTHER = 'spaces/AAQAotheralerts26';
+    main.t.chat.addSpace(OTHER, 'Other alerts (made up)');
+    main.sh.getRange(33, 2).setValue(OTHER);
     run(main.t, main.sh);
     [['one-space', one.t, golden.spaces.AC], ['mirror', mir.t, golden.spaces.MIRROR], ['main', main.t, null]].forEach(([what, t, where]) => {
       const day = JSON.parse(t.g.props.get('EWS_SRC_DAY') || '{}');
@@ -469,6 +476,9 @@ module.exports = H => {
       // beside the Mirror space the test copy does get Burson's corrected alert: the way to Burson is open, and holds nothing new
       if (what === 'mirror') assert.ok(bursonSide(t, [golden.spaces.COPY]).posts.length > 0, 'the test copy has posts');
       assertNothingNew(what, bursonSide(t, [golden.spaces.REAL, golden.spaces.COPY]));
+      // the Other alerts space, and every email the bot sent or drafted (Social Alerts, to testers or to groups): in these
+      // worlds the bot sends none and posts nothing there, so any that a later change makes must hold nothing new
+      assertNothingNew(`${what}: Other alerts space and emails`, { posts: bursonSide(t, [OTHER]).posts.concat(mails(t)), outbox: [] });
       if (where) assert.ok(t.chat.botPosts(where).some(m => /EARLY DETECTION/.test(m.text || '') && AMIE_POSTS.some(p => (m.text || '').includes(p.url))), `${what}: the story's card is where the bot works`);
     });
   });
