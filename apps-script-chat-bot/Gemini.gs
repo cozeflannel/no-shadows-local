@@ -459,6 +459,7 @@ function geminiGenerate_(system, prompt, schema, opts) {
       text = String((e && e.message) || e);
     }
     if (code === 429) got429++;
+    if (code === 429 && typeof apiGuardNoteVertex429Try_ === 'function') apiGuardNoteVertex429Try_();  // for the first screen (RequirementsFirst.gs): only while it is on
     if (code !== 429 && code < 500) {
       // A 4xx with the web-search tool on: once more without it, when the error is about the tool (or nothing else in
       // the request could be: no media). A media error goes straight back to assess(), which retries text-only.
@@ -558,4 +559,65 @@ function webSources_(body) {
     .map(w => ({ title: String(w.title || w.domain || '').trim(), uri: String(w.uri || '').trim() }))
     .filter(s => s.title || s.uri).slice(0, 8);
   return queries.length || sources.length ? { queries, sources } : null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A sender of its own for background work that must never touch Burson's reviews (step S19h's first screen,
+// RequirementsFirst.gs): the request and the reply are pure; the caller sends (one UrlFetchApp.fetchAll), never
+// geminiGenerate_: no `gemini` count, no shared cooldown, no BigQuery ML, no web search, no retry
+// ---------------------------------------------------------------------------------------------------------------
+
+// Vertex AI's harm categories a caller may set: the screen asks it to block none of them (accepted values not verified
+// live: a 400 that names them drops them for the day)
+const GEMINI_OPEN_SAFETY_ = ['HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_DANGEROUS_CONTENT', 'HARM_CATEGORY_HARASSMENT',
+  'HARM_CATEGORY_SEXUALLY_EXPLICIT'].map(category => ({ category, threshold: 'BLOCK_NONE' }));
+
+/**
+ * One request for UrlFetchApp.fetchAll: GEN's triage model at its location, temperature 0, LOW thinking, an output cap
+ * (opts.maxOutputTokens, 4,096 when unset), no tools, and safetySettings unless opts.safetyOff. `token`: the run's OAuth
+ * token. Pure.
+ */
+function geminiRequest_(system, prompt, schema, opts, token) {
+  const o = opts || {};
+  const payload = geminiPayload_(system, prompt, schema, { temperature: 0, thinkingLevel: 'LOW',
+    maxOutputTokens: Number(o.maxOutputTokens) > 0 ? Number(o.maxOutputTokens) : 4096 });
+  if (!o.safetyOff) payload.safetySettings = GEMINI_OPEN_SAFETY_.map(x => Object.assign({}, x));
+  return { url: geminiUrl_(GEN.models.triage, GEN.models.location, GCP_PROJECT), method: 'post', contentType: 'application/json',
+    muteHttpExceptions: true, headers: { Authorization: 'Bearer ' + token }, payload: JSON.stringify(payload) };
+}
+
+/**
+ * Reads one reply of geminiRequest_ without throwing: {ok: true, out, usage: {in, thinking, out}}; {ok: false, refused,
+ * why} (a blocked prompt, a candidate stopped for safety, or a 400 that names safety, blocked or prohibited); {ok: false,
+ * busy} (429); {ok: false, cut} (MAX_TOKENS); {ok: false, settings} (a 400 that names safetySettings); else {ok: false,
+ * why}. Pure.
+ */
+function geminiReadReply_(code, text) {
+  try {
+    const c = Number(code) || 0;
+    const t = String(text === undefined || text === null ? '' : text);
+    if (c === 429) return { ok: false, busy: true, why: '429' };
+    if (c === 400 && /safety_?settings/i.test(t)) return { ok: false, settings: true, why: '400 safetySettings' };
+    if (c === 400 && /safety|blocked|prohibited/i.test(t)) return { ok: false, refused: true, why: '400 refused' };
+    if (c < 200 || c >= 300) return { ok: false, why: `${c || 'no answer'}` };
+    let body = null;
+    try { body = JSON.parse(t); } catch (e) { return { ok: false, why: 'no JSON' }; }
+    const u = (body && body.usageMetadata) || {};
+    const usage = { in: Number(u.promptTokenCount) || 0, thinking: Number(u.thoughtsTokenCount) || 0, out: Number(u.candidatesTokenCount) || 0 };
+    const cand = ((body && body.candidates) || [])[0];
+    if (body && body.promptFeedback && body.promptFeedback.blockReason) return { ok: false, refused: true, why: String(body.promptFeedback.blockReason), usage };
+    if (!cand) return { ok: false, why: 'no answer', usage };
+    const finish = String(cand.finishReason || '').replace(/^FINISH_REASON_/, '');
+    if (/^(?:SAFETY|PROHIBITED_CONTENT|BLOCKLIST|SPII|IMAGE_SAFETY)$/.test(finish)) return { ok: false, refused: true, why: finish, usage };
+    if (finish === 'MAX_TOKENS') return { ok: false, cut: true, why: 'MAX_TOKENS', usage };
+    const out = ((cand.content && cand.content.parts) || []).filter(p => p && !p.thought && typeof p.text === 'string').map(p => p.text).join('').trim();
+    if (!out) return { ok: false, why: 'no text', usage };
+    try {
+      return { ok: true, out: JSON.parse(out.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')), usage };
+    } catch (e) {
+      return { ok: false, why: 'no JSON', usage };
+    }
+  } catch (e) {
+    return { ok: false, why: 'unreadable' };
+  }
 }

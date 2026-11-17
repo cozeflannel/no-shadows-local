@@ -58,6 +58,8 @@ module.exports = H => {
     };
     const run = (on, slow) => {
       const { g, b } = bot(on);
+      // the quick look alone, as step S19d built it: the first screen (step S19h) off gives it back byte for byte
+      b.ev('GEN.settings.open_first_screen = false');
       const answer = (code, body) => ({ getResponseCode: () => code, getContentText: () => JSON.stringify(body), getHeaders: () => ({}) });
       const orig = g.services.UrlFetchApp.fetch;
       let calls = 0;

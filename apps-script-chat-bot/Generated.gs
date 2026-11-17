@@ -107,6 +107,7 @@ const GEN = {
   "open_check_minutes": 5,
   "open_queue_max": 24,
   "open_requirements_first": true,
+  "open_first_screen": true,
   "open_hold_none_at": 0.8,
   "open_equal_lanes": true,
   "open_fresh_minutes": 180,

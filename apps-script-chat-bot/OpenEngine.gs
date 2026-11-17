@@ -804,6 +804,8 @@ function openC51Text_(now) {
         ? `⏸ outside calls ahead of pace (${n(u.fetches)} of ${n(u.fetchBudget)} in 24 h): no quick looks. Burson's alerts go on`
         : `⏸ run time ahead of pace (${openHours_(u.runSec)} of ${openHours_(u.budgetSec)} in 24 h): only serious stories reviewed. Burson's alerts go on`;
     }
+    // the first screen paused an hour or more in a row (step S19h): below every other warning
+    if (!warning && typeof rqScreenC51Warning_ === 'function') warning = rqScreenC51Warning_(t);
     const walls = Object.keys(d.w || {}).filter(k => Number(d.w[k]) > 0 && OE_WALL_WORDS_[k]).map(k => `${OE_WALL_WORDS_[k]} ${n(d.w[k])}×`);
     const parts = [
       `today: checks every ${Math.round(openCheckMs_() / 60000)} min · ${n(d.rev)} of ${n(openCfg_().stop)} reviews`,

@@ -44,13 +44,20 @@ const ENG_COLS_ = [
   // RQ8 of the requirements-first plan (steps S19a-S19g fill them)
   ['alone', 'Alone read', 'n'], ['codePass', 'Code pass', 'n'], ['gated', 'Gated', 'n'], ['asked', 'Asked', 'n'],
   ['qPass', 'Quick pass', 'n'], ['failed', 'Failed', 'n'], ['notReached', 'Not reached', 'n'], ['quickS', 'Quick s', 'n'],
-  ['tokens', 'Tokens', 'n'], ['refused', 'Refused', 'n'], ['codeMs', 'Code check ms', 'n'], ['note', 'Note', 't'],
+  ['tokens', 'Tokens', 'n'], ['refused', 'Refused', 'n'], ['codeMs', 'Code check ms', 'n'],
+  // the first screen (step S19h, RequirementsFirst.gs); 'm': the largest of the runs since the check before
+  ['sPosts', 'screen posts', 'n'], ['sCalls', 'screen calls', 'n'], ['sPicked', 'screen picked', 'n'], ['sSentOn', 'screen sent on', 'n'],
+  ['sBad', 'screen bad answers', 'n'], ['sS', 'screen s', 'm'], ['sTokens', 'screen tokens', 'n'], ['sPeak', 'screen peak tokens', 'm'],
+  ['sThink', 'screen thinking', 'm'], ['sWhy', 'screen why off', 't'],
+  ['note', 'Note', 't'],
 ];
+const ENG_KIND_ = ENG_COLS_.reduce((o, c) => Object.assign(o, { [c[0]]: c[2] }), {});
 const ENG_HEAD_ = ENG_COLS_.map(c => c[1]);
 const ENG_HEAD_ROW_ = 3;
 const ENG_KEEP_MS_ = 7 * 24 * 3600 * 1000;
 const ENG_KEEP_ROWS_ = 2400;                  // at most (7 days of checks every 5 minutes is 2,016, with the daily rows)
 const ENG_CELL_MAX_ = 100;
+const ENG_NOTE_MAX_ = 200;                    // the Note column (a day's rows say a little more)
 const ENG_ACC_PROP_ = 'ENGINE_ACC';
 const ENG_ACC_MAX_ = 8800;
 const ENG_PENDING_MAX_ = 12;                  // rows waiting for a run with time to write them
@@ -70,6 +77,16 @@ function engAdd_(key, n) {
     const v = Number(n);
     if (!isFinite(v) || !v) return;
     ENG_RUN_.n[key] = Math.round(((Number(ENG_RUN_.n[key]) || 0) + v) * 1000) / 1000;
+  } catch (e) { /* not counted */ }
+}
+
+/** Keeps the largest `n` of the run in the column `key` (a 'm' column: the largest of the runs since the check before). */
+function engMax_(key, n) {
+  try {
+    if (!ENG_RUN_ || typeof openOn_ !== 'function' || !openOn_()) return;
+    const v = Number(n);
+    if (!isFinite(v) || !v) return;
+    ENG_RUN_.n[key] = Math.max(Number(ENG_RUN_.n[key]) || 0, Math.round(v * 1000) / 1000);
   } catch (e) { /* not counted */ }
 }
 
@@ -123,8 +140,8 @@ function engAcc_(props) {
 /** The values of a row in the tab's column order. Pure. */
 function engRowOf_(n, t) {
   return ENG_COLS_.map(([k, , kind]) => {
-    if (kind === 'n') return Object.prototype.hasOwnProperty.call(n, k) ? Math.round(Number(n[k]) * 10) / 10 : '';
-    return truncate_(String(t[k] === undefined ? '' : t[k]), ENG_CELL_MAX_);
+    if (kind === 'n' || kind === 'm') return Object.prototype.hasOwnProperty.call(n, k) ? Math.round(Number(n[k]) * 10) / 10 : '';
+    return truncate_(String(t[k] === undefined ? '' : t[k]), k === 'note' ? ENG_NOTE_MAX_ : ENG_CELL_MAX_);
   });
 }
 
@@ -168,7 +185,10 @@ function maybeWriteEngineTab_(ss, ctx, opts) {
       engAdd_('guard', OE_RUN_.walls.guard ? 1 : 0);
       engAdd_('r429', OE_RUN_.walls.gemini ? 1 : 0);
     }
-    Object.keys(ENG_RUN_.n).forEach(k => { a.cur.n[k] = Math.round(((Number(a.cur.n[k]) || 0) + ENG_RUN_.n[k]) * 1000) / 1000; });
+    const join = (into, k, v) => {
+      into[k] = ENG_KIND_[k] === 'm' ? Math.max(Number(into[k]) || 0, Number(v) || 0) : Math.round(((Number(into[k]) || 0) + Number(v)) * 1000) / 1000;
+    };
+    Object.keys(ENG_RUN_.n).forEach(k => join(a.cur.n, k, ENG_RUN_.n[k]));
     Object.assign(a.cur.t, ENG_RUN_.t);
     if (ENG_RUN_.check) {
       const at = ENG_RUN_.check.at;
@@ -176,6 +196,9 @@ function maybeWriteEngineTab_(ss, ctx, opts) {
       // the first check of an Eastern day: the day before's row first
       if (a.day && a.day.d !== day) {
         a.pending.push(engRowOf_(a.day.n, { at: a.day.d, row: `day ${a.day.d}`, note: engDayNote_(a.day) }));
+        // the first screen's rows for that day (step S19h): one cell each
+        const screen = typeof rqScreenDayRows_ === 'function' ? rqScreenDayRows_(a.day.d) : [];
+        screen.forEach(text => a.pending.push(engRowOf_({}, { at: a.day.d, row: 'first screen', note: text })));
         a.day = null;
       }
       if (!a.day) a.day = { d: day, n: {}, checks: 0 };
@@ -185,7 +208,7 @@ function maybeWriteEngineTab_(ss, ctx, opts) {
       let label = '';
       try { label = Utilities.formatDate(new Date(at), 'America/New_York', 'MMM d, h:mm a'); } catch (e) { label = new Date(at).toISOString(); }
       a.pending.push(engRowOf_(n, Object.assign(texts, { at: label, row: 'check' })));
-      Object.keys(n).forEach(k => { if (k !== 'gap') a.day.n[k] = Math.round(((Number(a.day.n[k]) || 0) + Number(n[k])) * 1000) / 1000; });
+      Object.keys(n).forEach(k => { if (k !== 'gap') join(a.day.n, k, n[k]); });
       a.day.checks++;
       a.last = at;
       a.cur = { n: {}, t: {} };

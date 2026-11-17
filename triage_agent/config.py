@@ -695,6 +695,7 @@ class BursonQAConfig(ConfigModel):
     open_check_minutes: int = 5
     open_queue_max: int = 24
     open_requirements_first: bool = True
+    open_first_screen: bool = True
     open_hold_none_at: float = 0.8
     open_equal_lanes: bool = True
     open_fresh_minutes: int = 180

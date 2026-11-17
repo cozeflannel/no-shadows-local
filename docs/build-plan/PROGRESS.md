@@ -310,7 +310,40 @@ one line under it: what was built, the suite's count, and anything left out with
       they need S19b's list and its review path, not built); the carry `rqj` and the answers `rqa` across runs (the
       producer's stored state, as S7); its own ApiGuard kind and pause (`decisions_post`, `DECISIONS_POST_STATE`: the
       looks share the story asks' session and pause today); C51's counting-only, paused and fetch texts.
-- [ ] **S19h** The first screen
+- [ ] **S19h** The first screen (part S19h-1 built in part: see below; left unticked)
+      Built, under row 51 with `open_requirements_first` and `open_first_screen` (true): in front of S19d's quick look,
+      `rqScreenRun_` (RequirementsFirst.gs) sends the posts left to a judgment to Vertex AI's triage model 25 to a call
+      with one of 12 known test posts (`RQ_SCREEN_KNOWN_`, in turn), the instruction built from GEN (`rqScreenSystem_`:
+      the P0 tags but `RQ_NEVER_QUICK_TAGS_`, which `rqDecide_` now reads too; the topics; the products and their other
+      names), the input from the platform, the product index, the source and the text only (`rqScreenInput_`, Google
+      links and handles kept as words by `rqGoogleSigns_`), calls in rank order and posts inside a call by text hash; the
+      answer check (`rqScreenRead_`: one entry a post, exact refs, the marks, the first words, the known post marked);
+      posts in a P0 risk-term group and instruction-like texts kept out (`oq`, `oi`); its own sender (Gemini.gs
+      `geminiRequest_` / `geminiReadReply_`, one `fetchAll` a round, temperature 0, LOW, a 4,096 cap, `safetySettings`,
+      never `geminiGenerate_`); its own ApiGuard kind (`screen`, `screen_split`, `screen_posts`, ceilings 300 / 1,800
+      from the carry's size, kept apart from `gemini`); the 429 list (`api_guard_v429_log`, one line in
+      `geminiGenerate_`, written only while the screen marked itself on); its gates (the quick look's own, the day's run
+      time or outside calls at 0.70, Burson first: their reviews bursting, the shared cooldown, a Vertex 429 in the last
+      10 minutes, a new Burson alert; its pause; its ceilings; the bug stop; room in the slice and 30 s of the flow);
+      rounds of `k` calls (4, doubling after a clean round with no 429 in the 2 minutes after, halving after a slow one,
+      for an hour after its own 429, for a day after a 429 near a round); refused calls split once 13 + 12; a cut answer
+      gives 13 posts a call, then an 8,192 cap, for the day; `safetySettings` refused drops them for the day; its own
+      pauses (10 minutes after its 429, 15 after no answer or three slow rounds, a failed probe doubling to an hour);
+      marks asked by rank, then the calls it could not read; 1 in 50 of the noes sampled and asked (1 in 200 at outside
+      calls 0.60); in a run where it cannot run, the quick looks ask exactly as without it; its state `RQ_SCREEN`; the
+      Engine tab's ten `screen` columns and the day before's rows (posts and picks by source, time off and why, the
+      known post missed); C51's warning after an hour paused. Suite: 1,344 of 1,344 passed. Left out, and why: the
+      carry's `fs` and `pi`, halves waiting for a later run, the 10-run wait `ow` and test 17 (the carry `rqj` is not
+      built, S19d; the posts are this run's, and what the screen does not reach in a run gets its quick look as without
+      it, so no post waits for it); the seen-set letters `n`, `F`, `M` (no seen set, S19a); the audit drawn at fail time
+      and its row, test 21 (S19e's audit, not built); sample passes ranked in the review list, the back-pressure of test
+      20 and the `rqj` sizes of test 22 (no list, S19d part two); the misses row "about N a day it should have picked"
+      (it needs the review's confirmations; the sample's counts by source are kept); marks by kind and Launches by
+      topic, misses by position third; S19h-2 (it needs S18 and S19g). Chosen where the plan is silent or would stall:
+      a round's room is at most the whole slice (20 s), else a slow history would stop the screen for good; a quick look
+      held by Gemini's "too busy" counts as Burson first; the cap of 8,192 applies from the next round; the Engine tab's
+      Note cell holds 200 characters (the day rows). S19d's step test now runs with `open_first_screen` false, which
+      gives the quick look alone as S19d built it.
 - [ ] **S13** The Watch: a single worrying post goes out alone
 - [ ] **S19c** One path with the Watch, and growth
 - [ ] **S19f** Every size grouped
@@ -343,5 +376,9 @@ one line under it: what was built, the suite's count, and anything left out with
 - That Apps Script lets the bot wrap `UrlFetchApp` for a run, so outside calls are counted (if not, the record says
   so, C51 shows no call count and only the run-time guard acts); the account's real daily trigger run time and outside
   calls (Google's figures as the plan remembered them, not verified); what a run that found the lock taken really costs.
+- The first screen (S19h): which `safetySettings` values `gemini-3.8-flash` accepts (a 400 naming them drops them for
+  the day); a 25-post call's real time and how many requests Apps Script's `fetchAll` runs at once; how often Vertex
+  refuses a call; the mark rate by source; the share of ordinary posts the instruction filter keeps out; that a refusal
+  arrives as `promptFeedback.blockReason` or a safety finish reason, as written.
 - That `Session.getEffectiveUser().getEmail()` answers in a trigger run of this deployment (if it throws, the bot takes
   the lower budgets, 1.5 hours and 20,000 calls, until the settings are filled in).
