@@ -371,12 +371,14 @@ module.exports = H => {
     const start = c1()[0].params.since_ms;
     eq([t.g.props.get('PW_TRIES'), t.g.props.get('PW_SINCE'), t.g.props.get('PW_JOB'), t.g.props.get('PW_US_TRIES'), lanes(bq).us.length],
       ['1', start, undefined, undefined, 1]);
-    // C34 says so from the first failed try on, in one form, behind a warning sign: since when, and why (no look has
+    // C34 says so from the first failed try on, in one form, behind a warning sign: since when (with its time zone, as
+    // the Watch sources tab writes it), and why in plain words (BigQuery's own words are in the run log only; no look has
     // been collected yet)
     const failedAt = t.g.clock.now;
-    const SINCE = ` · ⚠️ the look at Sonar and Tubular has failed since ${B.pwWhen_(failedAt)}: `;
+    const SINCE = ` · ⚠️ the look at Sonar and Tubular has failed since ${B.pwWhen_(failedAt, true)}: `;
     const TODAY = ' · today: 0 flagged, 0 near misses';
-    eq(note(t), `${ON_TEXT} · first look on its way${SINCE}BigQuery HTTP 500: Backend error${TODAY}`);
+    eq(note(t), `${ON_TEXT} · first look on its way${SINCE}BigQuery had a problem of its own${TODAY}`);
+    assert.ok(t.g.logs.some(l => /^Proactive watch: the look at Sonar and Tubular for .* failed \(try 1\): BigQuery HTTP 500: Backend error$/.test(l)));
     for (let i = 0; i < 4; i++) t.poll();
     eq(c1().length, 1, 'not again before 5 minutes');
     t.poll();  // try 2
@@ -387,7 +389,7 @@ module.exports = H => {
     // the skip is in the log; C34 keeps saying since when the look has failed, after the other location's last look
     assert.ok(t.g.logs.some(l => /^Proactive watch: skipped \d\d:\d\d-\d\d:\d\d for Sonar and Tubular after 3 tries; the next look carries on$/.test(l)));
     const failing = why => new RegExp(`^ · last look Oct 14, \\d+:\\d\\d [AP]M EDT: 0 new posts, 0 flagged${SINCE}${why}${TODAY}$`);
-    assert.match(note(t).slice(ON_TEXT.length), failing('BigQuery HTTP 500: Backend error'));
+    assert.match(note(t).slice(ON_TEXT.length), failing('BigQuery had a problem of its own'));
     // the skipped window moved the location's other sources past it
     const marks = JSON.parse(t.g.props.get('PW_MARKS'));
     eq([marks.tubular, marks.outbound], [Number(c1()[2].params.until_ms), undefined]);
