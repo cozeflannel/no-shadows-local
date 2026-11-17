@@ -331,8 +331,8 @@ outside the caps, never refused by them and using no slot: the `Alert requiremen
 story` reply. The review's own note (with its `Alert requirements` line) is no extra note and isn't counted. When a cap
 or the run's time stops a note, nothing is posted: only the counts move (C19, C35) and the run log says so. A story
 whose note couldn't be posted ends "Its main post already has an alert" or "Seen before, nothing new" instead. The
-watch's `Same story` replies stop only when the note can never go up (the card is gone, or is no longer in the
-Auto-correct space); then later flags on that story are counted on C35 as repeats of an alerted story. A run asks Chat
+watch's `Same story` replies stop only when the note can never go up (the card is gone, its thread can't be read, or
+it is no longer in the Auto-correct space); then later flags on that story are counted on C35 as repeats of an alerted story. A run asks Chat
 at most 12 times about the notes already under its cards, and a note that would need asking waits when less than 20
 seconds of the run are left.
 
