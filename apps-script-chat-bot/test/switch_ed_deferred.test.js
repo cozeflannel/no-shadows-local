@@ -241,6 +241,29 @@ module.exports = H => {
     eq([n.found, n.never, n.cards + n.waiting], [25, 20, 5]);
   });
 
+  test('early detection deferred: a check that changes nothing on the list of signals left for later does not write it again (neither the property nor the cache value)', () => {
+    const w = ends.world({ flow: 'one-space', row46: false, settings: {} });
+    const made = Math.floor(ends.at('09:25') / MIN);
+    const list = {};
+    for (let i = 0; i < 10; i++) list[`0000${String(i).padStart(4, '0')}:30`] = [made, 'k', 5];  // still in the window
+    const text = JSON.stringify(list);
+    w.t.g.props.set('EARLY_DETECTION_DEFERRED', text);
+    w.t.g.cache.set('ed_deferred_rows', '{}');
+    const writes = [];
+    const pset = w.t.g.props.set.bind(w.t.g.props);
+    w.t.g.props.set = (k, v) => { if (k === 'EARLY_DETECTION_DEFERRED') writes.push(k); return pset(k, v); };
+    const cset = w.t.g.cache.set.bind(w.t.g.cache);
+    w.t.g.cache.set = (k, v) => { if (k === 'ed_deferred_rows') writes.push(k); return cset(k, v); };
+    w.run('09:31', []);  // a quiet check: nothing read, nothing left the window
+    w.run('09:46', []);
+    eq(writes, []);
+    eq(w.t.g.props.get('EARLY_DETECTION_DEFERRED'), text);
+    // a check that does change it writes it: once they have left the window the sweep ends them and takes the list out
+    ['10:01', '10:16', '10:31', '10:46', '11:01', '11:16', '11:31'].forEach(time => w.run(time, []));
+    eq(w.t.g.props.get('EARLY_DETECTION_DEFERRED') || null, null);
+    eq(w.t.bot.edDayNumbers_(props(w)).never, 10);
+  });
+
   test('early detection deferred: with the allowance off (early_wave_reviews_per_hour 0) nothing is remembered', () => {
     const r = day({ batches: [['09:30', 1, 25]], skip: [['10:15', '10:40']], settings: ends.OLD_RULE, until: '11:00' });
     eq(r.deferred, null);

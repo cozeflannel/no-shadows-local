@@ -5014,7 +5014,7 @@ function earlyWaveCheck_(ctx) {
   };
   if (allow) capped = queueByAllowance();
   // The signals left for a later check: one queued or ended in this check is forgotten; past ED_DEFERRED_MAX_ the oldest
-  // end at once (never dropped without an ending); the list and its rows are saved while it has any
+  // end at once (never dropped without an ending); the list and its rows are saved when this check changed them
   if (Object.keys(deferredList).length || deferredChanged) {
     (rows || []).forEach(r => {
       const h = idHashOf(r);
@@ -5024,7 +5024,7 @@ function earlyWaveCheck_(ctx) {
     edDeferredTrim_(deferredList).forEach(h => endDeferred(h, before[h], true));
     // the list could not be saved: the ones put off in this check would be lost with no ending, so they end now, with
     // their cause alone (the stored list is as the check found it: the ones the sweep ended are marked as seen)
-    if (!edDeferredSave_(props, deferredList, deferredRows)) {
+    if (deferredChanged && !edDeferredSave_(props, deferredList, deferredRows)) {
       deferredNow.forEach(h => { if (deferredList[h]) endDeferred(h, deferredList[h], 'now'); });
     }
   }
