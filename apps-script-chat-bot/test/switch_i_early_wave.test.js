@@ -29,8 +29,8 @@ module.exports = H => {
   const COPY = 'spaces/AAQAcopyEd1';
   const COPY_NAME = 'Burson Relay Test Copy';
   const ROOM = 'https://chat.google.com/room/AAQAaa_0I9g'; // live S-F Burson
-  const ON_TEXT = '✓ ON: every 15 min, groups new low-reach posts from the BigQuery source tables into stories itself and ' +
-    'sends story clusters and velocity spikes for full triage';
+  const ON_TEXT = '✓ ON: every 15 min, groups new posts from small accounts into stories and reviews them; one that passes ' +
+    'its review is posted as an EARLY DETECTION card (there is no separate wave message)';
   const OFF_TEXT = 'OFF (one post at a time)';
 
   const COLS = [
@@ -1115,7 +1115,7 @@ module.exports = H => {
     // the Control tab's help, row 19: the card by its first line, and every place it can go
     const help = B.ev('CONTROL_HELP_').filter(l => /^• Early wave & velocity check: row 19/.test(l));
     eq(help.length, 1);
-    assert.match(help[0], /Each one goes out as the bot's own alert card \(its first line says EARLY DETECTION, or UPDATE when it adds to a story already alerted\) in the Mirror space or test feed, or in the Auto-correct space \(B10\) when it works alone \(never S-F Burson\)/);
+    assert.match(help[0], /Each one that passes its review goes out as the bot's own alert card \(its first line says EARLY DETECTION, or UPDATE when it adds to a story already alerted\) in the Mirror space or test feed, or in the Auto-correct space \(B10\) when it works alone \(never S-F Burson\)/);
     assert.ok(!B.ev('CONTROL_HELP_').some(l => /Early Detection Alert card/.test(l)), 'no help line names the card it was before');
     // ... and row 39: an early signal is the same alert card, told apart by its first line
     const help39 = B.ev('CONTROL_HELP_').filter(l => /^• Fast triage: rank and early watch: row 39/.test(l));

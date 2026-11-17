@@ -133,7 +133,10 @@ const CONTROL_HELP_ = [
     'Sonar, the last 48 hours) before asking Burson (with Never wait on Burson ON: found or not, the alert is processed ' +
     'right away, and Burson is told when it isn\'t found).',
   '• Direct BigQuery alerts: the bot also reviews qualifying Sprinklr, DSD / Brandwatch and Sonar posts straight from BigQuery, ' +
-    'never one it has already seen (in a test feed or the Mirror space only, never the live Burson space).',
+    'never one it has already seen (in a test feed, the Mirror space, or the Auto-correct space when it works alone; never ' +
+    'the live Burson space). A post that already had an alert, or is on a story already alerted, gets no card of its own: ' +
+    'C15 counts those, beside the day\'s cards and how many of them got a Social Alert. In the Auto-correct space working ' +
+    'alone, Early detection goes first in a run, and this check still runs at least every 10 minutes.',
   '• Write back to SLRR BigQuery: finalized alerts and sends are written to the shared SLRR BigQuery tables, where ' +
     'other teams and dashboards see them. Keep it OFF while testing.',
   '• Learn from IM calls: alerts where the IMs and the bot made different calls are kept on the Learned precedents ' +
@@ -141,14 +144,23 @@ const CONTROL_HELP_ = [
   '• Watch sent alerts (24h): for a day after a Social Alert is sent, the bot re-checks the post every 30 minutes and ' +
     'replies on the email thread once if its engagement surges past 50K, it is deleted, or the press picks it up.',
   '• Early wave & velocity check: row 19, OFF unless you turn it ON. Every 15 minutes the bot looks for a story that ' +
-    'small accounts are starting to tell before any single post is big. It reads the new low-reach posts in its ' +
+    'small accounts are starting to tell before any single post is big. It reads the new posts from small accounts in its ' +
     'approved BigQuery source tables (Sonar\'s posts and Sprinklr\'s comments as they arrive; Brandwatch and Tubular later, ' +
-    'only to add to a story), groups the posts that say the same thing into stories itself, and flags a story once ' +
-    'several different accounts tell it, or when the accounts on a topic jump well above the usual. Each one goes out as ' +
+    'only to add to a story), groups the posts that say the same thing into stories itself, and picks a story once ' +
+    'several different accounts tell it, or when the accounts on a topic jump well above the usual. A story gets a card only ' +
+    'after Gemini reviews it. Each one that passes its review goes out as ' +
     'the bot\'s own alert card (its first line says EARLY DETECTION, or UPDATE when it adds to a story already alerted) ' +
-    'in the Mirror space or test feed, or in the Auto-correct space (B10) when it works alone (never S-F Burson), so the ' +
-    'bot reviews it, marks its emojis, and drafts a Social Alert, Temp Check query, or T&S intake behind human review ' +
-    'when warranted.',
+    'in the Mirror space or test feed, or in the Auto-correct space (B10) when it works alone (never S-F Burson); there ' +
+    'is no separate wave message. The bot marks its emojis, and drafts a Social Alert, Temp Check query, or T&S intake ' +
+    'behind human review when warranted. In the Auto-correct space at most 10 stories an hour are taken for review (6 ' +
+    'ordinary ones; serious stories go first, and one turned away comes back at the next check) and 150 a day; elsewhere ' +
+    '40 a day. C19 counts the day: found, cards, under another ' +
+    'alert, let go, never reviewed and waiting.',
+  '• The Early Detection tab lists every story Early detection (row 19) found and what became of it, one row each, ' +
+    'newest first (the last 2,000), with the reason. Only rows that start "Card posted", "Update added" or "Added under" ' +
+    'are in the space. Row 3 has today\'s numbers, as C19 does. The bot makes the tab on the first run with row 19 ON; ' +
+    'you may sort its rows, but leave its title (A1) and column names (row 4) as they are. A tab of that name that the bot ' +
+    'didn\'t make is left alone, and Status says so.',
   '• BigQuery lookback (B31): how far back Direct BigQuery alerts and Early detection look: 15, 30, 45 or 60 minutes ' +
     '(blank: 60; never more than an hour). Sprinklr posts count only if they went live in that time; DSD story selection, ' +
     'Brandwatch mentions and Sonar posts count if the feed took them in in that time and they went live in the last 48 to 72 hours. ' +
@@ -230,8 +242,8 @@ const CONTROL_HELP_ = [
     'watch ON on the Watches tab: does the post match its question, how likely is it to become an issue in the next 6 ' +
     'hours (1-10), and what is it about. What scores at a watch\'s bar (and the near misses) goes on the Watch ' +
     'detections tab, with its source and a Rating column for you; the scorecard at its top compares it with Burson\'s ' +
-    'alerts (how many it caught, and how much sooner). The Watch sources tab says which sources are live and which are ' +
-    'stale. Nothing is posted or emailed unless Watch alerts (row 35) says where its flags go, and nothing is written to ' +
+    'alerts (how many it caught, and how much sooner). The Watch sources tab says which sources are live, stale or ' +
+    'failing. Nothing is posted or emailed unless Watch alerts (row 35) says where its flags go, and nothing is written to ' +
     'BigQuery. The tabs appear the first time it\'s ON, with two watches, both OFF: set a watch\'s On to ON, or add your ' +
     'own. C34 shows how it\'s doing.',
   '• Watch alerts: row 35, OFF until you choose where the Proactive watch\'s flags go. "Other alerts space (B33)" posts ' +
@@ -245,7 +257,10 @@ const CONTROL_HELP_ = [
     'engagements) or the post reports something new, and a flag that isn\'t about Google isn\'t posted. Each one is a 🔭 ' +
     'Watch alert, never in Zapier\'s format, and the bot works it like any alert: ❌, 👍 or a Social Alert to the right ' +
     'teams (only the testers while Testing), and T&S when the post\'s rules say so. A flag waits up to 3 hours to go out; ' +
-    'at most 5 a run go in B33, 2 in the Mirror or Auto-correct space. C35 shows how it\'s doing.',
+    'at most 5 a run go in B33, 2 in the Mirror or Auto-correct space. In the Auto-correct space, a flag on a post that ' +
+    'already has a card there is not posted again: that card gets a short note that the watch flagged it too (when its ' +
+    'only card is a story card that sent no Social Alert, the flag goes out as a Watch alert of its own). C35 shows how it\'s ' +
+    'doing: today\'s count of how each flag ended.',
   '• Temp checks: row 36, OFF until you turn it ON. In a thread in the Mirror space or the Other alerts space (B33), ' +
     'write "temp check" and the Brandwatch query\'s name (as the team names them, e.g. [G EVENT] NOV26 Issue name, in ' +
     '[SLRR] Private), or its link. After the next run\'s alerts the bot emails the temp check from its account to the ' +
@@ -278,8 +293,8 @@ const CONTROL_HELP_ = [
     'as a second alert).',
   '• Fast triage: hold back noise: row 40, OFF until you turn it ON; it needs row 38. A signal with no P0 risk group, no ' +
     'taxonomy hint, and severity in the two lowest levels is dropped without a review when about_google is at or below B41 ' +
-    'or routine_noise is at or above B42, with answer confidence at or above B43; C19 counts them as filtered by fast ' +
-    'triage and the log records one line with the signal\'s ID, the reason and the probabilities.',
+    'or routine_noise is at or above B42, with answer confidence at or above B43; C19 counts them among the stories let ' +
+    'go and the log records one line with the signal\'s ID, the reason and the probabilities.',
   '• Fast triage bars (B41:B45 and B47): the thresholds for row 40 (hold-back: about_google at or below B41, seed 0.10; ' +
     'routine_noise at or above B42, seed 0.90) and row 39 (early watch: about_google and brand_risk each at or above ' +
     'B44, seed 0.80; independent_reports at or above B47, seed 0.30; distinct accounts at least B45, seed 3), and the ' +
@@ -295,7 +310,7 @@ const CONTROL_HELP_ = [
 // three more switches (Fast triage), 41-45 five fast-triage bars, 46 one more switch (Write early-wave records to
 // BigQuery), 47 the sixth fast-triage bar, 48 blank)
 const CONTROL_HELP_ROW_ = 49;
-const CONTROL_HELP_ROWS_ = 46;  // rows kept for the help text (blank ones clear older, longer text)
+const CONTROL_HELP_ROWS_ = 47;  // rows kept for the help text (blank ones clear older, longer text)
 
 // Row 30: Testing: send to (B30). Up to 5 email addresses; blank holds test emails until filled in.
 const TESTERS_ROW_ = 30;
@@ -437,8 +452,8 @@ const CONTROL_SWITCHES_ = [
         'post, press pickup)') },
   { key: 'earlyWave', label: 'Early wave & velocity check',
     off: 'OFF (one post at a time)',
-    on: () => `✓ ON: every ${Math.round(EW_EVERY_MS_ / 60000)} min, groups new low-reach posts from the BigQuery source ` +
-      'tables into stories itself and sends story clusters and velocity spikes for full triage' },
+    on: () => `✓ ON: every ${Math.round(EW_EVERY_MS_ / 60000)} min, groups new posts from small accounts into stories ` +
+      'and reviews them; one that passes its review is posted as an EARLY DETECTION card (there is no separate wave message)' },
   { key: 'outageComms', label: 'Check outage & comms docs',
     off: 'OFF (standard review)',
     on: () => '✓ ON: checks outage claims and adds approved holding statements from the Resources documents' },

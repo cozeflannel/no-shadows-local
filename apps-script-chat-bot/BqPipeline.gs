@@ -1,8 +1,10 @@
 /**
  * BqPipeline.gs — BigQuery 3-Step LLM Alert & Group Wave Evaluation Pipeline (<bigquery_alert_instructions>).
  *
- * Shared by Direct BigQuery alerts (opts.soloOnly: Step 1 baseline filter + new-development check) and the Early wave
- * check (opts.wavesOnly: Track B group waves), as well as full Dual-Track (Track A solo alerts + Track B group waves).
+ * Used live only by Direct BigQuery alerts (opts.soloOnly: Step 1 baseline filter + new-development check). The group-wave
+ * part (opts.wavesOnly: Track B group waves, and full Dual-Track: Track A solo alerts + Track B group waves) is used by no
+ * live flow: only LiveVerify.gs verifyLookbackAndPipelineLive tests it, on five made-up posts, and the bot posts no wave
+ * message. Early Detection (Control row 19) finds its stories in EarlyWaveSource.gs, not here.
  * Gemini groups records and evaluates semantic guidelines/new developments; every count, engagement total, and platform
  * list is computed deterministically from the input records.
  */

@@ -4,7 +4,9 @@
  * Exercises the real live Control tab spreadsheet (`openStore_(false)` / `SpreadsheetApp`), real BigQuery v2 API
  * (`us-central1` Sonar table via `UrlFetchApp` + `ScriptApp.getOAuthToken()`), and real Vertex AI Gemini 3-Step
  * Dual-Track pipeline (`geminiClient_()`), logging real execution output directly via `console.log`.
- * Makes zero mutations to user cells on the live Control tab.
+ * Makes zero mutations to user cells on the live Control tab. Its two Gemini checks are tests of one function
+ * (BqPipeline.gs evaluateBqDualTrack_) on made-up posts (one for the solo check, five for the wave check): no live flow
+ * uses the group-wave part, and the bot posts no wave message (the output's `note` says so).
  *
  * verifyFastTriageLive() does the same for the fast triage (Decisions.gs, FastTriage.gs): real Gemini Decisions calls
  * about the real early-wave signals the bot holds right now, through the client the checks use. It writes to no sheet
@@ -109,6 +111,8 @@ function verifyLookbackAndPipelineLive() {
   });
 
   const summary = {
+    note: 'Both Gemini checks below are tests of one function (BqPipeline.gs evaluateBqDualTrack_) on made-up posts: one ' +
+      'post for the solo check, five for the wave check. No live flow uses the group-wave part: the bot posts no wave message.',
     sheetId,
     liveRow31: {
       a31: sh.getRange(BQ_LOOKBACK_ROW_, 1).getValue(),
