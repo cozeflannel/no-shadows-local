@@ -250,7 +250,9 @@ module.exports = H => {
     eq(cards(t), [MAPS_POST, PIXEL_POST]);
     Array.from(t.g.cache.keys()).filter(k => /^bqstep1:/.test(k)).forEach(k => t.g.cache.delete(k));  // (an hour on)
     rec.step('an hour on', 5);
-    eq([cards(t), today(t), logs(t).slice(2)], [[MAPS_POST, PIXEL_POST, UNDER], [3, 1, 1, 0, 2], [LET_THROUGH(UNDER, '2,000', pixelId)]]);
+    // (C15 lists no post both as posted and as not posted: the post that got its card leaves "on a story already alerted")
+    eq([cards(t), today(t), logs(t).slice(2)], [[MAPS_POST, PIXEL_POST, UNDER], [3, 1, 1, 0, 1], [LET_THROUGH(UNDER, '2,000', pixelId)]]);
+    eq(c15(t), '3 posts today (1 for a Social Alert, 1 monitoring only) · not posted: 0 already had an alert, 1 on a story already alerted');
   });
 
   test('bigger post: the earlier alert can be a story\'s card. A story among small accounts is carded (its main post has 44 engagements); Direct BigQuery then reads a post of 2,400 engagements on the story\'s issue that is none of the story\'s posts: it goes through as its own card, and the log names the story\'s card as the earlier alert. With the setting off it is left out as on a story already alerted', () => {

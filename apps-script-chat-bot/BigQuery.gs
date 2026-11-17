@@ -2190,16 +2190,45 @@ function bqCountNotPosted_(s, list) {
 }
 
 /**
+ * Takes the posts that got their card at this check (`keys`: their record keys) out of today's "not posted" counts of
+ * C15 (s.a, s.b) on the record `s` (bqDirectDay_), so that no post is listed both as posted and as not posted on one
+ * day: a post counted as not posted at an earlier check (one under the bar, on a story already alerted) whose card the
+ * poll posts later (it has grown into a bigger post). A post is known as counted today as bqCountNotPosted_ knows it
+ * (the day's record or its cache key); one that both have lost can't be taken out. Never throws.
+ */
+function bqUncountPosted_(s, keys) {
+  let cache = null;
+  try { cache = CacheService.getScriptCache(); } catch (e) { cache = null; }
+  (keys || []).forEach(key => {
+    if (!key) return;
+    ['a', 'b'].forEach(why => {
+      const id = why + hashText_(String(key));
+      const cacheKey = `bqnp:${s.day}:${id}`;
+      let counted = s.k.indexOf(id) >= 0;
+      try {
+        counted = counted || !!(cache && cache.get(cacheKey));
+        if (cache) cache.remove(cacheKey);
+      } catch (e) { /* the day's record alone says */ }
+      if (!counted) return;
+      s[why] = Math.max(0, s[why] - 1);
+      s.k = s.k.filter(x => x !== id);
+    });
+  });
+}
+
+/**
  * Direct BigQuery alerts: counts today's posts (`posted`) and the posts that were not posted (`notPosted`:
- * bqCountNotPosted_), and puts C15's note (bqDirectNoteText_) in the switch's column C, with what went wrong
+ * bqCountNotPosted_), takes the posts that got their card at this check (`postedKeys`) out of the "not posted" counts
+ * (bqUncountPosted_), and puts C15's note (bqDirectNoteText_) in the switch's column C, with what went wrong
  * (`problem`, '' when nothing did). Never throws.
  */
-function noteBqDirect_(props, posted, problem, notPosted) {
+function noteBqDirect_(props, posted, problem, notPosted, postedKeys) {
   try {
     const was = props.getProperty(BQ_DIRECT_DAY_PROP_);
     const s = bqDirectDay_(was);
     s.n += posted || 0;
     bqCountNotPosted_(s, notPosted);
+    bqUncountPosted_(s, postedKeys);
     const next = JSON.stringify(s);
     if (next !== was) props.setProperty(BQ_DIRECT_DAY_PROP_, next);
     noteSwitch_('directBq', bqDirectNoteText_(s, nowLabel_(), problem));
@@ -2698,6 +2727,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
   const total = () => counts.SPRINKLR + counts.BMIE + counts.BSIP;
   const posted = [];  // [hash of the message name, source]
   const cards = [];   // the cards this check posted: [{key, url, msg}], for the story notes (bqStoryNotes_)
+  const postedKeys = [];  // the record keys of the posts this check posted, for C15 (bqUncountPosted_)
   let skipped = 0;    // not about Google, taken before, in a log, or already waiting in the space
   let step1Out = 0;   // left out by Step 1 of the 3-step evaluation
   let noCount = 0;    // no true engagement count for the card (never made up): tried again at the next check
@@ -2719,6 +2749,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
       if (mem && mem.active) mem.claim(url, 'bq', info);
       seen.add(key);
       counts[kind]++;
+      postedKeys.push(key);
       if (msg && msg.name) posted.push([hashText_(String(msg.name)), BQ_SOURCE_LABELS_[kind]]);
       if (msg && msg.name) cards.push({ key, url, msg });
     } catch (e) {
@@ -2934,7 +2965,7 @@ function pollBigQuerySources_(ctx, targetSpaceId) {
     const problem = [refusedFor.length ? `BigQuery refused the query for ${names(refusedFor)}` : '',
       lateFor.length ? `BigQuery didn't finish the query for ${names(lateFor)} in time` : '',
       notPosted ? `${notPosted} couldn't be posted` : ''].filter(Boolean).join(', ');
-    noteBqDirect_(props, total(), problem, already);
+    noteBqDirect_(props, total(), problem, already, postedKeys);
   }
   return { sprinklr: counts.SPRINKLR, bmie: counts.BMIE, bsip: counts.BSIP, skipped_duplicates: skipped,
     skipped_step1: step1Out, skipped_no_count: noCount };
