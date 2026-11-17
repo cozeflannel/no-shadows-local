@@ -30,45 +30,59 @@ module.exports = H => {
    * A day in the one-space setup with the default settings, every minute from 09:01 to `until`. The producer hands over,
    * as it really reads, only the rows made within the check's lookback, more accounts first, then the oldest first, at
    * most `cap` (25). `batches`: [[made at, first story, how many, accounts]] (odd ones serious, even ones ordinary);
-   * `skip`: [[from, to]]: no check runs then (as when the API guard or a busy run skips it). Returns what was read, what
-   * ended, the tab and the numbers.
+   * `skip`: [[from, to]]: no check runs then (as when the API guard or a busy run skips it); `wide(time)`: true when
+   * the producer then reads 3 hours back whatever the check asks (as after B31 is raised). After every run, no signal
+   * still remembered as left for later has ended already. Returns what was read (and by the run: `readAt`), what ended,
+   * the tab and the numbers.
    */
   const day = o => {
     const w = ends.world({ flow: 'one-space', row46: false, settings: o.settings || {} });
     const rows = [];
-    o.batches.forEach(([at, first, n, au]) => {
+    o.batches.forEach(([at, first, n, au, kind]) => {
       for (let i = 0; i < n; i++) {
-        const r = (i % 2 ? ordinary : serious)(first + i, at);
+        const r = (kind === 'serious' || !(i % 2) ? serious : ordinary)(first + i, at);
         if (au) r.unique_low_tier_authors = au;
         rows.push(r);
       }
     });
     const read = new Set();
+    const readAt = {};
+    let clock = '';
     w.t.bot.bqEarlyDetectionRows_ = minutes => {
       const now = w.t.g.clock.now;
-      const out = rows.filter(r => madeAt(r) >= now - minutes * MIN && madeAt(r) <= now)
+      const back = o.wide && o.wide(clock) ? 180 : minutes;
+      const out = rows.filter(r => madeAt(r) >= now - back * MIN && madeAt(r) <= now)
         .sort((a, b) => b.unique_low_tier_authors - a.unique_low_tier_authors || madeAt(a) - madeAt(b))
         .slice(0, o.cap || 25).map(r => JSON.parse(JSON.stringify(r)));
       out.forEach(r => read.add(r.alert_id));
+      readAt[clock] = new Set(out.map(r => r.alert_id));
       return out;
     };
-    let clock = '';
+    const hashOf = {};
+    rows.forEach(r => { hashOf[w.t.bot.hashText_(`id:${r.alert_id}`)] = r.alert_id; });
     w.t.bot.__edDeferredSkip = () => (o.skip || []).some(s => clock >= s[0] && clock <= s[1]);
     w.t.bot.ev('earlyWaveCheck_ = (check => function (ctx) { return __edDeferredSkip() ? null : check(ctx); })(earlyWaveCheck_)');
     const endings = {};
+    const log = [];  // [time, id, outcome, why]
     const queued = new Set();
     const sizes = [];
     times('09:01', o.until || '12:30').forEach(time => {
       clock = time;
+      if (o.before) o.before(w, time);
       const look = w.run(time);
-      recsOf(w).forEach(r => { (endings[r.id] = endings[r.id] || []).push(r.outcome); });
+      recsOf(w).forEach(r => {
+        (endings[r.id] = endings[r.id] || []).push(r.outcome);
+        log.push([time, r.id, r.outcome, r.why]);
+      });
       w.t.bot.edQueueList_(props(w)).forEach(e => queued.add(e.id));
       const n = w.t.bot.edDayNumbers_(props(w));
       eq(n.found, n.cards + n.under + n.letgo + n.never + n.waiting, `the run at ${time}: ${JSON.stringify(n)}`);
       assert.ok(!look.logs.map(String).some(l => /did not add up/.test(l)), `the run at ${time}`);
       sizes.push(String(w.t.g.props.get('EARLY_DETECTION_DEFERRED') || '').length);
+      const kept = Object.keys(JSON.parse(w.t.g.props.get('EARLY_DETECTION_DEFERRED') || '{}'));
+      eq(kept.filter(h => endings[hashOf[h]]).map(h => hashOf[h]), [], `the run at ${time}: remembered, though ended`);
     });
-    return { w, read, endings, queued, n: w.t.bot.edDayNumbers_(props(w)), tab: tabRows(w), sizes,
+    return { w, read, readAt, endings, log, queued, n: w.t.bot.edDayNumbers_(props(w)), tab: tabRows(w), sizes,
       deferred: w.t.g.props.get('EARLY_DETECTION_DEFERRED') || null };
   };
 
@@ -101,6 +115,61 @@ module.exports = H => {
     everyReadEndsOnce(r, 'a full read');
     assert.ok(r.tab.some(x => /read it again in time/.test(x.why)));
     eq(r.deferred, null);
+  });
+
+  test('early detection deferred: 25 stories at 09:30 with 5 accounts, then newer serious signals of stories 6-25 at 09:40 with 9 accounts that get cards: an older signal of a carded story that no check read again ends as a repeat under that card, the same as one read again; "Never reviewed" counts only stories with no card', () => {
+    const r = day({ batches: [['09:30', 1, 25], ['09:40', 6, 20, 9, 'serious']], cap: 25 });
+    everyReadEndsOnce(r, 'a carded story');
+    const story = id => (String(id).match(/clu_ends\d+/) || [''])[0];
+    const cardAt = {};
+    r.log.filter(x => /^Card posted/.test(x[2])).forEach(x => { if (!cardAt[story(x[1])]) cardAt[story(x[1])] = x[0]; });
+    assert.ok(Object.keys(cardAt).length >= 10, JSON.stringify(cardAt));
+    const never = r.log.filter(x => x[2] === 'Never reviewed');
+    eq(never.filter(x => cardAt[story(x[1])] && cardAt[story(x[1])] <= x[0]).map(x => x.join(' | ')), [],
+      'never reviewed, though its story had a card');
+    eq(r.n.never, never.length);
+    // the older signals of the carded stories that were swept end as repeats under their story's card
+    const swept = r.log.filter(x => x[2] === 'Seen before, nothing new' && /-202610141330$/.test(x[1]) && x[0] > '10:00');
+    assert.ok(swept.length >= 10, `${swept.length} swept as repeats`);
+    swept.forEach(x => assert.ok(/^Its card of .* had 9 accounts; 5 now, nothing new/.test(x[3]), x.join(' | ')));
+    eq(r.deferred, null);
+  });
+
+  test('early detection deferred: when the list of signals left for a later check cannot be saved, the ones put off in that check end at once ("Never reviewed" with their cause alone), so none is lost; C19 adds up', () => {
+    const r = day({ batches: [['09:30', 1, 25]], skip: [['10:15', '10:40']], before: (w, time) => {
+      if (time !== '09:31') return;
+      const p = w.t.g.props;
+      const set = p.set.bind(p);
+      p.set = (k, v) => { if (k === 'EARLY_DETECTION_DEFERRED') throw new Error('quota (test)'); return set(k, v); };
+    } });
+    eq(r.read.size, 25);
+    everyReadEndsOnce(r, 'the list not saved');
+    const now = r.log.filter(x => x[2] === 'Never reviewed');
+    assert.ok(now.length >= 1, 'some were put off');
+    now.forEach(x => {
+      assert.ok(!/later check/.test(x[3]), x.join(' | '));
+      assert.ok(/^This hour's|^More than 5/.test(x[3]), x.join(' | '));
+    });
+    eq(r.deferred, null);
+  });
+
+  test('early detection deferred: a signal the sweep ended is not taken up again when the producer hands it over again later (the read widened, as after B31 is raised): it keeps its one ending', () => {
+    const r = day({ batches: [['09:30', 1, 25]], skip: [['10:15', '10:40']], wide: time => time >= '10:50', until: '12:00' });
+    eq(r.read.size, 25);
+    const late = r.log.filter(x => /read it again in time/.test(x[3]));
+    assert.ok(late.length >= 1, 'some were swept');
+    // the swept ones were handed over again after 10:50
+    assert.ok(late.some(x => Object.keys(r.readAt).some(t => t >= '10:50' && r.readAt[t].has(x[1]))), 'handed over again');
+    everyReadEndsOnce(r, 'handed over again');
+  });
+
+  test('early detection deferred: a signal left for later that the check reads again is not swept as unread, even past the window (the producer reads further back): it ends as a read signal does', () => {
+    const r = day({ batches: [['09:30', 1, 25]], skip: [['10:15', '10:40']], wide: () => true, until: '12:00' });
+    eq(r.read.size, 25);
+    everyReadEndsOnce(r, 'read past the window');
+    const late = r.log.filter(x => /read it again in time/.test(x[3]));
+    eq(late.filter(x => r.readAt[x[0]] && r.readAt[x[0]].has(x[1])).map(x => x.join(' | ')), [], 'swept, though read in that check');
+    assert.ok(r.log.some(x => x[0] >= '10:41' && x[2] === 'Never reviewed'), 'some ended after the gap');
   });
 
   test('early detection deferred: with the cache of their details deleted before every run, the same signals still end once each and C19 adds up (their rows name no story)', () => {
@@ -150,13 +219,23 @@ module.exports = H => {
     const rows = {};
     Object.keys(list).forEach((h, i) => {
       rows[h] = t.bot.edDeferredRow_({ alert_id: `ED-VEL-PRIORITY_TOPIC-${'x'.repeat(60)}-${i}`, signal_type: 'VELOCITY_SPIKE',
-        velocity_grain: 'PRIORITY_TOPIC', signal_key: 'k'.repeat(300), velocity_ratio: 1.4, unique_low_tier_authors: 9999999,
+        velocity_grain: 'PRIORITY_TOPIC', signal_key: 'k'.repeat(300), cluster_id: `clu_${'c'.repeat(300)}`,
+        velocity_ratio: 1.4, unique_low_tier_authors: 9999999,
         platforms_csv: 'X, Reddit, TikTok, YouTube, Instagram, Facebook, Threads', primary_url: `https://x.com/${'a'.repeat(120)}/status/1`,
         row: {} }, { c: 'c'.repeat(300), cp: 0.33, l: 4 });
     });
     t.bot.edDeferredSave_(p, list, rows);
     const cached = String(t.g.services.CacheService.getScriptCache().get('ed_deferred_rows'));
     assert.ok(cached.length <= 90000, `${cached.length}`);
+    // most rows fit even then (the oldest give up their details first), each with its story's key cut to 80 characters
+    // (the signal key is kept only for a signal without a cluster: edRowKeys_)
+    const kept = JSON.parse(cached);
+    assert.ok(Object.keys(kept).length >= 115, `${Object.keys(kept).length} rows kept`);
+    Object.keys(kept).forEach(h => {
+      assert.ok(kept[h].cluster_id.length > 0 && kept[h].cluster_id.length <= 80, kept[h].cluster_id);
+      eq(kept[h].signal_key, undefined);
+    });
+    eq(t.bot.edDeferredRow_({ alert_id: 'ED-VEL-x', signal_type: 'VELOCITY_SPIKE', signal_key: 's'.repeat(300) }, null).signal_key.length, 80);
     // an empty list takes the property and the cache value out
     t.bot.edDeferredSave_(p, {}, {});
     eq(t.g.props.get('EARLY_DETECTION_DEFERRED') || null, null);
@@ -173,14 +252,44 @@ module.exports = H => {
     const look = w.run('09:31', rows);
     const recs = recsOf(w);
     eq(look.waiting + recs.filter(r => /^Card posted/.test(r.outcome)).length, 5);  // five queued (two reviewed in this run)
-    const ended = recs.filter(r => /read it again in time/.test(r.why));
+    const ended = recs.filter(r => /Too many stories were waiting for a later check/.test(r.why));
     eq(ended.length, 20);
-    ended.forEach(r => eq([r.outcome, r.story, r.id], ['Never reviewed', 'A story whose details are gone', '']));
+    ended.forEach(r => eq([r.outcome, r.story, r.id, r.why], ['Never reviewed', 'A story whose details are gone', '',
+      'More than 5 stories arrived in 15 minutes; higher-ranked ones went first. Too many stories were waiting for a later check, so the oldest ones were let go.']));
+    eq(recs.filter(r => /read it again in time/.test(r.why)).length, 0);  // no later check was involved
+    // either reason, for each cause, stays under the 180 characters a reason keeps
+    ['k', 'h', 'o'].forEach(c => [false, true].forEach(f => {
+      const why = w.t.bot.edDeferredWhy_(c, f);
+      assert.ok(why.length <= w.t.bot.ev('ED_NOTE_WHY_MAX_'), `${why.length}: ${why}`);
+    }));
     const kept = JSON.parse(w.t.g.props.get('EARLY_DETECTION_DEFERRED'));
     eq(Object.keys(kept).length, 150);
     Array.from({ length: 20 }, (_, i) => `0000${String(i).padStart(4, '0')}:30`).forEach(h => assert.ok(!kept[h], h));
     const n = w.t.bot.edDayNumbers_(props(w));
     eq([n.found, n.never, n.cards + n.waiting], [25, 20, 5]);
+  });
+
+  test('early detection deferred: a check that changes nothing on the list of signals left for later does not write it again (neither the property nor the cache value)', () => {
+    const w = ends.world({ flow: 'one-space', row46: false, settings: {} });
+    const made = Math.floor(ends.at('09:25') / MIN);
+    const list = {};
+    for (let i = 0; i < 10; i++) list[`0000${String(i).padStart(4, '0')}:30`] = [made, 'k', 5];  // still in the window
+    const text = JSON.stringify(list);
+    w.t.g.props.set('EARLY_DETECTION_DEFERRED', text);
+    w.t.g.cache.set('ed_deferred_rows', '{}');
+    const writes = [];
+    const pset = w.t.g.props.set.bind(w.t.g.props);
+    w.t.g.props.set = (k, v) => { if (k === 'EARLY_DETECTION_DEFERRED') writes.push(k); return pset(k, v); };
+    const cset = w.t.g.cache.set.bind(w.t.g.cache);
+    w.t.g.cache.set = (k, v) => { if (k === 'ed_deferred_rows') writes.push(k); return cset(k, v); };
+    w.run('09:31', []);  // a quiet check: nothing read, nothing left the window
+    w.run('09:46', []);
+    eq(writes, []);
+    eq(w.t.g.props.get('EARLY_DETECTION_DEFERRED'), text);
+    // a check that does change it writes it: once they have left the window the sweep ends them and takes the list out
+    ['10:01', '10:16', '10:31', '10:46', '11:01', '11:16', '11:31'].forEach(time => w.run(time, []));
+    eq(w.t.g.props.get('EARLY_DETECTION_DEFERRED') || null, null);
+    eq(w.t.bot.edDayNumbers_(props(w)).never, 10);
   });
 
   test('early detection deferred: with the allowance off (early_wave_reviews_per_hour 0) nothing is remembered', () => {

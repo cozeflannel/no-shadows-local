@@ -4252,7 +4252,7 @@ function edDeferredRowsRead_() {
 
 /**
  * The few fields of a signal left for a later check that its row on the Early Detection tab needs (EarlyDetectionNotes.gs
- * edNoteRow_), with its title as the record would word it (`title`). `dec`: the fast triage's answers, for its first
+ * edNoteRow_) and its story keys need (edRowKeys_), with its title as the record would word it (`title`). `dec`: the fast triage's answers, for its first
  * guess at the Exposure Tag. Pure but for the answers kept.
  */
 function edDeferredRow_(row, dec) {
@@ -4269,6 +4269,11 @@ function edDeferredRow_(row, dec) {
     title: edCut_(edNoteStory_(r), ED_NOTE_STORY_MAX_),
   };
   if (guess && guess !== '-') out.tag_guess = edCut_(guess, ED_NOTE_TAG_MAX_);
+  // its story as the same-story dedup knows it (edRowKeys_, edRowStory_: the signal key counts only without a cluster),
+  // so the sweep can tell a repeat of a story carded since (earlyWaveCheck_)
+  const cid = String(r.cluster_id || '').trim();
+  if (cid) out.cluster_id = truncate_(cid, 80);
+  else if (String(r.signal_key || '').trim()) out.signal_key = truncate_(String(r.signal_key).trim(), 80);
   return out;
 }
 
@@ -4285,7 +4290,8 @@ function edDeferredTrim_(list) {
 
 /**
  * Saves the signals left for a later check (`list`), and their rows (`rows`, by the same hashes) in the script cache for
- * 6 hours, at most ED_DEFERRED_CACHE_CHARS_ (the oldest rows go first). An empty list takes both out. Never throws.
+ * 6 hours, at most ED_DEFERRED_CACHE_CHARS_ (the oldest rows go first). An empty list takes both out. False when the
+ * list itself could not be saved (the cache is a nicety: its rows only word the tab). Never throws.
  */
 function edDeferredSave_(props, list, rows) {
   const keys = Object.keys(list || {});
@@ -4297,12 +4303,13 @@ function edDeferredSave_(props, list, rows) {
     }
   } catch (e) {
     console.error('Early detection: couldn\'t remember the signals left for a later check: ' + ((e && e.message) || e));
+    return false;
   }
   try {
     const cache = CacheService.getScriptCache();
     if (!keys.length) {
       cache.remove(ED_DEFERRED_CACHE_);
-      return;
+      return true;
     }
     let kept = keys.filter(h => rows && rows[h]).sort((a, b) => Number(list[b][0]) - Number(list[a][0]));
     const build = () => { const m = {}; kept.forEach(h => { m[h] = rows[h]; }); return JSON.stringify(m); };
@@ -4312,12 +4319,22 @@ function edDeferredSave_(props, list, rows) {
   } catch (e) {
     console.warn('Early detection: couldn\'t keep the details of the signals left for a later check: ' + ((e && e.message) || e));
   }
+  return true;
 }
 
-/** Why a signal left for a later check that no check read again in time was never reviewed (`code`: ED_DEFERRED_CAUSES_'s). Pure but for the settings. */
-function edDeferredWhy_(code) {
+/**
+ * Why a signal left for a later check was never reviewed (`code`: ED_DEFERRED_CAUSES_'s): no check read it again in
+ * time; with `how` true (or 'full'), the list of those signals was full (ED_DEFERRED_MAX_) and it was one of the oldest;
+ * with 'now', the list could not be saved, so it ended in the check that put it off (its cause alone). Pure but for the
+ * settings.
+ */
+function edDeferredWhy_(code, how) {
   const cause = Object.keys(ED_DEFERRED_CAUSES_).find(k => ED_DEFERRED_CAUSES_[k] === code) || 'check';
-  return `${edNoteSentence_(edNeverWhy_(cause))} No later check read it again in time (checks were skipped, or busier stories came first).`;
+  const first = edNoteSentence_(edNeverWhy_(cause));
+  if (how === 'now') return first;
+  return `${first} ${how
+    ? 'Too many stories were waiting for a later check, so the oldest ones were let go.'
+    : 'No later check read it again in time (checks were skipped, or busier stories came first).'}`;
 }
 
 /**
@@ -4638,9 +4655,11 @@ function earlyWaveCheck_(ctx) {
   const isWatch = r => typeof EWS_WATCH_SIGNAL_ !== 'undefined' && String(r.signal_type || '').trim().toUpperCase() === EWS_WATCH_SIGNAL_;
   const watchRoom = Math.max(0, EW_WATCH_QUEUE_PER_DAY_ - (Number(today.watchq) || 0));
   // The signals an earlier check under the allowance left for a later one (edDeferredRead_; the list is empty with the
-  // allowance off): one this check did not read and that has left the window it reads ends now, "Never reviewed", once
-  // (it was never counted); its own id is marked as seen, never its story's keys. One marked as seen since is forgotten.
-  // With its details gone from the cache its row names no story and it is counted by its hash
+  // allowance off): one this check did not read and that has left the window it reads ends now, once (it was never
+  // counted): "Never reviewed", or, when its story has been carded or queued since with nothing new in it, "Seen before,
+  // nothing new" under that card, as it would end had a check read it again (edStoryVerdict_); its own id is marked as
+  // seen, never its story's keys. One marked as seen since is forgotten. With its details gone from the cache its row
+  // names no story, it is counted by its hash and it ends "Never reviewed"
   const idHashOf = r => {
     const k = r && typeof r === 'object' ? edRowKeys_(r).find(x => x.indexOf('id:') === 0) : '';
     return k ? hashText_(k) : '';
@@ -4653,7 +4672,7 @@ function earlyWaveCheck_(ctx) {
     delete deferredRows[h];
     deferredChanged = true;
   };
-  const endDeferred = (h, entry) => {
+  const endDeferred = (h, entry, how) => {
     const e = Array.isArray(entry) ? entry : [];
     const kept = deferredRows[h] && typeof deferredRows[h] === 'object' ? deferredRows[h] : null;
     const row = kept ? Object.assign({}, kept) : { unique_low_tier_authors: ewCount_(e[2]) };
@@ -4662,7 +4681,19 @@ function earlyWaveCheck_(ctx) {
     forgetDeferred(h);
     seen.addHash(h, now);
     marked++;
-    edNote_(ctx, row, ED_OUT_.never, edDeferredWhy_(e[1]), row.alert_id ? { title } : { title, key: `deferred:${h}` });
+    const keys = kept ? edRowKeys_(row) : [];
+    const idKey = keys.find(k => k.indexOf('id:') === 0) || '';
+    const storyKeys = keys.filter(k => k !== idKey);
+    if (storyKeys.length) {
+      readStore();
+      const v = edStoryVerdict_(row, ledger, seen.authors(storyKeys), now);
+      if (v.hold) {
+        repeats++;
+        edNote_(ctx, row, ED_OUT_.repeat, edRepeatWhy_(row, v, seen.first(storyKeys), now), { title, card: edPriorCard_(v) });
+        return;
+      }
+    }
+    edNote_(ctx, row, ED_OUT_.never, edDeferredWhy_(e[1], how), row.alert_id ? { title } : { title, key: `deferred:${h}` });
   };
   if (Object.keys(deferredList).length) {
     const readNow = new Set((rows || []).map(idHashOf).filter(Boolean));
@@ -4853,6 +4884,7 @@ function earlyWaveCheck_(ctx) {
   // rows a check reads), the first check after it left the window ends it (the sweep before the loops). True when the
   // day's limit refused one.
   let deferred = 0;  // under the allowance: signals left for the next check (the check's 5, the hour's limits)
+  const deferredNow = new Set();  // their ids' hashes (the remembered list's keys)
   let queuedSaved = 0;  // under the allowance: signals queued whose count is saved already (edAllowSaveQueued_)
   const queueByAllowance = () => {
     let dayStop = false;
@@ -4957,6 +4989,7 @@ function earlyWaveCheck_(ctx) {
             Math.min(999999, ewCount_(c.row.unique_low_tier_authors))];
           deferredRows[h] = edDeferredRow_(c.row, c.dec);
           deferredChanged = true;
+          deferredNow.add(h);
         }
         continue;
       }
@@ -4981,15 +5014,19 @@ function earlyWaveCheck_(ctx) {
   };
   if (allow) capped = queueByAllowance();
   // The signals left for a later check: one queued or ended in this check is forgotten; past ED_DEFERRED_MAX_ the oldest
-  // end at once (never dropped without an ending); the list and its rows are saved while it has any
+  // end at once (never dropped without an ending); the list and its rows are saved when this check changed them
   if (Object.keys(deferredList).length || deferredChanged) {
     (rows || []).forEach(r => {
       const h = idHashOf(r);
       if (h && deferredList[h] && seen.hasHash(h)) forgetDeferred(h);
     });
     const before = Object.assign({}, deferredList);
-    edDeferredTrim_(deferredList).forEach(h => endDeferred(h, before[h]));
-    edDeferredSave_(props, deferredList, deferredRows);
+    edDeferredTrim_(deferredList).forEach(h => endDeferred(h, before[h], true));
+    // the list could not be saved: the ones put off in this check would be lost with no ending, so they end now, with
+    // their cause alone (the stored list is as the check found it: the ones the sweep ended are marked as seen)
+    if (deferredChanged && !edDeferredSave_(props, deferredList, deferredRows)) {
+      deferredNow.forEach(h => { if (deferredList[h]) endDeferred(h, deferredList[h], 'now'); });
+    }
   }
   // At the day's limit the check stops looking: every signal it read and has not marked as seen was never reviewed
   if (capped && !allow) {

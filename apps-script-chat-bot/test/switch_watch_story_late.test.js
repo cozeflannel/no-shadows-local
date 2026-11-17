@@ -97,16 +97,44 @@ module.exports = H => {
     eq(timeline({ cross_alert_notes: false }, true).counts.map(c => c[1]), [0, 0, 0]);
   });
 
-  test('watch story note later: the pure gate (pwStoryNotesLate_): nothing outside the Auto-correct space, without stories first, or with the notes off', () => {
-    const B = H.B;
+  test('watch story note later: the gate and the guards (pwStoryNotesLate_): a note only in the Auto-correct space, with stories first and the notes on, under a Watch alert whose post had a story card before it that sent no Social Alert, and only with time left in the run', () => {
+    const w = W.oneSpaceWorld({});
+    const B = w.t.bot;
+    B.__lateCalls = [];
+    B.ev('pwThreadNote_ = function (dest, card, text, key) { __lateCalls.push([card.forward_message, text, key]); ' +
+      'return { ok: true, posted: true, full: false, why: "", lasting: false }; }');
     const now = Date.UTC(2026, 9, 14, 12, 0);
-    const dest = o => Object.assign({ choice: 'autocorrect', space: { id: 'spaces/AAQAonespace01' }, bqPastStoryCards: true }, o || {});
-    const rows = [{ alert_id: 'QA-1002', space: `spaces/AAQAonespace01${B.ev('AC_PARTITION_SUFFIX_')}`, ingested: 'Watch alert',
-      record_key: 'x.com/status/1', forward_thread: 'spaces/AAQAonespace01/threads/t1', forward_message: 'spaces/AAQAonespace01/messages/m1',
-      created_at: now - 60000 }];
-    eq([B.pwStoryNotesLate_(dest({ choice: 'mirror' }), rows, now, () => Infinity, true),
-      B.pwStoryNotesLate_(dest({ bqPastStoryCards: false }), rows, now, () => Infinity, true),
-      B.pwStoryNotesLate_(dest(), rows, now, () => Infinity, false),
-      B.pwStoryNotesLate_(dest(), rows, now, () => Infinity, true)], [0, 0, 0, 0]);
+    const space = 'spaces/AAQAonespace01';
+    const part = `${space}${B.ev('AC_PARTITION_SUFFIX_')}`;
+    const dest = o => Object.assign({ choice: 'autocorrect', space: { id: space }, bqPastStoryCards: true }, o || {});
+    const watchRow = { alert_id: 'QA-1002', space: part, ingested: 'Watch alert', record_key: 'x.com/status/1',
+      forward_thread: `${space}/threads/t1`, forward_message: `${space}/messages/m1`, created_at: now - 60000 };
+    // the story's card: an Early Detection card on the same post, posted before the Watch alert, that sent no Social Alert
+    const card = o => Object.assign({ alert_id: 'QA-1001', space: part, ingested: B.ev('ED_ALERT_INGESTED_'),
+      record_key: 'x.com/status/1', source_message: `${space}/messages/s1`, source_thread: `${space}/threads/s1`,
+      created_at: now - 10 * 60000, email_status: '', forwarded_fields: { early_detection: { distinct_authors: 6, platforms: ['X'] } } }, o || {});
+    const late = (d, rows, left, on) => {
+      B.__lateCalls.length = 0;
+      const n = B.pwStoryNotesLate_(d, rows, now, left || (() => Infinity), on === undefined ? true : on);
+      return [n, B.__lateCalls.length];
+    };
+    const rows = [card(), watchRow];
+    // the gate: outside the Auto-correct space, without stories first, with the notes off: nothing, no Chat call
+    eq(late(dest({ choice: 'mirror' }), rows), [0, 0]);
+    eq(late(dest({ bqPastStoryCards: false }), rows), [0, 0]);
+    eq(late(dest(), rows, null, false), [0, 0]);
+    // through the gate: the note, under the Watch alert, with the key the run that posted it uses
+    eq(late(dest(), rows), [1, 1]);
+    eq(B.__lateCalls[0][0], `${space}/messages/m1`);
+    eq(B.__lateCalls[0][2], `wstory:${space}/messages/m1`);
+    assert.ok(/^🔗 \*Part of a story:\* 6 small accounts on X tell it/.test(B.__lateCalls[0][1]), B.__lateCalls[0][1]);
+    // the story card sent a Social Alert: it is an alert of its own, no note
+    eq(late(dest(), [card({ email_status: 'sent' }), watchRow]), [0, 0]);
+    // the story card came after the Watch alert: no note
+    eq(late(dest(), [card({ created_at: now - 30000 }), watchRow]), [0, 0]);
+    // less than PW_MIN_LEFT_MS_ of the run left: no note and no Chat call
+    const min = B.ev('PW_MIN_LEFT_MS_');
+    eq(late(dest(), rows, () => min - 1), [0, 0]);
+    eq(late(dest(), rows, () => min), [1, 1]);
   });
 };
