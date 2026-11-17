@@ -300,8 +300,8 @@ module.exports = H => {
     const { t, sh } = world();
     const stage1 = B.ev('CONTROL_HELP_').filter(l => !l.startsWith('• The Early Detection tab lists every story'));
     sh.rows = sh.rows.slice(0, 48);
-    sh.rows[48] = [''];
-    sh.rows[49] = ['• Rows 11-24, 27-29, 32, 34, 36-40 and 46 are switches for what the bot may do on its own.'];
+    sh.rows[48] = ['• Rows 11-24, 27-29, 32, 34, 36-40 and 46 are switches for what the bot may do on its own.'];
+    sh.rows[49] = [''];
     sh.rows[50] = ['• my own bullet note'];
     sh.rows[51] = ['How it works'];
     stage1.forEach((l, i) => { sh.rows[52 + i] = [l]; });

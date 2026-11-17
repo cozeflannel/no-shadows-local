@@ -399,13 +399,14 @@ function ensureControlTab_(ss, owner) {
 /**
  * "How it works" from row 53 (CONTROL_HELP_ROW_), under blank rows (rewritten by setup(), so it stays current; nobody
  * edits it). In column A of the rows between the last switch (row 48) and the help, the bot's own old help is cleared
- * (controlHelpOwn_: its title or a help line, and any line starting with "• " in the old help's own rows, from its
- * title down to the first blank cell), so a tab from before the help moved (its "How it works" at row 49, or at row 52)
- * keeps no old text there; anything else a person wrote there is left as it is (their own "•" line above the old
- * title too), and a switch row is never touched. In column A of the rows the help is written over (row 53 down, CONTROL_HELP_ROWS_ rows), a text that is not
- * the bot's own help is a person's (a tab whose help was higher up had room below it, rows 96-100): it is kept,
- * unchanged and in order, in the first blank cells of column A below the help, and the log says so. Other columns are
- * never touched.
+ * (controlHelpOwn_: its title or a help line; and any line starting with "• " in an old help's own run of rows,
+ * which starts at its title or at one of its lines and ends at the first blank cell), so a tab from before the help
+ * moved (its "How it works" at row 49, or at row 52, or higher up with switch rows written over it since) keeps no old
+ * text there; anything else a person wrote there is left as it is (their own "•" line above a blank row or above
+ * the old title too), and a switch row is never touched. In column A of the rows the help is written over (row 53
+ * down, CONTROL_HELP_ROWS_ rows), a text that is not the bot's own help is a person's (a tab whose help was higher
+ * up had room below it, rows 96-100): it is kept, unchanged and in order, in the first blank cells of column A below
+ * the help, and the log says so. Other columns are never touched.
  */
 function writeControlHelp_(sh) {
   const lines = [['How it works']].concat(CONTROL_HELP_.map(line => [line]));
@@ -414,11 +415,11 @@ function writeControlHelp_(sh) {
   const end = CONTROL_HELP_ROW_ + lines.length - 1;
   const col = sh.getRange(from, 1, end - from + 1, 1).getValues().map(v => (v ? v[0] : ''));
   const kept = [];
-  let oldHelp = false;  // in an old help's rows: from its title down to the first blank cell
+  let oldHelp = false;  // in an old help's run of rows: from its title or one of its lines to the first blank cell
   col.forEach((v, i) => {
     const row = from + i;
     const text = String(v === undefined || v === null ? '' : v).trim();
-    oldHelp = text === 'How it works' || (oldHelp && text !== '');
+    oldHelp = text !== '' && (oldHelp || controlHelpOwn_(v));
     const own = controlHelpOwn_(v) || (oldHelp && text.startsWith('\u2022 '));
     if (row < CONTROL_HELP_ROW_) {
       if (own) sh.getRange(row, 1).setValue('').setFontWeight('normal');
