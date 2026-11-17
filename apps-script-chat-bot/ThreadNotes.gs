@@ -391,6 +391,18 @@ function acNotePlain_(text) {
 }
 
 /**
+ * Whether a note read back (`read`: its text as Chat hands it back) is the note `text`: the same words (acNotePlain_)
+ * and, when the one read back still has its links, the same link targets in the same order, so two notes in the same
+ * words that link different messages (two stories' "Part of a story" notes) are never taken for each other. Pure.
+ */
+function acNoteSame_(read, text) {
+  const links = s => (String(s === undefined || s === null ? '' : s).match(/<[^<>|\s]+\|/g) || []).join(' ');
+  if (acNotePlain_(read) !== acNotePlain_(text)) return false;
+  const back = links(read);
+  return !back || back === links(text);
+}
+
+/**
  * What the thread of a card holds (`check`: acThreadNoteCheck_'s): {card: its message is there, notes: the bot's notes
  * under it (replies that start as a note does, from the bot's account when it is known; never the review's own note,
  * known by its id: `reviewIds`, acNoteReviewIds_), own: the message with id `ownId` ('' when there's none), same: one
@@ -401,7 +413,7 @@ function acNotePlain_(text) {
 function acNoteThread_(check, ownId, run, reviewIds) {
   try {
     const bot = (check.ctx && check.ctx.botUser) || PropertiesService.getScriptProperties().getProperty('BOT_USER') || '';
-    const mine = acNotePlain_(truncate_(check.text, MAX_TEXT_));
+    const mine = truncate_(check.text, MAX_TEXT_);
     const out = { card: false, notes: 0, own: '', same: '' };
     // (a question the person the bot runs as asks under the card, "Alert requirements: …?", is no note of the bot's:
     // RequirementLine.gs isRequirementQuestion_, while the line is on)
@@ -426,7 +438,7 @@ function acNoteThread_(check, ownId, run, reviewIds) {
         if (m.clientId && (reviewIds || []).indexOf(m.clientId) >= 0) return;
         if (isThreadNoteText_(m.text) && (!bot || m.senderName === bot) && !asked(m.text) && !acNoteUncappedText_(m.text)) {
           out.notes++;
-          if (!out.same && acNotePlain_(m.text) === mine) out.same = m.name;
+          if (!out.same && acNoteSame_(m.text, mine)) out.same = m.name;
         }
       });
       pageToken = r.body.nextPageToken || '';
