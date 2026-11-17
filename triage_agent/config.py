@@ -621,10 +621,16 @@ class BursonQAConfig(ConfigModel):
     early_wave_topic_min_ratio: float = 3
     # The "Early Detection" tab (every story signal and what happened to it). false: no tab is made or written.
     early_detection_tab: bool = True
-    # The Auto-correct flow: a note under another alert's card when two alert types meet on one post or story. false:
-    # no note (the post or story is skipped as before, and counted).
+    # The Auto-correct flow: a note under another alert's card when two alert types meet on one post or story (story,
+    # watch and Direct BigQuery notes; the watch's "Same story" reply goes under its alert's card as such a note), and a
+    # bigger post (2,000+ engagements) on an issue already alerted gets its own card. false: as before: no such notes,
+    # the same-story reply goes in the thread as it used to, a post or story already covered is skipped and counted,
+    # and no extra card for a bigger post.
     cross_alert_notes: bool = True
-    # The Auto-correct flow: the "Alert requirements" line in the note that follows each review. false: no such line.
+    # The Auto-correct flow: the "Alert requirements" line in the note that follows each review, and the BSIP card's
+    # [KOF] line from the feed's influencer list ("Yes (<list>)"), which can start a Social Alert at any size; while it
+    # is on, an "Alert requirements: ...?" question asked under a card from the account the bot runs as is not taken for
+    # one of the bot's notes. false: as before: no such line, the BSIP card's [KOF] line says No.
     requirement_line: bool = True
     # What the Resources tab of the bot's sheet starts with: documents the bot links when Burson asks about the alert
     # requirements. After that the tab is what the bot uses (people edit it there). Only links Burson can open.
