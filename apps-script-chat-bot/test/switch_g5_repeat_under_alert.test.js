@@ -231,8 +231,9 @@ module.exports = H => {
   test('story under its alert: the same story reviewed a second time at the same size adds no second note', () => {
     const r = run({}, {
       again: (w, step) => {
-        // the story's mark and its id come out of the seen map, so the very same signal is queued and reviewed again
-        props(w.t).deleteProperty('EARLY_DETECTION_SEEN');
+        // the story's mark and its id come out of the seen map (all of it: the story keys, the older ones and the
+        // signals' own ids each have a property), so the very same signal is queued and reviewed again
+        ['EARLY_DETECTION_SEEN', 'EARLY_DETECTION_SEEN_2', 'EARLY_DETECTION_SEEN_IDS'].forEach(k => props(w.t).deleteProperty(k));
         step('story again', 15, () => { w.feed.stories = [story()]; });
         after(6).forEach(([l, m]) => step(`${l} again`, m));
       },
