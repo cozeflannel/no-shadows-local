@@ -315,6 +315,14 @@ module.exports = H => {
     eq(notesBelow(sh, 100), ['• my note under the help']);
   });
 
+  test('new sources control: row 48\'s help line says in plain numbers how many stories only the AMIE table lifts go for review, the same numbers the bot uses (ewsNewCfg_: early_wave_new_lifted_per_hour and _per_day), and where the rest are listed', () => {
+    const line = B.ev('CONTROL_HELP_').filter(l => l.startsWith(`• ${LABEL}: `))[0];
+    const cfg = B.ewsNewCfg_();
+    assert.ok(line.includes(`a story only they lift goes for review like the others, up to ${cfg.liftedPerHour} an hour and ` +
+      `${cfg.liftedPerDay} a day (the settings early_wave_new_lifted_per_hour and _per_day); the rest are listed on the New sources tab.`), line);
+    assert.ok(!/within a limit/.test(line), line);
+  });
+
   test('new sources control: column C of row 48 while ON says it is waiting while row 19 is OFF, and otherwise the ON text (115 characters) with what the last check found after it; OFF it is the OFF text whatever row 19 says; row 19 turned OFF again leaves only the waiting words (no note of an earlier check)', () => {
     const texts = sw => B.switchStatusTexts_(sw, '', {}, NOW)[B.switchRows_().indexOf(48)];
     eq([texts({ edAmie: true }), texts({ edAmie: true, earlyWave: true }), texts({ earlyWave: true }), texts({})],
