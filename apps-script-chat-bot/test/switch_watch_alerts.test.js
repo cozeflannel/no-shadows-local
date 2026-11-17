@@ -1457,6 +1457,26 @@ module.exports = H => {
     eq(names(B.pwStoriesShown_(pool.slice(0, 4).concat(brews.slice(0, 3)), [unit(0)], [])), ['m0 m1 m2 m3', 'b0 b1 b2']);  // few: all of them
   });
 
+  test('watch single (S13): under the open engine (row 51), a small flag (300 followers, 5 engagements) the pre-read judged meaningful with a P1 tag goes out alone in the Auto-correct space, and one with a Sensitive Topic; it waits for company in the Other alerts space, with no pre-read, and with row 51 OFF', () => {
+    const P1 = B.ev("GEN.exposure_tags.find(t => t.priority === 'P1').name");
+    const TOPIC = B.ev('GEN.sensitive_topics')[0].name;
+    const SMALL = 'https://x.com/smallacct/status/1980000000000000901';
+    const run = (w, open, say) => {
+      const { t } = w;
+      if (open) t.bot.ev('openOn_ = () => true');
+      t.g.vertex.triage = triage(NO_ACTION);
+      if (say) t.g.vertex.watchPreRead = preRead([], () => say);
+      look(w, [hit({ post_url: SMALL, author: '@smallacct', followers: 300, eng: 5, impact: 5, issue: 'A small post' })]);
+      const k = byKey(t)[rk(SMALL)];
+      return [posted(t, w.AC || MID).length, k && k.a];
+    };
+    eq(run(acWorld(), true, { exposure_tag: P1 }), [1, 'p']);
+    eq(run(acWorld(), true, { sensitive_topics: [TOPIC] }), [1, 'p']);
+    eq(run(world(OTHER), true, { exposure_tag: P1 }), [0, 'b']);
+    eq(run(acWorld(), true, null), [0, 'b']);
+    eq(run(acWorld(), false, { exposure_tag: P1 }), [0, 'b']);
+  });
+
   test('Watch alerts: a small post (no KOF author, under 100 engagements, no P0 tag) is not an alert by itself: it waits on the Watch detections tab (a: \'b\', nothing posted) and goes out with the others on its story as ONE alert once 3 accounts tell it (two posts from one account count once), its card saying what built up and the small posts listed in its thread; the triage is told to judge the build-up; a later small post on it joins that thread; C35 counts them', () => {
     const w = world(OTHER);
     const { t } = w;

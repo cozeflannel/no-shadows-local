@@ -344,7 +344,18 @@ one line under it: what was built, the suite's count, and anything left out with
       held by Gemini's "too busy" counts as Burson first; the cap of 8,192 applies from the next round; the Engine tab's
       Note cell holds 200 characters (the day rows). S19d's step test now runs with `open_first_screen` false, which
       gives the quick look alone as S19d built it.
-- [ ] **S13** The Watch: a single worrying post goes out alone
+- [ ] **S13** The Watch: a single worrying post goes out alone (built in part: see below; left unticked)
+      Built, under row 51: `pwSolo_` takes the destination; in the Auto-correct space a flag the pre-read judged
+      meaningful (`true`, not just not judged) with its own P1 tag or a Sensitive Topic is an alert of its own, whatever
+      its reach; no pre-read, the Mirror or Other alerts spaces, or row 51 OFF: today's rules. Flags waiting for their
+      pre-read for want of time or budget are noted (`pw_preread_wait`, the oldest's first sight; cleared when a
+      pre-read runs); from 10 minutes on, the Auto-correct flow's background steps after Burson's pass stop at 210 s
+      (`AC_PREREAD_LATEST_MS_`). Brandwatch mentions' 1,000 a day goes (60 a look stays). Posting while fewer than 3 of
+      the bot's cards wait came with S4. Suite: 1,349 of 1,349 passed. Chosen: the plan moves the flow's latest stop from
+      260 s to 210 s; that stop also ends Burson's own pass, so here only the background steps after it stop earlier
+      (rule 4: Burson's alerts are never slowed). Left out, and why: "one config rule" (Brandwatch mentions' 7 configs
+      read by `EWS_GOOGLE_CONFIG_RX_` instead): it changes the Watch's SQL, which this step must not change; the Watch
+      sources tab's description of Brandwatch mentions still says 1,000 a day (it is written when the file loads).
 - [ ] **S19c** One path with the Watch, and growth
 - [ ] **S19f** Every size grouped
 - [ ] **S18** "Why not this post?"

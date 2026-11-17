@@ -1371,8 +1371,10 @@ function pwPreReadFor_(items, recent, timeLeft, now, write) {
   const canWait = now - oldest < PW_PREREAD_MAX_WAIT_MS_;
   const budget = typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('gemini', false);
   if (timeLeft() < PW_MIN_LEFT_MS_ + PW_PREREAD_LEFT_MS_ || !budget) {
+    pwPreReadWaitNote_(canWait ? oldest : 0);
     return { pre: null, recent, wait: canWait ? 'not enough of this run left to read the flagged posts first (next run)' : '' };
   }
+  pwPreReadWaitNote_(0);
   const grounding = write && timeLeft() >= PW_MIN_LEFT_MS_ + PW_PREREAD_WEB_LEFT_MS_ ? webGroundingMode_() : '';
   try {
     const read = pwPreRead_(items, recent, Date.now() + Math.max(0, timeLeft() - PW_MIN_LEFT_MS_), grounding, !!write);
@@ -1443,13 +1445,43 @@ function pwAccount_(a, key) {
   return who ? `${String((a && a.network) || '').trim().toLowerCase()}:${who}` : `post:${key || ''}`;
 }
 
+// The open engine (Control row 51, step S13): since when flags have waited for their pre-read for want of time or budget
+// (the oldest one's first sight); from PW_PREREAD_RESERVE_AFTER_MS_ on, the Auto-correct flow's background steps stop
+// earlier so the Watch has time to read them (AutoCorrect.gs; Burson's own alerts keep their time)
+const PW_PREREAD_WAIT_KEY_ = 'pw_preread_wait';
+const PW_PREREAD_RESERVE_AFTER_MS_ = 10 * 60 * 1000;
+
+/** Notes since when flags wait for their pre-read (`since`: the oldest's first sight; 0: none waits). Row 51 OFF: nothing. Never throws. */
+function pwPreReadWaitNote_(since) {
+  try {
+    if (typeof openOn_ !== 'function' || !openOn_()) return;
+    const cache = CacheService.getScriptCache();
+    if (!since) { if (cache.get(PW_PREREAD_WAIT_KEY_) !== null) cache.remove(PW_PREREAD_WAIT_KEY_); return; }
+    if (!cache.get(PW_PREREAD_WAIT_KEY_)) cache.put(PW_PREREAD_WAIT_KEY_, String(Math.round(Number(since))), 3600);
+  } catch (e) { /* the next run notes it */ }
+}
+
+/** True when, under row 51, flags have waited PW_PREREAD_RESERVE_AFTER_MS_ or more for their pre-read. Never throws. */
+function pwPreReadReserveDue_(now) {
+  try {
+    if (typeof openOn_ !== 'function' || !openOn_()) return false;
+    const since = Number(CacheService.getScriptCache().get(PW_PREREAD_WAIT_KEY_)) || 0;
+    return since > 0 && (Number(now) || Date.now()) - since >= PW_PREREAD_RESERVE_AFTER_MS_;
+  } catch (e) {
+    return false;
+  }
+}
+
 /**
  * Why a flag (`item`: {q, a}; `p`: the pre-read's entry for it, or null) is an alert of its own; '' for a small one, which
  * waits to be grouped. SLRR's own collection thresholds: a KOF author (the listening data), PW_SOLO_MIN_ENG_
  * engagements, or a P0 exposure tag (the pre-read's, else the listening tool's). A post the pre-read judged not
- * meaningful by itself (a passing mention, a bare link) is one only for a KOF author or past the high-engagement bar. Pure.
+ * meaningful by itself (a passing mention, a bare link) is one only for a KOF author or past the high-engagement bar.
+ * Under the open engine (Control row 51, step S13), in the Auto-correct space (`dest`), a post the pre-read judged
+ * meaningful (true, not just not judged) with a P1 tag or a Sensitive Topic is one too (the alert requirements have no
+ * engagement bar for those); with no pre-read, today's rules. Pure (reads the switches).
  */
-function pwSolo_(item, p) {
+function pwSolo_(item, p, dest) {
   const a = (item && item.a) || {};
   const tax = a.tax || null;
   const eng = Number(a.eng) || 0;
@@ -1460,7 +1492,13 @@ function pwSolo_(item, p) {
   if (eng >= PW_SOLO_MIN_ENG_) return `${fmtInt_(eng)} engagements`;
   const name = String((p && p.tag) || '').replace(/\s*\(P[012]\)\s*$/, '') || String((tax && tax.t) || '');
   const tag = name ? lookupTag_(name) : null;
-  return tag && tag.priority === 'P0' ? `a P0 tag (${tag.name})` : '';
+  if (tag && tag.priority === 'P0') return `a P0 tag (${tag.name})`;
+  const open = typeof openOn_ === 'function' && openOn_() && !!dest && dest.choice === 'autocorrect';
+  if (!open || !p || p.meaningful !== true) return '';
+  const own = p.tag ? lookupTag_(name) : null;  // the pre-read's own tag only
+  if (own && own.priority === 'P1') return `a P1 tag (${own.name})`;
+  const topic = (p.topics || []).map(String).find(Boolean);
+  return topic ? `a Sensitive Topic (${topic})` : '';
 }
 
 /**
@@ -1846,7 +1884,7 @@ function pwPostStories_(items, pre, recent, c) {
     if (!members.length) continue;
     // an alert of its own (a flag that matters by itself, or news on a story already alerted), or small posts that wait
     const waiting = R && R.brew ? R.rows || [] : [];
-    const alone = i => !!pwSolo_(items[i], pr(i)) || !!(R && R.known && pr(i) && pr(i).news);
+    const alone = i => !!pwSolo_(items[i], pr(i), c.dest) || !!(R && R.known && pr(i) && pr(i).news);
     let build = null;
     if (!members.some(alone)) {
       const accounts = new Set(members.map(i => pwAccount_(items[i].a, items[i].q.k.k))

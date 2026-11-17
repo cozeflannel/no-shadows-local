@@ -35,6 +35,7 @@ const AC_BUDGET_MS_ = 150 * 1000;                 // its share of a run, after t
 const AC_STANDALONE_BUDGET_MS_ = 220 * 1000;      // its share when B10 runs standalone (B3/B4/B9 not running ahead of it)
 const AC_LATEST_MS_ = 240 * 1000;                 // it stops starting new alerts 4 minutes into a run (Apps Script stops at 6)
 const AC_STANDALONE_LATEST_MS_ = 260 * 1000;      // standalone latest stop (leaves 40s before RUN_HARD_STOP_MS_ for watches/Speed)
+const AC_PREREAD_LATEST_MS_ = 210 * 1000;         // row 51: the background steps' stop while Watch flags wait for their pre-read
 const AC_MIN_MS_ = 30 * 1000;                     // less than this left: it waits for the next minute
 const AC_POLL_OVERDUE_MS_ = 10 * 60 * 1000;       // standalone: the Direct BigQuery poll goes first again once its last check is this old
 const AC_STATS_PROP_ = 'AC_STATS';
@@ -127,6 +128,12 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
       report.handled - (Number(report.bg_handled) || 0) >= ctx.settings.max_messages_per_run ||
       (report.errors || []).some(e => /^time budget/.test(String(e)))));
     ctx.slaBusy = slaBusy;
+    // the open engine (row 51, step S13): Watch flags have waited 10+ minutes for their pre-read for want of time: this
+    // run's background steps below stop at 210 s, so the Watch after the flow has time to read them. Burson's pass above
+    // had its full time
+    if (standalone && typeof pwPreReadReserveDue_ === 'function' && pwPreReadReserveDue_(Date.now())) {
+      ctx.deadline = Math.min(ctx.deadline, (runStart || Date.now()) + AC_PREREAD_LATEST_MS_);
+    }
     // The Direct BigQuery poll (Control row 15)
     const pollDirect = () => {
       let bqPolled = null;

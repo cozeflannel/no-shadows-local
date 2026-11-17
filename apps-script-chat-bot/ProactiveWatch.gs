@@ -1336,7 +1336,8 @@ function pwFroms_(marks, until, today) {
   pwSources_().forEach(s => {
     const snap = s.spread ? pwSnap_(m, s, until) : null;
     if (s.gate) out[`${s.key}_mod`] = snap ? 0 : Math.max(0, Number(m[`${s.key}_mod`]) || 0);
-    if (s.dayMax) {
+    // (the open engine, Control row 51, step S13: no day's maximum; a look's cap stays)
+    if (s.dayMax && !(typeof openOn_ === 'function' && openOn_())) {
       const done = (((today && today.src) || {})[s.key] || [])[0];
       out[`${s.key}_left`] = Math.max(0, s.dayMax - (Number(done) || 0));
     }
