@@ -47,4 +47,17 @@ module.exports = H => {
       eq(JSON.parse(r.w.t.g.props.get('EARLY_DETECTION_TODAY')).cards, 1);
     }
   });
+
+  test('early detection count saves: when only the first save of an ending fails, the second try saves it: the stored counts hold the ending at once, even when the run ends right after with nothing kept in memory', () => {
+    const w = ends.world({ flow: 'one-space', row46: false });
+    w.run('09:01', []);
+    const before = JSON.parse(w.t.g.props.get('EARLY_DETECTION_TODAY') || '{}');
+    failCounts(w, 1);
+    const rec = w.t.bot.edNote_(null, ends.signal(331, { at: '09:01' }), 'Never reviewed', 'the review queue was full');
+    assert.ok(rec, 'the ending was noted');
+    // the run ends here: what it kept in memory is gone with it
+    w.t.bot.ev('ED_COUNT_UNSAVED_ = []');
+    const stored = JSON.parse(w.t.g.props.get('EARLY_DETECTION_TODAY') || '{}');
+    eq([stored.found, stored.never], [(Number(before.found) || 0) + 1, (Number(before.never) || 0) + 1]);
+  });
 };

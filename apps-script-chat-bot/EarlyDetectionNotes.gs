@@ -164,6 +164,8 @@ function edNeverWhy_(cause, n) {
  *   tag      the card's own Exposure Tag, after a card
  *   dec      the fast triage's answers about the signal, when the caller has them (else the ones kept are used)
  *   card     {id, message}: the Alert-log id and Chat message name of the card this ending is about
+ *   key      the key it is counted by, when `row` has no id (a signal left for a later check whose details are gone:
+ *            BigQuery.gs edDeferredRead_); else its id (edNoteKey_)
  * Returns the record row, or null when nothing was noted (not an outcome; a signal counted before: edCount_). Never
  * throws.
  */
@@ -176,7 +178,7 @@ function edNote_(ctx, row, outcome, why, extra) {
       return null;
     }
     const r = row && typeof row === 'object' ? row : {};
-    if (!edCount_(PropertiesService.getScriptProperties(), group, !!x.waited, edNoteKey_(r))) return null;
+    if (!edCount_(PropertiesService.getScriptProperties(), group, !!x.waited, x.key ? String(x.key) : edNoteKey_(r))) return null;
     const rec = edNoteRow_(r, outcome, why, x, ctx && typeof ctx.now === 'function' ? ctx.now() : Date.now());
     ED_NOTES_RUN_.push(rec);
     if (ED_NOTES_RUN_.length > ED_NOTES_RUN_MAX_) ED_NOTES_RUN_ = ED_NOTES_RUN_.slice(-ED_NOTES_RUN_MAX_);
