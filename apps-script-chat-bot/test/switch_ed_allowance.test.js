@@ -327,9 +327,11 @@ module.exports = H => {
     assert.ok(day.length < 2700, `EARLY_DETECTION_TODAY: ${day.length}`);
 
     // the seen map: a day of 150 signals queued (id, cluster and post keys) and 300 refused (their ids), saved as a
-    // check under the allowance saves it (the newest 200 entries)
+    // check under the allowance saves it (the ids apart; the story keys in two properties), or as one under the old rule
+    // saves it (the newest 200 entries in one)
+    const SEEN = ['EARLY_DETECTION_SEEN', 'EARLY_DETECTION_SEEN_2', 'EARLY_DETECTION_SEEN_IDS'];
     const aDay = idMs => {
-      g.props.delete('EARLY_DETECTION_SEEN');
+      SEEN.forEach(k => g.props.delete(k));
       const day0 = NOW - 24 * HOUR + MIN;
       for (let i = 0; i < 450; i++) {
         const at = day0 + Math.floor(i * (24 * HOUR - 2 * MIN) / 450);
@@ -339,16 +341,25 @@ module.exports = H => {
         else seen.add(keys[0], at);
         seen.save();
       }
-      const saved = g.props.get('EARLY_DETECTION_SEEN');
-      const entries = JSON.parse(saved);
-      return { chars: saved.length, entries: Object.keys(entries).length, stories: Object.keys(entries).filter(k => Array.isArray(entries[k])).length };
+      const chars = {};
+      const entries = {};
+      SEEN.forEach(k => {
+        const saved = g.props.get(k);
+        chars[k] = saved === undefined ? 0 : saved.length;
+        Object.assign(entries, saved === undefined ? {} : JSON.parse(saved));
+      });
+      return { chars, entries: Object.keys(entries).length, stories: Object.keys(entries).filter(k => Array.isArray(entries[k])).length,
+        oldest: bot.earlyWaveSeen_(p, NOW, idMs).first(bot.edRowKeys_(ends.signal(1000, { au: 999 })).slice(1)) };
     };
     const allowed = aDay(bot.ev('EW_SEEN_ID_MS_'));
-    assert.ok(allowed.chars <= 8800, `EARLY_DETECTION_SEEN: ${allowed.chars}`);
-    eq(allowed.entries, 200);
-    // the ids of the last 3.5 hours take their room and the rest is story keys: 134 of the day's 300 (its last 11 hours
-    // of queued signals), where without that rule the ids would keep only 80 of them
-    eq([allowed.stories, aDay(0).stories], [134, 80]);
+    SEEN.forEach(k => assert.ok(allowed.chars[k] <= 8800, `${k}: ${allowed.chars[k]}`));
+    // every story key of the day is known (its 300), the first one of nearly 24 hours ago too; the ids of the last 3.5
+    // hours are kept apart; under the old rule the one property keeps the newest 200 entries, 80 of them story keys
+    eq(allowed.stories, 300);
+    eq(allowed.oldest && allowed.oldest.au, 999999);
+    const old = aDay(0);
+    eq([old.entries, old.stories, old.chars['EARLY_DETECTION_SEEN_2'], old.chars['EARLY_DETECTION_SEEN_IDS']], [200, 80, 0, 0]);
+    assert.ok(old.chars['EARLY_DETECTION_SEEN'] <= 8800);
 
     // the queue: 12 entries with the longest id, every ranking key and the allowance's mark
     const list = Array.from({ length: 12 }, (_, i) => ({ k: bot.edQueueKey_(ends.signal(i)), id: `ED-VEL-PRIORITY_TOPIC-${'f'.repeat(58)}`.slice(0, 80),

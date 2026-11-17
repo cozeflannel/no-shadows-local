@@ -3330,6 +3330,12 @@ const EW_SEEN_MAX_ = 200;                     // cap stored hashes well under Sc
 const EW_SEEN_MAX_CHARS_ = 8800;              // the seen map's JSON (ScriptProperties: 9 KB a value)
 const ED_AT_PROP_ = 'EARLY_DETECTION_AT';     // timestamp (ms) when last poll started
 const ED_SEEN_PROP_ = 'EARLY_DETECTION_SEEN'; // {hash: ms | [ms, authors]} of recently queued early-detection signals
+// Under the allowance (a check passes EW_SEEN_ID_MS_) the seen map is kept in three properties, so a day of story keys
+// fits: the signals' own ids apart (EARLY_DETECTION_SEEN_IDS, {hash: ms}), the story keys in EARLY_DETECTION_SEEN and,
+// the older ones that don't fit there, EARLY_DETECTION_SEEN_2; each at most EW_SEEN_MAX_CHARS_ (earlyWaveSeen_)
+const ED_SEEN_IDS_PROP_ = 'EARLY_DETECTION_SEEN_IDS';
+const ED_SEEN_MORE_PROP_ = 'EARLY_DETECTION_SEEN_2';
+const EW_SEEN_MAX_ALLOW_ = 500;               // story keys kept under the allowance (a day at 150 queued has about 300)
 const ED_DAY_PROP_ = 'EARLY_DETECTION_TODAY'; // {day, clusters, velocity, queued, repeats, dismissed, at, problem} for Control C19
 // ... and what became of every signal today: {found, cards, under, letgo, never, noted} (edDayState_, edCount_); C19's
 // line is made of these (edDayNoteText_), and `limit` is the day's limit the last check ran under (noteEarlyWave_)
@@ -3616,13 +3622,60 @@ function edRowKeys_(row) {
  * held back as it always was; null when none of them is seen). `first(keys)` is that same entry with its time: {at (ms),
  * au}, or null (EarlyDetectionNotes.gs: "First seen 10:51 AM ET with 5 accounts").
  * `idMs` (the check under the allowance passes EW_SEEN_ID_MS_): save() then lets an entry that is only a signal's id go
- * once it is that old (pruneEarlyWaveSeen_).
+ * once it is that old (pruneEarlyWaveSeen_), and keeps the map in three properties: the signals' ids (`id:` keys) in
+ * ED_SEEN_IDS_PROP_ (the newest EW_SEEN_MAX_), the story keys in ED_SEEN_PROP_ and the older ones that don't fit there in
+ * ED_SEEN_MORE_PROP_ (EW_SEEN_MAX_ALLOW_ in all), each at most EW_SEEN_MAX_CHARS_, so a day of story keys stays known.
+ * `idMs` 0 (a check under the old rule) keeps the one property as it always was (the other two are taken out); `idMs`
+ * not given (edSeenForget_ outside a check) keeps whichever of the two the stored map has. Every read takes all three.
  */
 function earlyWaveSeen_(props, now, idMs) {
-  let map = {};
-  try { map = JSON.parse(props.getProperty(ED_SEEN_PROP_) || '{}') || {}; } catch (e) { map = {}; }
-  if (typeof map !== 'object' || Array.isArray(map)) map = {};
+  const read = name => {
+    let m = {};
+    try { m = JSON.parse(props.getProperty(name) || '{}') || {}; } catch (e) { m = {}; }
+    return typeof m === 'object' && !Array.isArray(m) ? m : {};
+  };
+  const ids = read(ED_SEEN_IDS_PROP_);
+  const more = read(ED_SEEN_MORE_PROP_);
+  const split = idMs > 0 || (idMs === undefined && (Object.keys(ids).length > 0 || Object.keys(more).length > 0));
+  const map = Object.assign({}, more, read(ED_SEEN_PROP_), ids);
+  const idHashes = new Set(Object.keys(ids));
   const live = v => { const at = edSeenAt_(v); return !!at && now - at < EW_SEEN_MS_; };
+  const save = () => {
+    if (!split) {  // the one property, as it always was
+      props.setProperty(ED_SEEN_PROP_, JSON.stringify(pruneEarlyWaveSeen_(map, now, idMs)));
+      [ED_SEEN_IDS_PROP_, ED_SEEN_MORE_PROP_].forEach(k => { if (props.getProperty(k) !== null) props.deleteProperty(k); });
+      return;
+    }
+    const life = idMs > 0 ? idMs : EW_SEEN_ID_MS_;
+    const idPart = {};
+    const storyPart = {};
+    Object.keys(map).forEach(h => { (idHashes.has(h) ? idPart : storyPart)[h] = map[h]; });
+    const keptIds = pruneEarlyWaveSeen_(idPart, now, life);
+    const stories = pruneEarlyWaveSeen_(storyPart, now, life, EW_SEEN_MAX_ALLOW_, 2 * EW_SEEN_MAX_CHARS_);
+    // the newest story keys in the first property, as many as fit; the rest in the second (cut to fit, the oldest go)
+    const first = {};
+    const rest = {};
+    let size = 2;
+    let full = false;
+    Object.keys(stories).forEach(h => {
+      const add = JSON.stringify(h).length + 1 + JSON.stringify(stories[h]).length + 1;
+      if (!full && size + add <= EW_SEEN_MAX_CHARS_) {
+        first[h] = stories[h];
+        size += add;
+      } else {
+        full = true;
+        rest[h] = stories[h];
+      }
+    });
+    const restKept = pruneEarlyWaveSeen_(rest, now, life, EW_SEEN_MAX_ALLOW_, EW_SEEN_MAX_CHARS_);
+    props.setProperty(ED_SEEN_PROP_, JSON.stringify(first));
+    const put = (name, m) => {
+      if (Object.keys(m).length) props.setProperty(name, JSON.stringify(m));
+      else if (props.getProperty(name) !== null) props.deleteProperty(name);
+    };
+    put(ED_SEEN_MORE_PROP_, restKept);
+    put(ED_SEEN_IDS_PROP_, keptIds);
+  };
   return {
     has: key => live(map[hashText_(key)]),
     authors: keys => {
@@ -3648,7 +3701,10 @@ function earlyWaveSeen_(props, now, idMs) {
     add: (key, ms, authors) => {
       if (!key) return;
       const au = Math.round(Number(authors) || 0);
-      map[hashText_(key)] = au > 0 ? [ms, au] : ms;
+      const h = hashText_(key);
+      map[h] = au > 0 ? [ms, au] : ms;
+      if (String(key).indexOf('id:') === 0 && !(au > 0)) idHashes.add(h);
+      else idHashes.delete(h);
     },
     // takes a story key out, only while it is still marked with `authors` accounts: the mark of the signal that had
     // them (a bigger signal queued on the same story has put its own mark there: that one stays); true when taken out
@@ -3658,9 +3714,10 @@ function earlyWaveSeen_(props, now, idMs) {
       if (v === undefined) return false;
       if (Array.isArray(v) && Math.round(Number(v[1]) || 0) !== Math.round(Number(authors) || 0)) return false;
       delete map[h];
+      idHashes.delete(h);
       return true;
     },
-    save: () => props.setProperty(ED_SEEN_PROP_, JSON.stringify(pruneEarlyWaveSeen_(map, now, idMs))),
+    save,
   };
 }
 
@@ -3700,14 +3757,16 @@ function edSeenAt_(v) {
 }
 
 /**
- * Prunes the seen early-detection map to the newest `EW_SEEN_MAX_` entries within `EW_SEEN_MS_` (either entry format),
- * fewer when its JSON would pass EW_SEEN_MAX_CHARS_. With `idMs` (the allowance: EW_SEEN_ID_MS_), an entry that is only a
- * time (a signal's id, or a story key from before the counts were kept) goes once it is that old. Pure.
+ * Prunes the seen early-detection map to the newest `EW_SEEN_MAX_` entries (or `max`) within `EW_SEEN_MS_` (either entry
+ * format), fewer when its JSON would pass EW_SEEN_MAX_CHARS_ (or `maxChars`). With `idMs` (the allowance:
+ * EW_SEEN_ID_MS_), an entry that is only a time (a signal's id, or a story key from before the counts were kept) goes
+ * once it is that old. Pure.
  */
-function pruneEarlyWaveSeen_(map, now, idMs) {
+function pruneEarlyWaveSeen_(map, now, idMs, max, maxChars) {
   const life = v => (idMs > 0 && !Array.isArray(v) ? Math.min(idMs, EW_SEEN_MS_) : EW_SEEN_MS_);
+  const chars = maxChars > 0 ? maxChars : EW_SEEN_MAX_CHARS_;
   let ks = Object.keys(map || {}).filter(k => { const at = edSeenAt_(map[k]); return at > 0 && now - at < life(map[k]); })
-    .sort((a, b) => edSeenAt_(map[b]) - edSeenAt_(map[a])).slice(0, EW_SEEN_MAX_);
+    .sort((a, b) => edSeenAt_(map[b]) - edSeenAt_(map[a])).slice(0, max > 0 ? max : EW_SEEN_MAX_);
   const build = list => {
     const keep = {};
     list.forEach(k => {
@@ -3717,7 +3776,7 @@ function pruneEarlyWaveSeen_(map, now, idMs) {
     return keep;
   };
   let keep = build(ks);
-  while (ks.length > 1 && JSON.stringify(keep).length > EW_SEEN_MAX_CHARS_) {
+  while (ks.length > 1 && JSON.stringify(keep).length > chars) {
     ks = ks.slice(0, Math.floor(ks.length * 0.9));
     keep = build(ks);
   }
