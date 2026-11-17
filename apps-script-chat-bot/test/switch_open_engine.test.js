@@ -13,7 +13,8 @@ module.exports = H => {
   const HOUR = 60 * MIN;
   const hourOf = ms => Math.floor(ms / HOUR) * HOUR;
   const OFF_TEXT = 'OFF (Early Detection, the Watch and Direct BigQuery keep today\'s limits)';
-  const ON_TEXT = '✓ ON: one safety stop a day, and the day\'s run time and outside calls guarded so Burson\'s alerts keep their share';
+  // (step S6 put the checks' interval and S5's order first: "checks every 5 min, the most serious go first")
+  const ON_TEXT = '✓ ON: checks every 5 min, the most serious go first; one safety stop a day, and the day\'s run time and outside calls guarded so Burson\'s alerts keep their share';
 
   /** A bot on fake services at NOW, row 51 ON (with row 19) unless `off`. */
   function bot(o) {
@@ -140,7 +141,7 @@ module.exports = H => {
     };
     const B = 4.5 * 3600;
     const ledger = (w, f, calls) => w.g.props.set('RUN_LEDGER', JSON.stringify({ v: 1, h: [[hourOf(NOW), Math.round(f * B), calls || 0, 1, 0]], p: [], a: { d: w.b.openEtDay_(NOW), w: 1 } }));
-    eq(at('a quiet day'), 'today: 0 of 2,000 reviews · run time 1 h 00 of 4 h 30 (24 h) · calls 1,234 of 100,000');
+    eq(at('a quiet day'), 'today: checks every 5 min · 0 of 2,000 reviews · run time 1 h 00 of 4 h 30 (24 h) · calls 1,234 of 100,000');
     const stopRev = at('the stop', w => { w.b.openCountReview_(2000); });
     eq(stopRev.split(' · ')[0], '⛔ safety stop at 8:00 AM: 2,000 background reviews today. Burson\'s alerts go on; stories, Watch and Direct cards wait until midnight ET. No big event? Tell the engineer');
     eq(at('the quick-look ceiling', w => { w.b.openCount_('ql', 20000); }).split(' · ')[0],
@@ -158,7 +159,8 @@ module.exports = H => {
       w.b.openC51Add_(() => 'a later step\'s part '.repeat(8));
     });
     // (a part that does not fit is left out whole: nothing is cut mid-way)
-    eq(crowded, '⛔ safety stop at 8:00 AM: 2,000 background reviews today. Burson\'s alerts go on; stories, Watch and Direct cards wait until midnight ET. No big event? Tell the engineer · today: 2,000 of 2,000 reviews');
+    // (step S6's longer day part no longer fits after the warning; the calls' part does)
+    eq(crowded, '⛔ safety stop at 8:00 AM: 2,000 background reviews today. Burson\'s alerts go on; stories, Watch and Direct cards wait until midnight ET. No big event? Tell the engineer · calls 1,234 of 100,000');
     const walls = at('walls hit', w => {
       w.b.openWall_('gemini');
       w.b.openWall_('gemini');  // the same run: once
@@ -202,8 +204,8 @@ module.exports = H => {
     eq(t.g.props.get('OPEN_DAY'), undefined);  // waiting: nothing of it runs
     t.bot.ev('readSwitches_ = (read => sh => Object.assign(read(sh), { earlyWave: true }))(readSwitches_)');
     t.poll();
-    assert.ok(String(sh.cell(51, 3)).startsWith(`${ON_TEXT} · today: 0 of 2,000 reviews · run time `), sh.cell(51, 3));
-    assert.ok(String(sh.cell(51, 3)).length <= 200);
+    assert.ok(String(sh.cell(51, 3)).startsWith(`${ON_TEXT} · today: checks every 5 min · 0 of 2,000 reviews · run time `), sh.cell(51, 3));
+    assert.ok(String(sh.cell(51, 3)).slice(ON_TEXT.length + 3).length <= 200);  // the note, cut at 200 as every switch's
   });
 
   // -----------------------------------------------------------------------------------------------------------------

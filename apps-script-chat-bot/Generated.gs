@@ -104,6 +104,7 @@ const GEN = {
   "open_lock_loss_seconds": 2.0,
   "open_fetch_day": null,
   "open_burson_pickup_p90_s": 120.0,
+  "open_check_minutes": 5,
   "open_queue_max": 24,
   "resources": [
    {

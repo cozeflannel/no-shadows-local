@@ -330,7 +330,9 @@ function ewsRows_(minutes, opts) {
   const props = PropertiesService.getScriptProperties();
   const st = ewsState_(props);
   let outcome = null;
-  if (!st.at || now < st.at || now - st.at >= EWS_EVERY_MS_) outcome = ewsProduce_(props, st, now, mins, opts);
+  // the open engine (row 51, step S6): a minute under the check's interval (openProducerMs_); OFF: EWS_EVERY_MS_
+  const every = typeof openProducerMs_ === 'function' ? openProducerMs_() : EWS_EVERY_MS_;
+  if (!st.at || now < st.at || now - st.at >= every) outcome = ewsProduce_(props, st, now, mins, opts);
   if (outcome && outcome.error && !outcome.emitted) throw new Error(outcome.error);
   if (outcome && outcome.watch && outcome.watch.length && opts && opts.watch) {
     ewsWatchAsk_(ewsCache_(), props, st, now, outcome.watch, opts.watch, opts && opts.record);

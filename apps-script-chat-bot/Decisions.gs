@@ -360,9 +360,11 @@ function decisionsAsk_(input, questions, session) {
       st.refused++;
     } else {
       st.failed++;
-      st.until = Date.now() + DEC_PAUSE_MS_;
+      // the open engine (row 51, step S6): the pause is one check's interval, as it is today
+      const pause = typeof openCheckMs_ === 'function' ? openCheckMs_() : DEC_PAUSE_MS_;
+      st.until = Date.now() + pause;
       st.why = out.why;
-      console.warn(`Gemini Decisions: ${out.why}; no calls for ${Math.round(DEC_PAUSE_MS_ / 60000)} minutes (signals go on without it)`);
+      console.warn(`Gemini Decisions: ${out.why}; no calls for ${Math.round(pause / 60000)} minutes (signals go on without it)`);
     }
     decSaveState_(props, st);
     return out;

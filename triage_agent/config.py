@@ -692,6 +692,7 @@ class BursonQAConfig(ConfigModel):
     open_lock_loss_seconds: float = 2
     open_fetch_day: int | None = None
     open_burson_pickup_p90_s: float = 120
+    open_check_minutes: int = 5
     open_queue_max: int = 24
     # What the Resources tab of the bot's sheet starts with: documents the bot links when Burson asks about the alert
     # requirements. After that the tab is what the bot uses (people edit it there). Only links Burson can open.

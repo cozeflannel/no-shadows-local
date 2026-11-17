@@ -177,7 +177,17 @@ one line under it: what was built, the suite's count, and anything left out with
       and checks of this step they hold, and step S7's carry is where the producer's items grow; a day's real counts
       are a live-only number); "150 s of the flow left" for a batch (step S12 makes batches; a single review keeps the
       90 s it has, plus the tab's 30 s from S3).
-- [ ] **S6** Checks every 5 minutes
+- [x] **S6** Checks every 5 minutes
+      Built, under row 51: Early Detection's check every `open_check_minutes` (5), paced by the record of run time
+      (`openCheckMs_`: every 10 minutes from 0.60 of the day's budget, every 15 from 0.70), the producer's own interval a
+      minute under it (`openProducerMs_`), Gemini Decisions' pause after a failure one check's interval, the age rule
+      and the "Check skipped" rows on the same interval; C51's day part says `checks every N min`; row 51's ON text is
+      now `✓ ON: checks every 5 min, the most serious go first; one safety stop a day, and the day's run time and outside
+      calls guarded so Burson's alerts keep their share` (152: the checks and S5's order put first) and its help line
+      says so. No per-check number changes. Suite: 1,296 of 1,296 passed. Choices: C19's ON text still says "every 15
+      min" (rule: no existing Control row changes its text); the Engine tab's "Gap (min)" column (S3) gives the real gap
+      between checks. Changed expected texts: row 51's ON text and C51's day part in switch_open_engine; a check "not
+      due" in switch_ed_tab's row-51 test is now 2 minutes old.
 - [ ] **S7** Ingest capacity
 - [ ] **S8** Velocity made correct
 - [ ] **S9** Equal standing

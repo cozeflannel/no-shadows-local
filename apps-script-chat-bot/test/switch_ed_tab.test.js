@@ -533,9 +533,9 @@ module.exports = H => {
     const ss = sheetOf(w);
     eq(w.bot.maybeWriteEdTab_(ss, ctxAt(w, NOW + 33 * MIN), { deadline: NOW + 40 * MIN }).written, 3);
     eq(data(tabOf(ss)).map(r => r.Outcome), ['Check skipped', 'Check skipped', 'Check skipped']);
-    // a check not due yet (its 15 minutes have not passed), in a run with nothing said before: no row
+    // a check not due yet (its 5 minutes under row 51 have not passed, step S6), in a run with nothing said before: no row
     const early = open(world());
-    early.g.services.PropertiesService.getScriptProperties().setProperty('EARLY_DETECTION_AT', String(NOW - 5 * MIN));
+    early.g.services.PropertiesService.getScriptProperties().setProperty('EARLY_DETECTION_AT', String(NOW - 2 * MIN));
     early.bot.edNotesStart_();
     eq([early.bot.edCheckSkipped_(ctx(NOW), 'busy'), early.bot.edNotesOfRun_()], [false, []]);
     // row 51 OFF

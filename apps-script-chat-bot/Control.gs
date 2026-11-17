@@ -335,7 +335,8 @@ const CONTROL_HELP_ = [
     'counts as that card\'s, as its main post does. A changed table stops this source alone (the Watch sources tab says ' +
     'why). Its flags go only where Watch alerts (row 35) send them, never to S-F Burson. C50 says what it is doing.',
   '• Open engine: judgment in place of caps: row 51, OFF until you turn it ON; it needs Early wave & velocity check (row ' +
-    '19) ON. It sets one safety stop a day (2,000 background reviews, the setting open_daily_stop: then stories, Watch and ' +
+    '19) ON. Early Detection then checks every 5 minutes (10, then 15, as the day\'s run time fills), most serious first, ' +
+    'with no count of stories turned away. It sets one safety stop a day (2,000 background reviews, the setting open_daily_stop: then stories, Watch and ' +
     'Direct cards wait until midnight ET) and guards the day\'s trigger run time and outside calls: as they near their ' +
     'budgets, background work slows and then stops, so Burson\'s alerts always keep their share, and a new Burson alert ' +
     'always goes first. Burson\'s alerts are never counted or stopped. The Engine tab then has a row for each Early ' +
@@ -736,7 +737,7 @@ const CONTROL_SWITCHES_ = [
     },
     on: (standIn, live, sw) => (!(sw && sw.earlyWave)
       ? '✓ ON, but waiting: it needs Early wave & velocity check (row 19) ON'
-      : '✓ ON: one safety stop a day, and the day\'s run time and outside calls guarded so Burson\'s alerts keep their share') },
+      : '✓ ON: checks every 5 min, the most serious go first; one safety stop a day, and the day\'s run time and outside calls guarded so Burson\'s alerts keep their share') },
 ];
 
 /**

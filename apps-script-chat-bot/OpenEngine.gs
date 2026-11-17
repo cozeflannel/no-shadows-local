@@ -386,6 +386,32 @@ const OE_QUEUE_MAX_ = 24;       // the review queue under row 51 (setting open_q
 const OE_QUEUE_SERIOUS_MORE_ = 4;  // places past it a serious signal may take (S5)
 const OE_ROWS_MAX_ = 300;       // signals a check reads and the producer's buffer keeps under row 51 (step S5)
 
+/**
+ * How often Early Detection checks (step S6): under row 51 every open_check_minutes (5), paced by the record of run
+ * time: from 0.60 of the day's budget every 10 minutes, from 0.70 every 15; row 51 OFF: every 15 minutes, as before
+ * (BigQuery.gs EW_EVERY_MS_). In ms. Never throws.
+ */
+function openCheckMs_() {
+  try {
+    if (!openOn_()) return EW_EVERY_MS_;
+    const set = Math.round(Number(((typeof GEN !== 'undefined' && GEN && GEN.settings) || {}).open_check_minutes));
+    const base = set >= 1 ? Math.min(15, set) : 5;
+    const step = openUsage_(Date.now()).step;
+    return (step >= 2 ? Math.max(base, 15) : step >= 1 ? Math.max(base, 10) : base) * 60 * 1000;
+  } catch (e) {
+    return EW_EVERY_MS_;
+  }
+}
+
+/** The producer's own interval (EarlyWaveSource.gs): a minute under the check's under row 51, else EWS_EVERY_MS_. */
+function openProducerMs_() {
+  try {
+    return openOn_() ? Math.max(60 * 1000, openCheckMs_() - 60 * 1000) : EWS_EVERY_MS_;
+  } catch (e) {
+    return EWS_EVERY_MS_;
+  }
+}
+
 /** The review queue's size: open_queue_max (24) under row 51, else today's 12 (BigQuery.gs ED_QUEUE_MAX_). Never throws. */
 function openQueueMax_() {
   try {
@@ -441,7 +467,7 @@ function openCheckRoom_(ctx) {
   try {
     const now = ctx && typeof ctx.now === 'function' ? ctx.now() : Date.now();
     const last = Number(PropertiesService.getScriptProperties().getProperty(ED_AT_PROP_)) || 0;
-    const due = !last || now < last || now - last >= EW_EVERY_MS_;
+    const due = !last || now < last || now - last >= openCheckMs_();
     if (!due || !ctx || !(Number(ctx.deadline) > 0)) return true;
     return Number(ctx.deadline) - now >= EW_MIN_LEFT_MS_ + EW_DRAIN_MIN_LEFT_MS_ + 40 * 1000;
   } catch (e) {
@@ -676,7 +702,7 @@ function openC51Text_(now) {
     }
     const walls = Object.keys(d.w || {}).filter(k => Number(d.w[k]) > 0 && OE_WALL_WORDS_[k]).map(k => `${OE_WALL_WORDS_[k]} ${n(d.w[k])}×`);
     const parts = [
-      `today: ${n(d.rev)} of ${n(openCfg_().stop)} reviews`,
+      `today: checks every ${Math.round(openCheckMs_() / 60000)} min · ${n(d.rev)} of ${n(openCfg_().stop)} reviews`,
       openRunWords_(u),
       u.counted ? `calls ${n(u.fetches)} of ${n(u.fetchBudget)}` : '',
     ].concat(typeof engC51Part_ === 'function' ? [engC51Part_()] : [],

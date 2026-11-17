@@ -4237,8 +4237,9 @@ function edAgesOut_(row, settings, now) {
   const made = edMadeAt_(row);
   if (!isFinite(made) || !(made > 0)) return true;
   const t = Number(now) || 0;
-  const window = edLookbackMinutes_(settings, t, t + EW_EVERY_MS_) * 60000;
-  return made + window < t + EW_EVERY_MS_ + EW_AGE_MARGIN_MS_;
+  const every = typeof openCheckMs_ === 'function' ? openCheckMs_() : EW_EVERY_MS_;  // row 51: the open interval (S6)
+  const window = edLookbackMinutes_(settings, t, t + every) * 60000;
+  return made + window < t + every + EW_AGE_MARGIN_MS_;
 }
 
 /** When a signal was made (its `created_utc`, "2026-10-14 13:30 UTC"), in ms; NaN when it can't be read. Pure. */
@@ -4600,7 +4601,8 @@ function earlyWaveCheck_(ctx) {
   const now = ctx.now();
   const props = PropertiesService.getScriptProperties();
   const last = Number(props.getProperty(ED_AT_PROP_)) || 0;
-  if (last && now >= last && now - last < EW_EVERY_MS_) return null;
+  // the open engine (row 51, step S6): every 5 minutes, paced by the day's run time (openCheckMs_); OFF: 15, as before
+  if (last && now >= last && now - last < (typeof openCheckMs_ === 'function' ? openCheckMs_() : EW_EVERY_MS_)) return null;
   // the open engine (row 51): with the day's run time or outside calls nearly used, no check (Burson's reserve)
   if (typeof openCheckHeld_ === 'function' && openCheckHeld_()) {
     edCheckSkipped_(ctx, 'pace');

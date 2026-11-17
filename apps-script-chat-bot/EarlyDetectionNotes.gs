@@ -234,9 +234,10 @@ function edCheckSkipped_(ctx, cause) {
     const props = PropertiesService.getScriptProperties();
     const now = ctx && typeof ctx.now === 'function' ? ctx.now() : Date.now();
     const last = Number(props.getProperty(ED_AT_PROP_)) || 0;
-    if (last && now >= last && now - last < EW_EVERY_MS_) return false;  // no check was due
+    const every = typeof openCheckMs_ === 'function' ? openCheckMs_() : EW_EVERY_MS_;
+    if (last && now >= last && now - last < every) return false;  // no check was due
     const told = Number(props.getProperty(ED_SKIP_PROP_)) || 0;
-    if (told && now >= told && now - told < EW_EVERY_MS_) return false;  // said once for this check
+    if (told && now >= told && now - told < every) return false;  // said once for this check
     const why = {
       busy: 'Burson\'s alerts were waiting (the check runs again next minute)',
       guard: 'too many outside calls in the last hour, so ApiGuard held background work (the check runs again next minute)',
