@@ -134,9 +134,10 @@ const CONTROL_HELP_ = [
     'right away, and Burson is told when it isn\'t found).',
   '• Direct BigQuery alerts: the bot also reviews qualifying Sprinklr, DSD / Brandwatch and Sonar posts straight from BigQuery, ' +
     'never one it has already seen (in a test feed, the Mirror space, or the Auto-correct space when it works alone; never ' +
-    'the live Burson space). A post that already had an alert, or is on a story already alerted, gets no card of its own: ' +
+    'the live Burson space). A post that already had an alert gets no card of its own, nor does one on a story already ' +
+    'alerted (in the Auto-correct space, unless it has 2,000+ engagements and the earlier alerts on it had fewer): ' +
     'C15 counts those, beside the day\'s cards and how many of them got a Social Alert. In the Auto-correct space working ' +
-    'alone, Early detection goes first in a run, and this check still runs at least every 10 minutes.',
+    'alone, Early detection goes first in a run, and this check still runs about every 10 to 15 minutes.',
   '• Write back to SLRR BigQuery: finalized alerts and sends are written to the shared SLRR BigQuery tables, where ' +
     'other teams and dashboards see them. Keep it OFF while testing.',
   '• Learn from IM calls: alerts where the IMs and the bot made different calls are kept on the Learned precedents ' +
@@ -148,7 +149,8 @@ const CONTROL_HELP_ = [
     'approved BigQuery source tables (Sonar\'s posts and Sprinklr\'s comments as they arrive; Brandwatch and Tubular later, ' +
     'only to add to a story), groups the posts that say the same thing into stories itself, and picks a story once ' +
     'several different accounts tell it, or when the accounts on a topic jump well above the usual. A story gets a card only ' +
-    'after Gemini reviews it. Each one that passes its review goes out as ' +
+    'after Gemini is asked to review it (an ordinary story whose review fails gets a "needs a human look" card). ' +
+    'Each one that passes its review goes out as ' +
     'the bot\'s own alert card (its first line says EARLY DETECTION, or UPDATE when it adds to a story already alerted) ' +
     'in the Mirror space or test feed, or in the Auto-correct space (B10) when it works alone (never S-F Burson); there ' +
     'is no separate wave message. The bot marks its emojis, and drafts a Social Alert, Temp Check query, or T&S intake ' +

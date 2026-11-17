@@ -67,7 +67,7 @@ sheet, and its link is in the bot's first message in the analyst space. You don'
 | **Other alerts space** (B33) | Optional. A Google-only space with other alerts (a campaign space, say) the bot works every minute beside the Mirror space, always in Testing (see "Other alerts space (B33)" below). C33 shows how it's doing | You |
 | **Fast triage bars** (B41:B45, B47) | The six hold-back and early-watch bars for rows 39 and 40 (seeds `0.10`, `0.90`, `0.55`, `0.80`, `3`, and `0.30` in B47; blank or invalid uses its seed). Column C shows what the bot is using | You |
 | **How it works** (from A49) | A plain-language guide to all of the above | `setup()` and the bot |
-| **Watches**, **Watch detections** and **Watch sources** tabs | Only with Proactive watch ON (row 34): what to look for (one watch a row, each ON / OFF), what the watches would have flagged (with its source and a scorecard against Burson's alerts), and which sources are live or stale (see "Proactive watch (row 34)" below) | You edit the watches and rate the rows; the bot writes the rest |
+| **Watches**, **Watch detections** and **Watch sources** tabs | Only with Proactive watch ON (row 34): what to look for (one watch a row, each ON / OFF), what the watches would have flagged (with its source and a scorecard against Burson's alerts), and which sources are live, stale or failing (see "Proactive watch (row 34)" below) | You edit the watches and rate the rows; the bot writes the rest |
 | **Follow-up** tab | Only with Track post-alert outcomes ON (row 21): what came of the bot's Social Alerts, which teams replied, each alert's status and next step, and editable P0/P1/P2 reply deadlines in B5:B7 | The bot updates it; you can edit B5:B7 |
 | **Burson outbox** tab | Only with Post in S-F Burson ON (row 24) while LIVE: what the bot or the Relay would post in S-F Burson, each row waiting for you to set it to Send or Skip | The bot adds rows; you set Status |
 | **Early Detection** tab | Only with Early wave & velocity check ON (row 19): every story it found and what became of each, one row each (see "The Early Detection tab" below) | The bot writes it; you can sort its rows |
@@ -320,7 +320,7 @@ like one is ever relayed or queued for S-F Burson (see row 22).
 | `🔗 *Part of a story:* 5 small accounts on X and Reddit tell it (story card)` | Early Detection, the Direct BigQuery poll and the Watch | Another alert's card that sent no Social Alert, when a story card is posted for its post; a new Direct BigQuery card whose post is in a story card of the last 24 hours (posted with 45 seconds of the run left; a card that missed it gets it at a later check within its first hour); a Watch alert whose post's only card is a story card that sent no Social Alert. "story card" is a link to the story's card |
 | `🔭 *Also flagged by the watch “Midterms 2026 × Google”.* No separate Watch alert: this card already covers the post.` | The Watch | A card that already covers the post the watch flagged (Burson's corrected alert, a Direct BigQuery card, a story card that sent its Social Alert, another Watch alert). Once a card: up to 3 watch names when they flag the post in the same run. When the card is only minutes old and not yet in the Alert log, the flag waits a run for it |
 | `🔗 *Same story: 2 more posts*` | The Watch | Its own Watch alert, for each later post on the alert's story (at most 6 such replies a run; the rest wait for the next run) |
-| `*Alert requirements, final:* …` | The review | The alert whose Social Alert went another way than its `Alert requirements` line said (Burson resends it with a higher engagement level after its Social Alert was decided, say) |
+| `*Alert requirements, final:* …` | The review | The alert where what was done differs from what its `Alert requirements` line said, or where the line in its thread is an earlier attempt's and says otherwise |
 
 A story card's review note (the reply under the card) can also end with `*Related alert:* its main post already has a
 card (QA-1001 · BigQuery · BSIP, 8:08 AM ET)`, linked to that card. It is in the review note, not on the card: the bot
@@ -355,18 +355,20 @@ Alert log keeps the old words). It is never on the card itself, in an email or i
   whose author isn't a KOF, an exclusion, a Sensitive Topic the rules don't count (`its Sensitive Topic (Privacy)
   restates the exposure tag and does not count`). When a T&S form follows, the line ends `No Social Alert; a T&S form
   is asked for below.` (with Auto-submit T&S form ON, `the T&S form is handled below.`; while the alert waits on Burson
-  for a missing link, `a T&S form follows once Burson adds what is missing.`).
+  for a missing link, `a T&S form follows once Burson adds what is missing.`). When a person is to check the alert
+  first, it ends `A person checks it: …` instead of `Monitoring only.`
 - `*Alert requirements:* not met yet (small accounts, no KOF author, no P0 tag). Posted early because 5 accounts tell
   the same story.` (a story or build-up card)
 - `*Alert requirements:* below the Social Alert thresholds (…). A Social Alert goes out anyway on the review's call.`
-  (or `on the watch's call`, for a Watch alert the watch itself sends)
+  (or `on the watch's call`, for a Watch alert the watch itself sends; for a test alert from the Test alert tab:
+  `A Social Alert goes out anyway: a test alert from the Test alert tab always sends one.`)
 
 When the Social Alert then goes another way than the line said, a second short note follows:
 `*Alert requirements, final:* …`. When the review's own note is very long, the text above the line is shortened, so
 the line always shows whole. The line never says "SLRR", and the only number it gives as a requirement is the 2,000
 engagements of the rules (never the 500 or 100 a listening feed collects from). You can ask the bot a question that
-starts `Alert requirements` and ends with a question mark, even from the account the bot runs as: it is answered while
-the line is on. In the Auto-correct space the BSIP card's `[KOF]` line follows the same setting (see "Row 15: Direct
+starts `Alert requirements` and ends with a question mark, even from the account the bot runs as: it is answered,
+with the line on or off. In the Auto-correct space the BSIP card's `[KOF]` line follows the same setting (see "Row 15: Direct
 BigQuery alerts").
 
 ### Other alerts space (B33): another space, beside the Mirror
@@ -845,7 +847,7 @@ started today.
   [legacy code for DSD / Brandwatch] or `BSIP` in the `ingested` column). When Burson then alerts the same post and the bot ❌s it as already alerted, the
   bot's call on Burson's alert is the Social Alert it sent from BigQuery (its email time, 0 minutes when it went out
   before Burson posted, and its reason).
-- **Column C (C15)** reads, for example, `last check 10:15 AM · 6 posts today (3 for a Social Alert, 2 monitoring only)
+- **Column C (C15)** reads, for example, `last check Oct 14, 10:15 AM EDT · 6 posts today (3 for a Social Alert, 2 monitoring only)
   · not posted: 4 already had an alert, 2 on a story already alerted`:
   - `posts today`: the cards the bot posted from BigQuery today. The bracket: of the cards reviewed today, how many got
     a Social Alert and how many didn't (monitoring only). A card is reviewed a minute or so after it is posted, and the
@@ -1043,7 +1045,7 @@ it's watching, the last check and today's updates (the main run's, not the auto-
   setup only to the testers in B30), and about 2 hours of run time over the day. The bot remembers a whole day of story
   keys (in the script properties `EARLY_DETECTION_SEEN`, `EARLY_DETECTION_SEEN_2` and `EARLY_DETECTION_SEEN_IDS`).
 - **Column C (C19)** says what became of the day's stories in one line that adds up, after the row's ON text: `last
-  check 10:15 AM · today: 47 found, 11 cards, 0 under another alert, 12 let go, 19 never reviewed, 5 waiting · the
+  check Oct 14, 10:15 AM EDT · today: 47 found, 11 cards, 0 under another alert, 12 let go, 19 never reviewed, 5 waiting · the
   Early Detection tab lists each one`. Found is always cards + under another alert + let go + never reviewed + waiting.
   - **found**: story signals the bot noticed today, each counted once. The day runs midnight to midnight Eastern; at
     midnight found starts at the number still waiting.
@@ -1732,7 +1734,8 @@ The switches on the Control tab need no YAML and no rebuild; their thresholds ar
 **The seven rollback settings** (under `burson_qa:`, each on by default). Each one turns off one part of what the
 Auto-correct space does, without a code change and without a Control switch. Set it to `false` (or `0` for a number)
 in `config/default_config.yaml`, rebuild `Generated.gs` and push, as above. Turned off, the bot does what it did before
-that part was built: it does not go silent. None of them changes anything outside the Auto-correct space.
+that part was built: it does not go silent. None of them changes what the bot posts, queues or emails outside the
+Auto-correct space (the Early Detection tab lists every space's stories, so `early_detection_tab` turns it off for all).
 
 | Setting | Default | What it switches | Turned off (`false` or `0`) gives back |
 |---|---|---|---|
@@ -1742,7 +1745,7 @@ that part was built: it does not go silent. None of them changes anything outsid
 | `early_wave_topic_min_ratio` | `3` | A topic only busier than usual (a head count under 3 times its usual) that isn't serious is noted, not reviewed (only while the hourly rule is on) | `0`: such topic counts are queued and reviewed, as before |
 | `early_detection_tab` | `true` | The Early Detection tab, and C19's pointer to it | No tab is made, read or written; nothing waits; C19 has no pointer |
 | `cross_alert_notes` | `true` | Three lanes' notes under another alert's card: Early Detection's (a story on a carded post or repeating an alert), the Watch's (`Also flagged by the watch`, and its `Same story` reply as a note under its alert's card) and the Direct BigQuery poll's (`Part of a story` under a card whose post is in a story); a story on a post whose card sent no Social Alert reviewed rather than skipped; one issue, one Social Alert email; and a bigger post (2,000+ engagements) on an issue already alerted getting its own card | No such notes; the `Same story` reply goes in the thread as it used to; a story on a post another alert covers is skipped (now counted: `Its main post already has an alert`); a story and a post's own card send two emails; no extra card for a bigger post |
-| `requirement_line` | `true` | The `Alert requirements` line in the note after each review (and its `final` form), the owner's `Alert requirements …?` question answered from the account the bot runs as, and the BSIP card's `[KOF]: Yes (<list>)` line (which can start a Social Alert at any size) | No such line, every note as before (an alert with nothing changed gets no note); such a question from the bot's account is taken for its own and not answered; the BSIP card's `[KOF]` line says `No` again |
+| `requirement_line` | `true` | The `Alert requirements` line in the note after each review (and its `final` form), and the BSIP card's `[KOF]: Yes (<list>)` line (which can start a Social Alert at any size) | No such line, every note as before (an alert with nothing changed gets no note); an `Alert requirements …?` question from the bot's account is answered either way; the BSIP card's `[KOF]` line says `No` again |
 
 C15, C19 (its new line), C34, C35 and the Watch sources tab's new words have no setting: they post nothing.
 
@@ -1758,7 +1761,11 @@ C15, C19 (its new line), C34, C35 and the Watch sources tab's new words have no 
   requirements` line show with the next alerts reviewed in the Auto-correct space.
 - **Run `setup()` once** for the new "How it works" lines: the help is written only by `setup()` (and when the bot adds
   a row to an older Control tab). `setup()` is safe to run again: nothing is posted twice, and the Control tab keeps what
-  people set.
+  people set. In the one-space setup (B3 or B4 blank), `setup()`'s result and Status (B5) say that the Burson space or
+  the analyst space (whichever is blank, or both) is blank, C3 or C4 says `✗ check this link`, and Today (B7) is
+  cleared. Ignore this and leave B3 and B4 as they are (filling both in ends the one-space setup): the next run, within
+  a minute, puts Status back to Working, C3 back to `— not used (working in Auto-correct space, B10)` and C4 back to
+  blank. The new "How it works" lines are already written by then.
 
 ## What only a live run can show
 
