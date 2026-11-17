@@ -193,7 +193,8 @@ function edNote_(ctx, row, outcome, why, extra) {
  * Notes what a queued signal's turn ended in, right after it left the queue (EarlyDetection.gs edDrainQueue_). `row`:
  * its stored row (null when it was gone: never reviewed); `res`: what edReviewAndPost_ returned: a card (which kind the
  * call says; an update goes on record with the earlier card it went under and what is new), a review that found the
- * posts not English or the issue already alerted, a dismissal, or a card Chat gave no message for. Never throws.
+ * posts not English or the issue already alerted (added under that alert's card when a note about the story was put
+ * there: `res.under`), a dismissal, or a card Chat gave no message for. Never throws.
  */
 function edNoteReviewed_(ctx, entry, row, res) {
   if (!row || !res) return edNote_(ctx, row || edEntryRow_(entry), ED_OUT_.never, edNeverWhy_('lost'), { waited: true });
@@ -213,6 +214,9 @@ function edNoteReviewed_(ctx, entry, row, res) {
   if (res.held && call.basis === 'non_english') {
     const lang = (/^non-English signal \(([^)]+)\)/.exec(String(res.held)) || [])[1] || '';
     return edNote_(ctx, row, ED_OUT_.notEnglish, `The posts are not in English${lang ? ` (${lang})` : ''}`, x);
+  }
+  if (res.held && res.under) {  // a repeat of an alert that went out, added under that alert's card (EarlyDetectionCross.gs edRepeatNote_)
+    return edNote_(ctx, row, ED_OUT_.under, res.under.why, Object.assign(x, { card: res.under.card }));
   }
   if (res.held) {
     return edNote_(ctx, row, ED_OUT_.repeat,

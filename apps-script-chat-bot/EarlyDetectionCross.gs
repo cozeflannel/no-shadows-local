@@ -238,3 +238,86 @@ function edWithSharedPost_(ctx, earlier, key, history, now) {
     return earlier;
   }
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// A story that repeats an alert is shown under that alert (edCrossOn_: the Auto-correct flow, setting
+// cross_alert_notes). A story whose review ends as a repeat of an alert that went out as a Social Alert (EarlyDetection.gs
+// edDecide_, basis 'repeat': one of its posts already went out, or its issue did, as the known issues or the alert
+// memory say) gets no card and no email. So that the story is seen where the alert is, one note goes under that
+// alert's card: the note a story whose MAIN post is alerted gets (edCrossNoteText_, under edCrossNote_'s key family,
+// through the one helper, under its caps). The story then ends "Added under another alert's card"; when the note could
+// not be posted it ends as before ("Seen before, nothing new").
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * The earlier alert a story's review found it repeats (edDecide_, basis 'repeat'; `esc`: the escalation the repeat was
+ * judged with; `shared`: edSharedPostAlert_'s entry when that is what made it a repeat), as {id (its alert id), row (its
+ * row, when the deciding code has one), alerted (the deciding code says it went out as a Social Alert), by ('post': one
+ * of the story's posts; 'issue': its issue)}: the shared post's alert, else the follow-up's earlier alert, else the
+ * known issue's latest alert, else the alert the memory holds it against; null when that one has no alert id, and
+ * always outside edCrossOn_ (nothing is looked at there). Never throws.
+ */
+function edRepeatOf_(ctx, review, esc, shared) {
+  try {
+    if (!edCrossOn_(ctx) || !review) return null;
+    const of = (id, row, alerted, by) => (id ? { id: String(id), row: row || null, alerted: !!alerted, by } : null);
+    if (shared) return of(shared.alert_id || (shared.row && shared.row.alert_id), shared.row, shared.outcome === 'alerted', 'post');
+    if (followUpSkip_(review, esc)) {
+      const o = (review.followUp && review.followUp.original) || {};
+      return of(o.alert_id || (o.row && o.row.alert_id), o.row, o.outcome === 'alerted', o.same_post ? 'post' : 'issue');
+    }
+    if (typeof knownIssueSkip_ === 'function' && knownIssueSkip_(review, esc)) {
+      const e = (review.knownIssue && review.knownIssue.entry) || {};
+      return of(e.alert_id || (e.row && e.row.alert_id), e.row, false, 'issue');
+    }
+    if (typeof memorySkip_ === 'function' && memorySkip_(review, esc)) {
+      const v = (review.memory && review.memory.verdict) || {};
+      return of(v.ref, null, false, v.kind === 'post' ? 'post' : 'issue');
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * After a story's review ended as a repeat of `of` (edRepeatOf_; `row`: the story's queued row): one note under that
+ * alert's card, when its Alert-log row is in this flow's Alert log (ctx.store.alerts) with its card in the space, it is
+ * not a story card itself, and it went out as a Social Alert; never for a pace jump on a topic or risk words (its posts
+ * are only a sample: no note, as edCrossOf_ gives it none). The note and key are edCrossNote_'s, so a story adds a note
+ * under one card once per signal; with the note posted, the story's keys are marked with its accounts as edCrossNote_'s
+ * caller marks them (never lowering a bigger mark), so only a story with twice the accounts (and 3 more) comes back for
+ * another. {card: {id, message}, why} for the record when the note is there; null otherwise (nothing posted: the story
+ * ends as before). Never throws.
+ */
+function edRepeatNote_(ctx, row, of, now) {
+  try {
+    if (!of || !of.id || !row || !edCrossOn_(ctx) || edSampleOnly_(row)) return null;
+    const other = ((ctx.store && ctx.store.alerts) || [])
+      .filter(a => a && String(a.alert_id || '') === of.id && a.forward_message && a.forward_thread && !a.resend_of)
+      .sort((a, b) => (Number(b.created_at) || 0) - (Number(a.created_at) || 0))[0];
+    if (!other || other.ingested === ED_ALERT_INGESTED_) return null;
+    if (!of.alerted && earlierOutcome_(other, now) !== 'alerted') return null;
+    if (!acThreadNote_(ctx, other, edCrossNoteText_(row), `story:${other.alert_id}:${edNoteKey_(row)}`)) return null;
+    try {
+      const seen = earlyWaveSeen_(PropertiesService.getScriptProperties(), now);
+      const au = ewCount_(row.unique_low_tier_authors);
+      edRowKeys_(row).forEach(k => {
+        if (k.indexOf('id:') === 0) return seen.add(k, now);
+        const had = seen.authors([k]);
+        if (had === null || had < au) seen.add(k, now, au);
+      });
+      seen.save();
+    } catch (e) {
+      console.warn('early detection: couldn\'t mark a story added under another alert\'s card: ' + ((e && e.message) || e));
+    }
+    const words = edAlertWords_(other, now);
+    return {
+      card: edAlertCard_(other),
+      why: of.by === 'post' ? `One of its posts already had a Social Alert, ${words}, and the story was added under its card`
+        : `Its issue already had a Social Alert, ${words}, and the story was added under its card`,
+    };
+  } catch (e) {
+    return null;
+  }
+}

@@ -584,7 +584,7 @@ function edDecide_(ctx, parsed, rev, llm, history, now) {
   const repeat = followUpSkip_(review, baseEsc) ||
     (typeof knownIssueSkip_ === 'function' ? knownIssueSkip_(review, baseEsc) : '') ||
     (typeof memorySkip_ === 'function' ? memorySkip_(review, baseEsc) : '');
-  if (repeat) return fin({ disposition: 'dismiss', basis: 'repeat', why: repeat });
+  if (repeat) return fin({ disposition: 'dismiss', basis: 'repeat', why: repeat, repeatOf: edRepeatOf_(ctx, review, baseEsc, null) });
 
   const p0Confirmed = !!(rev.slrr && rev.slrr.is && rev.slrr.priority === 'P0' && rev.slrr.confidence >= ED_SLRR_TAG_MIN_CONFIDENCE_ &&
     rev.disposition !== 'dismiss');
@@ -603,7 +603,10 @@ function edDecide_(ctx, parsed, rev, llm, history, now) {
     const escRepeat = (shared && sharedSkip ? `one of its posts was already alerted (${shared.alert_id || shared.url || 'an earlier alert'})` : sharedSkip) ||
       (typeof knownIssueSkip_ === 'function' ? knownIssueSkip_(review, built.esc) : '') ||
       (typeof memorySkip_ === 'function' ? memorySkip_(review, built.esc) : '');
-    if (escRepeat) return fin({ disposition: 'dismiss', basis: 'repeat', why: escRepeat });
+    if (escRepeat) {
+      return fin({ disposition: 'dismiss', basis: 'repeat', why: escRepeat,
+        repeatOf: edRepeatOf_(ctx, review, built.esc, shared && sharedSkip ? shared : null) });
+    }
     return fin({
       disposition: 'escalate',
       basis: p0Confirmed && rev.disposition !== 'escalate' ? 'p0_tag' : 'early_detection',
@@ -1758,7 +1761,9 @@ function edDismissed_(d) {
  * the review's call), logged (the card's Alert-log id), updated (true when posted in an earlier card's thread)}. For
  * the record of what became of the signal (EarlyDetectionNotes.gs), the call also says the review's headline (`title`),
  * its reason in plain words (`reason`) and the tag its card shows (`tag`), and an update comes with `earlier`: the card
- * it went under ({id, message}) and what is new (`news`).
+ * it went under ({id, message}) and what is new (`news`). A repeat of an alert that went out comes with `under` ({card,
+ * why}) when a note about the story was put under that alert's card (EarlyDetectionCross.gs edRepeatNote_: the
+ * Auto-correct flow, setting cross_alert_notes).
  */
 function edReviewAndPost_(ctx, row, report) {
   const now = ctx.now();
@@ -1798,7 +1803,10 @@ function edReviewAndPost_(ctx, row, report) {
     const why = d.why || 'already alerted';
     ctx.log(`early detection: held back "${truncate_(ewText_(named), 90)}" after its review: ${truncate_(why, 240)}`);
     if (report) report.early_detection_held = (report.early_detection_held || 0) + 1;
-    return { card: null, held: why, dismissed: '', call };
+    // a repeat of an alert that went out (the Auto-correct flow, setting cross_alert_notes): one note under that
+    // alert's card, so the story is seen where the alert is (EarlyDetectionCross.gs edRepeatNote_)
+    const under = d.basis === 'repeat' && d.repeatOf ? edRepeatNote_(ctx, row, d.repeatOf, now) : null;
+    return under ? { card: null, held: why, dismissed: '', call, under } : { card: null, held: why, dismissed: '', call };
   }
   // A dismissal is filtered out: nothing of it gets through (no card, note, mark, Social Alert or T&S intake); its
   // reason is logged and C19 counts it
