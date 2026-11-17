@@ -136,6 +136,18 @@ burson_qa:
   amie_max_gb: 1                        # one read may scan this many gigabytes at most (checked by a dry run each day); more: not read that day
   amie_stale_hours: 3                   # no new row in the table for this many hours is said in the row's note (the read goes on)
   amie_staff_feeds_rx: 'kof|kol|\binfs?\b|exec|googler|reps|posts by google'  # alert feeds of Google's staff and KOFs: their posts and authors are left out
+  # Brandwatch read live for Early Detection (Control row 49, OFF until the owner turns it on): new mentions, never X,
+  # from the queries ticked Read = ON on the New sources tab. None of these does anything while row 49 is OFF.
+  bw_live_project_id: 1998344909        # the Brandwatch project read ("[SLRR] Private", the bot's project)
+  bw_live_sources: [reddit, bluesky, facebook, facebook_public, instagram, instagram_public, tiktok, youtube, threads, tumblr, forum]  # the sources asked for (X and LinkedIn are refused whatever this says)
+  bw_live_queries_max: 20               # ticked queries read at most (the first by row); one call reads them all
+  bw_live_page_size: 300                # mentions a page
+  bw_live_parcel_max: 300               # mentions handed to Early Detection a read at most
+  bw_live_every_minutes: 10             # the least time between two reads
+  bw_live_first_minutes: 30             # the first read after the row goes ON reads this far back (no backfill)
+  bw_live_calls_per_10min: 20           # this reader's own calls in any 10 minutes at most (Brandwatch allows the shared login 600)
+  bw_live_pause_at_used: 450            # no read for 10 minutes once the shared login has used this many of its 600 calls in 10 minutes
+  bw_live_source_type_new: true         # ask for new mentions only (backfilled ones left out)
   # What the Resources tab of the bot's sheet starts with. After that the tab is what the bot uses: edit it there.
   # The bot links these when Burson asks about the alert requirements, so only list documents Burson can open.
   resources:

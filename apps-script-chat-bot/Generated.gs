@@ -75,6 +75,28 @@ const GEN = {
   "amie_max_gb": 1.0,
   "amie_stale_hours": 3.0,
   "amie_staff_feeds_rx": "kof|kol|\\binfs?\\b|exec|googler|reps|posts by google",
+  "bw_live_project_id": 1998344909,
+  "bw_live_sources": [
+   "reddit",
+   "bluesky",
+   "facebook",
+   "facebook_public",
+   "instagram",
+   "instagram_public",
+   "tiktok",
+   "youtube",
+   "threads",
+   "tumblr",
+   "forum"
+  ],
+  "bw_live_queries_max": 20,
+  "bw_live_page_size": 300,
+  "bw_live_parcel_max": 300,
+  "bw_live_every_minutes": 10,
+  "bw_live_first_minutes": 30,
+  "bw_live_calls_per_10min": 20,
+  "bw_live_pause_at_used": 450,
+  "bw_live_source_type_new": true,
   "resources": [
    {
     "name": "SLRR Collection Requirements",

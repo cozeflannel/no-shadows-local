@@ -17,7 +17,15 @@ one line under it: what was built, the suite's count, and anything left out with
 ## To do, in this order
 
 ### New sources (plan 1; briefs 1 to 5 in STEP_NOTES.md)
-- [ ] **2a** The Brandwatch reader
+- [x] **2a** The Brandwatch reader
+      Built `BrandwatchLive.gs` (entry point `bwLiveRun_`, the parcel's three functions for 2b, `bwLiveOff_`, row 49's
+      words in `bwlNote_`), the query list with the owner's ticks and Brandwatch's row on the New sources tab
+      (`NewSources.gs`), ten `bw_live_*` settings, the fake `test/fake_brandwatch.js` and 14 tests in
+      `test/switch_bw_live.test.js`. Suite: 1,205 of 1,205 passed. Choices where the plan was silent: the first read sets
+      `taken` to where it starts (so a lost first parcel is read again); the overlap's ids are kept with the parcel and
+      count only once it is handed over; a parcel of 300 mentions with 1,500 characters of words can be larger than 6
+      cache items, so the read then hands over fewer and the next read starts after the last one handed over; Brandwatch
+      down or slow (5xx, no answer) is tried again at the next read, any other refusal waits an hour.
 - [ ] **2b** Control row 49 and the wiring into Early Detection
 - [ ] **2c** One count of every Brandwatch mention; C19's warning when a new source fails
 - [ ] **3a** Every post of a carded story is claimed
@@ -64,4 +72,7 @@ one line under it: what was built, the suite's count, and anything left out with
 
 ## What only a live run can prove
 
-(add to this list as you build)
+- Brandwatch: that it honours "added since", oldest-first order, the list of sources, `language=en`, reposts out and
+  new mentions only in one request; the real names and form of the shared login's call-count headers; the shape of
+  `/metrics`' list of sources; how long after posting it adds a mention; whether Reddit mentions come with their words.
+- That a parcel of full-length mentions fits the script cache as measured in the harness (6 items of 90,000 characters).

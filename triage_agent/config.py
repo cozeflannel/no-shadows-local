@@ -664,6 +664,23 @@ class BursonQAConfig(ConfigModel):
     amie_max_gb: float = 1
     amie_stale_hours: float = 3
     amie_staff_feeds_rx: str = r"kof|kol|\binfs?\b|exec|googler|reps|posts by google"
+    # Brandwatch read live for Early Detection (Control row 49, OFF until the owner turns it on): new mentions, never X,
+    # from the queries ticked on the New sources tab. None of these does anything while row 49 is OFF. The project read;
+    # the sources asked for (X and LinkedIn are refused in code whatever this says); ticked queries read at most; mentions
+    # a page and handed over a read; the least minutes between reads; how far back the first read goes; this reader's
+    # own calls in 10 minutes; the shared login's calls used at which it pauses; and new mentions only.
+    bw_live_project_id: int = 1998344909
+    bw_live_sources: list[str] = Field(default_factory=lambda: [
+        "reddit", "bluesky", "facebook", "facebook_public", "instagram", "instagram_public", "tiktok", "youtube",
+        "threads", "tumblr", "forum"])
+    bw_live_queries_max: int = 20
+    bw_live_page_size: int = 300
+    bw_live_parcel_max: int = 300
+    bw_live_every_minutes: int = 10
+    bw_live_first_minutes: int = 30
+    bw_live_calls_per_10min: int = 20
+    bw_live_pause_at_used: int = 450
+    bw_live_source_type_new: bool = True
     # What the Resources tab of the bot's sheet starts with: documents the bot links when Burson asks about the alert
     # requirements. After that the tab is what the bot uses (people edit it there). Only links Burson can open.
     resources: list[BursonResource] = Field(default_factory=list)

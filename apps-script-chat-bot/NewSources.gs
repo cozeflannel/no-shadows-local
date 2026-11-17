@@ -34,6 +34,11 @@ const NSRC_HEADER_ = ['Source', 'Status', 'Last read (ET)',
   'Stories today: with its post / started by it / lifted only by it (sent / noted)',
   'Brandwatch today: calls / mentions / ceiling / all features', 'AMIE table: newest row / table last changed / a read scans'];
 const NSRC_LIFT_HEADER_ = ['Time (ET)', 'Headline', 'Accounts', 'Links', 'What happened', 'Sources'];
+// Brandwatch's queries (row 49): the owner sets Read to ON for the ones Early Detection reads; the bot writes OFF for a
+// new query and never sets ON. The id column ties each tick to its query, whatever the rows' order
+const NSRC_QUERY_TITLE_ = 'Brandwatch\'s queries: set Read to ON for the ones Early Detection reads (at most 20, the first by row). ' +
+  'The bot writes OFF for a new query and never sets ON';
+const NSRC_QUERY_HEADER_ = ['Read', 'Query', 'Collects', 'Languages', 'Suggested', 'Mentions today', 'Posts used today', 'Query id'];
 const NSRC_SOURCE_NAMES_ = { ami: 'The AMIE table (Brandwatch\'s alert feeds, X with its words)', bwl: 'Brandwatch live (not X)' };
 const NSRC_SHORT_NAMES_ = { ami: 'the AMIE table', bwl: 'Brandwatch live' };
 // how long after posting a post was first seen, by the day record's buckets (EarlyWaveSource.gs ewsNewBucket_)
@@ -338,19 +343,27 @@ function nsrcTrialWords_() {
  * today. `trial`: true while a source is in its trial (nsrcTrial_), the only time the list's title speaks of one. Pure
  * (but for the time zone).
  */
-function nsrcRows_(sources, lifted, calls, now, trial) {
+function nsrcRows_(sources, lifted, calls, now, trial, extra) {
   const width = NSRC_HEADER_.length;
   const pad = r => r.concat(Array(Math.max(0, width - r.length)).fill('')).slice(0, width);
+  const bw = extra && typeof extra === 'object' ? extra : null;
   const rows = [
     pad([NSRC_TITLE_]),
-    pad([`Calls today: ${nsrcNum_(calls)} to BigQuery for the AMIE table (its reads, table checks and dry runs) · written ` +
+    pad([`Calls today: ${nsrcNum_(calls)} to BigQuery for the AMIE table (its reads, table checks and dry runs)` +
+      (bw ? ` · ${nsrcNum_(bw.bwCalls)} to Brandwatch for Brandwatch live` : '') + ` · written ` +
       `${nsrcStamp_(now)} ET · "today" is the day in UTC, which starts at 7 or 8 PM ET · — means it ` +
       'does not apply to that source']),
     pad(NSRC_HEADER_.slice()),
   ];
   for (let i = 0; i < NSRC_SOURCE_ROWS_; i++) rows.push(pad(sources[i] || []));
   rows.push(pad([]));
-  // (a later step puts Brandwatch's query list here, from row NSRC_QUERY_ROW_, and the lifted stories after it)
+  // Brandwatch's query list (row 49 ON), from row NSRC_QUERY_ROW_, then a blank row; the lifted stories after it
+  if (bw) {
+    rows.push(pad([NSRC_QUERY_TITLE_]));
+    rows.push(pad(NSRC_QUERY_HEADER_.slice()));
+    (bw.queries || []).forEach(q => rows.push(pad(q)));
+    rows.push(pad([]));
+  }
   const list = (lifted || []).slice().reverse();
   rows.push(pad([`Stories only the new sources lifted over the bar, newest first (${list.length}` +
     (trial ? `; in a source's ${nsrcTrialWords_()} they are noted here, not sent for review)` : ')')]));
@@ -427,9 +440,11 @@ function nsrcAfterCheck_(props, st, nx, now, read) {
         st.nsf = st.nsf || now;
       } else if (tab && tab.sh) {
         delete st.nsf;
-        const rows = nsrcRows_([nsrcAmiRow_(status, d, now, false, Number(amiq.lr) || 0)], ewsLiftedStories_(), d.calls, now,
-          !!nsrcTrial_(rec, 'ami', day));
+        const bw = nx.sources.indexOf('bwl') >= 0 ? nsrcBwlExtra_(tab.sh, null, now) : null;
+        const rows = nsrcRows_([nsrcAmiRow_(status, d, now, false, Number(amiq.lr) || 0)].concat(bw ? [bw.row] : []),
+          ewsLiftedStories_(), d.calls, now, !!nsrcTrial_(rec, 'ami', day) || !!(bw && nsrcTrial_(rec, 'bwl', day)), bw);
         nsrcWrite_(tab.sh, rows);
+        if (bw) nsrcQueryDropdown_(tab.sh, bw.queries.length);
       }
     }
     noteSwitch_('edAmie', nsrcAmiNote_({ status, day: d, trial: nsrcTrial_(rec, 'ami', day), now, foreign: !!st.nsf }));
@@ -448,4 +463,137 @@ function nsrcWaiting_(key) {
     const notes = JSON.parse(PropertiesService.getScriptProperties().getProperty(SWITCH_NOTES_PROP_) || '{}') || {};
     if (notes[key] && notes[key].text) noteSwitch_(key, '');
   } catch (e) { /* the note ages out within a day */ }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Brandwatch live (row 49): its row, its query list and the owner's ticks
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * The query list as the tab has it now: {rows: [{id, read ('ON' | 'OFF')}] in row order} from the section under
+ * NSRC_QUERY_TITLE_ (row NSRC_QUERY_ROW_), or null when the tab has no such section. Reads only the bot's own tab.
+ * Never throws.
+ */
+function nsrcQuerySection_(sh) {
+  try {
+    const last = sh.getLastRow();
+    if (last < NSRC_QUERY_ROW_ + 1) return null;
+    const vals = sh.getRange(NSRC_QUERY_ROW_, 1, last - NSRC_QUERY_ROW_ + 1, NSRC_QUERY_HEADER_.length).getDisplayValues();
+    if (String(vals[0][0]).trim() !== NSRC_QUERY_TITLE_ || String(vals[1][0]).trim() !== NSRC_QUERY_HEADER_[0]) return null;
+    const rows = [];
+    for (let i = 2; i < vals.length; i++) {
+      const id = String(vals[i][NSRC_QUERY_HEADER_.length - 1] || '').replace(/^'/, '').trim();
+      if (!id) break;
+      rows.push({ id, read: /^\s*on\s*$/i.test(String(vals[i][0] || '')) ? 'ON' : 'OFF' });
+    }
+    return { rows };
+  } catch (e) {
+    return null;
+  }
+}
+
+/** "yes" when a query's name looks like one of Google's product queries (EWS_GOOGLE_CONFIG_RX_, or an old Google feed). Pure. */
+function nsrcSuggested_(name) {
+  const n = String(name || '').trim().toLowerCase();
+  return new RegExp(EWS_GOOGLE_CONFIG_RX_).test(n) || new RegExp(EWS_AMI_GOOGLE_FEEDS_RX_).test(n) ? 'yes' : '';
+}
+
+/**
+ * The query rows to write (NSRC_QUERY_HEADER_), from the project's queries (`list`, bwlQueries_'s; when empty, the ids
+ * the tab already lists) and the ticks the tab holds now (`have`: nsrcQuerySection_), each tick kept as it is and a new
+ * query OFF, in the tab's order with new queries after. `day`: BWL_DAY (today's counts by query). Pure.
+ */
+function nsrcQueryRows_(list, have, day) {
+  const ticks = {};
+  const order = [];
+  ((have && have.rows) || []).forEach(r => { ticks[r.id] = r.read; order.push(r.id); });
+  const byId = {};
+  (Array.isArray(list) ? list : []).forEach(q => { byId[String(q.id)] = q; });
+  const ids = Object.keys(byId).length
+    ? order.filter(id => byId[id]).concat(Object.keys(byId).filter(id => order.indexOf(id) < 0))
+    : order;
+  const q = (day && day.q) || {};
+  return ids.map(id => {
+    const x = byId[id] || { id, name: '', contentSources: [], languages: [] };
+    const c = Array.isArray(q[id]) ? q[id] : [0, 0];
+    return [ticks[id] === 'ON' ? 'ON' : 'OFF', nsrcScrub_(x.name), (x.contentSources || []).join(', '),
+      (x.languages || []).join(', '), nsrcSuggested_(x.name), nsrcNum_(c[0]), nsrcNum_(c[1]), String(id)];
+  });
+}
+
+/**
+ * The tab's Brandwatch part for a write: {row (nsrcBwlRow_), queries (nsrcQueryRows_), bwCalls}. `list`: the project's
+ * queries, or null to keep the ones the tab lists. Reads BWL_STATE, BWL_DAY and EWS_SRC_DAY. Never throws.
+ */
+function nsrcBwlExtra_(sh, list, now) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const st = bwlState_(props);
+    const day = bwlDay_(props, now);
+    const rec = ewsSrcDay_(props);
+    const stories = nsrcDay_(rec, 'bwl', ewsUtcDay_(now));
+    let kept = list;
+    if (!Array.isArray(kept)) { try { kept = JSON.parse(CacheService.getScriptCache().get(BWL_QUERIES_KEY_) || 'null'); } catch (e) { kept = null; } }
+    return { row: nsrcBwlRow_({ st, day, now, stories }), queries: nsrcQueryRows_(kept, nsrcQuerySection_(sh), day), bwCalls: day.calls };
+  } catch (e) {
+    return { row: [NSRC_SOURCE_NAMES_.bwl], queries: [], bwCalls: 0 };
+  }
+}
+
+/** An ON / OFF list on the Read cells of the query rows. Never throws (the tab works without it). */
+function nsrcQueryDropdown_(sh, n) {
+  if (!(n > 0)) return;
+  try {
+    const rule = SpreadsheetApp.newDataValidation().requireValueInList(['ON', 'OFF'], true).setAllowInvalid(true).build();
+    sh.getRange(NSRC_QUERY_ROW_ + 2, 1, n, 1).setDataValidation(rule);
+  } catch (e) { /* the cells still read ON and OFF */ }
+}
+
+/**
+ * The queries the owner ticked Read = ON, in row order (ids), from the bot's own tab (made when missing): {ticked, foreign}.
+ * A tab named "New sources" that the bot didn't make: foreign, nothing read. `list`: the project's queries (only a
+ * ticked id that is still in it counts; with no list, every ticked id). Never throws (no tab: nothing ticked).
+ */
+function nsrcBwlTicks_(list) {
+  try {
+    const ss = nsrcStore_();
+    if (!ss) return { ticked: [], foreign: false };
+    const tab = nsrcTab_(ss, true);
+    if (tab.foreign) return { ticked: [], foreign: true };
+    const have = nsrcQuerySection_(tab.sh);
+    const known = new Set((Array.isArray(list) ? list : []).map(q => String(q.id)));
+    const ticked = ((have && have.rows) || []).filter(r => r.read === 'ON' && (!known.size || known.has(r.id))).map(r => r.id);
+    return { ticked, foreign: false };
+  } catch (e) {
+    return { ticked: [], foreign: false };
+  }
+}
+
+/**
+ * After a Brandwatch read (or at the first look after row 49 goes ON): the tab with Brandwatch's row and the query list,
+ * keeping the ticks, and the AMIE table's row when row 48 is ON. Never throws.
+ */
+function nsrcBwlQueryRows_(list, day, now) {
+  try {
+    const ss = nsrcStore_();
+    if (!ss) return;
+    const tab = nsrcTab_(ss, true);
+    if (!tab.sh) return;
+    const props = PropertiesService.getScriptProperties();
+    const sw = typeof ewsRunSwitches_ === 'function' ? ewsRunSwitches_() : {};
+    const rec = ewsSrcDay_(props);
+    const utc = ewsUtcDay_(now);
+    let amiRow = [];
+    if (sw.edAmie) {
+      const est = ewsState_(props);
+      amiRow = nsrcAmiRow_(ewsAmiStatus_(now, est), nsrcDay_(rec, 'ami', utc), now, false, Number(((est.marks || {}).amiq || {}).lr) || 0);
+    }
+    const bw = nsrcBwlExtra_(tab.sh, list, now);
+    const rows = nsrcRows_([amiRow, bw.row], ewsLiftedStories_(), nsrcDay_(rec, 'ami', utc).calls, now,
+      !!nsrcTrial_(rec, 'ami', utc) || !!nsrcTrial_(rec, 'bwl', utc), bw);
+    nsrcWrite_(tab.sh, rows);
+    nsrcQueryDropdown_(tab.sh, bw.queries.length);
+  } catch (e) {
+    console.warn(`New sources: couldn't write Brandwatch's part of the ${NSRC_TAB_} tab: ${nsrcScrub_((e && e.message) || e, 200)}`);
+  }
 }
