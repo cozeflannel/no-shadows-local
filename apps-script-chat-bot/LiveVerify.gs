@@ -254,8 +254,9 @@ function verifyEarlyWaveBqLive() {
 // The new sources, live (the plan's stage 0): Brandwatch read live (never X) and the AMIE table, looked at by hand
 // --------------------------------------------------------------------------------------------------------------
 // Stand-ins for what later steps define for the bot itself; each of those steps replaces the NSV_ constant named here
-// with its own (the settings bw_live_project_id, bw_live_sources and bw_live_queries_max of step 2b, the AMIE job's
-// table and column lists of step 1c, the reader's request of step 2a).
+// with its own (the settings bw_live_project_id, bw_live_sources and bw_live_queries_max of step 2b, the reader's
+// request of step 2a). The AMIE table's name, its column lists, the old Google feeds and its settings are the AMIE
+// job's own (EarlyWaveSource.gs EWS_AMI_*, ewsAmiCfg_), read inside the functions below.
 const NSV_BW_PROJECT_ = 1998344909;           // the Brandwatch project the bot reads (PW_BW_PROJECT_; later bw_live_project_id)
 const NSV_BW_SOURCES_ = ['reddit', 'bluesky', 'facebook', 'facebook_public', 'instagram', 'instagram_public', 'tiktok',
   'youtube', 'threads', 'tumblr', 'forum'];   // content sources Brandwatch live would ask for (later bw_live_sources); never X
@@ -268,8 +269,6 @@ const NSV_BW_TEST_PAGE_ = 5;                 // mentions in the test read
 const NSV_BW_DAY_PAGE_ = 500;                // mentions in the read of the last 24 hours
 const NSV_BW_QUERIES_MAX_ = 20;              // query ids a read may carry (later bw_live_queries_max)
 const NSV_BW_EARLY_MS_ = 60 * 1000;          // a mention added more than this before "added since": the filter was ignored
-// The old pipeline's Google feed names (its "Google feeds" list): a query of such a name is suggested too
-const NSV_BW_GOOGLE_FEEDS_RX_ = /^(chrome overall|chrome execs|chrome kofs|slrr kofs chrome mentions|this week in android|google spikes|apac google|all sundar|search|gemini|antigravity|ai digest - google|googlers posting on x|google reps & execs|v2 policy.*)$/;
 // Fields the reader reads on a mention: the first list should be on every mention; the second is reported as it comes
 const NSV_BW_FIELDS_ = ['contentSource', 'guid', 'resourceId', 'url', 'added', 'date', 'language', 'sentiment'];
 const NSV_BW_MAYBE_FIELDS_ = ['pageType', 'threadEntryType'];  // the old name of contentSource; empty on unthreaded mentions
@@ -278,12 +277,6 @@ const NSV_BW_FOLLOWER_FIELDS_ = ['twitterFollowers', 'blueskyFollowers', 'instag
 const NSV_WORDS_MIN_ = 40;                    // characters of text a post needs (the shared length gate)
 const NSV_SLOW_MINUTES_ = 120;                // the gate: a source slower than this from posting to added is left out
 const NSV_SLOW_MIN_COUNT_ = 5;                // mentions with times a source needs before the gate judges it
-const NSV_AMIE_TABLE_ = 'brand-social-central-data.social_alerts_dataset.all_sundar_mentions';  // the AMIE table
-const NSV_AMIE_NEEDED_ = { url: 'STRING', alert_source: 'STRING', snippet: 'STRING', authorHandle: 'STRING',
-  SocialNetwork: 'STRING', Sentiment: 'STRING', postTime: 'TIMESTAMP', ingestionTimestamp: 'TIMESTAMP' };
-const NSV_AMIE_OPTIONAL_ = ['followers', 'KOF', 'product', 'engagement'];
-const NSV_AMIE_MAX_BYTES_ = 1000 * 1000 * 1000;  // 1 GB: the SELECT is sent only when its dry run is under this
-const NSV_AMIE_STALE_MS_ = 3 * 60 * 60 * 1000;   // no new row for this long: the table is stale
 
 /**
  * The new sources, live, read only: run it from the editor before stage 1 or 2 is built or turned ON. `queryIds`
@@ -358,7 +351,7 @@ function verifyNewSourcesLive(queryIds) {
     let schema = null;
     try { schema = nsvAmieSchema_(bqToken, lines, now); } catch (e) { lines.push(`PROBLEM the AMIE table's metadata: ${nsvScrub_(why(e), bwToken)}`); }
     try { nsvAmieRead_(bqToken, lines, schema, now); } catch (e) { lines.push(`PROBLEM the AMIE table's one-day read: ${nsvScrub_(why(e), bwToken)}`); }
-    try { nsvNewJobDryRuns_(bqToken).forEach(l => lines.push(l)); } catch (e) { lines.push(`PROBLEM the new jobs' dry runs: ${nsvScrub_(why(e), bwToken)}`); }
+    try { nsvNewJobDryRuns_(bqToken, schema, now).forEach(l => lines.push(l)); } catch (e) { lines.push(`PROBLEM the new jobs' dry runs: ${nsvScrub_(why(e), bwToken)}`); }
   }
   const head = `Live check of the new sources (read only), ${new Date(now).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
   const list = notes.length ? ['The project\'s Brandwatch queries (id | name | collects | languages | suggested):'].concat(notes) : [];
@@ -442,7 +435,7 @@ function nsvBwQueries_(token, bw, lines, notes) {
     const name = String(q.name).replace(/\s+/g, ' ').trim();
     const low = name.toLowerCase();
     return { id: Number(q.id), name, sources: nsvNames_(q.contentSources), languages: nsvNames_(q.languages),
-      suggested: googleRx.test(low) || NSV_BW_GOOGLE_FEEDS_RX_.test(low) };
+      suggested: googleRx.test(low) || new RegExp(EWS_AMI_GOOGLE_FEEDS_RX_).test(low) };
   });
   const sug = list.filter(q => q.suggested);
   lines.push(`OK Brandwatch project ${NSV_BW_PROJECT_} has ${fmtInt_(list.length)} queries; ${fmtInt_(sug.length)} look like Google's by the plan's rule` +
@@ -683,7 +676,7 @@ function nsvBqRefusal_(what, r) {
  * lists, the partitioning, when it last changed. Returns {cols: {lowercase name: type}} or null when it was not read.
  */
 function nsvAmieSchema_(token, lines, now) {
-  const [project, dataset, table] = NSV_AMIE_TABLE_.split('.');
+  const [project, dataset, table] = EWS_AMI_TABLE_.split('.');
   const r = nsvBq_(token, `${BQ_API_BASE_}${project}/datasets/${dataset}/tables/${table}`);
   if (r.code !== 200 || !r.body || !r.body.schema || !Array.isArray(r.body.schema.fields)) {
     lines.push(r.code === 200 ? 'PROBLEM the AMIE table\'s metadata came without its columns' : nsvBqRefusal_('the AMIE table\'s metadata', r));
@@ -692,13 +685,14 @@ function nsvAmieSchema_(token, lines, now) {
   const cols = {};
   r.body.schema.fields.forEach(f => { cols[String(f.name).toLowerCase()] = (f.mode === 'REPEATED' ? 'REPEATED ' : '') + String(f.type || '').toUpperCase(); });
   const type = c => cols[c.toLowerCase()];
-  const missing = Object.keys(NSV_AMIE_NEEDED_).filter(c => !type(c));
-  const wrong = Object.keys(NSV_AMIE_NEEDED_).filter(c => type(c) && type(c) !== NSV_AMIE_NEEDED_[c]);
+  const missing = Object.keys(EWS_AMI_NEEDED_).filter(c => !type(c));
+  const wrong = Object.keys(EWS_AMI_NEEDED_).filter(c => type(c) && type(c) !== EWS_AMI_NEEDED_[c]);
   if (missing.length) lines.push(`PROBLEM the AMIE table has no column ${missing.map(c => `"${c}"`).join(', ')}, which the plan needs`);
-  wrong.forEach(c => lines.push(`PROBLEM the AMIE table's column "${c}" holds ${nsvTypeWords_(type(c))}, but the plan needs ${nsvTypeWords_(NSV_AMIE_NEEDED_[c])}`));
+  wrong.forEach(c => lines.push(`PROBLEM the AMIE table's column "${c}" holds ${nsvTypeWords_(type(c))}, but the plan needs ${nsvTypeWords_(EWS_AMI_NEEDED_[c])}`));
   if (!missing.length && !wrong.length) lines.push(`OK the AMIE table can be read and has every column the plan needs, of the right type (${r.body.schema.fields.length} columns in all)`);
-  const optMissing = NSV_AMIE_OPTIONAL_.filter(c => !type(c));
-  lines.push(`${optMissing.length ? 'CHECK' : 'OK'} the AMIE table's optional columns: ` + NSV_AMIE_OPTIONAL_.filter(c => type(c))
+  const optional = Object.keys(EWS_AMI_OPTIONAL_);
+  const optMissing = optional.filter(c => !type(c));
+  lines.push(`${optMissing.length ? 'CHECK' : 'OK'} the AMIE table's optional columns: ` + optional.filter(c => type(c))
     .map(c => `${c} (${type(c)})`).concat(optMissing.map(c => `${c} missing (read as empty)`)).join(', '));
   const part = r.body.timePartitioning || null;
   const field = part ? String(part.field || 'the time rows were loaded') : '';
@@ -707,7 +701,7 @@ function nsvAmieSchema_(token, lines, now) {
     : `PROBLEM the AMIE table is ${part ? `partitioned on ${field}, not on ingestionTimestamp` : 'not partitioned by time'}: a read by ingestionTimestamp would scan more than one day`);
   const changed = Number(r.body.lastModifiedTime) || 0;
   lines.push(!changed ? 'CHECK the AMIE table\'s metadata does not say when it last changed'
-    : `${now - changed > NSV_AMIE_STALE_MS_ ? 'CHECK' : 'OK'} the AMIE table last changed ${nsvMinutes_((now - changed) / 60000)} ago ` +
+    : `${now - changed > ewsAmiCfg_().staleMs ? 'CHECK' : 'OK'} the AMIE table last changed ${nsvMinutes_((now - changed) / 60000)} ago ` +
       `(${new Date(changed).toISOString().slice(0, 16).replace('T', ' ')} UTC)`);
   return { cols };
 }
@@ -725,7 +719,7 @@ function nsvTypeWords_(type) {
 /** The one-day SELECT of the AMIE table: rows, newest ingestionTimestamp, rows by network, no postTime, the delay. Pure. */
 function nsvAmieSql_() {
   return [
-    `WITH d AS (SELECT SocialNetwork, postTime, ingestionTimestamp FROM \`${NSV_AMIE_TABLE_}\``,
+    `WITH d AS (SELECT SocialNetwork, postTime, ingestionTimestamp FROM \`${EWS_AMI_TABLE_}\``,
     '  WHERE ingestionTimestamp > TIMESTAMP_MILLIS(@from_ms) AND ingestionTimestamp <= TIMESTAMP_MILLIS(@until_ms))',
     'SELECT \'all\' AS kind, \'\' AS net, COUNT(*) AS n, UNIX_MILLIS(MAX(ingestionTimestamp)) AS newest_ms,',
     '  COUNTIF(postTime IS NULL) AS no_post_time,',
@@ -743,7 +737,7 @@ function nsvAmieSql_() {
  * (the dry run is still sent: it says on its own whether the bot may read the table).
  */
 function nsvAmieRead_(token, lines, schema, now) {
-  if (schema && ['SocialNetwork', 'postTime', 'ingestionTimestamp'].some(c => schema.cols[c.toLowerCase()] !== NSV_AMIE_NEEDED_[c])) {
+  if (schema && ['SocialNetwork', 'postTime', 'ingestionTimestamp'].some(c => schema.cols[c.toLowerCase()] !== EWS_AMI_NEEDED_[c])) {
     lines.push('CHECK the AMIE table\'s one-day read was not sent: a column it counts by is missing or of another type (above)');
     return;
   }
@@ -762,9 +756,10 @@ function nsvAmieRead_(token, lines, schema, now) {
     return;
   }
   const gb = `${(bytes / 1e9).toFixed(2)} GB`;
-  if (bytes >= NSV_AMIE_MAX_BYTES_) { lines.push(`PROBLEM one day of the AMIE table would scan ${gb} (the limit is 1 GB), so the read was not sent`); return; }
-  lines.push(`OK one day of the AMIE table scans ${gb} (the dry run's figure; the limit is 1 GB)`);
-  let r = nsvBq_(token, url, Object.assign({ timeoutMs: 30000, maximumBytesBilled: String(NSV_AMIE_MAX_BYTES_), maxResults: 1000 }, request));
+  const cfg = ewsAmiCfg_();
+  if (bytes >= cfg.maxBytes) { lines.push(`PROBLEM one day of the AMIE table would scan ${gb} (the limit is ${cfg.maxGb} GB), so the read was not sent`); return; }
+  lines.push(`OK one day of the AMIE table scans ${gb} (the dry run's figure; the limit is ${cfg.maxGb} GB)`);
+  let r = nsvBq_(token, url, Object.assign({ timeoutMs: 30000, maximumBytesBilled: String(cfg.maxBytes), maxResults: 1000 }, request));
   for (let i = 0; i < 2 && r.code === 200 && r.body && !r.body.jobComplete && r.body.jobReference && r.body.jobReference.jobId; i++) {
     const ref = r.body.jobReference;
     r = nsvBq_(token, `${BQ_API_BASE_}${encodeURIComponent(ref.projectId || GCP_PROJECT)}/queries/${encodeURIComponent(ref.jobId)}` +
@@ -777,7 +772,7 @@ function nsvAmieRead_(token, lines, schema, now) {
   const n = Number(all.n) || 0;
   if (!n) { lines.push('CHECK the AMIE table has no row from the last 24 hours'); return; }
   const newest = Number(all.newest_ms) || 0;
-  lines.push(`${!newest || now - newest > NSV_AMIE_STALE_MS_ ? 'CHECK' : 'OK'} the AMIE table, last 24 hours: ${fmtInt_(n)} rows; the newest landed ` +
+  lines.push(`${!newest || now - newest > ewsAmiCfg_().staleMs ? 'CHECK' : 'OK'} the AMIE table, last 24 hours: ${fmtInt_(n)} rows; the newest landed ` +
     (newest ? `${nsvMinutes_((now - newest) / 60000)} ago` : 'at a time it does not say'));
   const nets = rows.filter(x => x.kind === 'net').sort((a, b) => (Number(b.n) || 0) - (Number(a.n) || 0));
   const pct = k => `${Math.round((k / n) * 100)}%`;
@@ -793,10 +788,35 @@ function nsvAmieRead_(token, lines, schema, now) {
 }
 
 /**
- * STEP 1c AND STEP 2b ADD HERE: dry runs of the new Early Detection jobs' SQL, as the plan's Q4 says (the AMIE job of
- * step 1c; the Brandwatch job of step 2b with three made-up @bwl rows), each sent with dryRun: true and reported as one
- * OK or PROBLEM line. Neither job exists yet, so this sends nothing and returns no line.
+ * Dry runs of the new Early Detection jobs' SQL, as the plan's Q4 says, each sent with dryRun: true (BigQuery checks the
+ * names, the types and the access, scans nothing and says the bytes) and reported as one OK or PROBLEM line: the AMIE
+ * job exactly as a check builds it (ewsAmiQuery_, with the optional columns the metadata found in `schema`, or none),
+ * and the us-central1 job with its list of the big posts Sonar knew (only sent while a new row is ON). STEP 2b ADDS
+ * HERE the Brandwatch job's dry run with three made-up @bwl rows. `now`: the check's time (default the clock).
  */
-function nsvNewJobDryRuns_(token) {
-  return [];
+function nsvNewJobDryRuns_(token, schema, now) {
+  const at = Number(now) || Date.now();
+  const until = at - EWS_SETTLE_MS_;
+  const url = `${BQ_API_BASE_}${GCP_PROJECT}/queries`;
+  const gbOf = r => `${(Number(r.body && r.body.totalBytesProcessed) / 1e9).toFixed(2)} GB`;
+  const hasBytes = r => !!(r.body && r.body.totalBytesProcessed !== undefined && r.body.totalBytesProcessed !== null &&
+    isFinite(Number(r.body.totalBytesProcessed)));
+  const dry = (lane, q) => nsvBq_(token, url, Object.assign(JSON.parse(ewsJobRequest_(lane, q, token).payload), { dryRun: true }));
+  const out = [];
+  // the AMIE job (row 48)
+  const cols = (schema && schema.cols) || {};
+  const opt = Object.keys(EWS_AMI_OPTIONAL_).filter(c => (EWS_AMI_OPTIONAL_[c] || []).indexOf(String(cols[c.toLowerCase()] || '')) >= 0);
+  const cfg = ewsAmiCfg_();
+  const ami = dry({ key: 'ami', location: 'US' }, ewsAmiQuery_({ marks: { amiq: { opt } } }, until));
+  if (ami.code !== 200 || !ami.body) out.push(nsvBqRefusal_('the dry run of Early Detection\'s AMIE job', ami));
+  else if (!hasBytes(ami)) out.push('CHECK the dry run of Early Detection\'s AMIE job did not say how many bytes it would scan');
+  else if (Number(ami.body.totalBytesProcessed) > cfg.maxBytes) {
+    out.push(`PROBLEM Early Detection's AMIE job would scan ${gbOf(ami)} a read (its limit is ${cfg.maxGb} GB), so it would not be read`);
+  } else out.push(`OK Early Detection's AMIE job passes a dry run: ${gbOf(ami)} a read (its limit is ${cfg.maxGb} GB)`);
+  // the us-central1 job with its big posts' part
+  const c1 = dry({ key: 'c1', location: 'us-central1' }, ewsLaneQuery_('c1', { marks: {} }, until, false, 60, { xbig: true }));
+  const what = 'Early Detection\'s us-central1 job with its list of big posts (sent only while a new row is ON)';
+  if (c1.code !== 200 || !c1.body) out.push(`PROBLEM the dry run of ${what}: ${c1.code ? `BigQuery refused (HTTP ${c1.code}: ${c1.why})` : `the call to BigQuery did not complete (${c1.why})`}`);
+  else out.push(`OK ${what} passes a dry run${hasBytes(c1) ? `: ${gbOf(c1)}` : ''}`);
+  return out;
 }
