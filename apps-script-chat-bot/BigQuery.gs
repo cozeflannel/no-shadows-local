@@ -3802,38 +3802,82 @@ function edNoteKey_(row) {
  *     with an ending since it was queued (false);
  *   - a signal that ended without waiting is found and goes up in its group, the first time only: a signal remembered
  *     in any way (an ending today or on an earlier day, or waiting in the queue) is not counted again (false).
- * False when nothing was counted (the caller then records nothing). Never throws: when the counts can't be saved the
- * signal still has its ending (true), and the numbers are put right at the next check (noteEarlyWave_).
+ * False when nothing was counted (the caller then records nothing). Never throws: when the counts can't be saved (a
+ * second try fails too) the signal still has its ending (true), and its count is kept for this run (ED_COUNT_UNSAVED_):
+ * the next count, noteEarlyWave_ and edDayNumbers_ put it in first, so the numbers are right with the true ending.
  */
 function edCount_(props, group, waited, key) {
+  const item = { group: group || '', waited: !!waited, key: key ? String(key) : '' };
+  let pending = [];
   try {
     const was = props.getProperty(ED_DAY_PROP_);
     const s = Object.assign({}, edDayState_(props, !!group && !waited, !group ? -1 : waited ? 1 : 0));
-    const list = Array.isArray(s.noted) ? s.noted.slice() : [];
-    const h = key ? hashText_(String(key)) : '';
-    const at = h ? list.findIndex(e => String(e).replace(/=[^=]*$/, '') === h) : -1;
-    const had = at >= 0 ? (/=([^=]*)$/.exec(String(list[at])) || [])[1] || '' : null;
-    const groupOf = letter => Object.keys(ED_NOTED_GROUPS_).find(g => ED_NOTED_GROUPS_[g] === letter) || '';
-    if (!group) {
-      const earlier = had ? groupOf(had) : '';
-      if (earlier && (Number(s[earlier]) || 0) > 0) s[earlier] = Number(s[earlier]) - 1;
-      else s.found = (Number(s.found) || 0) + 1;
-    } else if (waited) {
-      if (had && groupOf(had)) return false;
-      s[group] = (Number(s[group]) || 0) + 1;
-    } else {
-      if (had !== null) return false;
-      s[group] = (Number(s[group]) || 0) + 1;
-      s.found = (Number(s.found) || 0) + 1;
-    }
-    if (h) {
-      if (at >= 0) list.splice(at, 1);
-      s.noted = list.concat([`${h}=${group ? ED_NOTED_GROUPS_[group] || '-' : 'w'}`]).slice(-ED_NOTED_MAX_);
-    }
+    // the counts an earlier save of this run could not keep go in first, in the order they were made
+    pending = edCountTake_();
+    pending.forEach(p => edCountApply_(s, p));
+    const counted = edCountApply_(s, item);
     const next = JSON.stringify(s);
-    if (next !== was) props.setProperty(ED_DAY_PROP_, next);
+    if (next !== was && !edCountSave_(props, next)) {
+      ED_COUNT_UNSAVED_ = pending.concat(counted ? [item] : []);
+    }
+    return counted;
   } catch (e) {
+    ED_COUNT_UNSAVED_ = pending.concat(ED_COUNT_UNSAVED_);
     console.error('could not count an early detection signal: ' + ((e && e.message) || e));
+  }
+  return true;
+}
+
+// The counts of this run that could not be saved (edCount_: a save and its second try failed), in the order they were
+// made: {group, waited, key} each. Put in first by the next count, noteEarlyWave_ and edDayNumbers_; gone with the run
+let ED_COUNT_UNSAVED_ = [];
+
+/** The counts waiting to be saved (ED_COUNT_UNSAVED_), taken out of the list: the caller saves them or puts them back. */
+function edCountTake_() {
+  const out = ED_COUNT_UNSAVED_;
+  ED_COUNT_UNSAVED_ = [];
+  return Array.isArray(out) ? out : [];
+}
+
+/** Saves today's counts (`next`: their JSON), with one more try when the first fails. True when saved. Never throws. */
+function edCountSave_(props, next) {
+  for (let i = 0; i < 2; i++) {
+    try {
+      props.setProperty(ED_DAY_PROP_, next);
+      return true;
+    } catch (e) {
+      console.error(`could not save today's early detection counts${i ? ' (second try)' : ''}: ${(e && e.message) || e}`);
+    }
+  }
+  return false;
+}
+
+/**
+ * One count (edCount_'s rules: {group, waited, key}) put in today's counts `s` (changed in place). False when the
+ * signal was counted before and nothing changed. Pure.
+ */
+function edCountApply_(s, item) {
+  const group = item.group;
+  const list = Array.isArray(s.noted) ? s.noted.slice() : [];
+  const h = item.key ? hashText_(String(item.key)) : '';
+  const at = h ? list.findIndex(e => String(e).replace(/=[^=]*$/, '') === h) : -1;
+  const had = at >= 0 ? (/=([^=]*)$/.exec(String(list[at])) || [])[1] || '' : null;
+  const groupOf = letter => Object.keys(ED_NOTED_GROUPS_).find(g => ED_NOTED_GROUPS_[g] === letter) || '';
+  if (!group) {
+    const earlier = had ? groupOf(had) : '';
+    if (earlier && (Number(s[earlier]) || 0) > 0) s[earlier] = Number(s[earlier]) - 1;
+    else s.found = (Number(s.found) || 0) + 1;
+  } else if (item.waited) {
+    if (had && groupOf(had)) return false;
+    s[group] = (Number(s[group]) || 0) + 1;
+  } else {
+    if (had !== null) return false;
+    s[group] = (Number(s[group]) || 0) + 1;
+    s.found = (Number(s.found) || 0) + 1;
+  }
+  if (h) {
+    if (at >= 0) list.splice(at, 1);
+    s.noted = list.concat([`${h}=${group ? ED_NOTED_GROUPS_[group] || '-' : 'w'}`]).slice(-ED_NOTED_MAX_);
   }
   return true;
 }
@@ -3844,7 +3888,11 @@ function edCount_(props, group, waited, key) {
  * when the caller has them (edDayState_). Never throws.
  */
 function edDayNumbers_(props, state) {
-  const s = state || edDayState_(props, true);
+  let s = state;
+  if (!s) {  // with the counts of this run that could not be saved yet (ED_COUNT_UNSAVED_)
+    s = Object.assign({}, edDayState_(props, true));
+    (ED_COUNT_UNSAVED_ || []).forEach(p => edCountApply_(s, p));
+  }
   const n = k => Math.max(0, Math.round(Number(s[k]) || 0));
   return { found: n('found'), cards: n('cards'), under: n('under'), letgo: n('letgo'), never: n('never'),
     waiting: edQueueList_(props).length };
@@ -3889,14 +3937,20 @@ function edDayNoteText_(s, n, o) {
  * under another daily limit passes it (o.dayLimit: the number of reviews a day); it is kept with the counts until the
  * next check, and the line then says "today's limit of 150 reviews is reached, more after midnight ET" once that many
  * were queued. The pointer to the Early Detection tab is there only with the setting early_detection_tab on. Every
- * caller is at rest (every signal counted is where the queue says it is), so the numbers add up here; when they don't
- * (a count that could not be saved) found is set to what the others add up to, and the log says so. Never throws.
+ * caller is at rest (every signal counted is where the queue says it is), so the numbers add up here: the counts this
+ * run could not save yet (edCount_) go in first and are saved with the rest. Only when a count was lost for good (the
+ * run that kept it ended first) they don't: then found is made to add up (set to what the others add up to), and the
+ * log says so. Never throws.
  */
 function noteEarlyWave_(props, clusters, velocity, problem, o) {
   const opt = o || {};
+  let pending = [];
   try {
     const was = props.getProperty(ED_DAY_PROP_);
     const s = Object.assign({}, edDayState_(props, true));
+    // the counts of this run that could not be saved (edCount_) go in first, so an ending they hold is not lost
+    pending = edCountTake_();
+    pending.forEach(p => edCountApply_(s, p));
     s.clusters = (Number(s.clusters) || 0) + (clusters || 0);
     s.velocity = (Number(s.velocity) || 0) + (velocity || 0);
     s.queued = (Number(s.queued) || 0) + (opt.queued || 0);
@@ -3915,22 +3969,25 @@ function noteEarlyWave_(props, clusters, velocity, problem, o) {
         s.hr = [String(opt.hour.key), Math.max(0, Math.round(Number(opt.hour.all) || 0)), Math.max(0, Math.round(Number(opt.hour.ord) || 0))];
       }
     }
-    // At rest the numbers add up; when a count could not be saved they don't, and found is put right here
+    // At rest the numbers add up. Only when a count was lost for good (it could not be saved, and the run that kept it
+    // ended before it could be saved) they don't: then, as a last resort, found is made to add up here
     const told = edDayNumbers_(props, s);
     const sum = told.cards + told.under + told.letgo + told.never + told.waiting;
     if (told.found !== sum) {
       console.warn(`early detection: today's numbers did not add up (${told.found} found, but ${told.cards} cards, ` +
         `${told.under} under another alert, ${told.letgo} let go, ${told.never} never reviewed and ${told.waiting} waiting), ` +
-        `so found is now ${sum}`);
+        `so found is made to add up: ${sum}`);
       s.found = sum;
     }
     const next = JSON.stringify(s);
-    if (next !== was) props.setProperty(ED_DAY_PROP_, next);
+    if (next !== was && !edCountSave_(props, next)) ED_COUNT_UNSAVED_ = pending.concat(ED_COUNT_UNSAVED_);
+    pending = [];
     const stop = s.limit ? (s.queued >= s.limit ? `today's limit of ${s.limit} reviews is reached, more after midnight ET` : '')
       : s.queued >= EW_MAX_PER_DAY_ ? `daily cap of ${EW_MAX_PER_DAY_} reached, more tomorrow` : '';
     noteSwitch_('earlyWave', edDayNoteText_({ at: s.at || nowLabel_(), problem: s.problem }, edDayNumbers_(props, s),
       { stop, tab: GEN.settings.early_detection_tab !== false }));
   } catch (e) {
+    ED_COUNT_UNSAVED_ = pending.concat(ED_COUNT_UNSAVED_);
     console.error('could not count early detection alerts: ' + ((e && e.message) || e));
   }
 }
