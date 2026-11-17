@@ -68,7 +68,20 @@ one line under it: what was built, the suite's count, and anything left out with
       the memory rebuilt from the Alert log (its tab lost) learns only main posts, as the row keeps only record keys; a
       linked post of a story whose email went out is "seen" for 24 hours (or the window a late source asks), not
       "emailed" for 14 days as the main post is.
-- [ ] **3b** Control row 50: the AMIE table as a source of the Watch
+- [x] **3b** Control row 50: the AMIE table as a source of the Watch
+      Built row 50 (`watchAmie`, written OFF, needs row 34, its help line) and the Watch's source `amie` ("Brandwatch alert
+      feeds (AMIE)", US look, its SQL from `ace865c^`'s BMIE source with the plan's changes): read from 40 minutes before
+      its mark, the keys of the rows handed over in the last 24 hours kept as hashes in `pw:amie:k` (at most 5,000, under
+      95,000 characters) and left out when read again, one row a post by its key (the X status-id key), 100 a look, no
+      cap a day, stale after 2 hours, its columns checked first with step 1c's `ewsAmiMeta_` (a changed table stops this
+      source alone, its row on the Watch sources tab says why). While row 50 is ON a flag from it or from Brandwatch's
+      mentions table asks the alert memory about 7 days. OFF forgets its check, keys, mark and numbers. Suite:
+      1,238 of 1,238 passed. Choices: the source is added by `pwSources_()` only while row 50 is ON (last on the tab), so
+      with it OFF every look's SQL, every tab and mark is byte for byte as before; the X status-id key and the key rows a
+      look returns (kind `amk`) are in a look only with the source; the first look reaches an hour back and never more
+      than 6 hours (step 1c's figures, the plan gives none); the 7-day check is behind row 50 too, as it changes what the
+      Watch does for Brandwatch's mentions table; the tab's existing error words say "tried again at the next look" also
+      for a stop for the day.
 
 ### Open engine (plan 2; briefs 6 to 16)
 - [ ] **S2** Row 51, the record of run time and outside calls, the safety stop, the guards, C51

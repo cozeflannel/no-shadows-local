@@ -1622,4 +1622,21 @@ module.exports = H => {
     assert.match(c35(t), / · today: 2 posted, 2 repeats of an alerted story held back · a flag that matters by itself /);
     eq([writes(t), outbox(t)], [[], []]);
   });
+
+  test('Watch alerts (row 50, the plan\'s Q10): a flag from a source whose rows come days late (Brandwatch\'s mentions table, the AMIE table) asks the alert memory about the last 7 days while row 50 is ON: a post another alert saw 30 hours ago is skipped; with row 50 OFF it is posted, as before (the memory\'s 24 hours)', () => {
+    const run = row50 => {
+      const w = world(OTHER);
+      const { t } = w;
+      t.control().getRange(50, 2).setValue(row50);
+      // another alert saw POST 30 hours ago (the memory keeps a post only seen for 48 hours)
+      const mem = t.bot.alertMemoryStart_(t.sheet());
+      mem.notePosts({ alert_id: 'QA-0999', created_at: t.g.clock.now - 30 * HOUR, space: 'SLRR Auto-correct Test (auto-correct)',
+        forwarded_fields: { post_url: 'https://x.com/someone_else/status/1980000000000000999' } }, [POST]);
+      mem.flush();
+      t.bot.alertMemoryEnd_();
+      look(w, [hit({ source: 'bwm', platform: 'reddit' })]);
+      return posted(t, MID).length;
+    };
+    eq([run('ON'), run('OFF')], [0, 1]);
+  });
 };

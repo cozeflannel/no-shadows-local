@@ -726,7 +726,7 @@ module.exports = H => {
     eq('ami' in env2.state().jobs, false);
   });
 
-  test('ed amie (E28): the approved-tables test passes with the AMIE table named (Early Detection\'s job and the live check), and a .gs naming a table outside the list still fails it', () => {
+  test('ed amie (E28): the approved-tables test passes with the AMIE table named (Early Detection\'s job, the live check, and the Watch\'s source behind row 50), and a .gs naming a table outside the list still fails it', () => {
     let approvedTest = null;
     const fakeH = new Proxy({}, { get: (t, k) => (k === 'test' ? (name, fn) => { if (/approved-tables invariant/.test(name)) approvedTest = fn; } : k === 'eq' ? eq : k === 'assert' ? assert : undefined) });
     require('./switch_alert_memory.test.js')(fakeH);
@@ -747,9 +747,11 @@ module.exports = H => {
       try { approvedTest(); } catch (e) { failed = true; } finally { fs.readdirSync = readdir; fs.readFileSync = read; }
       eq([name, failed], [name, true]);
     }
-    // the Watch still never reads it (its own tests stay as they are until stage 3)
+    // (stage 3, step 3b, the owner's request of 16 Nov) the Watch names it once in its code: its AMIE source's table, read
+    // only while Control row 50 is ON (switch_proactive_watch.test.js)
     const src = read.call(fs, require('path').join(dir, 'ProactiveWatch.gs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-    assert.ok(!/all_sundar_mentions/.test(src));
+    eq((src.match(/all_sundar_mentions/g) || []).length, 1);
+    assert.ok(/bq: 'brand-social-central-data\.social_alerts_dataset\.all_sundar_mentions'/.test(src));
   });
 
   // ---------------------------------------------------------------------------------------------------------------

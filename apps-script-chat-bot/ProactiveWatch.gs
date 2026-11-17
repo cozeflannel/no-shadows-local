@@ -35,7 +35,10 @@
  *                query as a parameter too. (Dropped Nov 1 as stale: the daily Brandwatch export, nothing since Sep 20;
  *                the DSD content vectors, since Sep 24; Reddit Pulse, since Oct 25. Dropped Nov 11, as not on the
  *                team's list of approved tables: BMIE's alert mentions and Sprinklr's older export of Google's own
- *                posts.)
+ *                posts.) The owner asked on 16 Nov 2026 for BMIE's alert mentions (the AMIE table) to be read again:
+ *                with Control row 50 ON (and row 34) the US look also reads it (PW_AMIE_SOURCE_, pwSources_), each
+ *                row once, after a check of its columns (step 1c's ewsAmiMeta_), and while row 50 is ON a flag from
+ *                it, or from Brandwatch's mentions table, asks the alert memory about the last 7 days.
  * In each job, every source's new rows go, as the same columns, in a temporary table (a source that fails is noted and
  * the others carry on). Sonar and the comments go by the look's window; the others keep their own place, the newest
  * item they handed over (PW_MARKS). Then, for each watch ON on the Watches tab (PW_MAX_WATCHES_ at most), Gemini inside
@@ -216,6 +219,173 @@ const PW_SOURCES_ = [
       `usually minutes after posting, posted within ${PW_BW_HOURS_} hours; X posts' text comes from X's public embed data ` +
       '(Brandwatch\'s API leaves it out); an X post X won\'t show is counted as not sent' },
 ];
+
+// --------------------------------------------------------------------------------------------------------------
+// The AMIE table as a source of the Watch (Control row 50, key watchAmie; step 3b of the new sources, the plan's Q10).
+// The owner asked on 16 Nov 2026 for this table to be read again (it was dropped on Nov 11 as not on the approved
+// list). It is not in PW_SOURCES_: pwSources_ adds it, last, only while row 50 is ON, so with row 50 OFF every look,
+// tab and mark is what it was.
+// --------------------------------------------------------------------------------------------------------------
+
+const PW_AMIE_PROP_ = 'PW_AMIE';            // the table's checks (EarlyWaveSource.gs ewsAmiMeta_'s record), while row 50 is ON
+const PW_AMIE_KEYS_ = 'pw:amie:k';          // the keys (hashes) of the rows handed over in the last 24 hours (cache)
+const PW_AMIE_KEYS_MAX_ = 5000;             // the newest this many at most: the cache item stays under 95,000 characters
+const PW_AMIE_KEYS_MS_ = 24 * PW_HOUR_MS_;
+const PW_AMIE_OVERLAP_MS_ = 40 * 60 * 1000;  // each look reads from this long before the newest row handed over
+const PW_AMIE_SAMPLE_PCT_ = 5;              // the other feeds: about this share of what has no sign of trouble is checked anyway
+// The feeds whose every row is checked (alert_source, lower case): brand safety and criticism, Google's executives,
+// people and own posts, policy and elections, and Google's products. The rest (regional, sports, culture, competitors,
+// general AI news) only with a sign something's wrong (Brandwatch negative, a KOF author, PW_AMIE_RISK_RX_)
+const PW_AMIE_FULL_RX_ = 'slrr|sundar|spike|critic|ethic|safety|accuracy|replacement|sustainab|environment|policy|election|' +
+  'execs|googlers|posts by google|ai digest - google|chrome overall|today in android|^search$|^gemini$|antigravity|g4d';
+// Words that say something may be wrong (RE2, on the lower-cased text)
+const PW_AMIE_RISK_RX_ = '\\b(lawsuits?|sued|suing|class action|antitrust|monopol\\w*|fined|fines|penalt\\w+|regulators?|' +
+  'investigat\\w+|probes?|banned|bans|boycott\\w*|outages?|is down|went down|not working|glitch\\w*|scams?|scammers?|fraud\\w*|' +
+  'phishing|malware|hack(ed|ers?)|breach\\w*|leak(s|ed)?|exploit\\w*|vulnerab\\w+|zero[- ]day|privacy|surveil\\w*|spying|' +
+  'data harvest\\w*|misinformation|disinformation|deepfakes?|biased|bias|censor\\w*|shadowban\\w*|propaganda|election|ballots?|' +
+  'voters?|racis\\w+|sexis\\w+|offensive|harass\\w*|unsafe|dangerous|harmful|layoffs?|walkout|protest\\w*|deforest\\w*|' +
+  'pollut\\w+|emissions|hallucinat\\w+)\\b';
+const PW_AMIE_SOURCE_ = { key: 'amie', lane: 'us', name: 'Brandwatch alert feeds (AMIE)', cap: 100, firstMs: 60 * 60 * 1000,
+  maxMs: 6 * PW_HOUR_MS_, overlapMs: PW_AMIE_OVERLAP_MS_, staleMs: 2 * PW_HOUR_MS_, plainWhy: 'brand-safety query',
+  bq: 'brand-social-central-data.social_alerts_dataset.all_sundar_mentions',
+  what: 'Brandwatch\'s alert feeds (AMIE: X posts with their words too), most a day after posting: every row from the brand-safety ' +
+    'and Google product feeds; from the other feeds (regional, sports, culture, competitors) those with a sign something is ' +
+    `wrong (Brandwatch negative, a KOF author, risk words), plus a ${PW_AMIE_SAMPLE_PCT_}% sample of the rest; each row once, ` +
+    '100 a look at most, read from 40 minutes before the newest row handed over so a row that lands late is caught' };
+
+/** The Watch's sources this run, in the order of the Watch sources tab: PW_SOURCES_, and the AMIE table last while Control row 50 is ON. */
+function pwSources_() {
+  try {
+    const sw = typeof ewsRunSwitches_ === 'function' ? ewsRunSwitches_() : {};
+    return sw.watchAmie === true ? PW_SOURCES_.concat([PW_AMIE_SOURCE_]) : PW_SOURCES_;
+  } catch (e) {
+    return PW_SOURCES_;
+  }
+}
+
+/** The AMIE table's check record (PW_AMIE: ewsAmiMeta_'s q), {} when none. Never throws. */
+function pwAmieQ_(props) {
+  try {
+    const q = JSON.parse(props.getProperty(PW_AMIE_PROP_) || '{}');
+    return q && typeof q === 'object' && !Array.isArray(q) ? q : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+/** Whether a look may read the AMIE table: row 50 ON, and its last check found it as the source needs it. Never throws. */
+function pwAmieReadable_() {
+  try {
+    if (!pwSources_().some(s => s.key === 'amie')) return false;
+    const q = pwAmieQ_(PropertiesService.getScriptProperties());
+    return !q.prob && Number(q.mt) > 0;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * The AMIE table's check before a look (row 50 ON): its metadata (step 1c's ewsAmiMeta_: the needed columns and their
+ * types, the optional ones there, the day partitioning), at most hourly, and not again the same UTC day after a stop or
+ * within an hour after a failure. A table the source can't read stops this source alone: its row on the Watch sources
+ * tab says why, in the tab's words for an error. Never throws.
+ */
+function pwAmieCheck_(props, now) {
+  try {
+    const q = pwAmieQ_(props);
+    if (q.sd === ewsUtcDay_(now) || Number(q.pu) > now) return;
+    if (Number(q.mt) > 0 && now - Number(q.mt) < EWS_AMI_CHECK_MS_ && !q.prob) return;
+    if (ewsAmiMeta_(q, now)) { delete q.prob; delete q.pu; delete q.sd; delete q.nd; }
+    props.setProperty(PW_AMIE_PROP_, JSON.stringify(q));
+    if (q.prob) {
+      const all = pwSourceStats_(props);
+      all.amie = Object.assign({}, all.amie || {}, { at: now, err: truncate_(String(q.prob.w || ''), PW_ERR_CHARS_) });
+      props.setProperty(PW_SOURCES_PROP_, JSON.stringify(all));
+    }
+  } catch (e) { /* tried again at the next look */ }
+}
+
+/** The keys handed over in the last 24 hours ([{h: the hour, k: 'hash,hash,…'}], oldest first). Never throws. */
+function pwAmieKeys_(now) {
+  try {
+    const raw = CacheService.getScriptCache().get(PW_AMIE_KEYS_);
+    const list = raw ? JSON.parse(raw) : [];
+    return (Array.isArray(list) ? list : []).filter(b => b && typeof b.k === 'string' && b.k && now - Number(b.h) < PW_AMIE_KEYS_MS_);
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * Adds the keys (12 hex characters each: pwAmieHashSql_) of the rows a look handed over to PW_AMIE_KEYS_, keeping the
+ * last 24 hours and the newest PW_AMIE_KEYS_MAX_ at most, so the item never passes 95,000 characters. Each look writes it
+ * again, so it lives on while the Watch looks (a cache item lives 6 hours at most). Never throws.
+ */
+function pwAmieKeysAdd_(hashes, now) {
+  try {
+    const add = (hashes || []).map(h => String(h || '').toLowerCase()).filter(h => /^[0-9a-f]{12}$/.test(h));
+    const list = pwAmieKeys_(now);
+    if (!add.length && !list.length) return;
+    const hour = Math.floor(now / PW_HOUR_MS_) * PW_HOUR_MS_;
+    let last = list[list.length - 1];
+    if (add.length) {
+      if (!last || Number(last.h) !== hour) { last = { h: hour, k: '' }; list.push(last); }
+      last.k = last.k ? `${last.k},${add.join(',')}` : add.join(',');
+    }
+    let total = list.reduce((n, b) => n + b.k.split(',').length, 0);
+    while (total > PW_AMIE_KEYS_MAX_ && list.length) {
+      const ks = list[0].k.split(',');
+      const drop = Math.min(ks.length, total - PW_AMIE_KEYS_MAX_);
+      total -= drop;
+      if (drop < ks.length) list[0].k = ks.slice(drop).join(','); else list.shift();
+    }
+    CacheService.getScriptCache().put(PW_AMIE_KEYS_, JSON.stringify(list), 21600);
+  } catch (e) { /* a row read again is left out by its 24 hours' check (checked_before) */ }
+}
+
+/** What a look needs to read the AMIE table (pwSql_'s froms): {amie_opt, amie_seen}, or {} with row 50 OFF. Never throws. */
+function pwAmieFroms_(props, now) {
+  try {
+    if (!pwSources_().some(s => s.key === 'amie')) return {};
+    const q = pwAmieQ_(props);
+    return { amie_opt: Array.isArray(q.opt) ? q.opt : [], amie_seen: [].concat(...pwAmieKeys_(now).map(b => b.k.split(','))) };
+  } catch (e) {
+    return {};
+  }
+}
+
+/**
+ * Row 50 OFF: the AMIE table's check, its keys, its mark and its row's numbers go, so ON again checks the table afresh
+ * and reads from the last hour (its row on the Watch sources tab is cleared at the next write of the tab). Writes only
+ * what is there. Never throws.
+ */
+function pwAmieOff_() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (props.getProperty(PW_AMIE_PROP_)) props.deleteProperty(PW_AMIE_PROP_);
+    try { if (CacheService.getScriptCache().get(PW_AMIE_KEYS_)) CacheService.getScriptCache().remove(PW_AMIE_KEYS_); } catch (e) { /* it expires */ }
+    const marks = pwMarks_(props);
+    if ('amie' in marks) { delete marks.amie; props.setProperty(PW_MARKS_PROP_, JSON.stringify(marks)); }
+    const all = pwSourceStats_(props);
+    if ('amie' in all) { delete all.amie; props.setProperty(PW_SOURCES_PROP_, JSON.stringify(all)); }
+  } catch (e) { /* the next OFF run tries again */ }
+}
+
+/**
+ * A post's key in SQL (Q8): an X post by its status id ("x:<id>", whatever the link: x.com or twitter.com, /status/ or
+ * /statuses/, a handle or i), any other link lower-cased without its scheme, www., m. or mobile., a trailing slash or #.
+ * Used only while row 50 is ON (with it OFF a look's SQL is what it was). Pure.
+ */
+function pwKeySql_(col) {
+  const low = `LOWER(TRIM(IFNULL(${col}, '')))`;
+  return `IF(REGEXP_CONTAINS(${low}, r'^(?:https?://)?(?:www\\.|m\\.|mobile\\.)?(?:x|twitter)\\.com/[^?#]*/status(?:es)?/[0-9]+'), ` +
+    `CONCAT('x:', REGEXP_EXTRACT(${low}, r'/status(?:es)?/([0-9]+)')), ` +
+    `REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(${low}, r'^https?://(?:www\\.|m\\.|mobile\\.)?', ''), r'^twitter\\.com/', 'x.com/'), r'#.*$|/+$', ''))`;
+}
+
+/** A key's hash as PW_AMIE_KEYS_ keeps it (12 hex characters of its SHA-256), in SQL. Pure. */
+function pwAmieHashSql_(keyExpr) { return `SUBSTR(TO_HEX(SHA256(${keyExpr})), 1, 12)`; }
+
 const PW_CHAT_FIELDS_ = [['u', 'STRING'], ['n', 'STRING'], ['a', 'STRING'], ['f', 'INT64'], ['e', 'INT64'], ['p', 'INT64'],
   ['s', 'INT64'], ['i', 'STRING'], ['m', 'STRING'], ['t', 'STRING']];
 const PW_NEW_COLS_ = 'source, rk, post_url, platform, author, followers, eng, posted, first_seen, issue, issue_new, summary, txt';
@@ -340,13 +510,13 @@ function pwNetwork_(platform, url) {
 function pwTopic_(s) { return String(s || '').replace(/['"`\\\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60); }
 
 /** A source by its key (PW_SOURCES_), or null. Pure. */
-function pwSource_(key) { return PW_SOURCES_.find(s => s.key === key) || null; }
+function pwSource_(key) { return pwSources_().find(s => s.key === key) || null; }
 
 /** A lane by its key (PW_LANES_), or null. Pure. */
 function pwLane_(key) { return PW_LANES_.find(l => l.key === key) || null; }
 
-/** A lane's sources, in the tab's order. Pure. */
-function pwLaneSources_(laneKey) { return PW_SOURCES_.filter(s => s.lane === laneKey); }
+/** A lane's sources, in the tab's order (the AMIE table only while its check lets it be read: pwAmieReadable_). */
+function pwLaneSources_(laneKey) { return pwSources_().filter(s => s.lane === laneKey && (s.key !== 'amie' || pwAmieReadable_())); }
 
 /** A lane's sources by name ("Sonar and Tubular"), for the notes. Pure. */
 function pwLaneNames_(laneKey) {
@@ -366,7 +536,7 @@ function pwLaneShort_(laneKey) {
  * since". When and why follow it. Pure.
  */
 function pwFailWords_(laneKeys) {
-  return laneKeys.length >= PW_LANES_.length ? `the looks at all ${PW_SOURCES_.length} sources have failed since`
+  return laneKeys.length >= PW_LANES_.length ? `the looks at all ${pwSources_().length} sources have failed since`
     : `the look at ${laneKeys.map(pwLaneShort_).join(' and ')} has failed since`;
 }
 
@@ -534,13 +704,14 @@ function pwSourcesTab_(ss, create) {
   sh.getRange(1, 1).setValue(PW_SRC_TITLE_);
   sh.getRange(2, 1).setValue(PW_SRC_NOTE_);
   sh.getRange(PW_SRC_HEAD_ROW_, 1, 1, PW_SRC_HEADER_.length).setValues([PW_SRC_HEADER_]);
-  sh.getRange(PW_SRC_HEAD_ROW_ + 1, 1, PW_SOURCES_.length, 3)
-    .setValues(PW_SOURCES_.map(s => [s.name, s.what, s.bq || s.where || '']));
+  const list = pwSources_();
+  sh.getRange(PW_SRC_HEAD_ROW_ + 1, 1, list.length, 3)
+    .setValues(list.map(s => [s.name, s.what, s.bq || s.where || '']));
   try {
     sh.getRange(1, 1).setFontWeight('bold').setFontSize(12);
     sh.getRange(PW_SRC_HEAD_ROW_, 1, 1, PW_SRC_HEADER_.length).setFontWeight('bold');
     sh.setFrozenRows(PW_SRC_HEAD_ROW_);
-    sh.getRange(PW_SRC_HEAD_ROW_ + 1, 1, PW_SOURCES_.length, PW_SRC_HEADER_.length).setWrap(true).setVerticalAlignment('top');
+    sh.getRange(PW_SRC_HEAD_ROW_ + 1, 1, list.length, PW_SRC_HEADER_.length).setWrap(true).setVerticalAlignment('top');
     [150, 360, 300, 300, 130, 130, 120, 90, 90, 130].forEach((w, i) => sh.setColumnWidth(i + 1, w));
   } catch (e) { /* the tab works unformatted */ }
   try { sh.protect().setDescription('Written by the Burson QA bot').setWarningOnly(true); } catch (e) { /* unprotected */ }
@@ -575,6 +746,66 @@ function pwTable_(key) { return '`' + pwSource_(key).bq + '`'; }
 
 /** Each source's rows as pw_new's columns (source, rk, post_url, ..., txt), by key. Pure. */
 const PW_SOURCE_SQL_ = {
+  // The AMIE table's rows (row 50 ON; restored from ace865c^'s BMIE source with the plan's changes): ingested since 40
+  // minutes before the newest row handed over (@amie_from), so a row that lands late is caught, and none whose key was
+  // handed over in the last 24 hours (@amie_seen: pw:amie:k), so none goes twice; one row a post by its key (an X post by
+  // its status id), its link kept as it came; not all positive, the reach floor, posted within 72 hours, none already
+  // checked in the 24 hours before (another feed's copy), each with why: every one from a brand-safety or Google product
+  // feed (PW_AMIE_FULL_RX_: 'brand-safety query'); from the other feeds only those with a sign something's wrong
+  // ('negative', a 'KOF author', 'risk words': PW_AMIE_RISK_RX_) and a PW_AMIE_SAMPLE_PCT_% 'sample' of the rest (by the
+  // post's key, the same post every time); the others 'skipped' (counted, never asked about). An optional column the
+  // table's check didn't find (froms.amie_opt: followers, KOF, product, engagement) is NULL. English only.
+  amie: f => {
+    const opt = new Set(((f && f.amie_opt) || []).map(String));
+    const col = (name, type) => (opt.has(name) ? `SAFE_CAST(${name} AS ${type})` : `CAST(NULL AS ${type})`);
+    const from = 'TIMESTAMP_MILLIS(@amie_from)';
+    const sample = `ABS(MOD(FARM_FINGERPRINT(k), 100)) < ${PW_AMIE_SAMPLE_PCT_}`;  // MOD first: ABS of the smallest INT64 overflows
+    return [
+      `INSERT INTO pw_new (${PW_NEW_COLS_}, why, tax)`,
+      "SELECT 'amie', ROW_NUMBER() OVER (ORDER BY CASE why WHEN 'brand-safety query' THEN 0 WHEN 'sample' THEN 2 WHEN 'skipped' THEN 9",
+      '    ELSE 1 END, IFNULL(followers, 0) DESC),',
+      '  url, ' + pwNetSql_('net') + ', author, followers, eng, posted, first_seen,',
+      "  CONCAT('Brandwatch: ', IFNULL(q, '')), CAST(NULL AS BOOL), SUBSTR(snippet, 1, 400),",
+      "  SUBSTR(CONCAT('Post text: ', IFNULL(snippet, ''), IF(IFNULL(kof, '') = '', '', CONCAT('\\nKOF: ', kof)),",
+      `    IF(IFNULL(product, '') = '', '', CONCAT('\\nProduct: ', product))), 1, ${PW_TEXT_CHARS_}), why,`,
+      "  TO_JSON_STRING(JSON_OBJECT('p', product, 'kv', kof)) AS tax",
+      'FROM (',
+      "  SELECT m.*, CASE WHEN full_q THEN 'brand-safety query' WHEN neg THEN 'negative' WHEN kof_author THEN 'KOF author'",
+      `      WHEN risk THEN 'risk words' WHEN ${sample} THEN 'sample' ELSE 'skipped' END AS why`,
+      '  FROM (',
+      '    SELECT k, ANY_VALUE(IF(cur, url, NULL)) AS url, MIN(IF(cur, t, NULL)) AS first_seen, ANY_VALUE(IF(cur, snippet, NULL)) AS snippet,',
+      '      MAX(IF(cur, followers, NULL)) AS followers, ANY_VALUE(IF(cur, authorHandle, NULL)) AS author,',
+      '      ANY_VALUE(IF(cur, SocialNetwork, NULL)) AS net, MAX(IF(cur, eng, NULL)) AS eng,',
+      "      STRING_AGG(DISTINCT IF(cur, alert_source, NULL), ', ' LIMIT 3) AS q, MIN(IF(cur, postTime, NULL)) AS posted,",
+      '      ANY_VALUE(IF(cur, kof, NULL)) AS kof, ANY_VALUE(IF(cur, product, NULL)) AS product,',
+      '      LOGICAL_AND(IF(cur, positive, TRUE)) AS positive, LOGICAL_OR(cur AND full_q) AS full_q, LOGICAL_OR(cur AND neg) AS neg,',
+      '      LOGICAL_OR(cur AND kof_author) AS kof_author, LOGICAL_OR(cur AND risk) AS risk,',
+      `      LOGICAL_OR(NOT cur AND NOT positive AND IFNULL(followers, 0) >= ${PW_MIN_FOLLOWERS_}`,
+      `        AND (full_q OR neg OR kof_author OR risk OR ${sample})) AS checked_before`,
+      '    FROM (',
+      `      SELECT ${pwKeySql_('url')} AS k, url, alert_source, snippet, authorHandle, SocialNetwork, postTime,`,
+      `        ${col('followers', 'INT64')} AS followers, ${col('engagement', 'INT64')} AS eng,`,
+      `        ${col('KOF', 'STRING')} AS kof, ${col('product', 'STRING')} AS product,`,
+      `        ingestionTimestamp AS t, ingestionTimestamp > ${from} AS cur,`,
+      "        LOWER(IFNULL(Sentiment, '')) = 'positive' AS positive, LOWER(IFNULL(Sentiment, '')) = 'negative' AS neg,",
+      `        REGEXP_CONTAINS(LOWER(IFNULL(alert_source, '')), r'${PW_AMIE_FULL_RX_}') AS full_q,`,
+      `        STARTS_WITH(IFNULL(${col('KOF', 'STRING')}, ''), 'Yes') AS kof_author,`,
+      `        REGEXP_CONTAINS(LOWER(IFNULL(snippet, '')), r'${PW_AMIE_RISK_RX_}') AS risk`,
+      `      FROM ${pwTable_('amie')}`,
+      `      WHERE ingestionTimestamp > TIMESTAMP_SUB(${from}, INTERVAL ${PW_NEW_HOURS_} HOUR)`,
+      '        AND ingestionTimestamp <= TIMESTAMP_MILLIS(@until_ms) AND url IS NOT NULL',
+      "        AND NOT REGEXP_CONTAINS(LOWER(IFNULL(alert_source, '')), r'positive')",
+      `        AND NOT ${nonEnglishScriptSql_('IFNULL(snippet, \'\')')}`,
+      '    )',
+      '    GROUP BY k',
+      '    HAVING LOGICAL_OR(cur) AND NOT checked_before',
+      '  ) m',
+      `  WHERE NOT positive AND IFNULL(followers, 0) >= ${PW_MIN_FOLLOWERS_}`,
+      '    AND (posted IS NULL OR posted >= TIMESTAMP_SUB(TIMESTAMP_MILLIS(@until_ms), INTERVAL 72 HOUR))',
+      `    AND ${pwAmieHashSql_('k')} NOT IN UNNEST(SPLIT(@amie_seen, ','))`,
+      ');',
+    ];
+  },
   // Pendulum's posts worth a look since the last one, each with why: 'new' (first seen in the window, none seen in the
   // 24 hours before, posted within 24 hours), 'grew' (seen in the 24 hours before but below the floor or without a risk
   // tag then: it went unnoticed and has grown since) or 'broke out' (above the floor before, already checked, and its
@@ -861,7 +1092,9 @@ function pwAiSql_(srcs, structs, topics, capOf) {
   const cap = s => Math.max(0, Math.floor(Number(capOf ? capOf(s) : s.cap) || 0));
   const caps = srcs.map(s => `STRUCT('${s.key}' AS source, ${cap(s)} AS cap)`).join(', ');
   const grok = pwGrokSql_('n');  // Grok's posts: never asked about, not counted as checked, counted as PW_GROK_WHY_
-  const key = "REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(LOWER(n.post_url), r'^https?://(?:www\\.|m\\.|mobile\\.)?', ''), " +
+  // (row 50 ON, the AMIE table among the sources: an X post by its status id, so AMIE's copy and another source's are one)
+  const amie = srcs.some(s => s.key === 'amie');
+  const key = amie ? pwKeySql_('n.post_url') : "REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(LOWER(n.post_url), r'^https?://(?:www\\.|m\\.|mobile\\.)?', ''), " +
     "r'^twitter\\.com/', 'x.com/'), r'#.*$|/+$', '')";
   return [
     'WITH watches AS (',
@@ -909,8 +1142,17 @@ function pwAiSql_(srcs, structs, topics, capOf) {
     '  CAST(NULL AS BOOL), CAST(NULL AS STRING), CAST(NULL AS FLOAT64), CAST(NULL AS FLOAT64), CAST(NULL AS STRING),',
     '  IFNULL(f.found, 0), IFNULL(f.checked, 0), f.newest_ms, x.mod_ms, x.err, d.detail, CAST(NULL AS STRING)',
     'FROM caps c LEFT JOIN found f USING (source) LEFT JOIN src x USING (source) LEFT JOIN detail d USING (source)',
+  ].concat(amie ? [  // the keys of the AMIE rows handed over (kind 'amk', the hash in `why`): pwAmieKeysAdd_
+    'UNION ALL',
+    `SELECT 'amk', 'amie', ${pwAmieHashSql_(pwKeySql_('n.post_url'))}, CAST(NULL AS INT64), CAST(NULL AS STRING), CAST(NULL AS STRING),`,
+    '  CAST(NULL AS STRING), CAST(NULL AS STRING), CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS INT64),',
+    '  CAST(NULL AS STRING), CAST(NULL AS BOOL), CAST(NULL AS STRING), CAST(NULL AS FLOAT64), CAST(NULL AS FLOAT64), CAST(NULL AS STRING),',
+    '  CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS STRING), CAST(NULL AS STRING),',
+    '  CAST(NULL AS STRING)',
+    "FROM pw_new n JOIN caps c USING (source) WHERE n.source = 'amie' AND n.rk <= c.cap",
+  ] : [], [
     'ORDER BY kind, impact DESC',
-  ];
+  ]);
 }
 
 /**
@@ -949,6 +1191,8 @@ function pwSql_(laneKey, watches, o) {
       params.push({ name: 'bwq', struct: PW_CHAT_FIELDS_, rows: (o && o.bwq) || [] },
         { name: 'bwq_err', type: 'STRING', value: truncate_(String((o && o.bwqErr) || ''), PW_ERR_CHARS_) });
     } else if (!s.window) params.push({ name: `${s.key}_from`, type: 'INT64', value: Math.floor(Number(froms[s.key]) || 0) });
+    // the AMIE table: the keys handed over in the last 24 hours (pwAmieKeys_), left out when read again
+    if (s.key === 'amie') params.push({ name: 'amie_seen', type: 'STRING', value: (Array.isArray(froms.amie_seen) ? froms.amie_seen : []).join(',') });
     if (s.spread) {  // its batch: read as its table stood at the batch's end, the part already handed over skipped
       params.push({ name: `${s.key}_upto`, type: 'INT64', value: Math.floor(Number(froms[`${s.key}_upto`]) || until) },
         { name: `${s.key}_skip`, type: 'INT64', value: Math.max(0, Math.floor(Number(froms[`${s.key}_skip`]) || 0)) });
@@ -972,7 +1216,7 @@ function pwSql_(laneKey, watches, o) {
   });
   lines.push(...pwModSql_(srcs));
   srcs.forEach(s => {
-    const block = pwGuard_(s.key, PW_SOURCE_SQL_[s.key]());
+    const block = pwGuard_(s.key, PW_SOURCE_SQL_[s.key](froms));
     if (s.gate) lines.push(`IF pw_mod_${s.key} > @${s.key}_mod THEN`, ...block, 'END IF;');
     else lines.push(...block);
   });
@@ -1089,7 +1333,7 @@ function pwSnap_(marks, s, until) {
 function pwFroms_(marks, until, today) {
   const m = marks || {};
   const out = {};
-  PW_SOURCES_.forEach(s => {
+  pwSources_().forEach(s => {
     const snap = s.spread ? pwSnap_(m, s, until) : null;
     if (s.gate) out[`${s.key}_mod`] = snap ? 0 : Math.max(0, Number(m[`${s.key}_mod`]) || 0);
     if (s.dayMax) {
@@ -1098,7 +1342,8 @@ function pwFroms_(marks, until, today) {
     }
     if (s.window) return;
     const have = Number(m[s.key]) || 0;
-    out[s.key] = snap ? snap[0] : have > 0 ? Math.max(have, until - s.maxMs) : until - s.firstMs;
+    // (overlapMs: the AMIE table reads again from that long before its mark, so a row that lands late is caught)
+    out[s.key] = snap ? snap[0] : have > 0 ? Math.max(have - (Number(s.overlapMs) || 0), until - s.maxMs) : until - s.firstMs;
     if (s.spread) {
       out[`${s.key}_upto`] = snap ? snap[1] : until;
       out[`${s.key}_skip`] = snap ? snap[2] : 0;
@@ -1121,7 +1366,7 @@ function pwAdvanceMarks_(marks, stats, until) {
   const end = Number(until) || 0;
   const used = pwFroms_(m, end);  // where the look started each source: its marks haven't moved since it was sent
   const out = {};
-  PW_SOURCES_.forEach(s => {
+  pwSources_().forEach(s => {
     if (!s.window && Number(m[s.key]) > 0) out[s.key] = Number(m[s.key]);
     if (s.gate && Number(m[`${s.key}_mod`]) > 0) out[`${s.key}_mod`] = Number(m[`${s.key}_mod`]);
     const snap = s.spread ? pwSnap_(m, s) : null;  // kept as it is: only the source's own look decides on it
@@ -1777,13 +2022,14 @@ function pwSourceStatus_(src, st, now, fail) {
 function pwSourcesSummary_(all, now, fails) {
   const n = { live: 0, stale: 0, error: 0, waiting: 0 };
   const failing = [];
-  PW_SOURCES_.forEach(s => {
+  const list = pwSources_();
+  list.forEach(s => {
     const kind = pwSourceStatus_(s, (all || {})[s.key], now, (fails || {})[s.lane]).kind;
     n[kind]++;
     if (kind === 'error') failing.push(s.name);
   });
-  if (n.waiting === PW_SOURCES_.length) return '';
-  if (n.live === PW_SOURCES_.length) return `all ${PW_SOURCES_.length} sources live`;
+  if (n.waiting === list.length) return '';
+  if (n.live === list.length) return `all ${list.length} sources live`;
   const parts = [];
   if (n.live) parts.push(`${n.live} live`);
   if (n.stale) parts.push(`${n.stale} stale`);
@@ -1794,7 +2040,7 @@ function pwSourcesSummary_(all, now, fails) {
 
 /** The Watch sources tab's rows (PW_SRC_HEADER_), one a source. `fails`: pwLaneFails_. Pure. */
 function pwSourceRows_(all, today, now, fails) {
-  return PW_SOURCES_.map(s => {
+  return pwSources_().map(s => {
     const st = (all || {})[s.key] || null;
     const c = ((today && today.src) || {})[s.key] || [0, 0];
     return [s.name, s.what, s.bq || s.where || '', pwSourceStatus_(s, st, now, (fails || {})[s.lane]).text,
@@ -1905,7 +2151,8 @@ function pwLastWith_(props, lane, entry) {
 function pwDone_(props, sh, lane, job, results, now, queue) {
   const rows = (results || []).filter(Boolean);
   const stats = rows.filter(r => r.kind === 'src');
-  const rec = pwRecord_(sh, rows.filter(r => r.kind !== 'src'), Number(job.since) || 0, queue);
+  const rec = pwRecord_(sh, rows.filter(r => r.kind !== 'src' && r.kind !== 'amk'), Number(job.since) || 0, queue);
+  if (rows.some(r => r.kind === 'amk')) pwAmieKeysAdd_(rows.filter(r => r.kind === 'amk').map(r => r.why), now);  // (row 50 ON)
   const windowErr = stats.some(r => r.err && (pwSource_(r.source) || {}).window);
   if (!windowErr) props.setProperty(lane.sinceProp, String(job.until));
   else if (!Number(props.getProperty(lane.sinceProp))) props.setProperty(lane.sinceProp, String(job.since));
@@ -2075,6 +2322,8 @@ function runProactiveWatch_(ss, runStart, opts) {
       let alerts = null;  // the Alert log's newest rows, read once, when the US look goes out
       let first = false;
       let failed = false;  // a failure's note stays: the first look's note doesn't cover it up
+      // (row 50 ON: the AMIE table's check, hourly, before the US look reads it; a table it can't read stops it alone)
+      if (pwSources_().some(s => s.key === 'amie')) pwAmieCheck_(props, Date.now());
       PW_LANES_.forEach(lane => {  // 2. each lane's next look, when it's due
         if (left() < PW_MIN_LEFT_MS_ || pwJob_(props, lane)) return;
         const now = Date.now();
@@ -2086,7 +2335,8 @@ function runProactiveWatch_(ss, runStart, opts) {
         props.setProperty(lane.atProp, String(now));  // first: a failing send isn't tried again every minute
         const sent = { since, until, at: now, tries: Number(props.getProperty(lane.triesProp)) || 0 };
         try {
-          const froms = pwFroms_(pwMarks_(props), until, pwToday_(props, dayKey_()));  // today's: each day's maximum
+          const froms = Object.assign(pwFroms_(pwMarks_(props), until, pwToday_(props, dayKey_())),  // today's: each day's maximum
+            lane.key === 'us' ? pwAmieFroms_(props, Date.now()) : {});  // (row 50 ON: the AMIE table's columns and keys)
           let chat = [];
           if (pwLaneSources_(lane.key).some(s => s.key === 'chat')) {
             if (!alerts) alerts = pwRecentAlerts_(ss);
@@ -2115,7 +2365,7 @@ function runProactiveWatch_(ss, runStart, opts) {
       });
       if (first && !failed) {
         noteSwitch_('proactiveWatch', `first look sent ${nowLabel_()} (${active.length} watch${active.length === 1 ? '' : 'es'}, ` +
-          `${PW_SOURCES_.length} sources); its results come in a minute or two`);
+          `${pwSources_().length} sources); its results come in a minute or two`);
       }
     }
     // 3. the flags waiting to go out as watch alerts (Control row 35, WatchAlerts.gs), a few a run, only while some wait

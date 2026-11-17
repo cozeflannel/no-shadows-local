@@ -190,7 +190,7 @@ function status() {
   try {
     const pwAll = pwSourceStats_(props);
     const pwFails = pwLaneFails_(pwLast_(props));  // a look failing as a whole: its sources say so, as on their tab
-    info.proactive_watch_sources = PW_SOURCES_.map(s => `${s.name}: ${pwSourceStatus_(s, pwAll[s.key], Date.now(), pwFails[s.lane]).text}`);
+    info.proactive_watch_sources = pwSources_().map(s => `${s.name}: ${pwSourceStatus_(s, pwAll[s.key], Date.now(), pwFails[s.lane]).text}`);
   } catch (e) { info.proactive_watch_sources = null; }
   try {
     info.knowledge = knowledgeSummaryText_(JSON.parse(props.getProperty(KNOWLEDGE_STATE_PROP_) || 'null'));
@@ -724,6 +724,9 @@ function poll() {
           proactiveWatchOff_();
           pwAlertsIdle_(control, wanted.watchAlerts, false);
         }
+        // Proactive watch: also read the AMIE table (Control row 50, ProactiveWatch.gs): OFF forgets its check, its keys,
+        // its mark and its row's numbers (writes only what is there). Never throws
+        if (!wanted.switches.watchAmie) pwAmieOff_();
         // Early Detection: also read Brandwatch live (Control row 49, BrandwatchLive.gs): right after the Watch, never in
         // front of it; it reads only while rows 49 and 19 are ON, and hands what it read to Early Detection's next check.
         // OFF forgets where it had read to (never the day's counts or the ticks). Never throws

@@ -821,10 +821,11 @@ module.exports = H => {
     eq([what, leaks], [what, []]);
   }
 
-  test('new sources control (E26): full runs with rows 48 and 49 ON, in the one-space setup, beside a Mirror space and in the main flow: the AMIE table\'s story and Brandwatch live\'s are found and reviewed where the bot works, but no outbox row, relay post, post in S-F Burson (B25), the Burson test copy (B26) or the Other alerts space (B33), and no email sent or drafted, holds a new-lane post\'s words or link, a query\'s name, "AMIE" or "Brandwatch"', () => {
+  test('new sources control (E26): full runs with rows 48 to 50 ON, in the one-space setup, beside a Mirror space and in the main flow: the AMIE table\'s story and Brandwatch live\'s are found and reviewed where the bot works, but no outbox row, relay post, post in S-F Burson (B25), the Burson test copy (B26) or the Other alerts space (B33), and no email sent or drafted, holds a new-lane post\'s words or link, a query\'s name, "AMIE" or "Brandwatch"', () => {
     const run = (t, sh) => {
       amieOn(t, sh);
       const bwl = bwlOn(t, sh);
+      sh.getRange(50, 2).setValue('ON');  // the Watch's AMIE source (it waits for row 34) and every story card's posts claimed
       t.chat.say(golden.spaces.REAL, H.F.MISTAKES, ZAPIER);  // Burson's own alert: the relay and the outbox have work too
       checks({ t }, 1);
       bwl.tick();

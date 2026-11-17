@@ -1923,7 +1923,7 @@ function pwPostStories_(items, pre, recent, c) {
     if (!pick) continue;
     const it = items[pick.i];
     const mem = typeof alertMemory_ === 'function' ? alertMemory_() : null;
-    const seen = mem && mem.active ? mem.seenPost(it.a.url) : null;
+    const seen = mem && mem.active ? mem.seenPost(it.a.url, pwLateSeen_(it.a)) : null;
     // (where stories go first, a story's card that sent no Social Alert is not the post's own alert: pwStoryCardOnly_)
     if (seen && !pwStoryCardOnly_(c.dest, c.rows, seen, c.now)) {
       c.same(it.q, 'already', `it already had an alert: ${seen.why || 'the alert memory has it'}`);
@@ -2302,5 +2302,22 @@ function pwAlertsIdle_(control, raw, watchOn) {
       pwAlertDay_(0), pwAlertDayGrouped_(), pwAlertDayMore_()));
   } catch (e) {
     console.error('could not write C35 (Watch alerts): ' + ((e && e.message) || e));
+  }
+}
+
+/**
+ * The window the alert memory is asked about for a flag (`a`: pwAlertOfRow_'s): 7 days ({hours: 168}) for a row from a
+ * source whose rows come more than 24 hours late (the AMIE table, and Brandwatch's mentions table), while Control row
+ * 50 is ON, so a copy days later gets no second card (the plan's Q8 and Q10); else none (the memory's 24 hours, as
+ * before). Never throws.
+ */
+function pwLateSeen_(a) {
+  try {
+    if (!(typeof ewsRunSwitches_ === 'function' && ewsRunSwitches_().watchAmie === true)) return undefined;
+    const src = String((a && a.source) || '');
+    const late = [PW_AMIE_SOURCE_.name, (PW_SOURCES_.find(s => s.key === 'bwm') || {}).name].filter(Boolean);
+    return late.some(n => src === n || src.indexOf(`${n} ·`) === 0) ? { hours: 168 } : undefined;
+  } catch (e) {
+    return undefined;
   }
 }

@@ -22,7 +22,7 @@ module.exports = H => {
       'bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw',
       'brand-social-central-data.google_tubular_mentions.tubular_videos',
       'brand-social-central-data.DSD.DSD-story-selection',
-      // The AMIE table: approved by the owner on 16 November 2026 (Early Detection, Control row 48)
+      // The AMIE table: approved by the owner on 16 November 2026 (Early Detection, Control row 48; the Watch, row 50)
       'brand-social-central-data.social_alerts_dataset.all_sundar_mentions',
       // Approved alert-history / IM write-back & ML model fallback
       'brand-social-central-data.slrr_alerts.slrr_alerts',
