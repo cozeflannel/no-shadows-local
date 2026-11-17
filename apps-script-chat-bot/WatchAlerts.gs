@@ -939,24 +939,19 @@ function pwAlsoFlaggedText_(names) {
 
 /**
  * The watch's note under a card in the Auto-correct space (P4b), through the one helper (ThreadNotes.gs acThreadNote_,
- * with `dest`, `card`, `text` and `key` as it takes them), and what came of it: {ok: the note is in the card's thread,
- * posted: it was posted by this call (not one already there under that key), full: it wasn't posted because the card
- * already has its AC_NOTE_PER_CARD_ notes, the one refusal that never lifts}. The helper's log line is written as it
- * would be (console.log) and read for that reason; whether this call posted is read from the run's count of notes
- * (acNoteRun_), which only a note posted now moves. Never throws.
+ * with `dest`, `card`, `text` and `key` as it takes them), and what came of it, as the helper says it
+ * (acThreadNoteLast_): {ok: the note is in the card's thread, posted: it was posted by this call (not one already there
+ * under that key), full: it wasn't posted because the card already has its AC_NOTE_PER_CARD_ notes, why: the helper's
+ * code for a refusal ('' when there was none), lasting: a refusal that will not lift (a full card, a card gone, a thread
+ * that can't be read, a card or space the note may not go to)}. Never throws.
  */
 function pwThreadNote_(dest, card, text, key) {
-  let why = '';
   try {
-    const from = Object.assign({}, dest, { log: msg => { why = String(msg); console.log(msg); } });
-    const run = acNoteRun_(null);
-    const before = run.n;
-    const ok = acThreadNote_(from, card, text, key) === true;
-    const after = acNoteRun_(null);
-    return { ok, posted: ok && after === run && after.n > before,
-      full: !ok && /^thread note not posted: its card already has \d+ notes$/.test(why) };
+    const ok = acThreadNote_(dest, card, text, key) === true;
+    const last = acThreadNoteLast_();
+    return { ok, posted: ok && last.posted, full: !ok && last.code === 'card_full', why: ok ? '' : last.code, lasting: !ok && last.lasting };
   } catch (e) {
-    return { ok: false, posted: false, full: false };
+    return { ok: false, posted: false, full: false, why: 'error', lasting: false };
   }
 }
 

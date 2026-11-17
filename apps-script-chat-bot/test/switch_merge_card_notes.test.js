@@ -47,13 +47,13 @@ module.exports = H => {
     assert.notStrictEqual(bqKey, edKey);
     let got = run(t, ctx => [t.bot.acThreadNote_(ctx, card, bqText, bqKey), t.bot.acThreadNote_(ctx, card, edText, edKey)],
       dest => t.bot.pwThreadNote_(dest, card, watchText, watchKey));
-    eq([got.flow, got.watch], [[true, true], { ok: true, posted: true, full: false }]);
+    eq([got.flow, got.watch], [[true, true], { ok: true, posted: true, full: false, why: '', lasting: false }]);
     eq(replies(t, card.forward_thread).slice(before).map(m => m.text), [bqText, edText, watchText]);
     // a fourth note under that card, of any lane, is refused; each of the three is still known by its key
     got = run(t, ctx => [t.bot.acThreadNote_(ctx, card, '🔗 *Part of a story:* 9 small accounts tell it (story card)', 'story:QA-9:ED-other'),
       t.bot.acThreadNote_(ctx, card, bqText, bqKey), t.bot.acThreadNote_(ctx, card, edText, edKey)],
     dest => t.bot.pwThreadNote_(dest, card, t.bot.pwAlsoFlaggedText_(['Midterms']), `watch:${card.forward_message}:2`));
-    eq([got.flow, got.watch], [[false, true, true], { ok: false, posted: false, full: true }]);
+    eq([got.flow, got.watch], [[false, true, true], { ok: false, posted: false, full: true, why: 'card_full', lasting: true }]);
     eq(replies(t, card.forward_thread).length - before, 3);
   });
 };

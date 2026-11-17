@@ -12,11 +12,13 @@
  *     (in the one-space setup that is Burson's own thread in S-F Burson; in the Mirror space, the thread Burson's
  *     replies come into);
  *   - that space is not S-F Burson (B25), not the Burson test copy (B26) and not open to people outside Google;
- *   - the note starts with one of the fixed first words (Voice.gs THREAD_NOTE_HEADS_): the bot then knows it as its own
- *     with no message id and never answers it, and the wider guard (Outbox.gs) holds it on any way to S-F Burson;
+ *   - the note is in the very shape of one of the bot's notes (Voice.gs isThreadNoteText_; its first words are
+ *     THREAD_NOTE_HEADS_): the bot then knows it as its own with no message id and never answers it, and the wider
+ *     guard (Outbox.gs) holds it on any way to S-F Burson;
  *   - its key hasn't been posted (once per key), the card has fewer than AC_NOTE_PER_CARD_ notes in its life and the run
  *     fewer than AC_NOTE_PER_RUN_, of all kinds together.
- * Otherwise nothing is posted and it returns false: the caller only counts and logs.
+ * Otherwise nothing is posted and it returns false: the caller only counts and logs, and learns why from
+ * acThreadNoteLast_ (a code, never the log's words).
  *
  * The note is the bot's own message: in a flow it goes through postTo_ (its id starts client-bqa-, and it is in
  * ctx.recent); from the watch through chatPostMessage_ with a key and the same default id.
@@ -64,6 +66,19 @@ const AC_NOTE_THREAD_PAGES_ = 4;             // ...in this many pages at most (C
 // notes couldn't be counted}, absent: {hash of a key: true when Chat had no note under it for a full card}}
 let AC_NOTE_RUN_ = { id: null, flow: null, n: 0, asks: 0, dark: {}, absent: {} };
 let AC_NOTE_UNKEPT_ = false;  // true from a write of the counts that failed until one goes through (acNoteSave_)
+// What came of the last call of acThreadNote_: {posted: it posted a note now, code: why it refused ('' when it didn't)}.
+// The codes, for a caller that acts on the reason (acThreadNoteLast_), never on the log's words:
+//   'no_note'    the note has no key or no text, or isn't in the shape of one of the bot's notes      (does not lift)
+//   'not_here'   it may not go there: not the Auto-correct flow or space, or the card isn't in it     (does not lift)
+//   'card_full'  its card already has its AC_NOTE_PER_CARD_ notes                                     (does not lift)
+//   'card_gone'  its card is no longer in the space                                                   (does not lift)
+//   'unread'     its card's thread couldn't be read to count its notes                                (does not lift)
+//   'run_full'   the run already posted its AC_NOTE_PER_RUN_ notes                                    (passes)
+//   'no_asking'  Chat may not be asked about the card's notes now: the run's asks, or its time        (passes)
+//   'chat'       Chat took no message                                                                 (passes)
+//   'error'      something failed on the way                                                          (passes)
+let AC_NOTE_LAST_ = { posted: false, code: '' };
+const AC_NOTE_LASTING_ = ['no_note', 'not_here', 'card_full', 'card_gone', 'unread'];
 
 /**
  * Whether a note may go under `card`, without posting anything or counting: {ok: true, space, ctx, thread, message,
@@ -128,13 +143,21 @@ function acThreadNote_(from, card, text, key) {
       if (from && typeof from.log === 'function') from.log(msg); else console.log(msg);
     } catch (e) { /* a log line never stops the run */ }
   };
+  AC_NOTE_LAST_ = { posted: false, code: '' };
+  // a refusal: its reason's code for the caller (acThreadNoteLast_), its words for the log
+  const refuse = (code, why) => {
+    AC_NOTE_LAST_.code = code;
+    if (why) say(`thread note not posted: ${why}`);
+    return false;
+  };
   try {
     const k = String(key === undefined || key === null ? '' : key);
     const check = k ? acThreadNoteCheck_(from, card, text) : { ok: false, why: 'the note has no key' };
     if (!check.ok) {
+      const code = /^(?:the note |there is no text|the check failed)/.test(check.why)
+        ? (/^the check failed/.test(check.why) ? 'error' : 'no_note') : 'not_here';
       // outside the Auto-correct flow that is the rule, not news: nothing is logged there
-      if (!/^(?:this is not the Auto-correct flow|the watch's alerts don't go)/.test(check.why)) say(`thread note not posted: ${check.why}`);
-      return false;
+      return refuse(code, /^(?:this is not the Auto-correct flow|the watch's alerts don't go)/.test(check.why) ? '' : check.why);
     }
     const now = Date.now();
     const state = acNoteState_(now);
@@ -147,14 +170,10 @@ function acThreadNote_(from, card, text, key) {
     const run = acNoteRun_(check.ctx);
     if (run.n >= AC_NOTE_PER_RUN_) {  // (before anything is read for it)
       acNoteSave_(state);
-      say(`thread note not posted: this run already posted ${AC_NOTE_PER_RUN_} notes`);
-      return false;
+      return refuse('run_full', `this run already posted ${AC_NOTE_PER_RUN_} notes`);
     }
     // a card whose thread this run couldn't count in is not asked about again in this run
-    if (run.dark[cardHash]) {
-      say(`thread note not posted: ${run.dark[cardHash]}`);
-      return false;
-    }
+    if (run.dark[cardHash]) return refuse(acNoteDarkCode_(run.dark[cardHash]), run.dark[cardHash]);
     // The notes its card has: what the counts say; a card they have nothing for has none only if its thread is younger
     // than they are and than 25 hours; any other card's notes are counted in its thread, once
     let had = state.c[cardHash] ? state.c[cardHash][0] : null;
@@ -165,16 +184,12 @@ function acThreadNote_(from, card, text, key) {
         had = 0;
       } else {
         const noAsking = acNoteAskRefusal_(run, check.ctx);
-        if (noAsking) {
-          say(`thread note not posted: ${noAsking}`);
-          return false;
-        }
+        if (noAsking) return refuse('no_asking', noAsking);
         const there = acNoteThread_(check, acNoteId_(check.space, k), run, acNoteReviewIds_(check, card));
         if (!there || !there.card) {
           run.dark[cardHash] = there ? 'its card is no longer in the space'
             : 'its card\'s thread couldn\'t be read to count the notes it has';
-          say(`thread note not posted: ${run.dark[cardHash]}`);
-          return false;
+          return refuse(acNoteDarkCode_(run.dark[cardHash]), run.dark[cardHash]);
         }
         counted = true;
         had = there.notes;
@@ -201,16 +216,12 @@ function acThreadNote_(from, card, text, key) {
         run.absent[keyHash] = true;
       }
       acNoteSave_(state);
-      say(`thread note not posted: its card already has ${AC_NOTE_PER_CARD_} notes`);
-      return false;
+      return refuse('card_full', `its card already has ${AC_NOTE_PER_CARD_} notes`);
     }
     const msg = check.ctx
       ? postTo_(check.ctx, check.space, check.text, check.thread, AC_NOTE_KEY_PREFIX_ + k)
       : chatPostMessage_(check.space, truncate_(check.text, MAX_TEXT_), { thread: check.thread, key: AC_NOTE_KEY_PREFIX_ + k });
-    if (!msg || !msg.name) {
-      say('thread note not posted: Chat took no message');
-      return false;
-    }
+    if (!msg || !msg.name) return refuse('chat', 'Chat took no message');
     state.k[keyHash] = now;
     // Chat handed back the message this key made before (the counts had lost the key): no new note, nothing to count
     const made = Number(msg.createTime) || 0;
@@ -221,12 +232,27 @@ function acThreadNote_(from, card, text, key) {
     if (msg.thread && msg.thread !== check.thread) say(`thread note: Chat started a new thread for it (its card's thread ${check.thread} is gone)`);
     state.c[cardHash] = [had + 1, now];
     run.n++;
+    AC_NOTE_LAST_.posted = true;
     acNoteSave_(state);
     return true;
   } catch (e) {
-    say(`thread note not posted: ${(e && e.message) || e}`);
-    return false;
+    return refuse('error', String((e && e.message) || e));
   }
+}
+
+/**
+ * What came of the last call of acThreadNote_: {posted: it posted the note now (not one already there under its key),
+ * code: why it refused, '' when it didn't (the codes: AC_NOTE_LAST_), lasting: the reason will not lift (the same note
+ * under the same card would be refused again in a later run)}. A caller acts on this, never on the log's words. Pure.
+ */
+function acThreadNoteLast_() {
+  const code = String(AC_NOTE_LAST_.code || '');
+  return { posted: AC_NOTE_LAST_.posted === true, code, lasting: AC_NOTE_LASTING_.indexOf(code) >= 0 };
+}
+
+/** The code (AC_NOTE_LAST_) of a card whose notes this run couldn't count (`why`: its run.dark words). Pure. */
+function acNoteDarkCode_(why) {
+  return /no longer in the space/.test(String(why || '')) ? 'card_gone' : 'unread';
 }
 
 /** This run's counts for the notes (see AC_NOTE_RUN_): started afresh for a new run. */
