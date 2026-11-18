@@ -805,6 +805,7 @@ function poll() {
       if (testers && testers.testers) extra.testers = testers.testers;
       if (direct) extra.directB25 = { state: direct.state, name: direct.name };  // C32: Work directly in B25
       if (wanted) extra.watchAlerts = pwAlertsChoice_(wanted.watchAlerts);  // C34: where the watch's flags go (row 35)
+      if (wanted) extra.paused = !wanted.on;  // C55: no slide is delivered while the bot is paused (B2 OFF)
       // the open engine (Control row 51, OpenEngine.gs): the day's counts, then C51's note, before column C is written
       openDaySave_();
       openWriteNote_(Date.now());
@@ -815,7 +816,7 @@ function poll() {
     // The live dashboard (Control row 54) and the slide deliveries (row 55), last: the dashboard's build id, and the
     // deliveries' own time trigger. Nothing here while both are OFF and no deliveries trigger is kept (no property
     // written, no trigger call). Never throws, so it can never fail the run
-    if (wanted && wanted.switches) pollDashboardUpkeep_(wanted.switches, { live: mode ? mode.live : undefined, paused: !wanted.on, control });
+    if (wanted && wanted.switches) pollDashboardUpkeep_(wanted.switches, { live: mode ? mode.live : undefined, start: runStart });
     try { outboxRunEnd_(); } catch (e) { console.error('Burson outbox: ' + e); }  // what this run withheld or queued
     // The shared alert memory (AlertMemory.gs): what every flow learned this run, written once (never throws), then gone
     alertMemoryFlush_();
@@ -1392,13 +1393,15 @@ const SLIDE_TRIGGER_PROP_ = 'SLIDE_TRIGGER';
 
 /**
  * The live dashboard's and the slide deliveries' upkeep, at the end of a run (`switches`: the run's, readControl_;
- * `run`: {live (this run's mode: runMode_), paused (Control B2 OFF), control (the Control tab)}): with row 54 ON, the
- * dashboard's build id in the property BOT_BUILD (pollBuildUpkeep_); the deliveries' trigger as row 55 says
- * (pollSlideTriggerUpkeep_); with row 55 ON, the run's mode kept (SlideDeliveries.gs slideModeNote_: a slide says
- * whether a Social Alert went to the teams or only to the testers) and, while the bot is paused, C55 saying no slide is
- * delivered until B2 is ON again (a paused run writes no other column C). With both OFF and no deliveries trigger
- * made: one property read (SLIDE_TRIGGER), no write and no trigger call. {build, trigger, mode}: what each did ('' when
- * it did nothing). Never throws.
+ * `run`: {live (this run's mode: runMode_), start (when this run started: before its mode was decided and before any
+ * of its sends)}): with row 54 ON, the dashboard's build id in the property BOT_BUILD (pollBuildUpkeep_); the
+ * deliveries' trigger as row 55 says (pollSlideTriggerUpkeep_); with row 55 ON, the run's mode kept from its start
+ * (SlideDeliveries.gs slideModeNote_: a slide says whether a Social Alert went to the teams or only to the testers); the
+ * run that finds row 55 turned OFF (it removes the trigger) marks the mode record "not kept" from its start
+ * (slideModeGap_), so sends while row 55 is OFF are never put under the last mode kept. (C55 while the bot is paused is
+ * written with the other switches' column C: writeSwitchStatuses_.) With both OFF and no deliveries trigger made: one
+ * property read (SLIDE_TRIGGER), no write and no trigger call. {build, trigger, mode}: what each did ('' when it did
+ * nothing). Never throws.
  */
 function pollDashboardUpkeep_(switches, run) {
   const out = { build: '', trigger: '', mode: '' };
@@ -1414,17 +1417,9 @@ function pollDashboardUpkeep_(switches, run) {
   } catch (e) {
     console.error('slide deliveries (row 55): could not keep the delivery trigger: ' + ((e && e.message) || e));
   }
-  if (slidesOn) {
-    out.mode = slideModeNote_(r.live, Date.now());
-    try {
-      if (r.paused && r.control) {
-        const cell = r.control.getRange(55, 3);
-        if (String(cell.getValue() || '') !== SLIDE_PAUSED_ON_TEXT_) cell.setValue(SLIDE_PAUSED_ON_TEXT_);
-      }
-    } catch (e) {
-      console.error('slide deliveries (row 55): could not write C55: ' + ((e && e.message) || e));
-    }
-  }
+  const start = Number(r.start) > 0 ? Number(r.start) : Date.now();
+  if (slidesOn) out.mode = slideModeNote_(r.live, start);
+  else if (out.trigger === 'removed') out.mode = slideModeGap_(start);
   return out;
 }
 

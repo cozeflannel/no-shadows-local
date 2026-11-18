@@ -699,8 +699,17 @@ module.exports = H => {
       decision: '', mirrored: '', created_at: now - 2 * 24 * HOUR }, main));
     const [l] = b.dlAlertsOf_([lost], now, {});
     eq([l.status, l.a.status.label, l.a.owner.who], ['needs-person', 'A person needs to look', 'the IM on shift']);
-    assert.match(l.a.action.text, /^Look at it yourself: the bot recorded it 2 days ago and has made no decision on it/);
-    eq(b.dlStuck_(x.t.sheet(), props, [l], now, null).filter(st => st.kind === 'alert').map(st => st.id), ['QA-8003']);
+    // its original (QA-7999) is not among the rows read: whether it was decided is not known, and it says so (never "no decision")
+    eq([l.a.owner.why, l.a.action.text], ['Its original (QA-7999) is not among the rows read, so whether it was decided is not known',
+      'Look at it yourself: its original (QA-7999) is not among the rows read, so whether it was decided is not known. Find QA-7999 on the Alert log tab.']);
+    eq(b.dlStuck_(x.t.sheet(), props, [l], now, null).filter(st => st.kind === 'alert').map(st => [st.id, st.why]),
+      [['QA-8003', 'Its original (QA-7999) is not among the rows read, so whether it was decided is not known']]);
+    // Burson's alert (not a resend) with no decision 2 days after the bot recorded it: the bot made none
+    const undecided = Object.assign({}, lost, { alert_id: 'QA-8004', resend_of: '' });
+    const [u] = b.dlAlertsOf_([undecided], now, {});
+    eq([u.status, u.a.owner.who], ['needs-person', 'the IM on shift']);
+    assert.match(u.a.action.text, /^Look at it yourself: the bot recorded it 2 days ago and has made no decision on it/);
+    eq(b.dlStuck_(x.t.sheet(), props, [u], now, null).filter(st => st.kind === 'alert').map(st => st.id), ['QA-8004']);
     // a minute after it was recorded: still the bot's (it decides on the run that records it)
     eq(b.dlAlertsOf_([Object.assign({}, lost, { created_at: now - MIN })], now, {})[0].status, 'needs-review');
   });
@@ -821,5 +830,177 @@ module.exports = H => {
     assert.match(b.dashDetail('cluster', 'CLU-none').todo, /^If it got a card, find it in Alerts/);
     const w = b.dashWhyNot('https://x.com/nobody/status/7');
     eq([w.found, w.todo], [[], 'If this post should have had an alert, post its link in the analyst space or send it to the IM on shift.']);
+  });
+
+  // ----- second review (L1-L8, L12, R1, R2): pure checks on rows written as the bot writes them --------------------
+  const MAINP = 'spaces/AAQAtestfd1 > spaces/AAQAaLn375E';
+  const ACP = 'spaces/AAQAsfb0001 > spaces/AAQAacsp001 (auto-correct)';
+  const HEALTHY = { level: 'ok', headline: 'The bot is running: it last ran 1 minute ago.', why: '', fix: '', sources: [] };
+  const ALL_ON = { trackOutcomes: true, earlyWave: true, directBq: true, proactiveWatch: true };
+  const raw = (now, o) => Object.assign({ alert_id: 'QA-9100', created_at: now - HOUR, space: MAINP, source_message: 'spaces/AAQAtestfd1/messages/m1',
+    status: 'ok', forwarded_fields: { issue_name: 'Gems give wrong answers' }, source_at: now - HOUR - MIN, decision: '', email_status: '' }, o || {});
+  const stage = (p, k) => p.stages.find(st => st.key === k).count;
+  const noSheet = { getSheetByName: () => null };
+  const noProps = { getProperty: () => null };
+
+  test('dashboard live: one Social Alert or T&S form counts once in the pipeline when Burson resent its alert, and an alert a person must look at is not "Reviewed" (L1, L2)', () => {
+    const b = on().t.bot;
+    const now = on().t.g.clock.now;
+    // row 23 OFF: the resend keeps no email and no decision of its own (Bot.gs handleResend_ hadEmail), same forward
+    const orig = raw(now, { alert_id: 'QA-9101', status: 'superseded', created_at: now - 2 * HOUR, forward_message: 'spaces/AAQAaLn375E/messages/F1',
+      email_status: 'sent', email_sent_at: now - 110 * MIN, email_input: { followup: { read: now - 30 * MIN } } });
+    const resend = raw(now, { alert_id: 'QA-9102', status: 'fixed', resend_of: 'QA-9101', created_at: now - 100 * MIN,
+      source_message: 'spaces/AAQAtestfd1/messages/m2', forward_message: 'spaces/AAQAaLn375E/messages/F1' });
+    const p = b.dlPipeline_(b.dlAlertsOf_([orig, resend], now, ALL_ON), [], now, ALL_ON);
+    eq(['received', 'drafted', 'sent', 'followup'].map(k => stage(p, k)), [2, 1, 1, 1]);
+    // a T&S form submitted on the original; the resend's decision is its copy (row 23 ON): one form
+    const tOrig = raw(now, { alert_id: 'QA-9103', status: 'superseded', created_at: now - 90 * MIN, decision: 'T&S form only (impersonation)',
+      tns_submitted: now - 89 * MIN });
+    const tResend = raw(now, { alert_id: 'QA-9104', status: 'fixed', resend_of: 'QA-9103', created_at: now - 40 * MIN, decision: 'T&S form only (impersonation)' });
+    eq(stage(b.dlPipeline_(b.dlAlertsOf_([tOrig, tResend], now, ALL_ON), [], now, ALL_ON), 'sent'), 1);
+    // two alerts, each with its own Social Alert: two
+    const other = raw(now, { alert_id: 'QA-9105', email_status: 'sent', email_sent_at: now - 50 * MIN });
+    eq(stage(b.dlPipeline_(b.dlAlertsOf_([orig, resend, other], now, ALL_ON), [], now, ALL_ON), 'sent'), 2);
+    // Burson's alert with no decision 20 minutes after it was recorded: a person looks, so it is not counted as Reviewed
+    const undecided = b.dlAlertsOf_([raw(now, { alert_id: 'QA-9106', created_at: now - 20 * MIN })], now, ALL_ON);
+    eq([undecided[0].status, stage(b.dlPipeline_(undecided, [], now, ALL_ON), 'reviewed')], ['needs-person', 0]);
+  });
+
+  test('dashboard live: what needs a person and whose seriousness is not known ranks above a known high one and sets the level to "can\'t be sure"; a critical one still leads (L3, R1)', () => {
+    const x = on();
+    const b = x.t.bot;
+    const now = x.t.g.clock.now;
+    const low = b.dlAlertsOf_([raw(now, { alert_id: 'QA-9111', created_at: now - 30 * MIN, decision: '❌ P2, 300 engagements: below the escalation criteria',
+      forwarded_fields: { issue_name: 'Meme' } })], now, ALL_ON);
+    const msgs = { ok: true, reach: true, rows: [{ message: 'spaces/AAQAtestfd1/messages/z', at: now - 10 * MIN, kind: 'raw_forward', flows: ['main'], error: '' }] };
+    const n1 = b.dlNow_(HEALTHY, low, [], b.dlStuck_(noSheet, noProps, low, now, msgs), now, ALL_ON);
+    eq([n1.level, n1.counts.needAction, n1.first[0].id], ['unknown', 1, 'msg:spaces/AAQAtestfd1/messages/z']);
+    assert.match(n1.headline, /^1 item needs a person now\. Most serious: A Burson message the bot could not review \(seriousness not known: /);
+    // a high draft waiting: the message still comes first
+    const high = b.dlAlertsOf_([raw(now, { alert_id: 'QA-9112', created_at: now - 3 * HOUR, email_status: 'pending', email_at: now - 2 * HOUR })], now, ALL_ON);
+    const n2 = b.dlNow_(HEALTHY, high, [], b.dlStuck_(noSheet, noProps, high, now, msgs), now, ALL_ON);
+    eq([n2.level, n2.first.map(i => i.id)], ['unknown', ['msg:spaces/AAQAtestfd1/messages/z', 'QA-9112']]);
+    // a critical one leads (a P0 exposure tag on a draft waiting)
+    const p0 = (b.ev('GEN').exposure_tags || []).find(t => String(t.priority).toUpperCase() === 'P0');
+    assert.ok(p0, 'a P0 tag in the config');
+    const crit = b.dlAlertsOf_([raw(now, { alert_id: 'QA-9113', created_at: now - 3 * HOUR, email_status: 'pending', email_at: now - 2 * HOUR,
+      exposure_tag: p0.name })], now, ALL_ON);
+    const n3 = b.dlNow_(HEALTHY, crit, [], b.dlStuck_(noSheet, noProps, crit, now, msgs), now, ALL_ON);
+    eq([n3.level, n3.first.map(i => i.id)], ['critical', ['QA-9113', 'msg:spaces/AAQAtestfd1/messages/z']]);
+  });
+
+  test('dashboard live: a decision that leaves a T&S form to submit or the YouTube Social chat to ping needs a person: counted, named in the headline and the needs-me answer, never "Done" in the pipeline (L4, R2)', () => {
+    const x = on();
+    const b = x.t.bot;
+    const now = x.t.g.clock.now;
+    const all = b.dlAlertsOf_([
+      raw(now, { alert_id: 'QA-9121', created_at: now - HOUR, decision: 'T&S form only (impersonation)', forwarded_fields: { issue_name: 'Impersonation' } }),
+      raw(now, { alert_id: 'QA-9122', created_at: now - 50 * MIN, decision: 'YouTube: left for a person (the YouTube Social chat ping)', forwarded_fields: { issue_name: 'YT thing' } }),
+      raw(now, { alert_id: 'QA-9123', created_at: now - 40 * MIN, decision: 'T&S form only (impersonation) · auto-submitted', tns_submitted: now - 39 * MIN }),
+    ], now, ALL_ON);
+    const stuck = b.dlStuck_(noSheet, noProps, all, now, { ok: true, reach: true, rows: [] });
+    const n = b.dlNow_(HEALTHY, all, [], stuck, now, ALL_ON);
+    eq([n.counts.needAction, n.first.slice(0, 2).map(i => i.id).sort()], [2, ['QA-9121', 'QA-9122']]);
+    assert.match(n.headline, /^2 items need a person now\. Most serious: Impersonation \(medium: Its T&S form is not submitted yet\)\.$/);
+    const p = b.dlPipeline_(all, stuck, now, ALL_ON);
+    eq(stage(p, 'done'), 0);
+    const snap = { health: HEALTHY, now: n, pressure: { speedLeaders: [] }, clusters: [], switches: ALL_ON, pipeline: p,
+      held: { today: { direct: { kept: false } } }, early: { ok: false, why: '', numbers: [] } };
+    assert.match(b.dlQuestions_(snap, all, now).find(q => q.id === 'needs-me').answer, /^2 items: first, Impersonation \(Its T&S form is not submitted yet\)\.$/);
+  });
+
+  test('dashboard live: Burson\'s alert left undecided follows the bot\'s own rule for waiting on Burson: the Auto-correct flow waits only on a problem only Burson can fix, and nothing waits with row 23 ON (L5)', () => {
+    const x = on();
+    const b = x.t.bot;
+    const now = x.t.g.clock.now;
+    const ac = raw(now, { alert_id: 'QA-9131', space: ACP, created_at: now - 3 * HOUR, status: 'fix_requested',
+      requested: [{ field: 'product', old: 'Gemini', new: 'Gems' }] });
+    const [a] = b.dlAlertsOf_([ac], now, ALL_ON);
+    eq([a.a.flow, a.status, a.a.owner.who], ['auto-correct', 'needs-person', 'the IM on shift']);
+    assert.match(a.a.action.text, /Open its thread in the Auto-correct space\.$/);
+    // the bot's rule says the same: a retry can't decide it, a person needs to look
+    const ctx = { store: { alertById: () => null, emailRowByForward: () => null }, drafts: { on: true }, gmail: {}, settings: { react: true },
+      switches: { noWait: false }, sourceReadOnly: true };
+    eq(b.undecidedRow_(ctx, ac), true);
+    // something only Burson can add (a problem): it waits on Burson's resend
+    const waits = Object.assign({}, ac, { requested: [{ field: 'post_url', problem: 'missing' }] });
+    eq(b.dlAlertsOf_([waits], now, ALL_ON)[0].status, 'needs-review');
+    // ...unless Never wait on Burson (row 23) is ON
+    eq(b.dlAlertsOf_([waits], now, Object.assign({ noWait: true }, ALL_ON))[0].status, 'needs-person');
+  });
+
+  test('dashboard live: a resend whose decision is its original\'s T&S form, auto-submitted or submitted on the original, is never told to submit it again (L6)', () => {
+    const x = on();
+    const b = x.t.bot;
+    const now = x.t.g.clock.now;
+    const orig = raw(now, { alert_id: 'QA-9141', status: 'superseded', created_at: now - 90 * MIN, decision: 'T&S form only (impersonation) · auto-submitted',
+      tns_submitted: now - 89 * MIN, forward_message: 'spaces/AAQAaLn375E/messages/F9' });
+    const resend = raw(now, { alert_id: 'QA-9142', status: 'fixed', resend_of: 'QA-9141', created_at: now - 40 * MIN,
+      decision: 'T&S form only (impersonation) · auto-submitted', forward_message: 'spaces/AAQAaLn375E/messages/F9' });
+    const r = b.dlAlertsOf_([orig, resend], now, ALL_ON)[1];
+    eq([r.status, r.a.tns.submitted], ['tns', true]);
+    assert.doesNotMatch(r.a.action.text, /Submit the T&S form/);
+    // its original not read: the decision's own words say it was submitted
+    eq(b.dlAlertsOf_([resend], now, ALL_ON)[0].a.tns.submitted, true);
+    // a T&S decision without the mark, its form submitted on the original
+    const plainOrig = Object.assign({}, orig, { decision: 'T&S form only (impersonation)' });
+    const plainResend = Object.assign({}, resend, { decision: 'T&S form only (impersonation)' });
+    const pr = b.dlAlertsOf_([plainOrig, plainResend], now, ALL_ON)[1];
+    eq([pr.status, pr.a.tns.submitted, pr.row.tnsFrom], ['tns', true, 'QA-9141']);
+    // and with no submission anywhere, the person is still told to submit it
+    const none = b.dlAlertsOf_([Object.assign({}, plainOrig, { tns_submitted: '' }), plainResend], now, ALL_ON)[1];
+    eq([none.status, none.a.action.text], ['done', 'Submit the T&S form from the pre-filled link in its thread, if no one has.']);
+  });
+
+  test('dashboard live: a Burson message both flows could not review is one stuck item, worded for where each flow put it; a Message log read that does not reach back 24 hours says so (L7, L8)', () => {
+    const x = on();
+    const b = x.t.bot;
+    const now = x.t.g.clock.now;
+    const sheetOf = values => ({ getLastRow: () => values.length,
+      getRange: (r, c, nr, nc) => ({ getValues: () => values.slice(r - 1, r - 1 + nr).map(v => v.slice(c - 1, c - 1 + nc)) }) });
+    const head = JSON.parse(JSON.stringify(b.ev('MESSAGE_COLUMNS_')));
+    const tab = b.ev('MESSAGE_TAB_');
+    const ssOf = vals => ({ getSheetByName: n => (n === tab ? sheetOf(vals) : null) });
+    const iso = new Set(['spaces/AAQAmirror01']);
+    const fwd = new Set(['spaces/AAQAtestfd1']);
+    const m = b.dlMessages_(ssOf([head, ['spaces/AAQAtestfd1/messages/z', now - 10 * MIN, 'raw_forward', '', 3, ''],
+      ['ac|spaces/AAQAtestfd1/messages/z', now - 9 * MIN, 'raw_forward', '', 3, ''],
+      ['spaces/AAQAmirror01/messages/q', now - 8 * MIN, 'raw_forward', '', 3, ''],
+      ['ac|spaces/AAQAsfb0001/messages/k', now - 7 * MIN, 'raw_forward', '', 3, '']]), now, iso, fwd);
+    const st = b.dlStuck_(noSheet, noProps, [], now, m);
+    eq(st.map(s => s.id), ['msg:spaces/AAQAtestfd1/messages/z', 'msg:spaces/AAQAmirror01/messages/q', 'msg:spaces/AAQAsfb0001/messages/k']);
+    eq(st[0].why, 'The bot could not read or review it, so it went to the analyst space as received, and went to the Auto-correct space as received, with no review (its seriousness is not known)');
+    eq(st[0].action, 'Review it by hand: open it in the analyst space, where it was forwarded as received.');
+    eq([st[1].why, st[1].action], ['The bot could not read or review it, so it was not forwarded (the bot works in its own space there), with no review (its seriousness is not known)',
+      'Review it by hand: open it in its space (the link).']);
+    eq(st[2].action, 'Review it by hand: open its copy in the Auto-correct space, where it was posted as received.');
+    eq(b.dlNow_(HEALTHY, [], [], st, now, ALL_ON).counts.needAction, 3);
+    // a message 20 hours ago behind 600 newer rows: not read, and said
+    const many = [head, ['spaces/AAQAtestfd1/messages/old', now - 20 * HOUR, 'raw_forward', '', 3, '']];
+    for (let i = 0; i < 600; i++) many.push([`spaces/AAQAtestfd1/messages/n${i}`, now - 6 * HOUR + i * 30000, 'alert', `QA-${i}`, 0, '']);
+    const m2 = b.dlMessages_(ssOf(many), now, iso, fwd);
+    eq([m2.ok, m2.reach, m2.rows.length], [true, false, 0]);
+    const cannot = b.dlCannotSee_(ALL_ON, { tab: true, mine: true, oldestAt: now - 8 * 24 * HOUR }, { count: 1, missing: 0 }, now, m2);
+    const c = cannot.find(e => /^Burson messages the bot could not review, before /.test(e.what));
+    assert.ok(c, JSON.stringify(cannot.map(e => e.what)));
+    eq(c.why, 'Only the newest 500 rows of the Message log are read, and they do not reach back 24 hours.');
+    // all of the last 24 hours read: nothing said
+    const m3 = b.dlMessages_(ssOf(many.slice(0, 300)), now, iso, fwd);
+    eq([m3.reach, m3.rows.length], [true, 1]);
+  });
+
+  test('dashboard live: why a post got no alert, with Early Detection (row 19) OFF: the story it joined is told as it was when row 19 was turned OFF, never as current (L11)', () => {
+    const x = on();
+    const b = x.t.bot;
+    const url = 'https://x.com/photos1/status/2160000000000000001';
+    const story = r => r.found.find(f => f.where === 'Early Detection stories' || f.where === 'Early Detection pool');
+    const live = story(b.dashWhyNot(url));
+    assert.ok(live, JSON.stringify(b.dashWhyNot(url).found));
+    assert.ok(/so far\)|\(none yet\)/.test(live.what), live.what);
+    withSwitches(b, { earlyWave: false }, () => {
+      const off = story(b.dashWhyNot(url));
+      assert.match(off.what, /when Early Detection \(row 19\) was turned OFF/);
+      assert.ok(!/so far\)|\(none yet\)/.test(off.what), off.what);
+    });
   });
 };

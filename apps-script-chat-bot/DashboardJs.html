@@ -104,7 +104,7 @@
 
   const S = {
     area: 'live',
-    snap: null, snapErr: null, snapRefusal: null, loading: false, loadedAt: 0, refreshFailed: null,
+    snap: null, snapErr: null, snapRefusal: null, loading: false, loadedAt: 0, loadedWall: 0, refreshFailed: null,
     view: 'map', question: null, sourcesOpen: false, canSeeOpen: -1, canSeeList: false, pipelineFlash: false,
     map: { filter: 'all', size: 'accounts', color: 'level', focus: '' },
     alerts: { q: '', status: '', level: '', kind: '', flow: '', sort: 'newest', corrected: false },
@@ -114,8 +114,9 @@
     deliv: { loaded: false, loading: false, resp: null, err: null, results: {} },
     editor: null,
   };
-  // the bot's clock as its last answer told it: {at: the bot's ms, perf: this page's performance.now() then}
-  const BOT_CLOCK = { at: 0, perf: 0 };
+  // the bot's clock as its last answer told it: {at: the bot's ms, perf: this page's performance.now() then, wall: the
+  // device's clock then (performance.now() stands still while the device sleeps; the device's clock does not)}
+  const BOT_CLOCK = { at: 0, perf: 0, wall: 0 };
   const reduceMotion = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)'); } catch (e) { return { matches: false }; }
   })();
@@ -259,16 +260,40 @@
     try { return window.performance.now(); } catch (e) { return Date.now(); }
   }
 
+  /** The device's clock in ms (only ever used for time passed, never for a moment). Never throws. */
+  function wallNow() {
+    try { return Date.now(); } catch (e) { return 0; }
+  }
+
+  /**
+   * The ms passed since a moment noted as (perf, wall): the larger of what the page clock and the device clock say
+   * (the page clock stands still while the device sleeps, so after waking only the device clock knows). Never throws.
+   */
+  function elapsed(perf, wall) {
+    return Math.max(0, perfNow() - perf, wall ? wallNow() - wall : 0);
+  }
+
   /** Notes the bot's clock from an answer (servedAt; a snapshot without it: its asOf). Never throws. */
   function noteBotClock(r) {
     const x = obj(r);
     const at = numOr(x.servedAt !== undefined ? x.servedAt : x.asOf);
-    if (at !== null && at > 0) { BOT_CLOCK.at = at; BOT_CLOCK.perf = perfNow(); }
+    if (at !== null && at > 0) { BOT_CLOCK.at = at; BOT_CLOCK.perf = perfNow(); BOT_CLOCK.wall = wallNow(); }
   }
 
   /** The bot's clock now (ms): its last answer's time plus the time passed since; null before any answer. Never throws. */
   function botNow() {
-    return BOT_CLOCK.at ? BOT_CLOCK.at + Math.max(0, perfNow() - BOT_CLOCK.perf) : null;
+    return BOT_CLOCK.at ? BOT_CLOCK.at + elapsed(BOT_CLOCK.perf, BOT_CLOCK.wall) : null;
+  }
+
+  /** Notes that the Live answer (or its failure) came now. Never throws. */
+  function markLoaded() {
+    S.loadedAt = perfNow();
+    S.loadedWall = wallNow();
+  }
+
+  /** The ms since the Live answer (or its failure) came. Never throws. */
+  function sinceLoaded() {
+    return elapsed(S.loadedAt, S.loadedWall);
   }
 
   /** How long before the bot's clock now the moment `at` (ms) was ('' when unknown). Never the device's clock. Never throws. */
@@ -497,7 +522,7 @@
     if (S.area === 'slides') {
       if (!S.deliv.loaded && !S.deliv.loading) loadDeliveries();
       else renderSlides();
-    } else if (!S.loading && perfNow() - S.loadedAt >= REFRESH_MS) {
+    } else if (!S.loading && sinceLoaded() >= REFRESH_MS) {
       loadSnapshot(false);
     }
     renderBanners();
@@ -548,18 +573,18 @@
         S.snapErr = null;
         S.snapRefusal = null;
         S.refreshFailed = null;
-        S.loadedAt = perfNow();
+        markLoaded();
       } else if (r && (r.denied || r.off)) {
         // access taken away, or the switch turned OFF: the page shows nothing of the bot's work any more
         S.snap = null;
         S.snapRefusal = r;
-        S.loadedAt = perfNow();
+        markLoaded();
       } else if (S.snap) {
         S.refreshFailed = { why: txt(r && r.why) || 'The bot did not say why.' };
-        S.loadedAt = perfNow();
+        markLoaded();
       } else {
         S.snapRefusal = r || {};
-        S.loadedAt = perfNow();
+        markLoaded();
       }
       renderLive();
       renderBanners();
@@ -567,7 +592,7 @@
     }, e => {
       S.loading = false;
       setRefreshBusy(false);
-      S.loadedAt = perfNow();
+      markLoaded();
       if (S.snap) S.refreshFailed = { why: `the bot could not be reached (${errWords(e)})` };
       else S.snapErr = e;
       renderLive();
@@ -613,9 +638,11 @@
     }
     const acct = S.snap ? obj(S.snap.build) : obj(S.deliv.resp);
     if (acct.sameAccount === false) {
+      // the bot's words start with the same sentence: the bold lead only when they are missing
       add(root, h('div', { class: 'banner banner--bad', role: 'alert' }, icon('info'),
-        h('div', { class: 'banner-text' }, h('strong', {}, 'This web app runs as a different Google account than the bot. '),
-          txt(acct.accountWhy) || 'The owner deploys it again signed in as the account in Control B8 (README, "Live dashboard").')));
+        h('div', { class: 'banner-text' }, txt(acct.accountWhy) ? txt(acct.accountWhy)
+          : [h('strong', {}, 'This web app runs as a different Google account than the bot. '),
+            'The owner deploys it again signed in as the account in Control B8 (README, "Live dashboard").'])));
     }
     if (S.area === 'live' && S.snap && S.refreshFailed) {
       add(root, h('div', { class: 'banner', role: 'alert' }, icon('info'),
@@ -903,8 +930,13 @@
         add(actions, h('button', { type: 'button', class: 'btn btn--primary', on: { click: () => goView(x.view, x.filter) } }, VIEW_GO_WORDS[x.view], icon('arrow')));
       }
       add(actions, h('button', { type: 'button', class: 'btn btn--text', on: { click: () => { S.question = null; redrawQuestions(); } } }, 'Close'));
+      // what the page shows is old: the answer (from the same snapshot) is never shown as current
+      const old = x.view === 'whynot' ? { stale: false } : staleness();
+      const said = txt(x.answer) || 'The bot\'s answer has no words for this question.';
       add(sec, h('div', { class: 'answer glass edge', id: 'answer', role: 'region', 'aria-live': 'polite', 'aria-label': 'Answer' },
-        h('p', { class: 'answer-q' }, txt(x.text)), h('p', { class: 'answer-a' }, txt(x.answer) || 'The bot\'s answer has no words for this question.'), actions));
+        h('p', { class: 'answer-q' }, txt(x.text)),
+        old.stale ? h('p', { class: 'answer-a' }, h('b', {}, `Can't be sure: this answer is from ${old.age !== null ? agoWords(old.age) : 'a time the bot did not say'}, and ${old.why}. `),
+          `It said then: ${said}`) : h('p', { class: 'answer-a' }, said), actions));
     } else {
       add(sec, h('div', { id: 'answer', hidden: true }));
     }
@@ -1487,7 +1519,8 @@
       pressureTable('By issue', p.byIssue), pressureTable('By product', p.byProduct), pressureTable('By platform', p.byPlatform)));
     const leaders = arr(p.speedLeaders).map(obj);
     const lcard = h('div', { class: 'card' }, h('h3', {}, 'Stories growing fastest'));
-    if (!leaders.length) add(lcard, h('p', { class: 'muted' }, 'No story is rising or surging right now.'));
+    if (obj(S.snap.switches).earlyWave !== true) add(lcard, h('p', { class: 'muted' }, 'Stories are not followed (Early Detection, row 19, is OFF), so none is shown here.'));
+    else if (!leaders.length) add(lcard, h('p', { class: 'muted' }, 'No story is rising or surging right now.'));
     else {
       add(lcard, h('ul', { class: 'plain-list' }, leaders.map(c => h('li', {},
         h('button', { type: 'button', class: 'row-open', 'data-fk': `lead:${c.id}`, on: { click: ev => openDetail('cluster', String(c.id), false, ev.currentTarget) } }, txt(c.label) || String(c.id)),
@@ -2072,7 +2105,8 @@
    */
   function delivGate() {
     const r = obj(S.deliv.resp);
-    const mayChange = r.mayChange !== false;  // set up, run, pause: for the people who can edit the bot's sheet
+    // set up, run, pause: for the people who can edit the bot's sheet, as the bot's own answer says (never while it loads or fails)
+    const mayChange = r.ok === true && r.mayChange === true;
     let on = boolOf(r, ['on', 'switchOn', 'enabled', 'slideDeliveries']);
     if (on === null && obj(r.switches) && typeof obj(r.switches).slideDeliveries === 'boolean') on = r.switches.slideDeliveries;
     if (on === null && S.snap && typeof obj(S.snap.switches).slideDeliveries === 'boolean') on = S.snap.switches.slideDeliveries;
@@ -2105,6 +2139,7 @@
       nextRun: numOr(d.nextRun !== undefined ? d.nextRun : d.next_run),
       note: txt(d.note || d.problem) || (arr(d.problems).map(txt).filter(Boolean).length ? `Its saved settings need a look: ${arr(d.problems).map(txt).filter(Boolean).join(' ')}` : ''),
       updatedAt: numOr(d.updatedAt !== undefined ? d.updatedAt : d.updated_at), updatedBy: txt(d.updatedBy || d.updated_by),
+      waiting: d.waiting && typeof d.waiting === 'object' ? obj(d.waiting) : null,
     };
   }
 
@@ -2230,7 +2265,11 @@
       notifiedWords(last.notified) ? h('span', { class: 'sub' }, notifiedWords(last.notified)) : null,
       txt(last.note) ? h('span', { class: 'sub' }, `Note: ${txt(last.note)}.`) : null,
       last.link ? h('span', { class: 'sub' }, extLink(last.link, 'Open the slide')) : null);
-    const next = paused ? 'Paused: no runs until it is resumed' : d.nextRun ? clock(d.nextRun, txt(sched.tz) || undefined) : 'Not scheduled';
+    // a scheduled run waiting for Gemini: its time has passed, so the card says what it waits for and until when
+    const waitWords = !paused && d.waiting ? (txt(d.waiting.label) || 'Waiting for Gemini: it tries again every few minutes.') : '';
+    const next = paused ? 'Paused: no runs until it is resumed' : waitWords
+      ? h('span', {}, h('span', { class: 'pill st-warn' }, 'Waiting'), ' ', d.nextRun ? clock(d.nextRun, txt(sched.tz) || undefined) : '', h('span', { class: 'sub' }, waitWords))
+      : d.nextRun ? clock(d.nextRun, txt(sched.tz) || undefined) : 'Not scheduled';
     const runReason = !gate.canRun ? gate.why : paused ? 'Resume it first to run it.' : '';
     const reasonId = `run-why-${cssId(d.id)}`;
     const busy = res && res.busy;
@@ -2507,7 +2546,8 @@
       kids.push(slides.length ? h('label', { class: 'field', style: { 'max-width': '520px' } }, h('span', {}, 'The slide whose look to copy'),
         h('select', { class: 'select', 'data-fk': 'design:slide', on: { change: ev => { s.design.slideId = ev.target.value; stalePreview(); refreshSaveBar(); } } },
           [h('option', { value: '' }, 'Pick a slide')].concat(slides.map((sl, i) => h('option', { value: txt(sl.id), selected: txt(sl.id) === txt(s.design.slideId),
-            disabled: sl.titled === false }, `${i + 1}. ${txt(sl.title) || 'Untitled slide'}${sl.titled === false ? ' (its layout has no title box, so its look can\'t be copied)' : ''}`)))))
+            disabled: sl.titled === false && s.mode !== 'add' }, `${i + 1}. ${txt(sl.title) || 'Untitled slide'}${sl.titled === false && s.mode !== 'add'
+              ? ' (its layout has no title box, so its look can\'t be copied)' : ''}`)))))
         : h('p', { class: 'muted' }, 'Check the deck first to pick a slide.'));
     }
     return step('Design', 'The slide follows the deck\'s design, never this page\'s.', s.design.mode === 'default' || !!txt(s.design.slideId), false, kids, 'step-design');
@@ -2616,7 +2656,10 @@
     const s = e.s;
     // "Match": each slide covering the time since the run before (when the times between runs differ), else a lookback
     const since = !!(m && m.sincePrevious === true);
-    const matchDiffers = m && (since ? !s.schedule.sincePrevious : ((numOr(m.lookbackHours) !== null && numOr(m.lookbackHours) !== numOr(s.lookbackHours)) ||
+    // a schedule covering the time since the run before that leaves no gap and no overlap is kept: a lookback would bring
+    // the gap or the overlap back at the next clock change past the 14 days checked
+    const matchDiffers = m && !(s.schedule.sincePrevious && !problem) &&
+      (since ? !s.schedule.sincePrevious : ((numOr(m.lookbackHours) !== null && numOr(m.lookbackHours) !== numOr(s.lookbackHours)) ||
       (typeof m.mondayCoversWeekend === 'boolean' && m.mondayCoversWeekend !== !!s.schedule.mondayCoversWeekend) || !!s.schedule.sincePrevious));
     const matchWords = !m ? '' : since ? 'cover the time since the run before on each slide' : [numOr(m.lookbackHours) !== null && numOr(m.lookbackHours) !== numOr(s.lookbackHours) ? `look back ${lookbackWords(m.lookbackHours)}` : '',
       typeof m.mondayCoversWeekend === 'boolean' && m.mondayCoversWeekend !== !!s.schedule.mondayCoversWeekend
@@ -2685,7 +2728,7 @@
       h('input', { type: 'checkbox', checked, disabled, 'data-fk': `opt:${key}`, on: { change: ev => { onChange(ev.target.checked); stalePreview(); refreshSaveBar(); } } }),
       h('span', {}, words, sub ? h('span', { class: disabled ? 'why' : 'sub' }, sub) : null));
     const radio = (value, words) => h('label', { class: 'check' }, h('input', { type: 'radio', name: 'ed-mode', value, checked: s.mode === value, 'data-fk': `mode:${value}`,
-      on: { change: () => { s.mode = value; } } }), h('span', {}, words));
+      on: { change: () => { s.mode = value; if (s.design.mode === 'copy') renderSlides(); } } }), h('span', {}, words));
     const kids = [
       box('own', 'Count the bot\'s own finds', 'Story cards, Watch alerts, Direct BigQuery cards and early signals count next to Burson\'s alerts. An issue with no Burson alert is marked "Found by the app".',
         !!s.countOwn, v => { s.countOwn = v; }),
@@ -3073,13 +3116,17 @@
     });
     $('#refresh-btn').addEventListener('click', () => { if (S.area === 'slides') loadDeliveries(); else loadSnapshot(true); });
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && S.area === 'live' && !S.loading && perfNow() - S.loadedAt >= REFRESH_MS) loadSnapshot(false);
+      if (document.visibilityState === 'visible' && S.area === 'live' && !S.loading && sinceLoaded() >= REFRESH_MS) loadSnapshot(false);
     });
+    let lastTick = wallNow();
     setInterval(() => {
+      // the device's clock jumped past a few ticks: it slept (the page clock stood still), so ask the bot at once
+      const woke = wallNow() - lastTick > 3 * TICK_MS;
+      lastTick = wallNow();
       updateFresh();
-      // what the page shows became too old (or fresh again): the Now strip says so at once
-      if (S.snap && S.area === 'live' && staleness().stale !== !!S.drawnStale) redrawNow();
-      if (document.visibilityState === 'visible' && S.area === 'live' && !S.loading && S.loadedAt && perfNow() - S.loadedAt >= REFRESH_MS) loadSnapshot(false);
+      // what the page shows became too old (or fresh again): the Now strip and the answers say so at once
+      if (S.snap && S.area === 'live' && staleness().stale !== !!S.drawnStale) { redrawNow(); redrawQuestions(); }
+      if (document.visibilityState === 'visible' && S.area === 'live' && !S.loading && S.loadedAt && (woke || sinceLoaded() >= REFRESH_MS)) loadSnapshot(false);
     }, TICK_MS);
     loadSnapshot(false);
     if (lsGet('area') === 'slides') setArea('slides');

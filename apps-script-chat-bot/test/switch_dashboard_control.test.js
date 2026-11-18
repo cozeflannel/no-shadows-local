@@ -140,7 +140,7 @@ module.exports = H => {
     // no old help line left anywhere (the old switch-rows line included), and nothing kept below the help (none was a person's)
     assert.ok(!sh.rows.some(r => /^• Rows .* 46 and 48-51 are switches/.test(String(r[0]))));
     eq(sh.rows.length, 57 + B.ev('CONTROL_HELP_ROWS_') - 1);
-    eq(t.g.logs.filter(l => /person's text there was kept below it/.test(l)), []);
+    eq(t.g.logs.filter(l => /kept below/.test(l)), []);
     // and it stays so: setup() and more runs change nothing from row 52 down; a person's ON on row 54 is kept
     const snap = JSON.stringify(sh.rows.slice(51));
     t.bot.setup();
@@ -169,8 +169,9 @@ module.exports = H => {
     const below = sh.rows.slice(57 + B.ev('CONTROL_HELP_ROWS_') - 1).map(r => r[0]);
     eq(below, ['C54 a person note beside old help', 'B55 mine', 'ON']);
     const end = 57 + B.ev('CONTROL_HELP_ROWS_') - 1;
-    eq(t.g.logs.filter(l => /person's text there was kept below it/.test(l)),
-      [`Control tab: "How it works" now fills rows 57-${end} of column A; a person's text there was kept below it (C54 to A${end + 1}, B55 to A${end + 2}, C55 to A${end + 3})`]);
+    // the log says the texts came from the new switch rows' cells (never "from the help's rows": U8)
+    eq(t.g.logs.filter(l => /kept below/.test(l)),
+      [`Control tab: a person's text in the cells the new switch rows were written over was kept below "How it works" (rows 57-${end} of column A): C54 to A${end + 1}, B55 to A${end + 2}, C55 to A${end + 3}`]);
     eq(t.bot.readControl_(sh).switches.liveDashboard, false);
     // the next runs keep them where they are and move nothing again
     const snap = JSON.stringify(sh.rows.slice(51));
@@ -528,5 +529,112 @@ module.exports = H => {
     eq(manifest.oauthScopes.length, 15);
     const ignore = fs.readFileSync(path.join(ROOT, '.claspignore'), 'utf8').split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
     eq(ignore, ['**/**', '!*.gs', '!*.html', '!appsscript.json']);
+  });
+
+  // ----- second review (U2/S3, U3, U4, U5, U6) ----------------------------------------------------------------------
+
+  test('dashboard control: the run that finds row 55 turned OFF marks the mode record "not kept" from its start, so a send while row 55 is OFF is never put under the last mode kept; ON again, the mode is kept from that run on (U2, S3)', () => {
+    const { t, sh } = world();
+    sh.getRange(55, 2).setValue('ON');
+    t.poll();
+    const writes = spyProps(t.g);
+    const log = () => JSON.parse(t.g.props.get('SLIDE_MODE_LOG'));
+    const first = log().changes;
+    eq(first.map(c => c[1]), [0]);  // Testing (B30 set)
+    sh.getRange(55, 2).setValue('OFF');
+    t.poll();
+    const offAt = t.g.clock.now;
+    eq(log().changes.map(c => c[1]), [0, null]);
+    eq(log().changes[1][0], offAt);
+    eq(t.bot.slideModeAt_(log(), offAt + 10 * 60 * 1000), 'unknown');
+    eq(t.bot.slideModeAt_(log(), first[0][0] + 1000), 'test');
+    // more runs with row 55 OFF: nothing more written
+    writes.length = 0;
+    t.poll();
+    t.poll();
+    eq(writes.filter(w => w[0] === 'SLIDE_MODE_LOG'), []);
+    // ON again: kept from that run (Testing after the gap, though Testing was the last mode kept before it)
+    sh.getRange(55, 2).setValue('ON');
+    t.poll();
+    eq(log().changes.map(c => c[1]), [0, null, 0]);
+    eq(t.bot.slideModeAt_(log(), t.g.clock.now + 1000), 'test');
+    // the upkeep on its own: a gap only when a record is kept, and only once
+    eq(t.bot.slideModeGap_(t.g.clock.now), 'gap');
+    eq(t.bot.slideModeGap_(t.g.clock.now + 1), 'same');
+  });
+
+  test('dashboard control: a change of mode is kept from the start of the run that found it, before any of that run\'s sends (U3)', () => {
+    const { t, sh } = world();
+    sh.getRange(55, 2).setValue('ON');
+    // the run takes 30 seconds after it starts (its sends are stamped during it)
+    t.bot.ev('var __clock = null; writeSwitchStatuses_ = (orig => function () { __clock.now += 30000; return orig.apply(null, arguments); })(writeSwitchStatuses_)');
+    t.bot.__clock = t.g.clock;
+    const start = t.g.clock.now + 60000;  // t.poll() moves the clock a minute on, then the run starts
+    t.poll();
+    const log = JSON.parse(t.g.props.get('SLIDE_MODE_LOG'));
+    eq([log.since, log.changes], [start, [[start, 0]]]);
+    assert.ok(t.g.clock.now > start);
+    // the upkeep stamps what it is given (the run's start), never the time it is called
+    t.g.props.delete('SLIDE_MODE_LOG');
+    t.bot.pollDashboardUpkeep_({ slideDeliveries: true }, { live: true, start: 12345 });
+    eq(JSON.parse(t.g.props.get('SLIDE_MODE_LOG')).changes, [[12345, 1]]);
+  });
+
+  test('dashboard control: while the bot is paused (B2 OFF) with row 55 ON, C55 says so, written once, and paused runs write no more column C (U4)', () => {
+    const { t, sh } = world();
+    sh.getRange(55, 2).setValue('ON');
+    t.poll();
+    const writes = [];
+    const orig = sh.getRange.bind(sh);
+    sh.getRange = (r, c, nr, nc) => {
+      const range = orig(r, c, nr, nc);
+      const rows = nr || 1;
+      const cols = nc || 1;
+      if (r <= 55 && 55 < r + rows && c <= 3 && 3 < c + cols) {
+        const set = range.setValues.bind(range);
+        range.setValues = v => { writes.push([r, c, rows, cols]); return set(v); };
+        range.setValue = v => range.setValues([[v]]);
+      }
+      return range;
+    };
+    try {
+      sh.getRange(2, 2).setValue('OFF');
+      for (let i = 0; i < 3; i++) t.poll();
+      eq([sh.cell(55, 3), writes.length], [B.ev('SLIDE_PAUSED_ON_TEXT_'), 1]);
+      // ON again: the usual text, once
+      sh.getRange(2, 2).setValue('ON');
+      t.poll();
+      t.poll();
+      assert.match(sh.cell(55, 3), /^✓ ON/);
+      eq(writes.length, 2);
+    } finally {
+      sh.getRange = orig;
+    }
+  });
+
+  test('dashboard control: on a tab from before rows 54-55, a person\'s note in those cells that starts with "OFF" or "✓ ON" is still theirs and kept; the bot\'s own texts there are not (U5)', () => {
+    const { t, sh } = world();
+    olderTab(sh);
+    sh.getRange(55, 3).setValue('OFF-site review on Friday');
+    sh.getRange(54, 3).setValue('✓ ON means the dashboard, ask Sam first');
+    t.poll();
+    eq([cells(sh, 54), cells(sh, 55)], [[LABEL54, 'OFF', OFF54], [LABEL55, 'OFF', OFF55]]);
+    const below = sh.rows.slice(57 + B.ev('CONTROL_HELP_ROWS_') - 1).map(r => r[0]);
+    eq(below, ['✓ ON means the dashboard, ask Sam first', 'OFF-site review on Friday']);
+    // the bot's own: its OFF text, an ON text with its note, the paused text
+    [OFF54, OFF55, `${ON54}${NOT_DEPLOYED}`, `${ON55} · last check 9:00 AM`, WAITING55, B.ev('SLIDE_PAUSED_ON_TEXT_')].forEach(v =>
+      eq(t.bot.controlPersonText_(v, 2), false, v));
+    ['OFF-site review on Friday', 'ON', 'OFF for now, ask Sam'].forEach(v => eq(t.bot.controlPersonText_(v, 2), true, v));
+  });
+
+  test('dashboard control: a Sheets failure while the help is written after rows 54-55 were written over never loses a person\'s text from them (U6)', () => {
+    const { t, sh } = world();
+    olderTab(sh);
+    sh.getRange(54, 2).setValue('ask Sam before changing row 53');
+    t.bot.ev('writeControlHelp_ = (orig => { let n = 0; return sh => { if (n++ === 0) throw new Error(\'Service Spreadsheets timed out\'); return orig(sh); }; })(writeControlHelp_)');
+    for (let i = 0; i < 3; i++) { try { t.poll(); } catch (e) { /* the run's own failure */ } }
+    eq(cells(sh, 54), [LABEL54, 'OFF', OFF54]);
+    eq(sh.rows.filter(r => r && r[0] === 'ask Sam before changing row 53').length, 1);
+    helpAt57(sh, 'after the failed run and the next');
   });
 };

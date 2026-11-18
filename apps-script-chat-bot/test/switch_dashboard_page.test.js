@@ -143,7 +143,10 @@ module.exports = H => {
     saved(w);
     w.t.control().getRange(8, 2).setValue('someone.else@runner.test');
     const page = open(w, EDITOR);
-    assert.match(page.text(page.one('#banners')), /^This web app runs as a different Google account than the bot\. This web app runs as a different Google account than the bot \(Control B8, "Runs as"\)/);
+    // the bot's own words, once (never the same sentence twice in a row: R8)
+    const banner = page.text(page.one('#banners'));
+    assert.match(banner, /^This web app runs as a different Google account than the bot \(Control B8, "Runs as"\): it was deployed from another account\./);
+    eq(banner.split('This web app runs as a different Google account').length - 1, 1);
     slidesArea(page);
     assert.ok(page.byText('#slides-root .banner-text', /deployed from another account/).length === 1);
     w.t.control().getRange(8, 2).setValue('bot@runner.test');
@@ -180,5 +183,143 @@ module.exports = H => {
     eq([last.args[0].schedule.days, last.args[0].schedule.sincePrevious], [[2, 5], true]);
     assert.match(page.text(page.one('#coverage')), /Every hour is on exactly one slide/);
     eq([page.one('[data-fk="ed:match"]'), page.one('[data-fk="ed:since"]').checked], [null, true]);
+  });
+
+  // ----- second review (R4, L9, L10, L11, X9) -----------------------------------------------------------------------
+
+  test('dashboard page: sharing that can\'t be checked just now (Drive did not answer) is never drawn as access taken away: the page keeps what it shows and says it can\'t be sure (R4)', () => {
+    const w = world();
+    const page = open(w, EDITOR);
+    assert.ok(page.one('#now'));
+    // the 10-minute sharing answer runs out and Drive fails on the next check
+    Array.from(w.t.g.cache.keys()).filter(k => k.startsWith('dash1:acl:')).forEach(k => w.t.g.cache.delete(k));
+    w.t.g.drive.files.get(w.t.g.props.get('STORE_SHEET_ID')).fail = 'Service unavailable';
+    w.t.g.session.active = EDITOR;
+    const r = w.t.bot.dashSnapshot({ refresh: true });
+    w.t.g.session.active = '';
+    eq([r.ok, r.denied], [false, undefined]);
+    assert.match(r.why, /^The dashboard could not check who the bot's sheet is shared with just now/);
+    page.tick(61 * 1000);
+    assert.ok(page.one('#now'), page.text(page.one('#live-root')));
+    assert.match(page.text(page.one('#now-headline')), /^Can't be sure: what this page shows is from .*, and the last refresh did not work \(The dashboard could not check/);
+    assert.ok(!/You can't see this yet/.test(page.text(page.one('#live-root'))));
+    // a definite "not shared" is still a refusal
+    w.t.g.drive.files.get(w.t.g.props.get('STORE_SHEET_ID')).fail = '';
+    w.t.g.drive.files.set(w.t.g.props.get('STORE_SHEET_ID'), { editors: [], viewers: [] });
+    Array.from(w.t.g.cache.keys()).filter(k => k.startsWith('dash1:acl:')).forEach(k => w.t.g.cache.delete(k));
+    w.t.g.session.active = EDITOR;
+    eq(w.t.bot.dashSnapshot({ refresh: true }).denied, true);
+    w.t.g.session.active = '';
+  });
+
+  test('dashboard page: on an old page the common answers are never shown as current: each says "can\'t be sure", how old, then what it said (L9)', () => {
+    const w = world();
+    let fail = false;
+    const page = open(w, EDITOR, { run: (fn, args, real) => { if (fail && fn === 'dashSnapshot') throw new Error('Service unavailable'); return real(fn, args); } });
+    page.click(page.one('[data-fk="q:needs-me"]'));
+    const fresh = page.text(page.one('#answer .answer-a'));
+    assert.ok(!/^Can't be sure/.test(fresh), fresh);
+    fail = true;
+    page.tick(61 * 1000);
+    page.tick(60 * MIN);
+    const old = page.text(page.one('#answer .answer-a'));
+    assert.match(old, /^Can't be sure: this answer is from (?:1 h|6\d min) ago, and the last refresh did not work \(the bot could not be reached \(Service unavailable\)\)\. It said then: /);
+    assert.ok(old.endsWith(fresh), old);
+    page.click(page.one('[data-fk="q:keeping-up"]'));
+    assert.match(page.text(page.one('#answer .answer-a')), /^Can't be sure: this answer is from /);
+  });
+
+  test('dashboard page: after the device slept, the page counts the time asleep: the data is "can\'t be sure" and the page asks the bot again at once (L10)', () => {
+    const w = world();
+    let hold = false;
+    const page = open(w, EDITOR, { hold: fn => hold && fn === 'dashSnapshot' });
+    const before = page.calls.filter(c => c.fn === 'dashSnapshot').length;
+    // an hour asleep: the page clock (performance.now) stood still, the device's clock did not; the bot does not answer yet
+    hold = true;
+    page.sleep(60 * MIN);
+    page.tick(5 * 1000);
+    eq(page.calls.filter(c => c.fn === 'dashSnapshot').length, before + 1);
+    assert.match(page.text(page.one('#now-headline')), /^Can't be sure: what this page shows is from (?:1 h|60 min) ago, and no newer answer has come from the bot\.$/);
+    assert.match(page.text(page.one('#fresh')), /^Updated (?:1 h|60 min) ago/);
+  });
+
+  test('dashboard page: with Early Detection (row 19) OFF the Pressure view says stories are not followed, never that none is rising (L11)', () => {
+    const w = world();
+    w.t.control().getRange(19, 2).setValue('OFF');
+    const page = open(w, EDITOR);
+    page.click(page.all('[role="tab"]').find(t => /Pressure/.test(page.text(t))));
+    const txt = page.text(page.one('#live-root'));
+    assert.match(txt, /Stories growing fastest\s*Stories are not followed \(Early Detection, row 19, is OFF\), so none is shown here\./);
+    assert.ok(!/No story is rising or surging right now/.test(txt));
+    // ON: as before (a snapshot built anew, not the one kept 45 seconds)
+    w.t.control().getRange(19, 2).setValue('ON');
+    Array.from(w.t.g.cache.keys()).filter(k => k.startsWith('dash1:snap')).forEach(k => w.t.g.cache.delete(k));
+    const on = open(w, EDITOR);
+    on.click(on.all('[role="tab"]').find(t => /Pressure/.test(on.text(t))));
+    const onTxt = on.text(on.one('#live-root'));
+    assert.ok(!/Stories are not followed/.test(onTxt), (onTxt.match(/.{200}Stories are not followed.{100}/) || [''])[0]);
+  });
+
+  test('dashboard page: New delivery and the editor are drawn only when the bot\'s answer says this viewer may set deliveries up: never while the list loads or after it failed (X9)', () => {
+    const w = world();
+    let hold = true;
+    const loading = open(w, READER, { hold: fn => hold && fn === 'dashDeliveries' });
+    slidesArea(loading);
+    eq(loading.one('[data-fk="deliv:new"]'), null);
+    hold = false;
+    const failing = open(w, READER, { run: (fn, args, real) => (fn === 'dashDeliveries' ? { ok: false, why: 'The bot\'s sheet could not be read just now.' } : real(fn, args)) });
+    slidesArea(failing);
+    eq(failing.one('[data-fk="deliv:new"]'), null);
+    // the same failure for an editor: no New either (the answer did not say)
+    const edFail = open(w, EDITOR, { run: (fn, args, real) => (fn === 'dashDeliveries' ? { ok: false, why: 'The bot\'s sheet could not be read just now.' } : real(fn, args)) });
+    slidesArea(edFail);
+    eq(edFail.one('[data-fk="deliv:new"]'), null);
+    const ed = open(w, EDITOR);
+    slidesArea(ed);
+    assert.ok(ed.one('[data-fk="deliv:new"]'));
+  });
+
+  test('dashboard page: a schedule covering the time since the run before that already leaves no gap and no overlap is not offered "Match" back to a lookback (S9); a copied design on a layout with no title box can be picked when each run adds a slide (S11)', () => {
+    const w = world();
+    const page = open(w, EDITOR);
+    slidesArea(page);
+    page.click(page.one('[data-fk="deliv:new"]'));
+    page.type(page.one('[data-fk="ed:deck"]'), LINK);
+    page.submit(page.one('[data-fk="ed:deck"]').closest('form'));
+    // every day at 9:00 (no clock change in the next 14 days), each slide covering the time since the run before
+    [0, 6].forEach(d => page.click(page.one(`[data-fk="day:${d}"]`)));
+    page.tick(1000);
+    page.type(page.one('[data-fk="ed:since"]'), true);
+    page.tick(1000);
+    const last = page.calls.filter(c => c.fn === 'dashScheduleCheck').pop();
+    eq([last.args[0].schedule.days, last.args[0].schedule.sincePrevious], [[0, 1, 2, 3, 4, 5, 6], true]);
+    assert.match(page.text(page.one('#coverage')), /Every hour is on exactly one slide/);
+    eq(page.one('[data-fk="ed:match"]'), null);
+    // S11: add mode lets the title-less slide's look be copied; replace mode does not
+    page.type(page.one('[data-fk="design:copy"]'), true);
+    const third = () => page.one('[data-fk="design:slide"]').querySelectorAll('option')[3];
+    eq(third().disabled, true);
+    page.type(page.one('[data-fk="mode:add"]'), true);
+    eq([third().disabled, page.text(third())], [false, '3. Untitled slide']);
+  });
+
+  test('dashboard page: a delivery whose scheduled run waits for Gemini shows "Waiting", since when and until when, not a next run already past (S6)', () => {
+    const w = world();
+    const d = saved(w, { schedule: { days: [0, 1, 2, 3, 4, 5, 6], time: '08:00', tz: 'America/New_York', mondayCoversWeekend: false } });
+    const v = w.t.g.vertex;
+    const orig = v.handle;
+    v.handle = (url, params) => {
+      const props = ((JSON.parse(params.payload).generationConfig || {}).responseSchema || {}).properties || {};
+      if (props.segments) return { code: 503, body: { error: { code: 503, message: 'The model is overloaded.', status: 'UNAVAILABLE' } } };
+      return orig(url, params);
+    };
+    const row = w.t.bot.slideRows_(w.t.sheet().getSheetByName('Slide deliveries')).find(r => r.id === d.id);
+    w.t.g.clock.now = row.next_run + 3 * MIN;
+    w.t.g.session.active = '';
+    eq(w.t.bot.dashDeliverDue().ran.map(x => x.ok), [false]);
+    const page = open(w, EDITOR);
+    slidesArea(page);
+    const card = page.text(page.one('.deliv'));
+    assert.match(card, /Next run\s*Waiting\s*\w{3} \d+, 8:00 AM.*Waiting for Gemini since .*: it tries again every few minutes until \w{3} \d+, 10:00 AM ET\./);
   });
 };

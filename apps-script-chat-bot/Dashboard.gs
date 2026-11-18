@@ -22,7 +22,7 @@
 // The dashboard's own build id: changed by hand whenever the dashboard's code changes. poll() writes it to the property
 // BOT_BUILD while row 54 is ON (the time trigger runs the newest code); the web app compares it with its own copy (a
 // deployment serves the code of its version), and says so when the link runs an older version than the bot
-const DASH_BUILD_ = '2026-11-18.2';
+const DASH_BUILD_ = '2026-11-18.3';
 const DASH_BUILD_PROP_ = 'BOT_BUILD';
 const DASH_ACL_CACHE_SEC_ = 600;
 const DASH_TITLE_ = 'Burson QA bot · Live';
@@ -129,9 +129,13 @@ function dashDenied_(email) {
       'ask to be added by name.' };
 }
 
-/** The answer when the sharing could not be checked just now (Drive did not answer, or the bot's sheet is not known): not cached. Pure. */
+/**
+ * The answer when the sharing could not be checked just now (Drive did not answer, or the bot's sheet is not known): not
+ * cached, and marked `unchecked` (never a refusal: dashRefusal_ answers it without `denied`, so the page keeps what it
+ * shows and says it can't be sure). Pure.
+ */
 function dashUnchecked_(email) {
-  return { ok: false, email, self: false,
+  return { ok: false, email, self: false, unchecked: true,
     why: 'The dashboard could not check who the bot\'s sheet is shared with just now (Google Drive did not answer, or the bot ' +
       'has not been set up yet): try again in a minute.' };
 }
@@ -203,7 +207,8 @@ function dashControlUnread_(ctx) {
 /** The words the page shows when this web app runs as another account than the bot (Control B8): no address. Pure. */
 const DASH_ACCOUNT_WHY_ = 'This web app runs as a different Google account than the bot (Control B8, "Runs as"): it was deployed ' +
   'from another account. The owner deploys it again signed in as the account in B8 (README, "Live dashboard", steps 3 and 4); ' +
-  'until then Run now and the deck checks use the other account.';
+  'until then no deck is checked, previewed, saved or run from this link (that account is not the one decks are shared ' +
+  'with; scheduled deliveries go on as the bot\'s account).';
 
 /**
  * {web, bot, behind, url, sameAccount, accountWhy}: the dashboard code this link runs vs the newest code the bot runs
@@ -243,7 +248,11 @@ function dashServed_(answer) {
   return answer;
 }
 
-/** A dash* function's refusal, in the shape the page reads: {ok: false, denied, why}. Pure. */
+/**
+ * A dash* function's refusal, in the shape the page reads: {ok: false, denied, why}. Sharing that could not be checked
+ * just now (dashUnchecked_) is not a refusal: {ok: false, why}, with no `denied` (the page keeps what it shows). Pure.
+ */
 function dashRefusal_(access) {
+  if (access && access.unchecked === true) return { ok: false, why: access.why || 'The dashboard could not check who the bot\'s sheet is shared with just now: try again in a minute.' };
   return { ok: false, denied: true, why: (access && access.why) || 'You can\'t open the live dashboard.' };
 }

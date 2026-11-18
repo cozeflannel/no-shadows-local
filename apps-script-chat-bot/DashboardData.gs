@@ -695,10 +695,15 @@ function dlDecisionRaw_(row) {
   return '';
 }
 
-/** True when the T&S form was submitted for the row (by the bot, or marked as done). Pure. */
+/**
+ * True when the T&S form was submitted for the row (by the bot, or marked as done; its decision says "· auto-submitted",
+ * as a resend's copy of its original's decision does; or the alert it resends had it submitted: dlChained_'s tnsFrom).
+ * Pure.
+ */
 function dlTnsSubmitted_(row) {
   const input = dlObj_(row.email_input);
-  return headStartTime_(row.tns_submitted) > 0 || groupsOf_(row).indexOf('tns') >= 0 || input.tns_submitted === true;
+  return headStartTime_(row.tns_submitted) > 0 || groupsOf_(row).indexOf('tns') >= 0 || input.tns_submitted === true ||
+    /\u00b7 auto-submitted/.test(dlText_(row.decision)) || !!dlText_(row.tnsFrom);
 }
 
 /**
@@ -708,12 +713,17 @@ function dlTnsSubmitted_(row) {
  * corrects the alert itself and asks Burson nothing); sent (done once a reply resolved it); tns (the T&S form
  * submitted, no Social Alert); no-action; done (any other decision); needs-review (no decision yet); needs-person
  * (Burson's alert, not waiting on Burson, still with no decision DL_UNDECIDED_MS_ after the bot recorded it: the bot
- * decides an alert on the run that records it, so a person looks; `kind`, `now` tell). Pure.
+ * decides an alert on the run that records it, so a person looks; `kind`, `now` tell). Waiting on Burson is the bot's
+ * own rule (Bot.gs undecidedRow_): never while Never wait on Burson (row 23, `sw.noWait`) is ON; in the Auto-correct
+ * flow only while something it asked has a problem only Burson can fix; else while a fix is asked (fix_requested). Pure.
  */
-function dlStatusOf_(row, flow, decision, kind, now) {
+function dlStatusOf_(row, flow, decision, kind, now, sw) {
   const es = dlText_(row.email_status);
   const ff = dlObj_(row.forwarded_fields);
   const failedReview = dlObj_(ff.early_detection).basis === 'failed' || dlObj_(ff.triage).basis === 'failed';
+  const noWait = !!(sw && sw.noWait === true);
+  const requested = Array.isArray(row.requested) ? row.requested : [];
+  const waitsOnBurson = !noWait && (flow === 'auto-correct' ? requested.some(x => x && x.problem) : dlText_(row.status) === 'fix_requested');
   if (dlText_(row.status) === 'superseded') return 'superseded';
   if (es === 'failed' || failedReview) return 'failed';
   if (es === 'drafted' || es === 'pending') return 'draft-waiting';
@@ -723,7 +733,7 @@ function dlStatusOf_(row, flow, decision, kind, now) {
   if (es === 'deleted' || es === 'discarded' || dlNoAction_(decision)) return 'no-action';
   if (decision || es === 'skipped_no_test_email') return 'done';
   const made = headStartTime_(row.created_at);
-  if (kind === 'burson' && now && made && now - made > DL_UNDECIDED_MS_ && dlText_(row.status) !== 'fix_requested') return 'needs-person';
+  if (kind === 'burson' && now && made && now - made > DL_UNDECIDED_MS_ && !waitsOnBurson) return 'needs-person';
   return 'needs-review';
 }
 
@@ -731,8 +741,11 @@ function dlStatusOf_(row, flow, decision, kind, now) {
  * The Alert log's rows with each resend's state followed back along its chain (resend_of, back to the first; the row of
  * the same forward that holds the email), as the bot reads it (Bot.gs mergedAlertRow_, Drafts.gs chainDecision_): a
  * resend that keeps no email and no decision of its own takes its original's email, T&S and decision, so a draft that
- * waits on the original still shows on the live resend. The originals stay as they are (superseded). Copies; the rows
- * read are not changed. Pure.
+ * waits on the original still shows on the live resend. The originals stay as they are (superseded). A resend whose
+ * decision names a T&S form (its own: Never wait on Burson, row 23, copies its original's) and that keeps no T&S
+ * submission takes the one an alert it resends had (tnsFrom: that alert's id). A resend with nothing of its own or of
+ * its chain, whose chain reaches an alert that is not among the rows read, is marked (originalUnread: that alert's id):
+ * whether it was decided is not known. Copies; the rows read are not changed. Pure.
  */
 function dlChained_(rows) {
   const byId = new Map();
@@ -745,20 +758,41 @@ function dlChained_(rows) {
       if (!cur || headStartTime_(r.created_at) >= headStartTime_(cur.created_at)) emailByForward.set(f, r);
     }
   });
+  const tnsOf = x => headStartTime_(x.tns_submitted) > 0 || groupsOf_(x).indexOf('tns') >= 0 || dlObj_(x.email_input).tns_submitted === true;
   return (rows || []).map(r => {
-    if (!dlText_(r.resend_of) || dlText_(r.email_status) || dlText_(r.decision)) return r;
+    if (!dlText_(r.resend_of)) return r;
     let email = null;
     let decision = '';
-    for (let x = r, n = 0; x && n < 20; x = dlText_(x.resend_of) ? byId.get(dlText_(x.resend_of)) : null, n++) {
+    let tns = null;
+    let unread = '';
+    for (let x = r, n = 0; x && n < 20; n++) {
       if (!email && dlText_(x.email_status)) email = x;
       if (!email && dlText_(x.forward_message) && emailByForward.has(dlText_(x.forward_message))) email = emailByForward.get(dlText_(x.forward_message));
       if (!decision && dlText_(x.decision)) decision = dlText_(x.decision);
+      if (!tns && x !== r && tnsOf(x)) tns = x;
+      const up = dlText_(x.resend_of);
+      x = up ? byId.get(up) : null;
+      if (up && !x) unread = up;
     }
-    if (!email && !decision) return r;
-    const out = Object.assign({}, r, { chainedFrom: dlText_((email || {}).alert_id) || '' });
-    if (email) DL_CHAIN_FIELDS_.forEach(k => { if (email[k] !== undefined && email[k] !== null && email[k] !== '') out[k] = email[k]; });
-    if (decision) out.decision = decision;
-    return out;
+    const own = !!(dlText_(r.email_status) || dlText_(r.decision));
+    const out = Object.assign({}, r);
+    let changed = false;
+    if (!own && (email || decision)) {
+      out.chainedFrom = dlText_((email || {}).alert_id) || '';
+      if (email) DL_CHAIN_FIELDS_.forEach(k => { if (email[k] !== undefined && email[k] !== null && email[k] !== '') out[k] = email[k]; });
+      if (decision) out.decision = decision;
+      changed = true;
+    }
+    if (tns && !tnsOf(out) && /T&S/.test(dlText_(out.decision))) {
+      out.tnsFrom = dlText_(tns.alert_id);
+      if (headStartTime_(tns.tns_submitted)) out.tns_submitted = tns.tns_submitted;
+      changed = true;
+    }
+    if (unread && !own && !email && !decision) {
+      out.originalUnread = unread;
+      changed = true;
+    }
+    return changed ? out : r;
   });
 }
 
@@ -824,7 +858,9 @@ function dlOwnerOf_(row, status, decision) {
   const d = dlDecisionKind_(row, decision);
   switch (status) {
     case 'needs-review': return o('the bot', 'No decision yet: the bot reviews it');
-    case 'needs-person': return o('the IM on shift', `The bot recorded it ${dlAgo_(Date.now() - headStartTime_(row.created_at))} and has made no decision on it`);
+    case 'needs-person':
+      return o('the IM on shift', dlText_(row.originalUnread) ? dlUnreadWhy_(row)
+        : `The bot recorded it ${dlAgo_(Date.now() - headStartTime_(row.created_at))} and has made no decision on it`);
     case 'draft-waiting':
       return dlText_(row.email_status) === 'drafted' ? o('the IM on shift', 'Its Social Alert is a Gmail draft waiting to be sent')
         : o('the IM on shift', dlText_(row.email_error) ? `Its Social Alert has not gone out: ${dlPlain_(row.email_error, 200)}`
@@ -844,6 +880,19 @@ function dlOwnerOf_(row, status, decision) {
       return o('nobody', 'Nothing is waiting on anyone');
     default: return o('nobody', status === 'no-action' ? 'No action was needed' : 'Nothing is waiting on anyone');
   }
+}
+
+/**
+ * True when a row's decision handed its next step to a person and nothing says it was taken (dlDecisionKind_: a T&S
+ * form not submitted, the YouTube Social chat to ping): the bot's part is done, a person's is not. Pure.
+ */
+function dlHandedOver_(x) {
+  return x.status === 'done' && ['tns', 'youtube'].indexOf(dlDecisionKind_(x.row, x.decision)) >= 0;
+}
+
+/** Why a resend whose original is not among the rows read (dlChained_ originalUnread) is a person's to look at. Pure. */
+function dlUnreadWhy_(row) {
+  return `Its original (${dlText_(row.originalUnread)}) is not among the rows read, so whether it was decided is not known`;
 }
 
 /**
@@ -877,8 +926,9 @@ function dlActionOf_(row, status, decision, now, sw) {
     switch (status) {
       case 'needs-review': return 'Nothing to do yet: the bot reviews it on its next run.';
       case 'needs-person':
+        if (dlText_(row.originalUnread)) return `Look at it yourself: ${dlUnreadWhy_(row).replace(/^Its/, 'its')}. Find ${dlText_(row.originalUnread)} on the Alert log tab.`;
         return `Look at it yourself: the bot recorded it ${dlAgo_(now - headStartTime_(row.created_at))} and has made no decision on it (it ` +
-          'decides an alert on the run that records it). Open its thread in the analyst space.';
+          `decides an alert on the run that records it). Open its thread in the ${amFlowOf_(row.space) === 'A' ? 'Auto-correct' : 'analyst'} space.`;
       case 'draft-waiting':
         if (dlText_(row.email_status) === 'drafted') return 'Open the draft in Gmail and send it, or discard it.';
         return dlText_(row.email_error) ? `Not sent yet: ${dlPlain_(row.email_error, 240)}`
@@ -924,7 +974,7 @@ function dlAlertOf_(row, now, sw) {
   const kind = dlKindOf_(row);
   const flow = DL_FLOW_WORDS_[amFlowOf_(row.space)] || '';
   const decision = dlDecisionRaw_(row);
-  const status = dlStatusOf_(row, flow, decision, kind, now);
+  const status = dlStatusOf_(row, flow, decision, kind, now, sw);
   const lv = dlAlertLevel_(row, kind, f, decision);
   const ed = dlObj_(ff.early_detection);
   const created = headStartTime_(row.created_at);
@@ -1291,17 +1341,25 @@ function dlCannotSee_(sw, log, cl, now, msgs) {
   }
   if (msgs && !msgs.ok) {
     out.push({ what: 'Burson messages the bot could not review', why: msgs.why, fix: '' });
+  } else if (msgs && msgs.reach === false) {
+    out.push({ what: `Burson messages the bot could not review, before ${dlClock_(msgs.oldestAt, now)}`,
+      why: `Only the newest ${DL_MESSAGE_ROWS_} rows of the Message log are read, and they do not reach back 24 hours.`,
+      fix: 'Look for raw_forward and dead rows on the Message log tab.' });
   }
   return out;
 }
 
 /**
  * The Message log (the bot's record of each Chat message it handled; Store.gs MESSAGE_COLUMNS_), its newest rows,
- * read-only, when its header row is the bot's: {ok, why, rows: [{message, at, kind ('raw_forward': Burson's message
- * forwarded as received, never reviewed; 'dead': given up on), error}]} of the last 24 hours. Never throws.
+ * read-only, when its header row is the bot's: {ok, why, reach, oldestAt, rows: [{message, at, kind ('raw_forward':
+ * Burson's message forwarded as received, never reviewed; 'dead': given up on), flows, error}]} of the last 24 hours,
+ * one per message: each flow that logged it is in `flows` ('auto-correct': its row's "ac|" mark; 'in place': a space the
+ * bot works in itself, forwarding nothing: `isolated`, the source spaces of the Alert log's "(isolated)" partitions;
+ * 'main': a space the main flow forwards from, `forwarding`; '' not known). reach is false when the rows read were cut
+ * and do not reach back 24 hours (oldestAt: the oldest time read). Never throws.
  */
-function dlMessages_(ss, now) {
-  const out = { ok: false, why: '', rows: [] };
+function dlMessages_(ss, now, isolated, forwarding) {
+  const out = { ok: false, why: '', reach: true, oldestAt: 0, rows: [] };
   try {
     const sh = ss.getSheetByName(MESSAGE_TAB_);
     if (!sh) { out.why = 'The bot\'s sheet has no Message log tab yet (the bot makes it on its first run).'; return out; }
@@ -1312,13 +1370,35 @@ function dlMessages_(ss, now) {
     const last = sh.getLastRow();
     if (last < 2) return out;
     const first = Math.max(2, last - DL_MESSAGE_ROWS_ + 1);
+    const byName = new Map();
+    let oldest = 0;
     sh.getRange(first, 1, last - first + 1, width).getValues().forEach(v => {
+      const at = headStartTime_(v[1]);
+      if (at && (!oldest || at < oldest)) oldest = at;
       const kind = dlText_(v[2]);
       if (kind !== 'raw_forward' && kind !== 'dead') return;
-      const at = headStartTime_(v[1]);
       if (!at || now - at > DL_DAY_MS_) return;
-      out.rows.push({ message: dlText_(v[0]).replace(/^[a-z]+\|/, ''), at, kind, error: dlPlain_(v[5], 200) });
+      const raw = dlText_(v[0]);
+      const mark = (raw.match(/^([a-z]+)\|/) || [])[1] || '';
+      const message = raw.replace(/^[a-z]+\|/, '');
+      const space = message.split('/messages/')[0];
+      const inPlace = !!(isolated && isolated.has(space));
+      const main = !!(forwarding && forwarding.has(space));
+      const flow = mark === 'ac' ? 'auto-correct' : mark || inPlace === main ? '' : inPlace ? 'in place' : 'main';
+      const cur = byName.get(message);
+      if (!cur) {
+        const row = { message, at, kind, flows: [flow], error: dlPlain_(v[5], 200) };
+        byName.set(message, row);
+        out.rows.push(row);
+        return;
+      }
+      if (cur.flows.indexOf(flow) < 0) cur.flows.push(flow);
+      if (at < cur.at) cur.at = at;
+      if (kind === 'raw_forward') cur.kind = kind;
+      if (!cur.error) cur.error = dlPlain_(v[5], 200);
     });
+    out.oldestAt = oldest;
+    out.reach = first <= 2 || !oldest || oldest <= now - DL_DAY_MS_;
   } catch (e) {
     Object.assign(out, { ok: false, rows: [], why: `The Message log tab could not be read: ${dlErr_(e)}.` });
   }
@@ -1359,17 +1439,24 @@ function dlStuck_(ss, props, alerts, now, msgs) {
         : 'Its review failed', headStartTime_(r.updated_at) || headStartTime_(r.created_at));
     } else if (x.status === 'needs-person') {
       const since = headStartTime_(r.created_at);
-      add(x, `The bot recorded it ${dlAgo_(now - since)} and has made no decision on it`, since);
+      add(x, dlText_(r.originalUnread) ? dlUnreadWhy_(r) : `The bot recorded it ${dlAgo_(now - since)} and has made no decision on it`, since);
     }
   });
   // Burson's messages the bot could not review (forwarded as received) or gave up on: no alert row, so a person looks
   ((msgs && msgs.rows) || []).forEach(m => {
     const forwarded = m.kind === 'raw_forward';
+    const flows = m.flows && m.flows.length ? m.flows : [''];
+    const went = { main: 'went to the analyst space as received', 'auto-correct': 'went to the Auto-correct space as received',
+      'in place': 'was not forwarded (the bot works in its own space there)',
+      '': 'went on as received (to the analyst space, or nowhere where the bot works in the space itself)' };
+    const open = { main: 'open it in the analyst space, where it was forwarded as received', 'auto-correct': 'open its copy in the Auto-correct space, where it was posted as received',
+      'in place': 'open it in its space (the link)', '': 'open it (the link)' };
+    const lead = flows.slice().sort((p, q) => ['main', 'auto-correct', 'in place', ''].indexOf(p) - ['main', 'auto-correct', 'in place', ''].indexOf(q))[0];
     out.push({ kind: 'stuck', id: `msg:${m.message}`, title: forwarded ? 'A Burson message the bot could not review' : 'A Burson message the bot gave up on',
-      why: forwarded ? 'The bot could not read or review it, so it went to the analyst space as received, with no review (its seriousness is not known)'
+      why: forwarded ? `The bot could not read or review it, so it ${Array.from(new Set(flows.map(f => went[f]))).join(', and ')}, with no review (its seriousness is not known)`
         : `The bot gave up on it after its tries${m.error ? ` (${m.error})` : ''}, so it has no review (its seriousness is not known)`,
       level: 'unknown', since: m.at,
-      action: forwarded ? 'Review it by hand: open it in the analyst space, where it was forwarded as received.'
+      action: forwarded ? `Review it by hand: ${open[lead]}.`
         : 'Review it by hand: open it in the Burson space (the link), as the bot could not handle it.',
       view: 'pipeline', filter: 'stuck', detail: null, link: dlChatLink_(m.message) });
   });
@@ -1410,9 +1497,12 @@ function dlStuck_(ss, props, alerts, now, msgs) {
 /**
  * Now, look first and then (SPEC 3.4): {level, headline, counts, first (3), then (5)}. When health is not ok: level
  * 'unknown', the headline says why first and the health item (with its fix) leads. Otherwise what needs a person (a
- * draft waiting, a fix asked over an hour ago, a failure, a stuck signal or outbox row) by level then age, then the
- * stories forming by importance, then the rest of the last 24 hours by level then newest. With Early Detection (row 19)
- * OFF (`sw`), no story is followed: none is counted (null, not 0) and the headline says so. Pure.
+ * draft waiting, a fix asked over an hour ago, a failure, a stuck signal, Burson message or outbox row, and a decision of
+ * the last 24 hours that hands the next step to a person: a T&S form to submit, the YouTube Social chat to ping) by
+ * level then age, then the stories forming by importance, then the rest of the last 24 hours by level then newest. An
+ * item needing a person whose seriousness is not known ranks just above high (never under a routine alert), and when it
+ * leads, the level is 'unknown'. With Early Detection (row 19) OFF (`sw`), no story is followed: none is counted (null,
+ * not 0) and the headline says so. Pure.
  */
 function dlNow_(health, alerts, clusters, stuck, now, sw) {
   const following = !sw || sw.earlyWave === true;  // Early Detection (row 19) ON: the bot follows stories
@@ -1428,7 +1518,16 @@ function dlNow_(health, alerts, clusters, stuck, now, sw) {
     need.push(it);
     seen.add(`alert:${x.a.id}`);
   });
-  need.sort((p, q) => dlRank_(q.level) - dlRank_(p.level) || p._since - q._since);
+  recent.forEach(x => {
+    if (!dlHandedOver_(x) || seen.has(`alert:${x.a.id}`)) return;
+    const it = dlItem_('alert', x.a.id, x.a.issue || x.a.id, x.a.owner.why, x.a.level, x.a.action.text, 'alerts', 'status:done', { kind: 'alert', id: x.a.id });
+    it._since = x.at || now;
+    need.push(it);
+    seen.add(`alert:${x.a.id}`);
+  });
+  // seriousness not known (a Burson message with no review, an outbox row) is never ranked under a known routine one
+  const rankOf = l => (l === 'unknown' ? dlRank_('high') + 0.5 : dlRank_(l));
+  need.sort((p, q) => rankOf(q.level) - rankOf(p.level) || p._since - q._since);
   const forming = clusters.filter(c => c.status === 'forming' || c.status === 'at the bar')
     .map(c => dlItem_('cluster', c.id, c.label || c.topic, `${c.accounts} account${c.accounts === 1 ? '' : 's'} on ${c.platforms.join(', ') || 'no platform named'}, ${c.speed}; ${c.status}`,
       c.level, c.atBar ? 'It is at the bar for a card: the bot reviews it at its next check. Open it to see its posts.'
@@ -1447,7 +1546,7 @@ function dlNow_(health, alerts, clusters, stuck, now, sw) {
     return { level: 'unknown', headline: health.headline, counts, first: [item].concat(ranked.slice(0, 2)), then: ranked.slice(2, 7) };
   }
   const pool = need.concat(forming, rest);
-  const top = pool.slice().sort((p, q) => dlRank_(q.level) - dlRank_(p.level))[0] || null;
+  const top = pool.slice().sort((p, q) => rankOf(q.level) - rankOf(p.level))[0] || null;
   const level = top ? top.level : 'low';
   const n = need.length;
   const needWords = n ? `${n} item${n === 1 ? '' : 's'} need${n === 1 ? 's' : ''} a person now.` : 'Nothing needs a person now.';
@@ -1531,19 +1630,21 @@ function dlPipeline_(alerts, stuck, now, sw) {
   const n = fn => rows.filter(fn).length;
   const es = x => dlText_(x.row.email_status);
   const fu = x => dlObj_(dlObj_(x.row.email_input).followup);
+  // one per email (and one per T&S form): a resend that took its original's email or T&S (dlChained_) counts with it
+  const once = fn => new Set(rows.filter(fn).map(x => (es(x) ? dlText_(x.row.chainedFrom) : dlText_(x.row.tnsFrom) || dlText_(x.row.chainedFrom)) || x.a.id)).size;
   return {
     days: 7,
     stages: [
       { key: 'received', label: 'Received', count: rows.length, note: 'Every alert recorded (resends included)' },
-      { key: 'reviewed', label: 'Reviewed', count: n(x => x.status !== 'needs-review'), note: 'A decision, a Social Alert, a fix asked or a T&S form' },
+      { key: 'reviewed', label: 'Reviewed', count: n(x => ['needs-review', 'needs-person'].indexOf(x.status) < 0), note: 'A decision, a Social Alert, a fix asked or a T&S form' },
       { key: 'fixes', label: 'Fixes asked', count: n(x => Array.isArray(x.row.requested) && x.row.requested.length > 0),
         note: 'Corrections or missing details recorded (in the Auto-correct space the bot corrects them itself and asks Burson nothing)' },
-      { key: 'drafted', label: 'Social Alert drafted', count: n(x => ['pending', 'drafted', 'sent', 'failed'].indexOf(es(x)) >= 0), note: 'A Social Alert made (drafted, sent, or not yet out)' },
-      { key: 'sent', label: 'Sent / T&S', count: n(x => es(x) === 'sent' || x.a.tns.submitted), note: 'A Social Alert sent, or the T&S form submitted' },
-      tracked ? { key: 'followup', label: 'Follow-up', count: n(x => es(x) === 'sent' && (Number(fu(x).read) > 0 || Object.keys(dlObj_(fu(x).replied)).length > 0 || !!fu(x).question)),
+      { key: 'drafted', label: 'Social Alert drafted', count: once(x => ['pending', 'drafted', 'sent', 'failed'].indexOf(es(x)) >= 0), note: 'A Social Alert made (drafted, sent, or not yet out)' },
+      { key: 'sent', label: 'Sent / T&S', count: once(x => es(x) === 'sent' || x.a.tns.submitted), note: 'A Social Alert sent, or the T&S form submitted' },
+      tracked ? { key: 'followup', label: 'Follow-up', count: once(x => es(x) === 'sent' && (Number(fu(x).read) > 0 || Object.keys(dlObj_(fu(x).replied)).length > 0 || !!fu(x).question)),
         note: 'A sent Social Alert whose email thread the bot has read for replies' }
         : { key: 'followup', label: 'Follow-up', count: null, note: `Not tracked with row ${dlSwitchRow_('trackOutcomes') || 21} OFF (Track post-alert outcomes): the bot reads no replies` },
-      { key: 'done', label: 'Done', count: n(x => x.status === 'done' || x.status === 'no-action'), note: 'Closed: resolved, no action, or nothing left to do' },
+      { key: 'done', label: 'Done', count: n(x => (x.status === 'done' && !dlHandedOver_(x)) || x.status === 'no-action'), note: 'Closed: resolved, no action, or nothing left to do (a T&S form or a YouTube ping left for a person is not)' },
     ],
     stuck: stuck.map(s => ({ kind: s.kind, id: s.id, title: s.title, why: s.why, level: s.level, since: s.since, action: s.action, detail: s.detail,
       link: s.link || '' })),
@@ -1708,6 +1809,25 @@ function dlQuestions_(s, alerts, now) {
   return out;
 }
 
+/**
+ * The Burson-side spaces of the Alert log's partitions ("<space> > <analyst space>" or "<space> > (isolated)...", Main.gs
+ * buildCtx_): [isolated (the bot works in that space itself and forwards nothing), forwarding (the main flow forwards
+ * from it)], each a Set of space names. Pure.
+ */
+function dlFlowSpaces_(rows) {
+  const isolated = new Set();
+  const forwarding = new Set();
+  (rows || []).forEach(r => {
+    const p = dlText_(r.space);
+    const src = p.split(' > ')[0];
+    if (!src || p === src) return;
+    const flow = amFlowOf_(p);
+    if (flow === 'M' || flow === 'O') isolated.add(src);
+    else if (flow === 'S') forwarding.add(src);
+  });
+  return [isolated, forwarding];
+}
+
 /** Builds the snapshot (dashSnapshot without the gate and the cache). Read-only. */
 function dlSnapshotOf_(ctx) {
   const now = ctx.now;
@@ -1720,7 +1840,7 @@ function dlSnapshotOf_(ctx) {
   const cl = dlClusters_(props, now, dlCardsByCluster_(all), edTab);
   // with Early Detection (row 19) OFF, the producer's cache is a frozen copy of the last stories: never shown as forming
   const stories = sw.earlyWave === true ? cl.list : [];
-  const msgs = dlMessages_(ctx.ss, now);
+  const msgs = dlMessages_(ctx.ss, now, ...dlFlowSpaces_(log.rows));
   const health = dlHealth_(ctx, props, log, cl, now, msgs);
   const stuck = dlStuck_(ctx.ss, props, all, now, msgs);
   const week = all.filter(x => x.at && now - x.at <= 7 * DL_DAY_MS_);
@@ -2087,12 +2207,18 @@ function dlWhyNotOf_(ctx, url) {
     found.push({ where: 'Watch detections tab', at: headStartTime_(w.s) || null, detail: null,
       what: `The Watch flagged it${w.w ? ` (${dlText_(w.w)})` : ''}: ${DL_WATCH_HELD_[w.a] || { p: 'posted as its own Watch alert', g: 'listed in its story\'s alert thread', u: 'listed under another alert\'s card', q: 'waiting to be posted' }[w.a] || 'flagged'}` });
   }
+  // with Early Detection (row 19) OFF the producer's stories are as they were when it was turned OFF: never told as now
+  const following = !!(ctx.switches && ctx.switches.earlyWave === true);
+  const offWords = `Early Detection (row ${dlSwitchRow_('earlyWave') || 19}) was turned OFF`;
   if (facts.story) {
+    const n = `${facts.story.accounts} account${facts.story.accounts === 1 ? '' : 's'}`;
     found.push({ where: 'Early Detection stories', at: facts.story.at || null, detail: null,
-      what: `It joined the story "${dlPlain_(facts.story.lab, 100)}" (${facts.story.accounts} account${facts.story.accounts === 1 ? '' : 's'} so far)${facts.story.source ? `, read from ${facts.story.source}` : ''}` });
+      what: `It joined the story "${dlPlain_(facts.story.lab, 100)}" (${following ? `${n} so far` : `${n} when ${offWords}; stories are not followed now`})` +
+        `${facts.story.source ? `, read from ${facts.story.source}` : ''}` });
   } else if (facts.pool) {
     found.push({ where: 'Early Detection pool', at: facts.pool.at || null, detail: null,
-      what: `It waits for other posts on the same story (none yet)${facts.pool.source ? `, read from ${facts.pool.source}` : ''}` });
+      what: `${following ? 'It waits for other posts on the same story (none yet)' : `It was waiting for other posts on the same story when ${offWords} (stories are not followed now)`}` +
+        `${facts.pool.source ? `, read from ${facts.pool.source}` : ''}` });
   }
   found.sort((p, q) => (q.at || 0) - (p.at || 0));
   const answer = found.length ? `The bot holds ${found.length} thing${found.length === 1 ? '' : 's'} about this post. ${found.map(f => `${f.what}.`).join(' ')}`

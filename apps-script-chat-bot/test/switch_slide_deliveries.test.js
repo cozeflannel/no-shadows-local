@@ -250,7 +250,7 @@ module.exports = H => {
     eq(b.slideNumbers_(noEng, 3).text, '1 alert · 1 account · 2 platforms (X, Reddit) · engagement not counted · down from 3 in the window before');
     // the status line from what the rows keep: Burson's alert was handled in the Auto-correct space, whose Social Alerts
     // go only to the testers (it is always Testing), so the slide never says the teams were emailed
-    eq(by['Criticism against AI Overviews'].status, 'Done: 1 Social Alert sent to the testers only (Testing) · With: nobody yet · Readers: nothing to do');
+    eq(by['Criticism against AI Overviews'].status, 'Done: 1 Social Alert sent to the testers only (Testing) · With: nobody (sent to the testers only) · Readers: nothing to do');
     eq(b.slideStatusLine_({ rows: [
       Object.assign({}, facts, { sent: true, sentMode: 'live', groups: ['gcpa', 'gup'], tnsDone: true, draft: false, fixAsked: false, question: true }),
       Object.assign({}, facts, { sent: false, groups: [], tnsDone: false, draft: false, fixAsked: true, question: false }),
@@ -507,7 +507,7 @@ module.exports = H => {
     // the slide's words: the title, the window, each issue's name in bold, its numbers, its summary and its status; no emoji
     const text = w2.slides.textOf(pulse2);
     assert.match(text, /^Brand safety pulse\n\nOct 13, 8:\d\d AM to Oct 14, 8:\d\d AM ET \(the bot's Alert log starts within this window\)\nCriticism against AI Overviews\n1 alert · 1 account/);
-    assert.match(text, /\nPeople say it happened to them after an update\.\nDone: 1 Social Alert sent to the testers only \(Testing\) · With: nobody yet · Readers: nothing to do$/);
+    assert.match(text, /\nPeople say it happened to them after an update\.\nDone: 1 Social Alert sent to the testers only \(Testing\) · With: nobody \(sent to the testers only\) · Readers: nothing to do$/);
     assert.ok(!EMOJI.test(text));
     const nameAt = text.split('\n\n')[1].indexOf('Criticism against AI Overviews');
     eq(w2.slides.styleAt(pulse2, 'BODY', nameAt).bold, true);
@@ -879,7 +879,7 @@ module.exports = H => {
     const r2 = one(two, LIVE_SINCE);
     eq(r2.issues[0].rows.map(a => a.ids), [['QA-100', 'QA-101']]);
     eq(H.B.slideStatusLine_(r2.issues[0]),
-      'Done: 1 Social Alert sent to the testers only (Testing), 1 T&S form submitted, 1 fix asked of Burson · With: Burson · Readers: nothing to do');
+      'Done: 1 Social Alert sent to the testers only (Testing), 1 T&S form submitted to its test copy only (Testing), 1 fix asked of Burson · With: Burson · Readers: nothing to do');
     eq(H.B.slidePosts_(r2.issues[0], false).citable, []);
   });
 
@@ -889,12 +889,12 @@ module.exports = H => {
       email_status: 'sent', email_sent_at: T0 + MIN, email_groups: 'gcpa' });
     const line = modes => H.B.slideStatusLine_(one([sent], modes).issues[0]);
     eq(line(LIVE_SINCE), 'Done: 1 Social Alert sent to gcpa · With: the teams emailed · Readers: nothing to do');
-    eq(line({ since: T0 - DAY, changes: [[T0 - DAY, 1], [T0 - HOUR, 0]] }), 'Done: 1 Social Alert sent to the testers only (Testing) · With: nobody yet · Readers: nothing to do');
+    eq(line({ since: T0 - DAY, changes: [[T0 - DAY, 1], [T0 - HOUR, 0]] }), 'Done: 1 Social Alert sent to the testers only (Testing) · With: nobody (sent to the testers only) · Readers: nothing to do');
     eq(line(null), 'Done: 1 Social Alert sent (to the teams or only to the testers: not recorded) · With: not known · Readers: nothing to do');
     eq(line({ since: T0 + HOUR, changes: [[T0 + HOUR, 1]] }), 'Done: 1 Social Alert sent (to the teams or only to the testers: not recorded) · With: not known · Readers: nothing to do');
     // the Auto-correct space's send (always Testing), whatever the record says
     eq(H.B.slideStatusLine_(one([Object.assign({}, sent, { space: 'spaces/AAQAfeed > spaces/AAQAac (auto-correct)' })], LIVE_SINCE).issues[0]),
-      'Done: 1 Social Alert sent to the testers only (Testing) · With: nobody yet · Readers: nothing to do');
+      'Done: 1 Social Alert sent to the testers only (Testing) · With: nobody (sent to the testers only) · Readers: nothing to do');
     // the record: kept by each run while row 55 is ON (Testing here), written only when the mode changes
     const w = world();
     const props = w.t.g.props;
@@ -1028,7 +1028,7 @@ module.exports = H => {
     const w = world({ decks: [deckSpec({ sharedDrive: true, editors: [] })] });
     w.as(VIEWER);
     assert.match(w.b.dashSaveDelivery(settings(w)).why, /^You can't open this deck yourself/);
-    const perms = `https://www.googleapis.com/drive/v3/files/${DECK}/permissions?supportsAllDrives=true&pageSize=100&fields=${encodeURIComponent('permissions(type,role,emailAddress,domain)')}`;
+    const perms = `https://www.googleapis.com/drive/v3/files/${DECK}/permissions?supportsAllDrives=true&pageSize=100&fields=${encodeURIComponent('nextPageToken,permissions(type,role,emailAddress,domain)')}`;
     w.t.g.pages.set(perms, { code: 200, body: JSON.stringify({ permissions: [{ type: 'user', role: 'reader', emailAddress: VIEWER }] }) });
     const check = w.b.dashDeckCheck(DECK);
     eq([check.ok, check.youCanView, check.youCanEdit, check.slides.length], [true, true, false, 4]);
@@ -1073,7 +1073,7 @@ module.exports = H => {
     const calls = w.summaries.length;
     const over = w.b.dashPreview(settings(w, { lookbackHours: 25 + max }));
     eq([over.ok, w.summaries.length], [false, calls]);
-    assert.match(over.why, new RegExp(`^You have built ${max} new previews in the last 10 minutes .*: try again at \\d{1,2}:\\d\\d (AM|PM) ET\\. A preview you already built shows again at once\\.$`));
+    assert.match(over.why, new RegExp(`^You have built ${max} new previews in the last 10 minutes .*: try again at \\d{1,2}:\\d\\d (AM|PM) ET\\. The last preview you built shows again at once, for the time it was built, when its settings are the same\\.$`));
     assert.ok(w.b.dashPreview(settings(w, { lookbackHours: 25 })).ok);  // built already: no Gemini call, no count
     eq(w.summaries.length, calls);
     w.t.g.clock.now += 10 * MIN;
@@ -1195,5 +1195,263 @@ module.exports = H => {
     assert.match(w.t.control().cell(55, 3), /^✓ ON: delivers/);
     w.as('');
     eq(w.b.dashDeliverDue().ran.map(x => x.ok), [true]);
+  });
+
+  // ----- second review (X1, X5, X7) ---------------------------------------------------------------------------------
+
+  test('slide deliveries: a deck the bot\'s account can\'t open is told as that, with what to share, even to its owner: at the deck check, the preview and the save, and nothing of the deck is shown (X1)', () => {
+    const w = world({ decks: [deckSpec({ access: 'none', owner: VIEWER, editors: [] })] });
+    w.as(VIEWER);
+    const want = w.b.slideShareWhy_('open', 'bot@runner.test', '');
+    assert.match(want, /^The bot's account can't open the deck, so nothing was put in it: share the deck with the bot's account \(bot@runner\.test\) as an editor/);
+    const check = w.b.dashDeckCheck(`https://docs.google.com/presentation/d/${DECK}/edit`);
+    eq([check.ok, check.why, check.slides, check.deck.title], [false, want, [], '']);
+    w.fresh();
+    eq(w.b.dashPreview(settings(w)).why, want);
+    // the save names the deck by the title the person's settings give (nothing read from the deck)
+    eq(w.b.dashSaveDelivery(settings(w)).why, w.b.slideShareWhy_('open', 'bot@runner.test', 'Weekly brand review'));
+    // the bot can open it, the person can't: the person is told that (and sees nothing of it)
+    const w2 = world({ decks: [deckSpec({ editors: ['someone@team.test'] })] });
+    w2.as(VIEWER);
+    const c2 = w2.b.dashDeckCheck(DECK);
+    eq([c2.ok, c2.slides], [false, []]);
+    assert.match(c2.why, /^You can't open this deck yourself/);
+  });
+
+  test('slide deliveries: while the web app runs as another account than the bot\'s (Control B8), no deck is checked, previewed, saved or run, and no account is named to share decks with (X5)', () => {
+    const w = world();
+    const d = save(w, settings(w));
+    w.t.g.session.effective = 'deployer@team.test';  // the web app was deployed from another account
+    try {
+      w.as(VIEWER);
+      const list = w.b.dashDeliveries();
+      eq([list.ok, list.sameAccount, list.botAccount], [true, false, '']);
+      const why = w.b.ev('DASH_ACCOUNT_WHY_');
+      w.fresh();
+      const answers = [w.b.dashDeckCheck(DECK), w.b.dashPreview(settings(w)), w.b.dashSaveDelivery(settings(w)), w.b.dashRunNow(d.id)];
+      eq(answers.map(r => [r.ok, r.why]), answers.map(() => [false, why]));
+      answers.concat([list]).forEach(r => assert.ok(!/deployer@team\.test/.test(JSON.stringify(r)), JSON.stringify(r)));
+      eq(w.pulses().length, 0);
+    } finally {
+      w.t.g.session.effective = 'bot@runner.test';
+    }
+    // the bot's account again: as before
+    w.as(VIEWER);
+    eq(w.b.dashDeliveries().botAccount, 'bot@runner.test');
+    assert.ok(w.b.dashDeckCheck(DECK).ok);
+  });
+
+  test('slide deliveries: a shared drive\'s permission list is read page by page; a list too long to read in full says so, never "not shared with you" (X7)', () => {
+    const w = world({ decks: [deckSpec({ sharedDrive: true, editors: [] })] });
+    const base = `https://www.googleapis.com/drive/v3/files/${DECK}/permissions?supportsAllDrives=true&pageSize=100&fields=${encodeURIComponent('nextPageToken,permissions(type,role,emailAddress,domain)')}`;
+    eq(w.b.slidePermsUrl_(DECK), base);
+    const others = n => Array.from({ length: 100 }, (_, i) => ({ type: 'user', role: 'reader', emailAddress: `person${n}.${i}@team.test` }));
+    // page 1: 100 others; page 2: the person
+    w.t.g.pages.set(base, { code: 200, body: JSON.stringify({ permissions: others(0), nextPageToken: 'p2' }) });
+    w.t.g.pages.set(`${base}&pageToken=p2`, { code: 200, body: JSON.stringify({ permissions: [{ type: 'user', role: 'reader', emailAddress: VIEWER }] }) });
+    w.as(VIEWER);
+    const check = w.b.dashDeckCheck(DECK);
+    eq([check.ok, check.youCanView], [true, true]);
+    // eleven pages, the person on none of the first ten: can't be told, and it says so
+    const w2 = world({ decks: [deckSpec({ sharedDrive: true, editors: [] })] });
+    for (let n = 0; n <= 10; n++) {
+      w2.t.g.pages.set(n ? `${base}&pageToken=t${n}` : base, { code: 200, body: JSON.stringify({ permissions: others(n), nextPageToken: `t${n + 1}` }) });
+    }
+    w2.as(VIEWER);
+    const long = w2.b.dashDeckCheck(DECK);
+    eq([long.ok, long.slides], [false, []]);
+    assert.match(long.why, /^This deck is shared with more people than the dashboard can read \(over 1,000 entries\), so it can't tell whether you can open it/);
+    assert.match(w2.b.dashSaveDelivery(settings(w2)).why, /^This deck is shared with more people than the dashboard can read/);
+  });
+
+  // ----- second review (U1, S1, S2, S4-S11, R7, U7) -----------------------------------------------------------------
+
+  const TESTING = { since: T0 - 10 * DAY, changes: [[T0 - 10 * DAY, 0]] };
+  /** Gemini's summary calls answered by `fn(n)` (the n-th call: a response {code, body}); every other call as scripted. */
+  const geminiSays = (w, fn) => {
+    const v = w.t.g.vertex;
+    const orig = v.handle;
+    let n = 0;
+    v.handle = (url, params) => {
+      const props = ((JSON.parse(params.payload).generationConfig || {}).responseSchema || {}).properties || {};
+      if (props.segments) { n++; const r = fn(n); if (r) return r; }
+      return orig(url, params);
+    };
+    return () => n;
+  };
+  const busy = () => ({ code: 503, body: { error: { code: 503, message: 'The model is overloaded.', status: 'UNAVAILABLE' } } });
+
+  test('slide deliveries: a Watch alert worked in the Other alerts space (always Testing) is never said to have gone to the teams, whatever the mode record says (U1)', () => {
+    const b = H.B;
+    const os = logRow({ alert_id: 'QA-30', created_at: T0, source_at: T0, space: `spaces/AAQAother > (isolated)${b.ev('OS_PARTITION_SUFFIX_')}`,
+      ingested: b.ev('PW_ALERT_INGESTED_'), record_key: 'x.com/status/2160000000000000777',
+      forwarded_fields: { issue_name: 'Maps bridge', post_url: 'https://x.com/a/status/2160000000000000777', author: '@a', social_network: 'X' },
+      email_status: 'sent', email_sent_at: T0 + MIN, email_groups: 'gcpa', email_subject: b.taggedSubject_('SOCIAL ALERT: Maps', b.ev('OS_TAG_'), null) });
+    eq(b.slideRowKind_(os), 'own');
+    eq(b.slideStatusLine_(one([os], LIVE_SINCE, true).issues[0]),
+      'Done: 1 Social Alert sent to the testers only (Testing) · With: nobody (sent to the testers only) · Readers: nothing to do');
+  });
+
+  test('slide deliveries: an alert is placed in a window by when the bot recorded it, so one that reached the space just before a run but was recorded after that run read the log is on the next slide (S1)', () => {
+    const S = T0;
+    // reached the space 8:57, recorded 9:04: the 9:00 run (its window ends at 9:00) read the log at 9:02, before it was there
+    const late = logRow({ alert_id: 'b1', created_at: S + 4 * MIN, source_at: S - 3 * MIN, record_key: 'x.com/status/2160000000000000901',
+      forwarded_fields: { issue_name: 'Outage', post_url: 'https://x.com/a/status/2160000000000000901', author: '@a' } });
+    eq(one([late], null, false, S, S + DAY).issues.map(i => i.key), [H.B.issueNameKey_('Outage')]);
+    eq(one([late], null, false, S - DAY, S).issues.length, 0);
+  });
+
+  test('slide deliveries: Burson\'s alert worked by the main flow (LIVE) and the Auto-correct flow (always Testing) names only the teams the LIVE send went to, and a T&S form submitted while Testing went to its test copy (S2)', () => {
+    const ff = { issue_name: 'Gems answers wrong', post_url: 'https://x.com/a/status/2160000000000001111', author: '@a', social_network: 'X' };
+    const main = logRow({ alert_id: 'm1', created_at: T0, source_at: T0, record_key: 'x.com/status/2160000000000001111', forwarded_fields: ff,
+      email_status: 'sent', email_sent_at: T0 + MIN, email_groups: 'gems' });
+    const ac = logRow({ alert_id: 'a1', created_at: T0 + MIN, source_at: T0, space: 'spaces/AAQAfeed > spaces/AAQAac (auto-correct)',
+      record_key: 'x.com/status/2160000000000001111', forwarded_fields: ff, email_status: 'sent', email_sent_at: T0 + 2 * MIN,
+      email_groups: 'gemini-app tns', tns_submitted: T0 + 2 * MIN });
+    eq(H.B.slideStatusLine_(one([main, ac], LIVE_SINCE).issues[0]),
+      'Done: 1 Social Alert sent to gems, 1 T&S form submitted to its test copy only (Testing) · With: the teams emailed · Readers: nothing to do');
+    // the main flow's own T&S form: the form itself while LIVE, its test copy while Testing, not known before the record
+    const tns = Object.assign({}, main, { email_groups: 'gems tns', tns_submitted: T0 + MIN });
+    assert.match(H.B.slideStatusLine_(one([tns], LIVE_SINCE).issues[0]), /^Done: 1 Social Alert sent to gems, 1 T&S form submitted · /);
+    assert.match(H.B.slideStatusLine_(one([tns], TESTING).issues[0]), /, 1 T&S form submitted to its test copy only \(Testing\) · /);
+    assert.match(H.B.slideStatusLine_(one([tns], null).issues[0]), /, 1 T&S form submitted \(the form itself or its test copy: not recorded\) · /);
+  });
+
+  test('slide deliveries: alerts with no issue name say which Social Alerts went only to the testers (S10)', () => {
+    const un = logRow({ alert_id: 'u1', created_at: T0, source_at: T0, record_key: 'x.com/status/2160000000000000888',
+      forwarded_fields: { post_url: 'https://x.com/u/status/2160000000000000888' }, email_status: 'sent', email_sent_at: T0 + MIN, email_groups: 'gems' });
+    const b = H.B;
+    const line = modes => { const c = one([un], modes).c; return b.slideUnnamedLine_(c.unnamed, c.unnamedSent, c.unnamedTest, c.unnamedUnknown); };
+    eq(line(TESTING), '1 alert without an issue name (1 with a Social Alert sent to the testers only)');
+    eq(line(LIVE_SINCE), '1 alert without an issue name (1 with a Social Alert sent)');
+    eq(line(null), '1 alert without an issue name (1 with a Social Alert sent, to the teams or only to the testers: not recorded)');
+  });
+
+  test('slide deliveries: an answer from Gemini that can\'t be used (a 4xx, a blocked prompt) fails the run at once with its reason, never waits as if Gemini were down (S4)', () => {
+    [{ code: 400, body: { error: { code: 400, message: 'Request contains an invalid argument.', status: 'INVALID_ARGUMENT' } } },
+      { code: 200, body: { promptFeedback: { blockReason: 'SAFETY' } } }].forEach(answer => {
+      const w = world();
+      const d = save(w, settings(w, { schedule: { days: [0, 1, 2, 3, 4, 5, 6], time: '08:00', tz: 'America/New_York', mondayCoversWeekend: false } }));
+      const due = w.row(d.id).next_run;
+      const calls = geminiSays(w, () => answer);
+      w.t.g.clock.now = due + 3 * MIN;
+      w.as('');
+      const r = w.b.dashDeliverDue();
+      eq([r.ran.map(x => x.ok), calls()], [[false], 1]);
+      assert.match(r.ran[0].why, /^The summary of ".*" could not be written, so nothing was delivered: Gemini's answer could not be used in 1 try \(the last: Gemini's answer could not be used \(/);
+      const row = w.row(d.id);
+      eq([row.last_run.ok, row.next_run > due, w.pulses().length], [false, true, 0]);
+    });
+  });
+
+  test('slide deliveries: when Gemini gives no answer, Run now and Preview say to try again (nothing tries again by itself), and a scheduled run past its 2 hours records that it gave up and when the next slide is due (S5)', () => {
+    const w = world();
+    const d = save(w, settings(w, { schedule: { days: [0, 1, 2, 3, 4, 5, 6], time: '08:00', tz: 'America/New_York', mondayCoversWeekend: false } }));
+    geminiSays(w, busy);
+    const r = runNow(w, d.id);
+    eq(r.ok, false);
+    assert.match(r.why, /^Gemini gave no answer for the summary of ".*" just now \(.*\), so nothing was delivered: try again in a few minutes\.$/);
+    w.fresh();
+    w.as(VIEWER);
+    assert.match(w.b.dashPreview(settings(w)).why, /, so the preview could not be made: try again in a few minutes\.$/);
+    // the scheduled run, 2.5 hours late (the bot was paused): given up on, said, and moved on
+    const due = w.row(d.id).next_run;
+    w.t.g.clock.now = due + 150 * MIN;
+    w.as('');
+    const late = w.b.dashDeliverDue();
+    eq(late.ran.map(x => x.ok), [false]);
+    const row = w.row(d.id);
+    assert.match(row.last_run.error, /^Gemini gave no answer .*, more than 2 hours after this slide's scheduled time \(\w{3} \d+, 8:00 AM ET\), so it was not delivered: the next slide is due \w{3} \d+, 8:00 AM ET\.$/);
+    assert.ok(!/tries again/.test(row.last_run.error));
+    assert.ok(row.next_run > due);
+  });
+
+  test('slide deliveries: a scheduled run waiting for Gemini is shown as waiting, since when and until when, never as a next run already past (S6)', () => {
+    const w = world();
+    const d = save(w, settings(w, { schedule: { days: [0, 1, 2, 3, 4, 5, 6], time: '08:00', tz: 'America/New_York', mondayCoversWeekend: false } }));
+    const due = w.row(d.id).next_run;
+    let down = true;
+    geminiSays(w, () => (down ? busy() : null));
+    w.t.g.clock.now = due + 3 * MIN;
+    w.as('');
+    eq(w.b.dashDeliverDue().ran.map(x => x.ok), [false]);
+    const writes = () => w.t.g.props.get('SLIDE_WAITS');
+    const kept = writes();
+    w.t.g.clock.now += 5 * MIN;
+    w.as('');
+    w.b.dashDeliverDue();
+    eq(writes(), kept);  // written once, when the wait started
+    w.as(VIEWER);
+    const item = w.b.dashDeliveries().deliveries[0];
+    eq([item.nextRun, item.waiting.givesUpAt], [due, due + 2 * HOUR]);
+    assert.match(item.waiting.label, /^Waiting for Gemini since \w{3} \d+, 8:03 AM ET \(Gemini gave no answer for the summary of .*\): it tries again every few minutes until \w{3} \d+, 10:00 AM ET\.$/);
+    down = false;
+    w.t.g.clock.now += 5 * MIN;
+    w.as('');
+    eq(w.b.dashDeliverDue().ran.map(x => x.ok), [true]);
+    w.as(VIEWER);
+    eq([w.b.dashDeliveries().deliveries[0].waiting, w.t.g.props.get('SLIDE_WAITS')], [null, undefined]);
+  });
+
+  test('slide deliveries: the summary checks let through a dotted name or a handle the facts hold word for word (Character.AI, Google.org, _lunarflare_), and still refuse one they do not (S7)', () => {
+    const b = H.B;
+    const facts = name => JSON.stringify({ issue: name, posts: [{ platform: 'X', author: '_lunarflare_', summary: `says the ${name} story is wrong` }] });
+    const seg = (a, t) => ({ segments: [{ text: a, ref: '' }, { text: t, ref: 'P1' }] });
+    eq(b.slideSummaryProblem_(seg('Posts tie Google to the Character.AI lawsuit,', ' one account says.'), ['P1'], facts('Character.AI lawsuit')), '');
+    eq(b.slideSummaryProblem_(seg('Accounts criticise Google.org grants', ' in one post.'), ['P1'], facts('Google.org grants')), '');
+    eq(b.slideSummaryProblem_(seg('One account, _lunarflare_, says Gems answers are wrong', ' after an update.'), ['P1'], facts('Gems answers')), '');
+    eq(b.slideSummaryProblem_(seg('Posts on x.com tie Google to the lawsuit,', ' one account says.'), ['P1'], facts('Character.AI lawsuit')),
+      'its text held a web address (links are added from the refs, never written)');
+    eq(b.slideSummaryProblem_(seg('One account says _Gems_ answers are wrong', ' after an update.'), ['P1'], facts('Gems answers')),
+      'its text held Markdown marks (write plain sentences)');
+  });
+
+  test('slide deliveries: the same preview pressed again minutes later shows the one already built (its window as built), with no Gemini call and none of the viewer\'s fresh previews used (R7, S8)', () => {
+    const w = world();
+    w.fresh();
+    w.as(VIEWER);
+    const s = settings(w);
+    const first = w.b.dashPreview(s);
+    assert.ok(first.ok, first.why);
+    const calls = w.summaries.length;
+    for (let i = 0; i < 6; i++) {
+      w.t.g.clock.now += 61 * 1000;
+      const again = w.b.dashPreview(s);
+      assert.ok(again.ok, again.why);
+      eq(again.window, first.window);
+    }
+    eq(w.summaries.length, calls);
+    // other settings are a new preview (and count)
+    assert.ok(w.b.dashPreview(settings(w, { lookbackHours: 30 })).ok);
+    assert.ok(w.summaries.length > calls);
+  });
+
+  test('slide deliveries: a copied design on a layout with no title box is fine when each run adds a new slide (it never looks for its slide again), and still refused when it replaces its slide (S11)', () => {
+    const spec = deckSpec();
+    spec.slides.splice(2, 0, { layout: 'BLANK' });
+    const w = world({ decks: [spec] });
+    const ids = w.slides.slideIds(DECK);
+    const add = save(w, settings(w, { design: { mode: 'copy', slideId: ids[2] }, mode: 'add' }));
+    const r = runNow(w, add.id);
+    assert.ok(r.ok, r.why);
+    eq(w.slides.slideIds(DECK).length, ids.length + 1);
+    w.as(VIEWER);
+    eq(w.b.dashSaveDelivery(settings(w, { design: { mode: 'copy', slideId: ids[2] }, mode: 'replace' })).why, w.b.ev('SLIDE_NO_TITLE_WHY_'));
+  });
+
+  test('slide deliveries: a delivery that came due while the bot was paused runs at the first pass once B2 is ON, as the paused words say (U7)', () => {
+    const w = world();
+    const d = save(w, settings(w, { schedule: { days: [0, 1, 2, 3, 4, 5, 6], time: '08:00', tz: 'America/New_York', mondayCoversWeekend: false } }));
+    assert.match(w.b.ev('SLIDE_PAUSED_WHY_'), /: a delivery that came due while it was paused runs within 5 minutes, then on its schedule\.$/);
+    const due = w.row(d.id).next_run;
+    w.t.control().getRange(2, 2).setValue('OFF');
+    w.t.g.clock.now = due + 3 * HOUR;
+    w.as('');
+    eq(w.b.dashDeliverDue().why, w.b.ev('SLIDE_PAUSED_WHY_'));
+    w.t.control().getRange(2, 2).setValue('ON');
+    w.t.g.clock.now += 5 * MIN;
+    w.as('');
+    eq(w.b.dashDeliverDue().ran.map(x => x.ok), [true]);
+    assert.ok(w.row(d.id).next_run > w.t.g.clock.now);
   });
 };

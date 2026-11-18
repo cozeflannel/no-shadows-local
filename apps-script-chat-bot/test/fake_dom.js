@@ -6,13 +6,15 @@
 //     simple selectors (tag, #id, .class, [attr], [attr="value"], several joined by commas; no combinators);
 //   - Dashboard.html's <body> parsed into those elements (its template tags and scripts left out), so the page finds its
 //     own containers;
-//   - a page clock the test moves (performance.now, setTimeout, setInterval: nothing runs until the test says), and a
-//     google.script.run whose calls wait until the test hands them on (to the real bot, or to its own answer).
+//   - a page clock the test moves (performance.now, setTimeout, setInterval: nothing runs until the test says), the
+//     device's clock (Date.now) moving with it, and a google.script.run whose calls wait until the test hands them on
+//     (to the real bot, or to its own answer).
 //
 //   const page = require('./fake_dom').loadPage({ run: (fn, args) => answer | throw, viewer })
 //   page.flush()          hands every waiting google.script.run call on (the page's promises settle at once: the test
 //                         harness runs tests one after the other, synchronously)
 //   page.tick(ms)         moves the page clock on, running the timers that come due (and flushing after each)
+//   page.sleep(ms)        the device sleeps: its clock (Date.now) moves on, the page clock and its timers do not
 //   page.text(el)         an element's text; page.all(sel) / page.one(sel); page.click(el); page.byText(sel, re)
 //
 // Nothing here is part of the bot or pushed with it.
@@ -270,6 +272,13 @@ function loadPage(opts) {
   const body = (html.match(/<body>([\s\S]*)<\/body>/) || [])[1] || '';
   parseInto(doc, doc.body, body.replace('<?= viewerEmail ?>', o.viewer || ''));
   const clock = { now: 1000 };
+  // the device's clock: the page clock's time plus what the device slept (page.sleep); new Date() and Date.now() read it
+  const wall = { base: Date.UTC(2026, 10, 18, 12, 0), slept: 0 };
+  const wallNow = () => wall.base + clock.now + wall.slept;
+  class PageDate extends Date {
+    constructor(...a) { if (a.length) super(...a); else super(wallNow()); }
+    static now() { return wallNow(); }
+  }
   const timers = [];
   let seq = 0;
   const pending = [];
@@ -308,7 +317,7 @@ function loadPage(opts) {
     performance: { now: () => clock.now },
   };
   const ctx = {
-    window, document: doc, console, Intl, Date, Math, JSON, Promise: SyncPromise, Array, Object, String, Number, Boolean, RegExp, Error, Set, Map, Symbol,
+    window, document: doc, console, Intl, Date: PageDate, Math, JSON, Promise: SyncPromise, Array, Object, String, Number, Boolean, RegExp, Error, Set, Map, Symbol,
     isFinite, parseInt, parseFloat, encodeURIComponent, decodeURIComponent,
     setTimeout: (fn, ms) => { const id = ++seq; timers.push({ id, at: clock.now + Math.max(0, Number(ms) || 0), fn, every: 0 }); return id; },
     clearTimeout: id => { const i = timers.findIndex(t => t.id === id); if (i >= 0) timers.splice(i, 1); },
@@ -332,6 +341,8 @@ function loadPage(opts) {
     },
     /** Runs the timers due now (a zero-delay timeout, an animation frame), then hands the calls on. */
     settle() { page.tick(0); },
+    /** The device sleeps for `ms`: its clock moves on; the page clock (performance.now) and the timers stand still. */
+    sleep(ms) { wall.slept += ms; },
     tick(ms) {
       const end = clock.now + ms;
       for (let n = 0; n < 10000; n++) {

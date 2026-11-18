@@ -519,8 +519,13 @@ function keepBelowControlHelp_(sh, end, kept) {
     }
     return `${k.cell || `A${k.row}`} to A${to}`;
   });
-  console.log(`Control tab: "How it works" now fills rows ${CONTROL_HELP_ROW_}-${end} of column A; a person's text ` +
-    `there was kept below it (${moved.join(', ')})`);
+  // a text from a cell a new switch row was written over (`cell`) did not come from the help's rows: said apart
+  const fromSwitch = kept.some(k => k.cell);
+  console.log(fromSwitch
+    ? `Control tab: a person's text in the cells the new switch rows were written over was kept below "How it works" (rows ` +
+      `${CONTROL_HELP_ROW_}-${end} of column A): ${moved.join(', ')}`
+    : `Control tab: "How it works" now fills rows ${CONTROL_HELP_ROW_}-${end} of column A; a person's text ` +
+      `there was kept below it (${moved.join(', ')})`);
 }
 
 /**
@@ -783,7 +788,9 @@ const CONTROL_SWITCHES_ = [
     on: () => liveDashboardOnText_(typeof dashWebAppUrl_ === 'function' ? dashWebAppUrl_() : '') },
   { key: 'slideDeliveries', label: 'Slide deliveries', row: 55,
     off: 'OFF (no pulse slides are delivered; deliveries can be set up in the web app and wait)',
-    on: () => slideDeliveriesOnText_(typeof dashScopeOk_ === 'function' && dashScopeOk_()) },
+    // while the bot is paused (B2 OFF: extra.paused, from poll) nothing is delivered, and C55 says so
+    on: (standIn, live, sw, extra) => (extra && extra.paused && typeof SLIDE_PAUSED_ON_TEXT_ === 'string' ? SLIDE_PAUSED_ON_TEXT_
+      : slideDeliveriesOnText_(typeof dashScopeOk_ === 'function' && dashScopeOk_())) },
 ];
 
 /**
@@ -913,16 +920,23 @@ function ensureSwitchRows_(sh) {
       });
     });
   } catch (e) { /* not read: written over as before */ }
-  todo.forEach(i => {
-    const s = CONTROL_SWITCHES_[i];
-    const row = rows[i];
-    sh.getRange(row, 1, 1, 3).setValues([[s.label, 'OFF', switchOffText_(s)]]);
-    sh.getRange(row, 1).setFontWeight('bold');
-    sh.getRange(row, 2).setBackground('#fff8e1').setDataValidation(rule);
-  });
-  writeControlHelp_(sh);
-  // after the help is in place (a tab from before it can end above where the help now ends)
-  if (kept.length) keepBelowControlHelp_(sh, CONTROL_HELP_ROW_ + Math.max(CONTROL_HELP_ROWS_, CONTROL_HELP_.length + 1) - 1, kept);
+  const over = new Set();  // the rows written over: their kept texts go below the help even when a write after fails
+  try {
+    todo.forEach(i => {
+      const s = CONTROL_SWITCHES_[i];
+      const row = rows[i];
+      sh.getRange(row, 1, 1, 3).setValues([[s.label, 'OFF', switchOffText_(s)]]);
+      over.add(row);
+      sh.getRange(row, 1).setFontWeight('bold');
+      sh.getRange(row, 2).setBackground('#fff8e1').setDataValidation(rule);
+    });
+    writeControlHelp_(sh);
+  } finally {
+    // after the help is in place (a tab from before it can end above where the help now ends); and when writing it
+    // failed, all the same: the next run finds the switch rows in place and never reads those cells again
+    const keep = kept.filter(k => over.has(k.row));
+    if (keep.length) keepBelowControlHelp_(sh, CONTROL_HELP_ROW_ + Math.max(CONTROL_HELP_ROWS_, CONTROL_HELP_.length + 1) - 1, keep);
+  }
 }
 
 // The switches whose rows a person's text is kept from when they are first written (ensureSwitchRows_): rows 54-55
@@ -930,15 +944,26 @@ const CONTROL_KEEP_TEXT_SWITCHES_ = ['liveDashboard', 'slideDeliveries'];
 
 /**
  * True when `v`, in column `c` (0 A, 1 B, 2 C) of a row a new switch is written over, is a person's text: not the bot's
- * own help (controlHelpOwn_), a switch's label, an ON / OFF value, or a switch's column C status (which starts "OFF" or
- * "✓ ON"). Pure.
+ * own help (controlHelpOwn_), a switch's label, an ON / OFF value, or one of rows 54-55's own column C statuses
+ * (controlOwnStatus_: a note of a person's that starts "OFF" or "✓ ON" is still theirs). Pure.
  */
 function controlPersonText_(v, c) {
   const text = String(v === undefined || v === null ? '' : v).trim();
   if (!text || v === true || v === false) return false;
   if (c === 0) return !controlHelpOwn_(v) && !CONTROL_SWITCHES_.some(s => s.label === text);
   if (c === 1) return !/^(?:ON|OFF)$/i.test(text);
-  return !/^(?:OFF\b|\u2713 ON\b)/.test(text);
+  return !controlOwnStatus_(text);
+}
+
+/**
+ * True when `text` is one of the column C statuses the bot writes for rows 54-55 (their OFF text, an ON text, C55's
+ * paused text), as it is or followed by its note (" · ..."). Pure but for GEN.
+ */
+function controlOwnStatus_(text) {
+  const own = CONTROL_SWITCHES_.filter(s => CONTROL_KEEP_TEXT_SWITCHES_.indexOf(s.key) >= 0).map(s => switchOffText_(s))
+    .concat([liveDashboardOnText_('').split(' \u00b7 ')[0], slideDeliveriesOnText_(true), slideDeliveriesOnText_(false)])
+    .concat(typeof SLIDE_PAUSED_ON_TEXT_ === 'string' ? [SLIDE_PAUSED_ON_TEXT_] : []);
+  return own.some(t => text === t || text.indexOf(`${t} \u00b7 `) === 0);
 }
 
 /**
