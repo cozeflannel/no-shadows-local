@@ -308,6 +308,9 @@ function edAct_(ctx, m, d, report) {
     ctx.spaces.analyst.id && ctx.spaces.analyst.id !== ctx.spaces.burson.id);
   const upd = d.ed && d.ed.update ? d.ed.update : null;  // an update: its copy goes in its story's thread too
   const fwd = twoSpace ? postTo_(ctx, ctx.spaces.analyst.id, m.text, (upd && upd.fwd) || null, 'edfwd:' + m.name, null, true) : m;
+  // Control row 54 (Live dashboard) ON: the story's posts in time order go with the card's snapshot (edSnapPosts_);
+  // OFF: null, and the snapshot is exactly as before
+  const snapPosts = edSnapPosts_(ctx, d);
 
   const row = ctx.store.addAlert(Object.assign({
     alert_id: alertId,
@@ -319,7 +322,7 @@ function edAct_(ctx, m, d, report) {
     exposure_tag: d.fields.exposure_tag || '',
     status: 'ok',
     requested: [],
-    forwarded_fields: Object.assign(snapshotFields_(d.fields), { early_detection: edSnap_(d, '') }),
+    forwarded_fields: Object.assign(snapshotFields_(d.fields), { early_detection: edSnap_(d, '', snapPosts) }),
     forward_message: (fwd && fwd.name) || m.name,
     forward_thread: (fwd && fwd.thread) || m.thread || '',
     burson_done: true,
@@ -342,7 +345,7 @@ function edAct_(ctx, m, d, report) {
   // alert line, when another alert's card covers its main post, comes last (d.relatedLine: EarlyDetectionCross.gs)
   const note = [edNoteText_(d, edRequirementLine_(ctx, d)), d.relatedLine || ''].filter(Boolean).join('\n');
   try {
-    const ff = Object.assign({}, row.forwarded_fields || {}, { early_detection: edSnap_(d, note) });
+    const ff = Object.assign({}, row.forwarded_fields || {}, { early_detection: edSnap_(d, note, snapPosts) });
     ctx.store.updateAlert(row, { forwarded_fields: ff });
   } catch (e) {}
   ctx.log(`${alertId} (early detection): ${edCallWords_(d)}${d.why ? `: ${d.why}` : ''}`);
@@ -1039,12 +1042,16 @@ function edNoteText_(d, requirement) {
   return truncate_(lines.filter(Boolean).join('\n'), 1800);
 }
 
-/** Compact Alert-log snapshot (`forwarded_fields.early_detection`) for retries and `Voice.gs` thread Q&A. Pure. */
-function edSnap_(d, note) {
+/**
+ * Compact Alert-log snapshot (`forwarded_fields.early_detection`) for retries and `Voice.gs` thread Q&A. `posts`: the
+ * story's posts in time order (edSnapPosts_), kept as `posts` only when given (Control row 54 ON); without them the
+ * snapshot is exactly what it always was. Pure.
+ */
+function edSnap_(d, note, posts) {
   const rev = d.rev || {};
   const ed = d.ed || {};
   const one = (s, n) => truncate_(String(s || '').replace(/\s+/g, ' ').trim(), n);
-  return {
+  const snap = {
     signal_type: ed.signalType || '',
     velocity_grain: ed.velocityGrain || '',
     distinct_authors: ed.distinctAuthors || null,
@@ -1070,6 +1077,63 @@ function edSnap_(d, note) {
     next_steps: ((rev.story && rev.story.steps) || []).map(x => one(x, 200)).slice(0, 4),
     note: truncate_(note || '', 3500),
   };
+  if (Array.isArray(posts)) snap.posts = posts;
+  return snap;
+}
+
+const ED_SNAP_POSTS_MAX_ = 30;      // the story's posts kept with its card (Control row 54): the newest this many
+const ED_SNAP_LINK_MAX_ = 300;      // a longer link is left out (a link is kept whole or not at all)
+const ED_SNAP_ACCOUNT_MAX_ = 80;
+
+/**
+ * The story's posts for its card's snapshot while Control row 54 (Live dashboard) is ON, so the live dashboard can show
+ * a carded story's posts in time order once its story has left the producer's 6-hour cache: [{u (link), a (account, as
+ * the producer keys it: "<Platform>:<author>"), p (platform), t (posted, ms; null when not known)}], the oldest first,
+ * the newest ED_SNAP_POSTS_MAX_ of them, each link once. From the story as the producer's cache holds it when the card
+ * is made (EarlyWaveSource.gs: the signal's cluster id, or a story-grain velocity signal's key); when the cache no longer
+ * has it, the signal's own posts (its representative posts, with the posted time they carry). Nothing is estimated: a
+ * post without a time keeps none (it goes first). null while row 54 is OFF (the snapshot is then as before), and when
+ * nothing can be read. Never throws.
+ */
+function edSnapPosts_(ctx, d) {
+  if (!switchOn_(ctx, 'liveDashboard')) return null;
+  try {
+    const ed = (d && d.ed) || {};
+    const id = String(ed.clusterId || (String(ed.velocityGrain || '').toUpperCase() === 'CLUSTER' ? ed.signalKey || '' : '')).trim();
+    const one = (s, n) => String(s === undefined || s === null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, n);
+    const at = v => { const n = Number(v); return isFinite(n) && n > 0 ? n : null; };
+    let posts = [];
+    if (id) {
+      const st = ewsState_(PropertiesService.getScriptProperties());
+      const story = ewsLoadClusters_(ewsCache_(), Number(st.cl) || 0).find(c => c.id === id);
+      if (story) posts = (story.m || []).map(m => ({ u: String(m.u || ''), a: one(m.a, ED_SNAP_ACCOUNT_MAX_), p: one(m.p, 40), t: at(m.t) }));
+    }
+    if (!posts.length) {
+      posts = edPostsOf_(ed).map(p => ({ u: p.url, a: one(p.platform && p.author ? `${p.platform}:${p.author}` : p.author, ED_SNAP_ACCOUNT_MAX_),
+        p: one(p.platform, 40), t: edPostedMs_(p.published_at) }));
+    }
+    const seen = new Set();
+    const kept = posts.filter(p => /^https?:\/\/\S+$/.test(p.u) && p.u.length <= ED_SNAP_LINK_MAX_ && !seen.has(p.u) && seen.add(p.u));
+    kept.sort((x, y) => (x.t === null ? -Infinity : x.t) - (y.t === null ? -Infinity : y.t));
+    return kept.slice(-ED_SNAP_POSTS_MAX_);
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * A representative post's posted time as written ("2026-10-14 11:42 UTC", an ISO time with its zone) in ms; null when
+ * it is not one of those (never guessed). Pure.
+ */
+function edPostedMs_(text) {
+  const s = String(text || '').trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?\s*(?:UTC|Z|\+00:?00)$/i);
+  if (m) return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6] || 0));
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?[+-]\d{2}:\d{2}$/.test(s)) {
+    const t = Date.parse(s);
+    return isFinite(t) ? t : null;
+  }
+  return null;
 }
 
 /** Context lines for `Voice.gs answerAnalystPrompts_` when someone asks a question in an Early Detection thread. Pure. */

@@ -43,6 +43,7 @@ const AC_LIVE_NAME_ = 'Burson space (live, read only)';
 
 /** Sets the auto-correct space on the Control tab (B10) and runs one pass now. From the Apps Script editor or clasp. */
 function startAutoCorrect(spaceLinkOrName) {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const target = String(spaceLinkOrName === undefined || spaceLinkOrName === null ? '' : spaceLinkOrName).trim();
   if (!target) throw new Error('Pass the test space\'s link or name to startAutoCorrect("..."), or paste it in cell B10 on the Control tab.');
   const ss = openStore_(true);
@@ -60,6 +61,7 @@ function startAutoCorrect(spaceLinkOrName) {
 
 /** Clears B10 so the auto-correct space stops (the Mirror space carries on as before). */
 function stopAutoCorrect() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const ss = openStore_(false);
   const control = controlTab_(ss);
   if (control) {

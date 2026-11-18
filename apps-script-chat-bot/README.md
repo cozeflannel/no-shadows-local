@@ -55,8 +55,8 @@ sheet, and its link is in the bot's first message in the analyst space. You don'
 | **Today** (B7) | Alerts reviewed, alerts sent back to Burson, questions answered. While the bot works alone in the Auto-correct space (B10 set, B9 blank, B3 or B4 blank): that space's own count, the one C10 shows | The bot |
 | **Runs as** (B8) | The account the bot posts as. It must be a member of both spaces | `setup()` |
 | **Mirror space**, **Auto-correct space** (B9, B10) | Optional test spaces (below) | You |
-| **The switches** (B11:B24, B27:B29, B32, B34, B36:B40, B46, B48) | `ON` or `OFF`, all OFF to start: what the bot may do on its own (below) | You |
-| C11:C24, C27:C29, C32, C34, C36:C40, C46, C48 | What each switch does when OFF, or what it is doing when ON | The bot, every minute |
+| **The switches** (B11:B24, B27:B29, B32, B34, B36:B40, B46, B48:B51, B54:B55) | `ON` or `OFF`, all OFF to start: what the bot may do on its own (below) | You |
+| C11:C24, C27:C29, C32, C34, C36:C40, C46, C48:C51, C54:C55 | What each switch does when OFF, or what it is doing when ON (C54: the live dashboard's link, once it is deployed) | The bot, every minute |
 | **S-F Burson space** (B25) | Which space is the real Burson space, S-F Burson: its link, id or exact name. Only this cell decides it; the code never names it. Blank to start (see "S-F Burson space (B25)" below) | You |
 | C25 | ✓ and the name of the space the bot found, ✗ and what to fix, or ⚠️ Not set and what waits for it | The bot |
 | **Burson test copy** (B26) | Optional. A Google-only space to practise the Relay in without touching S-F Burson: the bot copies S-F Burson there, and while it's set the Relay sends the analysts' side (and, with row 24 ON, the bot's own Burson replies and emojis) there instead of S-F Burson. Blank to start (see "Practising the Relay with a Burson test copy" below) | You |
@@ -66,7 +66,8 @@ sheet, and its link is in the bot's first message in the analyst space. You don'
 | **BigQuery lookback** (B31) | How far back Direct BigQuery alerts (row 15) and the Early wave check (row 19) look: 15, 30, 45 or 60 minutes (blank: 60). C31 shows what the bot is using | You |
 | **Other alerts space** (B33) | Optional. A Google-only space with other alerts (a campaign space, say) the bot works every minute beside the Mirror space, always in Testing (see "Other alerts space (B33)" below). C33 shows how it's doing | You |
 | **Fast triage bars** (B41:B45, B47) | The six hold-back and early-watch bars for rows 39 and 40 (seeds `0.10`, `0.90`, `0.55`, `0.80`, `3`, and `0.30` in B47; blank or invalid uses its seed). Column C shows what the bot is using | You |
-| **How it works** (from A53; rows 49-52 are blank, 49 to 51 kept for the next switches) | A plain-language guide to all of the above | `setup()` and the bot |
+| Rows 52-53 | Left as they are: blank, or your own notes. The bot never writes there (it only clears its own old help text from column A: the help was at row 53 before rows 54 and 55 were switches) | You |
+| **How it works** (from A57; row 56 is blank) | A plain-language guide to all of the above | `setup()` and the bot |
 | **Watches**, **Watch detections** and **Watch sources** tabs | Only with Proactive watch ON (row 34): what to look for (one watch a row, each ON / OFF), what the watches would have flagged (with its source and a scorecard against Burson's alerts), and which sources are live, stale or failing (see "Proactive watch (row 34)" below) | You edit the watches and rate the rows; the bot writes the rest |
 | **Follow-up** tab | Only with Track post-alert outcomes ON (row 21): what came of the bot's Social Alerts, which teams replied, each alert's status and next step, and editable P0/P1/P2 reply deadlines in B5:B7 | The bot updates it; you can edit B5:B7 |
 | **Burson outbox** tab | Only with Post in S-F Burson ON (row 24) while LIVE: what the bot or the Relay would post in S-F Burson, each row waiting for you to set it to Send or Skip | The bot adds rows; you set Status |
@@ -686,9 +687,9 @@ The thread only gets a short note: `🌡️ Temp check sent: @asker (10/29) 2020
   OFF (as it starts), nothing changes: such a message is an analyst's message like any other.
 - C36 says how the last one went.
 
-### The switches: what the bot may do on its own (rows 11-24, 27-29, 32, 34, 36-40, 46, 48-51)
+### The switches: what the bot may do on its own (rows 11-24, 27-29, 32, 34, 36-40, 46, 48-51, 54-55)
 
-Rows 11-24, 27-29, 32, 34, 36-40, 46 and 48-51 are ON / OFF switches (a dropdown in column B). Each starts **OFF**, and with every switch OFF the bot works
+Rows 11-24, 27-29, 32, 34, 36-40, 46, 48-51, 54 and 55 are ON / OFF switches (a dropdown in column B). Each starts **OFF**, and with every switch OFF the bot works
 exactly as the rest of this README describes (in S-F Burson itself, it posts nothing: row 24). Column C says what OFF
 means, or what an ON switch is doing (its counts today and its last check). The bot rewrites column C every run, paused
 or not.
@@ -724,13 +725,15 @@ or not.
 | 49 | Early Detection: also read Brandwatch live (not X) | Early Detection does not call Brandwatch | Needs row 19 ON (C49 says it is waiting while row 19 is OFF). The New sources tab then lists the Brandwatch project's queries, each with Read `OFF` (the bot never sets one `ON`): set Read to `ON` for the ones to read (at most 20, the first by row; C49 waits until one is ticked). After each run's alerts and the Watch (row 34), never before them, and at most every 10 minutes (`bw_live_every_minutes`), it asks Brandwatch's API, with GETs only, for the mentions of the ticked queries added since it last read (with 5 minutes of overlap, oldest first, at most 300 a read: `bw_live_parcel_max`), never X and never LinkedIn. Early Detection's next check takes them in a BigQuery job of its own, the mentions sent as a parameter (never in the SQL), through the same rules as its other sources (English, not positive, Google's, small accounts); a mention added more than 3 hours after it was posted can only join a story. It keeps to 20 calls in 10 minutes of its own (`bw_live_calls_per_10min`) and waits 10 minutes when Brandwatch's shared login has used 450 of its 600 calls (`bw_live_pause_at_used`) or says too many calls; Brandwatch refusing the key or the read, or not answering, is said in C49 with since when. An X mention, or Brandwatch ignoring "added since" or the order asked for, stops it until the row is turned OFF and ON again. While it reads (its last read under an hour old), the AMIE table (row 48) leaves Brandwatch's networks to it. A job that fails twice drops its mentions, and C49 says how many. The day's mentions are counted (C49 and the New sources tab) but not capped. While rows 49 and 19 are ON the bot also counts every Brandwatch mention it reads, whatever reads it (this reader, the Watch's Brandwatch query, Temp checks): C49 then says `the bot read 41,200 Brandwatch mentions today, all features` (when the Watch or Temp checks read some), and the tab and the log line give the same number; until the count has run over midnight Eastern it says `since this row went ON` instead of `today`. That count stops when row 49 goes OFF or waits for row 19, and never changes what the Watch or Temp checks ask Brandwatch or what they get. Turning it OFF forgets where it had read to (the day's counts and the ticks stay); ON again starts from the last 30 minutes (`bw_live_first_minutes`) |
 | 50 | Proactive watch: also read the AMIE table | The Watch does not read the AMIE table | Needs row 34 ON (C50 says it is waiting while row 34 is OFF). The Watch also checks the new rows of the AMIE table (Brandwatch's alert feeds, X posts with their words) in its US look, and while row 50 is ON every post an Early Detection story card links counts as that card's, as its main post does (see "Every post of a story card"). Its flags go only where Watch alerts (row 35) send them |
 | 51 | Open engine: judgment in place of caps | Early Detection, the Watch and Direct BigQuery keep today's limits. C51 also shows the run time of the last 24 hours and Burson's pick-up time (p90), once a minute of run time is recorded | Needs row 19 ON (C51 says it is waiting while row 19 is OFF). Built so far (step S2 of the open-engine plan): **one safety stop a day**: 2,000 background reviews an Eastern day (`open_daily_stop`; story reviews, Watch pre-reads, the Other alerts space's triages), and from the same number 20,000 quick looks, 200,000 Watch post checks and 3,000 GB of background BigQuery reads. Past it no new story review, Watch card or Direct BigQuery card starts until midnight ET (quick looks go on to their own ceiling), C51 says so first and C19 ends `safety stop reached`. **The day's run time and outside calls guarded**: from 80% of the last 24 hours' run-time budget only serious work starts (P0 / P1, a KOF, a 2,000+ post), from 90% no background reviews or cards, from 97% no background work at all; from 70% of the outside-call budget no quick looks, from 90% no background work. **Burson first**: before each background review or card the bot looks at S-F Burson; a new alert there ends background work for the run, and the next run takes it first. While the day's Burson pick-up p90 is over 2 minutes, each run keeps 30 to 60 seconds more for Burson. After a Gemini "too busy", background work waits 10 minutes; ApiGuard's rolling limits become a runaway guard only (Gemini 120 / 500, BigQuery 150 / 700, Gemini Decisions 600 / 2,400 in 10 / 60 minutes); a web search refused during background work is turned off for background work only. Burson's own alerts are never counted, slowed or stopped. In the Auto-correct space the bot's own Watch alerts and Direct BigQuery cards waiting for their review are the bot's own backlog: they no longer make the flow look busy (so Early Detection keeps checking), an ordinary one waits while a serious story is next in the review queue or a due check needs the rest of the run, and the Watch posts a new card there only while fewer than 3 of them wait. Early Detection checks every 5 minutes (`open_check_minutes`; every 10 from 60% of the day's run-time budget, every 15 from 70%; Gemini Decisions' pause after a failure follows it). Its review allowance (5 a check, the hour's 10 and 6 ordinary, the day's 150) no longer turns stories away: every signal not yet ended in the producer's 180 minutes is read (up to 300), serious ones go first, the queue holds 24 (`open_queue_max`; a serious one may take up to 4 places more, so an ordinary one is not pushed out for it), a story that does not fit waits for a later check and ends only when it would leave the 180 minutes (`it waited 3 hours while N more serious stories were reviewed first`), and the reviews have no count a run (the run's time bounds them). Each check embeds every post it has time for (80 texts a call, no count of 400 a check or 20,000 a day), a source's read returns up to 5,000 posts, and a check hands over up to 50 signals of a kind. Every source has the same standing (`open_equal_lanes`): a post of any source read within 3 hours of posting (`open_fresh_minutes`) may start a story, Tubular's and Brandwatch's nightly ones too, and a later one only joins; a story's review gets one line when most of its posts come from a source whose same-story grouping has not been checked yet (`open_lane_bars`, or the property `OPEN_LANE_BARS` step S1 writes, say which have been). Gemini Decisions' quick looks have no count a check or a day (the day's quick-look ceiling bounds them) and a check's candidates go side by side in one batch; a blank B45 reads 2 accounts; a story is raised early when about Google and brand risk reach the watch bar and medium-or-worse severity the confidence bar, or its P0 share is 0.35 or more; a signal most likely about nothing (severity none at `open_hold_none_at`, 0.80) is held back. Every post a check reads is checked against the alert requirements code can decide (`open_requirements_first`; a KOF on a list, 2,000+ engagements, the source's own P0 tag or Sensitive Topic, Google's own post at 30 comments and 30% negative) and counted on the Engine tab; the posts it leaves to a judgment get a quick look of their own at the end of the Auto-correct flow's run (one call a post, side by side, within 20 seconds; the post's words only, no link, handle or numbers), counted at four bars; nothing is posted or queued because of either yet; an alert in another format (the Watch's cards, the Other alerts space) with a Sensitive Topic counts as collected whatever its engagements. In the Auto-correct space a Watch flag the AI pre-read judged meaningful with a P1 tag or a Sensitive Topic goes out alone, whatever its reach (no pre-read: as before); when flags have waited 10 minutes for their pre-read for want of time, the flow's background steps stop at 210 s (Burson's own alerts keep their time) so the Watch can read them; Brandwatch mentions' 1,000 a day goes (60 a look stays). Direct BigQuery reads every source at each check, 50 candidates a source, ranks them across sources (a KOF's post first, then the most engagements) and posts while fewer than 3 of its cards wait unreviewed, instead of 2 a check (its 500 engagements stay); a candidate not posted comes back at the next check. A story already carded that grows 1.5 times and 3 more accounts (short of the update bar) gets a growth note in its card's thread ("Growing: 14 accounts now, up from 9" and up to 3 new links), with no review, while its newest post is under 3 hours old. Anyone in the Auto-correct space can write `why not <link>` and the bot answers in that thread from what it holds about the post (an alert or card already out, a Watch flag and what came of it, the story it joined or the pool it waits in, or that it holds nothing), read-only. In front of that quick look a first screen (`open_first_screen`) has Gemini (the triage model Burson's reviews use, through a sender of its own) read those posts 25 at a time with one known test post, and only the ones it marks as a possible P0 issue or Sensitive Topic (with 1 in 50 of the others, at random, and every post it could not read) get the quick look; a post in a P0 risk-term group or one whose words read like an instruction skips it. It steps aside for Burson (their pass catching up, their reviews bursting, a Gemini "too busy" to anyone in the last 10 minutes, a new Burson alert), pauses itself when Gemini is busy, slow or silent, and in a run where it cannot run every post gets its quick look as before; C51 warns after an hour of it paused. The new sources' caution rules go: no trial, no cap on stories only they lift, no share of the embeddings or the pool; Brandwatch live is read at every check and the AMIE table 5,000 rows a check (rows 48 and 49 still decide whether they are read at all). Velocity counts only posts the bot read within an hour of posting (`open_velocity_lag_minutes`), and a late post never changes an hour already counted (`open_velocity_fix`). C51 says the day's reviews, run time and calls against their budgets, and the walls met today (runs held by each) |
+| 54 | Live dashboard | The live dashboard web app shows nothing; the bot keeps no extra records for it | The live dashboard web app (see "Live dashboard" below) shows the bot's work to the people this sheet is shared with, read-only: what needs a person now, the stories forming, the alerts and where each stands, what is stuck or held back, and how current it all is. It never posts, sends or changes anything. While it's ON the bot also keeps, for each Early Detection story card it posts, the story's posts in order, and each run writes the dashboard's build id (the script property `BOT_BUILD`) when it changed. C54 has the web app's link once it is deployed, or says it is not deployed yet |
+| 55 | Slide deliveries | No pulse slides are delivered; deliveries can be set up in the web app and wait | Each delivery set up in the web app (see "Slide deliveries" below) is delivered on its own schedule: the run keeps one time trigger (`dashDeliverDue`, every 5 minutes) while row 55 is ON and removes it when it's OFF. C55 says it is waiting until the bot's account approves editing Google Slides once |
 
 What holds for every switch:
 
 - **ON only when it says so.** A switch is ON only when its row has the switch's own label and column B says ON. The
   bot never sets a switch ON: a row whose label is missing or changed is put back OFF. A Control tab from before the
-  switches gets rows 11-24, 27-29, 32, 34, 36-40, 46 and 48-50 on the next run (no need to run `setup()`), all OFF, rows 41-45 and 47 set to their seed bars (`0.10`, `0.90`, `0.55`, `0.80`, `3`, `0.30`), row 25 (S-F Burson space) blank, row 26 (Burson test copy) blank, row 33 (Other alerts space) blank and row 35 (Watch alerts) OFF.
-  The values in B2:B10, B25:B26, B30:B31, B33, B35, B41:B45, B47, and any switch someone already set, are kept, and "How it works" moves to row 53 (rows 51-52 are left blank: 51 is kept for one more switch, so the help does not move again; only the bot's own old help is cleared there, and anything else a person wrote in those rows stays, a line of their own that starts with "•" too; a person's text in column A of the rows the help now fills, rows 53-102, is kept below the help, in the first blank cells of column A, unchanged, and the log says where it went). A switch row the bot adds is written in full, label, `OFF` and column C, over whatever its cells A:C held: those are rows 48-50 (on a tab from the first build, the blank row above its help, the help's title and its first line), so a person's text in A48:C50 is replaced; keep nothing of your own in A:C of row 51, which the next switch will take the same way. One exception, once: the confidence bar (B43) still at `0.80`, the seed the first build wrote there, moves to `0.55`; any other value in B43 is kept.
+  switches gets rows 11-24, 27-29, 32, 34, 36-40, 46, 48-51, 54 and 55 on the next run (no need to run `setup()`), all OFF, rows 41-45 and 47 set to their seed bars (`0.10`, `0.90`, `0.55`, `0.80`, `3`, `0.30`), row 25 (S-F Burson space) blank, row 26 (Burson test copy) blank, row 33 (Other alerts space) blank and row 35 (Watch alerts) OFF.
+  The values in B2:B10, B25:B26, B30:B31, B33, B35, B41:B45, B47, and any switch someone already set, are kept, and "How it works" moves to row 57 (rows 52-53 are left as they are, and row 56 is blank: only the bot's own old help is cleared from column A there, such as the old "How it works" title at A53, and anything else a person wrote in rows 52-53 stays, in any column, a line of their own that starts with "•" too; a person's text in column A of the rows the help now fills, rows 57-109, is kept below the help, in the first blank cells of column A, unchanged, and the log says where it went). A switch row the bot adds is written in full, label, `OFF` and column C, over whatever its cells A:C held: on a tab from before rows 54 and 55 those are two of the old help's lines (on a tab from the first build, rows 48-51 too: the blank row above its help, the help's title and its first lines), so a person's text in A54:C55 is replaced; rows 52 and 53 are never taken. One exception, once: the confidence bar (B43) still at `0.80`, the seed the first build wrote there, moves to `0.55`; any other value in B43 is kept.
 - **Testing vs. LIVE is decided on the Control tab every run (`Main.gs` `runMode_`).**
   - The run is **LIVE** only when **Safety valve (row 29)** and **Group test emails (row 37)** are `OFF`, **Burson test copy (B26)** is blank, and **S-F Burson (B25)** is set and found (with alerts coming from S-F Burson via B3 or Mirror B9). While LIVE, Status (B5) starts with the LIVE badge, emails/drafts use real `Brand safety groups` recipients, the real T&S form is used, leads receive DMs, SLRR BigQuery write-back (row 16) writes to the shared tables, and the **Burson outbox** can send rows marked `Send` to S-F Burson.
   - Everything else (Safety valve `ON`, or Group test emails `ON`, or B26 set even if failing checks, or B25 blank/not found, or row 32 working directly in a Google-only B25) is **Testing** (fail closed): every email or draft goes only to the email addresses in `Control!B30` (`Testing: send to`; nothing is sent while `B30` is blank), except that with Group test emails `ON` each Social Alert goes to its group's test email in column C of `Brand safety groups` (a group with none is skipped and logged); only the test copy of the T&S form is submitted, and nothing is ever queued for or sent to live S-F Burson (any outbox row set to `Send` while in Testing is reset to `Pending` with a note). The **Auto-correct space (B10)** and the **Other alerts space (B33)** always stay in Testing even when the Mirror run is LIVE.
@@ -1386,6 +1389,89 @@ Write back to SLRR BigQuery (row 16) never writes it.
 Elections`), or a criteria document on the Resources tab: Gemini is told they decide the stream's call. The SLRR
 rules still decide the posts SLRR covers.
 
+## Live dashboard
+
+**Warning first: after the push that brings the dashboard, the bot's account must approve a new permission before the
+bot runs again** (step 2 below). Until it does, the bot's time triggers, the every-minute run included, are paused.
+
+The live dashboard is a web page served by the bot's own Apps Script project (one web app, `doGet` in `Dashboard.gs`). It
+shows the bot's work, read-only: what needs a person now and why, the stories forming, the alerts and where each one
+stands, what is stuck or held back, and how current all of it is (and what it can't see). It never posts, sends or
+changes anything; the only thing it writes is its own short-lived read cache (keys starting `dash1:`). Everything it
+shows comes from what the bot keeps; what the bot doesn't keep, it says it doesn't.
+
+- **Control row 54, OFF to start.** OFF, the web app shows nothing and the bot keeps nothing extra for it. ON, it shows
+  the bot's work, and the bot also keeps, for each Early Detection story card it posts, the story's posts in order.
+- **Who can open it.** The web app runs as the bot's account and only people signed in to the organisation's Google
+  accounts reach it (`appsscript.json`: `"webapp": {"executeAs": "USER_DEPLOYING", "access": "DOMAIN"}`). Of those, it
+  shows the dashboard only to the people the bot's sheet is shared with: the bot's own account, the sheet's editors and
+  viewers, or everyone when the sheet is shared with the whole organisation or with anyone who has the link. Anyone else
+  sees a page that says the sheet is not shared with them and asks them to ask the sheet's owner to share it (it shows
+  no address but their own). Once shared, it can take up to 10 minutes to let them in.
+- **Nothing else of the bot can be run from it.** Every other public function of the bot (`setup`, `poll`, `status`,
+  `refresh…`, `start…`/`stop…`, `verify…`, …) refuses a call from the web app as its first step
+  (`webViewerCall_`): a time trigger, a form trigger and the owner's own runs in the editor go on as before.
+- **The link.** C54 has the web app's link once it is deployed (step 3), or says it is not deployed yet.
+- **An older link.** A deployment runs the code it was made with. When the bot's code is newer than the deployment's
+  (row 54 ON writes the newest build id to the script property `BOT_BUILD`), the page says so at the top, with the
+  exact command that brings it up to date, its deployment id read from the link (step 4).
+- **How current it is.** "Updated 14 s ago" and every "3 min ago" are counted from the bot's own clock (each answer
+  carries it), so a viewer's wrong device clock can't make the page look fresh or late.
+
+Deploy it (from the repository's `apps-script-chat-bot/` folder):
+
+1. Push the code, the web app's `.html` pages and the manifest:
+   ```sh
+   clasp push -f
+   ```
+2. **Right after the push**, open the Apps Script editor signed in as the bot's account (the account in "Runs as", B8),
+   run **`setup`** once and approve. Google requires the bot's account to approve the new "edit Google Slides"
+   permission (`https://www.googleapis.com/auth/presentations`, for Slide deliveries); the bot's time triggers pause
+   until it does, so do this at once. `setup()` is safe to run again: nothing is posted twice, and the Control tab keeps
+   what people set.
+3. Once, make the web app's deployment:
+   ```sh
+   clasp deploy --description "Live dashboard"
+   ```
+   It prints the deployment's id (`clasp deployments` lists it again). The link appears in C54 at the next run with row
+   54 ON.
+4. After every later push, bring that same deployment (and so the same link) up to date:
+   ```sh
+   clasp deploy -i <deploymentId>
+   ```
+5. Set row 54 to ON, and share the bot's sheet with the people who should see the dashboard.
+
+## Slide deliveries
+
+**Warning first: nothing is delivered until the bot's account has approved editing Google Slides once** (step 2 of
+"Live dashboard" above). Until then C55 says it is waiting.
+
+A delivery puts a "Brand safety pulse" slide in a Google Slides deck on a schedule: the top issues of a window of time,
+with plain numbers, a short summary linked to the posts it cites, and what was done about each. People set deliveries up
+in the web app's Slide deliveries area; the bot builds and places the slides.
+
+- **Control row 55, OFF to start.** OFF, nothing is delivered; deliveries can be set up in the web app and wait. ON, the
+  run keeps one time trigger (`dashDeliverDue`, every 5 minutes) that delivers each delivery when it's due, and removes
+  that trigger when row 55 is OFF again.
+- **Set one up** (web app, Slide deliveries, New): paste the deck's link (the deck must be shared with the bot's account
+  as an editor; the web app names the account to share it with), pick where in the deck the slide goes (between which
+  slides), the design (copy the look of a slide you pick, or the deck's own), how far back to look (1 hour to 30 days),
+  the schedule (days, time, time zone; Monday can cover the weekend), and the options (count the bot's own finds, link
+  sensitive posts, replace the slide it put there the time before or add a new one each time, who gets an email that it
+  was delivered). Preview, then save.
+- **What a slide holds.** The title, the window it covers, and up to three issues (most alerts first): Burson's alerts
+  always count, the bot's own finds only when the delivery says so. For each issue: the numbers (alerts, accounts,
+  platforms, engagement, change from the window before), a short summary written by Gemini with links on the posts it
+  cites, and a status line (what was done, who has it, whether readers need to do anything). No alerts in the window:
+  the slide says so. The positive pulse slide is shown as not available: its source isn't known yet.
+- **One slide, as previewed.** When the words would run past the slide's text box at the deck's own size, the bot sets
+  the text of that slide smaller (only on the slide it placed) and says so in the run's note. The preview draws the
+  slide in the deck's own text boxes, with the same words and that same size, so it shows the slide as it will land.
+- **What it never does.** It changes no slide but the ones it placed itself, posts nothing in Chat (nothing goes to S-F
+  Burson or the Burson test copy), and emails only the testers (B30) while Testing (nobody while B30 is blank).
+- **Where deliveries are kept.** The bot's own `Slide deliveries` tab (its title in A1 marks it as the bot's). A tab of
+  that name the bot didn't make is left alone, and the web app says so.
+
 ## One-time setup (whoever installs it)
 
 1. The Apps Script project (`.clasp.json`) must use the Cloud project `brand-social-central-data` (**Project
@@ -1829,7 +1915,10 @@ C15, C19 (its new line), C34, C35 and the Watch sources tab's new words have no 
 - **Deploy when no answer of the bot waits on the Burson outbox.** This only matters while LIVE with Post in S-F Burson
   ON (row 24). An answer the old code queued whose text holds a note's first words (`Alert requirements`, `Part of a
   story`, …) is Blocked at Send by the new version. If one is waiting, edit it and set it to Send again.
-- **Nothing on the Control tab needs changing.** No switch was added and no row moved.
+- **Approve the new permission right after the push** ("Live dashboard", step 2): until the bot's account approves
+  editing Google Slides, its time triggers are paused.
+- **Nothing on the Control tab needs changing.** The next run adds rows 54 (Live dashboard) and 55 (Slide deliveries),
+  both OFF, and moves "How it works" to row 57; rows 52-53 stay as they are.
 - **What appears by itself**, at the next runs (each run writes column C and Status again): row 19's new ON text, the
   new lines in C15, C19, C34 and C35, and Status (B5) when a tab named "Early Detection" is in the way. The Early
   Detection tab is made at the start of the first run with row 19 ON. The notes under cards and the `Alert
@@ -1871,8 +1960,12 @@ The tests run the bot against fake Chat, Gemini, BigQuery and Sheets. These need
 
 | File | What it is |
 |---|---|
-| `Main.gs` | `setup()`, `status()`, `listMySpaces()`, `tryAlert()`, and `poll()`, the every-minute run (one at a time: a run that finds another still going skips) |
-| `Control.gs` | The Control tab (with its switches, rows 11-24, 27-29, 32, 34, 36-40, 46 and 48, and the S-F Burson space, row 25), and the Resources and Guidance tabs |
+| `Main.gs` | `setup()`, `status()`, `listMySpaces()`, `tryAlert()`, and `poll()`, the every-minute run (one at a time: a run that finds another still going skips); at its end, the live dashboard's build id (row 54) and the slide deliveries' time trigger (row 55) |
+| `Control.gs` | The Control tab (with its switches, rows 11-24, 27-29, 32, 34, 36-40, 46, 48-51, 54 and 55, and the S-F Burson space, row 25), and the Resources and Guidance tabs |
+| `Dashboard.gs` | The live dashboard web app's entry point (`doGet`) and who may open it (`dashAccess_`: the people the bot's sheet is shared with); `webViewerCall_`, the first line of every other public function, which refuses a call from the web app |
+| `DashboardData.gs` | What the live dashboard shows (row 54), read-only from what the bot keeps |
+| `SlideDeliveries.gs` | Slide deliveries (row 55): the bot's own `Slide deliveries` tab, the pulse slide each delivery builds, and its time trigger's handler `dashDeliverDue` |
+| `Dashboard.html`, `DashboardCss.html`, `DashboardJs.html` | The web app's page (pushed by `clasp push` with the `.gs` files: `.claspignore` lets `.html` through) |
 | `Knowledge.gs` | The knowledge base: reads the Resources tab's documents, keeps them current in the bot's own hidden "Knowledge cache (bot)" tab, and picks the parts that bear on each alert or question |
 | `Config.gs` | Fixed settings: the Cloud project and what a new Control tab starts with; and this run's S-F Burson space, as the Control tab's B25 names it (no S-F Burson id is in the code) |
 | `Bot.gs` | One pass over the Burson space: alerts, resends, replies, copying analyst emojis |

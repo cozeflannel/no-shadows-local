@@ -293,6 +293,7 @@ function ensureTnsTestTrigger_(form) {
 
 /** Run this to make the test copy now (or find it): logs its link and where to see what was submitted. */
 function setupTnsTestForm() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const props = PropertiesService.getScriptProperties();
   let form = tnsJson_(props.getProperty('TNS_TEST_FORM'));
   let open = null;
@@ -309,6 +310,11 @@ function setupTnsTestForm() {
  * (so the post's link is in it), sent to the tester only. The bot then marks ✍️ as it would for the real email.
  */
 function onTnsTestFormSubmit(e) {
+  // a dashboard viewer (google.script.run) is refused; a real form-submit trigger run (its event has a FormResponse,
+  // which google.script.run can't pass) runs as before, whoever submitted the form
+  if (webViewerCall_() && !(e && e.response && typeof e.response.getItemResponses === 'function')) {
+    throw new Error('Not available from the dashboard');
+  }
   let raw = '';
   try { raw = readTestersCell_(controlTab_(openStore_(false))); } catch (err) { raw = ''; }
   const to = testersFor_(raw).testers;

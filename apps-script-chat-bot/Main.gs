@@ -57,6 +57,7 @@ const CHAT_SPACE_URL_ = 'https://mail.google.com/chat/u/0/#chat/space/';
 // ---------------------------------------------------------------------------------------------------------------
 
 function setup() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(SETUP_LOCK_WAIT_MS_)) {  // a run is still going after 5 minutes: nothing is changed
     throw new Error('A run is in progress, try again in a few minutes (setup() didn\'t change anything).');
@@ -129,6 +130,7 @@ function setup() {
 }
 
 function status() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const props = PropertiesService.getScriptProperties();
   const info = {};
   try {
@@ -202,6 +204,7 @@ function status() {
 }
 
 function listMySpaces() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const lines = chatListSpaces_().filter(s => s.spaceType === 'SPACE')
     .map(s => `${s.displayName || '(no name)'}  →  ${CHAT_SPACE_URL_}${String(s.name).replace(/^spaces\//, '')}` +
       (s.externalUserAllowed ? '   (allows people outside Google)' : ''))
@@ -233,6 +236,7 @@ const TRY_ALERT_TEXT = [
 ].join('\n');
 
 function tryAlert() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const parsed = parseAlert_(TRY_ALERT_TEXT);
   if (!detectAlert_(TRY_ALERT_TEXT, parsed, '')) {
     console.log('This text doesn\'t look like a Zapier alert (too few "[Label]: value" lines).');
@@ -284,6 +288,7 @@ function tryAlert() {
 // ---------------------------------------------------------------------------------------------------------------
 
 function poll() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   openEntry_();  // the run-time record (OpenEngine.gs, always): a run that finds the lock taken is counted too
   const lock = LockService.getScriptLock();
   try {
@@ -341,14 +346,14 @@ function poll() {
     alertMemoryStart_(ss, { deadline: runStart + RUN_HARD_STOP_MS_ });
     if (typeof syncBrandSafetyGroups_ === 'function') syncBrandSafetyGroups_(ss);
     control = controlTab_(ss) || ensureControlTab_(ss, Session.getEffectiveUser().getEmail());
-    ensureSwitchRows_(control);  // rows 11-24, 27-29, 32, 34, 36-40, 46 and 48-51 on a tab from before them (OFF)
+    ensureSwitchRows_(control);  // rows 11-24, 27-29, 32, 34, 36-40, 46, 48-51, 54 and 55 on a tab from before them (OFF)
     ensureSfBursonRow_(control);  // row 25 (S-F Burson space, blank) on a tab from before it
     ensureTestCopyRow_(control);  // row 26 (Burson test copy, blank) on a tab from before it
     ensureTestersRow_(control);   // row 30 (Testing: send to, blank) on a tab from before it
     ensureBqLookbackRow_(control);  // row 31 (BigQuery lookback, 60 minutes) on a tab from before it
     ensureOtherSpaceRow_(control);  // row 33 (Other alerts space, blank) on a tab from before it
     ensureWatchAlertsRow_(control);  // row 35 (Watch alerts, OFF) on a tab from before it
-    ensureFtBarRows_(control);    // rows 41-45 and 47 (fast-triage bars, seeds) on a tab from before them; the help is at row 53
+    ensureFtBarRows_(control);    // rows 41-45 and 47 (fast-triage bars, seeds) on a tab from before them; the help is at row 57
     wanted = readControl_(control);
     ewsRunSwitches_(wanted.switches);  // EarlyWaveSource.gs: which new rows (48-51) are ON this run; unset: all OFF
     testers = testersFor_(wanted.testers, control);  // C30 is kept current even while the bot is paused
@@ -792,7 +797,8 @@ function poll() {
       console.error('after the run: ' + ((e && e.stack) || e));
     }
     try {
-      // C11:C24, C27:C29, C32, C34 and C36:C37, paused or not; whether this run is LIVE (runMode_), when the run got that far
+      // C11:C24, C27:C29, C32, C34, C36:C40, C46, C48:C51 and C54:C55, paused or not; whether this run is LIVE (runMode_),
+      // when the run got that far
       const live = mode ? mode.live : undefined;
       const extra = rtc ? { testCopy: rtc.space ? rtc.space.name : '', testCopyBroken: !rtc.space && !rtc.blank } : {};
       if (mode && mode.why) extra.modeWhy = mode.why;
@@ -806,6 +812,10 @@ function poll() {
     } catch (e) {
       console.error('could not update the switches on the Control tab: ' + ((e && e.message) || e));
     }
+    // The live dashboard (Control row 54) and the slide deliveries (row 55), last: the dashboard's build id, and the
+    // deliveries' own time trigger. Nothing here while both are OFF and no deliveries trigger is kept (no property
+    // written, no trigger call). Never throws, so it can never fail the run
+    if (wanted && wanted.switches) pollDashboardUpkeep_(wanted.switches);
     try { outboxRunEnd_(); } catch (e) { console.error('Burson outbox: ' + e); }  // what this run withheld or queued
     // The shared alert memory (AlertMemory.gs): what every flow learned this run, written once (never throws), then gone
     alertMemoryFlush_();
@@ -1370,6 +1380,71 @@ function sweepOrphanTriggers_() {
     console.warn('orphan trigger sweep skipped: ' + ((e && e.message) || e));
     return 0;
   }
+}
+
+// The slide deliveries' time trigger (Control row 55; its handler, dashDeliverDue, is in SlideDeliveries.gs and takes its
+// own claim, never the poll's lock): one, every 5 minutes, kept by poll() while row 55 is ON and removed while it's OFF.
+// SLIDE_TRIGGER_PROP_ says poll() made one (the time it did), so a run with row 55 OFF and none made reads the triggers
+// not at all
+const SLIDE_TRIGGER_HANDLER_ = 'dashDeliverDue';
+const SLIDE_TRIGGER_EVERY_MIN_ = 5;
+const SLIDE_TRIGGER_PROP_ = 'SLIDE_TRIGGER';
+
+/**
+ * The live dashboard's and the slide deliveries' upkeep, at the end of a run (`switches`: the run's, readControl_):
+ * with row 54 ON, the dashboard's build id in the property BOT_BUILD (pollBuildUpkeep_); the deliveries' trigger
+ * as row 55 says (pollSlideTriggerUpkeep_). With both OFF and no deliveries trigger made, nothing is read or written.
+ * {build, trigger}: what each did ('' when it did nothing). Never throws.
+ */
+function pollDashboardUpkeep_(switches) {
+  const out = { build: '', trigger: '' };
+  try {
+    if (switches && switches.liveDashboard === true) out.build = pollBuildUpkeep_();
+  } catch (e) {
+    console.error('live dashboard (row 54): could not write the build id: ' + ((e && e.message) || e));
+  }
+  try {
+    out.trigger = pollSlideTriggerUpkeep_(!!(switches && switches.slideDeliveries === true));
+  } catch (e) {
+    console.error('slide deliveries (row 55): could not keep the delivery trigger: ' + ((e && e.message) || e));
+  }
+  return out;
+}
+
+/**
+ * Row 54 ON: the dashboard's build id (Dashboard.gs DASH_BUILD_) in the property BOT_BUILD, written only when it is not
+ * there yet (one write after each push of new dashboard code). The web app compares its own copy with it. 'written' or
+ * 'same'.
+ */
+function pollBuildUpkeep_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty(DASH_BUILD_PROP_) === DASH_BUILD_) return 'same';
+  props.setProperty(DASH_BUILD_PROP_, DASH_BUILD_);
+  return 'written';
+}
+
+/**
+ * The slide deliveries' time trigger: `on` (row 55 ON) keeps exactly one (made when there is none, any extra deleted);
+ * OFF deletes every one, only when SLIDE_TRIGGER_PROP_ says poll() made one (otherwise no trigger call at all). Only the
+ * bot's own account's triggers are seen. 'made', 'kept', 'removed' or '' (nothing to do).
+ */
+function pollSlideTriggerUpkeep_(on) {
+  const props = PropertiesService.getScriptProperties();
+  const made = !!props.getProperty(SLIDE_TRIGGER_PROP_);
+  if (!on && !made) return '';
+  const mine = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === SLIDE_TRIGGER_HANDLER_);
+  if (!on) {
+    mine.forEach(t => ScriptApp.deleteTrigger(t));
+    props.deleteProperty(SLIDE_TRIGGER_PROP_);
+    console.log(`slide deliveries (row 55) is OFF: removed ${mine.length} delivery trigger${mine.length === 1 ? '' : 's'}`);
+    return 'removed';
+  }
+  mine.slice(1).forEach(t => ScriptApp.deleteTrigger(t));
+  if (!made) props.setProperty(SLIDE_TRIGGER_PROP_, String(Date.now()));
+  if (mine.length) return 'kept';
+  ScriptApp.newTrigger(SLIDE_TRIGGER_HANDLER_).timeBased().everyMinutes(SLIDE_TRIGGER_EVERY_MIN_).create();
+  console.log(`slide deliveries (row 55) is ON: made the delivery trigger (every ${SLIDE_TRIGGER_EVERY_MIN_} minutes)`);
+  return 'made';
 }
 
 /**

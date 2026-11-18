@@ -942,6 +942,17 @@ function makeGoogle(startMs) {
   const forms = new Map();  // FormApp forms by id; forms.fail = 'message' makes FormApp.create throw
   forms.calls = [];         // every FormApp.create / openById: [method, title or id]
   const charts = { built: [], fail: null };  // Charts.newLineChart().build() specs; charts.fail throws
+  // Session: who runs the code. active is blank, as in a trigger run or the owner's own run in the editor; a test sets a
+  // dashboard viewer's address (g.session.active = 'viewer@team.test'). effective is the account the bot runs as
+  const session = { active: '', effective: 'bot@runner.test' };
+  // ScriptApp: the web app's link (blank: no web app deployed yet) and the scopes the bot's account has not approved yet
+  // (getAuthorizationInfo says REQUIRED when any asked scope is one of them; asked: each call's scopes)
+  const script = { url: '', notGranted: [], asked: [] };
+  // DriveApp: each file's sharing, set by the test by its id: {access (a DriveApp.Access name, PRIVATE when left out),
+  // editors, viewers (email addresses), owner (an address; null: no owner, as a shared drive's file), name, url, mimeType,
+  // fail (a message getFileById throws)}. A spreadsheet the fakes made with no entry is PRIVATE, owned by the effective
+  // user; an unknown id throws as DriveApp does. calls: every getFileById id
+  const drive = { files: new Map(), calls: [] };
 
   const services = {
     console: { log: (...a) => logs.push(a.join(' ')), error: (...a) => logs.push('ERROR ' + a.join(' ')), warn: (...a) => logs.push(a.join(' ')) },
@@ -1002,15 +1013,59 @@ function makeGoogle(startMs) {
       }),
     },
     LockService: { getScriptLock: () => ({ tryLock: () => true, waitLock: () => {}, releaseLock: () => {} }) },
-    Session: { getEffectiveUser: () => ({ getEmail: () => 'bot@runner.test' }) },
+    Session: {
+      getActiveUser: () => ({ getEmail: () => session.active }),
+      getEffectiveUser: () => ({ getEmail: () => session.effective }),
+    },
     ScriptApp: {
+      AuthMode: { NONE: 'NONE', CUSTOM_FUNCTION: 'CUSTOM_FUNCTION', LIMITED: 'LIMITED', FULL: 'FULL' },
+      AuthorizationStatus: { REQUIRED: 'REQUIRED', NOT_REQUIRED: 'NOT_REQUIRED' },
       getOAuthToken: () => 'TOKEN',
+      getService: () => ({ getUrl: () => script.url, isEnabled: () => !!script.url }),
+      getAuthorizationInfo(mode, scopes) {
+        const asked = Array.isArray(scopes) ? scopes.slice() : null;
+        script.asked.push({ mode, scopes: asked });
+        const missing = (script.notGranted || []).filter(sc => !asked || asked.includes(sc));
+        return {
+          getAuthorizationStatus: () => (missing.length ? 'REQUIRED' : 'NOT_REQUIRED'),
+          getAuthorizationUrl: () => (missing.length ? 'https://script.google.com/macros/auth/fake' : null),
+          getAuthorizedScopes: () => [],
+        };
+      },
       getProjectTriggers: () => triggers.map(t => ({ getHandlerFunction: () => t.handler, getTriggerSourceId: () => t.source || null, _t: t })),
       deleteTrigger: t => { const i = triggers.indexOf(t._t); if (i >= 0) triggers.splice(i, 1); },
       newTrigger: handler => ({
         timeBased: () => ({ everyMinutes: n => ({ create: () => triggers.push({ handler, minutes: n }) }) }),
         forForm: form => ({ onFormSubmit: () => ({ create: () => triggers.push({ handler, source: form.getId(), event: 'formSubmit' }) }) }),
       }),
+    },
+    DriveApp: {
+      Access: { ANYONE: 'ANYONE', ANYONE_WITH_LINK: 'ANYONE_WITH_LINK', DOMAIN: 'DOMAIN', DOMAIN_WITH_LINK: 'DOMAIN_WITH_LINK',
+        PRIVATE: 'PRIVATE' },
+      Permission: { VIEW: 'VIEW', EDIT: 'EDIT', COMMENT: 'COMMENT', OWNER: 'OWNER', ORGANIZER: 'ORGANIZER',
+        FILE_ORGANIZER: 'FILE_ORGANIZER', NONE: 'NONE' },
+      getFileById(id) {
+        drive.calls.push(String(id));
+        const set = drive.files.get(String(id));
+        if (set && set.fail) throw new Error(set.fail);
+        if (!set && !spreadsheets.has(String(id))) {
+          throw new Error('No item with the given ID could be found. Possibly because you have not edited this item or you do not have permission to access it.');
+        }
+        const f = Object.assign({ access: 'PRIVATE', editors: [], viewers: [], owner: session.effective }, set || {});
+        const user = email => ({ getEmail: () => String(email), getName: () => '', getDomain: () => String(email).split('@')[1] || '' });
+        const ss = spreadsheets.get(String(id));
+        return {
+          getId: () => String(id),
+          getName: () => (f.name !== undefined ? f.name : ss ? ss.name : ''),
+          getUrl: () => (f.url !== undefined ? f.url : ss ? ss.getUrl() : `https://drive.google.com/file/d/${id}/view`),
+          getMimeType: () => (f.mimeType !== undefined ? f.mimeType : ss ? 'application/vnd.google-apps.spreadsheet' : ''),
+          getSharingAccess: () => f.access,
+          getSharingPermission: () => (f.access === 'PRIVATE' ? 'NONE' : f.permission || 'VIEW'),
+          getEditors: () => (f.editors || []).map(user),
+          getViewers: () => (f.viewers || []).map(user),
+          getOwner: () => (f.owner ? user(f.owner) : null),
+        };
+      },
     },
     FormApp: {
       ItemType: { LIST: 'LIST', MULTIPLE_CHOICE: 'MULTIPLE_CHOICE', TEXT: 'TEXT', PARAGRAPH_TEXT: 'PARAGRAPH_TEXT',
@@ -1092,7 +1147,8 @@ function makeGoogle(startMs) {
       },
     },
   };
-  return { clock, chat, vertex, gmail, props, cache, triggers, spreadsheets, pages, fetches, logs, forms, charts, services };
+  return { clock, chat, vertex, gmail, props, cache, triggers, spreadsheets, pages, fetches, logs, forms, charts, session, script,
+    drive, services };
 }
 
 function seedSyntheticDistribution(sandbox) {

@@ -565,8 +565,10 @@ module.exports = function (H) {
       eq([sh.cell(39, 1), sh.cell(39, 2), sh.validations['39,2'].values], ['Fast triage: rank and early watch', 'OFF', ['ON', 'OFF']]);
       eq([sh.cell(40, 1), sh.cell(40, 2), sh.validations['40,2'].values], ['Fast triage: hold back noise', 'OFF', ['ON', 'OFF']]);
       eq([sh.cell(46, 1), sh.cell(46, 2), sh.validations['46,2'].values], ['Write early-wave records to BigQuery', 'OFF', ['ON', 'OFF']]);
-      eq([sh.cell(47, 1), sh.cell(48, 1), sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1), sh.cell(53, 1)],
-        ['Early watch: independent_reports at or above', 'Early Detection: also read the AMIE table', 'Early Detection: also read Brandwatch live (not X)', 'Proactive watch: also read the AMIE table', 'Open engine: judgment in place of caps', '', 'How it works']);
+      eq([sh.cell(47, 1), sh.cell(48, 1), sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1), sh.cell(53, 1), sh.cell(54, 1),
+        sh.cell(55, 1), sh.cell(56, 1), sh.cell(57, 1)],
+        ['Early watch: independent_reports at or above', 'Early Detection: also read the AMIE table', 'Early Detection: also read Brandwatch live (not X)', 'Proactive watch: also read the AMIE table', 'Open engine: judgment in place of caps', '', '',
+          'Live dashboard', 'Slide deliveries', '', 'How it works']);
 
       if (disableFastTriageHooks) {
         t.bot.ftStart_ = () => null;
@@ -1431,7 +1433,7 @@ module.exports = function (H) {
     ]);
     const PROBS = ['0.05', '0.10', '0.15', '0.20', '0.25', '0.30', '0.35', '0.40', '0.45', '0.50', '0.55', '0.60', '0.65', '0.70', '0.75', '0.80', '0.85', '0.90', '0.95'];
     eq(specs.map(s => s.choices), [PROBS, PROBS, PROBS, PROBS, ['2', '3', '4'], PROBS]);
-    eq([sh.cell(46, 1), sh.cell(48, 1), sh.cell(49, 1), sh.cell(52, 1), sh.cell(53, 1)], ['Write early-wave records to BigQuery', 'Early Detection: also read the AMIE table', 'Early Detection: also read Brandwatch live (not X)', '', 'How it works']);
+    eq([sh.cell(46, 1), sh.cell(48, 1), sh.cell(49, 1), sh.cell(52, 1), sh.cell(53, 1), sh.cell(56, 1), sh.cell(57, 1)], ['Write early-wave records to BigQuery', 'Early Detection: also read the AMIE table', 'Early Detection: also read Brandwatch live (not X)', '', '', '', 'How it works']);
 
     // 1. Every bar row has strict dropdown validation (allowInvalid === false) and seed value on setup()
     for (const s of specs) {
@@ -1473,7 +1475,7 @@ module.exports = function (H) {
 
     // 4. A tab the first build made (rows 41-46 as it left them: one bar for the three early-watch answers in row 44, the confidence bar
     //    seeded 0.80, "How it works" from row 48): on the next run row 44 keeps its value under its new label, row 47 is the
-    //    independent_reports bar at its seed, row 48 the AMIE table's switch (OFF), "How it works" moves to row 53, and the
+    //    independent_reports bar at its seed, row 48 the AMIE table's switch (OFF), "How it works" moves to row 57, and the
     //    confidence cell still at that build's seed (0.80) moves to 0.55, once. Rows 38-46 keep what people set.
     const older = (conf) => {
       const o = e2e();
@@ -1490,12 +1492,13 @@ module.exports = function (H) {
       return { o, tab };
     };
     const first = older('0.80');
-    eq([41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53].map(r => [first.tab.cell(r, 1), first.tab.cell(r, 2)]), [
+    eq([41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57].map(r => [first.tab.cell(r, 1), first.tab.cell(r, 2)]), [
       ['Hold-back: about_google at or below', '0.10'], ['Hold-back: routine_noise at or above', '0.90'],
       ['Hold-back and early watch: answer confidence at or above', '0.55'],
       ['Early watch: about_google and brand_risk, each at or above', '0.70'], ['Early watch: distinct accounts, at least', '4'],
       ['Write early-wave records to BigQuery', 'ON'], ['Early watch: independent_reports at or above', '0.30'],
-      ['Early Detection: also read the AMIE table', 'OFF'], ['Early Detection: also read Brandwatch live (not X)', 'OFF'], ['Proactive watch: also read the AMIE table', 'OFF'], ['Open engine: judgment in place of caps', 'OFF'], ['', ''], ['How it works', '']]);
+      ['Early Detection: also read the AMIE table', 'OFF'], ['Early Detection: also read Brandwatch live (not X)', 'OFF'], ['Proactive watch: also read the AMIE table', 'OFF'], ['Open engine: judgment in place of caps', 'OFF'], ['', ''], ['', ''],
+      ['Live dashboard', 'OFF'], ['Slide deliveries', 'OFF'], ['', ''], ['How it works', '']]);
     assert.match(first.tab.cell(43, 3), /^✓ Hold-back \(row 40\) and early watch \(row 39\) require answer confidence at or above 0\.55/);
     eq(first.tab.rows.filter(r => String(r[0]).trim() === 'How it works').length, 1);
     eq(first.o.bot.ftBarsFor_(first.o.bot.readControl_(first.tab).ftBars).values, { about: 0.10, noise: 0.90, conf: 0.55, watch: 0.70, accounts: 4, independent: 0.30 });

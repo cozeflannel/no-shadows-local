@@ -223,7 +223,8 @@ module.exports = function ({ assert, F, B, NOW, test, eq, world, e2e, decodeMime
       sh.cell(39, 1), sh.cell(39, 2), sh.cell(40, 1), sh.cell(40, 2),
       sh.cell(41, 1), sh.cell(41, 2), sh.cell(42, 1), sh.cell(42, 2), sh.cell(43, 1), sh.cell(43, 2), sh.cell(44, 1), sh.cell(44, 2), sh.cell(45, 1), sh.cell(45, 2),
       sh.cell(46, 1), sh.cell(46, 2), sh.cell(47, 1), sh.cell(47, 2), sh.cell(48, 1), sh.cell(48, 2), sh.cell(49, 1), sh.cell(49, 2), sh.cell(50, 1), sh.cell(50, 2),
-      sh.cell(51, 1), sh.cell(51, 2), sh.cell(52, 1), sh.cell(53, 1)],
+      sh.cell(51, 1), sh.cell(51, 2), sh.cell(52, 1), sh.cell(53, 1), sh.cell(54, 1), sh.cell(54, 2), sh.cell(55, 1), sh.cell(55, 2),
+      sh.cell(56, 1), sh.cell(57, 1)],
       ['Testing: send to', '', 'BigQuery lookback', '60 minutes', 'Work directly in B25 (Google-only)', 'OFF', 'Other alerts space', '',
         'Proactive watch', 'OFF', 'Watch alerts', 'OFF', 'Temp checks', 'OFF', 'Group test emails', 'OFF', 'Fast triage (Gemini Decisions)', 'OFF',
         'Fast triage: rank and early watch', 'OFF', 'Fast triage: hold back noise', 'OFF',
@@ -232,7 +233,8 @@ module.exports = function ({ assert, F, B, NOW, test, eq, world, e2e, decodeMime
         'Early watch: about_google and brand_risk, each at or above', '0.80',
         'Early watch: distinct accounts, at least', '3',
         'Write early-wave records to BigQuery', 'OFF', 'Early watch: independent_reports at or above', '0.30',
-        'Early Detection: also read the AMIE table', 'OFF', 'Early Detection: also read Brandwatch live (not X)', 'OFF', 'Proactive watch: also read the AMIE table', 'OFF', 'Open engine: judgment in place of caps', 'OFF', '', 'How it works']);
+        'Early Detection: also read the AMIE table', 'OFF', 'Early Detection: also read Brandwatch live (not X)', 'OFF', 'Proactive watch: also read the AMIE table', 'OFF', 'Open engine: judgment in place of caps', 'OFF', '', '',
+        'Live dashboard', 'OFF', 'Slide deliveries', 'OFF', '', 'How it works']);
 
     sh.getRange(30, 1).setValue('');
     sh.getRange(30, 2).setValue('keepme@external.test');

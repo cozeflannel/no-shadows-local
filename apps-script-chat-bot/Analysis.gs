@@ -98,6 +98,7 @@ const ANALYSIS_PROP_MAX_CHARS_ = 7500;  // safely under Apps Script's 9 KB per-p
  * immediately with fresh BigQuery IM comparisons and current Knowledge Base snippets.
  */
 function refreshAnalysis() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const ss = openStore_(false);
   const wanted = readControl_(controlTab_(ss));
   const sfb = sfBursonFor_(null, wanted);
@@ -118,6 +119,7 @@ function refreshAnalysis() {
 
 /** Alias for analysts running from the Apps Script function dropdown. */
 function runBotAnalysis() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   return refreshAnalysis();
 }
 

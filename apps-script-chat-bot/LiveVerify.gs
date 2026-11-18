@@ -25,6 +25,7 @@
 const LIVE_VERIFY_FT_MAX_ = 5;  // signals asked about by verifyFastTriageLive (a look, not a load test)
 
 function verifyLookbackAndPipelineLive() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const ss = openStore_(false);
   const sheetId = ss.getId();
   const sh = controlTab_(ss);
@@ -159,6 +160,7 @@ function verifyLookbackAndPipelineLive() {
  * Run it from the editor.
  */
 function verifyFastTriageLive() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const props = PropertiesService.getScriptProperties();
   const buffer = ewsReadBuffer_(ewsCache_());
   const queued = edQueueList_(props).map(e => edQueueRow_(props, e.k)).filter(Boolean);
@@ -215,6 +217,7 @@ function verifyFastTriageLive() {
  * table was read and has no problem. Run it from the editor.
  */
 function verifyEarlyWaveBqLive() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const token = ScriptApp.getOAuthToken();
   const tables = EW_BQ_TABLES_.map(table => {
     const url = `${BQ_API_BASE_}${GCP_PROJECT}/datasets/${EW_BQ_DATASET_}/tables/${table}`;
@@ -293,6 +296,7 @@ const NSV_SLOW_MIN_COUNT_ = 5;                // mentions with times a source ne
  * last. No key, address, post text or author name is in it.
  */
 function verifyNewSourcesLive(queryIds) {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const now = Date.now();
   const lines = [];
   const notes = [];   // the project's queries, listed after the findings

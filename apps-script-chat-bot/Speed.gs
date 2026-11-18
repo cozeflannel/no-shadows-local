@@ -110,6 +110,7 @@ let RESULTS_RUN_ = null;
 
 /** Run this to rebuild the Results tab now (while the bot is ON, poll() keeps it up to date: see maybeRefreshSpeed_). */
 function refreshResults() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const ss = openStore_(false);
   const wanted = readControl_(controlTab_(ss));
   const sfb = sfBursonFor_(null, wanted);  // S-F Burson (Control tab B25): read only here (C25 is left to the runs)
@@ -136,6 +137,7 @@ function refreshResults() {
 
 /** The Results tab's old name (it was the Speed tab): the same as refreshResults(). */
 function refreshSpeed() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   return refreshResults();
 }
 

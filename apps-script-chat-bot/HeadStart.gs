@@ -195,6 +195,7 @@ const HEAD_START_RULES_ = ['', HEAD_START_SAME_POST_, HEAD_START_SAME_STORY_, HE
 
 /** Run this to rebuild the Head start tab now (while the bot is ON, poll() keeps it up to date: maybeRefreshHeadStart_). */
 function refreshHeadStart() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const ss = openStore_(false);
   const now = Date.now();
   const out = refreshHeadStart_(ss, { now, make: true });
