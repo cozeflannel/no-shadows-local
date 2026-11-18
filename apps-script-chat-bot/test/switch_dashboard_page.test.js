@@ -1,4 +1,4 @@
-// The live dashboard's page (DashboardJs.html in Dashboard.html), run in a small fake browser page (test/fake_dom.js)
+// The live dashboard's page (DashboardJs.html in DashboardPage.html), run in a small fake browser page (test/fake_dom.js)
 // with its google.script.run calls answered by the REAL dash* functions of a bot loaded with the test fakes, as the
 // viewer: the golden one-space world (golden_flows.js oneSpaceRun), the bot's sheet shared with an editor and a reader,
 // rows 54 and 55 ON on the Control tab as a person would set them, and a fake Google Slides deck (test/fake_slides.js).

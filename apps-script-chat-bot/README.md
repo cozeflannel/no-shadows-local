@@ -1999,7 +1999,7 @@ The tests run the bot against fake Chat, Gemini, BigQuery and Sheets. These need
 | `Dashboard.gs` | The live dashboard web app's entry point (`doGet`) and who may open it (`dashAccess_`: the people the bot's sheet is shared with); `webViewerCall_`, the first line of every other public function, which refuses a call from the web app |
 | `DashboardData.gs` | What the live dashboard shows (row 54), read-only from what the bot keeps |
 | `SlideDeliveries.gs` | Slide deliveries (row 55): the bot's own `Slide deliveries` tab, the pulse slide each delivery builds, and its time trigger's handler `dashDeliverDue` |
-| `Dashboard.html`, `DashboardCss.html`, `DashboardJs.html` | The web app's page (pushed by `clasp push` with the `.gs` files: `.claspignore` lets `.html` through) |
+| `DashboardPage.html`, `DashboardCss.html`, `DashboardJs.html` | The web app's page (pushed by `clasp push` with the `.gs` files: `.claspignore` lets `.html` through) |
 | `Knowledge.gs` | The knowledge base: reads the Resources tab's documents, keeps them current in the bot's own hidden "Knowledge cache (bot)" tab, and picks the parts that bear on each alert or question |
 | `Config.gs` | Fixed settings: the Cloud project and what a new Control tab starts with; and this run's S-F Burson space, as the Control tab's B25 names it (no S-F Burson id is in the code) |
 | `Bot.gs` | One pass over the Burson space: alerts, resends, replies, copying analyst emojis |

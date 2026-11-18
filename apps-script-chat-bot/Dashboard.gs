@@ -5,7 +5,7 @@
  * (dashAccess_). The page carries no data: it asks the dash* functions (DashboardData.gs: Live, read-only;
  * SlideDeliveries.gs: Slide deliveries) through google.script.run.
  *
- *   doGet(e)                 the page (Dashboard.html with DashboardCss.html and DashboardJs.html)
+ *   doGet(e)                 the page (DashboardPage.html with DashboardCss.html and DashboardJs.html)
  *   include_(name)           an HTML partial's content, for the page template
  *   dashAccess_()            {ok, email, why}: may this viewer see the dashboard? (the same people as the bot's sheet)
  *   webViewerCall_()         true when a dashboard viewer (not the bot's own account) is calling: every other public
@@ -22,7 +22,7 @@
 // The dashboard's own build id: changed by hand whenever the dashboard's code changes. poll() writes it to the property
 // BOT_BUILD while row 54 is ON (the time trigger runs the newest code); the web app compares it with its own copy (a
 // deployment serves the code of its version), and says so when the link runs an older version than the bot
-const DASH_BUILD_ = '2026-11-18.3';
+const DASH_BUILD_ = '2026-11-18.4';
 const DASH_BUILD_PROP_ = 'BOT_BUILD';
 const DASH_ACL_CACHE_SEC_ = 600;
 const DASH_TITLE_ = 'Burson QA bot · Live';
@@ -42,7 +42,7 @@ function doGet(e) {
       .setTitle(DASH_TITLE_)
       .addMetaTag('viewport', 'width=device-width, initial-scale=1');
   }
-  const page = HtmlService.createTemplateFromFile('Dashboard');
+  const page = HtmlService.createTemplateFromFile('DashboardPage');
   page.viewerEmail = access.email || '';
   return page.evaluate()
     .setTitle(DASH_TITLE_)
@@ -50,7 +50,7 @@ function doGet(e) {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
 }
 
-/** An HTML partial's content (Dashboard.html includes DashboardCss and DashboardJs with it). */
+/** An HTML partial's content (DashboardPage.html includes DashboardCss and DashboardJs with it). */
 function include_(name) {
   return HtmlService.createHtmlOutputFromFile(name).getContent();
 }

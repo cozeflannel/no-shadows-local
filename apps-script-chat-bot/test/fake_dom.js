@@ -4,7 +4,7 @@
 //   - elements with their attributes, children, text, classes, style properties, event listeners, and the properties
 //     the page sets (hidden, disabled, checked, selected, value); document.getElementById / querySelector(All) with
 //     simple selectors (tag, #id, .class, [attr], [attr="value"], several joined by commas; no combinators);
-//   - Dashboard.html's <body> parsed into those elements (its template tags and scripts left out), so the page finds its
+//   - DashboardPage.html's <body> parsed into those elements (its template tags and scripts left out), so the page finds its
 //     own containers;
 //   - a page clock the test moves (performance.now, setTimeout, setInterval: nothing runs until the test says), the
 //     device's clock (Date.now) moving with it, and a google.script.run whose calls wait until the test hands them on
@@ -231,7 +231,7 @@ function makeDocument() {
   return doc;
 }
 
-/** Parses an HTML fragment (no scripts, no template tags) into `parent`. Enough for Dashboard.html's own markup. */
+/** Parses an HTML fragment (no scripts, no template tags) into `parent`. Enough for DashboardPage.html's own markup. */
 function parseInto(doc, parent, html) {
   const src = String(html).replace(/<!--[\s\S]*?-->/g, '').replace(/<\?[\s\S]*?\?>/g, '').replace(/<script[\s\S]*?<\/script>/gi, '');
   const stack = [parent];
@@ -268,7 +268,7 @@ function loadPage(opts) {
   const o = opts || {};
   const root = path.join(__dirname, '..');
   const doc = makeDocument();
-  const html = fs.readFileSync(path.join(root, 'Dashboard.html'), 'utf8');
+  const html = fs.readFileSync(path.join(root, 'DashboardPage.html'), 'utf8');
   const body = (html.match(/<body>([\s\S]*)<\/body>/) || [])[1] || '';
   parseInto(doc, doc.body, body.replace('<?= viewerEmail ?>', o.viewer || ''));
   const clock = { now: 1000 };

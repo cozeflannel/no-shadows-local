@@ -512,7 +512,7 @@ module.exports = H => {
     // a viewer the sheet is shared with: the Dashboard template, as the page
     t.g.session.active = 'reader@team.test';
     t.bot.doGet({});
-    eq([built[built.length - 1].template, built[built.length - 1].title, built[built.length - 1].frame], ['Dashboard', 'Burson QA bot · Live', 'DEFAULT']);
+    eq([built[built.length - 1].template, built[built.length - 1].title, built[built.length - 1].frame], ['DashboardPage', 'Burson QA bot · Live', 'DEFAULT']);
   });
 
   // -----------------------------------------------------------------------------------------------------------------
@@ -636,5 +636,39 @@ module.exports = H => {
     eq(cells(sh, 54), [LABEL54, 'OFF', OFF54]);
     eq(sh.rows.filter(r => r && r[0] === 'ask Sam before changing row 53').length, 1);
     helpAt57(sh, 'after the failed run and the next');
+  });
+
+  // Apps Script names a file without its .gs or .html ending, so one project can't hold Dashboard.gs and Dashboard.html:
+  // `clasp push` stops with "A file with this name already exists". The files each .claspignore lets through are read here
+  test('dashboard control: clasp can push both Apps Script projects: no two files it sends share a name once the .gs or .html ending is dropped (any case), and every page or partial the code opens by name (createTemplateFromFile, createHtmlOutputFromFile, include_) is one of the .html files it sends', () => {
+    const pushed = dir => {
+      const rules = fs.readFileSync(path.join(dir, '.claspignore'), 'utf8').split('\n').map(l => l.trim())
+        .filter(l => l.startsWith('!')).map(l => new RegExp(`^${l.slice(1).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*')}$`));
+      return fs.readdirSync(dir).filter(f => fs.statSync(path.join(dir, f)).isFile() && rules.some(r => r.test(f)));
+    };
+    const projects = [ROOT, path.join(ROOT, '..', 'apps-script-sheet-sidepanel')].filter(d => fs.existsSync(path.join(d, '.claspignore')));
+    eq(projects.length, 2);
+    projects.forEach(dir => {
+      const files = pushed(dir);
+      const names = new Map();
+      files.forEach(f => {
+        if (f === 'appsscript.json') return;
+        const key = f.replace(/\.(gs|html)$/, '').toLowerCase();
+        names.set(key, (names.get(key) || []).concat(f));
+      });
+      const clashes = [...names.values()].filter(list => list.length > 1);
+      eq([path.basename(dir), clashes], [path.basename(dir), []]);
+      const html = new Set(files.filter(f => f.endsWith('.html')).map(f => f.replace(/\.html$/, '')));
+      const opened = new Set();
+      files.filter(f => /\.(gs|html)$/.test(f)).forEach(f => {
+        const src = fs.readFileSync(path.join(dir, f), 'utf8');
+        const re = /\b(?:createTemplateFromFile|createHtmlOutputFromFile|include_)\(\s*'([^']+)'\s*\)/g;
+        let m;
+        while ((m = re.exec(src))) opened.add(m[1]);
+      });
+      eq([path.basename(dir), [...opened].filter(n => !html.has(n))], [path.basename(dir), []]);
+    });
+    // the dashboard's page is among them, under its own name
+    assert.ok(pushed(ROOT).indexOf('DashboardPage.html') >= 0 && pushed(ROOT).indexOf('Dashboard.gs') >= 0);
   });
 };
