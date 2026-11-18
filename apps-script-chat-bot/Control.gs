@@ -497,7 +497,8 @@ function controlCellBlank_(v) {
 }
 
 /**
- * Puts a person's texts (`kept`: {row, v}, in row order) that the help was written over into the first blank cells of
+ * Puts a person's texts (`kept`: {row, v, cell (where it was, when not column A)}, in row order) that the help (or a new
+ * switch row) was written over into the first blank cells of
  * column A below row `end`, unchanged, one each; past the tab's last row each goes in a new row (appendRow, which also
  * grows the grid). Logs one line that says where each went.
  */
@@ -516,7 +517,7 @@ function keepBelowControlHelp_(sh, end, kept) {
       sh.appendRow([k.v]);
       to = sh.getLastRow();
     }
-    return `A${k.row} to A${to}`;
+    return `${k.cell || `A${k.row}`} to A${to}`;
   });
   console.log(`Control tab: "How it works" now fills rows ${CONTROL_HELP_ROW_}-${end} of column A; a person's text ` +
     `there was kept below it (${moved.join(', ')})`);
@@ -894,6 +895,24 @@ function ensureSwitchRows_(sh) {
     return;
   }
   const rule = SpreadsheetApp.newDataValidation().requireValueInList(['ON', 'OFF'], true).build();
+  // a person's text in rows 54-55 when their switches are written over it (beside an old help line, on a tab from
+  // before them) is kept below the help, as writeControlHelp_ keeps one in column A; the bot's own (its help, a switch's
+  // label, ON or OFF, a column C status) is not. A person's ON is never carried over: the new switch starts OFF. (The
+  // older switch rows are written over as they always were)
+  const kept = [];
+  const keepFrom = todo.filter(i => CONTROL_KEEP_TEXT_SWITCHES_.indexOf(CONTROL_SWITCHES_[i].key) >= 0);
+  try {
+    const lo = keepFrom.length ? Math.min.apply(null, keepFrom.map(i => rows[i])) : 0;
+    const hi = keepFrom.length ? Math.max.apply(null, keepFrom.map(i => rows[i])) : 0;
+    const grid = keepFrom.length ? sh.getRange(lo, 1, hi - lo + 1, 3).getValues() : [];
+    keepFrom.forEach(i => {
+      const r = rows[i];
+      (grid[r - lo] || []).forEach((v, c) => {
+        if (controlCellBlank_(v) || !controlPersonText_(v, c)) return;
+        kept.push({ row: r, v, cell: `${'ABC'[c]}${r}` });
+      });
+    });
+  } catch (e) { /* not read: written over as before */ }
   todo.forEach(i => {
     const s = CONTROL_SWITCHES_[i];
     const row = rows[i];
@@ -902,6 +921,24 @@ function ensureSwitchRows_(sh) {
     sh.getRange(row, 2).setBackground('#fff8e1').setDataValidation(rule);
   });
   writeControlHelp_(sh);
+  // after the help is in place (a tab from before it can end above where the help now ends)
+  if (kept.length) keepBelowControlHelp_(sh, CONTROL_HELP_ROW_ + Math.max(CONTROL_HELP_ROWS_, CONTROL_HELP_.length + 1) - 1, kept);
+}
+
+// The switches whose rows a person's text is kept from when they are first written (ensureSwitchRows_): rows 54-55
+const CONTROL_KEEP_TEXT_SWITCHES_ = ['liveDashboard', 'slideDeliveries'];
+
+/**
+ * True when `v`, in column `c` (0 A, 1 B, 2 C) of a row a new switch is written over, is a person's text: not the bot's
+ * own help (controlHelpOwn_), a switch's label, an ON / OFF value, or a switch's column C status (which starts "OFF" or
+ * "✓ ON"). Pure.
+ */
+function controlPersonText_(v, c) {
+  const text = String(v === undefined || v === null ? '' : v).trim();
+  if (!text || v === true || v === false) return false;
+  if (c === 0) return !controlHelpOwn_(v) && !CONTROL_SWITCHES_.some(s => s.label === text);
+  if (c === 1) return !/^(?:ON|OFF)$/i.test(text);
+  return !/^(?:OFF\b|\u2713 ON\b)/.test(text);
 }
 
 /**

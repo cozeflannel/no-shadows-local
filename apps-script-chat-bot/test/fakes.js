@@ -1017,6 +1017,15 @@ function makeGoogle(startMs) {
       getActiveUser: () => ({ getEmail: () => session.active }),
       getEffectiveUser: () => ({ getEmail: () => session.effective }),
     },
+    // ContentService: a plain-text answer (no page, no google.script.run): {content, mimeType, contentService: true}
+    ContentService: {
+      MimeType: { TEXT: 'TEXT', JSON: 'JSON' },
+      createTextOutput: text => {
+        const o = { content: String(text === undefined ? '' : text), mimeType: 'TEXT', contentService: true,
+          getContent: () => o.content, getMimeType: () => o.mimeType, setMimeType: m => { o.mimeType = m; return o; } };
+        return o;
+      },
+    },
     ScriptApp: {
       AuthMode: { NONE: 'NONE', CUSTOM_FUNCTION: 'CUSTOM_FUNCTION', LIMITED: 'LIMITED', FULL: 'FULL' },
       AuthorizationStatus: { REQUIRED: 'REQUIRED', NOT_REQUIRED: 'NOT_REQUIRED' },

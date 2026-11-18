@@ -194,7 +194,8 @@ module.exports = H => {
     eq(s.ok, true);
     ['asOf', 'build', 'switches', 'mode', 'health', 'now', 'clusters', 'alerts', 'pressure', 'pipeline', 'early', 'held', 'questions']
       .forEach(k => assert.ok(k in s, k));
-    eq([s.asOf, s.servedAt, keys(s.build), s.mode], [x.t.g.clock.now, x.t.g.clock.now, ['behind', 'bot', 'url', 'web'], 'testing']);
+    eq([s.asOf, s.servedAt, keys(s.build), s.mode], [x.t.g.clock.now, x.t.g.clock.now, ['accountWhy', 'behind', 'bot', 'sameAccount', 'url', 'web'], 'testing']);
+    eq([s.build.sameAccount, s.build.accountWhy], [true, '']);  // the web app runs as the account in Control B8
     // every answer the page shows times from carries the bot's clock (the page never counts "ago" from the device's)
     eq([x.t.bot.dashDetail('alert', s.alerts[0].id).servedAt, x.t.bot.dashWhyNot('https://x.com/nobody/status/1').servedAt], [x.t.g.clock.now, x.t.g.clock.now]);
     assert.ok(Object.keys(s.switches).length >= 29 && Object.values(s.switches).every(v => typeof v === 'boolean'));
@@ -248,15 +249,17 @@ module.exports = H => {
     const by = id => s.alerts.find(a => a.id === id);
     const pick = a => [a.kind, a.level, a.levelWhy, a.status.key, a.owner.who, a.action.text];
     eq(pick(by('QA-1001')), ['burson', 'critical', 'P0 exposure tag (Product - Perceived bias)', 'sent', 'the teams emailed: GCPA (gcpa), pa',
-      'Nothing yet: wait for its thread to be read']);
+      // Track post-alert outcomes (row 21) is OFF in this world: the bot reads no replies, and says so (never "wait for it")
+      'The bot does not read replies while Track post-alert outcomes (row 21) is OFF: check the email thread in Gmail.']);
     eq([by('QA-1001').corrections, by('QA-1001').email.status, by('QA-1001').flow], [4, 'sent', 'auto-correct']);
     eq(pick(by('QA-1002')), ['direct', 'low', 'No action: P2, 800 engagements: below the escalation criteria', 'no-action', 'nobody',
       'Nothing to do: P2, 800 engagements: below the escalation criteria.']);
     eq(pick(by('QA-1003')), ['watch', 'medium', 'A T&S form, no Social Alert', 'tns', 'Trust & Safety',
       'Check that the T&S submission went through (its confirmation email).']);
     eq([by('QA-1003').tns.submitted, by('QA-1003').decision], [true, 'Worth a look + T&S (Gemini hallucination) · auto-submitted']);
-    eq(pick(by('QA-1004')), ['story', 'medium', 'The story\'s review rated it medium', 'done', 'nobody',
-      'Nothing to do: Monitor build-up: Several independent users describe the same data loss after one update.']);
+    // "Monitor build-up" hands the story to the IMs on shift to watch (never "nobody" and "nothing to do")
+    eq(pick(by('QA-1004')), ['story', 'medium', 'The story\'s review rated it medium', 'done', 'the IMs on shift',
+      'Watch the story; open it again if it grows (Monitor build-up: Several independent users describe the same data loss after one update).']);
     eq(pick(by('QA-1005')), ['direct', 'critical', 'P0 exposure tag (Product - Perceived bias)', 'draft-waiting', 'the IM on shift',
       'Not sent yet: Testing: enter an email address in Control!B30 (Testing: send to) to receive test emails']);
     eq([by('QA-1007').level, by('QA-1007').levelWhy], ['high', 'The story\'s review rated it high']);
@@ -431,7 +434,8 @@ module.exports = H => {
       t.chat.fail = null;
     }
     eq(writes(), before);  // nothing posted
-    eq(b.dashDetail('alert', 'QA-9999'), { ok: false, why: 'QA-9999 is not among the newest 3,000 rows of the Alert log.' });
+    eq(b.dashDetail('alert', 'QA-9999'), { ok: false, why: 'QA-9999 is not among the newest 3,000 rows of the Alert log.',
+      todo: 'Find QA-9999 on the Alert log tab of the bot\'s sheet (search the alert_id column).' });
     eq(b.dashDetail('alert', ''), { ok: false, why: 'Nothing was picked: choose an alert or a story first.' });
   });
 
@@ -452,7 +456,8 @@ module.exports = H => {
     const c = b.dashDetail('cluster', b.dashSnapshot({ refresh: true }).clusters.find(cl => cl.topic === 'Google Photos').id);
     eq([c.ok, c.posts.length, c.posts.every((p, i) => !i || p.at >= c.posts[i - 1].at), c.posts[0].source, c.related[0]], [true, 6, true, 'Sonar',
       { kind: 'alert', id: 'QA-1007', title: 'Google Photos backups wiped after a storage plan change', why: 'Its card' }]);
-    eq(b.dashDetail('cluster', 'CLU-gone'), { ok: false, why: 'This story is no longer in the producer\'s cache: a story leaves it 24 hours after its last post, or when the cache is cleared.' });
+    eq(b.dashDetail('cluster', 'CLU-gone'), { ok: false, why: 'This story is no longer in the producer\'s cache: a story leaves it 24 hours after its last post, or when the cache is cleared.',
+      todo: 'If it got a card, find it in Alerts (a story card); how it ended is on the Early Detection tab, and in Held back when it was let go.' });
     // the cell cap: a story of 60 posts with the longest links kept keeps its newest 30, each link whole or left out
     const ON = { switches: { liveDashboard: true } };
     const big = { id: 'CLU-big000000001', s: 'x', m: Array.from({ length: 60 }, (_, i) => ({ a: `X:acct${i}`, p: 'X', t: 1790000000000 + i * MIN,
@@ -527,12 +532,14 @@ module.exports = H => {
       [{ day: true, prevDay: true, week: true, prevWeek: true }, { name: 'Chrome', now24: 2, prev24: 0, change24: 2, now7: 2, prev7: 0, change7: 2 }, [['surging', 7]]]);
     eq(p.load, { measured: false, why: 'Not measured with row 51 OFF: the bot counts its own run time and outside calls against a budget only for the open engine.' });
     eq(s.pipeline.stages.map(st => [st.label, st.count]), [['Received', 7], ['Reviewed', 7], ['Fixes asked', 1], ['Social Alert drafted', 2], ['Sent / T&S', 2],
-      ['Follow-up', 0], ['Done', 4]]);
+      ['Follow-up', null], ['Done', 4]]);  // row 21 OFF: replies are not tracked, so not counted as 0
+    eq(s.pipeline.stages.find(st => st.key === 'followup').note, 'Not tracked with row 21 OFF (Track post-alert outcomes): the bot reads no replies');
     eq(s.pipeline.stuck.map(st => [st.id, st.why]), [['QA-1005', 'Its Social Alert has waited 6 hours to go out']]);
     eq([s.early.ok, /ET$/.test(s.early.rebuilt), s.early.numbers.length, s.early.numbers[0]], [true, true, 12, { label: 'Stories this app alerted on its own', week: '5', month: '5' }]);
     assert.ok(s.early.stories.some(st => st.appAlert === 'QA-1007' && st.link === 'https://www.reddit.com/r/googlephotos/comments/1ph6/backup_wiped/'));
     const q = id => s.questions.find(x2 => x2.id === id).answer;
-    eq(q('keeping-up'), 'Yes: it last ran less than a minute ago, and every source that is ON is current.');
+    // only what is timed is named as current (never "every source that is ON")
+    eq(q('keeping-up'), 'Yes: it last ran less than a minute ago, and Early Detection, its stories\' producer, the Proactive watch and Direct BigQuery are current.');
     eq(q('needs-me'), '1 item: first, Maps routing onto a closed bridge (Its Social Alert has waited 6 hours to go out).');
     eq(q('held'), 'Today: 1 story let go or never reviewed (most: Held back as noise (no review)); 1 Watch flag not posted; 0 Direct BigQuery posts not posted.');
     eq(q('corrections'), 'In the last 7 days, 4 corrections on 1 of Burson\'s alerts: product (1), social network (1), priority (1), engagement level (1).');
@@ -652,5 +659,167 @@ module.exports = H => {
     eq(b.dlPlain_('\u2705 Working · <https://x.com/a|the post> \u{1F534} LIVE 1\uFE0F\u20E3'), 'Working · the post LIVE 1');
     eq(b.dlDecisionWords_('\u274C P2, 800 engagements: below the escalation criteria'), 'No action: P2, 800 engagements: below the escalation criteria');
     eq(b.dlDecisionWords_('\u{1F44D} Monitor build-up: x'), 'Monitor build-up: x');
+  });
+
+  // -------------------------------------------------------------------------------------------------------------
+  // The review's fixes (each test fails without its fix)
+  // -------------------------------------------------------------------------------------------------------------
+
+  /** A row of the Alert log as dlAlertRows_ reads it (a copy of `id`'s), with `o` on it. */
+  const rowOf = (x, id, o) => Object.assign(JSON.parse(JSON.stringify(x.t.bot.dlAlertRows_(x.t.sheet(), 3000).rows.find(r => r.alert_id === id))), o || {});
+  /** Runs `fn` with these switches as the Control tab says them (on top of the world's), then puts them back. */
+  const withSwitches = (b, sw, fn) => {
+    if (!b.__more) b.ev('var __more = {}; readSwitches_ = (read => sh => Object.assign(read(sh), __more))(readSwitches_)');
+    b.__more = sw;
+    try { return fn(); } finally { b.__more = {}; }
+  };
+
+  test('dashboard live: a resend follows its chain: the draft or Social Alert its superseded original keeps shows on the live resend (owner, action, stuck), and Burson\'s alert left undecided becomes one a person must look at (H1)', () => {
+    const x = on();
+    const b = x.t.bot;
+    const now = x.t.g.clock.now;
+    const props = x.t.g.services.PropertiesService.getScriptProperties();
+    const main = { space: 'spaces/AAQAtestfd1 > spaces/AAQAaLn375E', forward_message: 'spaces/AAQAaLn375E/messages/F8001' };
+    const orig = rowOf(x, 'QA-1001', Object.assign({ alert_id: 'QA-8001', status: 'superseded', email_status: 'drafted', email_at: now - 2 * HOUR,
+      email_sent_at: '', created_at: now - 3 * HOUR, decision: '' }, main));
+    const resend = rowOf(x, 'QA-1001', Object.assign({ alert_id: 'QA-8002', status: 'fixed', resend_of: 'QA-8001', email_status: '', email_input: {},
+      email_at: '', email_sent_at: '', email_thread: '', decision: '', created_at: now - HOUR }, main));
+    const all = b.dlAlertsOf_([orig, resend], now, { trackOutcomes: false });
+    eq(all.map(y => [y.a.id, y.status, y.a.owner.who]), [['QA-8001', 'superseded', 'nobody'], ['QA-8002', 'draft-waiting', 'the IM on shift']]);
+    eq(all[1].a.action.text, 'Open the draft in Gmail and send it, or discard it.');
+    const stuck = b.dlStuck_(x.t.sheet(), props, all, now, null).filter(st => st.kind === 'alert');
+    eq(stuck.map(st => [st.id, st.why]), [['QA-8002', 'Its Social Alert has waited 2 hours to go out']]);
+    // the original's Social Alert sent: the resend is sent, the teams have it
+    const sent = b.dlAlertsOf_([Object.assign({}, orig, { email_status: 'sent', email_sent_at: now - 2 * HOUR }), resend], now, { trackOutcomes: true });
+    eq([sent[1].status, /^the teams emailed/.test(sent[1].a.owner.who)], ['sent', true]);
+    // the rows read are never changed
+    eq([resend.email_status, resend.decision], ['', '']);
+    // Burson's alert with no decision and no email anywhere on its chain, 2 days after the bot recorded it: a person looks
+    const lost = rowOf(x, 'QA-1001', Object.assign({ alert_id: 'QA-8003', status: 'fixed', resend_of: 'QA-7999', email_status: '', email_input: {},
+      decision: '', mirrored: '', created_at: now - 2 * 24 * HOUR }, main));
+    const [l] = b.dlAlertsOf_([lost], now, {});
+    eq([l.status, l.a.status.label, l.a.owner.who], ['needs-person', 'A person needs to look', 'the IM on shift']);
+    assert.match(l.a.action.text, /^Look at it yourself: the bot recorded it 2 days ago and has made no decision on it/);
+    eq(b.dlStuck_(x.t.sheet(), props, [l], now, null).filter(st => st.kind === 'alert').map(st => st.id), ['QA-8003']);
+    // a minute after it was recorded: still the bot's (it decides on the run that records it)
+    eq(b.dlAlertsOf_([Object.assign({}, lost, { created_at: now - MIN })], now, {})[0].status, 'needs-review');
+  });
+
+  test('dashboard live: decisions that hand the work to a person name who and what: the YouTube Social chat ping, a T&S form not submitted yet, worth a look and a story to monitor (never "nobody" and "nothing to do") (H2)', () => {
+    const x = on();
+    const b = x.t.bot;
+    const now = x.t.g.clock.now;
+    const of = o => { const a = b.dlAlertsOf_([rowOf(x, 'QA-1002', Object.assign({ mirrored: '' }, o))], now, {})[0].a; return [a.status.key, a.owner.who, a.action.text]; };
+    eq(of({ decision: 'YouTube: left for a person (the YouTube Social chat ping)' }),
+      ['done', 'the IM on shift', 'Ping the YouTube Social chat about it (the bot left it for a person).']);
+    eq(of({ decision: '\u{1F44D} + T&S (impersonation)', tns_submitted: '', email_groups: '' }),
+      ['done', 'the IM on shift', 'Submit the T&S form from the pre-filled link in its thread, if no one has.']);
+    eq(of({ decision: '\u{1F44D} Monitor build-up: worth analyst monitoring' }),
+      ['done', 'the IMs on shift', 'Watch the story; open it again if it grows (Monitor build-up: worth analyst monitoring).']);
+    const flag = rowOf(x, 'QA-1002', { decision: '', mirrored: '' });
+    flag.forwarded_fields.triage = { call: 'flag', why: 'A creator says.' };
+    const fa = b.dlAlertsOf_([flag], now, {})[0].a;
+    eq([fa.owner.who, fa.action.text], ['the IMs on shift', 'Watch the story; open it again if it grows (Worth a look: A creator says).']);
+  });
+
+  test('dashboard live: with Direct BigQuery (row 15), Track post-alert outcomes (row 21) or Early Detection (row 19) OFF the page never shows calm zeros: Direct\'s held counts are not kept, replies are not tracked, stories are not followed (none shown, none counted), and it says so (H3, H4, H5)', () => {
+    const x = on();
+    const b = x.t.bot;
+    withSwitches(b, { directBq: false, trackOutcomes: false, earlyWave: false }, () => {
+      const s = b.dashSnapshot({ refresh: true });
+      eq(s.held.today.direct, { kept: false, why: 'Direct BigQuery (row 15) is OFF: it reads no posts, so it holds none back.' });
+      eq(s.questions.find(q => q.id === 'held').answer.indexOf('Direct BigQuery'), -1);
+      const what = s.health.cannotSee.map(c => c.what);
+      ['Direct BigQuery\'s posts', 'Replies to the Social Alerts sent', 'Stories forming'].forEach(w => assert.ok(what.includes(w), w));
+      eq([s.clusters, s.now.counts.forming, s.now.counts.atBar, s.now.first.concat(s.now.then).some(i => i.kind === 'cluster')], [[], null, null, false]);
+      eq(s.pressure.speedLeaders, []);
+      eq(s.questions.find(q => q.id === 'fastest').answer, 'No story is followed: Early Detection (row 19) is OFF.');
+      eq(s.pipeline.stages.find(st => st.key === 'followup').count, null);
+      // no alert in the last 24 hours and none forming: the headline says stories are not followed (never "no story is forming")
+      const quiet = b.dlNow_({ level: 'ok' }, [], [], [], x.t.g.clock.now, { earlyWave: false });
+      eq(quiet.headline, 'Nothing needs a person now. No alerts came in the last 24 hours, and stories are not followed (Early Detection, row 19, is OFF).');
+    });
+    // ON again: as before
+    const s = b.dashSnapshot({ refresh: true });
+    eq([s.held.today.direct.kept, s.clusters.length > 0], [true, true]);
+  });
+
+  test('dashboard live: Burson messages the bot could not review (forwarded as received) or gave up on, from the Message log, are stuck items a person must look at, with a link; a Message log the bot did not make is said, never read (H3)', () => {
+    const x = on();
+    const b = x.t.bot;
+    const now = x.t.g.clock.now;
+    const sh = x.t.sheet().getSheetByName('Message log');
+    const saved = JSON.parse(JSON.stringify(sh.rows));
+    try {
+      sh.appendRow(['spaces/AAQAaa_0I9g/messages/RAW1', now - 10 * MIN, 'raw_forward', '', 1, '']);
+      sh.appendRow(['ac|spaces/AAQAaa_0I9g/messages/DEAD1', now - 20 * MIN, 'dead', '', 3, 'Chat answered 500']);
+      sh.appendRow(['spaces/AAQAaa_0I9g/messages/OLD1', now - 2 * 24 * HOUR, 'raw_forward', '', 1, '']);
+      const s = b.dashSnapshot({ refresh: true });
+      const mine = s.pipeline.stuck.filter(st => /^msg:/.test(st.id));
+      eq(mine.map(st => [st.id, st.level, st.title]), [['msg:spaces/AAQAaa_0I9g/messages/RAW1', 'unknown', 'A Burson message the bot could not review'],
+        ['msg:spaces/AAQAaa_0I9g/messages/DEAD1', 'unknown', 'A Burson message the bot gave up on']]);
+      assert.match(mine[1].why, /^The bot gave up on it after its tries \(Chat answered 500\)/);
+      assert.match(mine[0].action, /^Review it by hand/);
+      eq(s.now.counts.stuck, 3);
+      // a tab of that name the bot did not make: not read, and said
+      sh.getRange(1, 1).setValue('Our messages');
+      const t2 = b.dashSnapshot({ refresh: true });
+      eq(t2.pipeline.stuck.filter(st => /^msg:/.test(st.id)), []);
+      assert.ok(t2.health.cannotSee.some(c => c.what === 'Burson messages the bot could not review' && /not the bot's header/.test(c.why)));
+    } finally {
+      sh.rows = saved;
+    }
+  });
+
+  test('dashboard live: the Control tab missing or unreadable is never "the dashboard is OFF": the page is told to try again and keeps what it shows (H7); an Alert log with no alert yet shows no time it never recorded (H8)', () => {
+    const x = on();
+    const b = x.t.bot;
+    const sh = x.t.control();
+    const getRange = sh.getRange;
+    sh.getRange = () => { throw new Error('Service Spreadsheets timed out'); };
+    let r;
+    try { r = b.dashSnapshot({ refresh: true }); } finally { sh.getRange = getRange; }
+    eq([r.ok, r.off, r.why], [false, undefined, 'The Control tab of the bot\'s sheet could not be read just now, so the dashboard can\'t tell which parts are ON: press Refresh in a minute.']);
+    const tab = b.controlTab_;
+    b.controlTab_ = () => null;
+    try { r = b.dashSnapshot({ refresh: true }); } finally { b.controlTab_ = tab; }
+    eq([r.ok, r.off], [false, undefined]);
+    assert.match(r.why, /^The bot's sheet has no Control tab/);
+    eq(b.dashSnapshot({ refresh: true }).ok, true);
+    // the Alert log read, with no alert in it yet
+    const ctx = b.dashCtx_();
+    const h = b.dlHealth_(ctx, x.t.g.services.PropertiesService.getScriptProperties(),
+      { rows: [], tab: true, mine: true, read: 0, total: 0, oldestAt: 0, newestAt: 0, error: '' }, { count: 1, missing: 0 }, x.t.g.clock.now, null);
+    eq(h.sources.find(src => src.key === 'alertLog'), { key: 'alertLog', label: 'The Alert log (the bot\'s record of every alert)', at: null, state: 'fresh', note: 'No alert recorded yet' });
+  });
+
+  test('dashboard live: a stuck item\'s seriousness has its reason: a queued signal\'s from its priority, said; a Burson outbox row\'s is not kept, so "can\'t be sure" (H10)', () => {
+    const t = H.e2e(H.makeGoogle(H.NOW));
+    t.bot.setup();
+    const ss = t.sheet();
+    const props = t.g.services.PropertiesService.getScriptProperties();
+    const now = t.g.clock.now;
+    const ob = t.bot.outboxTab_(ss, true);
+    ob.appendRow(['2026-10-14 07:00', 'reply', 'S-F Burson', 'Please fix the product', 'the bot', 'Pending', '']);
+    props.setProperty(t.bot.ev('ED_QUEUE_PROP_'), JSON.stringify([{ k: 'sig1', id: 'ED-CLU-a-202610141100', at: now - 2 * HOUR, pri: 'P0', tries: 0 }]));
+    const stuck = t.bot.dlStuck_(ss, props, [], now, null);
+    const q = stuck.find(st => st.id === 'ED-CLU-a-202610141100');
+    eq(q.level, 'high');
+    assert.match(q.why, /; high because its signal's priority is P0$/);
+    const o = stuck.find(st => /^outbox:/.test(st.id));
+    eq(o.level, 'unknown');
+    assert.match(o.why, /; its seriousness is not kept$/);
+    // the headline names it as not known (never a level it does not have)
+    const only = t.bot.dlNow_({ level: 'ok' }, [], [], [o], now, {});
+    assert.match(only.headline, /^1 item needs a person now\. Most serious: Please fix the product \(seriousness not known: /);
+  });
+
+  test('dashboard live: answers that find nothing carry what to do next: an alert past the rows read, a story gone from the cache, a post nothing mentions (H11)', () => {
+    const x = on();
+    const b = x.t.bot;
+    assert.match(b.dashDetail('alert', 'QA-9998').todo, /^Find QA-9998 on the Alert log tab/);
+    assert.match(b.dashDetail('cluster', 'CLU-none').todo, /^If it got a card, find it in Alerts/);
+    const w = b.dashWhyNot('https://x.com/nobody/status/7');
+    eq([w.found, w.todo], [[], 'If this post should have had an alert, post its link in the analyst space or send it to the IM on shift.']);
   });
 };

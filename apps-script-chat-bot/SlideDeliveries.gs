@@ -72,15 +72,23 @@ const SLIDE_FIT_ = { glyph: 0.52, line: 1.3, inset: 7.2, minPt: 9, bodyPt: 18 };
 // a new Google Slides deck's page (points) and its title-and-body boxes ({x, y, w, h}), when the deck's own can't be read
 const SLIDE_PAGE_ = { w: 720, h: 405 };
 const SLIDE_BOXES_ = { title: { x: 31.1, y: 22.3, w: 657.9, h: 62.6 }, body: { x: 31.1, y: 90.8, w: 657.9, h: 269.1 } };
+// the text boxes a run puts on its slide where the layout has no title or body box (slideFill_), in points
+const SLIDE_TEXT_BOX_ = { title: { x: 40, y: 20, w: 640, h: 60 }, body: { x: 40, y: 90, w: 640, h: 300 } };
+const SLIDE_NO_TITLE_WHY_ = 'The slide whose design was picked is on a layout with no title box, so the delivery\'s own slide ' +
+  'could not be told apart from the deck\'s other slides at the next run: pick another slide\'s design (one with a title), or ' +
+  'the deck\'s own title-and-body layout.';
 const SLIDE_DAYS_ = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const SLIDE_SCOPE_WHY_ = 'The bot\'s account has not approved editing Google Slides yet: the owner runs the bot once from the ' +
   'editor and approves it (README "Slide deliveries"). Until then nothing is checked or delivered.';
 const SLIDE_OFF_WHY_ = 'Slide deliveries is OFF on the Control tab (row 55): deliveries can be set up and saved, and they wait. ' +
   'Turn row 55 ON to preview, run or deliver them.';
+const SLIDE_PAUSED_WHY_ = 'The bot is paused (Control B2, Bot, is OFF), so no pulse slide is previewed, run or delivered: set B2 ' +
+  'to ON to restart the bot, and the deliveries go on at their next scheduled time.';
 const SLIDE_POSITIVE_WHY_ = 'The positive pulse slide is not available: where its posts would come from is not known yet (the ' +
   'owner was asked), and the bot keeps no positive posts of its own. It is never made from another source.';
 const SLIDE_ALERT_COLS_ = ['alert_id', 'created_at', 'space', 'record_key', 'author', 'status', 'forwarded_fields', 'resend_of',
-  'email_status', 'email_input', 'email_groups', 'decision', 'tns_submitted', 'ingested'];
+  'email_status', 'email_input', 'email_groups', 'email_subject', 'email_at', 'email_sent_at', 'decision', 'tns_submitted', 'ingested',
+  'source_at'];
 const SLIDE_SUMMARY_SCHEMA_ = {
   type: 'OBJECT',
   properties: {
@@ -302,8 +310,9 @@ function slideTzOk_(tz) {
 }
 
 /**
- * The schedule part checked: {ok, schedule: {days (sorted, each once), time 'HH:MM', tz, mondayCoversWeekend},
- * lookbackHours, errors: [plain sentences]}. Pure (the time zone is asked of the formatter).
+ * The schedule part checked: {ok, schedule: {days (sorted, each once), time 'HH:MM', tz, mondayCoversWeekend,
+ * sincePrevious (each slide covers the time since the scheduled run before it, whatever the lookback)}, lookbackHours,
+ * errors: [plain sentences]}. Pure (the time zone is asked of the formatter).
  */
 function slideScheduleOf_(raw) {
   const r = slideObj_(raw);
@@ -325,7 +334,8 @@ function slideScheduleOf_(raw) {
   const hh = tm ? String(Number(tm[1])).padStart(2, '0') : '';
   return {
     ok: !errors.length,
-    schedule: { days: uniq, time: tm ? `${hh}:${tm[2]}` : time, tz, mondayCoversWeekend: sc.mondayCoversWeekend === true },
+    schedule: { days: uniq, time: tm ? `${hh}:${tm[2]}` : time, tz, mondayCoversWeekend: sc.mondayCoversWeekend === true,
+      sincePrevious: sc.sincePrevious === true },
     lookbackHours: lb,
     errors,
   };
@@ -450,15 +460,19 @@ function slidePrevRun_(schedule, beforeMs) {
 }
 
 /**
- * A run's window, ending at `endMs` (to the minute): {start, end, prevStart, prevEnd}: the lookback before the end; on a
- * Monday with mondayCoversWeekend, from the last scheduled run before that Monday (Friday's) when that is earlier. The
- * window before is the same length, just before it.
+ * A run's window, ending at `endMs` (to the minute): {start, end, prevStart, prevEnd}: the lookback before the end; with
+ * sincePrevious, from the scheduled run before the end (whatever the times between runs: two days a week, the weekend, a
+ * clock change), else the lookback; on a Monday with mondayCoversWeekend, from the last scheduled run before that
+ * Monday (Friday's) when that is earlier. The window before is the same length, just before it.
  */
 function slideWindow_(settings, endMs) {
   const end = Math.floor(Number(endMs) / 60000) * 60000;
   let start = end - settings.lookbackHours * SLIDE_HOUR_MS_;
   const sc = settings.schedule;
-  if (sc && sc.mondayCoversWeekend && sc.tz) {
+  if (sc && sc.sincePrevious && sc.tz) {
+    const prev = slidePrevRun_(sc, end);
+    if (prev) start = Math.floor(prev / 60000) * 60000;
+  } else if (sc && sc.mondayCoversWeekend && sc.tz) {
     const p = slideLocal_(end, sc.tz);
     if (p.wd === 1) {
       const midnight = slideUtcOf_(p.y, p.mo, p.d, 0, 0, sc.tz);
@@ -501,17 +515,44 @@ function slideScheduleText_(sc) {
   const m = String(sc.time || '').match(/^(\d{2}):(\d{2})$/);
   const h = m ? Number(m[1]) : 0;
   const clock = m ? `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}` : String(sc.time || '');
-  return `${days} at ${clock} (${sc.tz})${sc.mondayCoversWeekend ? ', Monday\'s covers the weekend' : ''}`;
+  return `${days} at ${clock} (${sc.tz})${sc.sincePrevious ? ', each covering the time since the run before'
+    : sc.mondayCoversWeekend ? ', Monday\'s covers the weekend' : ''}`;
 }
 
 /**
  * The coverage check over the next 14 days of runs from `nowMs` (SPEC 4.5): {runs, gaps: [{from, to, hours}], overlaps:
- * [{at, hours}], gapText: [sentences], overlapText: [sentences], match: {lookbackHours, mondayCoversWeekend, text},
- * ok (no gap and no overlap)}. A gap is time between two runs that no window covers; an overlap is time a window
- * repeats from the one before. "Match": the lookback the usual time between runs, and Monday covering the weekend for
- * a weekday schedule.
+ * [{at, hours}], gapText: [sentences], overlapText: [sentences], match: {lookbackHours, mondayCoversWeekend,
+ * sincePrevious, text}, ok (no gap and no overlap)}. A gap is time between two runs that no window covers; an overlap is
+ * time a window repeats from the one before. "Match": the lookback the usual time between runs, and Monday covering the
+ * weekend for a weekday schedule, when that covers every run with no gap and no overlap; otherwise (the times between
+ * runs differ: two days a week, the weekend only, a clock change) each slide covering the time since the run before.
  */
 function slideCoverage_(settings, nowMs) {
+  const out = slideCoverageOf_(settings, nowMs);
+  const sc = settings.schedule;
+  const usual = out.usual;
+  if (!usual) {
+    out.match = { lookbackHours: settings.lookbackHours, mondayCoversWeekend: !!sc.mondayCoversWeekend, sincePrevious: !!sc.sincePrevious,
+      text: 'There are no runs in the next 14 days to match.' };
+    return out;
+  }
+  const weekdays = sc.days.indexOf(1) >= 0 && sc.days.indexOf(0) < 0 && sc.days.indexOf(6) < 0 && sc.days.length < 7;
+  const lookbackHours = Math.max(1, Math.min(SLIDE_LOOKBACK_MAX_H_, usual));
+  const plain = { lookbackHours, schedule: Object.assign({}, sc, { mondayCoversWeekend: weekdays, sincePrevious: false }) };
+  if (slideCoverageOf_(plain, nowMs).ok) {
+    out.match = { lookbackHours, mondayCoversWeekend: weekdays, sincePrevious: false,
+      text: `Match: each slide covers the ${slideHoursText_(lookbackHours)} since the one before` +
+        (weekdays ? ', and Monday\'s covers the weekend from the last run before it.' : '.') };
+  } else {
+    out.match = { lookbackHours, mondayCoversWeekend: false, sincePrevious: true,
+      text: 'Match: the times between these runs differ, so no one lookback covers them all: each slide covers the time since the ' +
+        'scheduled run before it instead.' };
+  }
+  return out;
+}
+
+/** slideCoverage_ without "Match": {runs, gaps, overlaps, gapText, overlapText, usual (the most common hours between runs), ok}. */
+function slideCoverageOf_(settings, nowMs) {
   const sc = settings.schedule;
   const runs = slideRuns_(sc, nowMs, nowMs + 14 * SLIDE_DAY_MS_);
   const gaps = [];
@@ -570,7 +611,7 @@ function slideCoverage_(settings, nowMs) {
       });
     }
   }
-  // Match: the usual time between runs (the most common; the shorter on a tie)
+  // the usual time between runs (the most common; the shorter on a tie), for "Match"
   const counts = new Map();
   for (let i = 1; i < runs.length; i++) {
     const h = Math.round((runs[i] - runs[i - 1]) / SLIDE_HOUR_MS_);
@@ -578,13 +619,7 @@ function slideCoverage_(settings, nowMs) {
   }
   let usual = 0;
   counts.forEach((n, h) => { if (!usual || n > counts.get(usual) || (n === counts.get(usual) && h < usual)) usual = h; });
-  const weekdays = sc.days.indexOf(1) >= 0 && sc.days.indexOf(0) < 0 && sc.days.indexOf(6) < 0 && sc.days.length < 7;
-  const match = usual
-    ? { lookbackHours: Math.max(1, Math.min(SLIDE_LOOKBACK_MAX_H_, usual)), mondayCoversWeekend: weekdays,
-      text: `Match: each slide covers the ${slideHoursText_(Math.min(SLIDE_LOOKBACK_MAX_H_, usual))} since the one before` +
-        (weekdays ? ', and Monday\'s covers the weekend from the last run before it.' : '.') }
-    : { lookbackHours: settings.lookbackHours, mondayCoversWeekend: !!sc.mondayCoversWeekend, text: 'There are no runs in the next 14 days to match.' };
-  return { runs, gaps, overlaps, gapText, overlapText, match, ok: !gaps.length && !overlaps.length };
+  return { runs, gaps, overlaps, gapText, overlapText, usual, ok: !gaps.length && !overlaps.length };
 }
 
 // =================================================================================================================
@@ -652,11 +687,38 @@ function slidePlatformKey_(p) {
 }
 
 /**
- * What one Alert-log row adds to its issue: {id, at, kind, name, key, resendOf, edId, postKey, authors, platforms,
- * engagement (null when not kept), posts: [{url, author, platform, summary}], tns, sensitive, sent, groups, draft,
- * fixAsked, question}. Never throws on a broken cell. Pure.
+ * A working link to a post known only by its record key (Alert.gs recordKey_ / normalizeUrl_ output), or '' when no
+ * working link can be made from the key (the post is then described, never cited). An X key ("x.com/status/<id>") is
+ * written as X's own "https://x.com/i/status/<id>" (X does not open "x.com/status/<id>"); a key already a link stays;
+ * other keys only when they are a full permalink as the key keeps it (a Reddit thread, a YouTube video, a TikTok video,
+ * an Instagram post or reel, a Threads or Bluesky post, a LinkedIn post, a Facebook post or video). Pure.
  */
-function slideRowFacts_(row) {
+function slideKeyLink_(key) {
+  const k = slideText_(key);
+  if (!k) return '';
+  if (/^https?:\/\/[^\s<>|]+$/.test(k)) return k;
+  const x = k.match(/^(?:x|twitter)\.com\/(?:i\/)?status(?:es)?\/(\d{5,25})$/i);
+  if (x) return `https://x.com/i/status/${x[1]}`;
+  const permalink = [
+    /^reddit\.com\/(?:r\/[^/\s]+\/)?comments\/[a-z0-9]+(?:\/[^\s]*)?$/i,
+    /^youtube\.com\/watch\?v=[\w-]{6,}$/i,
+    /^tiktok\.com\/@[^/\s]+\/video\/\d+$/i,
+    /^instagram\.com\/(?:p|reel|reels|tv)\/[\w-]+$/i,
+    /^threads\.(?:net|com)\/@[^/\s]+\/post\/[\w-]+$/i,
+    /^bsky\.app\/profile\/[^/\s]+\/post\/[\w]+$/i,
+    /^linkedin\.com\/(?:posts\/[^\s]+|feed\/update\/[^\s]+)$/i,
+    /^facebook\.com\/[^/\s]+\/(?:posts|videos)\/[\w.-]+$/i,
+  ];
+  return permalink.some(re => re.test(k)) ? `https://${k}` : '';
+}
+
+/**
+ * What one Alert-log row adds to its alert: {id, at (created), sourceAt, kind, name, key, resendOf, updateOf, edId,
+ * postKey, status, authors, platforms, engagement (null when not kept), posts: [{id (its record key), url ('' when no
+ * working link), key, author, platform, summary}], tns, sensitive, sent, sentMode ('live' | 'test' | 'unknown': who a sent Social Alert
+ * went to, `modes`: slideModeLog_), groups, tnsDone, draft, fixAsked, question}. Never throws on a broken cell. Pure.
+ */
+function slideRowFacts_(row, modes) {
   const ff = slideObj_(row.forwarded_fields);
   const ei = slideObj_(row.email_input);
   const ef = slideObj_(ei.fields);
@@ -676,28 +738,40 @@ function slideRowFacts_(row) {
   String(ed.platforms || '').split(',').forEach(addPlatform);
   const posts = [];
   const seen = new Set();
-  const addPost = (url, who, platform, summary) => {
+  // a post by its link, or (no working link) by its key only: described to Gemini, never cited
+  const addPost = (url, key, who, platform, summary) => {
     const u = String(url || '').trim();
-    if (!/^https?:\/\/[^\s<>|]+$/.test(u) || seen.has(u)) return;
-    seen.add(u);
-    posts.push({ url: u, author: slideText_(who), platform: slideText_(platform), summary: slideText_(summary).slice(0, 400) });
+    const link = /^https?:\/\/[^\s<>|]+$/.test(u) ? u : '';
+    // one post once, by its record key (its link and its key's own link are the same post)
+    let id = slideText_(key);
+    if (!id && link) { try { id = recordKey_({ post_url: link }) || link; } catch (e) { id = link; } }
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    posts.push({ id, url: link, key: slideText_(key), author: slideText_(who), platform: slideText_(platform), summary: slideText_(summary).slice(0, 400) });
   };
-  const own = pick('post_url') || (slideText_(row.record_key) ? `https://${slideText_(row.record_key)}` : '');
   const about = slideText_(ed.narrative) || pick('summary');
-  addPost(own, author, pick('social_network'), about);
+  const ownUrl = pick('post_url');
+  addPost(ownUrl || slideKeyLink_(row.record_key), ownUrl ? '' : row.record_key, author, pick('social_network'), about);
   (Array.isArray(ed.posts) ? ed.posts : []).forEach(p => {
     const a = slideText_(p && p.a);
     const who = a.indexOf(':') >= 0 ? a.slice(a.indexOf(':') + 1) : a;
     addAuthor(who);
     addPlatform(p && p.p);
-    addPost(p && p.u, who, p && p.p, '');
+    addPost(p && p.u, '', who, p && p.p, '');
   });
-  if (!Array.isArray(ed.posts)) (Array.isArray(ed.post_keys) ? ed.post_keys : []).forEach(k => addPost(k ? `https://${slideText_(k)}` : '', '', '', ''));
+  if (!Array.isArray(ed.posts)) (Array.isArray(ed.post_keys) ? ed.post_keys : []).forEach(k => addPost(slideKeyLink_(k), k, '', '', ''));
   const risk = v => (Array.isArray(v) ? v.filter(x => slideText_(x)).length > 0 : !!slideText_(v));
   const fu = slideObj_(ei.followup);
   const status = slideText_(row.email_status).toLowerCase();
+  const space = String(row.space || '');
+  const sent = status === 'sent';
+  // a test send: the Auto-correct flow's (always Testing), one whose subject the bot marked as a test, else the bot's
+  // mode at the time it was sent as the bot recorded it (slideModeAt_; 'unknown' before the record starts)
+  const testFlow = space.endsWith(AC_PARTITION_SUFFIX_) || /^\[(?:TEST|[^\]]*\btest)\]/i.test(slideText_(row.email_subject));
+  const sentAt = headStartTime_(row.email_sent_at) || headStartTime_(row.email_at) || headStartTime_(row.created_at);
   return {
-    id: slideText_(row.alert_id), at: headStartTime_(row.created_at), kind: slideRowKind_(row), name, key: issueNameKey_(name),
+    id: slideText_(row.alert_id), at: headStartTime_(row.created_at), sourceAt: headStartTime_(row.source_at), kind: slideRowKind_(row),
+    name, key: issueNameKey_(name), status: slideText_(row.status),
     resendOf: slideText_(row.resend_of), updateOf: slideText_(ed.update_of), edId: slideText_(ed.ed_alert_id),
     postKey: slideText_(row.record_key), authors, platforms,
     engagement: slideNum_(ff.total_engagement) !== null ? slideNum_(ff.total_engagement)
@@ -705,60 +779,171 @@ function slideRowFacts_(row) {
     posts,
     tns: Number(row.tns_submitted) > 0 || groups.indexOf('tns') >= 0 || /T&S/.test(slideText_(row.decision)),
     sensitive: risk(ff.risk_tags) || risk(ef.risk_tags) || risk(ee.sensitive_topics),
-    sent: status === 'sent',
+    sent,
+    sentMode: !sent ? '' : testFlow ? 'test' : slideModeAt_(modes, sentAt),
     groups: groups.filter(g => g !== 'tns'),
     tnsDone: Number(row.tns_submitted) > 0 || groups.indexOf('tns') >= 0,
     draft: status === 'drafted' || status === 'pending',
-    fixAsked: slideText_(row.status) === 'fix_requested' && !String(row.space || '').endsWith(AC_PARTITION_SUFFIX_),
+    fixAsked: slideText_(row.status) === 'fix_requested' && !space.endsWith(AC_PARTITION_SUFFIX_),
     question: !!(fu.question && !fu.resolved),
   };
 }
 
-/**
- * The issues of the rows created in [from, to): {issues: Map(key -> {key, name, rows: [facts], burson (a Burson
- * alert is among its rows), lastAt}), unnamed (rows with no issue name)}. A superseded row, a resend or update of a row
- * already counted, and a second row of Burson's alert on a post already counted (both test spaces record the same
- * alert) are not counted again; the bot's own finds (already one alert per post: its alert memory) only with
- * `countOwn`. Pure.
- */
-function slideCount_(rows, from, to, countOwn) {
-  const issues = new Map();
-  const counted = new Set();
-  const posts = new Set();  // the posts of Burson's alerts counted
-  let unnamed = 0;
-  const facts = (rows || []).map(r => { try { return Object.assign(slideRowFacts_(r), { status: slideText_(r.status) }); } catch (e) { return null; } })
-    .filter(f => f && f.at >= from && f.at < to).sort((a, b) => a.at - b.at);
-  facts.forEach(f => {
-    if (f.status === 'superseded' || !f.kind) return;
-    if (f.kind === 'own' && !countOwn) return;
-    const burson = f.kind === 'burson' && !!f.postKey;
-    const again = (f.resendOf && counted.has(f.resendOf)) || (f.updateOf && counted.has(f.updateOf)) || (burson && posts.has(f.postKey));
-    counted.add(f.id);
-    if (f.edId) counted.add(f.edId);
-    if (burson) posts.add(f.postKey);
-    if (!f.key) { if (!again) unnamed++; return; }
-    if (!issues.has(f.key)) issues.set(f.key, { key: f.key, name: f.name, rows: [], burson: false, lastAt: 0 });
-    const issue = issues.get(f.key);
-    if (f.kind === 'burson') issue.burson = true;
-    if (again) return;
-    issue.rows.push(f);
-    issue.lastAt = Math.max(issue.lastAt, f.at);
-  });
-  issues.forEach((v, k) => { if (!v.rows.length) issues.delete(k); });
-  return { issues, unnamed };
+// The bot's mode (LIVE or Testing) as each run found it, kept while Slide deliveries (row 55) is ON so a slide can say
+// whether a Social Alert went to the teams or only to the testers (the Alert log does not keep that per alert):
+// {since (the first run recorded), changes: [[ms, 1 (LIVE) | 0 (Testing)], ...]}, only the changes, the newest 60
+const SLIDE_MODE_PROP_ = 'SLIDE_MODE_LOG';
+const SLIDE_MODE_MAX_ = 60;
+
+/** The kept mode record ({since, changes}), or null. Never throws. */
+function slideModeLog_() {
+  try {
+    const v = JSON.parse(PropertiesService.getScriptProperties().getProperty(SLIDE_MODE_PROP_) || 'null');
+    return v && Number(v.since) > 0 && Array.isArray(v.changes) ? v : null;
+  } catch (e) {
+    return null;
+  }
 }
 
-/** An issue's accounts, platforms and engagement: {accounts, platforms: [keys], engagement (null: none kept)}. Pure. */
+/** 'live', 'test' or 'unknown': the bot's mode at `t` by the kept record (unknown before it starts, or with none). Pure. */
+function slideModeAt_(log, t) {
+  if (!log || !(t > 0) || t < Number(log.since)) return 'unknown';
+  let mode = '';
+  log.changes.forEach(c => { if (Array.isArray(c) && Number(c[0]) <= t) mode = c[1] ? 'live' : 'test'; });
+  return mode || 'unknown';
+}
+
+/**
+ * Records this run's mode (`live`: true LIVE, false Testing; anything else: not known, nothing kept) when it differs
+ * from the last one kept: one property read a run, a write only on a change. Main.gs calls it while row 55 is ON. 'kept',
+ * 'same' or ''. Never throws.
+ */
+function slideModeNote_(live, now) {
+  if (live !== true && live !== false) return '';
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const log = slideModeLog_() || { since: now, changes: [] };
+    const last = log.changes[log.changes.length - 1];
+    if (last && !!last[1] === live) return 'same';
+    log.changes.push([now, live ? 1 : 0]);
+    while (log.changes.length > SLIDE_MODE_MAX_) {
+      log.changes.shift();
+      log.since = Number(log.changes[0][0]);  // what came before the oldest change kept is not known any more
+    }
+    props.setProperty(SLIDE_MODE_PROP_, JSON.stringify(log));
+    return 'kept';
+  } catch (e) {
+    return '';
+  }
+}
+
+/**
+ * The alerts of the rows read, one per alert (SPEC 4.3): a resend (resend_of) or an update (update_of) with the alert it
+ * follows, back to the first; the rows two flows (or both test spaces) recorded of Burson's alert on one post (its key;
+ * one with no link by the time it reached the space, as Speed.gs speedPosts_ does) together; the bot's own find on a
+ * post Burson alerted with Burson's (two of its own finds on one post stay two: a story card and a card for one post
+ * are different alerts). The bot's own finds only with `countOwn`. Each alert: the facts of its live (latest) row,
+ * Burson's when Burson alerted it (name, accounts, platforms, engagement), what any of its rows did (sent, T&S, sensitive, a question asked), a
+ * draft that still waits, a fix asked that still waits, its posts, and its time (its earliest row's: when it reached
+ * the space, else when it was recorded), so it is counted once and on one slide only. An alert whose rows are all
+ * superseded (its resend not among the rows) is left out. Pure.
+ */
+function slideAlerts_(rows, countOwn, modes) {
+  const facts = (rows || []).map(r => { try { return slideRowFacts_(r, modes); } catch (e) { return null; } })
+    .filter(f => f && f.kind && (f.kind === 'burson' || countOwn)).sort((a, b) => a.at - b.at);
+  const parent = new Map();
+  const find = k => { let r = k; while (parent.get(r) !== r) r = parent.get(r); parent.set(k, r); return r; };
+  const node = k => { if (!parent.has(k)) parent.set(k, k); return k; };
+  const join = (a, b) => { const x = find(node(a)); const y = find(node(b)); if (x !== y) parent.set(y, x); };
+  // the posts Burson alerted: the bot's own find on one of them is that alert (its own finds are one alert a post already)
+  const bursonPosts = new Set(facts.filter(f => f.kind === 'burson' && f.postKey).map(f => f.postKey));
+  facts.forEach(f => {
+    const me = node(`id:${f.id}`);
+    if (f.resendOf) join(me, `id:${f.resendOf}`);
+    if (f.updateOf) join(me, `id:${f.updateOf}`);
+    if (f.edId) join(me, `id:${f.edId}`);
+    if (f.postKey && (f.kind === 'burson' || bursonPosts.has(f.postKey))) join(me, `post:${f.postKey}`);
+    else if (!f.postKey && f.kind === 'burson' && f.sourceAt) join(me, `at:${f.sourceAt}`);
+  });
+  const byRoot = new Map();
+  facts.forEach(f => {
+    const r = find(`id:${f.id}`);
+    if (!byRoot.has(r)) byRoot.set(r, []);
+    byRoot.get(r).push(f);
+  });
+  const out = [];
+  byRoot.forEach(list => {
+    const live = list.filter(f => f.status !== 'superseded');
+    if (!live.length) return;
+    const burson = list.filter(f => f.kind === 'burson');
+    const liveBurson = live.filter(f => f.kind === 'burson');
+    // the live alert: Burson's latest row when Burson alerted it, else the latest row
+    const latest = liveBurson.length ? liveBurson[liveBurson.length - 1] : live[live.length - 1];
+    const named = (burson.length ? burson : list).filter(f => f.key);
+    const nameOf = named.length ? named[named.length - 1] : latest;
+    const withEng = (burson.length ? burson : list).filter(f => f.engagement !== null);
+    const posts = [];
+    const seen = new Set();
+    list.forEach(f => f.posts.forEach(p => { const id = p.id || p.url || p.key; if (!seen.has(id)) { seen.add(id); posts.push(p); } }));
+    const sentRows = list.filter(f => f.sent);
+    const groups = [];
+    sentRows.forEach(f => f.groups.forEach(g => { if (groups.indexOf(g) < 0) groups.push(g); }));
+    const modesSent = sentRows.map(f => f.sentMode);
+    out.push({
+      id: list[0].id, ids: list.map(f => f.id), at: Math.min.apply(null, list.map(f => f.sourceAt || f.at)), lastAt: Math.max.apply(null, list.map(f => f.at)),
+      kind: burson.length ? 'burson' : 'own', name: nameOf.name, key: nameOf.key,
+      authors: latest.authors.slice(), platforms: latest.platforms.slice(),
+      engagement: latest.engagement !== null ? latest.engagement : withEng.length ? withEng[withEng.length - 1].engagement : null,
+      posts, groups,
+      tns: list.some(f => f.tns), sensitive: list.some(f => f.sensitive), question: list.some(f => f.question),
+      tnsDone: list.some(f => f.tnsDone),
+      sent: sentRows.length > 0,
+      sentMode: !sentRows.length ? '' : modesSent.indexOf('live') >= 0 ? 'live' : modesSent.indexOf('unknown') >= 0 ? 'unknown' : 'test',
+      draft: !sentRows.length && list.some(f => f.draft),
+      fixAsked: live.some(f => f.fixAsked),
+    });
+  });
+  return out.sort((a, b) => a.at - b.at);
+}
+
+/**
+ * The issues of the alerts (slideAlerts_) whose time is in [from, to): {issues: Map(key -> {key, name, rows: [alerts],
+ * burson (a Burson alert is among them), lastAt}), unnamed (alerts with no issue name), unnamedSent (of those, the ones
+ * whose Social Alert went out)}. `alerts` may also be the Alert-log rows themselves (made into alerts here, with
+ * `countOwn`). Pure.
+ */
+function slideCount_(alerts, from, to, countOwn) {
+  const list = (alerts || []).length && (alerts[0].alert_id !== undefined || alerts[0].forwarded_fields !== undefined)
+    ? slideAlerts_(alerts, countOwn, null) : (alerts || []);
+  const issues = new Map();
+  let unnamed = 0;
+  let unnamedSent = 0;
+  list.filter(a => a.at >= from && a.at < to).forEach(a => {
+    if (!a.key) { unnamed++; if (a.sent) unnamedSent++; return; }
+    if (!issues.has(a.key)) issues.set(a.key, { key: a.key, name: a.name, rows: [], burson: false, lastAt: 0 });
+    const issue = issues.get(a.key);
+    if (a.kind === 'burson') issue.burson = true;
+    issue.rows.push(a);
+    issue.lastAt = Math.max(issue.lastAt, a.lastAt || a.at);
+  });
+  return { issues, unnamed, unnamedSent };
+}
+
+/**
+ * An issue's accounts, platforms and engagement: {accounts, platforms: [keys], engagement (null: none kept),
+ * engagementOn (how many of its alerts keep a figure), alerts}. Pure.
+ */
 function slideIssueTotals_(issue) {
   const authors = new Set();
   const platforms = [];
   let eng = null;
+  let on = 0;
   issue.rows.forEach(f => {
     f.authors.forEach(a => authors.add(a));
     f.platforms.forEach(p => { if (platforms.indexOf(p) < 0) platforms.push(p); });
-    if (f.engagement !== null) eng = (eng || 0) + f.engagement;
+    if (f.engagement !== null) { eng = (eng || 0) + f.engagement; on++; }
   });
-  return { accounts: authors.size, platforms, engagement: eng };
+  return { accounts: authors.size, platforms, engagement: eng, engagementOn: on, alerts: issue.rows.length };
 }
 
 /** The top issues: by alert count; ties by more accounts, then more engagement, then the latest alert, then the name. Pure. */
@@ -778,73 +963,88 @@ function slidePlatformName_(k) {
 }
 
 /**
- * An issue's numbers line and its parts: {alerts, accounts, platforms (names), engagement (null: not counted), previous
- * (null: not known), change ('new' | 'up' | 'down' | 'same' | null), text}. `previous` null when the window before is not
- * fully kept. Pure.
+ * An issue's numbers line and its parts: {alerts, accounts, platforms (names), engagement (null: not counted),
+ * engagementOn (how many alerts keep a figure), previous (null: not known), change ('new' | 'up' | 'down' | 'same' |
+ * null), text}. `previous` null when the window before is not fully kept. An engagement summed from only some of the
+ * alerts says on how many. Pure.
  */
 function slideNumbers_(issue, previous) {
   const t = issue.totals || slideIssueTotals_(issue);
   const alerts = issue.rows.length;
+  const on = t.engagementOn === undefined ? alerts : t.engagementOn;
   const platforms = t.platforms.map(slidePlatformName_).filter((v, i, a) => a.indexOf(v) === i);
   const parts = [slidePlural_(alerts, 'alert')];
   parts.push(t.accounts ? slidePlural_(t.accounts, 'account') : 'accounts not kept');
   parts.push(platforms.length ? `${slidePlural_(platforms.length, 'platform')} (${platforms.join(', ')})` : 'platform not kept');
-  parts.push(t.engagement === null ? 'engagement not counted' : `${slideNumText_(t.engagement)} engagements`);
+  parts.push(t.engagement === null ? 'engagement not counted'
+    : `${slideNumText_(t.engagement)} engagements${on < alerts ? ` (counted on ${on} of ${alerts} alerts)` : ''}`);
   let change = null;
   if (previous === null || previous === undefined) parts.push('change from the window before not known (it is not fully kept)');
   else if (previous === 0) { change = 'new'; parts.push('new (none in the window before)'); }
   else if (alerts > previous) { change = 'up'; parts.push(`up from ${previous} in the window before`); }
   else if (alerts < previous) { change = 'down'; parts.push(`down from ${previous} in the window before`); }
   else { change = 'same'; parts.push('the same as the window before'); }
-  return { alerts, accounts: t.accounts, platforms, engagement: t.engagement, previous: previous === undefined ? null : previous, change,
-    text: parts.join(' · ') };
+  return { alerts, accounts: t.accounts, platforms, engagement: t.engagement, engagementOn: on,
+    previous: previous === undefined ? null : previous, change, text: parts.join(' · ') };
 }
 
 /**
- * An issue's status line, from what its rows keep (SPEC 4.3): what was done, who has it, whether readers must act. Pure.
+ * An issue's status line, from what its alerts keep (SPEC 4.3): what was done, who has it, whether readers must act. A
+ * Social Alert sent while the bot was Testing went only to the testers, and says so; one the bot's record can't place
+ * (sent before the mode was recorded) says that is not known. Pure.
  */
 function slideStatusLine_(issue) {
   const rows = issue.rows;
-  const sent = rows.filter(f => f.sent);
+  const mode = f => f.sentMode || 'unknown';
+  const live = rows.filter(f => f.sent && mode(f) === 'live');
+  const test = rows.filter(f => f.sent && mode(f) === 'test');
+  const unsure = rows.filter(f => f.sent && mode(f) === 'unknown');
   const teams = [];
-  sent.forEach(f => f.groups.forEach(g => { if (teams.indexOf(g) < 0) teams.push(g); }));
+  live.forEach(f => f.groups.forEach(g => { if (teams.indexOf(g) < 0) teams.push(g); }));
   const tns = rows.filter(f => f.tnsDone).length;
   const fixes = rows.filter(f => f.fixAsked).length;
   const done = [];
-  if (sent.length) done.push(`${slidePlural_(sent.length, 'Social Alert')} sent${teams.length ? ` to ${slideJoin_(teams)}` : ''}`);
+  if (live.length) done.push(`${slidePlural_(live.length, 'Social Alert')} sent${teams.length ? ` to ${slideJoin_(teams)}` : ''}`);
+  if (unsure.length) done.push(`${slidePlural_(unsure.length, 'Social Alert')} sent (to the teams or only to the testers: not recorded)`);
+  if (test.length) done.push(`${slidePlural_(test.length, 'Social Alert')} sent to the testers only (Testing)`);
   if (tns) done.push(`${slidePlural_(tns, 'T&S form')} submitted`);
   if (fixes) done.push(`${slidePlural_(fixes, 'fix', 'fixes')} asked of Burson`);
   const what = done.length ? `Done: ${done.join(', ')}` : 'Done: monitored, no alert sent';
-  const who = rows.some(f => f.draft) ? 'the IM on shift' : fixes ? 'Burson' : sent.length ? 'the teams emailed' : 'nobody';
+  const who = rows.some(f => f.draft) ? 'the IM on shift' : fixes ? 'Burson' : live.length ? 'the teams emailed'
+    : unsure.length ? 'not known' : test.length ? 'nobody yet' : 'nobody';
   const readers = rows.some(f => f.question) ? 'Readers: a reply is asked for on the alert email' : 'Readers: nothing to do';
   return `${what} · With: ${who} · ${readers}`;
 }
 
 /**
  * An issue's posts for Gemini: {citable: [{ref (P1..Pn), url, author, platform, summary}], context: [{platform,
- * summary}]}. With `linkSensitive` false, the posts of a row tied to a T&S submission or a Sensitive Topic are given
- * without a ref (they can be described, never cited or linked). At most SLIDE_POSTS_MAX_ in all, each link once. Pure.
+ * summary}]}. With `linkSensitive` false, the posts of an alert tied to a T&S submission or a Sensitive Topic are given
+ * without a ref (they can be described, never cited or linked); a post with no working link is given without a ref
+ * too. At most SLIDE_POSTS_MAX_ in all, each post once. Pure.
  */
 function slidePosts_(issue, linkSensitive) {
   const citable = [];
   const context = [];
   const seen = new Set();
   issue.rows.forEach(f => f.posts.forEach(p => {
-    if (seen.has(p.url) || citable.length + context.length >= SLIDE_POSTS_MAX_) return;
-    seen.add(p.url);
-    if (!linkSensitive && (f.tns || f.sensitive)) context.push({ platform: p.platform, summary: p.summary });
-    else citable.push(Object.assign({ ref: `P${citable.length + 1}` }, p));
+    const id = p.id || p.url || p.key;
+    if (!id || seen.has(id) || citable.length + context.length >= SLIDE_POSTS_MAX_) return;
+    seen.add(id);
+    if (!p.url || (!linkSensitive && (f.tns || f.sensitive))) context.push({ platform: p.platform, summary: p.summary });
+    else citable.push({ ref: `P${citable.length + 1}`, url: p.url, author: p.author, platform: p.platform, summary: p.summary });
   }));
   return { citable, context };
 }
 
 /** The facts Gemini writes one issue's summary from (no link, no address: refs stand for the posts). Pure. */
 function slideSummaryFacts_(issue, numbers, posts) {
+  const n = { alerts: numbers.alerts, accounts: numbers.accounts, platforms: numbers.platforms,
+    engagement: numbers.engagement === null ? 'not counted' : numbers.engagement, alerts_in_window_before: numbers.previous === null ? 'not known' : numbers.previous };
+  if (numbers.engagement !== null && numbers.engagementOn < numbers.alerts) n.engagement_counted_on = `${numbers.engagementOn} of ${numbers.alerts} alerts`;
   return {
     issue: issue.name,
     found_by_app: !issue.burson,
-    numbers: { alerts: numbers.alerts, accounts: numbers.accounts, platforms: numbers.platforms,
-      engagement: numbers.engagement === null ? 'not counted' : numbers.engagement, alerts_in_window_before: numbers.previous === null ? 'not known' : numbers.previous },
+    numbers: n,
     posts: posts.citable.map(p => ({ ref: p.ref, platform: p.platform, author: p.author, summary: p.summary })),
     context_posts: posts.context,
   };
@@ -874,11 +1074,15 @@ function slideNumbersIn_(text) {
   return (String(text || '').match(/\d+(?:[.,]\d+)*/g) || []).map(n => n.replace(/,/g, '').replace(/\.$/, ''));
 }
 
+// Host names a summary may not hold (a web address without "http" or "www."), by their last part
+const SLIDE_TLD_RE_ = /\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|co|app|dev|ai|gov|edu|info|me|tv|ly|gg|be|to|so|sh|xyz|site|page|blog|news|link|uk|us|de|fr|es|it|nl|jp|in|ca|au|br|mx|ru|cn|kr|ch|se|no|pl|ie|nz|sg)\b/i;
+
 /**
  * Why Gemini's answer can't go on the slide ('' when it can): its segments' refs must be among `refs` (and at least one
- * used when there are any), no text may hold a web address, the whole at most SLIDE_SUMMARY_MAX_ characters and not
- * empty, no emoji, no number that is not among the facts (`factsText`), and no email address, go/ link or internal id
- * (Voice.gs RAW_GUARD_PATTERNS_). Pure.
+ * used when there are any), no text may hold a web address (with or without "http" or "www.": a host name too), a
+ * Markdown mark or a ref written out (P1), the whole at most SLIDE_SUMMARY_MAX_ characters and not empty, no emoji, no
+ * number that is not among the facts (`factsText`; the refs' own digits do not count), and no email address, go/ link or
+ * internal id (Voice.gs RAW_GUARD_PATTERNS_). Pure.
  */
 function slideSummaryProblem_(reply, refs, factsText) {
   const segs = reply && Array.isArray(reply.segments) ? reply.segments : null;
@@ -888,12 +1092,14 @@ function slideSummaryProblem_(reply, refs, factsText) {
   if (bad.length) return `it cited ${slideJoin_(bad)}, which ${bad.length > 1 ? 'are' : 'is'} not among the posts given (only ${refs.length ? slideJoin_(refs) : 'none'} may be cited)`;
   const all = slideSummaryJoin_(segs).text;
   if (!all) return 'its text was empty';
-  if (/https?:|\bhttp|www\.|\b[a-z0-9-]+\.[a-z]{2,}\/\S/i.test(all)) return 'its text held a web address (links are added from the refs, never written)';
+  if (/https?:|\bhttp|www\.|\b[a-z0-9-]+\.[a-z]{2,}\/\S/i.test(all) || SLIDE_TLD_RE_.test(all)) return 'its text held a web address (links are added from the refs, never written)';
+  if (/\*\*|__|`|\[[^\]]*\]\([^)]*\)|(^|[\s(])[*_~][^\s*_~][^*_~]*[*_~](?=$|[\s.,;:!?)])|^\s*#+\s/.test(all)) return 'its text held Markdown marks (write plain sentences)';
+  if (/\bP\d+\b/.test(all)) return 'its text wrote a ref out (a ref goes in a segment\'s ref, never in its words)';
   if (all.length > SLIDE_SUMMARY_MAX_) return `it was ${all.length} characters long, more than ${SLIDE_SUMMARY_MAX_}`;
   if (/\p{Extended_Pictographic}/u.test(all)) return 'it held an emoji';
   if (refs.length && !segs.some(s => slideText_(s.ref))) return 'it cited no post, though posts with refs were given';
   if (segs.some(s => slideText_(s.ref) && !slideText_(s.text))) return 'a cited segment had no words';
-  const known = new Set(slideNumbersIn_(factsText));
+  const known = new Set(slideNumbersIn_(String(factsText || '').replace(/"ref"\s*:\s*"[^"]*"/g, '')));
   const invented = slideNumbersIn_(all).filter(n => !known.has(n));
   if (invented.length) return `it wrote ${slideJoin_(invented)}, which ${invented.length > 1 ? 'are' : 'is'} not among the facts`;
   const inside = RAW_GUARD_PATTERNS_.map(re => (all.match(re) || [])[0]).filter(Boolean);
@@ -903,7 +1109,8 @@ function slideSummaryProblem_(reply, refs, factsText) {
 
 /**
  * The segments joined as they read: {text, spans: [{start, end, ref}]} (a space put between two segments that would
- * otherwise run together; each cited span without its outer spaces). Pure.
+ * otherwise run together: a word, a number, an opening bracket or a quote, in any script; each cited span without its
+ * outer spaces). Pure.
  */
 function slideSummaryJoin_(segs) {
   let text = '';
@@ -911,7 +1118,7 @@ function slideSummaryJoin_(segs) {
   (segs || []).forEach(s => {
     const t = String((s && s.text) || '').replace(/\s+/g, ' ');
     if (!t) return;
-    if (text && !/\s$/.test(text) && /^[A-Za-z0-9("']/.test(t) && !/^\s/.test(t)) text += ' ';
+    if (text && !/\s$/.test(text) && /^[\p{L}\p{N}("'“‘]/u.test(t) && !/^\s/.test(t)) text += ' ';
     const lead = t.length - t.replace(/^\s+/, '').length;
     const core = t.trim();
     const start = text.length + lead;
@@ -927,15 +1134,19 @@ function slideSummaryJoin_(segs) {
 /**
  * One issue's summary from Gemini (SPEC 4.3): asked with the issue's facts, its answer checked (slideSummaryProblem_);
  * asked again with the reason, SLIDE_TRIES_ tries in all. {ok, parts: [{text, url}] (the url from the ref, '' for
- * plain words), why (the last reason when it failed), calls}.
+ * plain words), why (the last reason when it failed), noReply (true: Gemini gave no answer at any try: busy, a quota or
+ * a network fault, tried again later), calls}.
  */
 function slideSummarize_(issue, numbers, posts, deadline) {
   const facts = slideSummaryFacts_(issue, numbers, posts);
   const refs = posts.citable.map(p => p.ref);
+  const known = JSON.stringify(facts, (k, v) => (k === 'ref' ? undefined : v));
   let why = '';
+  let problemWhy = '';  // why Gemini's last answer could not be used (it is told, to write it again)
   let calls = 0;
+  let answered = 0;
   for (let i = 0; i < SLIDE_TRIES_; i++) {
-    const p = slideSummaryPrompts_(facts, why);
+    const p = slideSummaryPrompts_(facts, problemWhy);
     let reply = null;
     calls++;
     try {
@@ -944,8 +1155,9 @@ function slideSummarize_(issue, numbers, posts, deadline) {
       why = `Gemini did not answer (${slideErr_(e).slice(0, 160)})`;
       continue;
     }
-    const problem = slideSummaryProblem_(reply, refs, JSON.stringify(facts));
-    if (problem) { why = problem; continue; }
+    answered++;
+    const problem = slideSummaryProblem_(reply, refs, known);
+    if (problem) { why = problem; problemWhy = problem; continue; }
     const joined = slideSummaryJoin_(reply.segments);
     const url = ref => (posts.citable.find(x => x.ref === ref) || {}).url || '';
     const parts = [];
@@ -956,21 +1168,22 @@ function slideSummarize_(issue, numbers, posts, deadline) {
       at = sp.end;
     });
     if (at < joined.text.length) parts.push({ text: joined.text.slice(at), url: '' });
-    return { ok: true, parts, why: '', calls };
+    return { ok: true, parts, why: '', noReply: false, calls };
   }
-  return { ok: false, parts: [], why, calls };
+  return { ok: false, parts: [], why, noReply: !answered, calls };
 }
 
 /**
- * What a run puts on the slide, for one window (SPEC 4.3): {ok, why, wait (true: Gemini is busy, try again later),
- * window, issues: [{key, name, foundByApp, numbers, summary: [{text, url}], status}], none, unnamed, note, calls}.
- * Nothing is estimated: the change is "not known" when the window before is not fully kept; the run fails (ok false,
- * nothing delivered) when the window itself is not fully read, or when a summary can't be written.
+ * What a run puts on the slide, for one window (SPEC 4.3): {ok, why, wait (true: Gemini is busy or gave no answer, try
+ * again later), window, issues: [{key, name, foundByApp, numbers, summary: [{text, url}], status}], none (no alert at
+ * all), unnamed (alerts with no issue name: never left out silently), unnamedSent, note, calls}. Nothing is estimated:
+ * the change is "not known" when the window before is not fully kept; the run fails (ok false, nothing delivered) when
+ * the window itself is not fully read, or when a summary can't be written.
  */
 function slideBuild_(ss, settings, win, opts) {
   const o = opts || {};
   const out = { ok: false, why: '', wait: false, window: { start: win.start, end: win.end, prevStart: win.prevStart, prevEnd: win.prevEnd },
-    issues: [], none: false, unnamed: 0, note: '', calls: 0 };
+    issues: [], none: false, unnamed: 0, unnamedSent: 0, note: '', calls: 0 };
   const log = slideAlertRows_(ss, win.prevStart);
   if (!log.tab || !log.mine) {
     out.why = log.tab ? 'The Alert log tab\'s header is not the bot\'s, so no alert can be counted.'
@@ -984,11 +1197,13 @@ function slideBuild_(ss, settings, win, opts) {
   }
   const prevKnown = log.from <= win.prevStart && !(log.firstAt > win.prevStart);
   if (log.firstAt > win.start) out.note = 'the bot\'s Alert log starts within this window';
-  const now = slideCount_(log.rows, win.start, win.end, settings.countOwn);
-  const before = prevKnown ? slideCount_(log.rows, win.prevStart, win.prevEnd, settings.countOwn) : null;
+  const alerts = slideAlerts_(log.rows, settings.countOwn, slideModeLog_());
+  const now = slideCount_(alerts, win.start, win.end);
+  const before = prevKnown ? slideCount_(alerts, win.prevStart, win.prevEnd) : null;
   out.unnamed = now.unnamed;
+  out.unnamedSent = now.unnamedSent;
   const top = slideTop_(now.issues);
-  if (!top.length) { out.ok = true; out.none = true; return out; }
+  if (!top.length) { out.ok = true; out.none = !now.unnamed; return out; }
   if (typeof apiGuardAllowBackground_ === 'function' && !apiGuardAllowBackground_('gemini', false)) {
     out.wait = true;
     out.why = 'Gemini is busy with the bot\'s alert work right now, so the summaries were not written: the delivery tries again in a few minutes.';
@@ -1002,8 +1217,14 @@ function slideBuild_(ss, settings, win, opts) {
     const sum = slideSummarize_(issue, numbers, posts, o.deadline);
     out.calls += sum.calls;
     if (!sum.ok) {
-      out.why = `The summary of "${issue.name}" could not be written, so nothing was delivered: Gemini's answer could not be ` +
-        `used in ${SLIDE_TRIES_} tries (the last: ${sum.why}).`;
+      if (sum.noReply) {
+        out.wait = true;
+        out.why = `Gemini gave no answer for the summary of "${issue.name}" just now (${sum.why.replace(/^Gemini did not answer \(|\)$/g, '')}), so nothing ` +
+          'was delivered yet: the delivery tries again in a few minutes.';
+      } else {
+        out.why = `The summary of "${issue.name}" could not be written, so nothing was delivered: Gemini's answer could not be ` +
+          `used in ${SLIDE_TRIES_} tries (the last: ${sum.why}).`;
+      }
       out.issues = [];
       return out;
     }
@@ -1012,6 +1233,44 @@ function slideBuild_(ss, settings, win, opts) {
   }
   out.ok = true;
   return out;
+}
+
+// Previews built afresh (each asks Gemini for up to three summaries, three tries each): at most this many per viewer in
+// a 10-minute window, so no one viewer can use up the Gemini budget the bot's own background work waits on
+const SLIDE_PREVIEW_MAX_ = 4;
+const SLIDE_PREVIEW_SEC_ = 600;
+const SLIDE_PREVIEW_KEY_ = 'dash1:pv:';
+
+/** True when the generated set for these settings and window is in the script cache (a preview of it costs nothing). Never throws. */
+function slideGenCached_(settings, win) {
+  try { return !!CacheService.getScriptCache().get(SLIDE_GEN_KEY_ + slideGenKey_(settings, win)); } catch (e) { return false; }
+}
+
+/**
+ * Takes one of this viewer's fresh previews (SLIDE_PREVIEW_MAX_ per 10 minutes, counted in the script cache under a
+ * key made from their address): {ok} or {ok: false, why: "... try again at 9:40 AM ET"}. Never throws (counted as
+ * allowed when the cache can't be read: the guard of Gemini's own budget still holds).
+ */
+function slidePreviewTake_(email, tz) {
+  try {
+    const cache = CacheService.getScriptCache();
+    const key = SLIDE_PREVIEW_KEY_ + dashDigest_(email || 'unknown');
+    const now = Date.now();
+    let rec = null;
+    try { rec = JSON.parse(cache.get(key) || 'null'); } catch (e) { rec = null; }
+    if (!rec || !(Number(rec.start) > 0) || now - Number(rec.start) >= SLIDE_PREVIEW_SEC_ * 1000) rec = { start: now, n: 0 };
+    if (rec.n >= SLIDE_PREVIEW_MAX_) {
+      const at = Number(rec.start) + SLIDE_PREVIEW_SEC_ * 1000;
+      const zone = slideTzOk_(tz) ? tz : (GEN.timezone || 'America/New_York');
+      return { ok: false, why: `You have built ${SLIDE_PREVIEW_MAX_} new previews in the last 10 minutes (each one asks Gemini, which the ` +
+        `bot's own alert work needs too): try again at ${slideClock_(at, zone)} ${slideZone_(at, zone)}. A preview you already built shows again at once.` };
+    }
+    rec.n++;
+    cache.put(key, JSON.stringify(rec), Math.max(1, Math.ceil((Number(rec.start) + SLIDE_PREVIEW_SEC_ * 1000 - now) / 1000)));
+    return { ok: true };
+  } catch (e) {
+    return { ok: true };
+  }
 }
 
 /** The shared-generation key of a run (SPEC 4.3): the same window and options give the same set. Pure. */
@@ -1054,10 +1313,13 @@ function slideGenFor_(ss, settings, win, shared, opts) {
 
 /**
  * What Drive says about one file for `email`: {seen (Drive gave it), canEdit (the owner, a named editor, or the file
- * shared with the domain or anyone with edit rights), title}. Never throws.
+ * shared with the domain or anyone with edit rights), canView (any of those, a named viewer or commenter, or the file
+ * shared with the domain or anyone at all), title}. What DriveApp does not list (the members of a shared drive) is asked
+ * of Drive's own permission list (slideDrivePerms_) when DriveApp did not let them in. A share through a Google Group
+ * is not seen (Drive names the group, not its members). Never throws.
  */
 function slideDriveAccess_(fileId, email) {
-  const out = { seen: false, canEdit: false, title: '' };
+  const out = { seen: false, canEdit: false, canView: false, title: '' };
   let file = null;
   try { file = DriveApp.getFileById(fileId); } catch (e) { return out; }
   out.seen = true;
@@ -1067,15 +1329,65 @@ function slideDriveAccess_(fileId, email) {
   const mail = u => { try { return String((u && u.getEmail()) || '').trim().toLowerCase(); } catch (e) { return ''; } };
   try { if (mail(file.getOwner()) === me) out.canEdit = true; } catch (e) { /* a shared drive's file has no owner */ }
   try { if (!out.canEdit && (file.getEditors() || []).some(u => mail(u) === me)) out.canEdit = true; } catch (e) { /* not told */ }
+  try { if (!out.canEdit && (file.getViewers() || []).some(u => mail(u) === me)) out.canView = true; } catch (e) { /* not told */ }
   try {
     if (!out.canEdit) {
       const wide = String(file.getSharingAccess());
       const perm = String(file.getSharingPermission());
       const open = [DriveApp.Access.DOMAIN, DriveApp.Access.DOMAIN_WITH_LINK, DriveApp.Access.ANYONE, DriveApp.Access.ANYONE_WITH_LINK].map(String);
-      if (open.indexOf(wide) >= 0 && perm === String(DriveApp.Permission.EDIT)) out.canEdit = true;
+      if (open.indexOf(wide) >= 0) {
+        out.canView = true;
+        if (perm === String(DriveApp.Permission.EDIT)) out.canEdit = true;
+      }
     }
   } catch (e) { /* not told */ }
+  if (!out.canEdit) {
+    const perms = slideDrivePerms_(fileId, me);
+    if (perms) { out.canEdit = perms.canEdit; out.canView = out.canView || perms.canView; }
+  }
+  if (out.canEdit) out.canView = true;
   return out;
+}
+
+/** Drive's own question for a file's permissions (a shared drive's members too). Pure. */
+function slidePermsUrl_(fileId) {
+  return `${DRIVE_FILES_API_}${encodeURIComponent(fileId)}/permissions?supportsAllDrives=true&pageSize=100&fields=` +
+    encodeURIComponent('permissions(type,role,emailAddress,domain)');
+}
+
+/**
+ * What Drive's own permission list (as the bot's account sees it) says `email` may do with a file: {canView, canEdit},
+ * or null when Drive did not answer (DriveApp's answer stands). A person by their own address, their domain, or anyone.
+ * Never throws.
+ */
+function slideDrivePerms_(fileId, email) {
+  try {
+    const r = driveFetch_(slidePermsUrl_(fileId));
+    if (r.code !== 200) return null;
+    const list = (JSON.parse(r.text) || {}).permissions;
+    if (!Array.isArray(list)) return null;
+    const me = String(email || '').trim().toLowerCase();
+    const domain = me.split('@')[1] || '';
+    const out = { canView: false, canEdit: false };
+    list.forEach(p => {
+      const type = String((p && p.type) || '');
+      const mine = (type === 'user' && String(p.emailAddress || '').trim().toLowerCase() === me) ||
+        (type === 'domain' && !!domain && String(p.domain || '').trim().toLowerCase() === domain) || type === 'anyone';
+      if (!mine) return;
+      out.canView = true;
+      if (['owner', 'organizer', 'fileOrganizer', 'writer'].indexOf(String(p.role || '')) >= 0) out.canEdit = true;
+    });
+    return out;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** What to tell a person the deck is not shared with (or not in a way the bot can see). Pure. */
+function slideNotYoursWhy_() {
+  return 'You can\'t open this deck yourself (it is not shared with you by name, through your organisation or with a link), so ' +
+    'the dashboard does not show you its slides or put a delivery into it: ask its owner to share it with you (Viewer is enough). ' +
+    'If it reaches you through a Google Group, the bot can\'t see that: ask to be added by name.';
 }
 
 /** Drive's question for the bot's own right to edit a file (a shared drive's too). Pure. */
@@ -1146,16 +1458,26 @@ function slideShapeText_(shape) {
   try { return String(slideAsShape_(shape).getText().asString() || '').replace(/\n$/, ''); } catch (e) { return ''; }
 }
 
-/** The deck's slides for the web app's pickers: [{id, index, title, text (<= 200), layoutName}]. Never throws. */
+/**
+ * The deck's slides for the web app's pickers: [{id, index, title, text (<= 200), layoutName, titled (its layout has a
+ * title box: only such a slide's design can be copied, so the delivery's own slide is known again by its title)}].
+ * Never throws.
+ */
 function slideDeckSlides_(pres) {
   try {
     return pres.getSlides().map((s, index) => {
       let text = '';
       let layoutName = '';
+      let titled = null;
       try { text = s.getShapes().map(x => slideShapeText_(x)).filter(Boolean).join(' · '); } catch (e) { text = ''; }
-      try { layoutName = String(s.getLayout().getLayoutName() || ''); } catch (e) { layoutName = ''; }
+      try {
+        const layout = s.getLayout();
+        layoutName = String(layout.getLayoutName() || '');
+        titled = !!slideLayoutPlaceholder_(layout, ['TITLE', 'CENTERED_TITLE']);
+      } catch (e) { layoutName = layoutName || ''; }
+      if (titled === null) titled = !!slideTitleShape_(s);
       const title = slideShapeText_(slideTitleShape_(s));
-      return { id: s.getObjectId(), index, title: slideText_(title).slice(0, 200), text: slideText_(text).slice(0, 200), layoutName };
+      return { id: s.getObjectId(), index, title: slideText_(title).slice(0, 200), text: slideText_(text).slice(0, 200), layoutName, titled };
     });
   } catch (e) {
     return [];
@@ -1263,26 +1585,59 @@ function slideBackgroundOf_(slide) {
   }
 }
 
+/** A layout's first placeholder of the given types ('TITLE', 'BODY', ...), or null. Never throws. */
+function slideLayoutPlaceholder_(layout, types) {
+  for (let i = 0; i < types.length; i++) {
+    try {
+      const p = layout && typeof layout.getPlaceholder === 'function' ? layout.getPlaceholder(SlidesApp.PlaceholderType[types[i]]) : null;
+      if (p) return p;
+    } catch (e) { /* the next type */ }
+  }
+  return null;
+}
+
+/** The deck's own title-and-body layout (the one a default-mode run puts its slide on), or null. Never throws. */
+function slideTitleBodyLayout_(pres) {
+  try {
+    return (pres.getLayouts() || []).find(l => { try { return String(l.getLayoutName()) === 'TITLE_AND_BODY'; } catch (e) { return false; } }) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 /**
- * The design values the web app's preview uses, read from the deck (never the web app's own): {bg, font, titleColor,
- * bodyColor, titleSize, bodySize, from, box (slideGeometry_: the page and the title and body boxes)}: the picked slide's
- * in copy mode; else the first title-and-body slide's (the deck's own layout). Each null when the deck does not say.
- * Never throws.
+ * The design values the web app's preview uses, read from the deck (never the web app's own), from what the run writes
+ * to (SPEC 4.4): {bg, font, titleColor, bodyColor, titleSize, bodySize, from, box (the page and the title and body
+ * boxes)}. The boxes are always the layout's that the new slide is put on (copy mode: the picked slide's layout; else
+ * the deck's own title-and-body layout), with the text box the run makes where that layout has no body box; the text
+ * styles and background are what the run leaves on the new slide: copy mode, the picked slide's (slideFill_ copies
+ * them) where it has them, else the layout's own. Each null when the deck does not say. Never throws.
  */
 function slideDesign_(pres, design) {
   const out = { bg: null, font: null, titleColor: null, bodyColor: null, titleSize: null, bodySize: null, from: '', box: slideGeometry_(pres, null) };
   try {
-    let slide = design && design.mode === 'copy' && design.slideId ? pres.getSlideById(design.slideId) : null;
-    if (slide) out.from = 'the picked slide';
-    if (!slide) {
-      slide = pres.getSlides().find(s => { try { return String(s.getLayout().getLayoutName()) === 'TITLE_AND_BODY'; } catch (e) { return false; } }) || null;
-      if (slide) out.from = 'the deck\'s title-and-body slides';
+    const picked = design && design.mode === 'copy' && design.slideId ? pres.getSlideById(design.slideId) : null;
+    let layout = null;
+    if (picked) {
+      out.from = 'the picked slide';
+      try { layout = picked.getLayout(); } catch (e) { layout = null; }
+    } else {
+      layout = slideTitleBodyLayout_(pres);
+      if (layout) out.from = 'the deck\'s title-and-body layout';
     }
-    if (!slide) return out;
-    const t = slideStyleOf_(slideTitleShape_(slide));
-    const b = slideStyleOf_(slideBodyShape_(slide));
-    Object.assign(out, { bg: slideBackgroundOf_(slide), font: b.font || t.font, titleColor: t.color, bodyColor: b.color,
-      titleSize: t.size, bodySize: b.size, box: slideGeometry_(pres, slide) });
+    if (!layout && !picked) return out;
+    const lt = slideLayoutPlaceholder_(layout, ['TITLE', 'CENTERED_TITLE']);
+    const lb = slideLayoutPlaceholder_(layout, ['BODY', 'SUBTITLE']);
+    const geo = slideGeometry_(pres, null);
+    const tBox = lt ? slideBoxOf_(lt) : null;
+    const bBox = lb ? slideBoxOf_(lb) : layout ? Object.assign({}, SLIDE_TEXT_BOX_.body) : null;
+    out.box = { pageW: geo.pageW, pageH: geo.pageH, title: tBox || geo.title, body: bBox || geo.body, from: bBox ? 'deck' : 'default' };
+    const pt = picked ? slideTitleShape_(picked) : null;
+    const pb = picked ? slideBodyShape_(picked) : null;
+    const t = pt ? slideStyleOf_(pt) : slideStyleOf_(lt);
+    const b = pb ? slideStyleOf_(pb) : slideStyleOf_(lb);
+    const bg = (picked ? slideBackgroundOf_(picked) : null) || (layout ? slideBackgroundOf_(layout) : null);
+    Object.assign(out, { bg, font: b.font || t.font, titleColor: t.color, bodyColor: b.color, titleSize: t.size, bodySize: b.size });
   } catch (e) { /* what could be read */ }
   return out;
 }
@@ -1290,8 +1645,8 @@ function slideDesign_(pres, design) {
 /**
  * The slide's text, for one delivery (SPEC 4.4): {title, body, bold: [[start, end]], links: [[start, end, url]]}: the
  * title (dated in add mode), the window line, then for each issue its name (bold, and "Found by the app"), its numbers,
- * its summary (links on the cited words) and its status line; "No alerts in this window" when there is none. Pure (the
- * dates are asked of the formatter).
+ * its summary (links on the cited words) and its status line; the alerts with no issue name, counted (never left out);
+ * "No alerts in this window" only when there is no alert at all. Pure (the dates are asked of the formatter).
  */
 function slideModel_(gen, settings) {
   const tz = settings.schedule.tz;
@@ -1299,7 +1654,9 @@ function slideModel_(gen, settings) {
   let body = slideWindowLabel_(gen.window.start, gen.window.end, tz) + (gen.note ? ` (${gen.note})` : '');
   const bold = [];
   const links = [];
+  const unnamed = Number(gen.unnamed) || 0;
   if (gen.none) body += `\n${SLIDE_NONE_}`;
+  else if (!gen.issues.length && unnamed) body += `\n${slideUnnamedLine_(unnamed, gen.unnamedSent)}`;
   gen.issues.forEach(issue => {
     body += '\n';
     bold.push([body.length, body.length + issue.name.length]);
@@ -1311,7 +1668,14 @@ function slideModel_(gen, settings) {
     });
     body += `\n${issue.status}`;
   });
+  if (gen.issues.length && unnamed) body += `\nAlso ${slideUnnamedLine_(unnamed, gen.unnamedSent)}`;
   return { title, body, bold, links };
+}
+
+/** "2 alerts without an issue name (1 with a Social Alert sent)": the alerts no issue on the slide holds. Pure. */
+function slideUnnamedLine_(n, sent) {
+  const k = Number(sent) || 0;
+  return `${slidePlural_(n, 'alert')} without an issue name${k ? ` (${k} with a Social Alert sent)` : ''}`;
 }
 
 /**
@@ -1348,8 +1712,9 @@ function slideApplyStyle_(range, st) {
 function slideFill_(slide, model, picked) {
   let titleShape = slideTitleShape_(slide);
   let bodyShape = slideBodyShape_(slide);
-  if (!titleShape) titleShape = slide.insertTextBox(' ', 40, 20, 640, 60);
-  if (!bodyShape) bodyShape = slide.insertTextBox(' ', 40, 90, 640, 300);
+  const tb = SLIDE_TEXT_BOX_;
+  if (!titleShape) titleShape = slide.insertTextBox(' ', tb.title.x, tb.title.y, tb.title.w, tb.title.h);
+  if (!bodyShape) bodyShape = slide.insertTextBox(' ', tb.body.x, tb.body.y, tb.body.w, tb.body.h);
   const title = slideAsShape_(titleShape).getText();
   title.setText(model.title);
   const body = slideAsShape_(bodyShape).getText();
@@ -1377,18 +1742,22 @@ function slideFitNote_(bodyPt, deckPt) {
 
 /**
  * Puts the delivery's slide in its deck (SPEC 4.4): replace mode, in place of its own earlier slide wherever that now
- * stands (only a slide this delivery placed and that still is a pulse slide); else at the spot. The new slide goes in
- * first, then the old one comes out, so a failure never leaves the deck without either. {ok, placed: [ids], link, why,
- * note}. No other slide is changed.
+ * stands (only a slide this delivery placed and that still is a pulse slide); else at the spot. When the spot was
+ * changed in the web app since that slide was placed (`placedSpot`: the spot it was placed at, kept with the run), the
+ * new slide goes at the new spot and the old one still comes out. The new slide goes in first, then the old one comes
+ * out, so a failure never leaves the deck without either. A copied design on a layout with no title box is refused (the
+ * slide could not be known again at the next run). {ok, placed: [ids], link, why, note}. No other slide is changed.
  */
-function slideWriteDeck_(pres, deckId, settings, placedBefore, gen) {
+function slideWriteDeck_(pres, deckId, settings, placedBefore, gen, placedSpot) {
   const slides = pres.getSlides();
   const ids = slides.map(s => s.getObjectId());
   let old = [];
   let index = -1;
   if (settings.mode === 'replace') {
     old = (placedBefore || []).map(id => ids.indexOf(String(id))).filter(i => i >= 0 && slideIsPulse_(slides[i])).map(i => ids[i]);
-    if (old.length) index = Math.min.apply(null, old.map(id => ids.indexOf(id)));
+    const ps = slideObj_(placedSpot);
+    const moved = !!placedSpot && (slideText_(ps.afterId) !== settings.spot.afterId || slideText_(ps.beforeId) !== settings.spot.beforeId);
+    if (old.length && !moved) index = Math.min.apply(null, old.map(id => ids.indexOf(id)));
   }
   if (index < 0) {
     const spot = slideSpotIndex_(pres, settings.spot);
@@ -1396,6 +1765,10 @@ function slideWriteDeck_(pres, deckId, settings, placedBefore, gen) {
     index = spot.index;
   }
   const made = slideInsert_(pres, index, settings.design);
+  if (!slideTitleShape_(made.slide)) {
+    try { made.slide.remove(); } catch (x) { /* an empty slide stays: nothing was written on it */ }
+    return { ok: false, placed: [], link: '', why: `${SLIDE_NO_TITLE_WHY_} Nothing was put in the deck.`, note: '' };
+  }
   let fit = null;
   try {
     fit = slideFill_(made.slide, slideModel_(gen, settings), made.design);
@@ -1481,9 +1854,11 @@ function slideDeliver_(ctx, sh, row, o) {
     if (o.manual) return {};
     try { return { next_run: check.ok ? (slideNextRun_(s.schedule, now) || '') : '' }; } catch (e) { return { next_run: '' }; }
   };
+  // the spot the delivery's slide now in the deck was put at (kept with each run): a changed spot moves it
+  const placedSpot = slideObj_(row.last_run).spot || null;
   const fail = (why, wait) => {
     const late = !o.manual && o.scheduled && now - o.scheduled > SLIDE_WAIT_MAX_MS_;
-    if (!(wait && !late)) record(Object.assign({ last_run: { at: now, ok: false, link: '', slides: 0, error: String(why).slice(0, 500) } }, next()));
+    if (!(wait && !late)) record(Object.assign({ last_run: { at: now, ok: false, link: '', slides: 0, error: String(why).slice(0, 500), spot: placedSpot } }, next()));
     return { ok: false, wait: !!(wait && !late), why, link: '', notified: null, calls: 0 };
   };
   if (!check.ok) return fail(`The delivery's settings need a fix in the web app: ${check.errors.join(' ')}`);
@@ -1499,7 +1874,7 @@ function slideDeliver_(ctx, sh, row, o) {
   if (!gen.ok) return Object.assign(fail(gen.why, gen.wait), { calls: gen.calls || 0 });
   let wrote;
   try {
-    wrote = slideWriteDeck_(deck.pres, s.deck.id, s, Array.isArray(row.placed) ? row.placed : [], gen);
+    wrote = slideWriteDeck_(deck.pres, s.deck.id, s, Array.isArray(row.placed) ? row.placed : [], gen, placedSpot);
   } catch (e) {
     const msg = slideErr_(e);
     const why = /permission/i.test(msg) ? slideShareWhy_('view', '', deck.title) : `The slide could not be put in the deck: ${msg.slice(0, 300)}`;
@@ -1509,9 +1884,11 @@ function slideDeliver_(ctx, sh, row, o) {
   }
   if (!wrote.ok) return Object.assign(fail(wrote.why), { calls: gen.shared ? 0 : gen.calls });
   const label = slideWindowLabel_(win.start, win.end, s.schedule.tz);
-  const notes = [wrote.note, gen.none ? SLIDE_NONE_.toLowerCase() : '', s.slides.positive ? 'the positive pulse slide is not available yet' : '']
+  const notes = [wrote.note, gen.none ? SLIDE_NONE_.toLowerCase() : '', gen.unnamed ? slideUnnamedLine_(gen.unnamed, gen.unnamedSent) : '',
+    s.slides.positive ? 'the positive pulse slide is not available yet' : '']
     .filter(Boolean).join('; ');
-  const run = { at: now, ok: true, link: wrote.link, slides: wrote.placed.length, error: '', window: label, note: notes, notified: 'sending' };
+  const run = { at: now, ok: true, link: wrote.link, slides: wrote.placed.length, error: '', window: label, note: notes, notified: 'sending',
+    spot: { afterId: s.spot.afterId, beforeId: s.spot.beforeId } };
   record(Object.assign({ placed: wrote.placed, last_run: run }, next()));
   const told = slideNotify_(ctx, s, deck.title || s.deck.title, wrote.link, label);
   run.notified = told.sent.length ? `emailed ${told.sent.length}` : told.why;
@@ -1547,7 +1924,8 @@ function slideRelease_(id) {
 /**
  * The deliveries' time trigger (every 5 minutes while row 55 is ON; Main.gs keeps it): runs every active delivery that
  * is due, each for the window ending at its latest scheduled time; deliveries due with the same window and options
- * share one generated set. Does nothing while row 55 is OFF or the Slides approval is missing. Its own claim, never the
+ * share one generated set. Does nothing while row 55 is OFF, the bot is paused (Control B2 OFF: nothing is delivered
+ * then, as nothing else runs) or the Slides approval is missing. Its own claim, never the
  * poll's lock. {done, why, ran: [{id, ok, why}]}.
  */
 function dashDeliverDue() {
@@ -1556,7 +1934,9 @@ function dashDeliverDue() {
   const out = { done: false, why: '', ran: [] };
   let ctx;
   try { ctx = dashCtx_(); } catch (e) { out.why = slideErr_(e); return out; }
+  if (!ctx.controlOk) { out.why = 'the Control tab could not be read'; return out; }
   if (!(ctx.switches && ctx.switches[SLIDE_SWITCH_] === true)) { out.why = 'row 55 is OFF'; return out; }
+  if (!ctx.botOn) { out.why = SLIDE_PAUSED_WHY_; return out; }
   if (!dashScopeOk_()) { out.why = 'the Slides approval is missing'; return out; }
   const tab = slideTab_(ctx.ss, false);
   if (!tab.sh) { out.why = tab.why || 'no deliveries yet'; return out; }
@@ -1629,7 +2009,11 @@ function slideListItem_(row) {
   };
 }
 
-/** The deliveries for the web app's list: {ok, on (row 55), scopeOk, botAccount, positive, deliveries, why}. */
+/**
+ * The deliveries for the web app's list: {ok, on (row 55), scopeOk, botAccount, positive, deliveries, mayChange (this
+ * viewer may set up, run and pause them), paused (the bot is OFF: Control B2), sameAccount (this web app runs as the
+ * account in Control B8), why}.
+ */
 function dashDeliveries() {
   const access = dashAccess_();
   if (!access.ok) return dashRefusal_(access);
@@ -1639,6 +2023,9 @@ function dashDeliveries() {
     const rows = tab.sh ? slideRows_(tab.sh) : [];
     return dashServed_({ ok: true, on: !!(ctx.switches && ctx.switches[SLIDE_SWITCH_] === true), scopeOk: dashScopeOk_(), botAccount: slideBotAccount_(),
       offWhy: SLIDE_OFF_WHY_, scopeWhy: SLIDE_SCOPE_WHY_, positive: { available: false, why: SLIDE_POSITIVE_WHY_ },
+      controlOk: !!ctx.controlOk, controlWhy: ctx.controlOk ? '' : dashControlUnread_(ctx).why,
+      paused: !!ctx.controlOk && !ctx.botOn, pausedWhy: SLIDE_PAUSED_WHY_,
+      sameAccount: typeof ctx.sameAccount === 'boolean' ? ctx.sameAccount : null, accountWhy: ctx.sameAccount === false ? DASH_ACCOUNT_WHY_ : '',
       tab: { ok: !!tab.sh || !tab.why, why: tab.why }, deliveries: rows.map(slideListItem_), mayChange: slideMayChange_(access).ok });
   } catch (e) {
     return slideFailed_(e);
@@ -1647,23 +2034,27 @@ function dashDeliveries() {
 
 /**
  * Can the bot's account edit this deck, and its slides (for the spot and design pickers): {ok, deck: {id, url, title},
- * canEdit, youCanEdit, why, botAccount, slides: [{id, index, title, text, layoutName}]}.
+ * canEdit, youCanView, youCanEdit, why, botAccount, slides: [{id, index, title, text, layoutName, titled}]}. Only for a
+ * viewer who may set up deliveries (slideMayChange_) and who can open the deck themselves (or the bot's own account):
+ * the deck is opened as the bot, so its title and slides are never shown to someone the deck is not shared with.
  */
 function dashDeckCheck(url) {
   const access = dashAccess_();
   if (!access.ok) return dashRefusal_(access);
   try {
+    const may = slideMayChange_(access);
+    if (!may.ok) return { ok: false, why: may.why, mayChange: false };
     const bot = slideBotAccount_();
     const id = slideDeckId_(url);
     if (!id) return { ok: false, botAccount: bot, why: 'That is not a link to a Google Slides deck: copy the link from the deck\'s address bar.' };
     if (!dashScopeOk_()) return { ok: false, botAccount: bot, why: SLIDE_SCOPE_WHY_ };
+    const mine = access.self ? { canView: true, canEdit: true } : slideDriveAccess_(id, access.email);
+    if (!mine.canView) return { ok: false, deck: { id, url: slideDeckUrl_(id), title: '' }, canEdit: false, youCanView: false, botAccount: bot, why: slideNotYoursWhy_(), slides: [] };
     const deck = slideOpenDeck_(id, bot);
     const base = { id, url: slideDeckUrl_(id), title: deck.title };
-    if (!deck.pres) return { ok: false, deck: base, canEdit: false, botAccount: bot, why: deck.why, slides: [] };
-    const you = access.self || slideDriveAccess_(id, access.email).canEdit;
-    return { ok: true, deck: base, canEdit: deck.ok, youCanEdit: !!you, botAccount: bot,
-      why: deck.ok ? (you ? '' : 'You can\'t edit this deck yourself, so a delivery into it can\'t be saved by you.') : deck.why,
-      slides: slideDeckSlides_(deck.pres) };
+    if (!deck.pres) return { ok: false, deck: base, canEdit: false, youCanView: true, botAccount: bot, why: deck.why, slides: [] };
+    return { ok: true, deck: base, canEdit: deck.ok, youCanView: true, youCanEdit: !!mine.canEdit, botAccount: bot,
+      why: deck.ok ? '' : deck.why, slides: slideDeckSlides_(deck.pres) };
   } catch (e) {
     return slideFailed_(e);
   }
@@ -1685,15 +2076,19 @@ function dashScheduleCheck(settings) {
     const tz = s.schedule.tz;
     return { ok: true, next: cov.runs.slice(0, 5).map(at => ({ at, label: `${SLIDE_DAYS_[slideLocal_(at, tz).wd]}, ${slideWhen_(at, tz)} ${slideZone_(at, tz)}` })),
       coverage: { ok: cov.ok, gaps: cov.gapText, overlaps: cov.overlapText }, match: cov.match,
-      matched: cov.match.lookbackHours === s.lookbackHours && cov.match.mondayCoversWeekend === s.schedule.mondayCoversWeekend, why: '' };
+      matched: cov.match.sincePrevious ? s.schedule.sincePrevious === true
+        : cov.match.lookbackHours === s.lookbackHours && cov.match.mondayCoversWeekend === s.schedule.mondayCoversWeekend && !s.schedule.sincePrevious,
+      why: '' };
   } catch (e) {
     return slideFailed_(e);
   }
 }
 
-/** Row 55 ON and the Slides approval given, else why not (for preview and run now). */
+/** The Control tab read, row 55 ON, the bot ON (B2) and the Slides approval given, else why not (for preview and run now). */
 function slideReady_(ctx) {
+  if (!ctx.controlOk) return dashControlUnread_(ctx).why;
   if (!(ctx.switches && ctx.switches[SLIDE_SWITCH_] === true)) return SLIDE_OFF_WHY_;
+  if (!ctx.botOn) return SLIDE_PAUSED_WHY_;
   if (!dashScopeOk_()) return SLIDE_SCOPE_WHY_;
   return '';
 }
@@ -1708,13 +2103,19 @@ function dashPreview(settings) {
   const access = dashAccess_();
   if (!access.ok) return dashRefusal_(access);
   try {
+    const may = slideMayChange_(access);
+    if (!may.ok) return { ok: false, why: may.why, mayChange: false };
     const ctx = dashCtx_();
     const notReady = slideReady_(ctx);
     if (notReady) return { ok: false, why: notReady };
     const check = slideSettingsCheck_(settings);
     if (!check.ok) return { ok: false, why: check.errors.join(' '), errors: check.errors };
     const s = check.settings;
+    if (!access.self && !slideDriveAccess_(s.deck.id, access.email).canView) return { ok: false, why: slideNotYoursWhy_() };
     const win = slideWindow_(s, Date.now());
+    // a preview built afresh asks Gemini: a few per viewer every 10 minutes (one already built is shown again for free)
+    const limit = slideGenCached_(s, win) ? { ok: true } : slidePreviewTake_(access.email, s.schedule.tz);
+    if (!limit.ok) return { ok: false, why: limit.why };
     const gen = slideGenFor_(ctx.ss, s, win, null, { deadline: Date.now() + SLIDE_RUN_BUDGET_MS_ });
     if (!gen.ok) return { ok: false, why: gen.why };
     const label = slideWindowLabel_(win.start, win.end, s.schedule.tz) + (gen.note ? ` (${gen.note})` : '');
@@ -1730,7 +2131,8 @@ function dashPreview(settings) {
     const bodyPt = slideFitSize_(model.body, box.body, deckPt);
     const fit = { bodyPt, deckPt, note: bodyPt < deckPt ? slideFitNote_(bodyPt, deckPt) : '' };
     // `model` is the slide's text exactly as it is written to the deck (title; body with its bold and linked ranges)
-    const slides = [{ kind: 'pulse', title: model.title, windowLabel: label, none: gen.none, model, fit, box,
+    const slides = [{ kind: 'pulse', title: model.title, windowLabel: label, none: gen.none, unnamed: Number(gen.unnamed) || 0,
+      unnamedLine: gen.unnamed ? slideUnnamedLine_(gen.unnamed, gen.unnamedSent) : '', model, fit, box,
       issues: gen.issues.map(i => ({ name: i.name, foundByApp: i.foundByApp, numbers: i.numbers.text, summary: i.summary, status: i.status })) }];
     if (s.slides.positive) slides.push({ kind: 'positive', title: 'Positive pulse', unavailable: true, why: SLIDE_POSITIVE_WHY_ });
     return { ok: true, window: { start: win.start, end: win.end, label }, slides, design, designWhy, why: '' };
@@ -1739,7 +2141,25 @@ function dashPreview(settings) {
   }
 }
 
-/** Saves a delivery (new, or a change to one): {ok, delivery, why, errors}. Works while row 55 is OFF (it waits). */
+/**
+ * Whether the slide `slideId` of deck `deckId` is on a layout with a title box (its design can be copied): true, false,
+ * or null when the deck or the slide can't be read now (the run checks again). Never throws.
+ */
+function slideCopyTitled_(deckId, slideId) {
+  try {
+    const picked = SlidesApp.openById(deckId).getSlideById(slideId);
+    if (!picked) return null;
+    return !!slideLayoutPlaceholder_(picked.getLayout(), ['TITLE', 'CENTERED_TITLE']);
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Saves a delivery (new, or a change to one): {ok, delivery, why, errors}. Works while row 55 is OFF (it waits). For
+ * someone who can edit the bot's sheet and can open the deck (the bot's account writes to it; the person need not be
+ * one of its editors).
+ */
 function dashSaveDelivery(settings) {
   const access = dashAccess_();
   if (!access.ok) return dashRefusal_(access);
@@ -1752,9 +2172,11 @@ function dashSaveDelivery(settings) {
     const bot = slideBotAccount_();
     const drive = slideDriveAccess_(s.deck.id, bot);
     if (!drive.seen) return { ok: false, why: slideShareWhy_('open', bot, s.deck.title) };
-    if (!access.self && !slideDriveAccess_(s.deck.id, access.email).canEdit) {
-      return { ok: false, why: 'You can\'t edit this deck yourself (you are not its owner or one of its named editors), so you can\'t set up ' +
-        'a delivery into it: ask its owner to add you as an editor, then save again.' };
+    // the person: someone who can edit the bot's sheet (above) and can open the deck; the bot's account does the writing
+    if (!access.self && !slideDriveAccess_(s.deck.id, access.email).canView) return { ok: false, why: slideNotYoursWhy_() };
+    if (s.design.mode === 'copy') {
+      const titled = slideCopyTitled_(s.deck.id, s.design.slideId);
+      if (titled === false) return { ok: false, why: SLIDE_NO_TITLE_WHY_ };
     }
     const ctx = dashCtx_();
     const tab = slideTab_(ctx.ss, true);

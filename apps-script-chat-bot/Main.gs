@@ -815,7 +815,7 @@ function poll() {
     // The live dashboard (Control row 54) and the slide deliveries (row 55), last: the dashboard's build id, and the
     // deliveries' own time trigger. Nothing here while both are OFF and no deliveries trigger is kept (no property
     // written, no trigger call). Never throws, so it can never fail the run
-    if (wanted && wanted.switches) pollDashboardUpkeep_(wanted.switches);
+    if (wanted && wanted.switches) pollDashboardUpkeep_(wanted.switches, { live: mode ? mode.live : undefined, paused: !wanted.on, control });
     try { outboxRunEnd_(); } catch (e) { console.error('Burson outbox: ' + e); }  // what this run withheld or queued
     // The shared alert memory (AlertMemory.gs): what every flow learned this run, written once (never throws), then gone
     alertMemoryFlush_();
@@ -1391,25 +1391,45 @@ const SLIDE_TRIGGER_EVERY_MIN_ = 5;
 const SLIDE_TRIGGER_PROP_ = 'SLIDE_TRIGGER';
 
 /**
- * The live dashboard's and the slide deliveries' upkeep, at the end of a run (`switches`: the run's, readControl_):
- * with row 54 ON, the dashboard's build id in the property BOT_BUILD (pollBuildUpkeep_); the deliveries' trigger
- * as row 55 says (pollSlideTriggerUpkeep_). With both OFF and no deliveries trigger made, nothing is read or written.
- * {build, trigger}: what each did ('' when it did nothing). Never throws.
+ * The live dashboard's and the slide deliveries' upkeep, at the end of a run (`switches`: the run's, readControl_;
+ * `run`: {live (this run's mode: runMode_), paused (Control B2 OFF), control (the Control tab)}): with row 54 ON, the
+ * dashboard's build id in the property BOT_BUILD (pollBuildUpkeep_); the deliveries' trigger as row 55 says
+ * (pollSlideTriggerUpkeep_); with row 55 ON, the run's mode kept (SlideDeliveries.gs slideModeNote_: a slide says
+ * whether a Social Alert went to the teams or only to the testers) and, while the bot is paused, C55 saying no slide is
+ * delivered until B2 is ON again (a paused run writes no other column C). With both OFF and no deliveries trigger
+ * made: one property read (SLIDE_TRIGGER), no write and no trigger call. {build, trigger, mode}: what each did ('' when
+ * it did nothing). Never throws.
  */
-function pollDashboardUpkeep_(switches) {
-  const out = { build: '', trigger: '' };
+function pollDashboardUpkeep_(switches, run) {
+  const out = { build: '', trigger: '', mode: '' };
+  const r = run || {};
+  const slidesOn = !!(switches && switches.slideDeliveries === true);
   try {
     if (switches && switches.liveDashboard === true) out.build = pollBuildUpkeep_();
   } catch (e) {
     console.error('live dashboard (row 54): could not write the build id: ' + ((e && e.message) || e));
   }
   try {
-    out.trigger = pollSlideTriggerUpkeep_(!!(switches && switches.slideDeliveries === true));
+    out.trigger = pollSlideTriggerUpkeep_(slidesOn);
   } catch (e) {
     console.error('slide deliveries (row 55): could not keep the delivery trigger: ' + ((e && e.message) || e));
   }
+  if (slidesOn) {
+    out.mode = slideModeNote_(r.live, Date.now());
+    try {
+      if (r.paused && r.control) {
+        const cell = r.control.getRange(55, 3);
+        if (String(cell.getValue() || '') !== SLIDE_PAUSED_ON_TEXT_) cell.setValue(SLIDE_PAUSED_ON_TEXT_);
+      }
+    } catch (e) {
+      console.error('slide deliveries (row 55): could not write C55: ' + ((e && e.message) || e));
+    }
+  }
   return out;
 }
+
+// C55 while row 55 is ON and the bot is paused (Control B2 OFF): nothing is delivered then
+const SLIDE_PAUSED_ON_TEXT_ = '✓ ON, but paused: the bot is OFF (Control B2), so no pulse slides are delivered until it is ON again';
 
 /**
  * Row 54 ON: the dashboard's build id (Dashboard.gs DASH_BUILD_) in the property BOT_BUILD, written only when it is not

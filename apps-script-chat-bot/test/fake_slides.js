@@ -285,11 +285,29 @@ module.exports = function makeSlides() {
     };
   }
 
+  /**
+   * A layout's placeholder (Layout.getPlaceholder): its box, and its Shape, whose text style is the one the layout gives
+   * a new slide's placeholder (like the real one, it has no getText() itself: asShape() gives the Shape).
+   */
+  function layoutPlaceholderObj(p) {
+    const st = Object.assign({}, BASE_STYLE, p.style || {});
+    const shape = {
+      getPlaceholderType: () => p.type,
+      getText: () => ({
+        asString: () => '\n',
+        getTextStyle: () => ({ isBold: () => !!st.bold, getFontFamily: () => st.fontFamily, getFontSize: () => st.fontSize,
+          getForegroundColor: () => colorObj(st.color ? hex(st.color) : null) }),
+      }),
+    };
+    return Object.assign(boxGetters(p), { getPageElementType: () => 'SHAPE', asShape: () => shape });
+  }
+
   function layoutObj(deck, layout) {
     const l = {
       getObjectId: () => layout.id,
       getLayoutName: () => layout.name,
       getPlaceholders: () => layout.placeholders.map(p => ({ getPlaceholderType: () => p.type })),
+      getPlaceholder: type => { const p = layout.placeholders.find(x => x.type === String(type)); return p ? layoutPlaceholderObj(p) : null; },
       getBackground: () => background(deck, layout, () => layout.background, () => null, false),
       _layout: layout,
     };

@@ -11,7 +11,8 @@
  *   webViewerCall_()         true when a dashboard viewer (not the bot's own account) is calling: every other public
  *                            function of the bot refuses such a call (its first line)
  *   dashCtx_()               the read-only context every dash* function starts from: {ss, control, switches, mode, now}
- *   dashBuildInfo_()         {web, bot, behind, url}: is this link's code older than the bot's?
+ *   dashBuildInfo_(ctx)      {web, bot, behind, url, sameAccount}: is this link's code older than the bot's, and does it
+ *                            run as the bot's account (Control B8)?
  *   dashServed_(answer)      the answer with servedAt: the bot's clock as it is sent (the page's "N min ago" counts
  *                            from it, never from the viewer's device clock)
  *
@@ -21,14 +22,21 @@
 // The dashboard's own build id: changed by hand whenever the dashboard's code changes. poll() writes it to the property
 // BOT_BUILD while row 54 is ON (the time trigger runs the newest code); the web app compares it with its own copy (a
 // deployment serves the code of its version), and says so when the link runs an older version than the bot
-const DASH_BUILD_ = '2026-11-18.1';
+const DASH_BUILD_ = '2026-11-18.2';
 const DASH_BUILD_PROP_ = 'BOT_BUILD';
 const DASH_ACL_CACHE_SEC_ = 600;
 const DASH_TITLE_ = 'Burson QA bot · Live';
 
-/** The web app's page. Access is checked first: a viewer the bot's sheet is not shared with sees why, and nothing else. */
+/**
+ * The web app's page. Access is checked first: a viewer the bot's sheet is not shared with sees why, and nothing else.
+ * A viewer Google did not name (a blank address) gets the why as plain text (ContentService): no HtmlService page, so no
+ * google.script.run bridge reaches someone the bot could not identify (webViewerCall_ can't tell them from a trigger run).
+ */
 function doGet(e) {
   const access = dashAccess_();
+  if (!access.ok && !access.email) {
+    return ContentService.createTextOutput(`You can't open the live dashboard yet. ${access.why}`).setMimeType(ContentService.MimeType.TEXT);
+  }
   if (!access.ok) {
     return HtmlService.createHtmlOutput(dashDeniedHtml_(access))
       .setTitle(DASH_TITLE_)
@@ -60,7 +68,10 @@ function dashDeniedHtml_(access) {
 /**
  * May this viewer see the dashboard? The same people as the bot's sheet: the bot's own account, anyone the sheet is
  * shared with (its editors and viewers), or everyone when the sheet is shared with the whole domain or with anyone who
- * has the link. {ok, email, self, why}. The answer is cached 10 minutes per viewer. Never throws.
+ * has the link. {ok, email, self, why}. Only a definite answer is cached (10 minutes per viewer, keyed by a SHA-256 of
+ * the address, so no two addresses share one); when Drive can't be asked, or the bot's sheet is not known, the viewer is
+ * told to try again and nothing is cached. A share through a Google Group can't be seen (Drive lists the group's
+ * address, and checking its members needs a permission the bot does not ask for): the answer says so. Never throws.
  */
 function dashAccess_() {
   let email = '';
@@ -73,9 +84,10 @@ function dashAccess_() {
         'Open the link while signed in to your work Google account, in the same organisation as the bot\'s account.' };
   }
   if (self && email === self) return { ok: true, email, self: true, why: '' };
-  const key = `dash1:acl:${hashText_(email)}`;
+  let key = '';
+  try { key = `dash1:acl:${dashDigest_(email)}`; } catch (e) { key = ''; }
   let cache = null;
-  try { cache = CacheService.getScriptCache(); } catch (e) { cache = null; }
+  try { cache = key ? CacheService.getScriptCache() : null; } catch (e) { cache = null; }
   try {
     const hit = cache ? cache.get(key) : null;
     if (hit === '1') return { ok: true, email, self: false, why: '' };
@@ -84,23 +96,28 @@ function dashAccess_() {
   let ok = false;
   try {
     const id = PropertiesService.getScriptProperties().getProperty(STORE_SHEET_PROP_);
-    if (id) {
-      const file = DriveApp.getFileById(id);
-      const wide = String(file.getSharingAccess());
-      if (wide === String(DriveApp.Access.DOMAIN) || wide === String(DriveApp.Access.DOMAIN_WITH_LINK) ||
-        wide === String(DriveApp.Access.ANYONE) || wide === String(DriveApp.Access.ANYONE_WITH_LINK)) {
-        ok = true;
-      } else {
-        const people = [].concat(file.getEditors() || [], file.getViewers() || []);
-        try { people.push(file.getOwner()); } catch (e) { /* a shared drive file has no owner */ }
-        ok = people.some(u => { try { return String(u && u.getEmail() || '').trim().toLowerCase() === email; } catch (e) { return false; } });
-      }
+    if (!id) return dashUnchecked_(email);
+    const file = DriveApp.getFileById(id);
+    const wide = String(file.getSharingAccess());
+    if (wide === String(DriveApp.Access.DOMAIN) || wide === String(DriveApp.Access.DOMAIN_WITH_LINK) ||
+      wide === String(DriveApp.Access.ANYONE) || wide === String(DriveApp.Access.ANYONE_WITH_LINK)) {
+      ok = true;
+    } else {
+      const people = [].concat(file.getEditors() || [], file.getViewers() || []);
+      try { people.push(file.getOwner()); } catch (e) { /* a shared drive file has no owner */ }
+      ok = people.some(u => { try { return String(u && u.getEmail() || '').trim().toLowerCase() === email; } catch (e) { return false; } });
     }
   } catch (e) {
-    ok = false;
+    return dashUnchecked_(email);  // not a definite answer: never cached
   }
   try { if (cache) cache.put(key, ok ? '1' : '0', DASH_ACL_CACHE_SEC_); } catch (e) { /* asked again next time */ }
   return ok ? { ok: true, email, self: false, why: '' } : dashDenied_(email);
+}
+
+/** A viewer's address as a cache key's part: the SHA-256 (hex) of the lower-cased address. Pure but for Utilities. */
+function dashDigest_(email) {
+  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(email || '').toLowerCase(), Utilities.Charset.UTF_8);
+  return bytes.map(b => ((b + 256) % 256).toString(16).padStart(2, '0')).join('');
 }
 
 /** The "not shared with you" answer (the viewer's own address only; never another one). Pure. */
@@ -108,14 +125,24 @@ function dashDenied_(email) {
   return { ok: false, email, self: false,
     why: `The live dashboard shows the bot's work to the people its sheet is shared with, and the sheet is not shared with ${email}. ` +
       'Ask the owner of the bot\'s sheet (the Google Sheet with the Control tab) to share it with you, then open this link again ' +
-      '(it can take up to 10 minutes to let you in).' };
+      '(it can take up to 10 minutes to let you in). If it is shared with you through a Google Group, the bot can\'t see that: ' +
+      'ask to be added by name.' };
+}
+
+/** The answer when the sharing could not be checked just now (Drive did not answer, or the bot's sheet is not known): not cached. Pure. */
+function dashUnchecked_(email) {
+  return { ok: false, email, self: false,
+    why: 'The dashboard could not check who the bot\'s sheet is shared with just now (Google Drive did not answer, or the bot ' +
+      'has not been set up yet): try again in a minute.' };
 }
 
 /**
  * True when a dashboard viewer is calling: the person running the code (the active user) is known and is not the
  * account the bot runs as. Every public function of the bot other than the dashboard's own refuses such a call (the web
  * app runs as the bot's account, so google.script.run could otherwise reach them). Trigger runs and the owner's own runs
- * in the editor are never refused. Never throws.
+ * in the editor are never refused. A blank active user is a trigger run (Apps Script names no user there), so it is
+ * not refused: a web-app visitor Google did not name never gets a page with google.script.run in the first place
+ * (doGet answers them in plain text). Never throws.
  */
 function webViewerCall_() {
   try {
@@ -130,30 +157,65 @@ function webViewerCall_() {
 
 /**
  * The read-only context every dash* function starts from: the bot's sheet, its Control tab, the switches as the tab
- * says now, and the mode (testing / live) as the bot last wrote it in C29. Throws when the sheet can't be opened (the
- * caller turns that into a plain message).
+ * says now, the mode (testing / live) as the bot last wrote it in C29, whether the Control tab could be read at all
+ * (controlOk: a missing tab, or a read that failed, is not "every switch OFF"), whether the bot is ON (B2: botOn) and
+ * whether this web app runs as the account in "Runs as" (B8: sameAccount, null when B8 is blank or unreadable; no
+ * address is kept in the answer). Throws when the sheet can't be opened (the caller turns that into a plain message).
  */
 function dashCtx_() {
   const ss = openStore_(false);
   const control = controlTab_(ss);
-  const switches = control ? readSwitches_(control) : switchesOff_();
+  let controlOk = false;
+  let botOn = false;
+  let sameAccount = null;
+  if (control) {
+    try {
+      // B2 to the last switch row, read here so a read that fails is told apart from a tab whose switches are OFF
+      // (readSwitches_ answers "all OFF" for both)
+      const last = Math.max.apply(null, switchRows_());
+      const top = control.getRange(2, 2, last - 1, 1).getValues();
+      botOn = parseControl_(top[0][0], '', '').on;
+      const runsAs = String(top[6][0] === undefined || top[6][0] === null ? '' : top[6][0]).trim().toLowerCase();
+      const me = slideBotAccount_().toLowerCase();
+      sameAccount = runsAs && me ? runsAs === me : null;
+      controlOk = true;
+    } catch (e) {
+      controlOk = false;
+    }
+  }
+  const switches = control && controlOk ? readSwitches_(control) : switchesOff_();
   let mode = 'unknown';
   try {
     const c29 = control ? String(control.getRange(29, 3).getValue() || '') : '';
     if (/Testing/.test(c29)) mode = 'testing';
     else if (/\bLIVE\b/.test(c29)) mode = 'live';
   } catch (e) { mode = 'unknown'; }
-  return { ss, control, switches, mode, now: Date.now() };
+  return { ss, control, switches, controlOk, botOn, sameAccount, mode, now: Date.now() };
 }
 
+/** The answer of a dash* call when the Control tab is missing or could not be read (never "it is OFF"). Pure. */
+function dashControlUnread_(ctx) {
+  return { ok: false, why: ctx && ctx.control
+    ? 'The Control tab of the bot\'s sheet could not be read just now, so the dashboard can\'t tell which parts are ON: press Refresh in a minute.'
+    : 'The bot\'s sheet has no Control tab (it is made by setup()), so the dashboard can\'t tell which parts are ON: the bot\'s account runs setup() once.' };
+}
+
+/** The words the page shows when this web app runs as another account than the bot (Control B8): no address. Pure. */
+const DASH_ACCOUNT_WHY_ = 'This web app runs as a different Google account than the bot (Control B8, "Runs as"): it was deployed ' +
+  'from another account. The owner deploys it again signed in as the account in B8 (README, "Live dashboard", steps 3 and 4); ' +
+  'until then Run now and the deck checks use the other account.';
+
 /**
- * {web, bot, behind, url}: the dashboard code this link runs vs the newest code the bot runs (BOT_BUILD), and the web
- * app's own link (the page reads the deployment id from it for the exact `clasp deploy -i <id>` command). Never throws.
+ * {web, bot, behind, url, sameAccount, accountWhy}: the dashboard code this link runs vs the newest code the bot runs
+ * (BOT_BUILD), the web app's own link (the page reads the deployment id from it for the exact `clasp deploy -i <id>`
+ * command), and whether it runs as the bot's account (Control B8; `ctx`: dashCtx_). Never throws.
  */
-function dashBuildInfo_() {
+function dashBuildInfo_(ctx) {
   let bot = '';
   try { bot = String(PropertiesService.getScriptProperties().getProperty(DASH_BUILD_PROP_) || ''); } catch (e) { bot = ''; }
-  return { web: DASH_BUILD_, bot, behind: !!bot && bot !== DASH_BUILD_, url: dashWebAppUrl_() };
+  const sameAccount = ctx && typeof ctx.sameAccount === 'boolean' ? ctx.sameAccount : null;
+  return { web: DASH_BUILD_, bot, behind: !!bot && bot !== DASH_BUILD_, url: dashWebAppUrl_(), sameAccount,
+    accountWhy: sameAccount === false ? DASH_ACCOUNT_WHY_ : '' };
 }
 
 /** The web app's own link (empty when no web app deployment exists yet). Never throws. */

@@ -154,6 +154,30 @@ module.exports = H => {
     helpAt57(sh, 'with row 54 ON');
   });
 
+  test('dashboard control: on a tab from before rows 54-55, a person\'s text in the cells rows 54 and 55 are written over (beside the old help lines) is kept below the help, unchanged, and the log says which cell it came from; a stray ON there is never carried over (the switch starts OFF)', () => {
+    const { t, sh } = world();
+    const old = olderTab(sh);
+    eq([sh.cell(54, 1), sh.cell(55, 1)], [old[0], old[1]]);  // two of the old help's lines
+    sh.getRange(54, 3).setValue('C54 a person note beside old help');
+    sh.getRange(55, 2).setValue('B55 mine');
+    sh.getRange(55, 3).setValue('ON');
+    sh.getRange(54, 2).setValue('ON');
+    t.g.logs.length = 0;
+    t.poll();
+    eq([cells(sh, 54), cells(sh, 55)], [[LABEL54, 'OFF', OFF54], [LABEL55, 'OFF', OFF55]]);
+    helpAt57(sh, 'after the run');
+    const below = sh.rows.slice(57 + B.ev('CONTROL_HELP_ROWS_') - 1).map(r => r[0]);
+    eq(below, ['C54 a person note beside old help', 'B55 mine', 'ON']);
+    const end = 57 + B.ev('CONTROL_HELP_ROWS_') - 1;
+    eq(t.g.logs.filter(l => /person's text there was kept below it/.test(l)),
+      [`Control tab: "How it works" now fills rows 57-${end} of column A; a person's text there was kept below it (C54 to A${end + 1}, B55 to A${end + 2}, C55 to A${end + 3})`]);
+    eq(t.bot.readControl_(sh).switches.liveDashboard, false);
+    // the next runs keep them where they are and move nothing again
+    const snap = JSON.stringify(sh.rows.slice(51));
+    t.poll();
+    eq(JSON.stringify(sh.rows.slice(51)), snap);
+  });
+
   test('dashboard control: writing the help clears only the bot\'s own old text from row 52 down, never a switch row (an old help line in A54 stays until its switch is written) and never a person\'s text; on today\'s tab it writes nothing in rows 52-56', () => {
     const { t, sh } = world();
     // today's layout: writing the help again writes only the help itself
@@ -237,7 +261,18 @@ module.exports = H => {
     t.poll();
     t.poll();
     eq(writes.filter(w => w[0] === 'BOT_BUILD').length, 1, 'no write while it is the same');
-    eq(t.bot.dashBuildInfo_(), { web: B.ev('DASH_BUILD_'), bot: B.ev('DASH_BUILD_'), behind: false, url: '' });
+    eq(t.bot.dashBuildInfo_(), { web: B.ev('DASH_BUILD_'), bot: B.ev('DASH_BUILD_'), behind: false, url: '', sameAccount: null, accountWhy: '' });
+    // the account the web app runs as (it was deployed from) against "Runs as" (Control B8), never naming either address
+    eq([t.bot.dashBuildInfo_(t.bot.dashCtx_()).sameAccount, t.bot.dashBuildInfo_(t.bot.dashCtx_()).accountWhy], [true, '']);
+    const b8 = sh.cell(8, 2);
+    sh.getRange(8, 2).setValue('someone.else@runner.test');
+    const other = t.bot.dashBuildInfo_(t.bot.dashCtx_());
+    eq(other.sameAccount, false);
+    assert.match(other.accountWhy, /^This web app runs as a different Google account than the bot \(Control B8, "Runs as"\): it was deployed from another account\. The owner deploys it again signed in as the account in B8/);
+    assert.ok(!/@/.test(other.accountWhy));
+    sh.getRange(8, 2).setValue('');
+    eq(t.bot.dashBuildInfo_(t.bot.dashCtx_()).sameAccount, null);
+    sh.getRange(8, 2).setValue(b8);
     // the web app's own link, for the page's exact `clasp deploy -i <id>` (a Workspace domain's link has /a/macros/<domain>/)
     t.g.script.url = 'https://script.google.com/a/macros/team.test/s/AKfycbTestDeployment0123456789/exec';
     eq(t.bot.dashBuildInfo_().url, 'https://script.google.com/a/macros/team.test/s/AKfycbTestDeployment0123456789/exec');
@@ -254,7 +289,7 @@ module.exports = H => {
     t.poll();
     eq([t.g.props.get('BOT_BUILD'), writes.filter(w => w[0] === 'BOT_BUILD')], ['kept', []]);
     // the upkeep on its own: what it did
-    eq([t.bot.pollDashboardUpkeep_({}), t.bot.pollDashboardUpkeep_(null)], [{ build: '', trigger: '' }, { build: '', trigger: '' }]);
+    eq([t.bot.pollDashboardUpkeep_({}), t.bot.pollDashboardUpkeep_(null)], [{ build: '', trigger: '', mode: '' }, { build: '', trigger: '', mode: '' }]);
   });
 
   test('dashboard control: with row 55 OFF and no delivery trigger made, a run makes no trigger call at all; ON, one time trigger for dashDeliverDue every 5 minutes is made once and kept (an extra one is deleted, the poll trigger is never touched); OFF again, it is removed, and the next runs make no trigger call', () => {
@@ -411,9 +446,32 @@ module.exports = H => {
     const blank = as('');
     eq([blank.ok, blank.email, emailsIn(blank.why)], [false, '', []]);
     assert.match(blank.why, /Google did not tell the dashboard who you are/);
-    // Drive can't be asked (no access, a failure): refused
+    // Drive can't be asked (no access, a failure): refused, told to try again, and never kept: once Drive answers, the
+    // viewer is let in at once (no 10 minutes of a wrong "not shared with you")
     share({ fail: 'Access denied: DriveApp.' });
-    eq(as('editor@team.test').ok, false);
+    const failed = as('editor@team.test');
+    eq(failed.ok, false);
+    assert.match(failed.why, /^The dashboard could not check who the bot's sheet is shared with just now .*: try again in a minute\.$/);
+    eq(Array.from(t.g.cache.keys()).filter(k => k.startsWith('dash1:acl:')), []);
+    t.g.drive.files.set(id, { access: 'PRIVATE', editors: ['editor@team.test'], viewers: [], owner: 'owner@team.test' });
+    eq(as('editor@team.test').ok, true);
+    // the bot's sheet not known yet (no STORE_SHEET_ID): the same, and nothing kept
+    t.g.cache.clear();
+    const sheetId = t.g.props.get('STORE_SHEET_ID');
+    t.g.props.delete('STORE_SHEET_ID');
+    assert.match(as('editor@team.test').why, /^The dashboard could not check/);
+    t.g.props.set('STORE_SHEET_ID', sheetId);
+    eq(as('editor@team.test').ok, true);
+    // the answer is kept per address by a SHA-256 of it: two addresses whose short hash (Bot.gs hashText_) is the same
+    // never share an answer
+    const [one, two] = ['u00mf9r@team.test', 'u01ab3a@team.test'];
+    eq(B.hashText_(one), B.hashText_(two));
+    share({ editors: [one], viewers: [] });
+    eq([as(one).ok, as(two).ok], [true, false]);
+    eq(Array.from(t.g.cache.keys()).filter(k => k.startsWith('dash1:acl:')).map(k => /^dash1:acl:[0-9a-f]{64}$/.test(k)), [true, true]);
+    // shared through a Google Group (Drive lists the group's address): the bot can't see the members, and says so
+    share({ editors: ['brand-safety-team@team.test'], viewers: [] });
+    assert.match(as('member@team.test').why, /If it is shared with you through a Google Group, the bot can't see that: ask to be added by name\.$/);
     // a shared drive's file (no owner): editors and viewers still count
     share({ owner: null });
     eq([as('editor@team.test').ok, as('owner@team.test').ok], [true, false]);
@@ -440,11 +498,13 @@ module.exports = H => {
     assert.match(page.getContent(), /Ask the owner of the bot&#39;s sheet \(the Google Sheet with the Control tab\) to share it with you/);
     eq(emailsIn(page.getContent()), ['stranger@team.test']);
     eq(built.some(o => o.template), false);
-    // a blank address (Google hid it): the same page, with no address at all
+    // a blank address (Google hid it): the answer as plain text (ContentService), no page at all, so no google.script.run
+    // bridge reaches someone the bot could not identify (webViewerCall_ can't tell them from a trigger run); no address
     t.g.session.active = '';
+    const pages = built.length;
     const hidden = t.bot.doGet({});
-    eq([emailsIn(hidden.getContent()), built.some(o => o.template)], [[], false]);
-    assert.match(hidden.getContent(), /Google did not tell the dashboard who you are/);
+    eq([hidden.contentService, hidden.getMimeType(), built.length, emailsIn(hidden.getContent()), built.some(o => o.template)], [true, 'TEXT', pages, [], false]);
+    assert.match(hidden.getContent(), /^You can't open the live dashboard yet\. Google did not tell the dashboard who you are/);
     // an address with markup in it is shown as text, never as markup
     t.g.session.active = 'a<b>@team.test';
     assert.ok(!/<b>/.test(t.bot.doGet({}).getContent()));

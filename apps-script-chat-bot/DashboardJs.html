@@ -25,6 +25,10 @@
 
   const REFRESH_MS = 60 * 1000;
   const TICK_MS = 5 * 1000;
+  // what the page shows is past this age (the bot runs every minute; DashboardData.gs DL_RUN_OK_MS_): never shown as calm
+  const STALE_MS = 5 * 60 * 1000;
+  // how long a call to the bot may take before the page gives up on it (a preview or a run can take minutes)
+  const CALL_TIMEOUT_MS = { dashPreview: 330 * 1000, dashRunNow: 330 * 1000, '': 90 * 1000 };
   const LEVELS = ['critical', 'high', 'medium', 'low'];
   const LEVEL_WORDS = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low', unknown: 'Can\'t be sure' };
   const LEVEL_RANK = { critical: 4, high: 3, medium: 2, low: 1, unknown: 0 };
@@ -37,7 +41,7 @@
     held: { label: 'Held back', tone: 'st-plain' },
   };
   const STATUS_TONE = {
-    'needs-review': 'st-info', 'fix-asked': 'st-warn', 'draft-waiting': 'st-warn', sent: 'st-good', tns: 'st-good',
+    'needs-review': 'st-info', 'needs-person': 'st-bad', 'fix-asked': 'st-warn', 'draft-waiting': 'st-warn', sent: 'st-good', tns: 'st-good',
     'no-action': 'st-plain', failed: 'st-bad', superseded: 'st-plain', done: 'st-plain',
   };
   const KIND_WORDS = {
@@ -380,11 +384,21 @@
 
   /**
    * Calls the bot's function `fn` with `args` through google.script.run: a promise of its answer (an object; an empty
-   * answer becomes {ok: false, why}), rejected with the Error when the call itself fails. Never throws.
+   * answer becomes {ok: false, why}), rejected with the Error when the call itself fails, or when no answer comes within
+   * CALL_TIMEOUT_MS (an answer after that is let go). Never throws.
    */
   function call(fn) {
     const args = Array.prototype.slice.call(arguments, 1);
-    return new Promise((resolve, reject) => {
+    return new Promise((resolveIn, rejectIn) => {
+      let done = false;
+      const wait = CALL_TIMEOUT_MS[fn] || CALL_TIMEOUT_MS[''];
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        rejectIn(new Error(`the bot did not answer within ${Math.round(wait / 1000)} seconds`));
+      }, wait);
+      const resolve = r => { if (done) return; done = true; clearTimeout(timer); resolveIn(r); };
+      const reject = e => { if (done) return; done = true; clearTimeout(timer); rejectIn(e); };
       let run = null;
       try { run = window.google && window.google.script && window.google.script.run; } catch (e) { run = null; }
       if (!run) {
@@ -392,7 +406,7 @@
         return;
       }
       try {
-        const runner = run.withSuccessHandler(r => { noteBotClock(r); resolve(r && typeof r === 'object' ? r : { ok: false, why: 'The bot sent back an empty answer.' }); })
+        const runner = run.withSuccessHandler(r => { if (done) return; noteBotClock(r); resolve(r && typeof r === 'object' ? r : { ok: false, why: 'The bot sent back an empty answer.' }); })
           .withFailureHandler(e => reject(e instanceof Error ? e : new Error(errWords(e))));
         if (typeof runner[fn] !== 'function') throw new Error(`the bot has no ${fn} yet (this link may run an older version)`);
         runner[fn].apply(runner, args);
@@ -414,6 +428,8 @@
     } else if (x.off) {
       title = what === 'the deliveries' ? 'Slide deliveries is OFF' : 'The live dashboard is OFF';
       todo = 'Once it is ON, press Try again.';
+    } else if (txt(x.todo)) {
+      todo = txt(x.todo);  // the bot's own next step for this answer (trying again would not help)
     }
     return h('div', { class: 'notice panel glass', role: 'alert' },
       h('h2', {}, title), h('p', {}, why), h('p', { class: 'muted' }, h('b', {}, 'What to do: '), todo),
@@ -595,6 +611,12 @@
           `This link runs ${txt(b.web) || 'a version that is not named'}; the bot runs ${txt(b.bot) || 'a version that is not named'}, so parts of this page may be missing or out of date. `,
           h('b', {}, 'What to do: '), 'the owner of the bot runs ', how, ' in the bot\'s folder (apps-script-chat-bot); then reload this page.')));
     }
+    const acct = S.snap ? obj(S.snap.build) : obj(S.deliv.resp);
+    if (acct.sameAccount === false) {
+      add(root, h('div', { class: 'banner banner--bad', role: 'alert' }, icon('info'),
+        h('div', { class: 'banner-text' }, h('strong', {}, 'This web app runs as a different Google account than the bot. '),
+          txt(acct.accountWhy) || 'The owner deploys it again signed in as the account in Control B8 (README, "Live dashboard").')));
+    }
     if (S.area === 'live' && S.snap && S.refreshFailed) {
       add(root, h('div', { class: 'banner', role: 'alert' }, icon('info'),
         h('div', { class: 'banner-text' }, h('strong', {}, 'The last refresh did not work: '), `${S.refreshFailed.why}. `,
@@ -656,10 +678,30 @@
         h('div', { class: 'first-grid' }, h('div', { class: 'skel skel-card' }), h('div', { class: 'skel skel-card' }), h('div', { class: 'skel skel-card' }))));
   }
 
+  /**
+   * How old what the page shows is, by the bot's clock (ms since the snapshot was built), and whether it is too old to
+   * show as it is: past STALE_MS, or the last refresh failed. {stale, age, why}. Never throws.
+   */
+  function staleness() {
+    const asOf = numOr(S.snap && S.snap.asOf);
+    const now = botNow();
+    const age = asOf && now !== null ? Math.max(0, now - asOf) : null;
+    const stale = !!S.refreshFailed || (age !== null && age > STALE_MS);
+    const why = S.refreshFailed ? `the last refresh did not work (${txt(S.refreshFailed.why)})` : 'no newer answer has come from the bot';
+    return { stale, age, why };
+  }
+
   /** The Now strip: the level, the headline, how current the data is, the counts, what the page can't see, each source. Pure but for the DOM. */
   function nowStrip() {
-    const now = obj(S.snap.now);
+    const now0 = obj(S.snap.now);
     const health = obj(S.snap.health);
+    const old = staleness();
+    S.drawnStale = old.stale;
+    // what the page shows is old: "can't be sure", how old, and Refresh first (the cached calm headline is never shown then)
+    const now = old.stale ? Object.assign({}, now0, { level: 'unknown',
+      headline: `Can't be sure: what this page shows is from ${old.age !== null ? agoWords(old.age) : 'a time the bot did not say'}, and ${old.why}.`,
+      first: [{ kind: 'health', id: 'page', title: 'Refresh this page', why: old.why,
+        action: { text: 'Press Refresh. If it keeps failing, the owner of the bot checks that the web app is deployed (README, "Live dashboard").', view: 'refresh' } }] }) : now0;
     const level = levelOf(now.level);
     const serious = level === 'critical' || level === 'high' || level === 'unknown';
     const box = h('section', { class: `now panel glass${serious ? ' edge glow' : ''}`, id: 'now', 'aria-labelledby': 'now-headline' });
@@ -746,6 +788,7 @@
 
   /** The button words for an item's primary action: open its detail, or go to the view that shows it. Pure. */
   function actionWords(action) {
+    if (obj(action).view === 'refresh') return 'Refresh';
     const a = obj(action);
     const d = obj(a.detail);
     if (d.kind && d.id) return d.kind === 'cluster' ? 'Open the story' : 'Open the alert';
@@ -754,6 +797,7 @@
 
   /** Runs an item's primary action. Never throws. */
   function runAction(action, opener) {
+    if (obj(action).view === 'refresh') { loadSnapshot(true); return; }
     const a = obj(action);
     const d = obj(a.detail);
     if (d.kind && d.id) openDetail(d.kind, d.id, false, opener);
@@ -1501,7 +1545,8 @@
             txt(s.why) ? h('p', { class: 'item-why' }, txt(s.why)) : null,
             txt(s.action) ? h('p', { class: 'item-next' }, h('b', {}, 'Next step: '), txt(s.action)) : null),
           d.kind && d.id ? h('div', {}, h('button', { type: 'button', class: 'btn btn--tonal btn--sm', 'data-fk': `stuck:${s.id}`,
-            on: { click: ev => openDetail(d.kind, String(d.id), false, ev.currentTarget) } }, d.kind === 'cluster' ? 'Open the story' : 'Open the alert')) : null);
+            on: { click: ev => openDetail(d.kind, String(d.id), false, ev.currentTarget) } }, d.kind === 'cluster' ? 'Open the story' : 'Open the alert'))
+            : safeUrl(s.link) ? h('div', {}, extLink(s.link, 'Open it in Chat', 'btn btn--tonal btn--sm')) : null);
       })));
     }
     add(wrap, sec);
@@ -1930,6 +1975,7 @@
     else if (d.resp) {
       const r = d.resp;
       add(result, h('p', { class: 'answer-a' }, txt(r.answer) || 'The bot\'s answer has no words for this post.'));
+      if (txt(r.todo)) add(result, h('p', { class: 'muted', style: { 'margin-top': '8px' } }, h('b', {}, 'What to do: '), txt(r.todo)));
       const found = arr(r.found).map(obj);
       if (found.length) {
         add(result, h('ul', { class: 'feed', style: { 'margin-top': '12px' } }, found.map(f => {
@@ -2026,17 +2072,19 @@
    */
   function delivGate() {
     const r = obj(S.deliv.resp);
+    const mayChange = r.mayChange !== false;  // set up, run, pause: for the people who can edit the bot's sheet
     let on = boolOf(r, ['on', 'switchOn', 'enabled', 'slideDeliveries']);
     if (on === null && obj(r.switches) && typeof obj(r.switches).slideDeliveries === 'boolean') on = r.switches.slideDeliveries;
     if (on === null && S.snap && typeof obj(S.snap.switches).slideDeliveries === 'boolean') on = S.snap.switches.slideDeliveries;
     const scopeOk = boolOf(r, ['scopeOk', 'scope', 'canEditSlides', 'authorized']);
     let canRun = boolOf(r, ['canRun']);
-    if (canRun === null) canRun = on !== false && scopeOk !== false;
+    if (canRun === null) canRun = on !== false && scopeOk !== false && r.paused !== true && r.controlOk !== false;
     let why = '';
     if (!canRun) {
-      why = txt(r.runWhy || r.offWhy || r.scopeWhy) || (on === false ? DELIV_OFF_WHY : scopeOk === false ? DELIV_SCOPE_WHY : txt(r.why));
+      why = r.controlOk === false ? txt(r.controlWhy) : on === false ? (txt(r.offWhy) || DELIV_OFF_WHY) : r.paused === true ? txt(r.pausedWhy)
+        : scopeOk === false ? (txt(r.scopeWhy) || DELIV_SCOPE_WHY) : txt(r.runWhy || r.why);
     }
-    return { on, scopeOk, canRun, why };
+    return { on, scopeOk, canRun, why, mayChange };
   }
 
   /** A delivery as the page reads it, whatever the answer's spelling (camelCase or the tab's column names). Pure. */
@@ -2089,7 +2137,8 @@
     else if (set.size === 5 && [1, 2, 3, 4, 5].every(d => set.has(d))) dw = 'Weekdays';
     else dw = DAY_ORDER.filter(d => set.has(d)).map(d => DAY_SHORT[d]).join(', ');
     const parts = [`${dw}${txt(s.time) ? ` at ${txt(s.time)}` : ''}${txt(s.tz) ? ` (${txt(s.tz)})` : ''}`];
-    if (s.mondayCoversWeekend) parts.push('Monday covers the weekend');
+    if (s.sincePrevious) parts.push('each slide covers the time since the run before');
+    else if (s.mondayCoversWeekend) parts.push('Monday covers the weekend');
     return parts.join('; ');
   }
 
@@ -2123,11 +2172,16 @@
     const dv = S.deliv;
     const wrap = h('div');
     const gate = delivGate();
+    // New, Edit, Preview, Run now and Pause are for the people who may set deliveries up: never drawn for anyone else
     add(wrap, h('div', { class: 'section-head', style: { 'margin-top': '20px' } },
       h('h1', { class: 'section-title', style: { font: 'var(--type-headline-m)' } }, 'Slide deliveries'),
-      h('span', { style: { 'margin-left': 'auto' } }, h('button', { type: 'button', class: 'btn btn--primary', 'data-fk': 'deliv:new',
-        on: { click: () => openEditor(null) } }, icon('plus'), 'New delivery'))));
+      gate.mayChange ? h('span', { style: { 'margin-left': 'auto' } }, h('button', { type: 'button', class: 'btn btn--primary', 'data-fk': 'deliv:new',
+        on: { click: () => openEditor(null) } }, icon('plus'), 'New delivery')) : null));
     add(wrap, lead('the brand safety pulse slides the bot puts into Google Slides decks on a schedule. Each delivery is one deck, one spot in it, one schedule and how far back it looks.'));
+    const rr = obj(dv.resp);
+    if (rr.ok === true && rr.sameAccount === false && txt(rr.accountWhy)) {
+      add(wrap, h('div', { class: 'banner banner--bad', role: 'alert', style: { 'margin-top': '16px' } }, icon('info'), h('div', { class: 'banner-text' }, txt(rr.accountWhy))));
+    }
     if (!gate.canRun && gate.why && dv.resp && obj(dv.resp).ok === true) {
       add(wrap, h('div', { class: 'banner', role: 'note', style: { 'margin-top': '16px' } }, icon('info'), h('div', { class: 'banner-text' }, gate.why)));
     }
@@ -2150,8 +2204,10 @@
     const list = deliveries();
     if (!list.length && tab.ok === false) return wrap;
     if (!list.length) {
-      add(wrap, emptyState('No deliveries yet', 'Nothing is set up to be delivered.', 'Press New delivery: paste a Google Slides link, pick where the pulse slide goes, how far back it looks and when it is delivered.',
-        h('button', { type: 'button', class: 'btn btn--primary', on: { click: () => openEditor(null) } }, icon('plus'), 'New delivery')));
+      add(wrap, gate.mayChange
+        ? emptyState('No deliveries yet', 'Nothing is set up to be delivered.', 'Press New delivery: paste a Google Slides link, pick where the pulse slide goes, how far back it looks and when it is delivered.',
+          h('button', { type: 'button', class: 'btn btn--primary', on: { click: () => openEditor(null) } }, icon('plus'), 'New delivery'))
+        : emptyState('No deliveries yet', 'Nothing is set up to be delivered.', 'Someone who can edit the bot\'s sheet sets deliveries up here. Ask the owner of the bot\'s sheet for edit access to set one up yourself.'));
       return wrap;
     }
     add(wrap, h('ul', { class: 'deliv-list' }, list.map(d => deliveryCard(d, gate))));
@@ -2196,6 +2252,7 @@
         h('div', {}, h('dt', {}, 'Next run'), h('dd', {}, next))),
       h('p', { class: 'small muted', style: { 'margin-top': '10px' } }, opts.join(' · ')),
       d.note ? h('p', { class: 'why-off', style: { 'margin-top': '6px' } }, d.note) : null);
+    if (!gate.mayChange) return card;  // the delivery as it is, with no button that changes it
     const actions = h('div', { class: 'deliv-actions' },
       h('button', { type: 'button', class: 'btn btn--primary btn--sm', disabled: !!runReason || busy, 'aria-describedby': runReason ? reasonId : null,
         'data-fk': `run:${d.id}`, on: { click: () => runNow(d) } }, icon('play'), busy && res.what === 'run' ? 'Running...' : 'Run now'),
@@ -2271,6 +2328,7 @@
 
   /** Opens the editor on a delivery (null: a new one); an existing deck is checked at once to show its slides. Never throws. */
   function openEditor(d) {
+    if (!delivGate().mayChange) return;  // only for the people who may set deliveries up
     const base = newSettings();
     let s = base;
     if (d) {
@@ -2312,7 +2370,7 @@
       design: { mode: s.design.mode === 'copy' ? 'copy' : 'default', slideId: s.design.mode === 'copy' ? txt(s.design.slideId) : '' },
       lookbackHours: Math.round(numOr(s.lookbackHours) || 24),
       schedule: { days: arr(s.schedule.days).map(Number).filter(d => d >= 0 && d <= 6).sort((a, b) => a - b), time: txt(s.schedule.time), tz: txt(s.schedule.tz),
-        mondayCoversWeekend: !!s.schedule.mondayCoversWeekend },
+        mondayCoversWeekend: !!s.schedule.mondayCoversWeekend, sincePrevious: !!s.schedule.sincePrevious },
       countOwn: !!s.countOwn, linkSensitive: !!s.linkSensitive, slides: { pulse: !!s.slides.pulse, positive: !!s.slides.positive },
       mode: s.mode === 'add' ? 'add' : 'replace', notify: e.notifyText.split(/[\n,;]+/).map(txt).filter(Boolean),
     };
@@ -2448,7 +2506,8 @@
     if (s.design.mode === 'copy') {
       kids.push(slides.length ? h('label', { class: 'field', style: { 'max-width': '520px' } }, h('span', {}, 'The slide whose look to copy'),
         h('select', { class: 'select', 'data-fk': 'design:slide', on: { change: ev => { s.design.slideId = ev.target.value; stalePreview(); refreshSaveBar(); } } },
-          [h('option', { value: '' }, 'Pick a slide')].concat(slides.map((sl, i) => h('option', { value: txt(sl.id), selected: txt(sl.id) === txt(s.design.slideId) }, `${i + 1}. ${txt(sl.title) || 'Untitled slide'}`)))))
+          [h('option', { value: '' }, 'Pick a slide')].concat(slides.map((sl, i) => h('option', { value: txt(sl.id), selected: txt(sl.id) === txt(s.design.slideId),
+            disabled: sl.titled === false }, `${i + 1}. ${txt(sl.title) || 'Untitled slide'}${sl.titled === false ? ' (its layout has no title box, so its look can\'t be copied)' : ''}`)))))
         : h('p', { class: 'muted' }, 'Check the deck first to pick a slide.'));
     }
     return step('Design', 'The slide follows the deck\'s design, never this page\'s.', s.design.mode === 'default' || !!txt(s.design.slideId), false, kids, 'step-design');
@@ -2479,8 +2538,9 @@
         ev.target.setAttribute('aria-valuetext', lookbackWords(v));
         scheduleCheckSoon(400);
       } } });
+    const since = s.schedule.sincePrevious ? h('p', { class: 'small', role: 'note' }, 'Each slide covers the time since the scheduled run before it (Match, in the schedule below): this lookback is used only for a slide with no run before it in the last 8 days.') : null;
     return step('How far back it looks', 'Each slide covers the alerts of this window before its run. From 1 hour to 30 days.', true, false,
-      [label, range, h('div', { class: 'small muted', style: { display: 'flex', 'justify-content': 'space-between', 'max-width': '520px' } }, h('span', {}, '1 hour'), h('span', {}, '30 days'))], 'step-lookback');
+      [label, range, since, h('div', { class: 'small muted', style: { display: 'flex', 'justify-content': 'space-between', 'max-width': '520px' } }, h('span', {}, '1 hour'), h('span', {}, '30 days'))], 'step-lookback');
   }
 
   /** The time zones to offer: this device's first, then the saved one, then every zone the browser knows. Pure. */
@@ -2514,12 +2574,15 @@
         timeZones(sc.tz).map(z => h('option', { value: z, selected: z === sc.tz }, z === dev ? `${z} (this device)` : z))));
     const time = h('label', { class: 'field' }, h('span', {}, 'Time'),
       h('input', { class: 'input', type: 'time', value: txt(sc.time), 'data-fk': 'ed:time', on: { change: ev => { sc.time = ev.target.value; stalePreview(); scheduleCheckSoon(200); refreshSaveBar(); } } }));
+    const sinceBox = h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!sc.sincePrevious, 'data-fk': 'ed:since',
+      on: { change: ev => { sc.sincePrevious = ev.target.checked; e.preview = null; renderSlides(); scheduleCheckSoon(200); } } }),
+    h('span', {}, 'Each slide covers the time since the run before (for days with different gaps between them)'));
     const monday = h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!sc.mondayCoversWeekend, 'data-fk': 'ed:monday',
       on: { change: ev => { sc.mondayCoversWeekend = ev.target.checked; stalePreview(); scheduleCheckSoon(200); } } }),
     h('span', {}, 'Monday covers the weekend (Monday\'s slide starts where Friday\'s ended)'));
     return step('When it is delivered', 'Pick the days and the time. The bot checks the schedule against how far back it looks: hours no slide covers, or slides that repeat each other.',
       days.size > 0 && !!txt(sc.time) && !!txt(sc.tz), false,
-      [chips, h('div', { class: 'inline-fields' }, time, tz), monday, h('div', { id: 'coverage' }, coverageBox())], 'step-schedule');
+      [chips, h('div', { class: 'inline-fields' }, time, tz), monday, sinceBox, h('div', { id: 'coverage' }, coverageBox())], 'step-schedule');
   }
 
   /** The coverage message from dashScheduleCheck, with a Match button when the bot offers a match. Pure but for the DOM. */
@@ -2551,18 +2614,23 @@
     const nextLabel = txt(first.label);
     const m = r.match ? obj(r.match) : null;
     const s = e.s;
-    const matchDiffers = m && ((numOr(m.lookbackHours) !== null && numOr(m.lookbackHours) !== numOr(s.lookbackHours)) ||
-      (typeof m.mondayCoversWeekend === 'boolean' && m.mondayCoversWeekend !== !!s.schedule.mondayCoversWeekend));
-    const matchWords = m ? [numOr(m.lookbackHours) !== null && numOr(m.lookbackHours) !== numOr(s.lookbackHours) ? `look back ${lookbackWords(m.lookbackHours)}` : '',
+    // "Match": each slide covering the time since the run before (when the times between runs differ), else a lookback
+    const since = !!(m && m.sincePrevious === true);
+    const matchDiffers = m && (since ? !s.schedule.sincePrevious : ((numOr(m.lookbackHours) !== null && numOr(m.lookbackHours) !== numOr(s.lookbackHours)) ||
+      (typeof m.mondayCoversWeekend === 'boolean' && m.mondayCoversWeekend !== !!s.schedule.mondayCoversWeekend) || !!s.schedule.sincePrevious));
+    const matchWords = !m ? '' : since ? 'cover the time since the run before on each slide' : [numOr(m.lookbackHours) !== null && numOr(m.lookbackHours) !== numOr(s.lookbackHours) ? `look back ${lookbackWords(m.lookbackHours)}` : '',
       typeof m.mondayCoversWeekend === 'boolean' && m.mondayCoversWeekend !== !!s.schedule.mondayCoversWeekend
-        ? (m.mondayCoversWeekend ? 'let Monday cover the weekend' : 'stop Monday covering the weekend') : ''].filter(Boolean).join(' and ') : '';
+        ? (m.mondayCoversWeekend ? 'let Monday cover the weekend' : 'stop Monday covering the weekend') : '',
+      s.schedule.sincePrevious ? 'use the lookback again' : ''].filter(Boolean).join(' and ');
     return h('div', { class: `coverage${problem ? ' warn' : ''}`, role: 'status' },
       lines.length === 1 ? h('p', {}, lines[0]) : h('ul', {}, lines.map(l => h('li', {}, l))),
       next ? h('p', { class: 'small', style: { 'margin-top': '6px' } }, `First run: ${nextLabel || clock(next, txt(s.schedule.tz) || undefined)}`) : null,
+      m && txt(m.text) && matchDiffers ? h('p', { class: 'small', style: { 'margin-top': '6px' } }, txt(m.text)) : null,
       matchDiffers && matchWords ? h('div', { style: { 'margin-top': '8px' } }, h('button', { type: 'button', class: 'btn btn--sm btn--tonal btn--wrap', 'data-fk': 'ed:match',
         on: { click: () => {
           if (numOr(m.lookbackHours) !== null) s.lookbackHours = Math.round(numOr(m.lookbackHours));
           if (typeof m.mondayCoversWeekend === 'boolean') s.schedule.mondayCoversWeekend = m.mondayCoversWeekend;
+          s.schedule.sincePrevious = since;
           e.preview = null;
           renderSlides();
           scheduleCheckSoon(0);
@@ -2733,7 +2801,7 @@
       if (txt(sl.windowLabel)) add(card, h('div', { class: 'slide-window' }, txt(sl.windowLabel)));
       const issues = arr(sl.issues).map(obj);
       const list = h('div', { class: 'slide-issues' });
-      if (!issues.length) add(list, h('div', { class: 'slide-empty' }, txt(sl.empty) || 'No alerts in this window'));
+      if (!issues.length && !txt(sl.unnamedLine)) add(list, h('div', { class: 'slide-empty' }, txt(sl.empty) || 'No alerts in this window'));
       issues.forEach(is => {
         const summary = arr(is.summary).map(obj);
         add(list, h('div', { class: 'slide-issue' },
@@ -2744,6 +2812,7 @@
             : String(seg.text === undefined || seg.text === null ? '' : seg.text)))) : null,
           txt(is.status) ? h('div', { class: 'slide-status' }, txt(is.status)) : null));
       });
+      if (txt(sl.unnamedLine)) add(list, h('div', { class: 'slide-status' }, issues.length ? `Also ${txt(sl.unnamedLine)}` : txt(sl.unnamedLine)));
       add(card, list);
       // text taller than the slide runs past its bottom edge in the deck: the preview shows where the slide ends and says so
       const over = h('div', { class: 'coverage warn', role: 'alert', hidden: true },
@@ -3008,6 +3077,8 @@
     });
     setInterval(() => {
       updateFresh();
+      // what the page shows became too old (or fresh again): the Now strip says so at once
+      if (S.snap && S.area === 'live' && staleness().stale !== !!S.drawnStale) redrawNow();
       if (document.visibilityState === 'visible' && S.area === 'live' && !S.loading && S.loadedAt && perfNow() - S.loadedAt >= REFRESH_MS) loadSnapshot(false);
     }, TICK_MS);
     loadSnapshot(false);
