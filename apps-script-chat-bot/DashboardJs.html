@@ -1612,14 +1612,18 @@
     if (!stories.length) add(wrap, h('p', { class: 'muted' }, 'The Head start tab lists no story of this app\'s own yet.'));
     else {
       add(wrap, h('div', { class: 'table-wrap' }, h('table', { class: 'table table-stack' },
-        h('thead', {}, h('tr', {}, ['Story', 'This app alerted', 'Burson alerted', 'Head start', 'IMs\' email', 'Matched on'].map(t => h('th', { scope: 'col' }, t)))),
+        h('thead', {}, h('tr', {}, ['Story', 'This app alerted', 'Burson alerted', 'Head start', 'Matched on', 'Head start on the post', 'IMs\' email'].map(t => h('th', { scope: 'col' }, t)))),
         h('tbody', {}, stories.map(s => h('tr', {},
           h('td', {}, extLink(s.link, txt(s.story) || 'Not named'), h('span', { class: 'sub' }, [txt(s.type), txt(s.product), txt(s.tag), txt(s.appAlert)].filter(Boolean).join(' · '))),
           h('td', { 'data-label': 'This app alerted' }, txt(s.at) || '—'),
           h('td', { 'data-label': 'Burson alerted' }, txt(s.bursonAt) || '—'),
           h('td', { 'data-label': 'Head start' }, txt(s.headStart) || '—'),
-          h('td', { 'data-label': 'IMs\' email' }, txt(s.imsAt) || '—'),
-          h('td', { 'data-label': 'Matched on' }, txt(s.matchedOn) || '—')))))));
+          h('td', { 'data-label': 'Matched on' }, txt(s.matchedOn) || '—'),
+          // the race on the same post: Burson's first alert on one of the story's own posts (blank when Burson alerted none of them)
+          h('td', { 'data-label': 'Head start on the post' }, txt(s.postHeadStart) || '—',
+            txt(s.postBursonAt) ? h('span', { class: 'sub' }, `Burson on this post ${txt(s.postBursonAt)} ET`) : null),
+          h('td', { 'data-label': 'IMs\' email' }, txt(s.imsAt) || '—',
+            txt(s.imsHeadStart) ? h('span', { class: 'sub' }, txt(s.imsHeadStart)) : null)))))));
     }
     return wrap;
   }

@@ -545,8 +545,33 @@ module.exports = H => {
     eq(q('corrections'), 'In the last 7 days, 4 corrections on 1 of Burson\'s alerts: product (1), social network (1), priority (1), engagement level (1).');
     assert.ok(/^Last 7 days \(the Head start tab, rebuilt .* ET\): of this app's own stories, Burson also alerted 0 of 5 \(0%\); this app was first on none of them, Burson on 0\.$/.test(q('beat-burson')), q('beat-burson'));
     assert.ok(/: surging \(7 accounts in the last full hour/.test(q('fastest')), q('fastest'));
-    // the Head start tab, when one the bot did not make is in the way
+    // the times as Sheets gives them back: the tab gives its time columns a date format, so a time the bot wrote as text
+    // comes back as a date; it is shown as the bot wrote it ("yyyy-MM-dd HH:mm" ET), never left out; and the race on the
+    // same post (Burson on this post, head start on the post) and the IMs' head start come with each story
     const sh = x.t.sheet().getSheetByName('Head start');
+    const firstRow = sh.rows.findIndex(r => r && /^EVERY STORY/.test(String(r[0] || ''))) + 3;  // its title, its header, then the stories
+    const T1 = Date.UTC(2026, 9, 14, 14, 5);
+    const T2 = Date.UTC(2026, 9, 14, 14, 50);
+    const T3 = Date.UTC(2026, 9, 14, 13, 40);
+    const T4 = Date.UTC(2026, 9, 14, 16, 0);
+    const keep = [2, 6, 8, 9, 15, 16].map(c => [c, sh.cell(firstRow, c)]);
+    sh.getRange(firstRow, 2).setValue(new Date(T1));
+    sh.getRange(firstRow, 6).setValue(new Date(T2));
+    sh.getRange(firstRow, 8).setValue(new Date(T4));
+    sh.getRange(firstRow, 9).setValue('ahead by 1 h 55 min');
+    sh.getRange(firstRow, 15).setValue(new Date(T3));
+    sh.getRange(firstRow, 16).setValue('behind by 25 min');
+    try {
+      const st = x.t.bot.dashSnapshot({ refresh: true }).early.stories[0];
+      eq([st.at, st.bursonAt, st.imsAt, st.imsHeadStart, st.postBursonAt, st.postHeadStart],
+        [x.t.bot.speedTime_(T1), x.t.bot.speedTime_(T2), x.t.bot.speedTime_(T4), 'ahead by 1 h 55 min', x.t.bot.speedTime_(T3), 'behind by 25 min']);
+      assert.ok(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(st.at), st.at);
+      eq(x.t.bot.dlTimeCell_(new Date(NaN)), '');
+      eq(x.t.bot.dlTimeCell_('\'2026-10-14 10:05'), '2026-10-14 10:05');
+    } finally {
+      keep.forEach(([c, v]) => sh.getRange(firstRow, c).setValue(v));
+    }
+    // the Head start tab, when one the bot did not make is in the way
     const a1 = sh.cell(1, 1);
     sh.getRange(1, 1).setValue('Our own head start notes');
     try {

@@ -598,9 +598,22 @@ function dlEdTabInto_(ss, now, out) {
     const story = dlCellLink_(v[2], formulas && formulas[i] && formulas[i][2]);
     const card = dlCellLink_(v[4], formulas && formulas[i] && formulas[i][4]);
     const outcome = dlText_(v[1]);
-    out.rows.push({ at: at || null, when: dlText_(v[0] instanceof Date ? '' : v[0]), day, outcome, group: groupOf(outcome),
+    out.rows.push({ at: at || null, when: dlTimeCell_(v[0]), day, outcome, group: groupOf(outcome),
       story: dlPlain_(story.label, 160), link: dlUrl_(story.url), why: dlPlain_(v[3], 300), card: card.label, kind: dlText_(v[5]),
       accounts: dlNum_(v[6]), platforms: dlText_(v[7]), tag: dlPlain_(v[8], 160), id: dlText_(v[9]) });
+  }
+}
+
+/** A time cell the bot wrote ("yyyy-MM-dd HH:mm" ET), as that text, whether Sheets kept it as text or made a date of it; '' for none. Never throws. */
+function dlTimeCell_(v) {
+  try {
+    // a date from any realm (Sheets' own, or another script's): its tag, not instanceof
+    if (Object.prototype.toString.call(v) === '[object Date]') {
+      return isNaN(v.getTime()) ? '' : Utilities.formatDate(new Date(v.getTime()), GEN.timezone || 'America/New_York', 'yyyy-MM-dd HH:mm');
+    }
+    return dlText_(v).replace(/^'/, '');
+  } catch (e) {
+    return '';
   }
 }
 
@@ -1654,7 +1667,8 @@ function dlPipeline_(alerts, stuck, now, sw) {
 /**
  * How early things were caught (SPEC 3.5 early): the Head start tab as the bot wrote it (its own only), read-only: {ok,
  * why (when it can't be read), rebuilt (its "Rebuilt ... ET" words), numbers: [{label, week, month}], stories: [{type,
- * at, story, link, product, tag, bursonAt, headStart, imsAt, matchedOn, appAlert}]}. Never throws.
+ * at, story, link, product, tag, bursonAt, headStart, imsAt, imsHeadStart, matchedOn, appAlert, postBursonAt, postHeadStart}]}.
+ * Never throws.
  */
 function dlEarly_(ss) {
   const out = { ok: false, why: '', rebuilt: '', numbers: [], stories: [] };
@@ -1692,9 +1706,12 @@ function dlEarly_(ss) {
         const v = values[i];
         if (!dlText_(v[0]) || dlText_(v[0]) === 'None yet') break;
         const story = dlCellLink_(v[2], formulas && formulas[i] && formulas[i][2]);
-        out.stories.push({ type: dlText_(v[0]), at: dlText_(v[1] instanceof Date ? '' : v[1]), story: dlPlain_(story.label, 160), link: dlUrl_(story.url),
-          product: dlText_(v[3]), tag: dlText_(v[4]), bursonAt: dlText_(v[5] instanceof Date ? '' : v[5]), headStart: dlText_(v[6]),
-          imsAt: dlText_(v[7] instanceof Date ? '' : v[7]), matchedOn: dlText_(v[9]), appAlert: dlText_(v[10]) });
+        // the times as the bot wrote them ("yyyy-MM-dd HH:mm" ET): Sheets turns those cells into dates (the tab gives the
+        // columns a date format), which are written back the same way, never left out
+        out.stories.push({ type: dlText_(v[0]), at: dlTimeCell_(v[1]), story: dlPlain_(story.label, 160), link: dlUrl_(story.url),
+          product: dlText_(v[3]), tag: dlText_(v[4]), bursonAt: dlTimeCell_(v[5]), headStart: dlText_(v[6]),
+          imsAt: dlTimeCell_(v[7]), imsHeadStart: dlText_(v[8]), matchedOn: dlText_(v[9]), appAlert: dlText_(v[10]),
+          postBursonAt: dlTimeCell_(v[14]), postHeadStart: dlText_(v[15]) });
       }
     }
   } catch (e) {
