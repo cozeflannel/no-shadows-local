@@ -22,12 +22,16 @@
  *                                                      question on a Social Alert thread from what the bot knows about the
  *                                                      alert only (no web search), or that it can't answer it
  *
- * Web grounding (settings.web_grounding: enterprise | google | off): the alert review and analyst answers can search the
- * web for what Burson's write-up doesn't say (news coverage, whether a claim or incident is real, who the author is,
+ * Web grounding (settings.web_grounding: enterprise | google | off): the alert review and analyst answers (and the Early
+ * Detection review, and the Watch alerts' pre-read for the Auto-correct space: EarlyDetection.gs, WatchAlerts.gs) can
+ * search the web for what
+ * Burson's write-up doesn't say (news coverage, whether a claim or incident is real, who the author is,
  * Google's public statements) with Vertex AI's Web Grounding for Enterprise (`enterpriseWebSearch`, the default) or
  * Grounding with Google Search (`googleSearch`). Gemini 3.x returns the same structured JSON with the tool on. Answers to
  * Burson never search: they stick to the guide and the Resources tab. If Vertex AI refuses the tool (not enabled for the
- * project or model), the call is retried without it and grounding stays off for 6 hours. Searches and sources are logged.
+ * project or model), the call is retried without it and grounding stays off for 6 hours. Searches and sources are logged
+ * (in the Auto-correct space the review's write-up keeps its web background only when sources came back, and its note
+ * names them: Review.gs writeupOf_).
  *
  * Limits on every call: an output cap (generationConfig.maxOutputTokens, thinking included: GEMINI_MAX_TOKENS_) and, on
  * Gemini 3 and later, the thinking level (generationConfig.thinkingConfig.thinkingLevel: GEMINI_THINKING_LEVEL_). An
@@ -270,14 +274,19 @@ function webGroundingMode_() {
   if (!GROUNDING_TOOLS_[mode]) return '';
   try {
     if (CacheService.getScriptCache().get('grounding_off:' + mode)) return '';
+    // Control row 51: a refusal met by background work turns the web search off for background work only
+    if (typeof OE_BG_ !== 'undefined' && OE_BG_ && CacheService.getScriptCache().get('grounding_off_bg:' + mode)) return '';
   } catch (e) {}
   return mode;
 }
 
 /** Vertex AI refused the web-search tool: say why, and leave it off for a while (the call is retried without it). */
 function groundingRefused_(mode, why) {
-  console.warn(`Gemini web grounding (${mode}) was refused, so it's off for ${GROUNDING_OFF_SEC_ / 3600} h: ${why}`);
-  try { CacheService.getScriptCache().put('grounding_off:' + mode, '1', GROUNDING_OFF_SEC_); } catch (e) {}
+  // Control row 51 (OpenEngine.gs): refused during background work, it is off for background work only, so Burson's
+  // alerts keep their web search
+  const bg = typeof OE_BG_ !== 'undefined' && OE_BG_ && typeof openOn_ === 'function' && openOn_();
+  console.warn(`Gemini web grounding (${mode}) was refused, so it's off for ${GROUNDING_OFF_SEC_ / 3600} h${bg ? ' for background work' : ''}: ${why}`);
+  try { CacheService.getScriptCache().put((bg ? 'grounding_off_bg:' : 'grounding_off:') + mode, '1', GROUNDING_OFF_SEC_); } catch (e) {}
 }
 
 function geminiUrl_(model, location, project) {
@@ -450,6 +459,7 @@ function geminiGenerate_(system, prompt, schema, opts) {
       text = String((e && e.message) || e);
     }
     if (code === 429) got429++;
+    if (code === 429 && typeof apiGuardNoteVertex429Try_ === 'function') apiGuardNoteVertex429Try_();  // for the first screen (RequirementsFirst.gs): only while it is on
     if (code !== 429 && code < 500) {
       // A 4xx with the web-search tool on: once more without it, when the error is about the tool (or nothing else in
       // the request could be: no media). A media error goes straight back to assess(), which retries text-only.
@@ -549,4 +559,65 @@ function webSources_(body) {
     .map(w => ({ title: String(w.title || w.domain || '').trim(), uri: String(w.uri || '').trim() }))
     .filter(s => s.title || s.uri).slice(0, 8);
   return queries.length || sources.length ? { queries, sources } : null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A sender of its own for background work that must never touch Burson's reviews (step S19h's first screen,
+// RequirementsFirst.gs): the request and the reply are pure; the caller sends (one UrlFetchApp.fetchAll), never
+// geminiGenerate_: no `gemini` count, no shared cooldown, no BigQuery ML, no web search, no retry
+// ---------------------------------------------------------------------------------------------------------------
+
+// Vertex AI's harm categories a caller may set: the screen asks it to block none of them (accepted values not verified
+// live: a 400 that names them drops them for the day)
+const GEMINI_OPEN_SAFETY_ = ['HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_DANGEROUS_CONTENT', 'HARM_CATEGORY_HARASSMENT',
+  'HARM_CATEGORY_SEXUALLY_EXPLICIT'].map(category => ({ category, threshold: 'BLOCK_NONE' }));
+
+/**
+ * One request for UrlFetchApp.fetchAll: GEN's triage model at its location, temperature 0, LOW thinking, an output cap
+ * (opts.maxOutputTokens, 4,096 when unset), no tools, and safetySettings unless opts.safetyOff. `token`: the run's OAuth
+ * token. Pure.
+ */
+function geminiRequest_(system, prompt, schema, opts, token) {
+  const o = opts || {};
+  const payload = geminiPayload_(system, prompt, schema, { temperature: 0, thinkingLevel: 'LOW',
+    maxOutputTokens: Number(o.maxOutputTokens) > 0 ? Number(o.maxOutputTokens) : 4096 });
+  if (!o.safetyOff) payload.safetySettings = GEMINI_OPEN_SAFETY_.map(x => Object.assign({}, x));
+  return { url: geminiUrl_(GEN.models.triage, GEN.models.location, GCP_PROJECT), method: 'post', contentType: 'application/json',
+    muteHttpExceptions: true, headers: { Authorization: 'Bearer ' + token }, payload: JSON.stringify(payload) };
+}
+
+/**
+ * Reads one reply of geminiRequest_ without throwing: {ok: true, out, usage: {in, thinking, out}}; {ok: false, refused,
+ * why} (a blocked prompt, a candidate stopped for safety, or a 400 that names safety, blocked or prohibited); {ok: false,
+ * busy} (429); {ok: false, cut} (MAX_TOKENS); {ok: false, settings} (a 400 that names safetySettings); else {ok: false,
+ * why}. Pure.
+ */
+function geminiReadReply_(code, text) {
+  try {
+    const c = Number(code) || 0;
+    const t = String(text === undefined || text === null ? '' : text);
+    if (c === 429) return { ok: false, busy: true, why: '429' };
+    if (c === 400 && /safety_?settings/i.test(t)) return { ok: false, settings: true, why: '400 safetySettings' };
+    if (c === 400 && /safety|blocked|prohibited/i.test(t)) return { ok: false, refused: true, why: '400 refused' };
+    if (c < 200 || c >= 300) return { ok: false, why: `${c || 'no answer'}` };
+    let body = null;
+    try { body = JSON.parse(t); } catch (e) { return { ok: false, why: 'no JSON' }; }
+    const u = (body && body.usageMetadata) || {};
+    const usage = { in: Number(u.promptTokenCount) || 0, thinking: Number(u.thoughtsTokenCount) || 0, out: Number(u.candidatesTokenCount) || 0 };
+    const cand = ((body && body.candidates) || [])[0];
+    if (body && body.promptFeedback && body.promptFeedback.blockReason) return { ok: false, refused: true, why: String(body.promptFeedback.blockReason), usage };
+    if (!cand) return { ok: false, why: 'no answer', usage };
+    const finish = String(cand.finishReason || '').replace(/^FINISH_REASON_/, '');
+    if (/^(?:SAFETY|PROHIBITED_CONTENT|BLOCKLIST|SPII|IMAGE_SAFETY)$/.test(finish)) return { ok: false, refused: true, why: finish, usage };
+    if (finish === 'MAX_TOKENS') return { ok: false, cut: true, why: 'MAX_TOKENS', usage };
+    const out = ((cand.content && cand.content.parts) || []).filter(p => p && !p.thought && typeof p.text === 'string').map(p => p.text).join('').trim();
+    if (!out) return { ok: false, why: 'no text', usage };
+    try {
+      return { ok: true, out: JSON.parse(out.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')), usage };
+    } catch (e) {
+      return { ok: false, why: 'no JSON', usage };
+    }
+  } catch (e) {
+    return { ok: false, why: 'unreadable' };
+  }
 }

@@ -46,9 +46,12 @@
  *                            "Track post-alert outcomes" ON, replies to sent alerts are read for a week (Outcomes.gs)
  *   Auto-correct test space (ctx.sourceReadOnly, AutoCorrect.gs): the live Burson space is only read. Only Zapier's
  *                            top-level alerts are handled; nothing is ever posted or reacted there. The corrected alert
- *                            goes to the test space on its own, with what changed in its thread (ctx.changeNotes), and
- *                            its emojis go on that corrected alert; only what Burson alone can add holds back ❌ / 👍
- *                            (Never wait on Burson ON: nothing waits on Burson there either)
+ *                            goes to the test space on its own, under the bot's "Reviewed (and corrected) by the agentic
+ *                            assistant" line, with Gemini's write-up as its summary and the post's own picture, and what
+ *                            changed in its thread (ctx.changeNotes); its emojis go on that corrected alert; only what
+ *                            Burson alone can add holds back ❌ / 👍 (Never wait on Burson ON: nothing waits on Burson
+ *                            there either). A Direct BigQuery card there, posted before its review, gets the note too
+ *                            (inPlaceNote_)
  *
  * Pure orchestration over an injected ctx (Main.gs buildCtx_() in Apps Script; a fake one in tests):
  *   ctx.settings, ctx.spaces {burson: {id, name}, analyst: {id, name}}, ctx.store (makeStore_),
@@ -109,6 +112,7 @@ function runOnce_(ctx) {
     if (report.handled >= S.max_messages_per_run) break;
     if (!runOwned_()) { ctx.deadline = ctx.now(); break; }  // another run took over (Main.gs): it does the rest, not this one
     report.handled++;
+    if (typeof openPickup_ === 'function') openPickup_(m.createTime, ctx.now());  // its pick-up time, for the run's record (in memory)
     // Its tries were used up by runs that ended partway through it (crashGuard_ counted them): given up on now, as a
     // message whose tries all failed with an error is (forwarded to analysts as received, never dropped)
     const tried = guard.on ? ctx.store.attempts(m.name) : 0;
@@ -588,7 +592,11 @@ function isOwnMessage_(ctx, m) {
       String(m.clientId).indexOf(CAMPAIGN_CLIENT_PREFIX_) === 0;
   }
   if (!ctx.botUser || m.senderName !== ctx.botUser) return false;
-  if (typeof isBotFormattedText_ === 'function' ? isBotFormattedText_(m.text) : String(m.text || '').trim().indexOf(GEN.prefix) === 0) {
+  // (the Auto-correct flow with the line on: a question from the bot's account that starts as the line on the alert
+  // requirements does is the person's the bot runs as: RequirementLine.gs isRequirementQuestion_)
+  const asked = typeof requirementLineOn_ === 'function' && requirementLineOn_(ctx) &&
+    typeof isRequirementQuestion_ === 'function' && isRequirementQuestion_(m.text);
+  if (!asked && (typeof isBotFormattedText_ === 'function' ? isBotFormattedText_(m.text) : String(m.text || '').trim().indexOf(GEN.prefix) === 0)) {
     return true;
   }
   try {
@@ -669,10 +677,18 @@ function handleAlert_(ctx, m, parsed, report) {
   }
   // "Already reported" history: every forwarded alert except the one this message resends.
   const history = ctx.store.recentForwarded(now - GEN.novelty_days * DAY_MS_)
+    // (where stories go first, a story's card that sent no Social Alert is no earlier alert for the Direct BigQuery
+    // card of its own main post: BigQuery.gs bqStoryOnOwnPost_; everywhere else it leaves every row in)
+    .filter(h => !bqStoryOnOwnPost_(ctx, isSheetTest ? '' : ingested, key, h, now))
     .filter(h => !pending || h.forward_message !== pending.forward_message);
   // Earlier alerts this one may repeat or follow up on (same post, same author, or a post it replies under or quotes):
   // Gemini sees them too
   if (!isSheetTest && S.follow_ups !== false) parsed.earlier = earlierAlerts_(parsed.fields, history, parsed.bq, now, parsed.post);
+  // (a Direct BigQuery card whose post a story card that went out as a Social Alert links: that story's alert is an
+  // earlier alert on this post, in the Auto-correct flow with cross_alert_notes on: EarlyDetectionCross.gs)
+  if (!isSheetTest && S.follow_ups !== false && bqDirectSource_(ingested)) {
+    parsed.earlier = edWithSharedPost_(ctx, parsed.earlier, key, history, now);
+  }
   // The issues already alerted in the last 14 days most like this one (IssueNames.gs): Gemini says whether the alert is
   // one of them, so it keeps that issue's name instead of starting a second name for it
   if (!isSheetTest && S.follow_ups !== false) parsed.knownIssues = knownIssuesFor_(ctx, parsed, history, now);
@@ -685,6 +701,9 @@ function handleAlert_(ctx, m, parsed, report) {
   if (switchOn_(ctx, 'outageComms')) parsed.outageComms = true;
   // Never wait on Burson (Control tab row 23): a long video's missing timestamp is the bot's own correction (Review.gs)
   if (switchOn_(ctx, 'noWait')) parsed.noWait = true;
+  // The Auto-correct space (AutoCorrect.gs): the review call also writes the alert's summary paragraph (Review.gs
+  // writeupPrompt_), unless settings.autocorrect_writeup is false. A sheet-test card gets no Gemini review
+  if (ctx.changeNotes && !isSheetTest && S.autocorrect_writeup !== false) parsed.writeup = true;
   // The knowledge base (Knowledge.gs): the Resources tab's documents, the parts that bear on this alert
   try {
     parsed.knowledge = knowledgeForCtx_(ctx, knowledgeQuery_(parsed), { budget: KNOWLEDGE_REVIEW_CHARS_, pin: true });
@@ -706,7 +725,9 @@ function handleAlert_(ctx, m, parsed, report) {
   const memoryStory = !isSheetTest && typeof amNoveltyFor_ === 'function' ? amNoveltyFor_(ctx, parsed.fields) : null;
   // Gemini's review, with the crash guard and the hold for the next run (guardedAssess_)
   const { llm, llmError, held } = isSheetTest ? { llm: null, llmError: '', held: null } : guardedAssess_(ctx, m, parsed, now);
-  const review = reviewAlert_(parsed, { llm, llmError, now, settings: S, history, mediaHeld: held, memoryStory });
+  // autoCorrect: the agentic assistant decides in the Auto-correct space (Review.gs, autocorrect_min_confidence)
+  const review = reviewAlert_(parsed, { llm, llmError, now, settings: S, history, mediaHeld: held, memoryStory,
+    autoCorrect: !!ctx.changeNotes });
   if (isSheetTest) {
     review.ingested = SHEET_TEST_INGESTED_;
     if (typeof applySheetTestReviewOverrides_ === 'function') applySheetTestReviewOverrides_(parsed, review);
@@ -839,26 +860,38 @@ const LINK_FINDS_PROP_ = 'LINK_FINDS_TODAY';  // Auto-find missing links: today'
  * Only blank fields are filled. parsed.found keeps what was found for reviewAlert_: a correction analysts see, never
  * asked of Burson. Nothing found, a post the bot already alerted (in the last novelty_days), short of time
  * (BQ_LINK_MIN_LEFT_MS_) or BQ_LINK_MAX_PER_RUN_ lookups already made this run: nothing changes, and Burson is asked as
- * with the switch OFF (Never wait on Burson ON: the alert is processed without it). Never throws.
+ * with the switch OFF (Never wait on Burson ON: the alert is processed without it). A missing link that isn't filled
+ * leaves why on parsed.linkLookup, for the Auto-correct space's note (Voice.gs notFixedLine_): 'none' (the feeds had no
+ * sure match), 'alerted' (their match is a post already alerted), 'time' or 'cap' (not searched this run), 'failed'
+ * (the lookup failed, or there's none to make). Never throws.
  */
 function findMissingLink_(ctx, parsed, report) {
+  const f = (parsed && parsed.fields) || {};
+  const needUrl = isBlank_(f.post_url);
+  const why = outcome => { if (needUrl && parsed) parsed.linkLookup = outcome; };
   try {
-    const f = parsed.fields || {};
-    const needUrl = isBlank_(f.post_url);
     const needAuthor = isBlank_(f.author);
-    if ((!needUrl && !needAuthor) || typeof ctx.findLink !== 'function') return;
+    if (!needUrl && !needAuthor) return;
+    if (typeof ctx.findLink !== 'function') { why('failed'); return; }
     const what = needUrl ? (needAuthor ? 'link and author' : 'link') : 'author';
     const without = switchOn_(ctx, 'noWait') ? 'the alert is processed without it' : 'Burson is asked as usual';
     const capped = (report.link_lookups || 0) >= BQ_LINK_MAX_PER_RUN_;
     if (capped || ctx.deadline - ctx.now() < BQ_LINK_MIN_LEFT_MS_) {
       ctx.log(`auto-find missing links: ${capped ? `already ${BQ_LINK_MAX_PER_RUN_} lookups` : 'no time left'} this run, so the ` +
         `missing ${what} isn't looked up; ${without}`);
+      why(capped ? 'cap' : 'time');
       return;
     }
     report.link_lookups = (report.link_lookups || 0) + 1;
     const ident = JSON.stringify([issueNameOf_(f) || '', normHandle_(f.author), f.social_network || '', f.post_url || '']);
     let hit = null;
-    try { hit = ctx.findLink(parsed); } catch (e) { ctx.log('auto-find missing links failed: ' + ((e && e.message) || e)); }
+    let failed = false;
+    try {
+      hit = ctx.findLink(parsed);
+    } catch (e) {
+      failed = true;
+      ctx.log('auto-find missing links failed: ' + ((e && e.message) || e));
+    }
     const found = {};
     if (hit && needUrl && hit.post_url && domainOf_(hit.post_url)) found.post_url = { old: '', new: String(hit.post_url).trim() };
     if (hit && needAuthor && hit.author && String(hit.author).trim()) found.author = { old: '', new: String(hit.author).trim() };
@@ -874,6 +907,7 @@ function findMissingLink_(ctx, parsed, report) {
       delete found.author;  // it came with that post
     }
     noteLinkFind_(ident, !!(found.post_url || found.author));
+    if (!found.post_url) why(failed ? 'failed' : alerted ? 'alerted' : 'none');
     if (!found.post_url && !found.author) {
       if (!alerted) ctx.log(`auto-find missing links: no sure match for the missing ${what}; ${without}`);
       return;
@@ -888,6 +922,7 @@ function findMissingLink_(ctx, parsed, report) {
       .filter(Boolean).join(' by ')} (${found.how || 'feeds'}, ${Math.round(found.confidence * 100)}% sure)`);
   } catch (e) {
     ctx.log('auto-find missing links failed: ' + ((e && e.message) || e));
+    if (isBlank_(f.post_url)) why('failed');  // still missing (a find fills it)
   }
 }
 
@@ -962,7 +997,7 @@ function withFoundLink_(text, found) {
   const lines = String(text).split('\n');
   const line = `[Link]: ${url}`;
   const index = labelIndex_();
-  let at = lines.findIndex(l => RX_BOILERPLATE_.test(cleanLine_(l).trim().replace(RX_MD_, '').trim()));
+  let at = lines.findIndex(l => RX_FOOTER_.test(cleanLine_(l).trim().replace(RX_MD_, '').trim()));
   if (at < 0) {
     at = lines.findIndex(l => { const hit = splitLabel_(cleanLine_(l), index); return !!hit && hit.spec.name === 'code'; });
   }
@@ -971,6 +1006,27 @@ function withFoundLink_(text, found) {
   if (blankBefore && at > 1 && !lines[at - 2].trim()) lines.splice(at - 1, 1, line, '');  // where Burson's line was taken out
   else if (blankBefore) lines.splice(at, 0, line, '');
   else lines.splice(at, 0, line);
+  return lines.join('\n');
+}
+
+/**
+ * The auto-correct space's corrected alert with the write-up (Review.gs writeupOf_: `writeup.text`) as its summary
+ * paragraph when Burson's alert had none for rebuildAlert_ to replace (summary is no required field): its own paragraph
+ * in Burson's place for one, below the "SOCIAL ALERT" line and above the [Link] line, the first footer or the [Code]
+ * line, whichever comes first (else at the end), where parseAlert_ reads it back as the summary. `text` as it is
+ * without a write-up or when it's in it already. Pure.
+ */
+function withWriteup_(text, writeup) {
+  const s = String((writeup && writeup.text) || '').trim();
+  if (!s || String(text).indexOf(s) >= 0) return text;
+  const lines = String(text).split('\n');
+  const index = labelIndex_();
+  const bare = l => cleanLine_(l).trim().replace(RX_MD_, '').trim();
+  const head = lines.findIndex(l => RX_HEADER_.test(bare(l)));
+  const at = lines.findIndex((l, i) => i > head && (RX_FOOTER_.test(bare(l)) ||
+    (h => !!h && (h.spec.name === 'post_url' || h.spec.name === 'code'))(splitLabel_(cleanLine_(l), index))));
+  if (at < 0) return `${String(text).replace(/\s+$/, '')}\n\n${s}`;
+  lines.splice(at, 0, ...(at === 0 || !lines[at - 1].trim() ? [] : ['']), s, '');
   return lines.join('\n');
 }
 
@@ -992,7 +1048,7 @@ function withTimestamp_(text, fields, changed) {
     lines.splice(link, 0, line);
     return lines.join('\n');
   }
-  let at = lines.findIndex(l => RX_BOILERPLATE_.test(cleanLine_(l).trim().replace(RX_MD_, '').trim()));
+  let at = lines.findIndex(l => RX_FOOTER_.test(cleanLine_(l).trim().replace(RX_MD_, '').trim()));
   if (at < 0) at = lines.findIndex(labelled('code'));
   if (at < 0) return `${String(text).replace(/\s+$/, '')}\n${line}`;
   if (at > 0 && !lines[at - 1].trim()) lines.splice(at - 1, 0, line);  // above the blank line before the reminder
@@ -1051,8 +1107,18 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
   //    work in-place without forwarding to any other space.
   const inPlace = Boolean(ctx.outboundBlocked || (ctx.sourceReadOnly && parsed && parsed.ingested && m.name &&
     ctx.spaces && ctx.spaces.analyst && String(m.name).indexOf(ctx.spaces.analyst.id + '/messages/') === 0));
-  const fwd = inPlace ? { name: m.name, thread: m.thread || '' } : forwardAlert_(ctx, m, parsed, review, '');
+  // The auto-correct space (settings.requirement_line): which alert requirement the alert meets, worked out before the
+  // review's note is posted, for that note's last line (RequirementLine.gs requirementOf_; null in every other flow).
+  // waits: the alert is not decided in this run while it waits on what Burson alone can add (step 3 below)
+  const req = requirementOf_(ctx, review, history, { waits: !switchOn_(ctx, 'noWait') && requested.some(x => x.problem) });
+  const fwd = inPlace ? { name: m.name, thread: m.thread || '' } : forwardAlert_(ctx, m, parsed, review, '', req);
   if (fwd && !inPlace) report.forwarded++;
+  // A Direct BigQuery or sheet-test card in the auto-correct space was posted before its review, and the bot never edits
+  // a message: what the review changed, and the write-up the email uses, go in the card's thread (inPlaceNote_)
+  if (inPlace && ctx.changeNotes) inPlaceNote_(ctx, m, review, parsed, req);
+  // C10's "corrected" in the auto-correct space: the changes as the space shows them (reviewedLine_, or the in-place
+  // note: only those the email uses), counted here, before the Social Alert draft can take an existing issue's name
+  const corrected = !!ctx.sourceReadOnly && noteChanges_(review, inPlace).length > 0;
   const alertId = ctx.store.nextAlertId();
   const draft = draftPlan_(ctx, review, history);  // escalated: a Social Alert draft is due (made after Burson's side)
   const row = ctx.store.addAlert(Object.assign({
@@ -1064,6 +1130,9 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
     source_at: sourceAt_(m), seen_at: parsed.seen_at || '', knowledge_used: review.knowledgeUsed || [],
   }, parsed.ingested ? { ingested: parsed.ingested } : {}, livePairFields_(ctx, m), draft || {}));  // ingested: Direct BigQuery alerts (row 15)
   if (draft) watchDraft_(ctx, alertId);
+  bqDirectReviewed_(row, !!draft);  // C15: a Direct BigQuery card's review ended in a Social Alert, or in none
+  // ...and when the Social Alert then goes another way than that line says, one more line under the alert
+  requirementFinal_(ctx, req, inPlace ? m : fwd, m.name, draft, '');
 
   if (switchOn_(ctx, 'noWait')) {
     // Never wait on Burson ON (Control row 23):
@@ -1082,7 +1151,7 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
     //    was processed (no resend needed); 👍 (receipt) right away here only when people take the action from here (drafts
     //    off). The auto-correct test space never acts in the Burson space: its corrected alert is the alert.
     if (ctx.sourceReadOnly) {
-      if (changedFields_(review).length) report.corrected = (report.corrected || 0) + 1;
+      if (corrected) report.corrected = (report.corrected || 0) + 1;  // as the space shows it
     } else if (sendAlertActions_(ctx, m, requested, fwd, !draftsOn_(ctx))) report.fix_requests++;
     ctx.store.updateAlert(row, { burson_done: true });
     ctx.store.markDone(m.name, 'alert', alertId);
@@ -1097,7 +1166,7 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
   //    only when people take the action from here (drafts off). The auto-correct test space never acts in the Burson
   //    space: the bot made the fixes itself, and its corrected alert is the alert.
   if (ctx.sourceReadOnly) {
-    if (changedFields_(review).length) report.corrected = (report.corrected || 0) + 1;
+    if (corrected) report.corrected = (report.corrected || 0) + 1;  // as the space shows it
   } else if (sendAlertActions_(ctx, m, requested, fwd, !draftsOn_(ctx))) report.fix_requests++;
   ctx.store.updateAlert(row, { burson_done: true });
 
@@ -1122,23 +1191,44 @@ function handleNewAlert_(ctx, m, parsed, review, report, history) {
 
 /**
  * The corrected alert, in Burson's own format, posted to the analyst space with what was corrected underneath. The
- * auto-correct test space (ctx.changeNotes): the corrected alert on its own, exactly as Burson's would look, and a short
- * note in its thread on what changed (none when nothing did). With Never wait on Burson ON, a video timestamp the bot
- * added goes on its own "[Timestamp]" line (withTimestamp_).
+ * auto-correct test space (ctx.changeNotes): the corrected alert on its own, in Burson's layout under the bot's own first
+ * line ("✅ *Reviewed and corrected by the agentic assistant* · Original alert", the link to Burson's message: Voice.gs
+ * reviewedLine_), with the write-up in the summary's place (Review.gs writtenFields_; withWriteup_ when Burson's alert
+ * has no summary paragraph) and the post's own picture under it when the run has time (correctedAlertPicture_), then a
+ * note in its thread listing what the agentic assistant changed (changeNoteText_; none when there's nothing to say).
+ * With Never wait on Burson ON, a video timestamp the bot added goes on its own "[Timestamp]" line (withTimestamp_).
+ * `req` (the auto-correct space only: RequirementLine.gs requirementOf_, or null): its line, which alert requirement the
+ * alert meets, is that note's last line, and the whole note when there's nothing else to say.
  */
-function forwardAlert_(ctx, m, parsed, review, extraNote) {
+function forwardAlert_(ctx, m, parsed, review, extraNote, req) {
   const noWait = switchOn_(ctx, 'noWait');
-  const rebuilt = withFoundLink_(rebuildAlert_(m.text, parsed, review.fields, review.changed), parsed.found);
+  const shown = ctx.changeNotes ? writtenFields_(review) : { fields: review.fields, changed: review.changed };
+  const remade = rebuildAlert_(m.text, parsed, shown.fields, shown.changed);
+  const rebuilt = withFoundLink_(ctx.changeNotes ? withWriteup_(remade, review.writeup) : remade, parsed.found);
   const stamped = noWait ? withTimestamp_(rebuilt, review.fields, review.changed) : rebuilt;
   const body = parsed && parsed.ingested && typeof withBqBadge_ === 'function'
     ? withBqBadge_(stamped, parsed.ingested)
     : stamped;
   if (ctx.changeNotes) {
-    const fwd = postTo_(ctx, ctx.spaces.analyst.id, body, null, 'fwd:' + m.name);
-    const note = [extraNote || '', changeNoteText_(review, noWait)].filter(Boolean).join('\n');
+    const text = `${reviewedLine_(review, m.name)}\n${body}`;
+    const pic = correctedAlertPicture_(ctx, parsed);
+    let fwd = null;
+    if (pic.length) {
+      try {
+        fwd = postTo_(ctx, ctx.spaces.analyst.id, text, null, 'fwd:' + m.name, null, false, pic);
+      } catch (e) {  // the same key: an alert Chat did take is read back, never posted twice
+        ctx.log(`Chat refused the corrected alert with the post's picture, so it goes as text: ` +
+          `${truncate_(String((e && e.message) || e), 200)}`);
+      }
+    }
+    if (!fwd) fwd = postTo_(ctx, ctx.spaces.analyst.id, text, null, 'fwd:' + m.name);
+    logLeftAsIs_(ctx, review);
+    const note = requirementFit_([extraNote || '', changeNoteText_(review, { findLinks: switchOn_(ctx, 'autoFindLinks'),
+      linkLookup: parsed && parsed.linkLookup, requirement: req && req.line })].filter(Boolean).join('\n'), req && req.line);
     if (note && fwd && fwd.name) {
       try {
-        postTo_(ctx, ctx.spaces.analyst.id, note, fwd.thread || null, 'chg:' + m.name);
+        // (the note Chat hands back: at a second attempt at the alert it is the first attempt's, requirementNoted_)
+        requirementNoted_(req, postTo_(ctx, ctx.spaces.analyst.id, note, fwd.thread || null, 'chg:' + m.name));
       } catch (e) {  // the alert is out; a missing note isn't worth posting it twice
         ctx.log(`couldn't post what changed under ${fwd.name}: ${(e && e.message) || e}`);
       }
@@ -1147,6 +1237,64 @@ function forwardAlert_(ctx, m, parsed, review, extraNote) {
   }
   const footer = [ctx.settings.corrections_footer ? forwardFooter_(review, noWait) : '', extraNote || ''].filter(Boolean).join('\n');
   return postTo_(ctx, ctx.spaces.analyst.id, joinText_(body, footer), null, 'fwd:' + m.name);
+}
+
+// The corrected alert in the auto-correct space gets the post's own picture (correctedAlertPicture_) only with this much
+// of the run left, as a Direct BigQuery card does (BigQuery.gs BQ_DIRECT_PIC_LEFT_MS_)
+const AC_PIC_LEFT_MS_ = 60 * 1000;
+
+/**
+ * The auto-correct space: the post's own picture for its corrected alert (Post.gs alertPicture_ on the post the review
+ * looked up, parsed.post: its photo, its video's frame, thumbnail or cover, what a quoted post or link card shows; never
+ * the picture its page shows link previews, and never a generated one), uploaded to that space only (Chat.gs
+ * chatUploadImage_ refuses S-F Burson, the test copy and outside spaces). The message's `attachment` list: [] when
+ * there's none, the run has less than AC_PIC_LEFT_MS_ left, or the upload fails (the alert goes as text). Never throws.
+ */
+function correctedAlertPicture_(ctx, parsed) {
+  try {
+    if (!ctx.changeNotes || !parsed || !parsed.post || typeof alertPicture_ !== 'function' ||
+        typeof chatUploadImage_ !== 'function') return [];
+    if (!(Number(ctx.deadline) - ctx.now() >= AC_PIC_LEFT_MS_)) return [];
+    const pic = alertPicture_(String((parsed.fields && parsed.fields.post_url) || ''), parsed.post, false);
+    return pic && pic.img ? [{ attachmentDataRef: chatUploadImage_(ctx.spaces.analyst.id, pic.img) }] : [];
+  } catch (e) {
+    ctx.log(`the corrected alert goes without the post's picture: ${truncate_(String((e && e.message) || e), 200)}`);
+    return [];
+  }
+}
+
+/**
+ * The auto-correct space: what Gemini suggested and the agentic assistant left as Burson wrote it (under
+ * autocorrect_min_confidence: review.unsure), in the run log only; the space is told nothing about it.
+ */
+function logLeftAsIs_(ctx, review) {
+  const left = (review.unsure || []).filter(u => u && u.field);
+  if (!left.length) return;
+  ctx.log('left as Burson wrote it (Gemini wasn\'t sure enough): ' + left.map(u => `${burLabel_(u.field)}` +
+    (u.proposed !== null && u.proposed !== undefined ? ` (maybe ${truncate_(fmtValue_(u.proposed), 60)})` : '') +
+    (u.confidence ? `, ${Math.round(u.confidence * 100)}% sure` : '') +
+    (u.finding ? `: ${truncate_(u.finding, 160)}` : '')).join('; '));
+}
+
+/**
+ * A Direct BigQuery or sheet-test card in the auto-correct space (handleNewAlert_ in place): it was posted before its
+ * review and is never edited, so the thread note under it says what the review changed and the summary the email uses
+ * (changeNoteText_ with inPlace: "The agentic assistant reviewed this alert. The card above was posted before the
+ * review; the email uses these corrections:"), and last, which alert requirement the alert meets (`req`:
+ * RequirementLine.gs requirementOf_, or null with settings.requirement_line off). Nothing when there's nothing to say;
+ * a note that fails is only logged.
+ */
+function inPlaceNote_(ctx, m, review, parsed, req) {
+  logLeftAsIs_(ctx, review);
+  const note = requirementFit_(changeNoteText_(review, { inPlace: true, findLinks: switchOn_(ctx, 'autoFindLinks'),
+    linkLookup: parsed && parsed.linkLookup, requirement: req && req.line }), req && req.line);
+  if (!note) return;
+  try {
+    // (the note Chat hands back: at a second attempt at the card it is the first attempt's, requirementNoted_)
+    requirementNoted_(req, postTo_(ctx, ctx.spaces.analyst.id, note, m.thread || null, 'chg:' + m.name));
+  } catch (e) {
+    ctx.log(`couldn't post what changed under ${m.name}: ${(e && e.message) || e}`);
+  }
 }
 
 /**
@@ -1258,23 +1406,28 @@ function handleResend_(ctx, m, parsed, review, pending, report, history) {
   const forwarded = pending.forwarded_fields || {};
   const raised = raisedBy_(forwarded, review.fields);
   let fresh = null;
+  const hadEmail = !!(pending.email_status || (pending.forward_message && ctx.store.emailRowByForward(pending.forward_message)));
+  // (the auto-correct space: which alert requirement the resend meets, for its note's last line; RequirementLine.gs.
+  // An alert that had its Social Alert keeps it, so the resend gets none: the line says so at once)
+  const req = raised.length ? requirementOf_(ctx, review, history, { waits: missing.length > 0,
+    decided: hadEmail ? `a resend of ${pending.alert_id}, whose Social Alert was already decided` : '' }) : null;
   if (raised.length) {
     if (ctx.outboundBlocked) {
       fresh = { name: m.name, thread: m.thread || '' };
     } else {
-      fresh = forwardAlert_(ctx, m, parsed, review, `QA: updated alert (${raised.join(', ')})`);
+      fresh = forwardAlert_(ctx, m, parsed, review, `QA: updated alert (${raised.join(', ')})`, req);
       report.forwarded++;
     }
   } else if (!ctx.outboundBlocked) {
-    const note = fwd ? updateNote_(forwarded, review) : null;
+    const note = fwd ? updateNote_(forwarded, review, !!ctx.changeNotes) : null;
     if (note) postTo_(ctx, ctx.spaces.analyst.id, note, fwd.thread, 'upd:' + m.name);
   }
 
   // 3. The resend becomes the live post for this alert. Forwarded as a new alert that is now escalated, it gets the
   //    Social Alert draft the original didn't have (an original that has one keeps it).
   const alertId = ctx.store.nextAlertId();
-  const hadEmail = !!(pending.email_status || (pending.forward_message && ctx.store.emailRowByForward(pending.forward_message)));
   const draft = fresh && !hadEmail ? draftPlan_(ctx, review, history) : null;
+  requirementFinal_(ctx, req, fresh, m.name, draft, '');
 
   // 1. Burson: ⬇️ on the original ("addressed on updated post below"); on the resend ⬇️ again if it still needs changes
   //    (they're in its thread), else 👍 right away only when people take the action from here (drafts off)
@@ -1342,15 +1495,20 @@ function handleResendNoWait_(ctx, m, parsed, review, pending, report, history) {
   // 1. Analysts already have the corrected alert. If the priority or engagement level went up, the resend goes to
   //    them as a new alert; otherwise they only get a thread note about values that changed (e.g. the link).
   let fresh = null;
+  const hadEmail = !!(pending.email_status || (pending.forward_message && ctx.store.emailRowByForward(pending.forward_message)));
+  // (the auto-correct space: which alert requirement the resend meets, for its note's last line; RequirementLine.gs.
+  // An alert that had its Social Alert keeps it, so the resend gets none: the line says so at once)
+  const req = raised.length ? requirementOf_(ctx, review, history,
+    { decided: hadEmail ? `a resend of ${pending.alert_id}, whose Social Alert was already decided` : '' }) : null;
   if (raised.length) {
     if (ctx.outboundBlocked) {
       fresh = { name: m.name, thread: m.thread || '' };
     } else {
-      fresh = forwardAlert_(ctx, m, parsed, review, `QA: updated alert (${raised.join(', ')})`);
+      fresh = forwardAlert_(ctx, m, parsed, review, `QA: updated alert (${raised.join(', ')})`, req);
       report.forwarded++;
     }
   } else if (!ctx.outboundBlocked) {
-    const note = fwd ? updateNote_(forwarded, review) : null;
+    const note = fwd ? updateNote_(forwarded, review, !!ctx.changeNotes) : null;
     if (note) postTo_(ctx, ctx.spaces.analyst.id, note, fwd.thread, 'upd:' + m.name);
   }
 
@@ -1359,8 +1517,8 @@ function handleResendNoWait_(ctx, m, parsed, review, pending, report, history) {
   //    an original never processed, it's decided now. Otherwise nothing is done twice: the resend keeps the alert's
   //    decision and what Burson was told (for answers in its thread), and stays open for Burson's next resend.
   const alertId = ctx.store.nextAlertId();
-  const hadEmail = !!(pending.email_status || (pending.forward_message && ctx.store.emailRowByForward(pending.forward_message)));
   const draft = fresh && !hadEmail ? draftPlan_(ctx, review, history) : null;
+  requirementFinal_(ctx, req, fresh, m.name, draft, '');
   const decide = !draft && !hadEmail && (fresh || !done);
   // Auto-find missing links: the found link stays marked until Burson's own link takes its place
   const values = fresh ? snapshotFields_(review.fields) : Object.assign({}, forwarded, snapshotFields_(review.fields));
@@ -1608,6 +1766,31 @@ function pollAnalystMessages_(ctx, report) {
   let newCursor = cursor;
   let blocked = false;
   const advance = m => { if (!blocked) newCursor = Math.max(newCursor, m.createTime); };
+  // The open engine (Control row 51, step S4 of the open-engine plan), in the Auto-correct space: a card the bot posted
+  // itself (a Watch alert, a Direct BigQuery card) that waits is the bot's own backlog (report.bg_backlog), never
+  // Burson's (analyst_backlog, held, the time budget's error: what makes the flow look busy); it never stops Burson's
+  // alerts after it in the list; and an ordinary one waits for the next run while the story queue's next signal is
+  // serious. Row 51 OFF: as before
+  const open = !!ctx.sourceReadOnly && typeof openOn_ === 'function' && openOn_();
+  const botCard = m => !!(m && !m.threadReply && ((typeof pwAlertOf_ === 'function' && pwAlertOf_(ctx, m)) ||
+    (typeof bqIngestedSource_ === 'function' && bqIngestedSource_(ctx, m))));
+  const backlog = bot => { if (open && bot) report.bg_backlog = true; else report.analyst_backlog = true; };
+  let bgTold = false;
+  // an ordinary bot card waits for the next run behind a serious story in the queue, or when an Early Detection check
+  // is due and the run has only the check's time left (the check and a review go first: openCheckRoom_)
+  const bgWaits = (m, kind, x) => {
+    if (!open || openCardSerious_(kind, x)) return false;
+    const serious = openQueueTopSerious_();
+    if (!serious && openCheckRoom_(ctx)) return false;
+    if (!bgTold) {
+      ctx.log(`the bot's own ordinary cards wait for the next run: ${serious ? 'a serious story is next in the review queue'
+        : 'an Early Detection check is due and needs the rest of the run'}`);
+    }
+    bgTold = true;
+    report.bg_backlog = true;
+    blocked = true;
+    return true;
+  };
   const isPendingB10Alert = m => {
     if (!ctx.sourceReadOnly || !m || m.threadReply) return false;
     if (ctx.recent.has(m.name) || ctx.store.isDone(m.name)) return false;
@@ -1642,7 +1825,10 @@ function pollAnalystMessages_(ctx, report) {
   for (let idx = 0; idx < msgs.length; idx++) {
     const m = msgs[idx];
     if (ctx.now() > ctx.deadline) {
-      if (msgs.slice(idx).some(isPendingB10Alert)) {
+      const pending = msgs.slice(idx).filter(isPendingB10Alert);
+      if (open && pending.length && pending.every(botCard)) {
+        report.bg_backlog = true;  // only the bot's own cards wait: Burson's flow is not busy
+      } else if (pending.length) {
         report.analyst_backlog = true;
         if (!(report.errors || []).some(e => /^time budget/.test(String(e))) ) {
           report.errors.push('time budget reached; the rest is handled next run');
@@ -1659,9 +1845,16 @@ function pollAnalystMessages_(ctx, report) {
           advance(m);
           continue;
         }
-        if (report.handled >= S.max_messages_per_run) { report.analyst_backlog = true; blocked = true; break; }
+        if (report.handled >= S.max_messages_per_run) {
+          backlog(true);
+          blocked = true;
+          if (open) continue;  // row 51: Burson's alerts after it are still handled
+          break;
+        }
+        if (bgWaits(m, 'watch', watched)) continue;
         report.handled++;
         report.alerts++;
+        if (open) report.bg_handled = (report.bg_handled || 0) + 1;
         ctx.reviewHold = { first: report.handled === 1, room };
         try {
           handleOtherAlert_(ctx, m, watched, report);
@@ -1671,14 +1864,20 @@ function pollAnalystMessages_(ctx, report) {
           if (e && e.holdReview) {
             report.handled--;
             report.alerts--;
-            report.held = (report.held || 0) + 1;
-            report.analyst_backlog = true;
+            if (open) {
+              report.bg_handled--;
+              report.bg_held = (report.bg_held || 0) + 1;
+            } else {
+              report.held = (report.held || 0) + 1;
+            }
+            backlog(true);
             ctx.log(`held ${m.name} for the next run: ${e.message}`);
             blocked = true;
+            if (open) continue;
             break;
           }
           report.errors.push(`${m.name}: ${(e && e.message) || e}`);
-          report.analyst_backlog = true;
+          backlog(true);
           blocked = true;
         } finally {
           ctx.reviewHold = null;
@@ -1699,9 +1898,19 @@ function pollAnalystMessages_(ctx, report) {
         }
         const parsedBq = parseAlert_(m.text);
         if (detectAlert_(m.text, parsedBq, 'Zapier')) {
-          if (report.handled >= S.max_messages_per_run) { report.analyst_backlog = true; blocked = true; break; }
+          // a Direct BigQuery card is the bot's own; a sheet test is a person's (as Burson's alerts)
+          const own = open && !!(typeof bqIngestedSource_ === 'function' && bqIngestedSource_(ctx, m));
+          // (row 51: a person's sheet test is not held back by the bot's own cards handled before it)
+          if (report.handled - (open && !own ? (report.bg_handled || 0) : 0) >= S.max_messages_per_run) {
+            backlog(own);
+            blocked = true;
+            if (own) continue;  // row 51: Burson's alerts after it are still handled
+            break;
+          }
+          if (own && bgWaits(m, 'direct', parsedBq)) continue;
           report.handled++;
           report.alerts++;
+          if (own) report.bg_handled = (report.bg_handled || 0) + 1;
           ctx.reviewHold = { first: report.handled === 1, room };
           try {
             handleAlert_(ctx, m, parsedBq, report);
@@ -1711,14 +1920,20 @@ function pollAnalystMessages_(ctx, report) {
             if (e && e.holdReview) {
               report.handled--;
               report.alerts--;
-              report.held = (report.held || 0) + 1;
-              report.analyst_backlog = true;
+              if (own) {
+                report.bg_handled--;
+                report.bg_held = (report.bg_held || 0) + 1;
+              } else {
+                report.held = (report.held || 0) + 1;
+              }
+              backlog(own);
               ctx.log(`held ${m.name} for the next run: ${e.message}`);
               blocked = true;
+              if (own) continue;
               break;
             }
             report.errors.push(`${m.name}: ${(e && e.message) || e}`);
-            report.analyst_backlog = true;
+            backlog(own);
             blocked = true;
           } finally {
             ctx.reviewHold = null;
@@ -1752,6 +1967,15 @@ function pollAnalystMessages_(ctx, report) {
     const mentions = m.mentions || [];
     const mentioned = !!ctx.botUser && mentions.indexOf(ctx.botUser) >= 0;
     if (m.senderType === 'BOT' || (mentions.length && !mentioned)) {
+      ctx.recent.add(m.name, m.createTime);
+      advance(m);
+      continue;
+    }
+    // the open engine (row 51, step S18, WhyNot.gs): "why not <link>" from a person in the Auto-correct space is answered
+    // in its thread from what the bot holds about that post, read-only (no Gemini call)
+    const whyUrl = open && typeof whyNotLink_ === 'function' ? whyNotLink_(m.text) : '';
+    if (whyUrl && !ctx.store.isDone(m.name) && selfAnswerOk_(ctx, m)) {
+      whyNotAnswer_(ctx, m, whyUrl, report);
       ctx.recent.add(m.name, m.createTime);
       advance(m);
       continue;
@@ -1809,6 +2033,8 @@ function pollAnalystMessages_(ctx, report) {
     advance(m);
   }
   if (ctx.memo && newCursor !== saved) ctx.memo.set('analyst_cursor', String(newCursor));
+  // row 51: how many of the bot's own cards wait unreviewed here (the Watch posts a new one only while fewer than 3 do)
+  if (open) report.bg_waiting = msgs.filter(m => botCard(m) && !ctx.recent.has(m.name) && !ctx.store.isDone(m.name)).length;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1903,12 +2129,15 @@ function bursonOut_(ctx, fwd, key) {
  * Posts a message. In the Burson space it gets a last check first: anything that would leak is replaced by a
  * generic request (`allow` = values from Burson's own alert shown in the text). Every Burson-space post and every
  * answer (`key` 'ans:' / 'anaans:', in any space) goes in this flow's Message log as the bot's own (own_post), kept for
- * good: whatever else is lost, the bot never takes it for a person's message (isOwnMessage_).
+ * good: whatever else is lost, the bot never takes it for a person's message (isOwnMessage_). `attachments`
+ * (optional): Chat.gs chatUploadImage_'s, uploaded to that space first (forwardAlert_'s picture of the post).
  */
-function postTo_(ctx, space, text, thread, key, allow, skipGuard) {
+function postTo_(ctx, space, text, thread, key, allow, skipGuard, attachments) {
   const burson = space === ctx.spaces.burson.id;
   const body = burson && !skipGuard ? bursonSafeText_(ctx, text, allow) : truncate_(text, MAX_TEXT_);
-  const msg = ctx.chat.post(space, body, { thread: thread || null, key });
+  const opts = { thread: thread || null, key };
+  if (attachments && attachments.length && !burson) opts.attachments = attachments;
+  const msg = ctx.chat.post(space, body, opts);
   if (msg && msg.name) {
     if (burson || /^(?:ans|anaans):/.test(String(key || ''))) ctx.store.recordOwnPost(msg.name);
     ctx.recent.add(msg.name, msg.createTime || ctx.now());

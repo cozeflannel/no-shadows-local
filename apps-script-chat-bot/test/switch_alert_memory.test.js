@@ -1,5 +1,6 @@
-// AlertMemory.gs, Knowledge.gs compliance & strict 6-table BigQuery invariant tests:
-// - Repo-wide 6 approved social tables check across all .gs files
+// AlertMemory.gs, Knowledge.gs compliance & strict 7-table BigQuery invariant tests:
+// - Repo-wide 7 approved social tables check across all .gs files (the AMIE table approved by the owner on 16 November
+//   2026, read by Early Detection only, behind Control row 48)
 // - URL canonicalization across tracking params and domains (amPostKey_)
 // - 24h semantic story folding + Chat thread reply citing folded member post
 // - Stakes-rising single update + 120m cooldown + P0/KOF exemption
@@ -13,7 +14,7 @@ const path = require('path');
 module.exports = H => {
   const { test, eq, assert, B, F, NOW, e2e, makeGoogle, loadBot, KB, REAL, TEST_FEED, TRIAGED } = H;
 
-  test('BigQuery approved-tables invariant: all .gs files reference ONLY the 6 approved social-data tables (+ slrr_alerts/alert_sends memory, DSD.gemini_analyzer fallback, and write-only early_wave.{story_snapshots,story_posts,signals,signal_events,triage_verdicts})', () => {
+  test('BigQuery approved-tables invariant: all .gs files reference ONLY the 7 approved social-data tables (+ slrr_alerts/alert_sends memory, DSD.gemini_analyzer fallback, and write-only early_wave.{story_snapshots,story_posts,signals,signal_events,triage_verdicts})', () => {
     const approved = new Set([
       'brand-social-central-data.reporting_data.sprinklr_inbound_comments',
       'brand-social-central-data.raw_data.brandwatch_raw_mentions_base',
@@ -21,6 +22,8 @@ module.exports = H => {
       'bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw',
       'brand-social-central-data.google_tubular_mentions.tubular_videos',
       'brand-social-central-data.DSD.DSD-story-selection',
+      // The AMIE table: approved by the owner on 16 November 2026 (Early Detection, Control row 48; the Watch, row 50)
+      'brand-social-central-data.social_alerts_dataset.all_sundar_mentions',
       // Approved alert-history / IM write-back & ML model fallback
       'brand-social-central-data.slrr_alerts.slrr_alerts',
       'brand-social-central-data.slrr_feedback.alert_sends',
@@ -64,7 +67,7 @@ module.exports = H => {
           /\bSELECT\b[\s\S]{0,400}\bearly_wave\./i.test(src)) {
         bad.push(`${file}: reads from early_wave`);
       }
-      assert.ok(!/vw_chatbot_pending_early_alerts|all_sundar_mentions|sonar_post_aggregates_7d_materialized|content_vectors|evergreen_topics|reddit_items_raw/.test(src),
+      assert.ok(!/vw_chatbot_pending_early_alerts|sonar_post_aggregates_7d_materialized|content_vectors|evergreen_topics|reddit_items_raw/.test(src),
         `Retired table token still in executable code of ${file}`);
     }
     eq(bad, []);

@@ -13,7 +13,7 @@
  *                                                full review, card that says it is an early signal and how many
  *                                                accounts it rests on).
  *   Row 40  Fast triage: hold back noise         drops a signal that meets the hold-back conditions without a review,
- *                                                counts it on Control C19 as filtered by fast triage, and logs it in
+ *                                                counts it on Control C19 among the signals let go, and logs it in
  *                                                one line with its ID, the reason and the probabilities (ftHoldWhy_).
  *   Row 46  Write early-wave records to BigQuery writes each check's stories, story posts, signals, signal events and
  *                                                Decisions verdicts to brand-social-central-data.early_wave.
@@ -71,7 +71,7 @@ const FT_BAR_SPECS_ = [
 const FT_BAR_FIRST_ROW_ = Math.min.apply(null, FT_BAR_SPECS_.map(s => s.row));
 const FT_BAR_LAST_ROW_ = Math.max.apply(null, FT_BAR_SPECS_.map(s => s.row));
 
-const EW_WATCH_QUEUE_PER_DAY_ = 8;          // early-watch signals queued a day at most, of EW_MAX_PER_DAY_'s 40
+const EW_WATCH_QUEUE_PER_DAY_ = 8;          // early-watch signals queued a day at most, of EW_MAX_PER_DAY_'s 40 (or of the allowance's)
 const FT_ANSWER_CACHE_SEC_ = 3 * 3600;      // a signal's answers are kept as long as the producer's buffer keeps the signal
 const FT_ANSWER_CACHE_PREFIX_ = 'ft1:';
 
@@ -177,6 +177,9 @@ function ftBarFrom_(spec, raw) {
   const isDate = Object.prototype.toString.call(raw) === '[object Date]';
   const text = isDate ? '' : String(raw === undefined || raw === null ? '' : raw).trim();
   if (!isDate && !text) {
+    // the open engine (row 51, step S11): a blank accounts bar (B45) reads 2, so stories from 2 accounts are asked about
+    const open2 = spec.key === 'accounts' && typeof openOn_ === 'function' && openOn_();
+    if (open2) return { value: 2, blank: true, valid: false, note: `Blank: using 2 under the open engine (${spec.using(2)})` };
     return {
       value: spec.seed,
       blank: true,
@@ -360,6 +363,27 @@ function ftProtected_(row) {
   return r.tag_raised || ftP0Group_(r);
 }
 
+/**
+ * True when signal `row` is serious, for the allowance of the Auto-correct flow (BigQuery.gs edAllowance_: a serious
+ * signal goes first and passes the hour's allowance for ordinary ones): an early-watch story (EARLY_WATCH); or a P0 risk
+ * group (ftP0Group_: also a row without facts whose hint is P0); or, when the fast triage answered (`dec`, decCompact_),
+ * its probability of medium severity or higher (sp[2] + sp[3] + sp[4]) is at or above the confidence bar (`bars.conf`,
+ * Control B43); or, only when there is no answer, a taxonomy hint raised it (`tag_raised === true`). Never
+ * ftProtected_, which is true for a row without facts. Pure.
+ */
+function edSerious_(row, dec, bars) {
+  const r = row || {};
+  if (String(r.signal_type || '').trim().toUpperCase() === EWS_WATCH_SIGNAL_) return true;
+  if (ftP0Group_(r)) return true;
+  const sp = dec && typeof dec === 'object' && Array.isArray(dec.sp) && dec.sp.length === 5 ? dec.sp.map(v => Number(v) || 0) : null;
+  if (sp) {
+    const set = Number(bars && bars.conf);
+    const bar = isFinite(set) && set > 0 ? set : FT_BAR_SEEDS_.conf;
+    return Math.round((sp[2] + sp[3] + sp[4]) * 1000) / 1000 >= bar;
+  }
+  return r.tag_raised === true;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Order and hold-back (pure rules)
 // ---------------------------------------------------------------------------------------------------------------
@@ -411,6 +435,13 @@ function ftQueueUnrank_(props) {
 function ftHoldWhy_(row, dec, bars) {
   const b = Object.assign({}, FT_BAR_SEEDS_, bars || ftBars_());
   if (!dec || ftProtected_(row)) return '';
+  // the open engine (row 51, step S11): also held when its most probable severity is none at open_hold_none_at (0.80)
+  // or more (never with a P0 risk group or a raised hint: ftProtected_ above)
+  const noneAt = typeof openOn_ === 'function' && openOn_()
+    ? (Number(((typeof GEN !== 'undefined' && GEN && GEN.settings) || {}).open_hold_none_at) || 0.80) : null;
+  if (noneAt !== null && Number(dec.l) === 0 && Number(dec.sc) >= noneAt) {
+    return `most likely nothing (severity none ${dec.sc})`;
+  }
   if (!(Number(dec.l) <= EW_TRIAGE_HOLD_MAX_LEVEL_) || !(Number(dec.sc) >= b.conf)) return '';
   const level = ED_SEVERITIES_[dec.l] || String(dec.l);
   if (Number(dec.g) <= b.about) return `not about Google (about Google ${dec.g}, severity ${level} ${dec.sc})`;
@@ -432,14 +463,15 @@ function ftAnswerWords_(dec) {
 /**
  * This check's fast triage, or null when nothing that is ON uses the answers (row 38 OFF, or rows 39 and 40 both OFF):
  * {session (decSession_), rank, hold, bars (ftBars_), log, asked, missed: {why: count}, held, watch: {asked, raised},
- * verdicts: [triage_verdicts rows]}. `left`: () => ms of the run left.
+ * verdicts: [triage_verdicts rows]}. `left`: () => ms of the run left. `perDay`: the day's cap of Decisions calls
+ * (decSession_; BigQuery.gs earlyWaveCheck_ gives DEC_MAX_PER_DAY_ALLOWANCE_ under the allowance, else DEC_MAX_PER_DAY_).
  */
-function ftStart_(ctx, left) {
+function ftStart_(ctx, left, perDay) {
   const rank = ftRankOn_(ctx);
   const hold = ftHoldOn_(ctx);
   if (!rank && !hold) return null;
   return {
-    session: decSession_(left, !!(ctx && ctx.slaBusy)),
+    session: decSession_(left, !!(ctx && ctx.slaBusy), perDay),
     rank,
     hold,
     bars: ftBars_(ctx),
@@ -520,6 +552,7 @@ function ftAsk_(ft, row) {
     const id = String(r.alert_id || '');
     const kept = ftRecall_(id);
     if (kept) return kept;
+    if (ft.batched && ft.batched.has(id)) return null;  // asked in this check's batch (ftAskAll_) without an answer
     const res = decSignalAsk_(r, ft.session);
     if (res.ok) {
       ft.asked++;
@@ -537,6 +570,40 @@ function ftAsk_(ft, row) {
   } catch (e) {
     return null;
   }
+}
+
+/**
+ * The open engine (row 51, step S11): every candidate of the check asked side by side before the loops (decSignalAskAll_,
+ * in batches of up to 50, one fetchAll each), its answers kept as ftAsk_ keeps them, so the loops read them back (ftAsk_
+ * then asks nothing again for a row the batch asked). Row 51 OFF: nothing (ftAsk_ asks one at a time, as before).
+ * Never throws.
+ */
+function ftAskAll_(ft, rows) {
+  try {
+    if (!ft || typeof openOn_ !== 'function' || !openOn_()) return;
+    const todo = (rows || []).filter(r => r && !(r.dec && typeof r.dec.s === 'number') && !ftRecall_(String(r.alert_id || '')));
+    ft.batched = ft.batched || new Set();
+    for (let i = 0; i < todo.length; i += 50) {
+      const part = todo.slice(i, i + 50);
+      const res = decSignalAskAll_(part, ft.session);
+      part.forEach((r, j) => {
+        const id = String(r.alert_id || '');
+        const x = res[j] || { ok: false, why: 'no answer' };
+        ft.batched.add(id);
+        if (x.ok) {
+          ft.asked++;
+          ftRemember_(id, x.dec);
+          ft.verdicts.push(ewBqVerdictRow_('signal', r, x, ft.rank ? 'ranked' : 'kept', ft.now()));
+          ft.log(`fast triage: ${id || 'a signal'} \u00b7 ${ftAnswerWords_(x.dec)} \u00b7 ${x.ms} ms (side by side)`);
+        } else {
+          if (!x.skipped) ft.verdicts.push(ewBqVerdictRow_('signal', r, x, null, ft.now()));
+          const why = String(x.why || 'no answer');
+          ft.missed[why] = (ft.missed[why] || 0) + 1;
+        }
+      });
+      if (res.every(x => x && x.skipped)) break;  // a pause or a ceiling: the rest wait
+    }
+  } catch (e) { /* the loops ask one at a time */ }
 }
 
 /** Marks the verdict for `row` in `ft.verdicts` as `'held_back'` when row 40 holds the signal back. Never throws. */

@@ -46,8 +46,18 @@ _PRIORITY_BANNER = re.compile(r"THIS ALERT MEETS\s+(P[012])\s+CRITERIA", re.I)
 _SOCIAL_HEADER = re.compile(
     r"^(?:[^\w\s]\s*)*SOCIAL ALERT(?:\s*[^\w\s])*\s*:\s*(.*)$", re.I
 )
+# Lines that are no field and no part of the summary: Burson's footers, the Apps Script bot's own first line on an alert
+# it corrected in its Auto-correct space ("✅ *Reviewed and corrected by the agentic assistant* · Original alert"), and the
+# fixed lines of Burson's live layout (its title, its automated-message note, "Do Not Forward", whether the alert meets
+# the Collection Requirements, the words of its link to the post). The Apps Script bot's Alert.gs RX_BOILERPLATE_ has
+# these lines too (and the bot's own BigQuery lines).
+_REVIEWED_LINE = r"(?:\u2705\ufe0f?\s*)?\*?Reviewed (?:and corrected )?by the agentic assistant\b"
+_OWN_FIRST_LINE = re.compile(r"^[ \t]*" + _REVIEWED_LINE + r"[^\r\n]*", re.I | re.M)  # its link is to Burson's message
 _BOILERPLATE = re.compile(
-    r"^(?:As a reminder,\s*all alerts can be found|Note:\s*Brand-Social-Sends@|Please note:\s*screenshots are not available)",
+    r"^(?:As a reminder,\s*all alerts can be found|Note:\s*Brand-Social-Sends@|Please note:\s*screenshots are not available|"
+    + _REVIEWED_LINE + r"|"
+    r"Automated Alert via Burson\b|Note:\s*This is an automated message\b|Do Not Forward\b|"
+    r"This alert (?:does not meet|meets) the defined Collection Requirements\b|Click here for link to post\b)",
     re.I,
 )
 _AUTHOR_FOLLOWERS = re.compile(
@@ -219,11 +229,21 @@ def normalize_value(spec: FieldSpec, raw: Any, default_tz: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
+# The first line of the bot's own alert cards (apps-script-chat-bot/Alert.gs OWN_CARD_TYPES_): an emoji, the kind of
+# alert in capitals, then " · detail". Both the emoji and the capitals are required.
+_OWN_CARD_HEAD_RE = re.compile(
+    "^(?:\U0001f6a8\ufe0f?\\s*EARLY DETECTION|\u26a1\ufe0f?\\s*EARLY SIGNAL|\U0001f4c8\ufe0f?\\s*UPDATE"
+    "|\U0001f52d\ufe0f?\\s*WATCH)(?:\\s*\u00b7.*)?$"
+)
+
+
 def _is_own_alert_card_header(text: str | None) -> bool:
     for raw in (text or "").splitlines():
         line = raw.replace("*", "").strip()
         if not line:
             continue
+        if _OWN_CARD_HEAD_RE.match(line):
+            return True
         clean = re.sub(r"^[^\w]+|[^\w)\]]+$", "", line, flags=re.UNICODE).strip()
         return bool(re.match(r"^(?:Watch alert\s*\u00b7|Early Detection (?:Alert|Update)\b)", clean, re.I))
     return False
@@ -437,8 +457,8 @@ def parse(config: AgentConfig, text: str) -> ParsedAlert:
             if candidate_author and not candidate_author.isdigit():
                 fields["author"] = candidate_author
 
-    if not fields.get("post_url"):  # a bare link anywhere in the message
-        url = extract_url(_SCREENSHOT_LINK.sub(" ", _CHAT_LINK.sub(lambda m: m.group(1), text or "")))
+    if not fields.get("post_url"):  # a bare link anywhere in the message (never on the Apps Script bot's own first line)
+        url = extract_url(_SCREENSHOT_LINK.sub(" ", _CHAT_LINK.sub(lambda m: m.group(1), _OWN_FIRST_LINE.sub(" ", text or ""))))
         if url:
             fields["post_url"] = url
 

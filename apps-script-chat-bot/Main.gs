@@ -57,6 +57,7 @@ const CHAT_SPACE_URL_ = 'https://mail.google.com/chat/u/0/#chat/space/';
 // ---------------------------------------------------------------------------------------------------------------
 
 function setup() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(SETUP_LOCK_WAIT_MS_)) {  // a run is still going after 5 minutes: nothing is changed
     throw new Error('A run is in progress, try again in a few minutes (setup() didn\'t change anything).');
@@ -129,6 +130,7 @@ function setup() {
 }
 
 function status() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const props = PropertiesService.getScriptProperties();
   const info = {};
   try {
@@ -189,7 +191,8 @@ function status() {
   try { info.proactive_watch_today = JSON.parse(props.getProperty(PW_DAY_PROP_) || 'null'); } catch (e) { info.proactive_watch_today = null; }
   try {
     const pwAll = pwSourceStats_(props);
-    info.proactive_watch_sources = PW_SOURCES_.map(s => `${s.name}: ${pwSourceStatus_(s, pwAll[s.key], Date.now()).text}`);
+    const pwFails = pwLaneFails_(pwLast_(props));  // a look failing as a whole: its sources say so, as on their tab
+    info.proactive_watch_sources = pwSources_().map(s => `${s.name}: ${pwSourceStatus_(s, pwAll[s.key], Date.now(), pwFails[s.lane]).text}`);
   } catch (e) { info.proactive_watch_sources = null; }
   try {
     info.knowledge = knowledgeSummaryText_(JSON.parse(props.getProperty(KNOWLEDGE_STATE_PROP_) || 'null'));
@@ -201,6 +204,7 @@ function status() {
 }
 
 function listMySpaces() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const lines = chatListSpaces_().filter(s => s.spaceType === 'SPACE')
     .map(s => `${s.displayName || '(no name)'}  →  ${CHAT_SPACE_URL_}${String(s.name).replace(/^spaces\//, '')}` +
       (s.externalUserAllowed ? '   (allows people outside Google)' : ''))
@@ -232,6 +236,7 @@ const TRY_ALERT_TEXT = [
 ].join('\n');
 
 function tryAlert() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const parsed = parseAlert_(TRY_ALERT_TEXT);
   if (!detectAlert_(TRY_ALERT_TEXT, parsed, '')) {
     console.log('This text doesn\'t look like a Zapier alert (too few "[Label]: value" lines).');
@@ -267,7 +272,7 @@ function tryAlert() {
   const esc = escalation_(review.fields, {});
   let draftPreview = `Not escalated (${esc.reason})`;
   if (esc.escalated) {
-    const input = emailInput_(review.fields, esc, noWait);
+    const input = emailInput_(review.fields, esc, noWait, review.changed);
     const plan = planRecipients_(esc, esc.text, []);
     const email = socialAlertEmail_(input, plan, { test: false, mailbox: GEN.email.from_email, sendId: 'PREVIEW' });
     draftPreview = `Subject: ${email.subject}\nTo (${email.to.length}): ${email.to.join(', ')}\nCc (${email.cc.length}): ${email.cc.join(', ')}\n\n${email.text}`;
@@ -283,6 +288,8 @@ function tryAlert() {
 // ---------------------------------------------------------------------------------------------------------------
 
 function poll() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
+  openEntry_();  // the run-time record (OpenEngine.gs, always): a run that finds the lock taken is counted too
   const lock = LockService.getScriptLock();
   try {
     if (!lock.tryLock(1000)) return;  // the previous run is still going
@@ -295,6 +302,9 @@ function poll() {
     lock.releaseLock();
     return;
   }
+  openRunStart_(runStart);  // this run's record: its outside calls are counted (OpenEngine.gs)
+  engRunStart_();  // the Engine tab's numbers for this run (EngineTab.gs; row 51 only)
+  const tookOver = runTookOver_;  // a run that died: the record counts it from its claim's start
   if (runTookOver_) {  // the run before ended partway (out of memory, a time limit): a failed run, as an error makes one
     try {
       healthFail_(new Error(`the run that started at ${runOwnerWhen_(runTookOver_)} ended without finishing: Apps Script ` +
@@ -319,11 +329,13 @@ function poll() {
   let mode = null;  // this run's mode (runMode_): {live, why}, once the spaces are known
   let mainCtx = null;
   let acStandalone = false;
+  let acToday = null;  // working alone in the Auto-correct space: what this run wrote in Today (B7), before that flow ran
   let activity = 0;  // alerts handled and emails sent this run (either space): the Results tab rebuilds right after
   let followActivity = 0;  // new replies seen, drafts made, Social Alerts sent (either space): the Follow-up tab rebuilds right after
   let relayRan = false;  // the relay ran this run (when the run fails before it does, it starts afresh: relayFailStop_)
   try {
     outboxRunStart_();  // Outbox.gs: what this run withholds from, or queues for, S-F Burson (counted for the run log)
+    edNotesStart_();    // EarlyDetectionNotes.gs: what became of each Early Detection signal in this run
     setSfBurson_(null);  // Config.gs: no S-F Burson is known until B25 is read below
     setTestCopy_(null);  // Config.gs: no Burson test copy until B26 is read below
     setRunLive_(false);  // Config.gs: Testing until runMode_ says otherwise (fail closed)
@@ -334,15 +346,16 @@ function poll() {
     alertMemoryStart_(ss, { deadline: runStart + RUN_HARD_STOP_MS_ });
     if (typeof syncBrandSafetyGroups_ === 'function') syncBrandSafetyGroups_(ss);
     control = controlTab_(ss) || ensureControlTab_(ss, Session.getEffectiveUser().getEmail());
-    ensureSwitchRows_(control);  // rows 11-24, 27-29, 32, 34, 36-40 and 46 on a tab from before them (OFF)
+    ensureSwitchRows_(control);  // rows 11-24, 27-29, 32, 34, 36-40, 46, 48-51, 54 and 55 on a tab from before them (OFF)
     ensureSfBursonRow_(control);  // row 25 (S-F Burson space, blank) on a tab from before it
     ensureTestCopyRow_(control);  // row 26 (Burson test copy, blank) on a tab from before it
     ensureTestersRow_(control);   // row 30 (Testing: send to, blank) on a tab from before it
     ensureBqLookbackRow_(control);  // row 31 (BigQuery lookback, 60 minutes) on a tab from before it
     ensureOtherSpaceRow_(control);  // row 33 (Other alerts space, blank) on a tab from before it
     ensureWatchAlertsRow_(control);  // row 35 (Watch alerts, OFF) on a tab from before it
-    ensureFtBarRows_(control);    // rows 41-45 and 47 (fast-triage bars, seeds) on a tab from before them; the help is at row 49
+    ensureFtBarRows_(control);    // rows 41-45 and 47 (fast-triage bars, seeds) on a tab from before them; the help is at row 57
     wanted = readControl_(control);
+    ewsRunSwitches_(wanted.switches);  // EarlyWaveSource.gs: which new rows (48-51) are ON this run; unset: all OFF
     testers = testersFor_(wanted.testers, control);  // C30 is kept current even while the bot is paused
     lookback = bqLookbackFor_(wanted.bqLookback, control);  // and C31
     ftBars = ftBarsFor_(wanted.ftBars, control);  // and C41:C45, C47
@@ -357,6 +370,9 @@ function poll() {
       writeControlStatus_(control, { status: pausedStatusText_(), lastCheck: nowLabel_(), today: todayText_(readStats_(), dayKey_(), wanted.switches.noWait) });
       return;
     }
+    // The Early Detection tab (EarlyDetectionTab.gs, setting early_detection_tab): made once, with row 19 ON, before any
+    // flow writes C19, so C19 never points at a tab that isn't there; after that no Sheets call here. Never throws
+    if (wanted.switches.earlyWave) maybeMakeEdTab_(ss);
     // S-F Burson (Control tab B25), once this run, for every flow and Chat.gs (Config.gs setSfBurson_); C25 says what the
     // bot found. Blank or not found, everything that needs it is paused (fail closed). Never throws.
     sfb = sfBursonFor_(control, wanted);
@@ -408,17 +424,22 @@ function poll() {
     acStandalone = !direct.space && !mirror && !!String(wanted.autocorrect || '').trim() &&
       (!String(wanted.burson || '').trim() || !String(wanted.analyst || '').trim());
     if (acStandalone) {
-      mode = { live: false, why: 'working in the Auto-correct space (B10)' };
+      mode = { live: false, why: AC_STANDALONE_MODE_WHY_ };
       const needs = sfb.space ? [] : sfbNeeds_(wanted, null);
       const memNote = amControlNote_();  // AlertMemory.gs: its memory couldn't be read lately ('' when it could)
       const resultsNote = resultsBlockedNote_();  // Speed.gs: a "Results" tab the bot didn't make is in the way ('' when not)
+      const headStartNote = headStartBlockedNote_();  // HeadStart.gs: the same for a "Head start" tab ('' when not)
+      const edTabNote = edTabBlockedNote_();  // EarlyDetectionTab.gs: the same for an "Early Detection" tab ('' when not)
       writeControlStatus_(control, {
         bursonNote: '\u2014 not used (working in Auto-correct space, B10)',
         analystNote: '',
         status: needs.length ? `\u26a0\ufe0f ${sfbProblemText_(sfb, needs)}`
-          : (memNote ? `\u26a0\ufe0f ${memNote}` : resultsNote ? `\u26a0\ufe0f ${resultsNote}` : okStatusText_()),
+          : (memNote ? `\u26a0\ufe0f ${memNote}` : resultsNote ? `\u26a0\ufe0f ${resultsNote}`
+            : headStartNote ? `\u26a0\ufe0f ${headStartNote}` : edTabNote ? `\u26a0\ufe0f ${edTabNote}` : okStatusText_()),
         lastCheck: nowLabel_(),
-        today: todayText_(readStats_(), dayKey_(), wanted.switches.noWait) + amTodayText_(),
+        // Today (B7): the Auto-correct flow's own count, the one C10 shows (the main flow's counters never move
+        // here). The flow runs below, in this run's finally, which brings B7 up to date with what it handled
+        today: (acToday = autoCorrectTodayCell_(props, dayKey_()) + amTodayText_()),
       });
       props.setProperty('FAIL_STREAK', '0');
       return;
@@ -557,7 +578,9 @@ function poll() {
         console.error('direct BigQuery alerts: ' + ((e && e.message) || e));
       }
     }
+    const oeBefore = openFetches_();  // Burson's pass: its outside calls, for Burson's reserve (OpenEngine.gs)
     const report = runOnce_(ctx);
+    openBursonPass_(oeBefore);
     const slaBusy = !!(report && (report.held > 0 || report.handled >= ctx.settings.max_messages_per_run ||
       (report.errors || []).some(e => /^time budget/.test(String(e)))));
     ctx.slaBusy = slaBusy;
@@ -568,13 +591,18 @@ function poll() {
       report.bq_bmie = bqPolled.bmie;
     }
     if (bqPolled && bqPolled.bsip) report.bq_bsip = bqPolled.bsip;
+    if (bqPolled) engAdd_('direct', (Number(bqPolled.sprinklr) || 0) + (Number(bqPolled.bmie) || 0) + (Number(bqPolled.bsip) || 0));
     // Early detection (Control row 19): ON reads BigQuery low-tier clusters and multi-grain velocity spikes at most every
     // 15 minutes into a review queue (BigQuery.gs earlyWaveCheck_), then reviews queued signals and posts each one as a
     // single story card, at most 2 a run (EarlyDetection.gs edDrainQueue_). After the alerts; its failures stay isolated.
+    // the open engine (row 51): a check that was due but is skipped says so on the Early Detection tab (edCheckSkipped_)
+    if (switchOn_(ctx, 'earlyWave') && !(typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', slaBusy))) {
+      edCheckSkipped_(ctx, slaBusy ? 'busy' : 'guard');
+    }
     if (switchOn_(ctx, 'earlyWave') && (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', slaBusy))) {
       ctx._ewBqDeferEvents = true;
       try {
-        earlyWaveCheck_(ctx);
+        engCheck_(earlyWaveCheck_(ctx));  // its numbers for the Engine tab (row 51 only)
       } catch (e) {
         console.error('early detection check: ' + ((e && e.message) || e));
       }
@@ -620,9 +648,14 @@ function poll() {
     const memNote = amControlNote_();  // AlertMemory.gs: its memory couldn't be read lately ('' when it could)
     // Speed.gs: a tab named Results that the bot didn't make is in the way, so the Results tab isn't updated ('' when it is)
     const resultsNote = resultsBlockedNote_();
+    // HeadStart.gs: the same for a tab named Head start that the bot didn't make ('' when its last rebuild found none)
+    const headStartNote = headStartBlockedNote_();
+    // EarlyDetectionTab.gs: the same for a tab named Early Detection ('' when the last write found none)
+    const edTabNote = edTabBlockedNote_();
     const status = sfbStatus || (issues.length ? `⚠️ Something needs another try: ${truncate_(issues[0], 240)} The bot keeps retrying.`
       : (notice ? `⚠️ ${notice}` : memNote ? `⚠️ ${memNote}` : resultsNote ? `⚠️ ${resultsNote}`
-        : direct.space ? directB25StatusText_(cfg.burson) : okStatusText_()));
+        : headStartNote ? `⚠️ ${headStartNote}` : edTabNote ? `⚠️ ${edTabNote}`
+          : direct.space ? directB25StatusText_(cfg.burson) : okStatusText_()));
     writeControlStatus_(control, Object.assign(statusNotes, {
       status: mode && mode.live ? `${LIVE_STATUS_PREFIX_}${status}` : status,
       lastCheck: nowLabel_(), today: todayText_(today, day, wanted.switches.noWait) + amTodayText_(),
@@ -666,6 +699,15 @@ function poll() {
         });
         if (ac) activity += activityOf_(ac.report);
         if (ac) followActivity += followupActivityOf_(ac.report);
+        // Working alone in the Auto-correct space: Today (B7) says what C10 says, this run's alerts included (it was
+        // written above, before the flow ran). Written only when the flow changed it; a write that fails is logged and
+        // the steps below still run (the next run writes the cell)
+        if (acStandalone && acToday !== null) {
+          const todayNow = autoCorrectTodayCell_(props, dayKey_()) + amTodayText_();
+          if (todayNow !== acToday) {
+            try { control.getRange(7, 2).setValue(todayNow); } catch (e) { console.error('could not update Today (B7): ' + ((e && e.message) || e)); }
+          }
+        }
         // Temp checks (Control row 36, TempCheck.gs): what analysts asked for in a thread of the Mirror space or the Other
         // alerts space (queued by their flows above), worked now, after the alerts, in what's left of the run (one that
         // can't be done waits for the next run): emailed to this run's testers (B30, else the stand-in), the thread told
@@ -684,6 +726,11 @@ function poll() {
             cfg,
             toAc ? pwAutoCorrectSpaceFor_(ac, wanted, cfg, sfbFlows || sfb) : null
           );
+          // where stories go first in the Auto-correct space, a story's card that sent no Social Alert is no post's own
+          // alert for the watch either (WatchAlerts.gs pwStoryCardOnly_); everywhere else the watch does as before
+          if (toAc && alerts && ac && ac.ctx && ac.ctx.bqPastStoryCards === true) alerts.bqPastStoryCards = true;
+          // the open engine (row 51): the Watch posts a new card there only while fewer than 3 of the bot's own wait
+          if (toAc && alerts && openOn_()) alerts.bgWaiting = Number(ac && ac.report && ac.report.bg_waiting) || 0;
           const otherBusy = Boolean(toOther && os && os.report &&
             ((os.report.errors || []).some(e => /^time budget/.test(String(e))) || os.report.held > 0));
           const acBusy = Boolean(toAc && ac && ac.report &&
@@ -695,6 +742,17 @@ function poll() {
           proactiveWatchOff_();
           pwAlertsIdle_(control, wanted.watchAlerts, false);
         }
+        // Proactive watch: also read the AMIE table (Control row 50, ProactiveWatch.gs): OFF forgets its check, its keys,
+        // its mark and its row's numbers (writes only what is there). Never throws
+        if (!wanted.switches.watchAmie) pwAmieOff_();
+        // Early Detection: also read Brandwatch live (Control row 49, BrandwatchLive.gs): right after the Watch, never in
+        // front of it; it reads only while rows 49 and 19 are ON, and hands what it read to Early Detection's next check.
+        // OFF forgets where it had read to (never the day's counts or the ticks). Never throws
+        if (wanted.switches.edBwLive) bwLiveRun_(runStart, wanted.switches);
+        else bwLiveOff_(wanted.switches);
+        // Early Detection: also read the AMIE table (Control row 48, EarlyWaveSource.gs): OFF forgets where it had read to
+        // and the posts it had set aside (never the day's counts or the date its trial started). Never throws
+        if (!wanted.switches.edAmie) ewsAmieOff_(wanted.switches);
         const any = mainCtx || (ac && ac.ctx);
         const bgIdleOk = typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', bgBusy);
         if (any) {
@@ -720,27 +778,52 @@ function poll() {
               flows: resultsFlows_(mainCtx, ac && ac.ctx, cfg),
             });
           }
+          // The Head start tab (HeadStart.gs): this app's own alerts next to Burson's alerts and the IMs' emails, at most
+          // every 10 minutes, after the Results tab (whose rebuild in this run has the IMs' times); it only reads the
+          // Alert log and its own tab, writes only that tab, and never throws. Never in a run where a flow is still
+          // catching up on alerts (`flows`: it waits for a run that has caught up, so the next run is never kept waiting)
+          if (activity > 0 || bgIdleOk) {
+            maybeRefreshHeadStart_(ss, any, { deadline: runStart + RUN_HARD_STOP_MS_, runStart, flows: [mainCtx, ac, os] });
+          }
+          // The Early Detection tab (EarlyDetectionTab.gs, setting early_detection_tab): this run's record of what became
+          // of each story signal, written with 30 seconds of the run left and never in a run still catching up on alerts;
+          // else its rows wait for the next run. A run without a row makes no Sheets call. Never throws
+          maybeWriteEdTab_(ss, any, { deadline: runStart + RUN_HARD_STOP_MS_, flows: [mainCtx, ac, os] });
+          // The Engine tab (EngineTab.gs, Control row 51 only): a row for a check this run made, and the day's row
+          maybeWriteEngineTab_(ss, any, { deadline: runStart + RUN_HARD_STOP_MS_, flows: [mainCtx, ac, os] });
         }
       }
     } catch (e) {
       console.error('after the run: ' + ((e && e.stack) || e));
     }
     try {
-      // C11:C24, C27:C29, C32, C34 and C36:C37, paused or not; whether this run is LIVE (runMode_), when the run got that far
+      // C11:C24, C27:C29, C32, C34, C36:C40, C46, C48:C51 and C54:C55, paused or not; whether this run is LIVE (runMode_),
+      // when the run got that far
       const live = mode ? mode.live : undefined;
       const extra = rtc ? { testCopy: rtc.space ? rtc.space.name : '', testCopyBroken: !rtc.space && !rtc.blank } : {};
       if (mode && mode.why) extra.modeWhy = mode.why;
       if (testers && testers.testers) extra.testers = testers.testers;
       if (direct) extra.directB25 = { state: direct.state, name: direct.name };  // C32: Work directly in B25
       if (wanted) extra.watchAlerts = pwAlertsChoice_(wanted.watchAlerts);  // C34: where the watch's flags go (row 35)
+      if (wanted) extra.paused = !wanted.on;  // C55: no slide is delivered while the bot is paused (B2 OFF)
+      // the open engine (Control row 51, OpenEngine.gs): the day's counts, then C51's note, before column C is written
+      openDaySave_();
+      openWriteNote_(Date.now());
       if (control && wanted) writeSwitchStatuses_(control, wanted.switches, live, extra);
     } catch (e) {
       console.error('could not update the switches on the Control tab: ' + ((e && e.message) || e));
     }
+    // The live dashboard (Control row 54) and the slide deliveries (row 55), last: the dashboard's build id, and the
+    // deliveries' own time trigger. Nothing here while both are OFF and no deliveries trigger is kept (no property
+    // written, no trigger call). Never throws, so it can never fail the run
+    if (wanted && wanted.switches) pollDashboardUpkeep_(wanted.switches, { live: mode ? mode.live : undefined, start: runStart });
     try { outboxRunEnd_(); } catch (e) { console.error('Burson outbox: ' + e); }  // what this run withheld or queued
     // The shared alert memory (AlertMemory.gs): what every flow learned this run, written once (never throws), then gone
     alertMemoryFlush_();
     alertMemoryEnd_();
+    // the run-time and outside-call record (RUN_LEDGER, always: it only records), then UrlFetchApp as it was
+    openLedgerRecord_(runStart, Date.now(), tookOver);
+    openRunEnd_();
     releaseRun_();  // RUN_OWNER, if this run still holds it
     lock.releaseLock();
   }
@@ -811,6 +894,12 @@ function runMode_(switches, testCopyCell, sfbSpace, cfg) {
 // outbox aren't used; Direct BigQuery alerts and the Early wave check don't post there (BigQuery.gs). People outside
 // Google can join the real S-F Burson, so it is never worked this way, whatever row 32 says.
 // ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Why a run that works alone in the Auto-correct space (B10 set; B9 blank; B3 or B4 blank) is Testing (C29, the run
+ * log). No cell lifts it: B26 blank and S-F Burson set don't make that run LIVE (Control.gs: the Safety valve's note).
+ */
+const AC_STANDALONE_MODE_WHY_ = 'working in the Auto-correct space (B10)';
 
 /** Why a run that works directly in B25 is Testing (C29, the run log), and what the cells it doesn't use say. */
 const DIRECT_B25_MODE_WHY_ = 'the bot works directly in B25, a Google-only space (row 32)';
@@ -1292,6 +1381,85 @@ function sweepOrphanTriggers_() {
     console.warn('orphan trigger sweep skipped: ' + ((e && e.message) || e));
     return 0;
   }
+}
+
+// The slide deliveries' time trigger (Control row 55; its handler, dashDeliverDue, is in SlideDeliveries.gs and takes its
+// own claim, never the poll's lock): one, every 5 minutes, kept by poll() while row 55 is ON and removed while it's OFF.
+// SLIDE_TRIGGER_PROP_ says poll() made one (the time it did), so a run with row 55 OFF and none made reads the triggers
+// not at all
+const SLIDE_TRIGGER_HANDLER_ = 'dashDeliverDue';
+const SLIDE_TRIGGER_EVERY_MIN_ = 5;
+const SLIDE_TRIGGER_PROP_ = 'SLIDE_TRIGGER';
+
+/**
+ * The live dashboard's and the slide deliveries' upkeep, at the end of a run (`switches`: the run's, readControl_;
+ * `run`: {live (this run's mode: runMode_), start (when this run started: before its mode was decided and before any
+ * of its sends)}): with row 54 ON, the dashboard's build id in the property BOT_BUILD (pollBuildUpkeep_); the
+ * deliveries' trigger as row 55 says (pollSlideTriggerUpkeep_); with row 55 ON, the run's mode kept from its start
+ * (SlideDeliveries.gs slideModeNote_: a slide says whether a Social Alert went to the teams or only to the testers); the
+ * run that finds row 55 turned OFF (it removes the trigger) marks the mode record "not kept" from its start
+ * (slideModeGap_), so sends while row 55 is OFF are never put under the last mode kept. (C55 while the bot is paused is
+ * written with the other switches' column C: writeSwitchStatuses_.) With both OFF and no deliveries trigger made: one
+ * property read (SLIDE_TRIGGER), no write and no trigger call. {build, trigger, mode}: what each did ('' when it did
+ * nothing). Never throws.
+ */
+function pollDashboardUpkeep_(switches, run) {
+  const out = { build: '', trigger: '', mode: '' };
+  const r = run || {};
+  const slidesOn = !!(switches && switches.slideDeliveries === true);
+  try {
+    if (switches && switches.liveDashboard === true) out.build = pollBuildUpkeep_();
+  } catch (e) {
+    console.error('live dashboard (row 54): could not write the build id: ' + ((e && e.message) || e));
+  }
+  try {
+    out.trigger = pollSlideTriggerUpkeep_(slidesOn);
+  } catch (e) {
+    console.error('slide deliveries (row 55): could not keep the delivery trigger: ' + ((e && e.message) || e));
+  }
+  const start = Number(r.start) > 0 ? Number(r.start) : Date.now();
+  if (slidesOn) out.mode = slideModeNote_(r.live, start);
+  else if (out.trigger === 'removed') out.mode = slideModeGap_(start);
+  return out;
+}
+
+// C55 while row 55 is ON and the bot is paused (Control B2 OFF): nothing is delivered then
+const SLIDE_PAUSED_ON_TEXT_ = '✓ ON, but paused: the bot is OFF (Control B2), so no pulse slides are delivered until it is ON again';
+
+/**
+ * Row 54 ON: the dashboard's build id (Dashboard.gs DASH_BUILD_) in the property BOT_BUILD, written only when it is not
+ * there yet (one write after each push of new dashboard code). The web app compares its own copy with it. 'written' or
+ * 'same'.
+ */
+function pollBuildUpkeep_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty(DASH_BUILD_PROP_) === DASH_BUILD_) return 'same';
+  props.setProperty(DASH_BUILD_PROP_, DASH_BUILD_);
+  return 'written';
+}
+
+/**
+ * The slide deliveries' time trigger: `on` (row 55 ON) keeps exactly one (made when there is none, any extra deleted);
+ * OFF deletes every one, only when SLIDE_TRIGGER_PROP_ says poll() made one (otherwise no trigger call at all). Only the
+ * bot's own account's triggers are seen. 'made', 'kept', 'removed' or '' (nothing to do).
+ */
+function pollSlideTriggerUpkeep_(on) {
+  const props = PropertiesService.getScriptProperties();
+  const made = !!props.getProperty(SLIDE_TRIGGER_PROP_);
+  if (!on && !made) return '';
+  const mine = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === SLIDE_TRIGGER_HANDLER_);
+  if (!on) {
+    mine.forEach(t => ScriptApp.deleteTrigger(t));
+    props.deleteProperty(SLIDE_TRIGGER_PROP_);
+    console.log(`slide deliveries (row 55) is OFF: removed ${mine.length} delivery trigger${mine.length === 1 ? '' : 's'}`);
+    return 'removed';
+  }
+  mine.slice(1).forEach(t => ScriptApp.deleteTrigger(t));
+  if (!made) props.setProperty(SLIDE_TRIGGER_PROP_, String(Date.now()));
+  if (mine.length) return 'kept';
+  ScriptApp.newTrigger(SLIDE_TRIGGER_HANDLER_).timeBased().everyMinutes(SLIDE_TRIGGER_EVERY_MIN_).create();
+  console.log(`slide deliveries (row 55) is ON: made the delivery trigger (every ${SLIDE_TRIGGER_EVERY_MIN_} minutes)`);
+  return 'made';
 }
 
 /**

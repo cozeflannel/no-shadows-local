@@ -30,9 +30,15 @@ PARITY_FIELDS = [
 ]
 
 
+# How long the whole Node suite may take (seconds). It takes five to six minutes on a busy shared machine.
+NODE_SUITE_TIMEOUT = 900
+
+
 @needs_node
 def test_node_suite_passes():
-    result = subprocess.run([NODE, str(BOT / "test" / "run_tests.js")], capture_output=True, text=True, timeout=120)
+    result = subprocess.run(
+        [NODE, str(BOT / "test" / "run_tests.js")], capture_output=True, text=True, timeout=NODE_SUITE_TIMEOUT
+    )
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-2000:]
     assert "FAIL" not in result.stdout
 

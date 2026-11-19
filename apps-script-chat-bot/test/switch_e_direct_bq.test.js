@@ -226,7 +226,8 @@ module.exports = H => {
     eq([last.bq_sprinklr, last.bq_bmie, last.bq_bsip, last.alerts, last.errors], [undefined, undefined, 1, 1, []]);
     assert.strictEqual(t.get('B5'), '✅ Working');
     assert.match(t.control().cell(ROW, 3), new RegExp('^✓ ON: also reviews Sprinklr, DSD / Brandwatch and Sonar posts straight from BigQuery ' +
-      '\\(each post once\\) · last check Oct 14, \\d{1,2}:\\d\\d (AM|PM) EDT · 3 posts today$'));
+      '\\(each post once\\) · last check Oct 14, \\d{1,2}:\\d\\d (AM|PM) EDT · 3 posts today \\(2 for a Social Alert, 0 monitoring only\\)' +
+      ' · not posted: 0 already had an alert, 0 on a story already alerted$'));
     // What it remembers: short hashes of the posts, and the messages with their source
     const keys = JSON.parse(t.g.props.get('BQ_INGESTED_KEYS'));
     eq([keys.length, keys.every(k => /^[0-9a-f]{1,8}:\d+$/.test(k))], [3, true]);
@@ -283,7 +284,10 @@ module.exports = H => {
     eq(synth(t.chat, TEST_FEED).slice(2).map(linkOf), [NEW]);
     eq(direct(calls).filter(c => kindOf(c) === 'log').pop().params.urls, LOGGED);  // NEW's other link was dropped before it
     eq([lastRun(t).bq_bmie, lastRun(t).bq_bsip], [1, undefined]);
-    assert.match(t.control().cell(ROW, 3), / · 3 posts today$/);
+    // not posted, each counted once though read at several checks: the post Burson alerted, and the one the SLRR alert
+    // log has; never the posts the poll took itself (read again at every check, its memory lost or not)
+    assert.match(t.control().cell(ROW, 3),
+      / · 3 posts today \(2 for a Social Alert, 0 monitoring only\) · not posted: 2 already had an alert, 0 on a story already alerted$/);
     eq(logRows(t).filter(x => x.ingested).length, 3);
   });
 
@@ -359,10 +363,13 @@ module.exports = H => {
       return { t, calls, posted: synth(t.chat, TEST_FEED).map(linkOf), note: t.control().cell(ROW, 3) };
     };
     const AGAIN = '; it tries again at the next check)';
+    // C15's counts of what was not posted, after the day's posts (with a problem to tell there is no room for the
+    // bracket that splits the posts: BigQuery.gs bqDirectNoteText_). None here: no post that already had an alert is read
+    const NONE = ' · not posted: 0 already had an alert, 0 on a story already alerted';
     // Both US queries refused (as live, by the correlated subquery): BSIP still checked
     let s = scenario({ us: { code: 500 }, bsip: [bsipRow()], log: [] });
     eq([s.posted, direct(s.calls).map(kindOf)], [[BSIP_URL], ['spr', 'bmie', 'bsip', 'log']]);
-    assert.ok(s.note.endsWith(`EDT (BigQuery refused the query for Sprinklr and BMIE${AGAIN} · 1 post today`), s.note);
+    assert.ok(s.note.endsWith(`EDT (BigQuery refused the query for Sprinklr and BMIE${AGAIN} · 1 post today${NONE}`), s.note);
     ['Sprinklr', 'BMIE'].forEach(src => assert.ok(s.t.g.logs.some(l => l.startsWith(`BigQuery direct poll (${src}): BigQuery refused ` +
       'the query: BigQuery HTTP 500')), src));
     assert.ok(!s.t.g.logs.concat([s.note]).some(l => /didn't answer/.test(l)));
@@ -370,22 +377,23 @@ module.exports = H => {
     s = scenario({ us: c => (/sprinklr_candidates/.test(c.sql) ? { code: 400, body: '{"error":{"message":"Correlated subqueries ' +
       'that reference other tables are not supported"}}' } : [bmieRow()]), bsip: [], log: [] });
     eq([s.posted, direct(s.calls).map(kindOf)], [[BMIE_URL], ['spr', 'bmie', 'log', 'bsip']]);
-    assert.ok(s.note.endsWith(`EDT (BigQuery refused the query for Sprinklr${AGAIN} · 1 post today`), s.note);
+    assert.ok(s.note.endsWith(`EDT (BigQuery refused the query for Sprinklr${AGAIN} · 1 post today${NONE}`), s.note);
     assert.ok(s.t.g.logs.some(l => /^BigQuery direct poll \(Sprinklr\): BigQuery refused the query: BigQuery HTTP 400: .*Correlated subqueries/.test(l)));
     s = scenario({ us: [sprRow()], bsip: { timeout: true }, log: [] });  // BSIP too slow: none of its posts, no SLRR-log check
     eq([s.posted, direct(s.calls).map(kindOf)], [[SPR_URL], ['spr', 'log', 'bmie', 'bsip']]);
-    assert.ok(s.note.endsWith(`EDT (BigQuery didn't finish the query for BSIP in time${AGAIN} · 1 post today`), s.note);
+    assert.ok(s.note.endsWith(`EDT (BigQuery didn't finish the query for BSIP in time${AGAIN} · 1 post today${NONE}`), s.note);
     assert.ok(s.t.g.logs.includes('BigQuery direct poll (BSIP): BigQuery didn\'t finish the query in time: BigQuery: the query did not finish in time'));
     s = scenario({ us: [], bsip: [bsipRow()], log: { code: 503 } });  // can't tell whether the SLRR log has it: not posted
     eq([s.posted, direct(s.calls).map(kindOf)], [[], ['spr', 'bmie', 'bsip', 'log']]);
-    assert.ok(s.note.endsWith(`EDT (BigQuery refused the query for BSIP's SLRR log check${AGAIN} · 0 posts today`), s.note);
+    // (one character too long with "; it tries again at the next check": that goes, the problem's words and the counts stay)
+    assert.ok(s.note.endsWith(`EDT (BigQuery refused the query for BSIP's SLRR log check) · 0 posts today${NONE}`), s.note);
     // Chat refuses the posts: the run goes on; they aren't remembered, so the next check posts them
     s = scenario({ us: [sprRow()], bsip: [bsipRow()], log: [] }, t => {
       t.chat.fail = (method, path, query) => (method === 'post' && path === TEST_FEED + '/messages' && /^client-zmir-/.test(query.messageId || '')
         ? { code: 503, body: { error: { code: 503, message: 'The service is currently unavailable.' } } } : null);
     });
     eq(s.posted, []);
-    assert.ok(s.note.endsWith('EDT (2 couldn\'t be posted; it tries again at the next check) · 0 posts today'), s.note);
+    assert.ok(s.note.endsWith(`EDT (2 couldn't be posted${AGAIN} · 0 posts today${NONE}`), s.note);
     s.t.chat.fail = null;
     s.t.g.clock.now += 5 * 60e3;
     s.t.poll();
@@ -633,7 +641,7 @@ module.exports = H => {
     assert.ok(w2.g.logs.some(l => /^BigQuery direct poll \(BMIE's SLRR log check\): BigQuery refused the query: BigQuery HTTP 503/.test(l)),
       w2.g.logs.join('\n'));
     assert.match(JSON.parse(w2.g.props.get('SWITCH_NOTES')).directBq.text,
-      /\(BigQuery refused the query for BMIE's SLRR log check; it tries again at the next check\) · 0 posts today$/);
+      /\(BigQuery refused the query for BMIE's SLRR log check\) · 0 posts today · not posted: 0 already had an alert, 0 on a story already alerted$/);
     r.log = [];
     w2.g.clock.now += 5 * 60e3;
     eq(w2.bot.pollBigQuerySources_(onCtx(w2), w2.BUR).bmie, 1);
@@ -647,7 +655,7 @@ module.exports = H => {
     ['Sprinklr', 'BMIE'].forEach(src => assert.ok(w.g.logs.includes(`BigQuery direct poll (${src}): BigQuery didn't finish the query in ` +
       'time: BigQuery: the query did not finish in time'), w.g.logs.join('\n')));
     assert.match(JSON.parse(w.g.props.get('SWITCH_NOTES')).directBq.text,
-      /\(BigQuery didn't finish the query for Sprinklr and BMIE in time; it tries again at the next check\) · 1 post today$/);
+      /\(BigQuery didn't finish the query for Sprinklr and BMIE in time\) · 1 post today · not posted: 0 already had an alert, 0 on a story already alerted$/);
     const spr = direct(calls).find(c => kindOf(c) === 'spr');
     assert.ok(/\nsprinklr_top AS \([^]*\n {4}AND c\.comment_timestamp >= TIMESTAMP_SUB\(CURRENT_TIMESTAMP\(\), INTERVAL 14 DAY\)\n/.test(spr.sql), spr.sql);
   });

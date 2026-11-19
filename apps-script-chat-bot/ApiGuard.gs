@@ -30,6 +30,15 @@ const API_GUARD_BQ_60M_ = 180;
 const API_GUARD_DECISIONS_10M_ = 30;  // two full checks' worth (DEC_MAX_PER_CHECK_ a check, Decisions.gs)
 const API_GUARD_DECISIONS_60M_ = 90;  // as the Gemini 60-minute ceiling: one call a signal, like its one review
 
+// Control row 51 (the open engine, OpenEngine.gs): the rolling ceilings above stay only as a runaway guard, at these
+// (the open-engine plan's O3 row 20; Decisions' recorded live limit is about 285 calls a minute)
+const API_GUARD_OPEN_GEMINI_10M_ = 120;
+const API_GUARD_OPEN_GEMINI_60M_ = 500;
+const API_GUARD_OPEN_BQ_10M_ = 150;
+const API_GUARD_OPEN_BQ_60M_ = 700;
+const API_GUARD_OPEN_DECISIONS_10M_ = 600;
+const API_GUARD_OPEN_DECISIONS_60M_ = 2400;
+
 // Vertex AI HTTP 429 retry-storm cooldown (ms)
 const API_GUARD_V429_KEY_ = 'api_guard_v429';
 const API_GUARD_V429_MS_ = 30 * 1000;
@@ -55,14 +64,20 @@ function apiGuardReadBuckets_(nowMs) {
         const g = Math.max(0, Math.floor(Number(v.g) || 0));
         const b = Math.max(0, Math.floor(Number(v.b) || 0));
         const d = Math.max(0, Math.floor(Number(v.d) || 0));
-        if (g || b || d) out[m] = d ? { g, b, d } : { g, b };
+        // the first screen's own fields (RequirementsFirst.gs): kept beside the others, only on a minute that had some
+        const extra = {};
+        ['s', 't', 'q'].forEach(f => { const x = Math.max(0, Math.floor(Number(v[f]) || 0)); if (x) extra[f] = x; });
+        if (g || b || d || Object.keys(extra).length) out[m] = Object.assign(d ? { g, b, d } : { g, b }, extra);
       }
     });
   } catch (e) {}
   return out;
 }
 
-/** Records `count` outbound API calls of `kind` ('gemini' | 'bigquery' | 'decisions') in the rolling minute buckets. Never throws. */
+/**
+ * Records `count` outbound API calls of `kind` ('gemini' | 'bigquery' | 'decisions'; the first screen's 'screen',
+ * 'screen_split' and 'screen_posts') in the rolling minute buckets. Never throws.
+ */
 function apiGuardNote_(kind, count, nowMs) {
   try {
     const n = Math.max(1, Math.floor(Number(count === undefined ? 1 : count) || 1));
@@ -74,6 +89,9 @@ function apiGuardNote_(kind, count, nowMs) {
     if (kind === 'gemini') cur.g += n;
     else if (kind === 'bigquery') cur.b += n;
     else if (kind === 'decisions') cur.d = (Number(cur.d) || 0) + n;
+    else if (kind === 'screen') cur.s = (Number(cur.s) || 0) + n;
+    else if (kind === 'screen_split') cur.t = (Number(cur.t) || 0) + n;
+    else if (kind === 'screen_posts') cur.q = (Number(cur.q) || 0) + n;
     else return;
     buckets[curMin] = cur;
     CacheService.getScriptCache().put(API_GUARD_CACHE_KEY_, JSON.stringify(buckets), API_GUARD_CACHE_SEC_);
@@ -114,8 +132,15 @@ function apiGuardAllowBackground_(kind, slaBusy, nowMs) {
   const c = apiGuardCounts_(nowMs);
   const checkGemini = !kind || kind === 'any' || kind === 'gemini';
   const checkBq = !kind || kind === 'any' || kind === 'bigquery';
-  if (checkGemini && (c.gemini10m >= API_GUARD_GEMINI_10M_ || c.gemini60m >= API_GUARD_GEMINI_60M_)) return false;
-  if (checkBq && (c.bq10m >= API_GUARD_BQ_10M_ || c.bq60m >= API_GUARD_BQ_60M_)) return false;
+  // Control row 51 (OpenEngine.gs): the rolling ceilings stay only as a runaway guard (API_GUARD_OPEN_*_); a 429 makes
+  // background work wait 10 minutes instead (openNote429_, openMayStart_). OFF: the ceilings as they were
+  const open = typeof openOn_ === 'function' && openOn_();
+  const g10 = open ? API_GUARD_OPEN_GEMINI_10M_ : API_GUARD_GEMINI_10M_;
+  const g60 = open ? API_GUARD_OPEN_GEMINI_60M_ : API_GUARD_GEMINI_60M_;
+  const b10 = open ? API_GUARD_OPEN_BQ_10M_ : API_GUARD_BQ_10M_;
+  const b60 = open ? API_GUARD_OPEN_BQ_60M_ : API_GUARD_BQ_60M_;
+  if (checkGemini && (c.gemini10m >= g10 || c.gemini60m >= g60)) { if (open) openWall_('guard'); return false; }
+  if (checkBq && (c.bq10m >= b10 || c.bq60m >= b60)) { if (open) openWall_('guard'); return false; }
   return true;
 }
 
@@ -140,7 +165,76 @@ function apiGuardDecisionsCounts_(nowMs) {
  */
 function apiGuardAllowDecisions_(nowMs) {
   const c = apiGuardDecisionsCounts_(nowMs);
-  return c.decisions10m < API_GUARD_DECISIONS_10M_ && c.decisions60m < API_GUARD_DECISIONS_60M_;
+  const open = typeof openOn_ === 'function' && openOn_();  // row 51: the runaway guard's ceilings
+  return c.decisions10m < (open ? API_GUARD_OPEN_DECISIONS_10M_ : API_GUARD_DECISIONS_10M_) &&
+    c.decisions60m < (open ? API_GUARD_OPEN_DECISIONS_60M_ : API_GUARD_DECISIONS_60M_);
+}
+
+// The first screen (RequirementsFirst.gs, step S19h): its calls are counted apart (`s`), never as `gemini`, so they never
+// stop Early Detection, the Direct poll, the Watch pre-read or anything apiGuardAllowBackground_ gates. Its ceilings
+// come from the carry's size (RQ_CARRY_MAX_ posts a check, RQ_SCREEN_MAX_POSTS_ a call): a call and its two halves,
+// two checks in 10 minutes and twelve in 60, with one partial call a round, two rounds a run
+const API_GUARD_V429_LOG_KEY_ = 'api_guard_v429_log';
+const API_GUARD_V429_LOG_MAX_ = 20;
+
+/** The screen's rolling ceilings: {m10: 300, m60: 1,800}. Never throws. */
+function apiGuardScreenCeilings_() {
+  try {
+    const calls = Math.ceil(RQ_CARRY_MAX_ / RQ_SCREEN_MAX_POSTS_);
+    return { m10: 3 * (2 * calls + 20), m60: 3 * (12 * calls + 120) };
+  } catch (e) {
+    return { m10: 300, m60: 1800 };
+  }
+}
+
+/** The first screen's rolling counts: {screen10m, screen60m, split60m, posts60m}. Never throws. */
+function apiGuardScreenCounts_(nowMs) {
+  const now = Number(nowMs) || Date.now();
+  const min10 = Math.floor(now / 60000) - 9;
+  const buckets = apiGuardReadBuckets_(now);
+  const out = { screen10m: 0, screen60m: 0, split60m: 0, posts60m: 0 };
+  Object.keys(buckets).forEach(k => {
+    const v = buckets[k] || {};
+    out.screen60m += Number(v.s) || 0;
+    out.split60m += Number(v.t) || 0;
+    out.posts60m += Number(v.q) || 0;
+    if (Number(k) >= min10) out.screen10m += Number(v.s) || 0;
+  });
+  return out;
+}
+
+/** True when `n` more screen calls fit under the screen's own rolling ceilings. Never throws. */
+function apiGuardAllowScreen_(n, nowMs) {
+  const c = apiGuardScreenCounts_(nowMs);
+  const max = apiGuardScreenCeilings_();
+  const k = Math.max(0, Number(n) || 0);
+  return c.screen10m + k <= max.m10 && c.screen60m + k <= max.m60;
+}
+
+/**
+ * A Vertex AI 429 met by any try of geminiGenerate_ (Burson's reviews, the Watch pre-read, ...): its time joins a short
+ * list (the last 20, 2 hours) the first screen reads, only while the screen marked itself on in the last 10 minutes (the
+ * cache flag rq_screen_on); else nothing is written. The cooldown above is untouched. Never throws.
+ */
+function apiGuardNoteVertex429Try_(nowMs) {
+  try {
+    if (typeof CacheService === 'undefined' || !CacheService.getScriptCache) return;
+    const cache = CacheService.getScriptCache();
+    if (!cache.get('rq_screen_on')) return;
+    const list = apiGuardVertex429Log_().concat([Number(nowMs) || Date.now()]).slice(-API_GUARD_V429_LOG_MAX_);
+    cache.put(API_GUARD_V429_LOG_KEY_, JSON.stringify(list), API_GUARD_CACHE_SEC_);
+  } catch (e) {}
+}
+
+/** The times of the Vertex AI 429s geminiGenerate_ met lately (apiGuardNoteVertex429Try_), oldest first. Never throws. */
+function apiGuardVertex429Log_() {
+  try {
+    if (typeof CacheService === 'undefined' || !CacheService.getScriptCache) return [];
+    const list = JSON.parse(CacheService.getScriptCache().get(API_GUARD_V429_LOG_KEY_) || '[]');
+    return Array.isArray(list) ? list.map(Number).filter(x => x > 0) : [];
+  } catch (e) {
+    return [];
+  }
 }
 
 /** True while Vertex AI is inside its brief post-429 retry-storm cooldown window. Never throws. */
@@ -162,6 +256,7 @@ function apiGuardNoteVertex429_(nowMs) {
     const now = Number(nowMs) || Date.now();
     const sec = Math.max(10, Math.ceil(API_GUARD_V429_MS_ / 1000) + 5);
     CacheService.getScriptCache().put(API_GUARD_V429_KEY_, String(now + API_GUARD_V429_MS_), sec);
+    if (typeof openNote429_ === 'function') openNote429_(now);  // row 51: background work waits 10 minutes
   } catch (e) {}
 }
 

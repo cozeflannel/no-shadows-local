@@ -67,10 +67,13 @@ const DEC_SLOW_MS_ = 10 * 1000;              // a call that took longer counts a
 const DEC_PAUSE_MS_ = 15 * 60 * 1000;        // after a failure no call is made for this long (one early-wave check interval)
 const DEC_MAX_PER_CHECK_ = 15;               // calls an early-wave check (queue candidates and early-watch stories together)
 const DEC_MAX_PER_DAY_ = 150;                // calls a day: about 72 queue candidates a day (Nov 11-13) plus the early watch
+const DEC_MAX_PER_DAY_ALLOWANCE_ = 300;      // calls a day while the Auto-correct flow's allowance is on (BigQuery.gs
+                                             // edAllowance_: every candidate is asked, ~136 signals a day on Nov 15); every
+                                             // other flow, and the setting at 0, keep DEC_MAX_PER_DAY_
 const DEC_INPUT_MAX_CHARS_ = 4000;           // the input's JSON: a headline, the counts and 8 snippets of 280 characters
 const DEC_HEADLINE_CHARS_ = 200;             // of the signal's headline
 const DEC_ID_DIGITS_ = 8;                    // a run of this many digits is taken for an id and cut (a CVE number has 4-7)
-const DEC_STATE_PROP_ = 'DECISIONS_STATE';   // {day, asked, failed, refused, until, why}: today's calls and the pause
+const DEC_STATE_PROP_ = 'DECISIONS_STATE';   // {day, asked, failed, refused, until, why[, cap]}: today's calls and the pause
 const DEC_REFUSAL_CODES_ = ['safety', 'prohibited_content', 'blocklist', 'image_safety', 'content_blocked'];  // HTTP 400: the input was refused
 
 // The fast triage's questions (decSignalQuestions_): their keys, and the severity rubric's levels (ED_SEVERITIES_)
@@ -88,8 +91,10 @@ const DEC_NO_CATEGORY_ = 'none';             // the category for no brand-safety
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
- * Today's Decisions calls: {day, asked, failed, refused, until (ms: no call before it), why (the last failure)}. A new
- * day starts the counts again; a pause still running is kept. Never throws.
+ * Today's Decisions calls: {day, asked, failed, refused, until (ms: no call before it), why (the last failure)}, and
+ * `cap` only when today's last call was made under a daily cap other than DEC_MAX_PER_DAY_ (the allowance's
+ * DEC_MAX_PER_DAY_ALLOWANCE_: decStatusText_ names that cap). A new day starts the counts again; a pause still running
+ * is kept. Never throws.
  */
 function decState_(props, now) {
   const day = dayKey_();
@@ -100,7 +105,7 @@ function decState_(props, now) {
   const until = num(s.until);
   const paused = until > (Number(now) || Date.now());
   const same = s.day === day;
-  return {
+  const out = {
     day,
     asked: same ? num(s.asked) : 0,
     failed: same ? num(s.failed) : 0,
@@ -108,6 +113,8 @@ function decState_(props, now) {
     until: paused ? until : 0,
     why: paused || same ? String(s.why || '') : '',
   };
+  if (same && num(s.cap)) out.cap = num(s.cap);
+  return out;
 }
 
 /** Saves today's Decisions calls. Never throws. */
@@ -136,8 +143,8 @@ function decStatusText_(props, now) {
       const tz = (typeof GEN !== 'undefined' && GEN && GEN.timezone) || 'America/New_York';
       parts.push(`paused until ${Utilities.formatDate(new Date(st.until), tz, 'h:mm a')}` +
         `${st.why ? ` (${st.why})` : ''}: signals go on without it`);
-    } else if (st.asked >= DEC_MAX_PER_DAY_) {
-      parts.push(`daily cap of ${DEC_MAX_PER_DAY_} reached, more tomorrow`);
+    } else if (st.asked >= (st.cap || DEC_MAX_PER_DAY_)) {
+      parts.push(`daily cap of ${st.cap || DEC_MAX_PER_DAY_} reached, more tomorrow`);
     }
     return parts.join(' \u00b7 ');
   } catch (e) {
@@ -151,10 +158,16 @@ function decStatusText_(props, now) {
 
 /**
  * A check's session with the Decisions API: {left: () => ms of the run left, busy: SLA triage is catching up, key: the
- * API key once read (in memory, this check only), asked: calls made this check}. Pure.
+ * API key once read (in memory, this check only), asked: calls made this check, perDay: the day's cap}. `perDay` is
+ * DEC_MAX_PER_DAY_ unless a positive number is given (the Auto-correct flow's allowance gives
+ * DEC_MAX_PER_DAY_ALLOWANCE_). Pure.
  */
-function decSession_(left, busy) {
-  return { left: typeof left === 'function' ? left : () => Infinity, busy: !!busy, key: '', asked: 0 };
+function decSession_(left, busy, perDay) {
+  const cap = Math.floor(Number(perDay));
+  return {
+    left: typeof left === 'function' ? left : () => Infinity, busy: !!busy, key: '', asked: 0,
+    perDay: isFinite(cap) && cap > 0 ? cap : DEC_MAX_PER_DAY_,
+  };
 }
 
 /**
@@ -189,10 +202,20 @@ function decUrl_() {
 function decSkipWhy_(session, st, now) {
   if (session.busy) return 'the alerts come first';
   if (st.until > now) return `paused after a failure${st.why ? ` (${st.why})` : ''}`;
-  if (session.asked >= DEC_MAX_PER_CHECK_) return `${DEC_MAX_PER_CHECK_} calls this check`;
-  if (st.asked >= DEC_MAX_PER_DAY_) return `${DEC_MAX_PER_DAY_} calls today`;
+  // the open engine (row 51, step S11): no count a check or a day; the day's quick-look ceiling (openMayStart_ below),
+  // ApiGuard's runaway ceilings and the run's time bound the calls. OFF: the counts, as before
+  const open = typeof openOn_ === 'function' && openOn_();
+  if (!open && session.asked >= DEC_MAX_PER_CHECK_) return `${DEC_MAX_PER_CHECK_} calls this check`;
+  const perDay = session.perDay || DEC_MAX_PER_DAY_;
+  if (!open && st.asked >= perDay) return `${perDay} calls today`;
   if (typeof apiGuardAllowDecisions_ === 'function' && !apiGuardAllowDecisions_(now)) return 'too many calls lately';
   if (session.left() < DEC_MIN_LEFT_MS_) return 'too little of the run left';
+  // the open engine (Control row 51, OpenEngine.gs): the day's quick-look ceiling, the run-time and outside-call steps;
+  // with row 51 OFF it always says yes
+  if (typeof openMayStart_ === 'function') {
+    const may = openMayStart_('quick', null);
+    if (!may.ok) return may.why;
+  }
   return '';
 }
 
@@ -315,6 +338,9 @@ function decisionsAsk_(input, questions, session) {
       // Counted before the call is made: a run that dies mid-call still counts toward every cap
       s.asked++;
       st.asked++;
+      if (typeof openCount_ === 'function') openCount_('ql', 1);  // row 51: one toward the day's quick-look ceiling
+      if (typeof engAdd_ === 'function') engAdd_('qAsked', 1);
+      if ((s.perDay || DEC_MAX_PER_DAY_) !== DEC_MAX_PER_DAY_) st.cap = s.perDay; else delete st.cap;
       decSaveState_(props, st);
       if (typeof apiGuardNote_ === 'function') apiGuardNote_('decisions', 1);
       try {
@@ -337,9 +363,11 @@ function decisionsAsk_(input, questions, session) {
       st.refused++;
     } else {
       st.failed++;
-      st.until = Date.now() + DEC_PAUSE_MS_;
+      // the open engine (row 51, step S6): the pause is one check's interval, as it is today
+      const pause = typeof openCheckMs_ === 'function' ? openCheckMs_() : DEC_PAUSE_MS_;
+      st.until = Date.now() + pause;
       st.why = out.why;
-      console.warn(`Gemini Decisions: ${out.why}; no calls for ${Math.round(DEC_PAUSE_MS_ / 60000)} minutes (signals go on without it)`);
+      console.warn(`Gemini Decisions: ${out.why}; no calls for ${Math.round(pause / 60000)} minutes (signals go on without it)`);
     }
     decSaveState_(props, st);
     return out;
@@ -606,6 +634,163 @@ function decCompact_(answers) {
   out.sc = r2(sev.confidence);
   out.sp = sev.probabilities.map(r2);
   return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The quick look at one post (requirements-first step S19d): four questions, no link, handle, follower count,
+// engagement or id sent
+// ---------------------------------------------------------------------------------------------------------------
+
+const DEC_Q_SENSITIVE_ = 'sensitive';
+const DEC_POST_TEXT_CHARS_ = 600;
+const DEC_POST_MIN_CHARS_ = 20;
+const DEC_NO_SENSITIVE_ = 'none';
+
+/** One post as the quick look reads it: {signal, platform, posted_at, text}; '' when its clean text is under 20 characters. Pure. */
+function decPostInput_(post) {
+  const p = post || {};
+  const text = decCleanText_(p.text, DEC_POST_TEXT_CHARS_);
+  if (!text || text.length < DEC_POST_MIN_CHARS_) return '';
+  const out = { signal: 'one post' };
+  const platform = decPlatform_(p.platform);
+  const at = decTime_(p.posted_at || (Number(p.t) > 0 ? new Date(Number(p.t)).toISOString() : ''));
+  if (platform) out.platform = platform;
+  if (at) out.posted_at = at;
+  out.text = text;
+  return JSON.stringify(out);
+}
+
+/** The Sensitive Topics as options (GEN's names and descriptions), and "none". Pure. */
+function decSensitiveOptions_() {
+  const out = {};
+  ((typeof GEN !== 'undefined' && GEN && GEN.sensitive_topics) || []).forEach(t => {
+    const name = String((t && t.name) || '').replace(/\s+/g, ' ').trim();
+    if (name && name.length <= 128 && !Object.prototype.hasOwnProperty.call(out, name)) out[name] = String((t && t.description) || '').replace(/\s+/g, ' ').trim();
+  });
+  out[DEC_NO_SENSITIVE_] = 'None of these topics: the post touches no sensitive topic.';
+  return out;
+}
+
+/** The four questions about one post: about_google, category (the Exposure Tags), sensitive, severity. Pure. */
+function decPostQuestions_() {
+  const s = decSignalQuestions_();
+  const q = {};
+  q[DEC_Q_ABOUT_] = Object.assign({}, s[DEC_Q_ABOUT_], { instructions: 'Is the post in `text` about Google or Alphabet: the company, one of its ' +
+    'executives, or one of its products or services?' });
+  q[DEC_Q_CATEGORY_] = Object.assign({}, s[DEC_Q_CATEGORY_], { instructions: 'Which of Google\'s brand-safety Exposure Tags best describes what the post in `text` is about?' });
+  q[DEC_Q_SENSITIVE_] = { type: 'choice', instructions: 'Which Sensitive Topic, if any, does the post in `text` touch?', criteria: decSensitiveOptions_() };
+  q[DEC_Q_SEVERITY_] = Object.assign({}, s[DEC_Q_SEVERITY_], { instructions: 'How severe, for Google\'s reputation, is what the post in `text` describes?' });
+  return q;
+}
+
+/** The post's answers as kept: {g, c, cp, p0, st, stp, sp0, l, sc}; null when one is missing. Pure. */
+function decPostCompact_(answers) {
+  const a = answers || {};
+  const r2 = v => Math.round(Number(v) * 100) / 100;
+  const ab = a[DEC_Q_ABOUT_];
+  const cat = a[DEC_Q_CATEGORY_];
+  const sen = a[DEC_Q_SENSITIVE_];
+  const sev = a[DEC_Q_SEVERITY_];
+  if (!ab || ab.type !== 'noul' || !cat || cat.type !== 'choice' || !sen || sen.type !== 'choice' || !sev || sev.type !== 'score') return null;
+  const probs = sen.probabilities || {};
+  return { g: r2(ab.p), c: truncate_(String(cat.choice), 128), cp: r2(cat.p), p0: decP0Mass_(cat), st: truncate_(String(sen.choice), 64),
+    stp: r2(sen.p), sp0: r2(1 - (Number(probs[DEC_NO_SENSITIVE_]) || 0)), l: sev.level, sc: r2(sev.confidence) };
+}
+
+/**
+ * Many asks at once (step S11, under the open engine): `items` [{input, questions}] (any question set, any input shape)
+ * sent side by side in ONE UrlFetchApp.fetchAll, within `session` and decSkipWhy_ (checked once, for the whole batch);
+ * each call counted before it is sent. One result an item, as decisionsAsk_ gives it. A failed call (a 429 among
+ * them) is not asked again here and pauses nothing, unless more than half the batch failed: then every call pauses
+ * as after one failure today. Never throws.
+ */
+function decisionsAskMany_(items, session) {
+  const s = session || decSession_();
+  const list = Array.isArray(items) ? items : [];
+  const out = list.map(() => null);
+  let key = '';
+  const clean = v => {
+    const t = String(v === undefined || v === null ? '' : v);
+    return truncate_((key ? t.split(key).join('[key]') : t).replace(/\s+/g, ' ').trim(), 120);
+  };
+  try {
+    const todo = [];
+    list.forEach((it, i) => {
+      const text = it && typeof it.input === 'string' ? it.input.trim() : '';
+      if (!text || !it.questions || typeof it.questions !== 'object' || !Object.keys(it.questions).length) {
+        out[i] = { ok: false, skipped: true, why: 'nothing to ask' };
+      } else todo.push(i);
+    });
+    if (!todo.length) return out;
+    const props = PropertiesService.getScriptProperties();
+    const now = Date.now();
+    const st = decState_(props, now);
+    const skip = decSkipWhy_(s, st, now);
+    if (skip) {
+      todo.forEach(i => { out[i] = { ok: false, skipped: true, why: skip }; });
+      return out;
+    }
+    try {
+      key = s.key || decKey_();
+      s.key = key;
+    } catch (e) {
+      todo.forEach(i => { out[i] = { ok: false, why: clean((e && e.message) || e) || 'no API key' }; });
+      return out;
+    }
+    // Counted before the calls are made: a run that dies mid-batch still counts toward every ceiling
+    s.asked += todo.length;
+    st.asked += todo.length;
+    if (typeof openCount_ === 'function') openCount_('ql', todo.length);
+    if (typeof engAdd_ === 'function') engAdd_('qAsked', todo.length);
+    decSaveState_(props, st);
+    if (typeof apiGuardNote_ === 'function') apiGuardNote_('decisions', todo.length);
+    const t0 = Date.now();
+    let resps = [];
+    try {
+      resps = UrlFetchApp.fetchAll(todo.map(i => ({ url: decUrl_(), method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+        headers: { 'x-goog-api-key': key }, payload: JSON.stringify({ model: DEC_MODEL_, input: list[i].input.trim(), questions: list[i].questions }) })));
+    } catch (e) {
+      resps = [];
+      todo.forEach(i => { out[i] = { ok: false, why: clean((e && e.message) || e) || 'no answer' }; });
+    }
+    const ms = Date.now() - t0;
+    let failed = 0;
+    let why = '';
+    todo.forEach((i, j) => {
+      const r = resps[j];
+      if (!r) { if (!out[i]) out[i] = { ok: false, why: 'no answer' }; failed++; why = why || out[i].why; return; }
+      const res = decRead_(r.getResponseCode(), r.getContentText(), list[i].questions, ms);
+      if (!res.ok) {
+        res.why = clean(res.why);
+        if (res.refused) st.refused++;
+        else { failed++; why = why || res.why; }
+      }
+      out[i] = res;
+    });
+    if (failed) {
+      st.failed += failed;
+      if (failed * 2 > todo.length) {
+        const pause = typeof openCheckMs_ === 'function' ? openCheckMs_() : DEC_PAUSE_MS_;
+        st.until = Date.now() + pause;
+        st.why = why;
+        console.warn(`Gemini Decisions: ${failed} of ${todo.length} calls failed (${why}); no calls for ${Math.round(pause / 60000)} minutes`);
+      }
+    }
+    decSaveState_(props, st);
+    return out;
+  } catch (e) {
+    return out.map(x => x || { ok: false, why: clean((e && e.message) || e) || 'no answer' });
+  }
+}
+
+/** The six questions about many signals (`rows`) at once (decisionsAskMany_): one result a row, as decSignalAsk_. */
+function decSignalAskAll_(rows, session) {
+  const res = decisionsAskMany_((rows || []).map(r => ({ input: decSignalInput_(r), questions: decSignalQuestions_() })), session);
+  return res.map(r => {
+    if (!r || !r.ok) return r || { ok: false, why: 'no answer' };
+    const dec = decCompact_(r.answers);
+    return dec ? { ok: true, dec, answers: r.answers, tokens: r.tokens, ms: r.ms } : { ok: false, why: 'an answer that couldn\'t be read', ms: r.ms };
+  });
 }
 
 /**

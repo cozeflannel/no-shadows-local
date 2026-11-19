@@ -541,6 +541,11 @@ async function main() {
     const preview = await devClient.callTool('slrr_preview_alert_triage', { alert_text: sampleAlert });
     assert.strictEqual(preview.detected, true);
     assert(preview.fixes.length > 0, 'Expected deterministic fixes on mismatched Gems/Instagram sample alert');
+    // the preview's Social Alert email carries the corrected alert's own [Code] (the corrected product), as the bot's does
+    const previewCode = preview.analyst_space_post.split('\n').find(l => l.indexOf('[Code]: ') === 0).slice('[Code]: '.length);
+    assert.strictEqual(previewCode, 'Product - Perceived bias,29425,edervolcelazz,-,Gemini App,Ongoing Issue');
+    assert(preview.social_alert_email, 'Expected the sample alert to be escalated, so the preview has its email');
+    assert(preview.social_alert_email.body_preview.split('\n').includes(`Code: ${previewCode}`), preview.social_alert_email.body_preview);
 
     const simGuidance = await devClient.callTool('slrr_simulate_guidance_rule', {
       guidance_text: 'Escalate all posts about Chrome zero-day CVE-2026-125350 regardless of engagement',

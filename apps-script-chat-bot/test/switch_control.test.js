@@ -1,4 +1,4 @@
-// The Control tab's switches (rows 11-24, 27-29, 32, 34 and 36-40, Control.gs) and the 49,000-character cell cap (Sheets.gs, Speed.gs).
+// The Control tab's switches (rows 11-24, 27-29, 32, 34, 36-40, 46, 48-51, 54 and 55, Control.gs) and the 49,000-character cell cap (Sheets.gs, Speed.gs).
 'use strict';
 
 module.exports = H => {
@@ -8,16 +8,19 @@ module.exports = H => {
     'Early wave & velocity check', 'Check outage & comms docs', 'Track post-alert outcomes', 'Relay with S-F Burson',
     'Never wait on Burson', 'Post in S-F Burson', 'Draft follow-ups', 'Draft answers to questions', 'Safety valve',
     'Work directly in B25 (Google-only)', 'Proactive watch', 'Temp checks', 'Group test emails', 'Fast triage (Gemini Decisions)',
-    'Fast triage: rank and early watch', 'Fast triage: hold back noise', 'Write early-wave records to BigQuery'];
+    'Fast triage: rank and early watch', 'Fast triage: hold back noise', 'Write early-wave records to BigQuery',
+    'Early Detection: also read the AMIE table', 'Early Detection: also read Brandwatch live (not X)', 'Proactive watch: also read the AMIE table', 'Open engine: judgment in place of caps',
+    'Live dashboard', 'Slide deliveries'];
   const KEYS = ['autoSend', 'autoTns', 'kbStartAlerts', 'autoFindLinks', 'directBq', 'writeBackBq', 'learnIm', 'watchSent',
     'earlyWave', 'outageComms', 'trackOutcomes', 'relay', 'noWait', 'postBurson', 'draftFollowUps', 'draftAnswers', 'safetyValve',
-    'directB25', 'proactiveWatch', 'tempChecks', 'bsgTestEmails', 'fastTriage', 'fastTriageRank', 'fastTriageHold', 'earlyWaveBq'];
-  const ROWS = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 27, 28, 29, 32, 34, 36, 37, 38, 39, 40, 46];  // rows 25-26 the space cells, 30-31 B30 / B31, 33 B33, 35 B35, 41-45 bars
+    'directB25', 'proactiveWatch', 'tempChecks', 'bsgTestEmails', 'fastTriage', 'fastTriageRank', 'fastTriageHold', 'earlyWaveBq',
+    'edAmie', 'edBwLive', 'watchAmie', 'openEngine', 'liveDashboard', 'slideDeliveries'];
+  const ROWS = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 27, 28, 29, 32, 34, 36, 37, 38, 39, 40, 46, 48, 49, 50, 51, 54, 55];  // rows 25-26 the space cells, 30-31 B30 / B31, 33 B33, 35 B35, 41-45 and 47 bars, 52-53 left to people
   const rows = (t, col) => ROWS.map(r => t.control().cell(r, col));
   const allOff = () => Object.fromEntries(KEYS.map(k => [k, false]));
   const VALVE = KEYS.indexOf('safetyValve');
 
-  test('switches: a new Control tab has all 25, each an ON / OFF dropdown set to OFF, with what OFF means in column C; rows 11-24, 27-29, 32, 34, 36-40 and 46 are the switches, row 25 the S-F Burson space (blank), row 26 the Burson test copy (blank), row 30 Testing: send to (blank), row 31 the BigQuery lookback (60 minutes, its own dropdown), row 33 the Other alerts space (blank, no dropdown), row 35 Watch alerts (OFF, its own dropdown), rows 41-45 the fast-triage and early-watch bars, and "How it works" follows from row 48', () => {
+  test('switches: a new Control tab has all 31, each an ON / OFF dropdown set to OFF, with what OFF means in column C; rows 11-24, 27-29, 32, 34, 36-40, 46, 48-51, 54 and 55 are the switches, row 25 the S-F Burson space (blank), row 26 the Burson test copy (blank), row 30 Testing: send to (blank), row 31 the BigQuery lookback (60 minutes, its own dropdown), row 33 the Other alerts space (blank, no dropdown), row 35 Watch alerts (OFF, its own dropdown), rows 41-45 and 47 the fast-triage and early-watch bars, rows 52-53 blank, row 56 blank, and "How it works" follows from row 57', () => {
     const t = e2e();
     t.bot.setup();
     eq(B.switchRows_(), ROWS);
@@ -30,19 +33,21 @@ module.exports = H => {
     t.poll();  // the first run: C29 says the run's mode (Testing here: no S-F Burson)
     assert.match(rows(t, 3)[VALVE], /^OFF \u00b7 \ud83e\uddea Testing \(S-F Burson, B25, isn't set or found\): nothing goes to S-F Burson, and every email goes only to the stand-in \(B30\)\. With B26 blank and S-F Burson set, the bot is fully LIVE$/);
     assert.match(t.control().cell(16, 3), /writes only to this sheet: nothing goes to the shared SLRR BigQuery tables/);
-    eq([25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49].map(r => t.control().cell(r, 1)), ['S-F Burson space', 'Burson test copy', 'Draft follow-ups',
+    eq([25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57].map(r => t.control().cell(r, 1)), ['S-F Burson space', 'Burson test copy', 'Draft follow-ups',
       'Draft answers to questions', 'Safety valve', 'Testing: send to', 'BigQuery lookback', 'Work directly in B25 (Google-only)',
       'Other alerts space', 'Proactive watch', 'Watch alerts', 'Temp checks', 'Group test emails', 'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise',
       'Hold-back: about_google at or below', 'Hold-back: routine_noise at or above', 'Hold-back and early watch: answer confidence at or above',
       'Early watch: about_google and brand_risk, each at or above', 'Early watch: distinct accounts, at least',
-      'Write early-wave records to BigQuery', 'Early watch: independent_reports at or above', '', 'How it works']);
+      'Write early-wave records to BigQuery', 'Early watch: independent_reports at or above', 'Early Detection: also read the AMIE table',
+      'Early Detection: also read Brandwatch live (not X)', 'Proactive watch: also read the AMIE table', 'Open engine: judgment in place of caps', '', '',
+      'Live dashboard', 'Slide deliveries', '', 'How it works']);
     eq([t.control().validations['25,2'], t.control().validations['26,2'], t.control().validations['33,2']], [undefined, undefined, undefined]);  // a space goes there
     // B31 is no switch: 60 minutes, with its own 15 / 30 / 45 / 60 minutes dropdown
     eq([t.control().cell(31, 2), t.control().validations['31,2'].values], ['60 minutes', ['15 minutes', '30 minutes', '45 minutes', '60 minutes']]);
     // B35 is no switch either: OFF, with its own OFF / Other alerts space (B33) / Mirror space (B9) dropdown
     eq([t.control().cell(35, 2), t.control().validations['35,2'].values],
       ['OFF', ['OFF', 'Other alerts space (B33)', 'Mirror space (B9)', 'Auto-correct space (B10)']]);
-    const help = Array.from({ length: 45 }, (_, i) => t.control().cell(50 + i, 1)).join('\n');
+    const help = Array.from({ length: B.ev('CONTROL_HELP_').length }, (_, i) => t.control().cell(58 + i, 1)).join('\n');
     LABELS.forEach(l => assert.ok(help.includes(`• ${l}: `), l));
     eq(t.bot.readControl_(t.control()).switches, allOff());
     eq(B.ev('CONTROL_SWITCHES_').map(s => s.key), KEYS);
@@ -66,12 +71,14 @@ module.exports = H => {
     eq(rows(t, 1), LABELS);
     eq(rows(t, 2), LABELS.map(() => 'OFF'));
     ROWS.forEach(r => eq(sh.validations[`${r},2`].values, ['ON', 'OFF']));
-    eq([25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49].map(r => sh.cell(r, 1)), ['S-F Burson space', 'Burson test copy', 'Draft follow-ups',
+    eq([25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57].map(r => sh.cell(r, 1)), ['S-F Burson space', 'Burson test copy', 'Draft follow-ups',
       'Draft answers to questions', 'Safety valve', 'Testing: send to', 'BigQuery lookback', 'Work directly in B25 (Google-only)',
       'Other alerts space', 'Proactive watch', 'Watch alerts', 'Temp checks', 'Group test emails', 'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise',
       'Hold-back: about_google at or below', 'Hold-back: routine_noise at or above', 'Hold-back and early watch: answer confidence at or above',
       'Early watch: about_google and brand_risk, each at or above', 'Early watch: distinct accounts, at least',
-      'Write early-wave records to BigQuery', 'Early watch: independent_reports at or above', '', 'How it works']);
+      'Write early-wave records to BigQuery', 'Early watch: independent_reports at or above', 'Early Detection: also read the AMIE table',
+      'Early Detection: also read Brandwatch live (not X)', 'Proactive watch: also read the AMIE table', 'Open engine: judgment in place of caps', '', '',
+      'Live dashboard', 'Slide deliveries', '', 'How it works']);
     // the BigQuery lookback row comes in too: 60 minutes, with its dropdown (the tab had only B2's)
     eq([sh.cell(31, 2), sh.validations['31,2'].values], ['60 minutes', ['15 minutes', '30 minutes', '45 minutes', '60 minutes']]);
     eq([sh.cell(25, 2), t.bot.readControl_(sh).sfBurson, sh.cell(26, 2), t.bot.readControl_(sh).testCopy], ['', '', '', '']);
@@ -151,6 +158,89 @@ module.exports = H => {
     t.g.clock.now += 60e3;
     t.bot.noteSwitch_('autoTns', LASTING);
     eq(JSON.parse(t.g.props.get('SWITCH_NOTES')).autoTns.at, at + 3600e3);
+  });
+
+  test('standalone Auto-correct space (B10; B9 and B4 blank; B25 the live space, read only; the Safety valve OFF and B26 blank): the Control tab says what is so. Today (B7) is that flow\'s own count, the one C10 shows, in the same run (the main flow\'s counters never move there); and the Safety valve\'s note (C29) says the run is Testing because the bot works in the Auto-correct space, without the line that B26 blank and S-F Burson set make the bot LIVE (both are so here, and it is Testing: every email goes only to B30)', () => {
+    const t = e2e(null, { noWait: true });
+    t.bot.setup();
+    t.set('B30', 'tester@testing.test');
+    const AC = 'spaces/AAQAautocorrect8';
+    t.chat.addSpace(AC, 'SLRR Unified Auto-correct');
+    t.set('B25', H.REAL);
+    t.set('B3', `https://chat.google.com/app/chat/${AC.replace('spaces/', '')}`);
+    t.set('B4', '');
+    t.set('B9', '');
+    t.set('B10', 'SLRR Unified Auto-correct');
+    eq([t.get('B29'), t.get('B26')], ['OFF', '']);
+    t.poll();  // the Auto-correct flow starts reading the live space from here
+    eq([t.get('B5'), t.get('B7'), t.get('C10')], ['✅ Working', 'No alerts yet today', '✓ SLRR Unified Auto-correct · no alerts yet today']);
+    const C29 = 'OFF · 🧪 Testing (working in the Auto-correct space (B10)): nothing goes to S-F Burson, and every email goes only to ' +
+      'tester@testing.test (B30). The bot works only in the Auto-correct space, which is always Testing';
+    eq(t.get('C29'), C29);
+    t.g.clock.now += 60 * 1000;
+    t.chat.say(H.REAL, H.F.MISTAKES, { sender: 'users/zapier', type: 'BOT', displayName: 'Zapier' });
+    t.poll();
+    // one alert, corrected, its Social Alert sent to the tester only: C10 and B7 say the same, in this very run
+    const social = t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject));
+    eq([social.length, social.every(m => m.to.join() === 'tester@testing.test' && !(m.cc || []).length)], [1, true]);
+    eq(t.get('C10'), '✓ SLRR Unified Auto-correct · today: 1 alert, 1 corrected, 1 Social Alert sent, 0 questions answered');
+    eq(t.get('B7'), '1 alert, 1 corrected, 1 Social Alert sent, 0 questions answered (in the Auto-correct space, B10)');
+    eq([t.get('C29'), /LIVE/.test(t.get('C29')), t.get('B5')], [C29, false, '✅ Working']);
+    // an idle run later: both as they were
+    t.poll();
+    eq([t.get('B7'), t.get('C10')], ['1 alert, 1 corrected, 1 Social Alert sent, 0 questions answered (in the Auto-correct space, B10)',
+      '✓ SLRR Unified Auto-correct · today: 1 alert, 1 corrected, 1 Social Alert sent, 0 questions answered']);
+    // Any other reason a run is Testing keeps the line that says how to go LIVE (the first test above: no S-F Burson)
+    const off = B.ev('CONTROL_SWITCHES_').find(s => s.key === 'safetyValve').off;
+    assert.match(off({}, false, { modeWhy: 'the Burson test copy, B26, is set' }), /\(B30\)\. With B26 blank and S-F Burson set, the bot is fully LIVE$/);
+    eq(t.chat.botPosts(H.REAL), []);
+  });
+
+  test('standalone Auto-correct space: when the write of Today (B7) that follows the flow fails (Sheets, once), the run logs it and skips nothing after it: the Temp checks, the Proactive watch\'s step and the four report tabs (Results, Follow-up, Analysis, Head start) still get their turn in that run, and the next run writes the cell', () => {
+    const t = e2e(null, { noWait: true });
+    t.bot.setup();
+    t.set('B30', 'tester@testing.test');
+    const AC = 'spaces/AAQAautocorrect9';
+    t.chat.addSpace(AC, 'SLRR Unified Auto-correct');
+    t.set('B25', H.REAL);
+    t.set('B3', `https://chat.google.com/app/chat/${AC.replace('spaces/', '')}`);
+    t.set('B4', '');
+    t.set('B9', '');
+    t.set('B10', 'SLRR Unified Auto-correct');
+    t.poll();  // the Auto-correct flow starts reading the live space from here
+    t.g.clock.now += 60 * 1000;
+    t.chat.say(H.REAL, H.F.MISTAKES, { sender: 'users/zapier', type: 'BOT', displayName: 'Zapier' });
+    // Sheets fails once on that write: the one cell B7 (the run's own status write, before the flow, is B5:B7 at once)
+    const control = t.control();
+    const real = control.getRange.bind(control);
+    let failed = 0;
+    control.getRange = (r, c, nr, nc) => {
+      const range = real(r, c, nr, nc);
+      if (r === 7 && c === 2 && !nr && !nc) {
+        range.setValue = () => { failed++; throw new Error('Service Spreadsheets failed while accessing document'); };
+      }
+      return range;
+    };
+    // what comes after that write in the run, counted
+    const STEPS = ['runTempChecks_', 'proactiveWatchOff_', 'maybeRefreshSpeed_', 'maybeRefreshFollowUp_', 'maybeRefreshAnalysis_', 'maybeRefreshHeadStart_'];
+    const ran = {};
+    STEPS.forEach(name => {
+      const step = t.bot[name];
+      t.bot[name] = (...args) => { ran[name] = (ran[name] || 0) + 1; return step(...args); };
+    });
+    const logged = t.g.logs.length;
+    t.poll();
+    control.getRange = real;
+    const logs = t.g.logs.slice(logged);
+    eq([failed, STEPS.map(name => ran[name] || 0), logs.filter(l => /could not update Today \(B7\)|after the run:/.test(l))],
+      [1, [1, 1, 1, 1, 1, 1], ['ERROR could not update Today (B7): Service Spreadsheets failed while accessing document']]);
+    // the alert was handled as ever; only the cell is behind, until the next run
+    const COUNT = '1 alert, 1 corrected, 1 Social Alert sent, 0 questions answered';
+    eq([t.g.gmail.sentMessages().filter(m => /SOCIAL ALERT/.test(m.subject)).length, t.get('B7'), t.get('C10'), t.get('B5')],
+      [1, 'No alerts yet today', `✓ SLRR Unified Auto-correct · today: ${COUNT}`, '✅ Working']);
+    t.poll();
+    eq([failed, t.get('B7')], [1, `${COUNT} (in the Auto-correct space, B10)`]);
+    eq(t.chat.botPosts(H.REAL), []);
   });
 
   test('cell cap: no cell the bot writes goes over 49,000 characters; a JSON column stays JSON that parses, keeping its short fields', () => {

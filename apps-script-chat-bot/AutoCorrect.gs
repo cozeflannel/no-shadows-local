@@ -7,11 +7,15 @@
  *      strictly read only: nothing is ever posted, reacted or answered there (guardedChat_ refuses it, and Bot.gs never
  *      tries). While B25 is blank or can't be found it doesn't run (C10 says so); when B25 changes, it starts from the
  *      new space's last 15 minutes;
- *   2. reviews each alert exactly as it does everywhere (the rules, Gemini, the post itself, the listening feeds);
- *   3. posts the corrected alert, in Burson's own format, to the auto-correct space, with a short note in its thread on
- *      what it changed ("Product: Gems to Gemini App"; a rewritten text shows only the new wording) and anything only
- *      Burson can add. It never asks Burson for fixes: it makes them (with "Never wait on Burson" ON, Control row 23, it
- *      doesn't wait on what only Burson can add either: it goes on without it);
+ *   2. reviews each alert as it does everywhere (the rules, Gemini, the post itself, the listening feeds), except that the
+ *      agentic assistant decides: Gemini's value is applied from settings.autocorrect_min_confidence, with nothing left
+ *      for a reader to double-check, and the same review call writes the summary paragraph (Review.gs writeupOf_);
+ *   3. posts the corrected alert, in Burson's own format, to the auto-correct space, under the bot's own first line ("✅
+ *      *Reviewed and corrected by the agentic assistant* · Original alert", linking to Burson's message: Voice.gs
+ *      reviewedLine_), with the write-up in the summary's place and the post's own picture, then a note in its thread on
+ *      who changed what ("- Product: Gems to Gemini App") and anything only Burson can add ("Not fixed: …"). It never
+ *      asks Burson for fixes: it makes them (with "Never wait on Burson" ON, Control row 23, it doesn't wait on what only
+ *      Burson can add either: it goes on without it);
  *   4. works the alert there as an IM would: legend emojis, the Social Alert email (only to the stand-in while testing,
  *      its subject starting "[Auto-correct test]"), the pre-filled T&S test-form link in the alert's thread, the 🧑‍💻 DM
  *      (stand-in), and answers to questions people ask in that space.
@@ -31,12 +35,15 @@ const AC_BUDGET_MS_ = 150 * 1000;                 // its share of a run, after t
 const AC_STANDALONE_BUDGET_MS_ = 220 * 1000;      // its share when B10 runs standalone (B3/B4/B9 not running ahead of it)
 const AC_LATEST_MS_ = 240 * 1000;                 // it stops starting new alerts 4 minutes into a run (Apps Script stops at 6)
 const AC_STANDALONE_LATEST_MS_ = 260 * 1000;      // standalone latest stop (leaves 40s before RUN_HARD_STOP_MS_ for watches/Speed)
+const AC_PREREAD_LATEST_MS_ = 210 * 1000;         // row 51: the background steps' stop while Watch flags wait for their pre-read
 const AC_MIN_MS_ = 30 * 1000;                     // less than this left: it waits for the next minute
+const AC_POLL_OVERDUE_MS_ = 10 * 60 * 1000;       // standalone: the Direct BigQuery poll goes first again once its last check is this old
 const AC_STATS_PROP_ = 'AC_STATS';
 const AC_LIVE_NAME_ = 'Burson space (live, read only)';
 
 /** Sets the auto-correct space on the Control tab (B10) and runs one pass now. From the Apps Script editor or clasp. */
 function startAutoCorrect(spaceLinkOrName) {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const target = String(spaceLinkOrName === undefined || spaceLinkOrName === null ? '' : spaceLinkOrName).trim();
   if (!target) throw new Error('Pass the test space\'s link or name to startAutoCorrect("..."), or paste it in cell B10 on the Control tab.');
   const ss = openStore_(true);
@@ -54,6 +61,7 @@ function startAutoCorrect(spaceLinkOrName) {
 
 /** Clears B10 so the auto-correct space stops (the Mirror space carries on as before). */
 function stopAutoCorrect() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const ss = openStore_(false);
   const control = controlTab_(ss);
   if (control) {
@@ -105,38 +113,59 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
     const cfg = autoCorrectCfg_(space, sfb.space);
     cfg.testers = mainCfg && Array.isArray(mainCfg.testers) ? mainCfg.testers : testersFor_(wanted ? wanted.testers : '').testers;
     const ctx = buildCtx_(cfg, ss, wanted && wanted.switches);
+    ctx.ss = ss;  // (read-only: "why not" answers read the Watch detections tab, WhyNot.gs)
     ctx.settings.bq_lookback_minutes = (opts && opts.lookbackMinutes) ||
       bqLookbackFrom_(wanted && wanted.bqLookback).minutes;
     ctx.allowEarlyWave = Boolean(opts && opts.allowEarlyWave);
     ctx.allowDirectBq = Boolean(opts && opts.allowDirectBq);
+    // Where stories go first, a story's card that sent no Social Alert doesn't stand in for its post's own Direct
+    // BigQuery card (BigQuery.gs bqStoryCardRow_): the poll still posts that card, and its review decides the Social Alert
+    ctx.bqPastStoryCards = acStoriesFirst_(ctx, standalone);
     const budgetMs = standalone ? AC_STANDALONE_BUDGET_MS_ : AC_BUDGET_MS_;
     ctx.deadline = Math.min(Date.now() + budgetMs, latest);
     startFromAutoCorrect_(props, cfg, ctx);
     // Triage existing S-F Burson and B10 alerts FIRST so Direct BigQuery queries never starve aging cards in B10
     const report = runOnce_(ctx);
+    // (the open engine, row 51, OpenEngine.gs / Bot.gs: the bot's own Watch and Direct cards it reviewed don't count)
     const slaBusy = Boolean(report && (report.held > 0 || report.analyst_backlog ||
-      report.handled >= ctx.settings.max_messages_per_run ||
+      report.handled - (Number(report.bg_handled) || 0) >= ctx.settings.max_messages_per_run ||
       (report.errors || []).some(e => /^time budget/.test(String(e)))));
     ctx.slaBusy = slaBusy;
-    let bqPolled = null;
-    if (ctx.allowDirectBq && switchOn_(ctx, 'directBq') && !slaBusy) {
-      Object.assign(ctx.settings, { bq_direct_poll: true, bq_poll_sprinklr: true, bq_poll_bmie: true, bq_poll_bsip: true });
-      if (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', false)) {
-        try { bqPolled = pollBigQuerySources_(ctx, space.id); } catch (e) {
-          console.error('auto-correct direct BigQuery alerts: ' + ((e && e.message) || e));
+    // the open engine (row 51, step S13): Watch flags have waited 10+ minutes for their pre-read for want of time: this
+    // run's background steps below stop at 210 s, so the Watch after the flow has time to read them. Burson's pass above
+    // had its full time
+    if (standalone && typeof pwPreReadReserveDue_ === 'function' && pwPreReadReserveDue_(Date.now())) {
+      ctx.deadline = Math.min(ctx.deadline, (runStart || Date.now()) + AC_PREREAD_LATEST_MS_);
+    }
+    // The Direct BigQuery poll (Control row 15)
+    const pollDirect = () => {
+      let bqPolled = null;
+      if (ctx.allowDirectBq && switchOn_(ctx, 'directBq') && !slaBusy) {
+        Object.assign(ctx.settings, { bq_direct_poll: true, bq_poll_sprinklr: true, bq_poll_bmie: true, bq_poll_bsip: true });
+        if (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', false)) {
+          try { bqPolled = pollBigQuerySources_(ctx, space.id); } catch (e) {
+            console.error('auto-correct direct BigQuery alerts: ' + ((e && e.message) || e));
+          }
         }
       }
-    }
-    if (bqPolled && (bqPolled.sprinklr || bqPolled.bmie)) {
-      report.bq_sprinklr = bqPolled.sprinklr;
-      report.bq_bmie = bqPolled.bmie;
-    }
-    if (bqPolled && bqPolled.bsip) report.bq_bsip = bqPolled.bsip;
-    if (ctx.allowEarlyWave && switchOn_(ctx, 'earlyWave') &&
-        (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', slaBusy))) {
+      if (bqPolled && (bqPolled.sprinklr || bqPolled.bmie)) {
+        report.bq_sprinklr = bqPolled.sprinklr;
+        report.bq_bmie = bqPolled.bmie;
+      }
+      if (bqPolled && bqPolled.bsip) report.bq_bsip = bqPolled.bsip;
+      if (bqPolled) engAdd_('direct', (Number(bqPolled.sprinklr) || 0) + (Number(bqPolled.bmie) || 0) + (Number(bqPolled.bsip) || 0));
+    };
+    // Early Detection (Control row 19): the 15-minute check, then the reviews of the signals that wait
+    const earlyDetection = () => {
+      if (!(ctx.allowEarlyWave && switchOn_(ctx, 'earlyWave') &&
+          (typeof apiGuardAllowBackground_ !== 'function' || apiGuardAllowBackground_('any', slaBusy)))) {
+        // the open engine (row 51): a check that was due but is skipped says so on the Early Detection tab
+        if (ctx.allowEarlyWave && switchOn_(ctx, 'earlyWave')) edCheckSkipped_(ctx, slaBusy ? 'busy' : 'guard');
+        return;
+      }
       ctx._ewBqDeferEvents = true;
       try {
-        earlyWaveCheck_(ctx);
+        engCheck_(earlyWaveCheck_(ctx));  // its numbers for the Engine tab (row 51 only)
       } catch (e) {
         console.error('auto-correct early detection check: ' + ((e && e.message) || e));
       }
@@ -153,7 +182,19 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
           ewBqFlush_(ctx, props, () => (ctx.deadline ? ctx.deadline - ctx.now() : Infinity), { signal_events: evs });
         }
       }
+    };
+    // The poll, then Early Detection; in the one-space setup the other way round (acEarlyDetectionFirst_), so a poll
+    // with much to read no longer takes the time the reviews need
+    if (acEarlyDetectionFirst_(ctx, standalone, props)) {
+      earlyDetection();
+      pollDirect();
+    } else {
+      pollDirect();
+      earlyDetection();
     }
+    // requirements first (row 51, step S19d, RequirementsFirst.gs): the quick looks at this run's single posts the code
+    // check left to a judgment, last, in what is left of the slice; counted only. Off: nothing
+    if (typeof rqJudgeRun_ === 'function' && !slaBusy) rqJudgeRun_(ctx);
     ctx.recent.save();
     const today = bumpAutoCorrectStats_(props, report, dayKey_());
     const issues = report.errors.filter(e => !/^time budget/.test(e));
@@ -172,6 +213,36 @@ function runAutoCorrect_(control, wanted, ss, mainCfg, runStart, sfb, opts) {
       console.error('could not update the Control tab: ' + err);
     }
     return null;
+  }
+}
+
+/**
+ * Whether stories go first where this flow works: the one-space setup (`standalone`: B10 working alone, runAutoCorrect_'s
+ * opts.standalone) with the setting early_detection_first on (config burson_qa; on unless it is false). Two things hang
+ * on it: the order of a pass (acEarlyDetectionFirst_), and that a story's card which sent no Social Alert doesn't stop
+ * its post's own Direct BigQuery card (ctx.bqPastStoryCards: BigQuery.gs pollBigQuerySources_). Pure; never throws.
+ */
+function acStoriesFirst_(ctx, standalone) {
+  return !!standalone && !!ctx && !!ctx.settings && ctx.settings.early_detection_first !== false;
+}
+
+/**
+ * Whether this pass does Early Detection (the 15-minute check, then the reviews) before the Direct BigQuery poll. Only
+ * where stories go first (acStoriesFirst_), and only while the poll is not overdue: its last check started
+ * (BQ_DIRECT_AT) less than AC_POLL_OVERDUE_MS_ ago. Once the last check is that old, or there has been none, the poll
+ * goes first in that run, so it still gets its turn however many signals wait for a review. That is the first run that
+ * STARTS 10 minutes or more after the last check: two checks can be 10 minutes and the run in progress apart (about 10
+ * to 15 minutes while stories wait), and further while Burson's alerts keep the flow busy, as before. Everywhere else,
+ * and with the setting off, the poll goes first as it always did. Never throws.
+ */
+function acEarlyDetectionFirst_(ctx, standalone, props) {
+  try {
+    if (!acStoriesFirst_(ctx, standalone)) return false;
+    const last = Number(props.getProperty(BQ_DIRECT_AT_PROP_)) || 0;
+    const now = typeof ctx.now === 'function' ? ctx.now() : Date.now();
+    return last > 0 && now >= last && now - last < AC_POLL_OVERDUE_MS_;
+  } catch (e) {
+    return false;
   }
 }
 
@@ -272,6 +343,19 @@ function autoCorrectTodayText_(s) {
   const n = (count, one, many) => `${count} ${count === 1 ? one : many}`;
   return `today: ${n(s.alerts, 'alert', 'alerts')}, ${s.corrected || 0} corrected, ` +
     `${n(s.emails || 0, 'Social Alert', 'Social Alerts')} sent, ${n(s.answers || 0, 'question', 'questions')} answered`;
+}
+
+/**
+ * The Control tab's Today (B7) while the bot works alone in the Auto-correct space (Main.gs poll()): this flow's own
+ * counts for `day`, the ones C10 shows: "3 alerts, 1 corrected, 3 Social Alerts sent, 0 questions answered (in the
+ * Auto-correct space, B10)"; "No alerts yet today" before the first. The main flow's counters (Control.gs todayText_)
+ * never move there. Never throws.
+ */
+function autoCorrectTodayCell_(props, day) {
+  let s = null;
+  try { s = JSON.parse(props.getProperty(AC_STATS_PROP_) || 'null'); } catch (e) { s = null; }
+  if (!s || s.day !== day || !(s.alerts || s.answers)) return 'No alerts yet today';
+  return `${autoCorrectTodayText_(s).replace(/^today: /, '')} (in the Auto-correct space, B10)`;
 }
 
 /** Row 10 ("Auto-correct space") on the Control tab; on an older tab, "How it works" moves down a row to make room. */

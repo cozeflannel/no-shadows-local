@@ -35,7 +35,10 @@
  *                query as a parameter too. (Dropped Nov 1 as stale: the daily Brandwatch export, nothing since Sep 20;
  *                the DSD content vectors, since Sep 24; Reddit Pulse, since Oct 25. Dropped Nov 11, as not on the
  *                team's list of approved tables: BMIE's alert mentions and Sprinklr's older export of Google's own
- *                posts.)
+ *                posts.) The owner asked on 16 Nov 2026 for BMIE's alert mentions (the AMIE table) to be read again:
+ *                with Control row 50 ON (and row 34) the US look also reads it (PW_AMIE_SOURCE_, pwSources_), each
+ *                row once, after a check of its columns (step 1c's ewsAmiMeta_), and while row 50 is ON a flag from
+ *                it, or from Brandwatch's mentions table, asks the alert memory about the last 7 days.
  * In each job, every source's new rows go, as the same columns, in a temporary table (a source that fails is noted and
  * the others carry on). Sonar and the comments go by the look's window; the others keep their own place, the newest
  * item they handed over (PW_MARKS). Then, for each watch ON on the Watches tab (PW_MAX_WATCHES_ at most), Gemini inside
@@ -52,7 +55,9 @@
  * they're written. A US look that gave Gemini ~70 posts for one watch took up to ~2 minutes (Nov 10).
  *
  * Each job is sent in one run and collected in a later one, so it never holds a run up; a failing job is tried again
- * (PW_MAX_TRIES_, then skipped and noted), each location on its own. Posts at or above a watch's bar, and the near
+ * (PW_MAX_TRIES_, then its window is skipped), each location on its own, and until a job of that location succeeds again
+ * C34 says since when its look has failed and why, and the Watch sources tab shows its sources as failing (pwFailed_).
+ * Posts at or above a watch's bar, and the near
  * misses (within PW_NEAR_ of it, to tune the bar), go on the Watch detections tab, each post once a watch (whichever
  * source handed it over first), with a Rating column for people. The tab's scorecard compares them with Burson's alerts
  * in the Alert log, day by day: how many of Burson's posts a watch flagged, how many before Burson's alert reached S-F
@@ -91,6 +96,8 @@ const PW_PILEUP_NEG_ = 5;                    // Sprinklr comments: this many neg
 const PW_BIG_VOICE_ = 100000;                // ...or one negative comment from an account with this many followers
 const PW_CHAT_READ_ROWS_ = 600;              // the Alert log's newest rows read for the Other alerts space's alerts
 const PW_ERR_CHARS_ = 300;                   // of a source's error kept
+const PW_NOTE_CHARS_ = 200;                  // a switch's note (C34 after its fixed text) is cut at this (Control.gs noteSwitch_)
+const PW_FAIL_WHY_MIN_ = 16;                 // of a failed look's reason C34 keeps this much: the last look's numbers give way first
 const PW_HOUR_MS_ = 60 * 60 * 1000;
 // The Brandwatch query read straight from Brandwatch's API (source 'bwq'), with the token slrr-campaigns mints and keeps
 // in Secret Manager (read each look; never kept, logged or written anywhere)
@@ -141,7 +148,11 @@ const PW_TRIES_PROP_ = 'PW_TRIES';           // its failed tries at the window s
 const PW_DAY_PROP_ = 'PW_TODAY';             // today's numbers: {day, looks, checked, flagged, near, w: {watch: [flagged, near]}, src: {source: [checked, flagged]}}
 const PW_PAUSED_PROP_ = 'PW_PAUSED';         // set while the bot is paused: the next look starts afresh
 const PW_SCORE_AT_PROP_ = 'PW_SCORE_AT';     // when the scorecard was last written (ms)
-const PW_LAST_PROP_ = 'PW_LAST';             // the last looks collected: {at, checked, flagged, near, lanes: {c1|us: {at, checked, flagged, near}}}
+// The last looks collected: {at, checked, flagged, near, lanes: {c1|us: {at, checked, flagged, near}}}: each lane's
+// latest, and their sum. A lane whose look failed as a whole has {fail: {since (ms: its first failed try), why (its
+// latest try's, 160 characters at most), ok (ms: when its last good look was collected; left out when it had none)}}
+// as its entry instead, with no numbers, until a look of it succeeds again (pwFailed_, pwDone_, pwLastWith_)
+const PW_LAST_PROP_ = 'PW_LAST';
 const PW_MARKS_PROP_ = 'PW_MARKS';           // each source's place (ms): the newest item it handed over; <source>_mod: when its
                                              // table was read; <source>_snap: a batch it is still handing over (pwSnap_)
 const PW_SOURCES_PROP_ = 'PW_SOURCES';       // each source's last look: {source: {at, found, checked, newest, mod, err, flagged}}
@@ -208,6 +219,173 @@ const PW_SOURCES_ = [
       `usually minutes after posting, posted within ${PW_BW_HOURS_} hours; X posts' text comes from X's public embed data ` +
       '(Brandwatch\'s API leaves it out); an X post X won\'t show is counted as not sent' },
 ];
+
+// --------------------------------------------------------------------------------------------------------------
+// The AMIE table as a source of the Watch (Control row 50, key watchAmie; step 3b of the new sources, the plan's Q10).
+// The owner asked on 16 Nov 2026 for this table to be read again (it was dropped on Nov 11 as not on the approved
+// list). It is not in PW_SOURCES_: pwSources_ adds it, last, only while row 50 is ON, so with row 50 OFF every look,
+// tab and mark is what it was.
+// --------------------------------------------------------------------------------------------------------------
+
+const PW_AMIE_PROP_ = 'PW_AMIE';            // the table's checks (EarlyWaveSource.gs ewsAmiMeta_'s record), while row 50 is ON
+const PW_AMIE_KEYS_ = 'pw:amie:k';          // the keys (hashes) of the rows handed over in the last 24 hours (cache)
+const PW_AMIE_KEYS_MAX_ = 5000;             // the newest this many at most: the cache item stays under 95,000 characters
+const PW_AMIE_KEYS_MS_ = 24 * PW_HOUR_MS_;
+const PW_AMIE_OVERLAP_MS_ = 40 * 60 * 1000;  // each look reads from this long before the newest row handed over
+const PW_AMIE_SAMPLE_PCT_ = 5;              // the other feeds: about this share of what has no sign of trouble is checked anyway
+// The feeds whose every row is checked (alert_source, lower case): brand safety and criticism, Google's executives,
+// people and own posts, policy and elections, and Google's products. The rest (regional, sports, culture, competitors,
+// general AI news) only with a sign something's wrong (Brandwatch negative, a KOF author, PW_AMIE_RISK_RX_)
+const PW_AMIE_FULL_RX_ = 'slrr|sundar|spike|critic|ethic|safety|accuracy|replacement|sustainab|environment|policy|election|' +
+  'execs|googlers|posts by google|ai digest - google|chrome overall|today in android|^search$|^gemini$|antigravity|g4d';
+// Words that say something may be wrong (RE2, on the lower-cased text)
+const PW_AMIE_RISK_RX_ = '\\b(lawsuits?|sued|suing|class action|antitrust|monopol\\w*|fined|fines|penalt\\w+|regulators?|' +
+  'investigat\\w+|probes?|banned|bans|boycott\\w*|outages?|is down|went down|not working|glitch\\w*|scams?|scammers?|fraud\\w*|' +
+  'phishing|malware|hack(ed|ers?)|breach\\w*|leak(s|ed)?|exploit\\w*|vulnerab\\w+|zero[- ]day|privacy|surveil\\w*|spying|' +
+  'data harvest\\w*|misinformation|disinformation|deepfakes?|biased|bias|censor\\w*|shadowban\\w*|propaganda|election|ballots?|' +
+  'voters?|racis\\w+|sexis\\w+|offensive|harass\\w*|unsafe|dangerous|harmful|layoffs?|walkout|protest\\w*|deforest\\w*|' +
+  'pollut\\w+|emissions|hallucinat\\w+)\\b';
+const PW_AMIE_SOURCE_ = { key: 'amie', lane: 'us', name: 'Brandwatch alert feeds (AMIE)', cap: 100, firstMs: 60 * 60 * 1000,
+  maxMs: 6 * PW_HOUR_MS_, overlapMs: PW_AMIE_OVERLAP_MS_, staleMs: 2 * PW_HOUR_MS_, plainWhy: 'brand-safety query',
+  bq: 'brand-social-central-data.social_alerts_dataset.all_sundar_mentions',
+  what: 'Brandwatch\'s alert feeds (AMIE: X posts with their words too), most a day after posting: every row from the brand-safety ' +
+    'and Google product feeds; from the other feeds (regional, sports, culture, competitors) those with a sign something is ' +
+    `wrong (Brandwatch negative, a KOF author, risk words), plus a ${PW_AMIE_SAMPLE_PCT_}% sample of the rest; each row once, ` +
+    '100 a look at most, read from 40 minutes before the newest row handed over so a row that lands late is caught' };
+
+/** The Watch's sources this run, in the order of the Watch sources tab: PW_SOURCES_, and the AMIE table last while Control row 50 is ON. */
+function pwSources_() {
+  try {
+    const sw = typeof ewsRunSwitches_ === 'function' ? ewsRunSwitches_() : {};
+    return sw.watchAmie === true ? PW_SOURCES_.concat([PW_AMIE_SOURCE_]) : PW_SOURCES_;
+  } catch (e) {
+    return PW_SOURCES_;
+  }
+}
+
+/** The AMIE table's check record (PW_AMIE: ewsAmiMeta_'s q), {} when none. Never throws. */
+function pwAmieQ_(props) {
+  try {
+    const q = JSON.parse(props.getProperty(PW_AMIE_PROP_) || '{}');
+    return q && typeof q === 'object' && !Array.isArray(q) ? q : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+/** Whether a look may read the AMIE table: row 50 ON, and its last check found it as the source needs it. Never throws. */
+function pwAmieReadable_() {
+  try {
+    if (!pwSources_().some(s => s.key === 'amie')) return false;
+    const q = pwAmieQ_(PropertiesService.getScriptProperties());
+    return !q.prob && Number(q.mt) > 0;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * The AMIE table's check before a look (row 50 ON): its metadata (step 1c's ewsAmiMeta_: the needed columns and their
+ * types, the optional ones there, the day partitioning), at most hourly, and not again the same UTC day after a stop or
+ * within an hour after a failure. A table the source can't read stops this source alone: its row on the Watch sources
+ * tab says why, in the tab's words for an error. Never throws.
+ */
+function pwAmieCheck_(props, now) {
+  try {
+    const q = pwAmieQ_(props);
+    if (q.sd === ewsUtcDay_(now) || Number(q.pu) > now) return;
+    if (Number(q.mt) > 0 && now - Number(q.mt) < EWS_AMI_CHECK_MS_ && !q.prob) return;
+    if (ewsAmiMeta_(q, now)) { delete q.prob; delete q.pu; delete q.sd; delete q.nd; }
+    props.setProperty(PW_AMIE_PROP_, JSON.stringify(q));
+    if (q.prob) {
+      const all = pwSourceStats_(props);
+      all.amie = Object.assign({}, all.amie || {}, { at: now, err: truncate_(String(q.prob.w || ''), PW_ERR_CHARS_) });
+      props.setProperty(PW_SOURCES_PROP_, JSON.stringify(all));
+    }
+  } catch (e) { /* tried again at the next look */ }
+}
+
+/** The keys handed over in the last 24 hours ([{h: the hour, k: 'hash,hash,…'}], oldest first). Never throws. */
+function pwAmieKeys_(now) {
+  try {
+    const raw = CacheService.getScriptCache().get(PW_AMIE_KEYS_);
+    const list = raw ? JSON.parse(raw) : [];
+    return (Array.isArray(list) ? list : []).filter(b => b && typeof b.k === 'string' && b.k && now - Number(b.h) < PW_AMIE_KEYS_MS_);
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * Adds the keys (12 hex characters each: pwAmieHashSql_) of the rows a look handed over to PW_AMIE_KEYS_, keeping the
+ * last 24 hours and the newest PW_AMIE_KEYS_MAX_ at most, so the item never passes 95,000 characters. Each look writes it
+ * again, so it lives on while the Watch looks (a cache item lives 6 hours at most). Never throws.
+ */
+function pwAmieKeysAdd_(hashes, now) {
+  try {
+    const add = (hashes || []).map(h => String(h || '').toLowerCase()).filter(h => /^[0-9a-f]{12}$/.test(h));
+    const list = pwAmieKeys_(now);
+    if (!add.length && !list.length) return;
+    const hour = Math.floor(now / PW_HOUR_MS_) * PW_HOUR_MS_;
+    let last = list[list.length - 1];
+    if (add.length) {
+      if (!last || Number(last.h) !== hour) { last = { h: hour, k: '' }; list.push(last); }
+      last.k = last.k ? `${last.k},${add.join(',')}` : add.join(',');
+    }
+    let total = list.reduce((n, b) => n + b.k.split(',').length, 0);
+    while (total > PW_AMIE_KEYS_MAX_ && list.length) {
+      const ks = list[0].k.split(',');
+      const drop = Math.min(ks.length, total - PW_AMIE_KEYS_MAX_);
+      total -= drop;
+      if (drop < ks.length) list[0].k = ks.slice(drop).join(','); else list.shift();
+    }
+    CacheService.getScriptCache().put(PW_AMIE_KEYS_, JSON.stringify(list), 21600);
+  } catch (e) { /* a row read again is left out by its 24 hours' check (checked_before) */ }
+}
+
+/** What a look needs to read the AMIE table (pwSql_'s froms): {amie_opt, amie_seen}, or {} with row 50 OFF. Never throws. */
+function pwAmieFroms_(props, now) {
+  try {
+    if (!pwSources_().some(s => s.key === 'amie')) return {};
+    const q = pwAmieQ_(props);
+    return { amie_opt: Array.isArray(q.opt) ? q.opt : [], amie_seen: [].concat(...pwAmieKeys_(now).map(b => b.k.split(','))) };
+  } catch (e) {
+    return {};
+  }
+}
+
+/**
+ * Row 50 OFF: the AMIE table's check, its keys, its mark and its row's numbers go, so ON again checks the table afresh
+ * and reads from the last hour (its row on the Watch sources tab is cleared at the next write of the tab). Writes only
+ * what is there. Never throws.
+ */
+function pwAmieOff_() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (props.getProperty(PW_AMIE_PROP_)) props.deleteProperty(PW_AMIE_PROP_);
+    try { if (CacheService.getScriptCache().get(PW_AMIE_KEYS_)) CacheService.getScriptCache().remove(PW_AMIE_KEYS_); } catch (e) { /* it expires */ }
+    const marks = pwMarks_(props);
+    if ('amie' in marks) { delete marks.amie; props.setProperty(PW_MARKS_PROP_, JSON.stringify(marks)); }
+    const all = pwSourceStats_(props);
+    if ('amie' in all) { delete all.amie; props.setProperty(PW_SOURCES_PROP_, JSON.stringify(all)); }
+  } catch (e) { /* the next OFF run tries again */ }
+}
+
+/**
+ * A post's key in SQL (Q8): an X post by its status id ("x:<id>", whatever the link: x.com or twitter.com, /status/ or
+ * /statuses/, a handle or i), any other link lower-cased without its scheme, www., m. or mobile., a trailing slash or #.
+ * Used only while row 50 is ON (with it OFF a look's SQL is what it was). Pure.
+ */
+function pwKeySql_(col) {
+  const low = `LOWER(TRIM(IFNULL(${col}, '')))`;
+  return `IF(REGEXP_CONTAINS(${low}, r'^(?:https?://)?(?:www\\.|m\\.|mobile\\.)?(?:x|twitter)\\.com/[^?#]*/status(?:es)?/[0-9]+'), ` +
+    `CONCAT('x:', REGEXP_EXTRACT(${low}, r'/status(?:es)?/([0-9]+)')), ` +
+    `REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(${low}, r'^https?://(?:www\\.|m\\.|mobile\\.)?', ''), r'^twitter\\.com/', 'x.com/'), r'#.*$|/+$', ''))`;
+}
+
+/** A key's hash as PW_AMIE_KEYS_ keeps it (12 hex characters of its SHA-256), in SQL. Pure. */
+function pwAmieHashSql_(keyExpr) { return `SUBSTR(TO_HEX(SHA256(${keyExpr})), 1, 12)`; }
+
 const PW_CHAT_FIELDS_ = [['u', 'STRING'], ['n', 'STRING'], ['a', 'STRING'], ['f', 'INT64'], ['e', 'INT64'], ['p', 'INT64'],
   ['s', 'INT64'], ['i', 'STRING'], ['m', 'STRING'], ['t', 'STRING']];
 const PW_NEW_COLS_ = 'source, rk, post_url, platform, author, followers, eng, posted, first_seen, issue, issue_new, summary, txt';
@@ -332,18 +510,67 @@ function pwNetwork_(platform, url) {
 function pwTopic_(s) { return String(s || '').replace(/['"`\\\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60); }
 
 /** A source by its key (PW_SOURCES_), or null. Pure. */
-function pwSource_(key) { return PW_SOURCES_.find(s => s.key === key) || null; }
+function pwSource_(key) { return pwSources_().find(s => s.key === key) || null; }
 
 /** A lane by its key (PW_LANES_), or null. Pure. */
 function pwLane_(key) { return PW_LANES_.find(l => l.key === key) || null; }
 
-/** A lane's sources, in the tab's order. Pure. */
-function pwLaneSources_(laneKey) { return PW_SOURCES_.filter(s => s.lane === laneKey); }
+/** A lane's sources, in the tab's order (the AMIE table only while its check lets it be read: pwAmieReadable_). */
+function pwLaneSources_(laneKey) { return pwSources_().filter(s => s.lane === laneKey && (s.key !== 'amie' || pwAmieReadable_())); }
 
 /** A lane's sources by name ("Sonar and Tubular"), for the notes. Pure. */
 function pwLaneNames_(laneKey) {
   const n = pwLaneSources_(laneKey).map(s => s.name);
   return n.length > 1 ? `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}` : (n[0] || '');
+}
+
+/** A lane's sources in few words, for a note with 200 characters ("Sonar and Tubular"; "Brandwatch mentions and 5 more"). Pure. */
+function pwLaneShort_(laneKey) {
+  const n = pwLaneSources_(laneKey).map(s => s.name);
+  return n.length > 2 ? `${n[0]} and ${n.length - 1} more` : pwLaneNames_(laneKey);
+}
+
+/**
+ * The start of what C34 and the Watch sources tab say while a look fails as a whole (`laneKeys`: the failing lanes):
+ * "the look at Sonar and Tubular has failed since"; with every lane failing, "the looks at all 8 sources have failed
+ * since". When and why follow it. Pure.
+ */
+function pwFailWords_(laneKeys) {
+  return laneKeys.length >= PW_LANES_.length ? `the looks at all ${pwSources_().length} sources have failed since`
+    : `the look at ${laneKeys.map(pwLaneShort_).join(' and ')} has failed since`;
+}
+
+/** A time (ms) as a note writes it ("Oct 14, 8:04 AM"; with `zone`, "Oct 14, 8:04 AM EDT", as Main.gs nowLabel_). */
+function pwWhen_(ms, zone) {
+  return Utilities.formatDate(new Date(Number(ms)), GEN.timezone || 'America/New_York', `MMM d, h:mm a${zone ? ' z' : ''}`);
+}
+
+/**
+ * Why a look failed as a whole, in plain words for C34 and the Watch sources tab (`what`: the error's own text, which
+ * only the run log keeps): "BigQuery refused access (a permission is missing)", "BigQuery could
+ * not find a table the look reads", "BigQuery reached a quota or rate limit", "BigQuery had a problem of its own",
+ * "BigQuery refused the look's query", "BigQuery could not be reached", "the shared Brandwatch key could not be read"
+ * or "... is empty"; the bot's own words ("BigQuery took more than 4 minutes", "BigQuery gave no job to collect") as
+ * they are; anything else "an unexpected error (the run log has its words)". Pure.
+ */
+function pwPlainWhy_(what) {
+  const s = String(what === null || what === undefined ? '' : what).replace(/\s+/g, ' ').trim();
+  if (/^BigQuery took more than \d+ minutes?$/.test(s) || s === 'BigQuery gave no job to collect') return s;
+  if (/^Secret Manager HTTP /.test(s)) return 'the shared Brandwatch key could not be read';
+  if (/Brandwatch token in Secret Manager is empty/.test(s)) return 'the shared Brandwatch key is empty';
+  const http = s.match(/^BigQuery HTTP (\d{3})(?::|$)/);
+  if (http) {
+    const code = Number(http[1]);
+    if (code === 401 || code === 403 || /access denied|permission|forbidden/i.test(s)) {
+      return 'BigQuery refused access (a permission is missing)';
+    }
+    if (code === 404 || /not found/i.test(s)) return 'BigQuery could not find a table the look reads';
+    if (code === 429 || /quota|rate limit|exceeded|too many/i.test(s)) return 'BigQuery reached a quota or rate limit';
+    if (code >= 500) return 'BigQuery had a problem of its own';
+    return 'BigQuery refused the look\'s query';
+  }
+  if (/timed? ?out|address unavailable|dns|connection|unreachable/i.test(s)) return 'BigQuery could not be reached';
+  return 'an unexpected error (the run log has its words)';
 }
 
 /**
@@ -477,13 +704,14 @@ function pwSourcesTab_(ss, create) {
   sh.getRange(1, 1).setValue(PW_SRC_TITLE_);
   sh.getRange(2, 1).setValue(PW_SRC_NOTE_);
   sh.getRange(PW_SRC_HEAD_ROW_, 1, 1, PW_SRC_HEADER_.length).setValues([PW_SRC_HEADER_]);
-  sh.getRange(PW_SRC_HEAD_ROW_ + 1, 1, PW_SOURCES_.length, 3)
-    .setValues(PW_SOURCES_.map(s => [s.name, s.what, s.bq || s.where || '']));
+  const list = pwSources_();
+  sh.getRange(PW_SRC_HEAD_ROW_ + 1, 1, list.length, 3)
+    .setValues(list.map(s => [s.name, s.what, s.bq || s.where || '']));
   try {
     sh.getRange(1, 1).setFontWeight('bold').setFontSize(12);
     sh.getRange(PW_SRC_HEAD_ROW_, 1, 1, PW_SRC_HEADER_.length).setFontWeight('bold');
     sh.setFrozenRows(PW_SRC_HEAD_ROW_);
-    sh.getRange(PW_SRC_HEAD_ROW_ + 1, 1, PW_SOURCES_.length, PW_SRC_HEADER_.length).setWrap(true).setVerticalAlignment('top');
+    sh.getRange(PW_SRC_HEAD_ROW_ + 1, 1, list.length, PW_SRC_HEADER_.length).setWrap(true).setVerticalAlignment('top');
     [150, 360, 300, 300, 130, 130, 120, 90, 90, 130].forEach((w, i) => sh.setColumnWidth(i + 1, w));
   } catch (e) { /* the tab works unformatted */ }
   try { sh.protect().setDescription('Written by the Burson QA bot').setWarningOnly(true); } catch (e) { /* unprotected */ }
@@ -518,6 +746,66 @@ function pwTable_(key) { return '`' + pwSource_(key).bq + '`'; }
 
 /** Each source's rows as pw_new's columns (source, rk, post_url, ..., txt), by key. Pure. */
 const PW_SOURCE_SQL_ = {
+  // The AMIE table's rows (row 50 ON; restored from ace865c^'s BMIE source with the plan's changes): ingested since 40
+  // minutes before the newest row handed over (@amie_from), so a row that lands late is caught, and none whose key was
+  // handed over in the last 24 hours (@amie_seen: pw:amie:k), so none goes twice; one row a post by its key (an X post by
+  // its status id), its link kept as it came; not all positive, the reach floor, posted within 72 hours, none already
+  // checked in the 24 hours before (another feed's copy), each with why: every one from a brand-safety or Google product
+  // feed (PW_AMIE_FULL_RX_: 'brand-safety query'); from the other feeds only those with a sign something's wrong
+  // ('negative', a 'KOF author', 'risk words': PW_AMIE_RISK_RX_) and a PW_AMIE_SAMPLE_PCT_% 'sample' of the rest (by the
+  // post's key, the same post every time); the others 'skipped' (counted, never asked about). An optional column the
+  // table's check didn't find (froms.amie_opt: followers, KOF, product, engagement) is NULL. English only.
+  amie: f => {
+    const opt = new Set(((f && f.amie_opt) || []).map(String));
+    const col = (name, type) => (opt.has(name) ? `SAFE_CAST(${name} AS ${type})` : `CAST(NULL AS ${type})`);
+    const from = 'TIMESTAMP_MILLIS(@amie_from)';
+    const sample = `ABS(MOD(FARM_FINGERPRINT(k), 100)) < ${PW_AMIE_SAMPLE_PCT_}`;  // MOD first: ABS of the smallest INT64 overflows
+    return [
+      `INSERT INTO pw_new (${PW_NEW_COLS_}, why, tax)`,
+      "SELECT 'amie', ROW_NUMBER() OVER (ORDER BY CASE why WHEN 'brand-safety query' THEN 0 WHEN 'sample' THEN 2 WHEN 'skipped' THEN 9",
+      '    ELSE 1 END, IFNULL(followers, 0) DESC),',
+      '  url, ' + pwNetSql_('net') + ', author, followers, eng, posted, first_seen,',
+      "  CONCAT('Brandwatch: ', IFNULL(q, '')), CAST(NULL AS BOOL), SUBSTR(snippet, 1, 400),",
+      "  SUBSTR(CONCAT('Post text: ', IFNULL(snippet, ''), IF(IFNULL(kof, '') = '', '', CONCAT('\\nKOF: ', kof)),",
+      `    IF(IFNULL(product, '') = '', '', CONCAT('\\nProduct: ', product))), 1, ${PW_TEXT_CHARS_}), why,`,
+      "  TO_JSON_STRING(JSON_OBJECT('p', product, 'kv', kof)) AS tax",
+      'FROM (',
+      "  SELECT m.*, CASE WHEN full_q THEN 'brand-safety query' WHEN neg THEN 'negative' WHEN kof_author THEN 'KOF author'",
+      `      WHEN risk THEN 'risk words' WHEN ${sample} THEN 'sample' ELSE 'skipped' END AS why`,
+      '  FROM (',
+      '    SELECT k, ANY_VALUE(IF(cur, url, NULL)) AS url, MIN(IF(cur, t, NULL)) AS first_seen, ANY_VALUE(IF(cur, snippet, NULL)) AS snippet,',
+      '      MAX(IF(cur, followers, NULL)) AS followers, ANY_VALUE(IF(cur, authorHandle, NULL)) AS author,',
+      '      ANY_VALUE(IF(cur, SocialNetwork, NULL)) AS net, MAX(IF(cur, eng, NULL)) AS eng,',
+      "      STRING_AGG(DISTINCT IF(cur, alert_source, NULL), ', ' LIMIT 3) AS q, MIN(IF(cur, postTime, NULL)) AS posted,",
+      '      ANY_VALUE(IF(cur, kof, NULL)) AS kof, ANY_VALUE(IF(cur, product, NULL)) AS product,',
+      '      LOGICAL_AND(IF(cur, positive, TRUE)) AS positive, LOGICAL_OR(cur AND full_q) AS full_q, LOGICAL_OR(cur AND neg) AS neg,',
+      '      LOGICAL_OR(cur AND kof_author) AS kof_author, LOGICAL_OR(cur AND risk) AS risk,',
+      `      LOGICAL_OR(NOT cur AND NOT positive AND IFNULL(followers, 0) >= ${PW_MIN_FOLLOWERS_}`,
+      `        AND (full_q OR neg OR kof_author OR risk OR ${sample})) AS checked_before`,
+      '    FROM (',
+      `      SELECT ${pwKeySql_('url')} AS k, url, alert_source, snippet, authorHandle, SocialNetwork, postTime,`,
+      `        ${col('followers', 'INT64')} AS followers, ${col('engagement', 'INT64')} AS eng,`,
+      `        ${col('KOF', 'STRING')} AS kof, ${col('product', 'STRING')} AS product,`,
+      `        ingestionTimestamp AS t, ingestionTimestamp > ${from} AS cur,`,
+      "        LOWER(IFNULL(Sentiment, '')) = 'positive' AS positive, LOWER(IFNULL(Sentiment, '')) = 'negative' AS neg,",
+      `        REGEXP_CONTAINS(LOWER(IFNULL(alert_source, '')), r'${PW_AMIE_FULL_RX_}') AS full_q,`,
+      `        STARTS_WITH(IFNULL(${col('KOF', 'STRING')}, ''), 'Yes') AS kof_author,`,
+      `        REGEXP_CONTAINS(LOWER(IFNULL(snippet, '')), r'${PW_AMIE_RISK_RX_}') AS risk`,
+      `      FROM ${pwTable_('amie')}`,
+      `      WHERE ingestionTimestamp > TIMESTAMP_SUB(${from}, INTERVAL ${PW_NEW_HOURS_} HOUR)`,
+      '        AND ingestionTimestamp <= TIMESTAMP_MILLIS(@until_ms) AND url IS NOT NULL',
+      "        AND NOT REGEXP_CONTAINS(LOWER(IFNULL(alert_source, '')), r'positive')",
+      `        AND NOT ${nonEnglishScriptSql_('IFNULL(snippet, \'\')')}`,
+      '    )',
+      '    GROUP BY k',
+      '    HAVING LOGICAL_OR(cur) AND NOT checked_before',
+      '  ) m',
+      `  WHERE NOT positive AND IFNULL(followers, 0) >= ${PW_MIN_FOLLOWERS_}`,
+      '    AND (posted IS NULL OR posted >= TIMESTAMP_SUB(TIMESTAMP_MILLIS(@until_ms), INTERVAL 72 HOUR))',
+      `    AND ${pwAmieHashSql_('k')} NOT IN UNNEST(SPLIT(@amie_seen, ','))`,
+      ');',
+    ];
+  },
   // Pendulum's posts worth a look since the last one, each with why: 'new' (first seen in the window, none seen in the
   // 24 hours before, posted within 24 hours), 'grew' (seen in the 24 hours before but below the floor or without a risk
   // tag then: it went unnoticed and has grown since) or 'broke out' (above the floor before, already checked, and its
@@ -804,7 +1092,9 @@ function pwAiSql_(srcs, structs, topics, capOf) {
   const cap = s => Math.max(0, Math.floor(Number(capOf ? capOf(s) : s.cap) || 0));
   const caps = srcs.map(s => `STRUCT('${s.key}' AS source, ${cap(s)} AS cap)`).join(', ');
   const grok = pwGrokSql_('n');  // Grok's posts: never asked about, not counted as checked, counted as PW_GROK_WHY_
-  const key = "REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(LOWER(n.post_url), r'^https?://(?:www\\.|m\\.|mobile\\.)?', ''), " +
+  // (row 50 ON, the AMIE table among the sources: an X post by its status id, so AMIE's copy and another source's are one)
+  const amie = srcs.some(s => s.key === 'amie');
+  const key = amie ? pwKeySql_('n.post_url') : "REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(LOWER(n.post_url), r'^https?://(?:www\\.|m\\.|mobile\\.)?', ''), " +
     "r'^twitter\\.com/', 'x.com/'), r'#.*$|/+$', '')";
   return [
     'WITH watches AS (',
@@ -852,8 +1142,17 @@ function pwAiSql_(srcs, structs, topics, capOf) {
     '  CAST(NULL AS BOOL), CAST(NULL AS STRING), CAST(NULL AS FLOAT64), CAST(NULL AS FLOAT64), CAST(NULL AS STRING),',
     '  IFNULL(f.found, 0), IFNULL(f.checked, 0), f.newest_ms, x.mod_ms, x.err, d.detail, CAST(NULL AS STRING)',
     'FROM caps c LEFT JOIN found f USING (source) LEFT JOIN src x USING (source) LEFT JOIN detail d USING (source)',
+  ].concat(amie ? [  // the keys of the AMIE rows handed over (kind 'amk', the hash in `why`): pwAmieKeysAdd_
+    'UNION ALL',
+    `SELECT 'amk', 'amie', ${pwAmieHashSql_(pwKeySql_('n.post_url'))}, CAST(NULL AS INT64), CAST(NULL AS STRING), CAST(NULL AS STRING),`,
+    '  CAST(NULL AS STRING), CAST(NULL AS STRING), CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS INT64),',
+    '  CAST(NULL AS STRING), CAST(NULL AS BOOL), CAST(NULL AS STRING), CAST(NULL AS FLOAT64), CAST(NULL AS FLOAT64), CAST(NULL AS STRING),',
+    '  CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS INT64), CAST(NULL AS STRING), CAST(NULL AS STRING),',
+    '  CAST(NULL AS STRING)',
+    "FROM pw_new n JOIN caps c USING (source) WHERE n.source = 'amie' AND n.rk <= c.cap",
+  ] : [], [
     'ORDER BY kind, impact DESC',
-  ];
+  ]);
 }
 
 /**
@@ -892,6 +1191,8 @@ function pwSql_(laneKey, watches, o) {
       params.push({ name: 'bwq', struct: PW_CHAT_FIELDS_, rows: (o && o.bwq) || [] },
         { name: 'bwq_err', type: 'STRING', value: truncate_(String((o && o.bwqErr) || ''), PW_ERR_CHARS_) });
     } else if (!s.window) params.push({ name: `${s.key}_from`, type: 'INT64', value: Math.floor(Number(froms[s.key]) || 0) });
+    // the AMIE table: the keys handed over in the last 24 hours (pwAmieKeys_), left out when read again
+    if (s.key === 'amie') params.push({ name: 'amie_seen', type: 'STRING', value: (Array.isArray(froms.amie_seen) ? froms.amie_seen : []).join(',') });
     if (s.spread) {  // its batch: read as its table stood at the batch's end, the part already handed over skipped
       params.push({ name: `${s.key}_upto`, type: 'INT64', value: Math.floor(Number(froms[`${s.key}_upto`]) || until) },
         { name: `${s.key}_skip`, type: 'INT64', value: Math.max(0, Math.floor(Number(froms[`${s.key}_skip`]) || 0)) });
@@ -915,7 +1216,7 @@ function pwSql_(laneKey, watches, o) {
   });
   lines.push(...pwModSql_(srcs));
   srcs.forEach(s => {
-    const block = pwGuard_(s.key, PW_SOURCE_SQL_[s.key]());
+    const block = pwGuard_(s.key, PW_SOURCE_SQL_[s.key](froms));
     if (s.gate) lines.push(`IF pw_mod_${s.key} > @${s.key}_mod THEN`, ...block, 'END IF;');
     else lines.push(...block);
   });
@@ -1032,16 +1333,18 @@ function pwSnap_(marks, s, until) {
 function pwFroms_(marks, until, today) {
   const m = marks || {};
   const out = {};
-  PW_SOURCES_.forEach(s => {
+  pwSources_().forEach(s => {
     const snap = s.spread ? pwSnap_(m, s, until) : null;
     if (s.gate) out[`${s.key}_mod`] = snap ? 0 : Math.max(0, Number(m[`${s.key}_mod`]) || 0);
-    if (s.dayMax) {
+    // (the open engine, Control row 51, step S13: no day's maximum; a look's cap stays)
+    if (s.dayMax && !(typeof openOn_ === 'function' && openOn_())) {
       const done = (((today && today.src) || {})[s.key] || [])[0];
       out[`${s.key}_left`] = Math.max(0, s.dayMax - (Number(done) || 0));
     }
     if (s.window) return;
     const have = Number(m[s.key]) || 0;
-    out[s.key] = snap ? snap[0] : have > 0 ? Math.max(have, until - s.maxMs) : until - s.firstMs;
+    // (overlapMs: the AMIE table reads again from that long before its mark, so a row that lands late is caught)
+    out[s.key] = snap ? snap[0] : have > 0 ? Math.max(have - (Number(s.overlapMs) || 0), until - s.maxMs) : until - s.firstMs;
     if (s.spread) {
       out[`${s.key}_upto`] = snap ? snap[1] : until;
       out[`${s.key}_skip`] = snap ? snap[2] : 0;
@@ -1064,7 +1367,7 @@ function pwAdvanceMarks_(marks, stats, until) {
   const end = Number(until) || 0;
   const used = pwFroms_(m, end);  // where the look started each source: its marks haven't moved since it was sent
   const out = {};
-  PW_SOURCES_.forEach(s => {
+  pwSources_().forEach(s => {
     if (!s.window && Number(m[s.key]) > 0) out[s.key] = Number(m[s.key]);
     if (s.gate && Number(m[`${s.key}_mod`]) > 0) out[`${s.key}_mod`] = Number(m[`${s.key}_mod`]);
     const snap = s.spread ? pwSnap_(m, s) : null;  // kept as it is: only the source's own look decides on it
@@ -1246,6 +1549,7 @@ function pwBwMentions_(token, from, until, left) {
       out.err = 'Brandwatch\'s answer had no list of mentions';
       break;
     }
+    if (typeof bwCountMentions_ === 'function') bwCountMentions_(results.length, 'watch');  // the one count of every feature's Brandwatch mentions (row 49)
     let older = false;
     results.forEach(m => {
       const k = keyOf(m);
@@ -1488,10 +1792,12 @@ function pwRecord_(sh, results, floor, queue) {
  * Queues again the small flags that waited to be grouped (their key: a 'b') whose post has since grown into one that
  * matters by itself (`list`: pwDetections_'s requeue; `held`: "watch|key" -> {i: index in `block`, k}): the row's
  * engagements, followers and score brought up to date, its key back to a 'q' with rq (when: its 3 hours to go out count
- * from then), out of its build-up. The next pwPostAlerts_ takes it like a new flag. Rows queued again.
+ * from then), out of its build-up. The next pwPostAlerts_ takes it like a new flag. One that was held today is no longer
+ * in today's count of small flags held (C35: WatchAlerts.gs pwAlertDay_): it is counted where it ends. Rows queued again.
  */
 function pwRequeue_(sh, block, held, list, now) {
   let n = 0;
+  let today = 0;  // of them, held today
   (list || []).forEach(x => {
     const h = held.get(x.id);
     if (!h) return;
@@ -1504,7 +1810,9 @@ function pwRequeue_(sh, block, held, list, now) {
     delete k.ac;
     sh.getRange(row, PW_COL_.key).setValue(JSON.stringify(k));
     n++;
+    if (pwOnToday_(h.k.at)) today++;
   });
+  if (today) pwAlertDay_(0, 0, { held: -today });
   if (n) console.log(`Proactive watch: ${n} small flag${n === 1 ? '' : 's'} that waited to be grouped grew past ${PW_SOLO_MIN_ENG_} engagements: queued as alerts of their own`);
   return n;
 }
@@ -1662,11 +1970,44 @@ function pwSourcesAfter_(all, stats, bySource, now) {
   return out;
 }
 
+/** The last looks as they are kept (PW_LAST), or null. */
+function pwLast_(props) {
+  try { return JSON.parse(props.getProperty(PW_LAST_PROP_) || 'null'); } catch (e) { return null; }
+}
+
+/**
+ * The lanes whose look has failed as a whole and not succeeded since (`last`: PW_LAST), by lane key: {since (ms: the
+ * first failed try), why (the latest try's), ok (ms: when the lane's last good look was collected; 0 for none)}; {}
+ * when none has. Pure.
+ */
+function pwLaneFails_(last) {
+  const out = {};
+  PW_LANES_.forEach(l => {
+    const f = last && last.lanes && last.lanes[l.key] && last.lanes[l.key].fail;
+    if (f && Number(f.since) > 0) out[l.key] = { since: Number(f.since), why: String(f.why || 'unknown'), ok: Number(f.ok) || 0 };
+  });
+  return out;
+}
+
+/**
+ * When the latest look that worked was collected (ms; 0 for none), from the last looks (`last`: PW_LAST): the latest
+ * of the lanes' looks, and of the last good look of a lane whose look fails now. The Watches tab's "last look". Pure.
+ */
+function pwLastGoodAt_(last) {
+  const fails = pwLaneFails_(last);
+  return Object.keys(fails).reduce((at, k) => Math.max(at, fails[k].ok), Number(last && last.at) || 0);
+}
+
 /**
  * A source's status (`st`: its last look, or none yet): {kind: 'waiting' | 'error' | 'stale' | 'live', text}. Stale:
- * its table hasn't changed for longer than its staleMs. Pure.
+ * its table hasn't changed for longer than its staleMs. `fail` (its lane's, of pwLaneFails_): the look it is read in
+ * has failed as a whole, so it is failing with that look's error, whatever its own last look said. Pure.
  */
-function pwSourceStatus_(src, st, now) {
+function pwSourceStatus_(src, st, now, fail) {
+  if (fail) {
+    return { kind: 'error', text: `⚠️ failing: ${pwFailWords_([src.lane])} ${pwWhen_(fail.since, true)}: ${fail.why} ` +
+      '(tried again at the next look)' };
+  }
   if (!st || !st.at) return { kind: 'waiting', text: '... waiting for its first look' };
   if (st.err) return { kind: 'error', text: `⚠️ error at the last look: ${st.err} (tried again at the next look)` };
   if (src.staleMs && Number(st.mod) > 0 && now - Number(st.mod) > src.staleMs) {
@@ -1677,18 +2018,19 @@ function pwSourceStatus_(src, st, now) {
 
 /**
  * "sources: 4 live, 2 stale, 1 failing: Sprinklr comments" (all of them live: "all 8 sources live"); '' before any look.
- * Short: it goes in C34, whose note is cut at 200 characters. Pure.
+ * Short: it goes in C34, whose note is cut at 200 characters. `fails`: pwLaneFails_. Pure.
  */
-function pwSourcesSummary_(all, now) {
+function pwSourcesSummary_(all, now, fails) {
   const n = { live: 0, stale: 0, error: 0, waiting: 0 };
   const failing = [];
-  PW_SOURCES_.forEach(s => {
-    const kind = pwSourceStatus_(s, (all || {})[s.key], now).kind;
+  const list = pwSources_();
+  list.forEach(s => {
+    const kind = pwSourceStatus_(s, (all || {})[s.key], now, (fails || {})[s.lane]).kind;
     n[kind]++;
     if (kind === 'error') failing.push(s.name);
   });
-  if (n.waiting === PW_SOURCES_.length) return '';
-  if (n.live === PW_SOURCES_.length) return `all ${PW_SOURCES_.length} sources live`;
+  if (n.waiting === list.length) return '';
+  if (n.live === list.length) return `all ${list.length} sources live`;
   const parts = [];
   if (n.live) parts.push(`${n.live} live`);
   if (n.stale) parts.push(`${n.stale} stale`);
@@ -1697,12 +2039,12 @@ function pwSourcesSummary_(all, now) {
   return `sources: ${parts.join(', ')}`;
 }
 
-/** The Watch sources tab's rows (PW_SRC_HEADER_), one a source. Pure. */
-function pwSourceRows_(all, today, now) {
-  return PW_SOURCES_.map(s => {
+/** The Watch sources tab's rows (PW_SRC_HEADER_), one a source. `fails`: pwLaneFails_. Pure. */
+function pwSourceRows_(all, today, now, fails) {
+  return pwSources_().map(s => {
     const st = (all || {})[s.key] || null;
     const c = ((today && today.src) || {})[s.key] || [0, 0];
-    return [s.name, s.what, s.bq || s.where || '', pwSourceStatus_(s, st, now).text,
+    return [s.name, s.what, s.bq || s.where || '', pwSourceStatus_(s, st, now, (fails || {})[s.lane]).text,
       pwText_(pwTime_(st && st.mod)), pwText_(pwTime_(st && st.newest)),
       st && st.at ? pwText_(`${fmtInt_(st.found)} / ${fmtInt_(st.checked)}${st.detail ? ` (${st.detail})` : ''}`) : '',
       c[0], c[1], pwText_(pwTime_(st && st.at))];
@@ -1711,11 +2053,14 @@ function pwSourceRows_(all, today, now) {
 
 /**
  * Rewrites the Watch sources tab's rows when something changed, and clears the rows below them that a tab made when
- * the watch read more sources still holds (the tab is the bot's own: pwSourcesTab_). Never throws.
+ * the watch read more sources still holds (the tab is the bot's own: pwSourcesTab_). The sources of a look that is
+ * failing as a whole (pwLaneFails_) say so: `last` is the last looks (pwLast_) when the caller has read them, so they
+ * are read once a run. Never throws.
  */
-function pwWriteSources_(sh, props, now) {
+function pwWriteSources_(sh, props, now, last) {
   try {
-    const rows = pwSourceRows_(pwSourceStats_(props), pwToday_(props, dayKey_()), now);
+    const rows = pwSourceRows_(pwSourceStats_(props), pwToday_(props, dayKey_()), now,
+      pwLaneFails_(last === undefined ? pwLast_(props) : last));
     const range = sh.getRange(PW_SRC_HEAD_ROW_ + 1, 1, rows.length, PW_SRC_HEADER_.length);
     const current = range.getValues();
     if (rows.some((r, i) => r.some((c, j) => !pwSame_(c, (current[i] || [])[j])))) range.setValues(rows);
@@ -1741,23 +2086,51 @@ function pwToday_(props, day) {
 }
 
 /**
- * Column C of the switch, from today's numbers, the last looks (`last`: {at, checked, flagged, near}) and the sources
- * (`sources`: pwSourcesSummary_). Pure.
+ * Column C of the switch, from today's numbers, the last looks (`last`: {at, checked, flagged, near}; `timeLabel`: when
+ * the latest of them was collected) and the sources (`sources`: pwSourcesSummary_). While a look fails as a whole
+ * (`fails`: pwLaneFails_) the note says so between the last look and today's counts, behind a warning sign (the cell
+ * starts with the switch's tick): "⚠️ the look at Sonar and Tubular has failed since Oct 14, 8:04 AM EDT: <why>" (every
+ * look failing: "⚠️ the looks at all 8 sources have failed since", from when the later of them began to, with its
+ * reason, and no last look). It then stays within PW_NOTE_CHARS_, where a note is cut: the reason is shortened to the
+ * room there is (never through a character: WatchAlerts.gs pwCut_), and when under PW_FAIL_WHY_MIN_ characters of it
+ * would be left the last look's numbers go, then the last look; today's counts are never cut, and the sources follow
+ * only when they fit whole. Pure.
  */
-function pwNoteText_(today, last, timeLabel, sources) {
-  const looked = last && last.at
-    ? `last look ${timeLabel}: ${fmtInt_(last.checked)} new post${last.checked === 1 ? '' : 's'}, ${fmtInt_(last.flagged)} flagged`
+function pwNoteText_(today, last, timeLabel, sources, fails) {
+  const at = last && last.at ? `last look ${timeLabel}` : '';
+  const looked = at
+    ? `${at}: ${fmtInt_(last.checked)} new post${last.checked === 1 ? '' : 's'}, ${fmtInt_(last.flagged)} flagged`
     : 'first look on its way';
-  return `${looked} · today: ${fmtInt_(today.flagged)} flagged, ${fmtInt_(today.near)} near miss${today.near === 1 ? '' : 'es'}` +
-    (sources ? ` · ${sources} (Watch sources tab)` : ' (Watch detections tab)');
+  const counts = `today: ${fmtInt_(today.flagged)} flagged, ${fmtInt_(today.near)} near miss${today.near === 1 ? '' : 'es'}`;
+  const tail = sources ? ` · ${sources} (Watch sources tab)` : ' (Watch detections tab)';
+  const failing = PW_LANES_.map(l => l.key).filter(k => (fails || {})[k]);
+  if (!failing.length) return `${looked} · ${counts}${tail}`;
+  const f = failing.map(k => fails[k]).reduce((a, b) => (b.since > a.since ? b : a));
+  const said = `⚠️ ${pwFailWords_(failing)} ${pwWhen_(f.since, true)}: `;
+  const leads = failing.length >= PW_LANES_.length ? [''] : [`${looked} · `].concat(at ? [`${at} · `] : [], ['']);
+  const room = lead => PW_NOTE_CHARS_ - lead.length - said.length - ' · '.length - counts.length;
+  const lead = leads.find(l => !l || room(l) >= PW_FAIL_WHY_MIN_);
+  const note = `${lead}${said}${pwCut_(f.why, Math.max(1, room(lead)))} · ${counts}`;
+  return note.length + tail.length <= PW_NOTE_CHARS_ ? note + tail : note;
 }
 
-/** The last looks with the lane's latest (`entry`), kept (PW_LAST): each lane's latest, and their sum. */
+/**
+ * The last looks with the lane's latest (`entry`), kept (PW_LAST): each lane's latest, and their sum. A look that failed
+ * as a whole (`entry`: {fail: {since, why}}) leaves no numbers of the lane's last good look in the sum, and has failed
+ * since the first try that did: an entry that already says so keeps its `since` and takes the new `why`. It keeps when
+ * the lane's last good look was collected (`ok`, when it had one), for the Watches tab's "last look" (pwLastGoodAt_).
+ */
 function pwLastWith_(props, lane, entry) {
   let last = null;
   try { last = JSON.parse(props.getProperty(PW_LAST_PROP_) || 'null'); } catch (e) { last = null; }
   const lanes = Object.assign({}, (last && last.lanes) || {});
-  lanes[lane.key] = entry;
+  if (entry.fail) {
+    const was = pwLaneFails_(last)[lane.key] || null;
+    const ok = was ? was.ok : Number((lanes[lane.key] || {}).at) || 0;
+    lanes[lane.key] = { fail: Object.assign({ since: was ? was.since : entry.fail.since, why: entry.fail.why }, ok ? { ok } : {}) };
+  } else {
+    lanes[lane.key] = entry;
+  }
   const sum = { at: 0, checked: 0, flagged: 0, near: 0, lanes };
   Object.keys(lanes).forEach(k => {
     const l = lanes[k] || {};
@@ -1779,7 +2152,8 @@ function pwLastWith_(props, lane, entry) {
 function pwDone_(props, sh, lane, job, results, now, queue) {
   const rows = (results || []).filter(Boolean);
   const stats = rows.filter(r => r.kind === 'src');
-  const rec = pwRecord_(sh, rows.filter(r => r.kind !== 'src'), Number(job.since) || 0, queue);
+  const rec = pwRecord_(sh, rows.filter(r => r.kind !== 'src' && r.kind !== 'amk'), Number(job.since) || 0, queue);
+  if (rows.some(r => r.kind === 'amk')) pwAmieKeysAdd_(rows.filter(r => r.kind === 'amk').map(r => r.why), now);  // (row 50 ON)
   const windowErr = stats.some(r => r.err && (pwSource_(r.source) || {}).window);
   if (!windowErr) props.setProperty(lane.sinceProp, String(job.until));
   else if (!Number(props.getProperty(lane.sinceProp))) props.setProperty(lane.sinceProp, String(job.since));
@@ -1803,8 +2177,9 @@ function pwDone_(props, sh, lane, job, results, now, queue) {
     today.src[r.source] = [c[0] + (Number(r.checked) || 0), c[1] + ((rec.bySource[r.source] || [0])[0])];
   });
   props.setProperty(PW_DAY_PROP_, JSON.stringify(today));
-  const last = pwLastWith_(props, lane, { at: now, checked, flagged: rec.flagged, near: rec.near });
-  noteSwitch_('proactiveWatch', pwNoteText_(today, last, nowLabel_(), pwSourcesSummary_(sources, now)));
+  const last = pwLastWith_(props, lane, { at: now, checked, flagged: rec.flagged, near: rec.near });  // it no longer fails
+  const fails = pwLaneFails_(last);  // the other lane's look may be failing still: the note keeps saying so
+  noteSwitch_('proactiveWatch', pwNoteText_(today, last, nowLabel_(), pwSourcesSummary_(sources, now, fails), fails));
   if (rec.added) console.log(`Proactive watch (${lane.location}): ${checked} new posts checked, ${rec.flagged} flagged, ${rec.near} near misses`);
   stats.filter(r => r.err && pwSource_(r.source))
     .forEach(r => console.warn(`Proactive watch: ${pwSource_(r.source).name} failed at the last look: ${r.err}`));
@@ -1812,12 +2187,15 @@ function pwDone_(props, sh, lane, job, results, now, queue) {
 }
 
 /**
- * A lane's look that failed (`why`): tried again at its next look, or skipped after PW_MAX_TRIES_ (its window marked
- * done, and its sources' marks moved past it, so one bad window can't stop the watch), and noted either way.
+ * A lane's look that failed as a whole (`why`): tried again at its next look, or skipped after PW_MAX_TRIES_ (its window
+ * marked done, and its sources' marks moved past it, so one bad window can't stop the watch; the log says so). Either
+ * way the failure is kept on the lane's entry of the last looks (pwLastWith_: since when, and why) until a look of the
+ * lane succeeds again (pwDone_): until then C34 says so (pwNoteText_), and the Watch sources tab shows the lane's
+ * sources as failing (pwSourceStatus_).
  */
 function pwFailed_(props, lane, job, why) {
   const tries = (Number(job.tries) || 0) + 1;
-  const what = truncate_(String((why && why.message) || why || 'unknown'), 160);
+  const what = pwCut_(String((why && why.message) || why || 'unknown'), 160);  // never through a character (WatchAlerts.gs)
   const names = pwLaneNames_(lane.key);
   console.warn(`Proactive watch: the look at ${names} for ${pwTime_(job.since)}-${pwTime_(job.until)} failed (try ${tries}): ${what}`);
   if (tries >= PW_MAX_TRIES_) {
@@ -1830,13 +2208,18 @@ function pwFailed_(props, lane, job, why) {
       delete marks[`${s.key}_snap`];  // a batch it was handing over goes with the window
     });
     props.setProperty(PW_MARKS_PROP_, JSON.stringify(marks));
-    noteSwitch_('proactiveWatch', `⚠️ skipped ${pwTime_(job.since).slice(11)}-${pwTime_(job.until).slice(11)} for ${names} ` +
-      `after ${tries} tries (${what}); the next look carries on`);
+    console.warn(`Proactive watch: skipped ${pwTime_(job.since).slice(11)}-${pwTime_(job.until).slice(11)} for ${names} ` +
+      `after ${tries} tries; the next look carries on`);
   } else {
     props.setProperty(lane.triesProp, String(tries));
     if (!Number(props.getProperty(lane.sinceProp))) props.setProperty(lane.sinceProp, String(job.since));  // retried from its start
-    noteSwitch_('proactiveWatch', `⚠️ the last look at ${names} failed (${what}); it tries again at the next look`);
   }
+  const now = Date.now();
+  // what C34 and the Watch sources tab say is why in plain words (pwPlainWhy_); the error's own text is in the log above
+  const last = pwLastWith_(props, lane, { fail: { since: now, why: pwPlainWhy_(what) } });
+  const fails = pwLaneFails_(last);
+  noteSwitch_('proactiveWatch', pwNoteText_(pwToday_(props, dayKey_()), last, last.at ? pwWhen_(last.at, true) : '',
+    pwSourcesSummary_(pwSourceStats_(props), now, fails), fails));
 }
 
 /**
@@ -1940,6 +2323,8 @@ function runProactiveWatch_(ss, runStart, opts) {
       let alerts = null;  // the Alert log's newest rows, read once, when the US look goes out
       let first = false;
       let failed = false;  // a failure's note stays: the first look's note doesn't cover it up
+      // (row 50 ON: the AMIE table's check, hourly, before the US look reads it; a table it can't read stops it alone)
+      if (pwSources_().some(s => s.key === 'amie')) pwAmieCheck_(props, Date.now());
       PW_LANES_.forEach(lane => {  // 2. each lane's next look, when it's due
         if (left() < PW_MIN_LEFT_MS_ || pwJob_(props, lane)) return;
         const now = Date.now();
@@ -1951,7 +2336,8 @@ function runProactiveWatch_(ss, runStart, opts) {
         props.setProperty(lane.atProp, String(now));  // first: a failing send isn't tried again every minute
         const sent = { since, until, at: now, tries: Number(props.getProperty(lane.triesProp)) || 0 };
         try {
-          const froms = pwFroms_(pwMarks_(props), until, pwToday_(props, dayKey_()));  // today's: each day's maximum
+          const froms = Object.assign(pwFroms_(pwMarks_(props), until, pwToday_(props, dayKey_())),  // today's: each day's maximum
+            lane.key === 'us' ? pwAmieFroms_(props, Date.now()) : {});  // (row 50 ON: the AMIE table's columns and keys)
           let chat = [];
           if (pwLaneSources_(lane.key).some(s => s.key === 'chat')) {
             if (!alerts) alerts = pwRecentAlerts_(ss);
@@ -1980,7 +2366,7 @@ function runProactiveWatch_(ss, runStart, opts) {
       });
       if (first && !failed) {
         noteSwitch_('proactiveWatch', `first look sent ${nowLabel_()} (${active.length} watch${active.length === 1 ? '' : 'es'}, ` +
-          `${PW_SOURCES_.length} sources); its results come in a minute or two`);
+          `${pwSources_().length} sources); its results come in a minute or two`);
       }
     }
     // 3. the flags waiting to go out as watch alerts (Control row 35, WatchAlerts.gs), a few a run, only while some wait
@@ -1994,7 +2380,7 @@ function runProactiveWatch_(ss, runStart, opts) {
     if (opts && opts.control) {
       try {
         writeWatchAlertsNote_(opts.control, pwAlertsNoteText_(dest || { choice: '' }, out.alerts, true, pwAlertDay_(0),
-          pwAlertDayGrouped_(), pwAlertDayMore_()));
+          pwAlertDayGrouped_(), pwAlertDayMore_(), !active.length));
       } catch (e) {
         console.error('could not write C35 (Watch alerts): ' + ((e && e.message) || e));
       }
@@ -2005,10 +2391,11 @@ function runProactiveWatch_(ss, runStart, opts) {
       (out.added || !scoredAt || Date.now() - scoredAt >= PW_SCORE_EVERY_MS_)) {
       pwRefreshScorecard_(ss, dt.sh, Date.now());
     }
-    if (st.sh) pwWriteSources_(st.sh, props, Date.now());
-    let last = null;
-    try { last = JSON.parse(props.getProperty(PW_LAST_PROP_) || 'null'); } catch (e) { last = null; }
-    const lastAt = last && last.at ? Utilities.formatDate(new Date(Number(last.at)), GEN.timezone, 'h:mm a') : '';
+    const last = pwLast_(props);  // read once, for the Watch sources tab and the watches' status
+    if (st.sh) pwWriteSources_(st.sh, props, Date.now(), last);
+    // the latest look that worked, also while every look fails (C34 and the Watch sources tab say that they do)
+    const goodAt = pwLastGoodAt_(last);
+    const lastAt = goodAt ? Utilities.formatDate(new Date(goodAt), GEN.timezone, 'h:mm a') : '';
     pwWriteStatuses_(wt.sh, watches, pwToday_(props, dayKey_()), lastAt);
     return out;
   } catch (e) {

@@ -1,0 +1,381 @@
+{
+ "Step 1 only, the rules alone": {
+  "by": "rules",
+  "solo_alerts": [
+   {
+    "id": "new_development",
+    "url": "https://x.com/news/status/12",
+    "platform": "X",
+    "engagement": 3200,
+    "why_met_guidelines": "Passed Step 1 (Google relevance, not already alerted on).",
+    "is_new_development": true,
+    "prior_alert_ref": "QA-701",
+    "new_development_summary": "New development (Breaking update) since QA-701: Breaking update: Google responded with an official statement and recall program for affected Pixel 10 batteries."
+   },
+   {
+    "id": "fresh",
+    "url": "https://x.com/fresh/status/13",
+    "platform": "X",
+    "engagement": 2500,
+    "why_met_guidelines": "Passed Step 1 (Google relevance, not already alerted on)."
+   },
+   {
+    "id": "one_off",
+    "url": "https://x.com/u9/status/9",
+    "platform": "X",
+    "engagement": 90,
+    "why_met_guidelines": "Passed Step 1 (Google relevance, not already alerted on)."
+   }
+  ],
+  "group_waves": [],
+  "discarded_ids": [
+   "slang",
+   "nfl",
+   "promo",
+   "same_post",
+   "same_post_other_link",
+   "same_post_flagged",
+   "same_issue"
+  ]
+ },
+ "Step 1 only, no earlier alerts": {
+  "by": "rules",
+  "solo_alerts": [
+   {
+    "id": "same_post",
+    "url": "https://x.com/tech/status/10",
+    "platform": "X",
+    "engagement": 2900,
+    "why_met_guidelines": "Passed Step 1 (Google relevance, not already alerted on)."
+   },
+   {
+    "id": "same_issue",
+    "url": "https://x.com/other/status/11",
+    "platform": "X",
+    "engagement": 2400,
+    "why_met_guidelines": "Passed Step 1 (Google relevance, not already alerted on)."
+   },
+   {
+    "id": "fresh",
+    "url": "https://x.com/fresh/status/13",
+    "platform": "X",
+    "engagement": 2500,
+    "why_met_guidelines": "Passed Step 1 (Google relevance, not already alerted on)."
+   },
+   {
+    "id": "one_off",
+    "url": "https://x.com/u9/status/9",
+    "platform": "X",
+    "engagement": 90,
+    "why_met_guidelines": "Passed Step 1 (Google relevance, not already alerted on)."
+   }
+  ],
+  "group_waves": [],
+  "discarded_ids": [
+   "slang",
+   "nfl"
+  ]
+ },
+ "Step 1 only, Gemini answers": {
+  "by": "gemini",
+  "solo_alerts": [
+   {
+    "id": "same_issue_3",
+    "url": "https://x.com/other3/status/31",
+    "platform": "X",
+    "engagement": 2500,
+    "why_met_guidelines": "Engineers confirmed a pattern.",
+    "is_new_development": true,
+    "prior_alert_ref": "QA-701",
+    "new_development_summary": "Google engineers acknowledged the swelling pattern."
+   },
+   {
+    "id": "same_issue_4",
+    "url": "https://x.com/other4/status/41",
+    "platform": "X",
+    "engagement": 2550,
+    "why_met_guidelines": "A regulator stepped in.",
+    "is_new_development": true,
+    "prior_alert_ref": "QA-702",
+    "new_development_summary": "A regulator opened a file on the swelling batteries."
+   },
+   {
+    "id": "new_development",
+    "url": "https://x.com/news/status/12",
+    "platform": "X",
+    "engagement": 3200,
+    "why_met_guidelines": "Google answered officially.",
+    "is_new_development": true,
+    "prior_alert_ref": "QA-701",
+    "new_development_summary": "New development (Breaking update) since QA-701: Breaking update: Google responded with an official statement and recall program for affected Pixel 10 batteries."
+   },
+   {
+    "id": "fresh",
+    "url": "https://x.com/fresh/status/13",
+    "platform": "X",
+    "engagement": 2500,
+    "why_met_guidelines": "A specific complaint about Chrome."
+   }
+  ],
+  "group_waves": [],
+  "discarded_ids": [
+   "slang",
+   "same_post",
+   "same_post_flagged",
+   "same_issue",
+   "same_issue_2",
+   "fresh_2"
+  ]
+ },
+ "Step 1 only, Gemini fails": {
+  "by": "rules",
+  "solo_alerts": [
+   {
+    "id": "new_development",
+    "url": "https://x.com/news/status/12",
+    "platform": "X",
+    "engagement": 3200,
+    "why_met_guidelines": "Passed Step 1 (Google relevance, not already alerted on).",
+    "is_new_development": true,
+    "prior_alert_ref": "QA-701",
+    "new_development_summary": "New development (Breaking update) since QA-701: Breaking update: Google responded with an official statement and recall program for affected Pixel 10 batteries."
+   },
+   {
+    "id": "fresh",
+    "url": "https://x.com/fresh/status/13",
+    "platform": "X",
+    "engagement": 2500,
+    "why_met_guidelines": "Passed Step 1 (Google relevance, not already alerted on)."
+   },
+   {
+    "id": "fresh_2",
+    "url": "https://x.com/fresh2/status/14",
+    "platform": "X",
+    "engagement": 2600,
+    "why_met_guidelines": "Passed Step 1 (Google relevance, not already alerted on)."
+   }
+  ],
+  "group_waves": [],
+  "discarded_ids": [
+   "slang",
+   "same_post",
+   "same_post_flagged",
+   "same_issue",
+   "same_issue_2",
+   "same_issue_3",
+   "same_issue_4"
+  ]
+ },
+ "Step 1 only, Gemini answers something else": {
+  "by": "rules",
+  "solo_alerts": [
+   {
+    "id": "new_development",
+    "url": "https://x.com/news/status/12",
+    "platform": "X",
+    "engagement": 3200,
+    "why_met_guidelines": "Passed Step 1 (Google relevance, not already alerted on).",
+    "is_new_development": true,
+    "prior_alert_ref": "QA-701",
+    "new_development_summary": "New development (Breaking update) since QA-701: Breaking update: Google responded with an official statement and recall program for affected Pixel 10 batteries."
+   },
+   {
+    "id": "fresh",
+    "url": "https://x.com/fresh/status/13",
+    "platform": "X",
+    "engagement": 2500,
+    "why_met_guidelines": "Passed Step 1 (Google relevance, not already alerted on)."
+   },
+   {
+    "id": "fresh_2",
+    "url": "https://x.com/fresh2/status/14",
+    "platform": "X",
+    "engagement": 2600,
+    "why_met_guidelines": "Passed Step 1 (Google relevance, not already alerted on)."
+   }
+  ],
+  "group_waves": [],
+  "discarded_ids": [
+   "slang",
+   "same_post",
+   "same_post_flagged",
+   "same_issue",
+   "same_issue_2",
+   "same_issue_3",
+   "same_issue_4"
+  ]
+ },
+ "Step 1 only, nothing passes the rules": {
+  "by": "rules",
+  "solo_alerts": [],
+  "group_waves": [],
+  "discarded_ids": [
+   "slang",
+   "nfl",
+   "same_post"
+  ]
+ },
+ "Step 1 only, no records": {
+  "by": "rules",
+  "solo_alerts": [],
+  "group_waves": [],
+  "discarded_ids": []
+ },
+ "Dual track, the rules alone": {
+  "by": "rules",
+  "solo_alerts": [
+   {
+    "id": "fresh",
+    "url": "https://x.com/fresh/status/13",
+    "platform": "X",
+    "engagement": 2500,
+    "why_met_guidelines": "Passed Step 1, and its 2,500 engagements meet the 2,000 Solo Alert threshold."
+   }
+  ],
+  "group_waves": [
+   {
+    "wave_title": "Google Photos deleting shared albums",
+    "total_engagement": 2375,
+    "total_posts": 5,
+    "authors": 5,
+    "platforms": [
+     "X"
+    ],
+    "top": 525,
+    "top_posts": [
+     {
+      "url": "https://x.com/wave5/status/505",
+      "author": "@wave5",
+      "network": "X",
+      "interactions": 525
+     },
+     {
+      "url": "https://x.com/wave4/status/504",
+      "author": "@wave4",
+      "network": "X",
+      "interactions": 500
+     },
+     {
+      "url": "https://x.com/wave3/status/503",
+      "author": "@wave3",
+      "network": "X",
+      "interactions": 475
+     }
+    ],
+    "urls": [
+     "https://x.com/wave5/status/505",
+     "https://x.com/wave4/status/504",
+     "https://x.com/wave3/status/503",
+     "https://x.com/wave2/status/502",
+     "https://x.com/wave1/status/501"
+    ],
+    "keys": [
+     "x.com/status/505",
+     "x.com/status/504",
+     "x.com/status/503",
+     "x.com/status/502",
+     "x.com/status/501"
+    ]
+   }
+  ],
+  "discarded_ids": [
+   "slang",
+   "nfl",
+   "same_issue",
+   "one_off",
+   "held1",
+   "held2",
+   "held3",
+   "held4",
+   "held5"
+  ]
+ },
+ "Dual track, Gemini groups": {
+  "by": "gemini",
+  "solo_alerts": [
+   {
+    "id": "fresh",
+    "url": "https://x.com/fresh/status/13",
+    "platform": "X",
+    "engagement": 2500,
+    "why_met_guidelines": "A specific complaint about Chrome."
+   }
+  ],
+  "group_waves": [
+   {
+    "wave_title": "Google Photos loses shared albums",
+    "total_engagement": 2375,
+    "total_posts": 5,
+    "authors": 5,
+    "platforms": [
+     "X"
+    ],
+    "top": 525,
+    "top_posts": [
+     {
+      "url": "https://x.com/newtold5/status/505",
+      "author": "@newtold5",
+      "network": "X",
+      "interactions": 525
+     },
+     {
+      "url": "https://x.com/newtold4/status/504",
+      "author": "@newtold4",
+      "network": "X",
+      "interactions": 500
+     },
+     {
+      "url": "https://x.com/newtold3/status/503",
+      "author": "@newtold3",
+      "network": "X",
+      "interactions": 475
+     }
+    ],
+    "urls": [
+     "https://x.com/newtold5/status/505",
+     "https://x.com/newtold4/status/504",
+     "https://x.com/newtold3/status/503",
+     "https://x.com/newtold2/status/502",
+     "https://x.com/newtold1/status/501"
+    ],
+    "keys": [
+     "x.com/status/505",
+     "x.com/status/504",
+     "x.com/status/503",
+     "x.com/status/502",
+     "x.com/status/501"
+    ],
+    "wave_summary": "People say Google Photos lost their shared albums.",
+    "platform_breakdown": [
+     {
+      "platform": "X",
+      "post_count": 5,
+      "combined_engagement": 2375,
+      "narrative": "People list what is gone."
+     }
+    ]
+   }
+  ],
+  "discarded_ids": [
+   "doodle",
+   "one_off",
+   "heldtold1",
+   "heldtold2",
+   "heldtold3",
+   "heldtold4",
+   "heldtold5"
+  ]
+ },
+ "Waves only, a wave on a story already alerted": {
+  "by": "rules",
+  "solo_alerts": [],
+  "group_waves": [],
+  "discarded_ids": [
+   "held1",
+   "held2",
+   "held3",
+   "held4",
+   "held5"
+  ]
+ }
+}

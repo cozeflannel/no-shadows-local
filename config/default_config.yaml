@@ -75,6 +75,8 @@ burson_qa:
   dry_run: false                 # true = post nothing in the Burson space ("would reply" notes go under the forward)
   llm_min_confidence: 0.9        # Gemini suggestions below this are "double-check" notes for analysts, not fix requests
   llm_fix_severities: [blocking, warning]  # Gemini checks that can become fix requests: tag, product, topics + KOF, issue name, summary
+  autocorrect_min_confidence: 0.6  # the Auto-correct space (B10) only: Gemini's value (and its existing-issue call) is applied from this (the agentic assistant decides; below it Burson's value stays), never on the summary or a field the rules decided
+  autocorrect_writeup: true      # the Auto-correct space (B10) only: the review call also writes the alert's summary paragraph (web background only with web sources), for the corrected alert, its note and the Social Alert email
   check_issue_status: true       # Burson's "New" -> "Ongoing Issue" when the same issue was alerted in the last 14 days
   pending_fix_hours: 48          # an alert for the same post within 48 h of a fix request is Burson's fix
   start_lookback_minutes: 15
@@ -97,6 +99,77 @@ burson_qa:
   speed_log_table: brand-social-central-data.slrr_alerts.slrr_alerts    # the IMs' actioned alerts (backs up their call)
   speed_im_sender: ""                                                   # resolved dynamically from Brand safety groups when configured
   speed_gmail: true              # look up when the IMs' emails went out (in the mailbox the bot runs as)
+  # Rollback settings: each guards one behaviour, so it can be turned off here (then rebuild and clasp push) without
+  # reverting code. false, or 0 for a number, keeps what the bot did before. Outside the Auto-correct flow none of them
+  # changes what the bot posts, queues or emails.
+  early_detection_first: true    # the one-space setup: Early Detection runs before the Direct BigQuery poll (false: the poll first, as before)
+  early_wave_reviews_per_hour: 6 # the Auto-correct flow: ordinary story signals queued for review in a clock hour (0: the old rule, 40 queued a day)
+  early_wave_reviews_per_day: 150  # ...and story signals queued a day at most (used only while the hourly rule is on; 0: the old rule too)
+  early_wave_topic_min_ratio: 3  # the Auto-correct flow: a topic's pace jump under this multiple of its usual count is noted, not reviewed (0: reviewed, as before)
+  early_detection_tab: true      # the "Early Detection" tab: every story signal and what happened to it (false: no tab is made or written)
+  # cross_alert_notes, the Auto-correct flow: a note under another alert's card when two alert types meet on one post or
+  # story (story, watch and Direct BigQuery notes; the watch's "Same story" reply goes under its alert's card as such a
+  # note), and a bigger post (2,000+ engagements) on an issue already alerted gets its own card (false: as before: no
+  # such notes, the same-story reply goes in the thread as it used to, a post or story already covered is skipped and
+  # counted, and no extra card for a bigger post)
+  cross_alert_notes: true
+  # requirement_line, the Auto-correct flow: the "Alert requirements" line in the note after each review, and the BSIP
+  # card's [KOF] line from the feed's influencer list ("Yes (<list>)"), which can start a Social Alert at any size; while
+  # it is on, an "Alert requirements: ...?" question asked under a card from the account the bot runs as is not taken
+  # for one of the bot's notes (false: as before: no such line, the BSIP card's [KOF] line says No)
+  requirement_line: true
+  # New sources in Early Detection (Control rows 48-49, each OFF until the owner turns it on): how their posts share the
+  # check with today's sources. None of these does anything while those rows are OFF.
+  early_wave_new_embed_per_check: 100   # of the 400 texts embedded a check, the new sources' share (today's sources keep 300; room either side leaves goes to the other)
+  early_wave_new_embed_per_day: 5000    # texts of the new sources embedded a UTC day at most (they also stop once the day's total nears its pace, keeping room for Sonar)
+  early_wave_new_late_minutes: 180      # a new source's post first seen more than this long after it was posted can only join a story, never start one
+  early_wave_new_pool_max: 300          # of the 1,200 unjoined posts kept to start stories, at most this many from the new sources...
+  early_wave_new_pool_minutes: 120      # ...each kept this long at most
+  early_wave_new_carry_max: 100         # new sources' posts not embedded in a check, kept for the next check (2 hours at most)
+  early_wave_new_trial_days: 0          # no trial: stories only a new source lifts go for review from its first day, within the two limits below; above 0, the days after a source is first read when stories only it lifts over the bar are listed, not sent for review, and stories only it lifts to the early watch are not asked about
+  early_wave_new_lifted_per_hour: 2     # after the trial: stories only the new sources lift over the bar, sent for review in an hour at most...
+  early_wave_new_lifted_per_day: 20     # ...and in a day (the rest are listed, not sent)
+  # The AMIE table in Early Detection (Control row 48, OFF until the owner turns it on): Brandwatch's alert feeds, X with
+  # its words, read from BigQuery (no Brandwatch call). None of these does anything while row 48 is OFF.
+  amie_rows_per_check: 300              # new rows of the AMIE table read a check at most (about a check's share of 25,000 a day)
+  amie_overlap_minutes: 60              # each read starts this long before the newest row it last took, to catch rows that land late
+  amie_max_gb: 1                        # one read may scan this many gigabytes at most (checked by a dry run each day); more: not read that day
+  amie_stale_hours: 3                   # no new row in the table for this many hours is said in the row's note (the read goes on)
+  amie_staff_feeds_rx: 'kof|kol|\binfs?\b|exec|googler|reps|posts by google'  # alert feeds of Google's staff and KOFs: their posts and authors are left out
+  # Brandwatch read live for Early Detection (Control row 49, OFF until the owner turns it on): new mentions, never X,
+  # from the queries ticked Read = ON on the New sources tab. None of these does anything while row 49 is OFF.
+  bw_live_project_id: 1998344909        # the Brandwatch project read ("[SLRR] Private", the bot's project)
+  bw_live_sources: [reddit, bluesky, facebook, facebook_public, instagram, instagram_public, tiktok, youtube, threads, tumblr, forum]  # the sources asked for (X and LinkedIn are refused whatever this says)
+  bw_live_queries_max: 20               # ticked queries read at most (the first by row); one call reads them all
+  bw_live_page_size: 300                # mentions a page
+  bw_live_parcel_max: 300               # mentions handed to Early Detection a read at most
+  bw_live_every_minutes: 10             # the least time between two reads
+  bw_live_first_minutes: 30             # the first read after the row goes ON reads this far back (no backfill)
+  bw_live_calls_per_10min: 20           # this reader's own calls in any 10 minutes at most (Brandwatch allows the shared login 600)
+  bw_live_pause_at_used: 450            # no read for 10 minutes once the shared login has used this many of its 600 calls in 10 minutes
+  bw_live_source_type_new: true         # ask for new mentions only (backfilled ones left out)
+  # Step 3a of the new sources: while Control row 50 (the Watch's AMIE source) is ON, every post a carded Early
+  # Detection story links is seen by that card in the alert memory, as its main post is, so the Watch and the Direct
+  # BigQuery poll treat it as they treat the main post. With row 50 OFF nothing changes.
+  early_detection_claim_members: true
+  # The open engine (Control row 51, OpenEngine.gs; step S2 of the open-engine plan). The record of run time and
+  # outside calls (RUN_LEDGER) runs with row 51 OFF too: it only records.
+  open_daily_stop: 2000                 # background reviews an Eastern day at most (Burson's alerts never count or stop); also 10x quick looks, 100x Watch post checks, 1.5 GB x BigQuery
+  open_runtime_budget_hours:            # the account's trigger run time a day; blank: 6 on a Workspace account, 1.5 on any other (the bot reads which, once a day)
+  open_runtime_other_hours: 1.5         # what other scripts on the account use, plus a margin (at most half the budget)
+  open_lock_loss_seconds: 2             # what a run that found the lock taken costs
+  open_fetch_day:                       # outside calls a day; blank: 100,000 on a Workspace account, 20,000 on any other
+  open_burson_pickup_p90_s: 120         # past this p90 of Burson's pick-up time, background work gives up 30 s more a run
+  open_check_minutes: 5                 # how often Early Detection checks under row 51 (step S6): 10 from 0.60 of the day's run time, 15 from 0.70
+  open_velocity_fix: true               # under row 51 (step S8): late posts and posts read over the lag after posting give no velocity count
+  open_velocity_lag_minutes: 60         # ...the lag (raise to 120 if Sonar's median lag is over 45 minutes)
+  open_equal_lanes: true                # under row 51 (step S9): every source's fresh post may start a story; a late one only joins
+  open_fresh_minutes: 180               # ...a post read later than this after posting is late
+  open_lane_bars: ''                    # measured same-story bars by source (JSON); blank: the script property OPEN_LANE_BARS, else today's bars
+  open_hold_none_at: 0.8                # under row 51 (step S11): a signal whose most probable severity is none at this or more is held back
+  open_requirements_first: true         # under row 51 (step S19a): every post read is checked against the alert requirements code can decide (counted)
+  open_first_screen: true               # under row 51 with open_requirements_first (step S19h): Gemini reads the posts left to a judgment 25 at a time first
+  open_queue_max: 24                    # the review queue under row 51 (step S5); a story that does not fit waits for a later check
   # What the Resources tab of the bot's sheet starts with. After that the tab is what the bot uses: edit it there.
   # The bot links these when Burson asks about the alert requirements, so only list documents Burson can open.
   resources:
@@ -184,7 +257,9 @@ alert_template:
     - {name: comments, labels: [Comments, Replies], type: integer, min: 0}
     - {name: shares, labels: [Shares, Reposts, Retweets], type: integer, min: 0}
     - {name: views, labels: [Views], type: integer, min: 0}
-    - {name: product, labels: [Product, Google Product], type: string, required: true, reference_list: products, correctable: true,
+    # "Product(s)" is the label on Burson's live alerts. The bare plurals (Products, Google Products) are left out on
+    # purpose: a line of a post's summary that starts "Google products: ..." (a boycott list) would be read as the product.
+    - {name: product, labels: [Product, Google Product, "Product(s)", "Google Product(s)"], type: string, required: true, reference_list: products, correctable: true,
        description: "Google product (distro name), e.g. Gemini App, AI Overviews, Pixel.",
        fix_hint: Use the product names from the distribution list (Gems -> Gemini App; AI Studio/Antigravity -> Devs Products).}
     - {name: other_products, labels: [Other Products, Other Google Products, "Product #2", "Product #3", Product 2, Additional Products], type: list, correctable: true}

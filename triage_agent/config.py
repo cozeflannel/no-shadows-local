@@ -553,6 +553,14 @@ class BursonQAConfig(ConfigModel):
     # Gemini checks that may become fix requests: blocking = exposure tag, product, Sensitive Topics; warning = KOF,
     # issue name, summary wording. Anything below llm_min_confidence is a "double-check" note for analysts instead.
     llm_fix_severities: list[str] = Field(default_factory=lambda: ["blocking", "warning"])
+    # The Apps Script bot's Auto-correct space (B10) only: Gemini's value is applied from this confidence (the agentic
+    # assistant decides instead of leaving a double-check; below it Burson's value stays), never on the summary or on a
+    # field the rules already corrected
+    autocorrect_min_confidence: float = 0.6
+    # The Apps Script bot's Auto-correct space (B10) only: the review call also writes the alert's summary paragraph
+    # (its web background only when the call came back with web sources), for the corrected alert, its thread note and
+    # the Social Alert email
+    autocorrect_writeup: bool = True
     check_issue_status: bool = True  # "New" when the same issue was already alerted in the last 14 days -> fix request
     pending_fix_hours: int = 48  # an alert for the same post within this window of a fix request is Burson's fix
     start_lookback_minutes: int = 15  # a new Burson space (first run or after a switch) is read from N minutes back
@@ -595,6 +603,105 @@ class BursonQAConfig(ConfigModel):
     speed_log_table: str = "brand-social-central-data.slrr_alerts.slrr_alerts"
     speed_im_sender: str = ""
     speed_gmail: bool = True
+    # Rollback settings: each guards one behaviour of the Apps Script bot, so that behaviour can be turned off here (then
+    # a rebuild and a clasp push) without reverting code. A true/false one is read as `settings.<name> !== false`; a
+    # number set to 0 keeps the rule the bot had before. Outside the Auto-correct flow none of them changes what the bot
+    # posts, queues or emails.
+    # The one-space setup (the Auto-correct space working alone): the Early Detection check and its reviews run before
+    # the Direct BigQuery poll. false: the poll runs first, as before.
+    early_detection_first: bool = True
+    # The Auto-correct flow: ordinary story signals queued for review in a clock hour (Eastern). 0: the old rule (40
+    # queued a day, whatever they are).
+    early_wave_reviews_per_hour: int = 6
+    # ...and story signals queued a day at most (used only while early_wave_reviews_per_hour is above 0). 0: the old
+    # rule too, as with early_wave_reviews_per_hour at 0.
+    early_wave_reviews_per_day: int = 150
+    # The Auto-correct flow: a pace jump on a whole topic under this multiple of its usual count is noted, not reviewed.
+    # 0: every topic count is queued and reviewed, as before.
+    early_wave_topic_min_ratio: float = 3
+    # The "Early Detection" tab (every story signal and what happened to it). false: no tab is made or written.
+    early_detection_tab: bool = True
+    # The Auto-correct flow: a note under another alert's card when two alert types meet on one post or story (story,
+    # watch and Direct BigQuery notes; the watch's "Same story" reply goes under its alert's card as such a note), and a
+    # bigger post (2,000+ engagements) on an issue already alerted gets its own card. false: as before: no such notes,
+    # the same-story reply goes in the thread as it used to, a post or story already covered is skipped and counted,
+    # and no extra card for a bigger post.
+    cross_alert_notes: bool = True
+    # The Auto-correct flow: the "Alert requirements" line in the note that follows each review, and the BSIP card's
+    # [KOF] line from the feed's influencer list ("Yes (<list>)"), which can start a Social Alert at any size; while it
+    # is on, an "Alert requirements: ...?" question asked under a card from the account the bot runs as is not taken for
+    # one of the bot's notes. false: as before: no such line, the BSIP card's [KOF] line says No.
+    requirement_line: bool = True
+    # New sources in Early Detection (Control rows 48-49, OFF until the owner turns them on): how their posts share the
+    # check with today's sources. None of these does anything while those rows are OFF.
+    # Of the 400 texts embedded a check, the new sources' share (today's sources keep the rest; room one side leaves
+    # goes to the other).
+    early_wave_new_embed_per_check: int = 100
+    # The new sources' texts embedded a UTC day at most (they also stop once the day's total nears its pace).
+    early_wave_new_embed_per_day: int = 5000
+    # A new source's post first seen more than this many minutes after it was posted can only join a story.
+    early_wave_new_late_minutes: int = 180
+    # Of the 1,200 unjoined posts kept to start stories, at most this many from the new sources, each kept this many
+    # minutes at most.
+    early_wave_new_pool_max: int = 300
+    early_wave_new_pool_minutes: int = 120
+    # The new sources' posts not embedded in a check, kept for the next one (2 hours at most).
+    early_wave_new_carry_max: int = 100
+    # Days after a source is first read when stories only the new sources lift over the bar are listed, not sent
+    # for review, and stories only they lift to the early watch are not asked about. 0 (the default): no trial (sent
+    # from the first day, within the two caps below).
+    early_wave_new_trial_days: int = 0
+    # After the trial (with no trial, from the first day): such lifted stories sent for review in an hour, and in a day, at most (the rest are listed).
+    early_wave_new_lifted_per_hour: int = 2
+    early_wave_new_lifted_per_day: int = 20
+    # The AMIE table in Early Detection (Control row 48, OFF until the owner turns it on). None of these does anything
+    # while row 48 is OFF. New rows read a check at most; how many minutes each read starts before the newest row it
+    # last took (rows that land late); the gigabytes one read may scan (a dry run checks it each day); the hours with no
+    # new row after which the row's note says so; and the alert feeds of Google's staff and KOFs, left out (a regular
+    # expression on the feed's name).
+    amie_rows_per_check: int = 300
+    amie_overlap_minutes: int = 60
+    amie_max_gb: float = 1
+    amie_stale_hours: float = 3
+    amie_staff_feeds_rx: str = r"kof|kol|\binfs?\b|exec|googler|reps|posts by google"
+    # Brandwatch read live for Early Detection (Control row 49, OFF until the owner turns it on): new mentions, never X,
+    # from the queries ticked on the New sources tab. None of these does anything while row 49 is OFF. The project read;
+    # the sources asked for (X and LinkedIn are refused in code whatever this says); ticked queries read at most; mentions
+    # a page and handed over a read; the least minutes between reads; how far back the first read goes; this reader's
+    # own calls in 10 minutes; the shared login's calls used at which it pauses; and new mentions only.
+    bw_live_project_id: int = 1998344909
+    bw_live_sources: list[str] = Field(default_factory=lambda: [
+        "reddit", "bluesky", "facebook", "facebook_public", "instagram", "instagram_public", "tiktok", "youtube",
+        "threads", "tumblr", "forum"])
+    bw_live_queries_max: int = 20
+    bw_live_page_size: int = 300
+    bw_live_parcel_max: int = 300
+    bw_live_every_minutes: int = 10
+    bw_live_first_minutes: int = 30
+    bw_live_calls_per_10min: int = 20
+    bw_live_pause_at_used: int = 450
+    bw_live_source_type_new: bool = True
+    # Step 3a of the new sources: while Control row 50 is ON, every post a carded Early Detection story links is seen by
+    # that card in the alert memory, as its main post is. With row 50 OFF nothing changes.
+    early_detection_claim_members: bool = True
+    # The open engine (Control row 51, OpenEngine.gs; step S2): the day's safety stop and the run-time and outside-call
+    # guards. Blank budgets come from the account type, read by the bot once a day.
+    open_daily_stop: int = 2000
+    open_runtime_budget_hours: float | None = None
+    open_runtime_other_hours: float = 1.5
+    open_lock_loss_seconds: float = 2
+    open_fetch_day: int | None = None
+    open_burson_pickup_p90_s: float = 120
+    open_check_minutes: int = 5
+    open_queue_max: int = 24
+    open_requirements_first: bool = True
+    open_first_screen: bool = True
+    open_hold_none_at: float = 0.8
+    open_equal_lanes: bool = True
+    open_fresh_minutes: int = 180
+    open_lane_bars: str = ''
+    open_velocity_fix: bool = True
+    open_velocity_lag_minutes: int = 60
     # What the Resources tab of the bot's sheet starts with: documents the bot links when Burson asks about the alert
     # requirements. After that the tab is what the bot uses (people edit it there). Only links Burson can open.
     resources: list[BursonResource] = Field(default_factory=list)

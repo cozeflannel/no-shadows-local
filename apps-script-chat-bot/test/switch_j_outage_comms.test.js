@@ -390,17 +390,20 @@ An X user (@inboxwatcher; 51200 followers) posted that the Gemini app has been d
     const extra = { sourceReadOnly: true, changeNotes: true };
     const r = run({ switches: ON }, gemini(COMMS()), null, { extra });
     const [top] = r.w.analystPosts().filter(m => !m.threadReply);
-    eq(top.text, OUTAGE);  // the corrected alert on its own, exactly as Burson's would look
+    eq(top.text, `✅ *Reviewed by the agentic assistant*\n${OUTAGE}`);  // the alert on its own, under the bot's first line
     const notes = r.w.analystPosts().filter(m => m.threadReply && m.thread.name === top.thread.name).map(m => m.text);
-    assert.ok(notes.includes(`Comms / Status Context: ${LINE}`), notes.join('\n---\n'));
+    // (the note's last line says which alert requirement the alert met: RequirementLine.gs, settings.requirement_line)
+    const REQ = '*Alert requirements:* met for a Social Alert: 4,800 engagements (2,000+ needed).';
+    assert.ok(notes.includes(`Comms / Status Context: ${LINE}\n${REQ}`), notes.join('\n---\n'));
     eq([r.w.bursonPosts(), r.reactions], [[], []]);
-    // OFF: no note at all (nothing changed)
+    // OFF: the note has no comms line (nothing changed: it is the line on the alert requirements alone)
     const off = run({}, gemini(COMMS()), null, { extra });
-    eq(off.w.analystPosts().filter(m => m.threadReply && !/Social Alert/.test(m.text)).map(m => m.text), []);
-    // With changes too, the line comes last
+    eq(off.w.analystPosts().filter(m => m.threadReply && !/^Social Alert/.test(m.text)).map(m => m.text), [REQ]);
+    // With changes too, the comms line comes after them (the alert requirements last)
     const fixed = run({ switches: ON }, gemini(COMMS()), OUTAGE_WRONG, { extra });
-    const note = fixed.w.analystPosts().find(m => m.threadReply && /Updates made to this alert:/.test(m.text));
-    assert.ok(note && note.text.endsWith(`\nComms / Status Context: ${LINE}`), note && note.text);
+    const note = fixed.w.analystPosts().find(m => m.threadReply && /^The agentic assistant reviewed this alert and made these changes:/.test(m.text));
+    assert.ok(note && /\nComms \/ Status Context: [^\n]*\n\*Alert requirements:\* [^\n]*$/.test(note.text) &&
+      note.text.includes(`\nComms / Status Context: ${LINE}\n`), note && note.text);
   });
 
   test('outage comms: the pieces (knowledge search words, the prompt without documents, the schema with KB & Guidance, the analyst line)', () => {

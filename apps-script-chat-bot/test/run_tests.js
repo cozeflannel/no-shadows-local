@@ -1075,7 +1075,7 @@ test('setup(): one run creates the control sheet (ready for testing), starts the
   eq(['B2', 'B3', 'B4', 'C3', 'C4', 'B5', 'B8'].map(t.get),
     ['ON', 'SLRR Test Feed (Burson Sim)', TRIAGED, '\u2713 SLRR Test Feed (Burson Sim)', `\u2713 ${ANALYST_NAME}`, '\u2705 Working', 'bot@runner.test']);
   eq(t.control().validations['2,2'].values, ['ON', 'OFF']);
-  eq([9, 10, 11, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49].map(r => t.control().cell(r, 1)), ['Mirror space', 'Auto-correct space',
+  eq([9, 10, 11, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57].map(r => t.control().cell(r, 1)), ['Mirror space', 'Auto-correct space',
     'Auto-send Social Alerts', 'Track post-alert outcomes', 'Relay with S-F Burson', 'Never wait on Burson', 'Post in S-F Burson',
     'S-F Burson space', 'Burson test copy', 'Draft follow-ups', 'Draft answers to questions', 'Safety valve', 'Testing: send to',
     'BigQuery lookback', 'Work directly in B25 (Google-only)', 'Other alerts space', 'Proactive watch', 'Watch alerts', 'Temp checks', 'Group test emails',
@@ -1084,7 +1084,8 @@ test('setup(): one run creates the control sheet (ready for testing), starts the
     'Hold-back and early watch: answer confidence at or above',
     'Early watch: about_google and brand_risk, each at or above',
     'Early watch: distinct accounts, at least', 'Write early-wave records to BigQuery',
-    'Early watch: independent_reports at or above', '', 'How it works']);
+    'Early watch: independent_reports at or above', 'Early Detection: also read the AMIE table', 'Early Detection: also read Brandwatch live (not X)', 'Proactive watch: also read the AMIE table', 'Open engine: judgment in place of caps', '', '',
+    'Live dashboard', 'Slide deliveries', '', 'How it works']);
   eq([t.get('B29'), t.control().validations['29,2'].values], ['OFF', ['ON', 'OFF']]);  // starts OFF, like every switch
   eq([t.control().cell(32, 2), t.control().validations['32,2'].values], ['OFF', ['ON', 'OFF']]);  // row 32 too: a person turns it ON
   eq([t.control().cell(34, 2), t.control().validations['34,2'].values], ['OFF', ['ON', 'OFF']]);  // and row 34 (Proactive watch)
@@ -1102,9 +1103,9 @@ test('setup(): one run creates the control sheet (ready for testing), starts the
   eq([t.get('B25'), t.get('C25')], ['', t.bot.ev('SFB_BLANK_NOTE_')]);  // S-F Burson is only ever pasted there by a person
   assert.match(t.get('C25'), /^⚠️ Not set: paste S-F Burson's link \(the real Burson space\)\. Until then the Mirror, Auto-correct and Relay are paused, and the bot posts nothing in any space people outside Google can join\.$/);
   eq([t.control().cell(26, 2), t.control().cell(26, 3)], ['', t.bot.ev('RTC_BLANK_NOTE_')]);
-  assert.match(t.control().cell(50, 1), /^• Every minute the bot reads the Burson space/);
-  assert.match(t.control().cell(53, 1), /^• S-F Burson space \(B25\): which space is the real Burson space/);
-  assert.match(t.control().cell(55, 1), /^• The Resources tab is the bot's knowledge base\. Gemini reads every document listed there/);
+  assert.match(t.control().cell(58, 1), /^• Every minute the bot reads the Burson space/);
+  assert.match(t.control().cell(61, 1), /^• S-F Burson space \(B25\): which space is the real Burson space/);
+  assert.match(t.control().cell(63, 1), /^• The Resources tab is the bot's knowledge base\. Gemini reads every document listed there/);
   assert.ok(t.sheet().getSheetByName('Alert log').protections[0].warningOnly);
   eq(g.triggers, [{ handler: 'poll', minutes: 1 }]);
   assert.strictEqual(g.props.get('BOT_USER'), 'users/bot');
@@ -1855,17 +1856,35 @@ test('Mirror.gs: copies only top-level Zapier alerts from live Burson into the m
 // The auto-correct test space (AutoCorrect.gs): the bot fixes live alerts itself, beside the unchanged Mirror space
 // =============================================================================================================
 
-test('auto-correct space: the change note is short ("X to Y"; a rewrite shows only its new wording), its emails say which space they came from, and the space must be a Google-only space of its own', () => {
-  eq(B.changeNoteText_(review(F.MISTAKES)), 'Updates made to this alert:\n- Product updated from Gems to Gemini App\n- Social Network updated from Instagram to X\n' +
-    '- Priority banner updated from P2 to P0\n- Engagement updated from LOW to HIGH');
-  assert.ok(!/→|->|\(was /.test(B.changeNoteText_(review(F.MISTAKES))));
-  eq(B.changeNoteText_(review(F.NO_LINK), true), 'Processed without waiting for Burson: Link missing');  // Never wait on Burson ON
+test('auto-correct space: the change note says who changed what ("- Product: Gems to Gemini App"; added / removed values; no arrows), what only Burson can supply and why the bot couldn\'t, never a double-check or the summary; its emails say which space they came from, and the space must be a Google-only space of its own', () => {
+  const head = 'The agentic assistant reviewed this alert and made these changes:';
+  eq(B.changeNoteText_(review(F.MISTAKES)), `${head}\n- Product: Gems to Gemini App\n- Social Network: Instagram to X\n` +
+    '- Priority banner: P2 to P0\n- Engagement: LOW to HIGH');
+  assert.ok(!/→|->|\(was |updated/.test(B.changeNoteText_(review(F.MISTAKES))));
+  // a missing link: why the bot couldn't fix it, whether Never wait on Burson is ON or OFF
+  eq([B.changeNoteText_(review(F.NO_LINK)), B.changeNoteText_(review(F.NO_LINK), { findLinks: true })],
+    ['Not fixed: Burson\'s alert has no link to the post (Auto-find missing links, row 14, is OFF)',
+      'Not fixed: Burson\'s alert has no link to the post, and the listening feeds had no match']);
   eq(B.changeNoteText_(review(F.P0_OK)), '');  // nothing changed: no note at all
-  const rewrite = { fixes: [{ field: 'summary', old: 'A summary Burson wrote that was wrong.', new: 'X user posted a video of AI Overviews.' }],
-    silentFixes: [], missing: [], unsure: [{ field: 'exposure_tag', proposed: 'Product - Perceived bias' }] };
-  eq(B.changeNoteText_(rewrite), 'Updates made to this alert:\n- Summary updated to "X user posted a video of AI Overviews."\n' +
-    'Double-check: Exposure Tag (may be Product - Perceived bias)');
+  // a value the alert didn't have, one taken out, another field Burson only can fix; the summary and a double-check never
+  const mixed = { fixes: [{ field: 'summary', old: 'A summary Burson wrote that was wrong.', new: 'X user posted a video of AI Overviews.' },
+    { field: 'post_url', old: '', new: 'https://x.com/a/status/2109952063492993159' }, { field: 'risk_tags', old: ['Politics'], new: [] }],
+  silentFixes: [{ field: 'other_products', old: [], new: ['Search'] }, { field: 'alert_name', old: 'a', new: 'b' }],
+  missing: [{ field: 'post_date', problem: 'is in the future' }],
+  unsure: [{ field: 'exposure_tag', proposed: 'Product - Perceived bias', confidence: 0.5 }] };
+  eq(B.changeNoteText_(mixed), `${head}\n- Link: added https://x.com/a/status/2109952063492993159\n- Sensitive Topic: removed Politics\n` +
+    '- Other Google Products: added Search\nNot fixed: Time/Date Post Went Live is in the future');
+  eq(B.changeNoteText_({ fixes: mixed.fixes.slice(0, 1), silentFixes: [], missing: [], unsure: mixed.unsure }), '');
   eq(B.changedFields_(review(F.MISTAKES)).map(x => x.field), ['product', 'social_network', 'priority', 'engagement_level']);
+  eq(B.noteChanges_(mixed).map(x => x.field), ['post_url', 'risk_tags', 'other_products']);
+  // every way the note can start is the bot's own, and so are the heads notes had before (they stay in the space)
+  [head, 'Not fixed: Link missing', 'Sources: Reuters', 'Burson resent this alert. These values are not in the alert above:\n- x',
+    'The post\'s own media wasn\'t reviewed: reviewing it crashed the bot', 'Gemini couldn\'t review the post\'s video, so it had only the alert text',
+    'The agentic assistant reviewed this alert. The card above was posted before the review; the email uses these corrections:',
+    'Updates made to this alert:\n- x', 'Still needs Burson: Link missing', 'Processed without waiting for Burson: Link missing',
+    'Double-check: Product', 'Burson resent this alert with updates:\n- x']
+    .forEach(t => assert.ok(B.isBotFormattedText_(t), t));
+  assert.ok(!B.isBotFormattedText_('The agentic assistant is wrong here, the product is Search'));
 
   const reply = { subject: '[Auto-correct test] SOCIAL ALERT: x' };
   eq([B.taggedSubject_('SOCIAL ALERT: x', 'Auto-correct test', null), B.taggedSubject_('Re: ' + reply.subject, 'Auto-correct test', reply),
@@ -1922,7 +1941,9 @@ test('auto-correct space (B10) beside the Mirror space: each live Zapier alert i
     t.control().cell(31, 1), t.control().cell(32, 1), t.control().cell(33, 1), t.control().cell(34, 1), t.control().cell(35, 1),
     t.control().cell(36, 1), t.control().cell(37, 1), t.control().cell(38, 1), t.control().cell(39, 1), t.control().cell(40, 1),
     t.control().cell(41, 1), t.control().cell(42, 1), t.control().cell(43, 1), t.control().cell(44, 1), t.control().cell(45, 1),
-    t.control().cell(46, 1), t.control().cell(47, 1), t.control().cell(48, 1), t.control().cell(49, 1)],
+    t.control().cell(46, 1), t.control().cell(47, 1), t.control().cell(48, 1), t.control().cell(49, 1),
+    t.control().cell(50, 1), t.control().cell(51, 1), t.control().cell(52, 1), t.control().cell(53, 1), t.control().cell(54, 1),
+    t.control().cell(55, 1), t.control().cell(56, 1), t.control().cell(57, 1)],
   [AC, 'Auto-correct space', 'SLRR Auto-correct Test', 'Auto-send Social Alerts', 'BigQuery lookback',
     'Work directly in B25 (Google-only)', 'Other alerts space', 'Proactive watch', 'Watch alerts', 'Temp checks', 'Group test emails',
     'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise',
@@ -1930,7 +1951,8 @@ test('auto-correct space (B10) beside the Mirror space: each live Zapier alert i
     'Hold-back and early watch: answer confidence at or above',
     'Early watch: about_google and brand_risk, each at or above',
     'Early watch: distinct accounts, at least', 'Write early-wave records to BigQuery',
-    'Early watch: independent_reports at or above', '', 'How it works']);
+    'Early watch: independent_reports at or above', 'Early Detection: also read the AMIE table', 'Early Detection: also read Brandwatch live (not X)', 'Proactive watch: also read the AMIE table', 'Open engine: judgment in place of caps', '', '',
+    'Live dashboard', 'Slide deliveries', '', 'How it works']);
   eq([t.chat.botPosts(AC), t.control().cell(10, 3)], [[], '✓ SLRR Auto-correct Test · no alerts yet today']);
 
   // Live activity in the real Burson space: chatter, an alert a person pasted, a Zapier alert with mistakes, an IM's
@@ -1956,12 +1978,18 @@ test('auto-correct space (B10) beside the Mirror space: each live Zapier alert i
   // AlertMemory prevents sending a duplicate second Social Alert to B30 when Mirror already emailed it in the same tier
   const acTop = t.chat.botPosts(AC).filter(m => !m.threadReply);
   const acReplies = t.chat.botPosts(AC).filter(m => m.threadReply);
+  // (its first line is the bot's own: the fake's message ids give no link to Burson's message, so there's none here)
   assert.strictEqual(acTop.length, 1);
-  assert.strictEqual(acTop[0].text, F.MISTAKES_FIXED);
+  assert.strictEqual(acTop[0].text, '✅ *Reviewed and corrected by the agentic assistant*\n' + F.MISTAKES_FIXED);
   eq(t.chat.botReactions(acTop[0].name), ['❌']);
+  // (the note's last line says which alert requirement the alert met, and why no Social Alert went out from here: the
+  // Mirror flow's alert for the same post, QA-1001, already has it. That alert has no card in this space, so the line
+  // says the other flow sent it, never "a repeat of". The alert is on an ongoing issue and its author is no KOF: its
+  // engagements are the requirement it meets, not its P0 tag)
   eq(acReplies.map(m => m.text), [
-    'Updates made to this alert:\n- Product updated from Gems to Gemini App\n- Social Network updated from Instagram to X\n' +
-      '- Priority banner updated from P2 to P0\n- Engagement updated from LOW to HIGH',
+    'The agentic assistant reviewed this alert and made these changes:\n- Product: Gems to Gemini App\n- Social Network: Instagram to X\n' +
+      '- Priority banner: P2 to P0\n- Engagement: LOW to HIGH\n' +
+      '*Alert requirements:* met for a Social Alert (29,425 engagements), but none was sent: the other flow already sent it (QA-1001).',
   ]);
   // One Social Alert total (Mirror's), only to the tester — zero duplicate email from B10!
   const sent = t.g.gmail.sentMessages();
@@ -4569,7 +4597,7 @@ test('multi-product alerts: parses compound [Product] lines, enriches via Gemini
   const reparsedPx = parse(rebuiltPx);
   eq(reparsedPx.fields.product, 'Pixel');
   eq(plain(reparsedPx.fields.other_products), [androidCanon]);
-  assert.match(B.changeNoteText_(revPx, true), /- Other Google Products added: Android \(Android OS & Google TV\)/);
+  assert.match(B.changeNoteText_(revPx), /\n- Other Google Products: added Android \(Android OS & Google TV\)/);
 
   // 3. Escalation, recipient routing, Social Alert email, and T&S single-select dropdown compatibility
   const escPx = B.escalation_(revPx.fields, { now: NOW });
@@ -4628,19 +4656,36 @@ function markAs(t, user, org, name) {
   if (name) tab.getRange(r + 1, head.indexOf('name') + 1).setValue(name);
 }
 
+// The leak audit's own lists (below; not the bot's guard): what a text in a Burson space must never hold. The first
+// words of the notes the bot posts under a card in the Auto-correct space (ThreadNotes.gs; Voice.gs THREAD_NOTE_HEADS_)
+// are on it: at the start of a text or of a line, after an emoji and one of Chat's marks (bold, italic, struck through)
+// or not, and as a note has them anywhere, the colon inside the mark or after it (never "the alert requirements" in a
+// sentence: the bot's answers to Burson say that). H.leakDenied: for the test files.
+const LEAK_DENY_ = /\bforward(?:ed|ing|s)?\b|analyst\s+space|clean(?:\s+data)?\s+space|triage(?:d)?\s+(?:space|alerts)|second\s+space|reduc(?:e|ing)\s+reliance|replace\s+burson|\bgo\/|@\w+\.com|brand-social-sends|AAQAaLn375E|ANALYST|SLRR Triaged Alerts/i;
+const LEAK_NOTE_HEADS_ = /(?:^|\n)[ \t]*(?:[^\x00-\x7F]{1,8}[ \t]+)?[*_~]?(?:Also flagged by the watch|Part of a story|Alert requirements)(?![A-Za-z0-9])|[Ff]lagged by the watch(?![A-Za-z0-9])|Part of a story[*_~]?:|Alert requirements(?:, final)?[*_~]?:|(?<![A-Za-z0-9])Same story: \d[\d,]* more posts?(?![A-Za-z0-9])|(?<![A-Za-z0-9])Growing:\*? \d[\d,]* accounts now(?![A-Za-z0-9])/;
+const leakDenied = t => LEAK_DENY_.test(t) || LEAK_NOTE_HEADS_.test(t);
+// The bot's own answer to a question of Burson's is no such note, though it can open with the same words (Gemini writes
+// it from a context whose rules stand under "[Alert requirements]"), and it goes to Burson as it always did (Outbox.gs
+// outboxOwnAnswerKey_). A test that lets such an answer reach a Burson space names its text with
+// H.ownAnswerInBurson(text): the audit takes that very text for the answer it is. Everything else on the lists still
+// counts against it.
+const LEAK_OWN_ANSWERS_ = new Set();
+const ownAnswerInBurson = text => { LEAK_OWN_ANSWERS_.add(String(text)); };
+// What the audit below holds against a text posted in a Burson space (H.leakAuditDenied: so its rule is tested too)
+const leakAuditDenied = t => LEAK_DENY_.test(t) || (LEAK_NOTE_HEADS_.test(t) && !LEAK_OWN_ANSWERS_.has(t));
+
 const H = { assert, F, B, NOW, test, eq, plain, parse, review, world, e2e, collectBurson, makeGoogle, loadBot, decodeMime,
   CHAT_POSTS, FakeSpreadsheet, GUARD, ANALYST_NAME, TEST_FEED, TRIAGED, REAL, VENDOR, CELL, RES, KB, driveFile, resultsRow,
-  resultsRows, MAPS_LOW, MISTAKES_NO_LINK, bursonTexts, markAs };
+  resultsRows, MAPS_LOW, MISTAKES_NO_LINK, bursonTexts, markAs, leakDenied, ownAnswerInBurson, leakAuditDenied };
 require('fs').readdirSync(__dirname).filter(f => /^switch_.+\.test\.js$/.test(f)).sort().forEach(f => require('./' + f)(H));
 
 // =============================================================================================================
 // Leak audit: everything any test posted in a Burson space, checked with a separate list (not the bot's guard)
 // =============================================================================================================
 
-test('nothing posted in a Burson space mentions the second analyst space, forwarding, reducing reliance on Burson, or internal emails/ids', () => {
-  const deny = /\bforward(?:ed|ing|s)?\b|analyst\s+space|clean(?:\s+data)?\s+space|triage(?:d)?\s+(?:space|alerts)|second\s+space|reduc(?:e|ing)\s+reliance|replace\s+burson|\bgo\/|@\w+\.com|brand-social-sends|AAQAaLn375E|ANALYST|SLRR Triaged Alerts/i;
+test('nothing posted in a Burson space mentions the second analyst space, forwarding, reducing reliance on Burson, or internal emails/ids, or starts as a note the bot posts under a card in the Auto-correct space', () => {
   assert.ok(bursonTexts.length >= 8, `only ${bursonTexts.length} Burson texts collected`);
-  for (const t of bursonTexts) assert.ok(!deny.test(t), t);
+  for (const t of bursonTexts) assert.ok(!leakAuditDenied(t), t);
   const legend = new Set(B.ev('GEN').legend.map(a => a.emoji));
   for (const e of bursonReactions) {
     assert.ok(legend.has(e) || legend.has(e + '\uFE0F'), `unexpected reaction ${e}`);

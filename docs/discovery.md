@@ -87,7 +87,9 @@ Recorded on 2026-10-29 before writing service code.
 
 ## 6. BigQuery Mention Tables
 
-Configured in `brand-social-central-data` (location `US`), aligned with the approved 6-table social data inventory:
+Configured in `brand-social-central-data` (location `US`), aligned with the approved social data inventory (7 tables; the
+AMIE table `brand-social-central-data.social_alerts_dataset.all_sundar_mentions`, approved by the owner, 2026-11-16, is read
+by the Apps Script bot's Early Detection only, behind Control row 48, and not by the Python service):
 
 1. **`brand-social-central-data.DSD.DSD-story-selection` (`bigquery_dsd_table`):**
    - **Freshness:** Live (~30-minute cadence, `US`).

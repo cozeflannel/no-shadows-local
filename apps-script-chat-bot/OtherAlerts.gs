@@ -342,11 +342,16 @@ function handleOtherAlert_(ctx, m, other, report) {
     try { parsed.bq = ctx.bq(parsed); } catch (e) { parsed.bq = null; }
   }
   const since = now - GEN.novelty_days * DAY_MS_;
-  const history = ctx.otherSpace && typeof ctx.store.recentForwardedAcrossSpaces === 'function'
-    ? ctx.store.recentForwardedAcrossSpaces(since) : ctx.store.recentForwarded(since);
+  const history = (ctx.otherSpace && typeof ctx.store.recentForwardedAcrossSpaces === 'function'
+    ? ctx.store.recentForwardedAcrossSpaces(since) : ctx.store.recentForwarded(since))
+    // (where stories go first, a story's card that sent no Social Alert is no earlier alert for the Watch alert of its
+    // own main post, as for a Direct BigQuery card: BigQuery.gs bqStoryOnOwnPost_; everywhere else every row stays in)
+    .filter(h => !bqStoryOnOwnPost_(ctx, other.watch ? PW_ALERT_INGESTED_ : '', recordKey_(parsed.fields), h, now));
   // Earlier alerts this one may repeat or follow up on (Escalate.gs): Gemini sees them, and the repeat rules use them
   if (S.follow_ups !== false) {
     parsed.earlier = earlierAlerts_(parsed.fields, history, parsed.bq, now, parsed.post, { includeSameDayLog: true });
+    // (a Watch alert whose post a story card that went out as a Social Alert links: as for a Direct BigQuery card)
+    if (other.watch) parsed.earlier = edWithSharedPost_(ctx, parsed.earlier, recordKey_(parsed.fields), history, now);
     const slrrIssues = parsed.bq && Array.isArray(parsed.bq.recent_issues) ? parsed.bq.recent_issues
       : (typeof ctx.bq === 'function' && typeof recentSlrrIssues_ === 'function' ? recentSlrrIssues_(S) : []);
     parsed.knownIssues = recentKnownIssues_(parsed.fields, history, slrrIssues, parsed.earlier, now);
@@ -373,7 +378,13 @@ function handleOtherAlert_(ctx, m, other, report) {
     } catch (e) {}
   }
   const preNonEn = otherNonEnglishWhy_(parsed, null);
-  const { llm, llmError, held } = preNonEn ? { llm: null, llmError: '', held: null } : guardedAssess_(ctx, m, parsed, now);
+  // the open engine (Control row 51, OpenEngine.gs): once today's safety stop is reached no new triage starts until
+  // midnight ET (the alert is left for a person, saying why); every triage started is one toward it. Row 51 OFF: as before
+  const oeStop = !preNonEn && typeof openStopReached_ === 'function' && openStopReached_();
+  const { llm, llmError, held } = preNonEn ? { llm: null, llmError: '', held: null }
+    : oeStop ? { llm: null, llmError: 'today\'s safety stop was reached: no Gemini triage until midnight ET', held: null }
+      : guardedAssess_(ctx, m, parsed, now);
+  if (!preNonEn && !oeStop && typeof openCountReview_ === 'function') openCountReview_(1);
   const tri = otherTriageOf_(llm, parsed);
   if (!tri && llm) ctx.log('Gemini\'s triage came back without its call: the alert is left for a person');
   const d = otherDecide_(ctx, parsed, tri, llm, history, now);
@@ -397,7 +408,9 @@ function handleOtherAlert_(ctx, m, other, report) {
   if (d.action !== 'escalate') {
     otherNoEmail_(ctx, row, d, report);
   }
-  const note = otherNoteText_(d);
+  // The auto-correct space (settings.requirement_line): the note says which alert requirement the alert meets, where
+  // it has its "SLRR" line everywhere else (RequirementLine.gs otherRequirementLine_: '' in every other flow)
+  const note = otherNoteText_(d, otherRequirementLine_(ctx, d, other));
   try {
     ctx.store.updateAlert(row, {
       forwarded_fields: Object.assign({}, row.forwarded_fields || {}, { triage: otherTriageSnap_(d, note) }),
@@ -753,11 +766,14 @@ function otherEngagement_(parsed) {
 
 /**
  * Would SLRR's collection have taken this post? true (P0 tag, a KOF author, or 100+ engagements), false (fewer, as far
- * as the bot can count), or null (it can't tell: a tier like 0-199 and no count). Pure.
+ * as the bot can count), or null (it can't tell: a tier like 0-199 and no count). Under requirements first (row 51 with
+ * open_requirements_first, step S19c) a Sensitive Topic counts too: the alert requirements set no engagement bar for it.
+ * Pure (reads the switches).
  */
 function otherCollected_(fields, eng) {
   const tag = lookupTag_(fields.exposure_tag);
   if ((tag && tag.priority === 'P0') || fields.kof === true || asList_(fields.kof_lists).length) return true;
+  if (typeof rqOn_ === 'function' && rqOn_() && asList_(fields.risk_tags).length) return true;
   if ((eng.min || 0) >= OTHER_COLLECT_MIN_) return true;
   if (eng.n !== null) return eng.n >= OTHER_COLLECT_MIN_;
   if (eng.max !== null && eng.max < OTHER_COLLECT_MIN_) return false;
@@ -1172,7 +1188,9 @@ function otherTriagePrompts_(parsed, media) {
     'Don\'t judge the author\'s KOF status or SLRR\'s engagement thresholds: the bot checks those itself.\n\n' +
     `EXPOSURE TAGS:\n${tags}\n\nSENSITIVE TOPICS:\n${topics}\n\nPRODUCTS (distribution names): ${products}\n\n` +
     (parsed && parsed.tagHintLine ? `${parsed.tagHintLine}\n\n` : '') +
-    `SLRR PLAYBOOK:\n${playbookText_()}\n\n` +
+    `SLRR PLAYBOOK:\n${playbookText_()}\n` +
+    'The escalation thresholds in the playbook decide the Social Alert email for a single post; they are never by ' +
+    'themselves a reason to call a watch flag no action.\n\n' +
     'TEAMS (recommended_groups): the teams that should get a Social Alert about it, each with a one-sentence reason (read ' +
     'by Google analysts only). Leave a team out when unsure.\n' + teamGuideText_() + '\n\n' +
     'TRUST & SAFETY (tns): set `needed: true` ONLY for actual dangerous/hallucinated outputs generated by a Google AI or ' +
@@ -1282,9 +1300,11 @@ function otherNoEscWhy_(esc, eng, kof) {
 
 /**
  * Fast-moving thread reply (max 3-5 sentences): leads immediately with the resolution + issue (hyperlinking the post
- * when available), followed by 1-3 concise bullets for SLRR threshold context, T&S/Teams, and escalation triggers. Pure.
+ * when available), followed by 1-3 concise bullets for SLRR threshold context, T&S/Teams, and escalation triggers.
+ * `requirement` (the auto-correct space only, RequirementLine.gs: "*Alert requirements:* …"): that line stands in the
+ * SLRR line's place; without it the note is as it always was. Pure.
  */
-function otherNoteText_(d) {
+function otherNoteText_(d, requirement) {
   const tri = d.tri;
   const f = d.fields || {};
   const url = String(f.post_url || '').trim();
@@ -1293,7 +1313,9 @@ function otherNoteText_(d) {
   const postLink = /^https?:\/\/[^\s<>|]+$/i.test(url) && typeof chatLink_ === 'function' ? chatLink_(url, linkLabel) : '';
   const severity = tri && tri.severity ? ` \u00b7 ${tri.severity}` : '';
   const sure = tri && d.basis === 'stream' && d.action !== 'no_action' ? ` (${otherPct_(tri.confidence)} sure)` : '';
-  const head = `${GEN.prefix} *Triage: ${otherCallWords_(d)}*${severity}${sure}`;
+  // (with the line on the alert requirements, the head and the first line say the team's rules in its words)
+  const words = s => (requirement ? requirementNoteWords_(s) : s);
+  const head = words(`${GEN.prefix} *Triage: ${otherCallWords_(d)}*${severity}${sure}`);
   if (!tri) {
     const facts = [postLink || [f.social_network, f.author].filter(Boolean).join(' \u00b7 '),
       Number.isInteger(f.followers) ? `${fmtInt_(f.followers)} followers` : '',
@@ -1305,9 +1327,9 @@ function otherNoteText_(d) {
   }
   const sumRaw = truncate_(String(tri.summary || f.summary || f.issue_name || 'Social post').replace(/\.$/, '').trim(), 220);
   const whyRaw = truncate_(String(d.why || '').replace(/\.$/, '').trim(), 180);
-  const lead = `${sumRaw}${whyRaw ? ` \u2014 ${whyRaw}` : ''}.${postLink ? ` (${postLink})` : ''}`;
+  const lead = `${words(`${sumRaw}${whyRaw ? ` \u2014 ${whyRaw}` : ''}`)}.${postLink ? ` (${postLink})` : ''}`;
   const bullets = [];
-  const slrr = otherSlrrLine_(d);
+  const slrr = requirement || otherSlrrLine_(d);
   if (slrr) bullets.push(`\u2022 ${slrr}`);
   if (d.action === 'escalate') {
     const names = Object.keys(tri.teamReasons).filter(c => c !== 'tns').map(c => {

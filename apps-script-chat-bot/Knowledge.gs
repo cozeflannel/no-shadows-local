@@ -102,6 +102,7 @@ const KNOWLEDGE_OFFICE_ = {
  * permission: click Allow). Logs what it found for each row; the same is in the tab's Bot status column.
  */
 function refreshKnowledge() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const ss = openStore_(false);
   const out = refreshKnowledge_(ss, { force: true, deadline: Date.now() + KNOWLEDGE_FULL_MS_ });
   const rows = readResourceRows_(ss).filter(r => r.name || r.url).map(r => `${r.name || r.url}: ${r.status || '(not read yet)'}`);

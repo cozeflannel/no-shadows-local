@@ -1,8 +1,10 @@
 /**
  * BqPipeline.gs — BigQuery 3-Step LLM Alert & Group Wave Evaluation Pipeline (<bigquery_alert_instructions>).
  *
- * Shared by Direct BigQuery alerts (opts.soloOnly: Step 1 baseline filter + new-development check) and the Early wave
- * check (opts.wavesOnly: Track B group waves), as well as full Dual-Track (Track A solo alerts + Track B group waves).
+ * Used live only by Direct BigQuery alerts (opts.soloOnly: Step 1 baseline filter + new-development check). The group-wave
+ * part (opts.wavesOnly: Track B group waves, and full Dual-Track: Track A solo alerts + Track B group waves) is used by no
+ * live flow: only LiveVerify.gs verifyLookbackAndPipelineLive tests it, on five made-up posts, and the bot posts no wave
+ * message. Early Detection (Control row 19) finds its stories in EarlyWaveSource.gs, not here.
  * Gemini groups records and evaluates semantic guidelines/new developments; every count, engagement total, and platform
  * list is computed deterministically from the input records.
  */
@@ -121,13 +123,20 @@ const BQ_EVAL_RECORDS_CHARS_ = 32000;
 
 /**
  * Alerts from this flow's Alert log in the last BQ_PRIOR_ALERT_DAYS_ days (excluding superseded originals), normalized
- * for Step 1.4 duplicate/new-development checks. Never throws.
+ * for Step 1.4 duplicate/new-development checks. `storyKeys` (the one-space setup with Early Detection first only:
+ * BigQuery.gs pollBigQuerySources_ passes the candidates' record keys): a story's card on one of those very posts that
+ * sent no Social Alert (bqStoryCardRow_) is left out: it is no earlier alert on its own main post, which would
+ * otherwise be dropped as a repeat of it. Never throws.
  */
-function bqPriorAlerts_(ctx, now) {
+function bqPriorAlerts_(ctx, now, storyKeys) {
   let rows = [];
   try { rows = (ctx && ctx.store && ctx.store.alerts) || []; } catch (e) { rows = []; }
-  const since = (Number(now) || Date.now()) - BQ_PRIOR_ALERT_DAYS_ * DAY_MS_;
-  return normalizeBqPriorAlerts_(rows.filter(a => a && a.status !== 'superseded' && Number(a.created_at) >= since).map(a => {
+  const at = Number(now) || Date.now();
+  const since = at - BQ_PRIOR_ALERT_DAYS_ * DAY_MS_;
+  const own = new Set((Array.isArray(storyKeys) ? storyKeys : []).filter(Boolean).map(String));
+  const storyOnOwnPost = a => own.size > 0 && !!a.record_key && own.has(String(a.record_key)) && bqStoryCardRow_(a, at);
+  return normalizeBqPriorAlerts_(rows.filter(a => a && a.status !== 'superseded' && Number(a.created_at) >= since &&
+    !storyOnOwnPost(a)).map(a => {
     const f = a.forwarded_fields || {};
     return {
       alert_id: a.alert_id,
@@ -346,7 +355,8 @@ function bqAlertPrompts_(views, knowledge, guidance, priors, opts) {
   const mode = o.soloOnly
     ? 'MODE: STEP 1 ONLY. Every record already met its own source\'s alert rule, so Track A\'s engagement threshold does ' +
       'not apply and there is no Track B. Put every record that passes Step 1 in `solo_alerts` (with its id) and every ' +
-      'other record\'s id in `discarded_ids`. `group_waves` must be empty.'
+      'other record\'s id in `discarded_ids`. `group_waves` must be empty. The escalation thresholds decide the Social ' +
+      'Alert email later; they are never a reason to discard a record here.'
     : `ENGAGEMENT GUIDELINE THRESHOLDS: Track A (a Solo Alert): a record at ${fmtInt_(o.threshold || EW_SINGLE_MAX_)} ` +
       'engagements or more (likes + comments + shares, views excluded). Track B (a Group Wave Alert): records under that, ' +
       `from at least ${o.minAuthors || EW_WAVE_MIN_AUTHORS_} different authors, about the same story, with more than ` +
@@ -436,11 +446,71 @@ function bqWaveOf_(members, words) {
   }, summary ? { wave_summary: summary } : {}, breakdown.length ? { platform_breakdown: breakdown } : {});
 }
 
+// Why evaluateBqDualTrack_ left a record out (the `why` of its `left_out` entries), in the order its steps run
+const BQ_LEFT_OUT_ = {
+  NOT_GOOGLE: 'not_google',  // the rules: not about Google ("google it" slang, a feed or an issue name that isn't Google's)
+  SAME_POST: 'same_post',    // the rules: the post itself already has an alert, and nothing says what is new
+  GEMINI: 'gemini',          // Gemini's Step 1 discarded it (it gives no reason)
+  SAME_ISSUE: 'same_issue',  // the rules: on an issue already alerted, with no new development (a wave on one, too)
+  NO_WAVE: 'no_wave',        // the Dual-Track only: under the Solo threshold and in no Group Wave
+};
+
+/**
+ * One entry of evaluateBqDualTrack_'s `left_out`: {id, why, alert_id, match}. `why`: one of BQ_LEFT_OUT_. `match`: what
+ * the code's own rule (matchBqPriorAlert_) answered for the record, or null. alert_id is that earlier alert's id as the
+ * caller's list of earlier alerts has it (from the poll, bqPriorAlerts_: its Alert-log id), and `match` says how the
+ * rule matched it: 'post' (the post itself) or 'issue' (the same issue); both '' when it matched none. Never the
+ * prior_alert_ref Gemini writes, which is free text. Pure.
+ */
+function bqLeftOut_(id, why, match) {
+  const prior = (match && match.prior) || null;
+  return { id, why, alert_id: prior ? String(prior.alert_id || '') : '', match: prior ? (match.same_post ? 'post' : 'issue') : '' };
+}
+
+/**
+ * The alert requirements' engagement bar for a Social Alert: the config's collection.high_engagement_threshold, as
+ * GEN.escalation_rules has it (2,000 today), never a number typed here; 0 when the config gives none. Pure.
+ */
+function bqEngagementBar_() {
+  const n = Number(typeof GEN !== 'undefined' && GEN && GEN.escalation_rules && GEN.escalation_rules.high_engagement_threshold);
+  return isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * A bigger post on an issue that already has an alert: the Direct BigQuery poll lets it through as its own card, in
+ * the Auto-correct flow only (BigQuery.gs pollBigQuerySources_). True when all of this holds:
+ *   - Step 1 left `record` out as on an issue already alerted (`x`: its entry in evaluateBqDualTrack_'s left_out, whose
+ *     match is 'issue'): by the rules as the same issue, or by Gemini while the code's own rule matches an earlier
+ *     alert by the issue;
+ *   - the record has the engagement bar or more (bqEngagementBar_);
+ *   - none of the earlier alerts on its issue had that many. `priors`: the earlier alerts Step 1 weighed it against
+ *     (bqPriorAlerts_), to which the poll adds the posts that go on at the same check (those Step 1 passed itself and
+ *     those let through before this one). Every one the code's own rule (matchBqPriorAlert_) matches to the record
+ *     counts, not only the first one, which is the oldest; one whose count isn't known had none.
+ * Nothing else passes: not a record left out for any other reason (not about Google, the post itself already alerted,
+ * Gemini's own call with no earlier alert on the issue, no wave), not a post under the bar whoever wrote it, and no
+ * record at all while the config gives no bar. Pure.
+ */
+function bqBiggerPost_(record, x, priors) {
+  const bar = bqEngagementBar_();
+  if (!bar || !record || typeof record !== 'object' || !x || x.match !== 'issue' ||
+      (x.why !== BQ_LEFT_OUT_.SAME_ISSUE && x.why !== BQ_LEFT_OUT_.GEMINI)) return false;
+  const v = bqRecordView_(record, 0);
+  if (!(v.engagement >= bar)) return false;
+  const earlier = normalizeBqPriorAlerts_(Array.isArray(priors) ? priors : [], null)
+    .filter(p => matchBqPriorAlert_({ url: v.url, issue_name: v.issue }, [p]));
+  return earlier.length > 0 && earlier.every(p => !(Number(p.engagement) >= bar));
+}
+
 /**
  * Executes the 3-step BigQuery Dual-Track evaluation over `records`.
  * Calls Gemini whenever there is time remaining and at least one qualifying Track A solo candidate (when `!opts.wavesOnly`)
  * or enough sub-threshold records (`minAuthors`) to form a Track B group wave (when `!opts.soloOnly`). Falls back to
  * deterministic rules if Gemini is unavailable or errors. Never throws.
+ * {solo_alerts, group_waves, discarded_ids, by, left_out}. left_out says why each record in discarded_ids was left out,
+ * one entry a record in the same order (bqLeftOut_: {id, why, alert_id, match}), with the earlier alert the code's own
+ * rule matched it to. For a record Gemini discarded that is the alert matchBqPriorAlert_ finds for its link and issue
+ * name (none when it finds none); for the posts of a wave held back, the alert the wave matched.
  */
 function evaluateBqDualTrack_(records, ctx, opts) {
   const o = opts || {};
@@ -450,7 +520,11 @@ function evaluateBqDualTrack_(records, ctx, opts) {
   const waveMin = ewCount_(o.waveMin) || EW_WAVE_MIN_TOTAL_;
   const minAuthors = Math.max(2, ewCount_(o.minWaveAuthors) || 2);
   const priors = normalizeBqPriorAlerts_(Array.isArray(o.priorAlerts) ? o.priorAlerts : [], null);
-  const out = { solo_alerts: [], group_waves: [], discarded_ids: [], by: 'rules' };
+  const out = { solo_alerts: [], group_waves: [], discarded_ids: [], by: 'rules', left_out: [] };
+  const leave = (v, why, match) => {  // its id, as always, and why
+    out.discarded_ids.push(v.id);
+    out.left_out.push(bqLeftOut_(v.id, why, match));
+  };
   const items = [];
   const ids = new Set();
   (Array.isArray(records) ? records : []).forEach((r, idx) => {
@@ -462,7 +536,7 @@ function evaluateBqDualTrack_(records, ctx, opts) {
     const same = relevant ? matchBqPriorAlert_({ url: v.url }, priors) : null;
     const repeat = !!(same && same.same_post && !assessBqNewDevelopment_(Object.assign({}, r, { text: v.text }), same).allowed);
     if (relevant && !repeat) items.push(v);
-    else out.discarded_ids.push(v.id);
+    else leave(v, relevant ? BQ_LEFT_OUT_.SAME_POST : BQ_LEFT_OUT_.NOT_GOOGLE, relevant ? same : null);
   });
   if (!items.length) return out;
   const byId = new Map(items.map(v => [v.id, v]));
@@ -513,12 +587,15 @@ function evaluateBqDualTrack_(records, ctx, opts) {
     };
   };
 
+  const ruled = new Map();  // id -> the earlier alert the rules left the record out for
+  const held = new Map();   // id -> the earlier alert its wave was held back for
   live.filter(v => soloOnly || v.engagement >= threshold).forEach(v => {
     const match = matchBqPriorAlert_({ url: v.url, issue_name: v.issue }, priors);
     const dev = devOf(llmSolo.get(v.id), match,
       assessBqNewDevelopment_({ url: v.url, issue_name: v.issue, text: v.text, engagement: v.engagement }, match));
     if (!dev.allowed) {
       dropped.add(v.id);
+      ruled.set(v.id, match);
       return;
     }
     const said = llmSolo.get(v.id) || {};
@@ -551,7 +628,10 @@ function evaluateBqDualTrack_(records, ctx, opts) {
         total_engagement: wave.total_engagement,
         platforms: wave.platforms,
       }, match));
-      if (!dev.allowed) return;
+      if (!dev.allowed) {
+        members.forEach(v => held.set(v.id, match));
+        return;
+      }
       members.forEach(v => used.add(v.id));
       out.group_waves.push(Object.assign(wave, dev.is_new_development ? {
         is_new_development: true,
@@ -581,6 +661,14 @@ function evaluateBqDualTrack_(records, ctx, opts) {
   }
 
   const alerted = new Set(out.solo_alerts.map(s => s.id).concat(Array.from(used)));
-  items.forEach(v => { if (!alerted.has(v.id)) out.discarded_ids.push(v.id); });
+  items.forEach(v => {
+    if (alerted.has(v.id)) return;
+    const rule = ruled.get(v.id);
+    const wave = held.get(v.id);
+    if (ruled.has(v.id)) leave(v, rule && rule.same_post ? BQ_LEFT_OUT_.SAME_POST : BQ_LEFT_OUT_.SAME_ISSUE, rule);
+    else if (dropped.has(v.id)) leave(v, BQ_LEFT_OUT_.GEMINI, matchBqPriorAlert_({ url: v.url, issue_name: v.issue }, priors));
+    else if (held.has(v.id)) leave(v, BQ_LEFT_OUT_.SAME_ISSUE, wave ? { prior: wave.prior, same_post: false } : null);
+    else leave(v, BQ_LEFT_OUT_.NO_WAVE, null);
+  });
   return out;
 }

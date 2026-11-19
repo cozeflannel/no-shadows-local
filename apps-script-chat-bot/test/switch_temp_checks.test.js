@@ -262,24 +262,29 @@ module.exports = H => {
       ['Temp checks', 'OFF', 'OFF (temp checks are done by hand)', ['ON', 'OFF']]);
     eq([t.control().cell(37, 1), t.control().cell(37, 2), t.control().cell(38, 1), t.control().cell(39, 1), t.control().cell(40, 1),
       t.control().cell(41, 1), t.control().cell(42, 1), t.control().cell(43, 1), t.control().cell(44, 1), t.control().cell(45, 1),
-      t.control().cell(46, 1), t.control().cell(47, 1), t.control().cell(48, 1), t.control().cell(49, 1)],
+      t.control().cell(46, 1), t.control().cell(47, 1), t.control().cell(48, 1), t.control().cell(49, 1), t.control().cell(50, 1),
+      t.control().cell(51, 1), t.control().cell(52, 1), t.control().cell(53, 1), t.control().cell(54, 1), t.control().cell(55, 1),
+      t.control().cell(56, 1), t.control().cell(57, 1)],
     ['Group test emails', 'OFF', 'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise',
       'Hold-back: about_google at or below', 'Hold-back: routine_noise at or above', 'Hold-back and early watch: answer confidence at or above',
       'Early watch: about_google and brand_risk, each at or above', 'Early watch: distinct accounts, at least',
-      'Write early-wave records to BigQuery', 'Early watch: independent_reports at or above', '', 'How it works']);
-    const help = t.control().rows.slice(49).map(r => String(r[0] || ''));
+      'Write early-wave records to BigQuery', 'Early watch: independent_reports at or above', 'Early Detection: also read the AMIE table',
+      'Early Detection: also read Brandwatch live (not X)', 'Proactive watch: also read the AMIE table', 'Open engine: judgment in place of caps', '', '',
+      'Live dashboard', 'Slide deliveries', '', 'How it works']);
+    const help = t.control().rows.slice(57).map(r => String(r[0] || ''));
     assert.ok(help.some(l => /^• Temp checks: row 36, OFF until you turn it ON\. In a thread in the Mirror space or the Other alerts space \(B33\)/.test(l)));
-    assert.ok(help.some(l => /^• Rows 11-24, 27-29, 32, 34, 36-40 and 46 are switches/.test(l)));
-    eq([SWITCHES.length, SWITCHES[SWITCHES.length - 6].key, SWITCHES[SWITCHES.length - 5].key, B.switchRows_().slice(-6)],
-      [25, 'tempChecks', 'bsgTestEmails', [36, 37, 38, 39, 40, 46]]);
+    assert.ok(help.some(l => /^• Rows 11-24, 27-29, 32, 34, 36-40, 46, 48-51, 54 and 55 are switches/.test(l)));
+    eq([SWITCHES.length, SWITCHES[SWITCHES.length - 12].key, SWITCHES[SWITCHES.length - 11].key, B.switchRows_().slice(-12)],
+      [31, 'tempChecks', 'bsgTestEmails', [36, 37, 38, 39, 40, 46, 48, 49, 50, 51, 54, 55]]);
     // The deployed layout: row 36 blank, "How it works" at row 37
     t.control().getRange(36, 1, 1, 3).setValues([['', '', '']]);
     t.control().getRange(37, 1, 1, 3).setValues([['How it works', '', '']]);
     t.control().getRange(35, 2).setValue('Mirror space (B9)');  // a choice a person made in B35: kept
     t.poll();
     eq([t.control().cell(35, 2), t.control().cell(36, 1), t.control().cell(36, 2), t.control().cell(37, 1), t.control().cell(37, 2), t.control().cell(38, 1),
-      t.control().cell(39, 1), t.control().cell(40, 1), t.control().cell(46, 1), t.control().cell(47, 1), t.control().cell(48, 1), t.control().cell(49, 1)],
-    ['Mirror space (B9)', 'Temp checks', 'OFF', 'Group test emails', 'OFF', 'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise', 'Write early-wave records to BigQuery', 'Early watch: independent_reports at or above', '', 'How it works']);
+      t.control().cell(39, 1), t.control().cell(40, 1), t.control().cell(46, 1), t.control().cell(47, 1), t.control().cell(48, 1), t.control().cell(49, 1),
+      t.control().cell(57, 1)],
+    ['Mirror space (B9)', 'Temp checks', 'OFF', 'Group test emails', 'OFF', 'Fast triage (Gemini Decisions)', 'Fast triage: rank and early watch', 'Fast triage: hold back noise', 'Write early-wave records to BigQuery', 'Early watch: independent_reports at or above', 'Early Detection: also read the AMIE table', 'Early Detection: also read Brandwatch live (not X)', 'How it works']);
     t.control().getRange(36, 2).setValue('ON');
     t.poll();
     t.poll();
@@ -685,5 +690,33 @@ module.exports = H => {
     eq([B.relayAnalyst_(ctx(true), m), B.relayAnalyst_(ctx(false), m), B.relayAnalyst_(ctx(true), Object.assign({}, m, { text: 'Morning team' }))],
       [false, true, true]);
     eq(B.tempCheckRequestOf_(Object.assign(ctx(true), { spaces: { burson: { id: REAL, externalUserAllowed: true } } }), m), null);
+  });
+
+  test('temp checks (new sources step 2c): with rows 49 and 19 ON the mentions a temp check reads are counted in BWL_DAY (Temp checks\' part of "all features"); its requests, its email and its thread posts are byte for byte those of a check with the rows OFF, also when the count cannot be saved', () => {
+    const run = mode => {
+      const w = world(true);
+      const b = w.t.bot;
+      let day = null;  // BWL_DAY right after the temp check (later in the run, row 49 OFF on this tab stops the count)
+      const orig = b.runTempChecks_;
+      b.runTempChecks_ = function () {
+        if (mode !== 'off') b.ewsRunSwitches_({ edBwLive: true, earlyWave: true });  // as rows 49 and 19 ON set them
+        const r = orig.apply(this, arguments);
+        day = JSON.parse(w.t.g.props.get('BWL_DAY') || 'null');
+        return r;
+      };
+      if (mode === 'fail') {
+        const set = w.t.g.props.set.bind(w.t.g.props);
+        w.t.g.props.set = (k, v) => { if (k === 'BWL_DAY') throw new Error('Service invoked too many times: properties'); return set(k, v); };
+      }
+      ask(w, ASK);
+      return { calls: w.bw.calls.map(c => c.url), mails: JSON.stringify(mails(w.t)), posts: JSON.stringify(posts(w.t, MIRROR).map(m => m.text)), day };
+    };
+    const off = run('off');
+    const on = run('on');
+    const fail = run('fail');
+    eq([on.calls, on.mails, on.posts], [off.calls, off.mails, off.posts]);
+    eq([fail.calls, fail.mails, fail.posts], [off.calls, off.mails, off.posts]);
+    assert.ok(JSON.parse(off.mails).length === 1, 'the temp check went out');
+    eq([off.day, fail.day, on.day.af], [null, null, { temp: 7 + 2 }]);  // its two reads of mentions returned 7 and 2
   });
 };

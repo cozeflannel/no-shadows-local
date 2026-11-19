@@ -217,15 +217,25 @@ module.exports = H => {
     eq(B.reviewAlert_(Object.assign(B.parseAlert_(F.NO_LINK), { found: {} }), { now: NOW, history: [] }), plainReview);
   });
 
+  // The corrected alert's first line in the auto-correct space (Voice.gs reviewedLine_; the fake's message ids give no
+  // link to Burson's message, so there's none)
+  const REVIEWED_BY = '✅ *Reviewed by the agentic assistant*';
+  const CORRECTED_BY = '✅ *Reviewed and corrected by the agentic assistant*';
+
   test('auto-find links ON: the auto-correct test space posts the corrected alert with the link, says so in its note, and no longer waits on Burson for it', () => {
     const off = world({ noWait: true });
     off.paste(F.NO_LINK);
     runWith(off, { sourceReadOnly: true, changeNotes: true });
-    eq(off.analystPosts().map(m => m.text), [F.NO_LINK, 'Processed without waiting for Burson: Link missing']);
+    // (each note's last line says which alert requirement the alert met, and that this world makes no emails:
+    // RequirementLine.gs)
+    const REQ = '*Alert requirements:* met for a Social Alert (P0 exposure tag), but none was sent: emails are off in this run (a dry run).';
+    eq(off.analystPosts().map(m => m.text), [`${REVIEWED_BY}\n${F.NO_LINK}`,
+      `Not fixed: Burson's alert has no link to the post (Auto-find missing links, row 14, is OFF)\n${REQ}`]);
     const w = world({ noWait: true });
     w.paste(F.NO_LINK);
     runWith(w, { sourceReadOnly: true, changeNotes: true, switches: switchesNoWait(w, true), findLink: spy(FOUND) });
-    eq(w.analystPosts().map(m => m.text), [F.P0_OK, `Updates made to this alert:\n- Link updated from (blank) to ${SAM}`]);
+    eq(w.analystPosts().map(m => m.text), [`${CORRECTED_BY}\n${F.P0_OK}`,
+      `The agentic assistant reviewed this alert and made these changes:\n- Link: added ${SAM}\n${REQ}`]);
     eq(w.bursonPosts(), []);
   });
 

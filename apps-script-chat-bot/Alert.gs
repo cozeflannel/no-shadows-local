@@ -14,7 +14,21 @@ const RX_URL_IN_TEXT_ = /https?:\/\/[^\s<>|"')\]]+/i;
 const RX_BARE_URL_ = /^https?:\/\/\S+$/i;
 const RX_BANNER_ = /THIS ALERT MEETS\s+(P[012])\s+CRITERIA/i;
 const RX_HEADER_ = /^(?:[^\w\s]\s*)*SOCIAL ALERT(?:\s*[^\w\s])*\s*:\s*(.*)$/iu;
-const RX_BOILERPLATE_ = /^(?:As a reminder,\s*all alerts can be found|Note:\s*Brand-Social-Sends@|Please note:\s*screenshots are not available|(?:🔷🔍|🔷📊|🔍📊)?\s*\[?BigQuery\b)/i;
+// Lines of an alert that are no field and no part of its summary: Burson's footers, the bot's own BigQuery lines, the
+// bot's own first line on an alert it corrected in the Auto-correct space ("✅ *Reviewed and corrected by the agentic
+// assistant* · Original alert": Voice.gs reviewedLine_), and the fixed lines of Burson's live layout (its title, its
+// automated-message note, "Do Not Forward", whether the alert meets the Collection Requirements, the words of its link
+// to the post). They are skipped when the alert is read and stay as they are when it is rebuilt
+// (triage_agent/qa/parser.py _BOILERPLATE has the same list, but for BigQuery)
+const RX_REVIEWED_LINE_SRC_ = '(?:\\u2705\\uFE0F?\\s*)?\\*?Reviewed (?:and corrected )?by the agentic assistant\\b';
+const RX_BOILERPLATE_ = new RegExp('^(?:As a reminder,\\s*all alerts can be found|Note:\\s*Brand-Social-Sends@|' +
+  'Please note:\\s*screenshots are not available|(?:🔷🔍|🔷📊|🔍📊)?\\s*\\[?BigQuery\\b|' + RX_REVIEWED_LINE_SRC_ + '|' +
+  'Automated Alert via Burson\\b|Note:\\s*This is an automated message\\b|Do Not Forward\\b|' +
+  'This alert (?:does not meet|meets) the defined Collection Requirements\\b|Click here for link to post\\b)', 'i');
+// The ones of them that stand below an alert's summary: Burson's footers and the bot's own BigQuery lines, without the
+// live layout's fixed lines (most of those are the alert's first lines). A line the bot adds goes above the first of
+// these (Bot.gs withFoundLink_, withTimestamp_), and the summary's place ends there (rebuildAlert_)
+const RX_FOOTER_ = /^(?:As a reminder,\s*all alerts can be found|Note:\s*Brand-Social-Sends@|Please note:\s*screenshots are not available|(?:🔷🔍|🔷📊|🔍📊)?\s*\[?BigQuery\b)/i;
 const RX_COMPOUND_ENGAGEMENT_ = /^([A-Za-z ]+?)\s*\(\s*([\d,]+(?:\.\d+)?[km]?)\s*(?:engagements?)?\s*\)$/i;
 const RX_COMPOUND_NAME_ = /^(.+?)\s+\/\s+(Ongoing Issue|New\s*\/\s*not previously reported over the past 14 days|NEW|Recently Reported)\s*$/i;
 const RX_COMPOUND_KOF_ = /^(yes|true|1|no|false|0)\s*\(([^)]+)\)\s*$/i;
@@ -344,6 +358,7 @@ function parseAlert_(text) {
   const raw = {};
   const labeled = {};
   const unmatched = [];
+  const unmatchedAt = [];  // the line each of `unmatched` is on
   const extra = {};
   let current = null;
   String(text || '').split(/\r?\n/).forEach((orig, i) => {
@@ -384,7 +399,7 @@ function parseAlert_(text) {
         current = null;
         return;
       }
-      if (!('post_url' in raw)) raw.post_url = bare; else unmatched.push(bare);
+      if (!('post_url' in raw)) raw.post_url = bare; else { unmatched.push(bare); unmatchedAt.push(i); }
       current = null;
       return;
     }
@@ -393,6 +408,7 @@ function parseAlert_(text) {
       raw[current] = (raw[current] + '\n' + bare).trim();
     } else {
       unmatched.push(bare);
+      unmatchedAt.push(i);
       current = null;
     }
   });
@@ -431,10 +447,11 @@ function parseAlert_(text) {
     }
   }
   if (unmatched.length && !('summary' in raw) && !('post_content' in raw)) {  // unlabeled paragraph = summary
-    const summary = unmatched.filter(u => !RX_BARE_URL_.test(u));
-    if (summary.length) {
-      raw.summary = summary.join('\n').trim();
+    const kept = unmatched.map((u, k) => k).filter(k => !RX_BARE_URL_.test(unmatched[k]));
+    if (kept.length) {
+      raw.summary = kept.map(k => unmatched[k]).join('\n').trim();
       extra.summary_from_paragraph = true;
+      extra.summary_lines = kept.map(k => unmatchedAt[k]);  // where its lines are in the alert, for rebuildAlert_
     }
   }
 
@@ -491,8 +508,10 @@ function parseAlert_(text) {
     if (handle) fields.author = handle;
     else if (parts.length >= 6 && parts[parts.length - 4] && !/^\d+$/.test(parts[parts.length - 4])) fields.author = parts[parts.length - 4];
   }
-  if (!fields.post_url) {
-    const url = extractUrl_(String(text || '').replace(RX_CHAT_LINK_, '$1').replace(new RegExp(SCREENSHOT_LINK_RX_.source, 'gi'), ' '));
+  if (!fields.post_url) {  // never the link on the bot's own first line (to Burson's message, not to the post)
+    const own = new RegExp(`^[ \\t]*${RX_REVIEWED_LINE_SRC_}[^\\r\\n]*`, 'gim');
+    const url = extractUrl_(String(text || '').replace(own, ' ').replace(RX_CHAT_LINK_, '$1')
+      .replace(new RegExp(SCREENSHOT_LINK_RX_.source, 'gi'), ' '));
     if (url) fields.post_url = url;
   }
   if (!fields.author && fields.post_url) {
@@ -520,9 +539,78 @@ function isBlank_(v) {
   return v === null || v === undefined || v === '' || (Array.isArray(v) && v.length === 0);
 }
 
-/** True when `text` opens with the bot's own Watch alert or Early Detection header (never a Zapier/Burson alert). Pure. */
+/**
+ * The first line of every alert card the bot posts as its own (never Burson's format): an emoji, the kind of alert in
+ * capitals, and one detail. The four kinds share ONE card: the lines under the first keep one order (the headline, the
+ * Product / Exposure Tag / Sensitive Topic / KOF lines, a blank line, What's happening, then Post (the post's first
+ * words, on a card in the Auto-correct space that goes without a picture of the post and quotes none of its words:
+ * ownCardPostLine_), Web, Call,
+ * Activity, Next steps and Posts where the kind has them: EarlyDetection.gs edStoryCardText_, WatchAlerts.gs
+ * pwAlertText_), so a reader finds the same thing in the same place and tells the kinds apart by the first line alone:
+ *   story    (siren) *EARLY DETECTION* · New story                        a story at the usual bar
+ *   signal   (bolt) *EARLY SIGNAL* · 3 accounts so far (a story is …)     a story flagged below the usual bar
+ *   update   (chart) *UPDATE* · More on a story already alerted            in the earlier card's thread
+ *   watch    (telescope) *WATCH* · <the watch's name>                      a Proactive watch flag
+ * Burson's alerts keep Burson's own format (the other card people see). The words are plain ones no guard list of
+ * what may reach S-F Burson holds, and the cards never go there anyway (their ids: Relay.gs RELAY_ID_RX_).
+ */
+const OWN_CARD_TYPES_ = {
+  story: { emoji: '\ud83d\udea8', label: 'EARLY DETECTION' },
+  signal: { emoji: '\u26a1', label: 'EARLY SIGNAL' },
+  update: { emoji: '\ud83d\udcc8', label: 'UPDATE' },
+  watch: { emoji: '\ud83d\udd2d', label: 'WATCH' },
+};
+
+/** An own card's first line for `type` (OWN_CARD_TYPES_' key) and its `detail` (one line, no markup of its own). Pure. */
+function ownCardHead_(type, detail) {
+  const t = OWN_CARD_TYPES_[type] || OWN_CARD_TYPES_.story;
+  const d = String(detail === undefined || detail === null ? '' : detail).replace(/[*<>|]/g, ' ').replace(/\s+/g, ' ').trim();
+  return `${t.emoji} *${t.label}*${d ? ` \u00b7 ${d}` : ''}`;
+}
+
+// The post's own words on a card of the bot's own that goes without a picture of the post, in the Auto-correct space
+// (ownCardPostLine_)
+const OWN_CARD_QUOTE_CHARS_ = 200;
+
+/**
+ * The line an own card in the Auto-correct space (B10) carries under its What's happening line when it goes without a
+ * picture of the post and quotes none of the post's words elsewhere: `*Post:* "<the post's first OWN_CARD_QUOTE_CHARS_ characters>"`, on one line,
+ * with no address or Chat link marks left in the words (the post's link stays the card's own, on its Posts line); ''
+ * when the post has no words. The label is read back by no card's reader (WatchAlerts.gs pwAlertParse_ reads Posts,
+ * EarlyDetection.gs edParseCard_ gives "post" no meaning). Pure.
+ */
+function ownCardPostLine_(text) {
+  const t = String(text === undefined || text === null ? '' : text)
+    .replace(/(?:https?:\/\/|www\.)[^\s<>|]+/gi, ' ').replace(/[<>|]/g, ' ').replace(/\s+/g, ' ').trim();
+  return t ? `*Post:* "${truncate_(t, OWN_CARD_QUOTE_CHARS_)}"` : '';
+}
+
+/**
+ * An own card's first line read back: {type, detail} when `line` (with or without Chat's bold marks) is one of
+ * OWN_CARD_TYPES_' (its emoji, its label in capitals, then " · detail"), else null. The emoji and the capitals are
+ * both required, so a person's "Update · …" or "Watch · …" is never taken for a card. Pure.
+ */
+function ownCardHeadParse_(line) {
+  const s = String(line || '').replace(/\*/g, '').trim();
+  for (const type of Object.keys(OWN_CARD_TYPES_)) {
+    const t = OWN_CARD_TYPES_[type];
+    if (s.indexOf(t.emoji) !== 0) continue;
+    const rest = s.slice(t.emoji.length).replace(/^\ufe0f/, '').trim();
+    if (rest === t.label) return { type, detail: '' };
+    if (rest.indexOf(t.label) !== 0) continue;
+    const m = rest.slice(t.label.length).match(/^\s*\u00b7\s*(.*)$/);
+    if (m) return { type, detail: m[1].trim() };
+  }
+  return null;
+}
+
+/**
+ * True when `text` opens with one of the bot's own alert cards' first lines (ownCardHead_, or the headers the cards
+ * had before: "Watch alert · …", "Early Detection Alert", "Early Detection Update"), never a Zapier/Burson alert. Pure.
+ */
 function isOwnAlertCardHeader_(text) {
   const first = String(text || '').split(/\r?\n/).map(l => l.replace(/\*/g, '').trim()).find(Boolean) || '';
+  if (ownCardHeadParse_(first)) return true;
   const clean = first.replace(/^[^\p{L}\p{N}]+/u, '').replace(/[^\p{L}\p{N})\]]+$/u, '').trim();
   return /^(?:Watch alert\s*\u00b7|Early Detection (?:Alert|Update)\b)/i.test(clean);
 }
@@ -713,6 +801,27 @@ function bannerLine_(priority, original) {
   return (priority === 'P0' ? '\ud83d\udea8' + core + '\ud83d\udea8' : core) + tail;
 }
 
+// The fields Burson's [Code] line carries ("tag,engagement,author,risk,product,status"; the author is never corrected)
+const ALERT_CODE_FIELDS_ = ['exposure_tag', 'total_engagement', 'risk_tags', 'product', 'issue_status'];
+
+/**
+ * Burson's [Code] value after a review: each part whose field was corrected (`changed`: the corrected fields' names,
+ * a list or a Set) carries the final value (`fin`), every other part stays as Burson wrote it. null when the code has
+ * nothing to change: none of its fields was corrected, or it hasn't its six parts. The corrected alert's [Code] line
+ * (rebuildAlert_) and the Social Alert email's code (Email.gs emailInput_) are this one value. Pure.
+ */
+function alertCode_(code, fin, changed) {
+  const ch = changed instanceof Set ? changed : new Set(changed || []);
+  if (!ALERT_CODE_FIELDS_.some(c => ch.has(c))) return null;
+  const parts = splitTopLevel_(String(code === undefined || code === null ? '' : code), true).map(p => p.trim());
+  if (parts.length < 6) return null;
+  const f = fin || {};
+  const status = ch.has('issue_status') ? statusSuffix_(f.issue_status, parts.slice(5).join(',')) : parts.slice(5).join(',');
+  const risk = (f.risk_tags && f.risk_tags.length) ? f.risk_tags[0] : parts[3];
+  return [ch.has('exposure_tag') ? f.exposure_tag : parts[0], ch.has('total_engagement') ? f.total_engagement : parts[1],
+    parts[2], ch.has('risk_tags') ? risk : parts[3], ch.has('product') ? f.product : parts[4], status].join(',');
+}
+
 /**
  * Rewrite only the lines whose value changed; order, spacing and boilerplate stay exactly as Burson sent them.
  * `fin` = final field values, `changed` = array of field names whose value was corrected.
@@ -723,7 +832,6 @@ function rebuildAlert_(text, parsed, fin, changed) {
   const ex = parsed.extra || {};
   const index = labelIndex_();
   const lines = String(text).split(/\r?\n/);
-  const codeFields = ['exposure_tag', 'total_engagement', 'risk_tags', 'product', 'issue_status'];
   const hasOtherLine = lines.some((ln, idx) => idx !== ex.banner_line && idx !== ex.header_line &&
     ((splitLabel_(ln, index) || {}).spec || {}).name === 'other_products');
   const productChanged = ch.has('product') || ch.has('other_products');
@@ -757,22 +865,20 @@ function rebuildAlert_(text, parsed, fin, changed) {
     const prefix = hit.prefix;
     let value = null;
     if (f === 'engagement_level' && (ch.has('engagement_level') || ch.has('total_engagement'))) {
-      value = ex.compound_engagement && RX_COMPOUND_ENGAGEMENT_.test(hit.value.replace(RX_MD_, '').trim())
-        ? `${fin.engagement_level} (${fin.total_engagement} engagements)` : String(fin.engagement_level);
+      // "LOW (373 engagement)": the level changes, and what Burson wrote in the parentheses stays (its own word, the
+      // count as it wrote it); only a corrected count is put in its place there
+      const compound = ex.compound_engagement && RX_COMPOUND_ENGAGEMENT_.test(hit.value.replace(RX_MD_, '').trim());
+      const paren = compound ? hit.value.slice(hit.value.indexOf('(')).replace(RX_MD_, '').trim() : '';
+      value = !compound ? String(fin.engagement_level)
+        : `${fin.engagement_level} ${ch.has('total_engagement') ? paren.replace(/[\d,]+(?:\.\d+)?[km]?/i, String(fin.total_engagement)) : paren}`;
     } else if (f === 'alert_name' && ex.burson_name_format && (ch.has('alert_name') || ch.has('issue_name') || ch.has('issue_status'))) {
       value = `${fin.issue_name} / ${statusSuffix_(fin.issue_status, ex.burson_status_suffix)}`;
     } else if (f === 'alert_name' && ch.has('alert_name')) {
       value = String(fin.alert_name);
     } else if (f === 'kof' && ch.has('kof')) {
       value = fin.kof ? 'Yes' + (fin.kof_lists && fin.kof_lists.length ? ` (${fin.kof_lists.join(', ')})` : '') : 'No';
-    } else if (f === 'code' && codeFields.some(c => ch.has(c))) {
-      const parts = splitTopLevel_(hit.value, true).map(p => p.trim());
-      if (parts.length >= 6) {
-        const status = ch.has('issue_status') ? statusSuffix_(fin.issue_status, parts.slice(5).join(',')) : parts.slice(5).join(',');
-        const risk = (fin.risk_tags && fin.risk_tags.length) ? fin.risk_tags[0] : parts[3];
-        value = [ch.has('exposure_tag') ? fin.exposure_tag : parts[0], ch.has('total_engagement') ? fin.total_engagement : parts[1],
-          parts[2], ch.has('risk_tags') ? risk : parts[3], ch.has('product') ? fin.product : parts[4], status].join(',');
-      }
+    } else if (f === 'code') {
+      value = alertCode_(hit.value, fin, ch);  // null: nothing of the code changed
     } else if (f === 'product' && (ch.has('product') || (ch.has('other_products') && !hasOtherLine))) {
       value = !hasOtherLine && Array.isArray(fin.other_products) && fin.other_products.length
         ? allProductsText_(fin, null, fin.product)
@@ -780,13 +886,42 @@ function rebuildAlert_(text, parsed, fin, changed) {
     } else if (ch.has(f) && !['alert_name', 'engagement_level', 'code', 'kof'].includes(f)) {
       value = displayValue_(f, fin[f], hit.value);
     }
-    if (value !== null) lines[i] = prefix + value;
+    // a line Burson left empty ("[Product(s)]:") has no space after its colon to keep: the value gets one
+    if (value !== null) lines[i] = prefix + (hit.value === '' && /[:：]$/.test(prefix) && String(value) !== '' ? ' ' : '') + value;
   }
 
   let out = lines.join('\n');
   if (ch.has('summary') && ex.summary_from_paragraph && ex.raw && ex.raw.summary && fin.summary) {
     const original = ex.raw.summary;
-    if (out.includes(original)) out = out.replace(original, () => fin.summary);
+    if (out.includes(original)) {
+      out = out.replace(original, () => fin.summary);
+    } else {
+      // Burson's paragraph isn't there as one piece (a hyperlink in it, which the summary reads as its address; blank
+      // lines between its lines; a line the bot doesn't know, read with it): its own lines are replaced (parseAlert_'s
+      // summary_lines), so a summary the note says was updated is never left as it was. Of several runs of those lines
+      // (only blank lines between a run's), the one in Burson's place for the summary: below the "SOCIAL ALERT" line
+      // (without one, the first labelled line) and above the [Link] line, the first footer or the [Code] line, whichever
+      // comes first; of several there, the one that holds most of the text. A line anywhere else (one the bot doesn't
+      // know, above the title or among the footers) stays as Burson wrote it, however long it is; with no run in that
+      // place, so does the whole text
+      const at = (Array.isArray(ex.summary_lines) ? ex.summary_lines : []).filter(i => Number.isInteger(i) && i >= 0 && i < lines.length);
+      const runs = [];
+      at.forEach(i => {
+        const run = runs[runs.length - 1];
+        if (run && lines.slice(run[run.length - 1] + 1, i).every(l => !l.trim())) run.push(i); else runs.push([i]);
+      });
+      const size = run => run.reduce((n, i) => n + lines[i].trim().length, 0);
+      const labelOf = l => ((splitLabel_(l, index) || {}).spec || {}).name;
+      const top = ex.header_line !== undefined ? ex.header_line : lines.findIndex(l => !!labelOf(l));
+      const stop = lines.findIndex((l, i) => i > top && (['post_url', 'code'].includes(labelOf(l)) ||
+        RX_FOOTER_.test(cleanLine_(l).trim().replace(RX_MD_, '').trim())));
+      const most = runs.filter(run => run[0] > top && (stop < 0 || run[0] < stop)).sort((a, b) => size(b) - size(a))[0];
+      if (most) {
+        const lead = (lines[most[0]].match(RX_BULLET_) || lines[most[0]].match(/^\s*/))[0];
+        lines.splice(most[0], most[most.length - 1] - most[0] + 1, lead + fin.summary);
+        out = lines.join('\n');
+      }
+    }
   }
   return out;
 }

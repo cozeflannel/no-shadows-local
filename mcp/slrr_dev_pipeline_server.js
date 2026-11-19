@@ -251,7 +251,7 @@ async function handlePreviewAlertTriage(args) {
   const esc = bot.escalation_(review.fields, { now });
   let emailPreview = null;
   if (esc.escalated) {
-    const input = bot.emailInput_(review.fields, esc, noWait);
+    const input = bot.emailInput_(review.fields, esc, noWait, review.changed);
     const plan = bot.planRecipients_(esc, esc.text, []);
     const email = bot.socialAlertEmail_(input, plan, {
       test: false,

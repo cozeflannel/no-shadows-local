@@ -1,0 +1,181 @@
+{
+ "one_space": {
+  "chat": [
+   {
+    "run": "setup",
+    "space": "spaces/AAQAaLn375E",
+    "thread": "spaces/AAQAaLn375E/threads/t1",
+    "reply": false,
+    "text": "The Burson QA bot is set up. Every alert posted in SLRR Test Feed (Burson Sim) comes here, already checked.\n- Control tab: <https://docs.google.com/spreadsheets/d/sheet1|Control Sheet>"
+   },
+   {
+    "run": "03 Burson alert with mistakes",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t3",
+    "reply": false,
+    "text": "✅ *Reviewed and corrected by the agentic assistant*\n🚨THIS ALERT MEETS P0 CRITERIA🚨\n\n🟥SOCIAL ALERT🟥: Gemini App | Criticism against AI Overviews | X | 29425 Engagements\n[Name]: Criticism against AI Overviews / Ongoing Issue\n[Engagement]: HIGH (29425 engagements)\n[Product]: Gemini App\n[Social Network]: X\n[Exposure Tag]: Product - Perceived bias\n[Sensitive Topic]: -\n[KOF]: No\n\nX user @edervolcelazz criticized AI Overviews in a reply, saying the answer it gave was offensive. The post does not show the answer.\n\n[Link]: https://x.com/edervolcelazz/status/2109566527900926417\n\nAs a reminder, all alerts can be found in our Alert Dashboard at go/SLRR-Database.\nNote: Brand-Social-Sends@ and SLRR-updates@ includes xWF vendors that support Brand Social's 24/7 Social Listening & Rapid Response. Please consider removing these aliases in NTK replies.\n\n[Time/Date Post Went Live]: October 12, 2026, 1:47 AM\n\n[Code]: Product - Perceived bias,29425,edervolcelazz,-,Gemini App,Ongoing Issue\n\nPlease note: screenshots are not available for Reddit, TikTok, Facebook or Instagram."
+   },
+   {
+    "run": "03 Burson alert with mistakes",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t3",
+    "reply": true,
+    "text": "The agentic assistant reviewed this alert and made these changes:\n- Product: Gems to Gemini App\n- Social Network: Instagram to X\n- Priority banner: P2 to P0\n- Engagement: LOW to HIGH\n*Alert requirements:* met for a Social Alert: 29,425 engagements (2,000+ needed)."
+   },
+   {
+    "run": "04 Direct BigQuery finds the Pixel post",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t5",
+    "reply": false,
+    "text": "THIS ALERT MEETS P2 CRITERIA · 🔷🔍 *[BigQuery · BSIP]*\n\n🟨SOCIAL ALERT🟨: Pixel | Pixel 10 battery swelling after update | X | 800 Engagements\n[Name]: Pixel 10 battery swelling after update / NEW\n[Engagement]: MODERATE (800 engagements)\n[Product]: Pixel\n[Social Network]: X\n[Exposure Tag]: Product - Other/general criticism\n[Sensitive Topic]: -\n[KOF]: No\n\nAn X user says their Google Pixel 10 battery swelled up after the latest update.\n\n[Link]: https://x.com/pixelcritic/status/2150000000000000001\n\n[Time/Date Post Went Live]: 2026-10-14 11:40 UTC\n\n[Code]: Product - Other/general criticism,800,pixelcritic,-,Pixel,NEW"
+   },
+   {
+    "run": "05 the Pixel card is reviewed",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t5",
+    "reply": true,
+    "text": "The agentic assistant reviewed this alert. The card above was posted before the review; the email uses these corrections:\n- Summary: X user @pixelcritic (3,200 followers) says their Pixel 10 battery swelled up after the latest update and that the back cover is lifting. The post does not say which update.\n*Alert requirements:* not met for a Social Alert (a P2 tag needs 2,000+ engagements, a KOF author or a Sensitive Topic; this post: 800 engagements, no KOF author). Monitoring only."
+   },
+   {
+    "run": "06 the watch flags the Gemini post",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t7",
+    "reply": false,
+    "text": "🔭 *WATCH* · Google brand safety (all)\n*Product:* Gemini App\n*Exposure Tag:* Product - Factual inaccuracies (not dangerous/offensive) (P1)\n*Sensitive Topic:* None\n*KOF:* Unknown\n\n*What's happening:* X account @promptwatch (18K followers) says the Gemini app invented a court ruling and cited it as real.\n*Activity:* @promptwatch · X · 18,000 followers · 520 engagements\n*Posts:* <https://x.com/promptwatch/status/2150000000000000003|View the post on X>"
+   },
+   {
+    "run": "07 the watch alert is triaged",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t7",
+    "reply": true,
+    "text": "🤖 *Triage: 👍 Worth a look · ✍️ T&S intake* · medium (80% sure)\nAn X user (@promptwatch, 18K followers) says the Gemini app invented a court ruling and cited it as real — A made-up legal citation from a Google AI product. (<https://x.com/promptwatch/status/2150000000000000003|@promptwatch on X>)\n• *Alert requirements:* not met for a Social Alert (a P1 tag needs 2,000+ engagements, a KOF author or a Sensitive Topic; this post: 520 engagements, no KOF author). No Social Alert; a T&S form is asked for below.\n• *T&S:* Gemini hallucination — <https://docs.google.com/forms/d/e/pub-form1/viewform?usp=pp_url&entry.880042=Marketing&entry.880007=Gemini&entry.880014=Information%20Quality&entry.880021=https%3A%2F%2Fx.com%2Fpromptwatch%2Fstatus%2F2150000000000000003&entry.880028=An%20X%20user%20%28%40promptwatch%2C%2018K%20followers%29%20says%20the%20Gemini%20app%20invented%20a%20court%20ruling%20and%20cited%20it%20as%20real.%20520%20engagements%20on%20X.|Open the test copy of the T&S Intake Form, pre-filled> (Gemini / Information Quality).\n• *Escalate if:* A KOF or 2,000+ engagements amplifying it."
+   },
+   {
+    "run": "09 Direct BigQuery finds the Maps post and a story is found",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t9",
+    "reply": false,
+    "text": "🚨 *EARLY DETECTION* · New story\n*Chrome users say the update closed all their open tabs*\n*Product:* Chrome\n*Exposure Tag:* Product - Other/general criticism (P2)\n*Sensitive Topic:* None\n*KOF:* No (6 small, non-KOF accounts)\n\n*What's happening:* Users say the update <https://x.com/tabhoarder/status/2150000000000000011|closed every open tab> and that <https://www.reddit.com/r/chrome/comments/1q2tabs/update_closed_tabs/|session restore does nothing>.\n*Post:* \"Chrome closed all my tabs after the update and the session restore is empty.\"\n*Call:* 👍 Monitor build-up: Several independent users describe the same data loss after one update\n*Activity:* 6 small accounts on X and Reddit posted about this 7 times at 7:42 AM ET\n*Next steps:*\n1. Keep monitoring for volume growth and re-check in 2 hours.\n*Posts:* <https://x.com/tabhoarder/status/2150000000000000011|@tabhoarder> (X) · <https://x.com/devnotes_k/status/2150000000000000012|@devnotes_k> (X) · <https://www.reddit.com/r/chrome/comments/1q2tabs/update_closed_tabs/|@u_tab_loss> (Reddit) · <https://x.com/latenightcoder/status/2150000000000000014|@latenightcoder> (X)"
+   },
+   {
+    "run": "09 Direct BigQuery finds the Maps post and a story is found",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t9",
+    "reply": true,
+    "text": "🤖 *Early Detection Review: 👍 Monitor build-up* · medium (86% sure)\n*Why:* Several independent users describe the same data loss after one update.\n• *Alert requirements:* not met yet (small accounts, no KOF author, no P0 tag). Posted early because 6 accounts tell the same story.\n• *Draft Temp Check query:* `Chrome AND (tabs OR \"session restore\") AND update` (Last 6 hours across X and Reddit)\n• *Escalate if:* An official statement or press pickup."
+   },
+   {
+    "run": "09 Direct BigQuery finds the Maps post and a story is found",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t11",
+    "reply": false,
+    "text": "THIS ALERT MEETS P0 CRITERIA · 🔷🔍 *[BigQuery · BSIP]*\n\n🟥SOCIAL ALERT🟥: Google Maps | Maps routing onto a closed bridge | X | 2400 Engagements\n[Name]: Maps routing onto a closed bridge / NEW\n[Engagement]: HIGH (2400 engagements)\n[Product]: Google Maps\n[Social Network]: X\n[Exposure Tag]: Product - Perceived bias\n[Sensitive Topic]: -\n[KOF]: No\n\nAn X user says Google Maps keeps sending drivers onto a closed bridge and calls the routing biased toward toll roads.\n\n[Link]: https://x.com/roadwatcher/status/2150000000000000002\n\n[Time/Date Post Went Live]: 2026-10-14 11:55 UTC\n\n[Code]: Product - Perceived bias,2400,roadwatcher,-,Google Maps,NEW"
+   },
+   {
+    "run": "10 the Maps card is reviewed and the watch flags the Maps post too",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t11",
+    "reply": true,
+    "text": "The agentic assistant reviewed this alert. The card above was posted before the review; the email uses these corrections:\n- Summary: X user @roadwatcher (41,000 followers) says Google Maps keeps sending drivers onto a closed bridge and calls the routing biased toward toll roads. The post does not name the bridge.\n*Alert requirements:* met for a Social Alert: P0 exposure tag (Product - Perceived bias) · 2,400 engagements (2,000+ needed)."
+   },
+   {
+    "run": "10 the Maps card is reviewed and the watch flags the Maps post too",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t11",
+    "reply": true,
+    "text": "🔭 *Also flagged by the watch “Google brand safety (all)”.* No separate Watch alert: this card already covers the post."
+   },
+   {
+    "run": "12 a story whose main post is the Pixel post",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t14",
+    "reply": false,
+    "text": "🚨 *EARLY DETECTION* · New story\n*Pixel 10 owners say batteries are swelling after the update*\n*Product:* Pixel\n*Exposure Tag:* Product - Other/general criticism (P2)\n*Sensitive Topic:* None\n*KOF:* No (5 small, non-KOF accounts)\n\n*What's happening:* Owners describe <https://x.com/pixelcritic/status/2150000000000000001|swollen batteries> on X and <https://www.reddit.com/r/GooglePixel/comments/1p9xyz/battery_swelling/|Reddit>.\n*Post:* \"My Pixel 10 battery swelled up after the latest update, the back cover is lifting.\"\n*Call:* 👍 Monitor build-up: Several independent owners describe the same hardware safety symptom\n*Activity:* 5 small accounts on X and Reddit posted about this 6 times at 7:42 AM ET\n*Next steps:*\n1. Keep monitoring for volume growth and re-check in 2 hours.\n*Posts:* <https://x.com/pixelcritic/status/2150000000000000001|@pixelcritic> (X) · <https://x.com/droidfan22/status/2150000000000000022|@droidfan22> (X) · <https://www.reddit.com/r/GooglePixel/comments/1p9xyz/battery_swelling/|@u_pixel_owner> (Reddit)"
+   },
+   {
+    "run": "12 a story whose main post is the Pixel post",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t14",
+    "reply": true,
+    "text": "🤖 *Early Detection Review: 👍 Monitor build-up* · medium (86% sure)\n*Why:* Several independent owners describe the same hardware safety symptom.\n• *Alert requirements:* not met yet (small accounts, no KOF author, no P0 tag). Posted early because 5 accounts tell the same story.\n• *Draft Temp Check query:* `\"Pixel 10\" AND (battery OR swelling OR swollen)` (Last 6 hours across X and Reddit)\n• *Escalate if:* An official statement or press pickup.\n*Related alert:* its main post already has a card (QA-1002 · BigQuery · BSIP, 8:07 AM ET)"
+   },
+   {
+    "run": "12 a story whose main post is the Pixel post",
+    "space": "spaces/AAQAonespace01",
+    "thread": "spaces/AAQAonespace01/threads/t5",
+    "reply": true,
+    "text": "🔗 *Part of a story:* 5 small accounts on X and Reddit tell it (story card QA-1006)"
+   }
+  ],
+  "test_copy": [],
+  "reactions": [
+   {
+    "run": "03 Burson alert with mistakes",
+    "on": "spaces/AAQAonespace01/messages/m3",
+    "emoji": "📰"
+   },
+   {
+    "run": "03 Burson alert with mistakes",
+    "on": "spaces/AAQAonespace01/messages/m3",
+    "emoji": "📦"
+   },
+   {
+    "run": "05 the Pixel card is reviewed",
+    "on": "spaces/AAQAonespace01/messages/m5",
+    "emoji": "❌"
+   },
+   {
+    "run": "07 the watch alert is triaged",
+    "on": "spaces/AAQAonespace01/messages/m7",
+    "emoji": "👍"
+   },
+   {
+    "run": "09 Direct BigQuery finds the Maps post and a story is found",
+    "on": "spaces/AAQAonespace01/messages/m9",
+    "emoji": "👍"
+   },
+   {
+    "run": "10 the Maps card is reviewed and the watch flags the Maps post too",
+    "on": "spaces/AAQAonespace01/messages/m11",
+    "emoji": "📰"
+   },
+   {
+    "run": "10 the Maps card is reviewed and the watch flags the Maps post too",
+    "on": "spaces/AAQAonespace01/messages/m11",
+    "emoji": "📦"
+   },
+   {
+    "run": "12 a story whose main post is the Pixel post",
+    "on": "spaces/AAQAonespace01/messages/m14",
+    "emoji": "👍"
+   }
+  ],
+  "emails": [
+   {
+    "run": "03 Burson alert with mistakes",
+    "kind": "sent",
+    "to": [
+     "tester@testing.test"
+    ],
+    "cc": [],
+    "bcc": [],
+    "subject": "[Auto-correct test] 🟥SOCIAL ALERT🟥: Gemini App | Criticism against AI Overviews | X | 29425 Engagements",
+    "text": "SOCIAL ALERT\n\nX user @edervolcelazz criticized AI Overviews in a reply, saying the answer it gave was offensive. The post does not show the answer.\n\nLink: https://x.com/edervolcelazz/status/2109566527900926417\n\n--- Alert Details ---\nName: Criticism against AI Overviews / Ongoing Issue\nEngagement: HIGH (29425 engagements)\nProduct: Gemini App\nSocial Network: X\nExposure Tag: Product - Perceived bias\nRisk Tag: -\nKOF: No\nT&S: No\nCode: Product - Perceived bias,29425,edervolcelazz,-,Gemini App,Ongoing Issue\n\nWould have gone to: To: Gemini App alert POCs; Cc: GCPA, standard CC list",
+    "html": "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\"><title>Social Alert</title></head>\n<body style=\"font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4;\">\n<div style=\"width: 100%; max-width: 680px; margin: 0 auto; background-color: #ffffff; border: 1px solid #ddd; border-radius: 8px; overflow: hidden;\">\n<div style=\"background-color: #e6392d; color: #ffffff; padding: 15px 20px; font-size: 24px; font-weight: bold; text-align: center; line-height: 30px;\">\n<a href=\"https://sites.google.com/corp/google.com/247-social-listening-site/slrr-alerts?utm_source=social_alert&amp;utm_medium=email&amp;utm_campaign=gemini_app&amp;utm_content=header_learn_more&amp;utm_term=Product%20-%20Perceived%20bias%2C29425%2Cedervolcelazz%2C-%2CGemini%20App%2COngoing%20Issue\" target=\"_blank\" style=\"float: right; background-color: #ffffff; color: #202124; font-size: 11px; font-weight: bold; text-decoration: none; padding: 4px 8px; border-radius: 4px; white-space: nowrap; margin-top: 3px; line-height: normal;\">Learn more</a>\n<img src=\"https://services.google.com/fh/files/newsletters/brandsafetylogo2.png\" alt=\"Logo\" style=\"width: 30px; height: auto; vertical-align: middle; margin-right: 15px;\">SOCIAL ALERT<img src=\"https://services.google.com/fh/files/newsletters/brandsafetylogo2.png\" alt=\"Logo\" style=\"width: 30px; height: auto; vertical-align: middle; margin-left: 15px;\"></div>\n<div style=\"padding: 20px;\">\n<div style=\"background-color: #f9f9f9; padding: 20px; border-radius: 5px; font-size: 14px; line-height: 1.6; margin-top: 20px;\">\n<p style=\"margin-top: 0; margin-bottom: 15px; white-space: pre-wrap;\">X user @edervolcelazz criticized AI Overviews in a reply, saying the answer it gave was offensive. The post does not show the answer.</p>\n\n\n<table border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" align=\"center\" style=\"margin: 0 auto;\"><tr>\n<td align=\"center\"><table border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\"><tr><td align=\"center\" bgcolor=\"#007BFF\" style=\"border-radius: 5px;\"><a href=\"https://x.com/edervolcelazz/status/2109566527900926417\" target=\"_blank\" style=\"font-size: 14px; font-family: Arial, sans-serif; color: #ffffff; text-decoration: none; padding: 10px 15px; border-radius: 5px; display: inline-block;\">View Post</a></td></tr></table></td>\n<td style=\"width: 10px;\"> </td>\n<td align=\"center\"><table border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\"><tr><td align=\"center\" bgcolor=\"#007BFF\" style=\"border-radius: 5px;\"><a href=\"https://lookerstudio.google.com/c/u/0/reporting/f3b19d3c-e8d9-401c-b384-f730c4d66af4/page/p_ath6l398kd/\" target=\"_blank\" style=\"font-size: 14px; font-family: Arial, sans-serif; color: #ffffff; text-decoration: none; padding: 10px 15px; border-radius: 5px; display: inline-block;\">View All Alerts</a></td></tr></table></td>\n<td style=\"width: 10px;\"> </td>\n<td align=\"center\"><table border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\"><tr><td align=\"center\" bgcolor=\"#007BFF\" style=\"border-radius: 5px;\"><a href=\"http://go/slrr-digest\" target=\"_blank\" style=\"font-size: 14px; font-family: Arial, sans-serif; color: #ffffff; text-decoration: none; padding: 10px 15px; border-radius: 5px; display: inline-block;\">Create Custom Alerts Digest</a></td></tr></table></td>\n</tr></table>\n<table border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" align=\"center\" style=\"margin: 20px auto 0 auto; border-top: 1px solid #e0e0e0; padding-top: 14px; width: 100%;\">\n<tr><td align=\"center\" style=\"font-size: 13px; font-weight: 500; color: #555555; padding-bottom: 8px;\">Was this alert useful?</td></tr>\n<tr><td align=\"center\"><table border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" align=\"center\" style=\"margin: 0 auto;\"><tr>\n<td align=\"center\" bgcolor=\"#ffffff\" style=\"border: 1px solid #dadce0; border-radius: 6px;\"><a href=\"https://slrr-tooling-1028310913761.us-central1.run.app/feedback?send_id=QA-1001&amp;vote=up\" target=\"_blank\" style=\"font-size: 15px; font-family: Arial, sans-serif; color: #3c4043; text-decoration: none; padding: 8px 16px; display: inline-block;\"><span style=\"font-size: 18px;\">&#x1F44D;</span> Yes</a></td>\n<td style=\"width: 12px;\"></td>\n<td align=\"center\" bgcolor=\"#ffffff\" style=\"border: 1px solid #dadce0; border-radius: 6px;\"><a href=\"https://slrr-tooling-1028310913761.us-central1.run.app/feedback?send_id=QA-1001&amp;vote=down\" target=\"_blank\" style=\"font-size: 15px; font-family: Arial, sans-serif; color: #3c4043; text-decoration: none; padding: 8px 16px; display: inline-block;\"><span style=\"font-size: 18px;\">&#x1F44E;</span> No</a></td>\n</tr></table></td></tr></table>\n</div>\n<div style=\"margin-top: 20px; margin-bottom: 20px;\">\n<div style=\"font-size: 18px; font-weight: bold; color: #333333; margin-bottom: 10px; border-bottom: 2px solid #e6392d; padding-bottom: 5px;\"><img src=\"https://services.google.com/fh/files/newsletters/brandsafetylogo.png\" alt=\"Alert Icon\" style=\"height: 20px; width: auto; vertical-align: middle; margin-right: 8px;\">Alert Details</div>\n<table style=\"width: 100%; border-collapse: collapse;\">\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">Name</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">Criticism against AI Overviews / Ongoing Issue</td></tr>\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">Engagement</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">HIGH (29425 engagements)</td></tr>\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">Product</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">Gemini App</td></tr>\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">Social Network</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">X</td></tr>\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">Exposure Tag</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">Product - Perceived bias</td></tr>\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">Risk Tag</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">-</td></tr>\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">KOF</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">No</td></tr>\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">T&S</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">No</td></tr>\n</table></div>\n<div style=\"background-color: #f4f4f4; padding: 15px; font-size: 12px; color: #666666;\">\n<div style=\"margin-bottom: 20px; padding: 10px; background-color: #e9e9e9; border-radius: 5px;\">\n<p style=\"margin-top: 0; margin-bottom: 8px; font-weight: bold; color: #333333;\">Emoji Key</p>\n<table style=\"width: 100%; border-collapse: collapse; font-size: 12px; color: #666666;\">\n<tr style=\"vertical-align: top;\"><td style=\"padding: 2px 0; width: 25px;\">⬛:</td><td style=\"padding: 2px 0;\">Post being flagged has &lt;200 engagements</td></tr>\n<tr style=\"vertical-align: top;\"><td style=\"padding: 2px 0; width: 25px;\"><span style=\"display: inline-block; width: 12px; height: 12px; vertical-align: middle; border: 1px solid #ccc; background-color: #FFD700;\"></span>:</td><td style=\"padding: 2px 0;\">Post being flagged has 200-499 engagements</td></tr>\n<tr style=\"vertical-align: top;\"><td style=\"padding: 2px 0; width: 25px;\"><span style=\"display: inline-block; width: 12px; height: 12px; vertical-align: middle; border: 1px solid #ccc; background-color: #FFA500;\"></span>:</td><td style=\"padding: 2px 0;\">Post being flagged has 500-1,999 engagements</td></tr>\n<tr style=\"vertical-align: top;\"><td style=\"padding: 2px 0; width: 25px;\"><span style=\"display: inline-block; width: 12px; height: 12px; vertical-align: middle; border: 1px solid #ccc; background-color: #DC143C;\"></span>:</td><td style=\"padding: 2px 0;\">Post being flagged 2,000+ engagements</td></tr>\n<tr style=\"vertical-align: top;\"><td style=\"padding: 2px 0; width: 25px;\">⭐:</td><td style=\"padding: 2px 0;\">Post being flagged is from a Viral KOF (separate emoji because we often see these posts to eventually have high engagement, even if they have low engagement when we alert originally)</td></tr>\n</table></div>\n<p style=\"margin: 5px 0;\">As a reminder, all alerts can be found in our Alert Dashboard at go/SLRR-Database.</p>\n<p style=\"margin: 5px 0;\">Note: Brand-Social-Sends@ and SLRR-updates@ includes xWF vendors that support Brand Social's 24/7 Social Listening &amp; Rapid Response. Please consider removing these aliases in NTK replies.</p>\n<p style=\"margin: 5px 0;\">Code: Product - Perceived bias,29425,edervolcelazz,-,Gemini App,Ongoing Issue</p>\n<p style=\"margin: 5px 0;\">Link: <a href=\"https://x.com/edervolcelazz/status/2109566527900926417\" style=\"color: #007bff; text-decoration: underline;\">https://x.com/edervolcelazz/status/2109566527900926417</a></p>\n</div></div></div><div style=\"max-width: 680px; margin: 12px auto 20px auto; font-family: Arial, sans-serif; font-size: 12px; color: #555555;\">Would have gone to: To: Gemini App alert POCs; Cc: GCPA, standard CC list</div></body></html>"
+   },
+   {
+    "run": "10 the Maps card is reviewed and the watch flags the Maps post too",
+    "kind": "sent",
+    "to": [
+     "tester@testing.test"
+    ],
+    "cc": [],
+    "bcc": [],
+    "subject": "[Auto-correct test] 🟥SOCIAL ALERT🟥: Google Maps | Maps routing onto a closed bridge | X | 2400 Engagements",
+    "text": "SOCIAL ALERT\n\nX user @roadwatcher (41,000 followers) says Google Maps keeps sending drivers onto a closed bridge and calls the routing biased toward toll roads. The post does not name the bridge.\n\nLink: https://x.com/roadwatcher/status/2150000000000000002\n\n--- Alert Details ---\nName: Maps routing onto a closed bridge / New\nEngagement: HIGH (2400 engagements)\nProduct: Google Maps\nSocial Network: X\nExposure Tag: Product - Perceived bias\nRisk Tag: -\nKOF: No\nT&S: No\nCode: Product - Perceived bias,2400,roadwatcher,-,Google Maps,NEW\n\nWould have gone to: To: Maps/Geo alert POCs; Cc: GCPA, standard CC list",
+    "html": "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\"><title>Social Alert</title></head>\n<body style=\"font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4;\">\n<div style=\"width: 100%; max-width: 680px; margin: 0 auto; background-color: #ffffff; border: 1px solid #ddd; border-radius: 8px; overflow: hidden;\">\n<div style=\"background-color: #e6392d; color: #ffffff; padding: 15px 20px; font-size: 24px; font-weight: bold; text-align: center; line-height: 30px;\">\n<a href=\"https://sites.google.com/corp/google.com/247-social-listening-site/slrr-alerts?utm_source=social_alert&amp;utm_medium=email&amp;utm_campaign=google_maps&amp;utm_content=header_learn_more&amp;utm_term=Product%20-%20Perceived%20bias%2C2400%2Croadwatcher%2C-%2CGoogle%20Maps%2CNEW\" target=\"_blank\" style=\"float: right; background-color: #ffffff; color: #202124; font-size: 11px; font-weight: bold; text-decoration: none; padding: 4px 8px; border-radius: 4px; white-space: nowrap; margin-top: 3px; line-height: normal;\">Learn more</a>\n<img src=\"https://services.google.com/fh/files/newsletters/brandsafetylogo2.png\" alt=\"Logo\" style=\"width: 30px; height: auto; vertical-align: middle; margin-right: 15px;\">SOCIAL ALERT<img src=\"https://services.google.com/fh/files/newsletters/brandsafetylogo2.png\" alt=\"Logo\" style=\"width: 30px; height: auto; vertical-align: middle; margin-left: 15px;\"></div>\n<div style=\"padding: 20px;\">\n<div style=\"background-color: #f9f9f9; padding: 20px; border-radius: 5px; font-size: 14px; line-height: 1.6; margin-top: 20px;\">\n<p style=\"margin-top: 0; margin-bottom: 15px; white-space: pre-wrap;\">X user @roadwatcher (41,000 followers) says Google Maps keeps sending drivers onto a closed bridge and calls the routing biased toward toll roads. The post does not name the bridge.</p>\n\n\n<table border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" align=\"center\" style=\"margin: 0 auto;\"><tr>\n<td align=\"center\"><table border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\"><tr><td align=\"center\" bgcolor=\"#007BFF\" style=\"border-radius: 5px;\"><a href=\"https://x.com/roadwatcher/status/2150000000000000002\" target=\"_blank\" style=\"font-size: 14px; font-family: Arial, sans-serif; color: #ffffff; text-decoration: none; padding: 10px 15px; border-radius: 5px; display: inline-block;\">View Post</a></td></tr></table></td>\n<td style=\"width: 10px;\"> </td>\n<td align=\"center\"><table border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\"><tr><td align=\"center\" bgcolor=\"#007BFF\" style=\"border-radius: 5px;\"><a href=\"https://lookerstudio.google.com/c/u/0/reporting/f3b19d3c-e8d9-401c-b384-f730c4d66af4/page/p_ath6l398kd/\" target=\"_blank\" style=\"font-size: 14px; font-family: Arial, sans-serif; color: #ffffff; text-decoration: none; padding: 10px 15px; border-radius: 5px; display: inline-block;\">View All Alerts</a></td></tr></table></td>\n<td style=\"width: 10px;\"> </td>\n<td align=\"center\"><table border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\"><tr><td align=\"center\" bgcolor=\"#007BFF\" style=\"border-radius: 5px;\"><a href=\"http://go/slrr-digest\" target=\"_blank\" style=\"font-size: 14px; font-family: Arial, sans-serif; color: #ffffff; text-decoration: none; padding: 10px 15px; border-radius: 5px; display: inline-block;\">Create Custom Alerts Digest</a></td></tr></table></td>\n</tr></table>\n<table border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" align=\"center\" style=\"margin: 20px auto 0 auto; border-top: 1px solid #e0e0e0; padding-top: 14px; width: 100%;\">\n<tr><td align=\"center\" style=\"font-size: 13px; font-weight: 500; color: #555555; padding-bottom: 8px;\">Was this alert useful?</td></tr>\n<tr><td align=\"center\"><table border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" align=\"center\" style=\"margin: 0 auto;\"><tr>\n<td align=\"center\" bgcolor=\"#ffffff\" style=\"border: 1px solid #dadce0; border-radius: 6px;\"><a href=\"https://slrr-tooling-1028310913761.us-central1.run.app/feedback?send_id=QA-1005&amp;vote=up\" target=\"_blank\" style=\"font-size: 15px; font-family: Arial, sans-serif; color: #3c4043; text-decoration: none; padding: 8px 16px; display: inline-block;\"><span style=\"font-size: 18px;\">&#x1F44D;</span> Yes</a></td>\n<td style=\"width: 12px;\"></td>\n<td align=\"center\" bgcolor=\"#ffffff\" style=\"border: 1px solid #dadce0; border-radius: 6px;\"><a href=\"https://slrr-tooling-1028310913761.us-central1.run.app/feedback?send_id=QA-1005&amp;vote=down\" target=\"_blank\" style=\"font-size: 15px; font-family: Arial, sans-serif; color: #3c4043; text-decoration: none; padding: 8px 16px; display: inline-block;\"><span style=\"font-size: 18px;\">&#x1F44E;</span> No</a></td>\n</tr></table></td></tr></table>\n</div>\n<div style=\"margin-top: 20px; margin-bottom: 20px;\">\n<div style=\"font-size: 18px; font-weight: bold; color: #333333; margin-bottom: 10px; border-bottom: 2px solid #e6392d; padding-bottom: 5px;\"><img src=\"https://services.google.com/fh/files/newsletters/brandsafetylogo.png\" alt=\"Alert Icon\" style=\"height: 20px; width: auto; vertical-align: middle; margin-right: 8px;\">Alert Details</div>\n<table style=\"width: 100%; border-collapse: collapse;\">\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">Name</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">Maps routing onto a closed bridge / New</td></tr>\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">Engagement</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">HIGH (2400 engagements)</td></tr>\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">Product</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">Google Maps</td></tr>\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">Social Network</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">X</td></tr>\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">Exposure Tag</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">Product - Perceived bias</td></tr>\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">Risk Tag</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">-</td></tr>\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">KOF</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">No</td></tr>\n<tr><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: bold; color: #555555; width: 30%;\">T&S</td><td style=\"padding: 8px; border: 1px solid #ddd; font-size: 14px;\">No</td></tr>\n</table></div>\n<div style=\"background-color: #f4f4f4; padding: 15px; font-size: 12px; color: #666666;\">\n<div style=\"margin-bottom: 20px; padding: 10px; background-color: #e9e9e9; border-radius: 5px;\">\n<p style=\"margin-top: 0; margin-bottom: 8px; font-weight: bold; color: #333333;\">Emoji Key</p>\n<table style=\"width: 100%; border-collapse: collapse; font-size: 12px; color: #666666;\">\n<tr style=\"vertical-align: top;\"><td style=\"padding: 2px 0; width: 25px;\">⬛:</td><td style=\"padding: 2px 0;\">Post being flagged has &lt;200 engagements</td></tr>\n<tr style=\"vertical-align: top;\"><td style=\"padding: 2px 0; width: 25px;\"><span style=\"display: inline-block; width: 12px; height: 12px; vertical-align: middle; border: 1px solid #ccc; background-color: #FFD700;\"></span>:</td><td style=\"padding: 2px 0;\">Post being flagged has 200-499 engagements</td></tr>\n<tr style=\"vertical-align: top;\"><td style=\"padding: 2px 0; width: 25px;\"><span style=\"display: inline-block; width: 12px; height: 12px; vertical-align: middle; border: 1px solid #ccc; background-color: #FFA500;\"></span>:</td><td style=\"padding: 2px 0;\">Post being flagged has 500-1,999 engagements</td></tr>\n<tr style=\"vertical-align: top;\"><td style=\"padding: 2px 0; width: 25px;\"><span style=\"display: inline-block; width: 12px; height: 12px; vertical-align: middle; border: 1px solid #ccc; background-color: #DC143C;\"></span>:</td><td style=\"padding: 2px 0;\">Post being flagged 2,000+ engagements</td></tr>\n<tr style=\"vertical-align: top;\"><td style=\"padding: 2px 0; width: 25px;\">⭐:</td><td style=\"padding: 2px 0;\">Post being flagged is from a Viral KOF (separate emoji because we often see these posts to eventually have high engagement, even if they have low engagement when we alert originally)</td></tr>\n</table></div>\n<p style=\"margin: 5px 0;\">As a reminder, all alerts can be found in our Alert Dashboard at go/SLRR-Database.</p>\n<p style=\"margin: 5px 0;\">Note: Brand-Social-Sends@ and SLRR-updates@ includes xWF vendors that support Brand Social's 24/7 Social Listening &amp; Rapid Response. Please consider removing these aliases in NTK replies.</p>\n<p style=\"margin: 5px 0;\">Code: Product - Perceived bias,2400,roadwatcher,-,Google Maps,NEW</p>\n<p style=\"margin: 5px 0;\">Link: <a href=\"https://x.com/roadwatcher/status/2150000000000000002\" style=\"color: #007bff; text-decoration: underline;\">https://x.com/roadwatcher/status/2150000000000000002</a></p>\n</div></div></div><div style=\"max-width: 680px; margin: 12px auto 20px auto; font-family: Arial, sans-serif; font-size: 12px; color: #555555;\">Would have gone to: To: Maps/Geo alert POCs; Cc: GCPA, standard CC list</div></body></html>"
+   }
+  ],
+  "outbox": []
+ }
+}

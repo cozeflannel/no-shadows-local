@@ -41,6 +41,7 @@ const MIRROR_MAX_GAP_MS_ = 60 * 60 * 1000;
  * Can be called from the Apps Script editor or via clasp.
  */
 function startMirror(spaceLinkOrName) {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const target = String(spaceLinkOrName === undefined || spaceLinkOrName === null ? MIRROR_TARGET_SPACE : spaceLinkOrName).trim();
   if (!target) throw new Error('Pass a training space link/name to startMirror("..."), or paste it in cell B9 on the Control tab.');
   const ss = openStore_(true);
@@ -54,6 +55,7 @@ function startMirror(spaceLinkOrName) {
 
 /** Clears cell B9 on the Control tab so live Zapier mirroring stops. */
 function stopMirror() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const ss = openStore_(false);
   const control = controlTab_(ss);
   if (control) {
@@ -67,6 +69,7 @@ function stopMirror() {
 
 /** Runs one pass of the live Zapier mirror (also called automatically every minute by poll() when B9 is set). */
 function pollMirror() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const ss = openStore_(false);
   if (typeof syncBrandSafetyGroups_ === 'function') syncBrandSafetyGroups_(ss);
   const control = controlTab_(ss) || ensureControlTab_(ss, Session.getEffectiveUser().getEmail());

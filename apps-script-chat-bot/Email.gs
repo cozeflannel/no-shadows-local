@@ -12,12 +12,16 @@
  *                                             multipart/related with the screenshot when there is one)
  *   addRecipientsToMime_(raw, to, cc)      -> the same message with addresses added (the body, including any edits
  *                                             someone made in Gmail, is untouched)
- *   emailInput_(fields, esc, noWait)       -> what the email is built from, stored on the row. escalation.kb_basis (only
+ *   emailInput_(fields, esc, noWait, changed) -> what the email is built from, stored on the row (its code as the
+ *                                             corrected alert has it: `changed`, the review's). escalation.kb_basis (only
  *                                             when KB & Guidance started the alert) is for analysts' "Why", never the email.
  *                                             no_wait (only when "Never wait on Burson", Control row 23, was ON for the
  *                                             review): the email (and the T&S form, TnsForm.gs) gets the video's
  *                                             "Timestamp in the video" line (videoStamp_); every other email is byte for
  *                                             byte as before
+ *                                             The auto-correct space's email_input.writeup (Drafts.gs draftRowFor_: the
+ *                                             write-up, Review.gs writeupOf_) is its summary; every other email is byte
+ *                                             for byte as before
  *   commsEmailInput_ / commsEmailRows_     -> Check outage & comms docs (Control tab row 20): email_input.comms_context
  *                                             (only while it was ON) adds a "Comms / Status Context" section under the
  *                                             Alert Details (Google's status when it was checked, and the approved holding
@@ -40,11 +44,15 @@ const EMAIL_INPUT_FIELDS_ = ['issue_name', 'issue_status', 'engagement_level', '
 /**
  * What an alert's email (and its recipients) is built from: the corrected values + the escalation. Stored on the row.
  * kb_basis (KB & Guidance can start alerts) is copied only when there is one, and no_wait only when "Never wait on
- * Burson" is ON (noWait), so every other row is as before.
+ * Burson" is ON (noWait), so every other row is as before. `changed` (a review's corrected fields: review.changed):
+ * Burson's code then follows them (Alert.gs alertCode_), so the email's "Code:" line and its utm_term carry the
+ * corrected alert's own [Code], never the product, tag, topic, count or status the review corrected.
  */
-function emailInput_(fields, esc, noWait) {
+function emailInput_(fields, esc, noWait, changed) {
   const values = {};
   EMAIL_INPUT_FIELDS_.forEach(k => { if (!isBlank_(fields[k])) values[k] = k === 'post_content' ? truncate_(fields[k], 1500) : fields[k]; });
+  const code = values.code && changed ? alertCode_(values.code, fields, changed) : null;
+  if (code) values.code = code;
   const input = {
     fields: values,
     escalation: {
@@ -131,7 +139,8 @@ function emailValues_(input) {
     tag: f.exposure_tag || '-', risk: asList_(f.risk_tags).join(', ') || '-',
     kof: esc.is_kof ? 'Yes' + (kofLists.length ? ` (${kofLists.join(', ')})` : '') : 'No',
     ts: input.tns_submitted ? 'Yes' : 'No',  // "whether the incident was submitted to T&S" (✍️), never why it was flagged
-    summary: f.summary || '-', link: f.post_url || '', date: f.post_date || '-', code: f.code || '-',
+    // the write-up (the auto-correct space: Drafts.gs draftRowFor_, input.writeup) in the summary's place
+    summary: input.writeup || f.summary || '-', link: f.post_url || '', date: f.post_date || '-', code: f.code || '-',
     owned: f.exposure_tag === 'Content - Negative reaction to owned social post',
     noWait: !!input.no_wait, stamp: input.no_wait ? videoStamp_(f) : '',  // Never wait on Burson only (emailInput_)
   };

@@ -98,6 +98,7 @@ const ANALYSIS_PROP_MAX_CHARS_ = 7500;  // safely under Apps Script's 9 KB per-p
  * immediately with fresh BigQuery IM comparisons and current Knowledge Base snippets.
  */
 function refreshAnalysis() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   const ss = openStore_(false);
   const wanted = readControl_(controlTab_(ss));
   const sfb = sfBursonFor_(null, wanted);
@@ -118,6 +119,7 @@ function refreshAnalysis() {
 
 /** Alias for analysts running from the Apps Script function dropdown. */
 function runBotAnalysis() {
+  if (webViewerCall_()) throw new Error('Not available from the dashboard');
   return refreshAnalysis();
 }
 
@@ -461,7 +463,11 @@ function analysisAlertChatActivity_(alertRows, chatIndex) {
         }
       });
     });
-    String(a.mirrored || '').split(/\s+/).filter(Boolean).forEach(e => mirroredEmojis.add(e));
+    // The row's `mirrored` marks count as the analyst space's emojis, but for a row of the Auto-correct flow: there
+    // they are only the bot's own, put on its corrected alert (Drafts.gs markEmojis_; that flow copies no analyst's
+    // reaction, Bot.gs analystReactions_), never an analyst's
+    const ownMarks = typeof AC_PARTITION_SUFFIX_ === 'string' && String(a.space || '').endsWith(AC_PARTITION_SUFFIX_);
+    if (!ownMarks) String(a.mirrored || '').split(/\s+/).filter(Boolean).forEach(e => mirroredEmojis.add(e));
     String(a.feedback || '').split(/\s+/).filter(Boolean).forEach(e => feedbackEmojis.add(e));
   });
 

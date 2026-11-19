@@ -62,3 +62,6 @@ scratch/
 transcripts/
 *.notes.md
 *.transcript.md
+
+# Temporary checkouts an assistant session makes while it works
+.claude/worktrees/

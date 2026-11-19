@@ -1,0 +1,48 @@
+{
+  "about": "The five story signals the owner's bot read on 15 November 2026 (a check of the fast triage): each signal's id, kind, accounts, the producer's own headline and Gemini Decisions' answers about it, as they were. Nothing else: no address, no space id, no link. The Early Detection tab's test notes each one and checks how its row reads.",
+  "signals": [
+    {
+      "alert_id": "ED-CLU-CLU-ca805de55d1d-202611151551",
+      "signal_type": "CLUSTER_EMERGENCE",
+      "accounts": 5,
+      "headline": "Low-tier claim cluster (5 accounts): They didn't even invited   😢\nWho wants techno gamerz \n👇",
+      "answers": { "g": 0.84, "r": 0.09, "i": 0.29, "n": 0.9, "c": "Content - Negative reaction to owned social post", "cp": 0.32, "p0": 0.39, "s": 0.99, "l": 1, "sc": 0.57, "sp": [0.26, 0.57, 0.11, 0.04, 0.02] },
+      "hold_back": "routine noise (routine noise 0.9, severity low 0.57)"
+    },
+    {
+      "alert_id": "ED-CLU-CLU-b37f45c04c20-202611151551",
+      "signal_type": "CLUSTER_EMERGENCE",
+      "accounts": 5,
+      "headline": "Low-tier claim cluster (5 accounts): A screenshot of an e-commerce product page for a 'Gemini Ultra' account service, p…",
+      "answers": { "g": 0.96, "r": 0.29, "i": 0.18, "n": 0.82, "c": "Product - Scams involving Google products", "cp": 0.46, "p0": 0.01, "s": 1.45, "l": 0, "sc": 0.33, "sp": [0.33, 0.2, 0.2, 0.25, 0.03] },
+      "hold_back": "no"
+    },
+    {
+      "alert_id": "ED-VEL-PRIORITY_TOPIC-9a3cca518b2684a246a42cfe2eedd230-202611151607",
+      "signal_type": "VELOCITY_SPIKE",
+      "velocity_grain": "PRIORITY_TOPIC",
+      "signal_key": "Search & Shopping",
+      "velocity_ratio": 1.9,
+      "accounts": 36,
+      "headline": "Low-tier velocity 1.9x (PRIORITY_TOPIC: Search & Shopping)",
+      "answers": { "g": 0.52, "r": 0.34, "i": 0.03, "n": 0.96, "c": "none", "cp": 0.86, "p0": 0.05, "s": 0.97, "l": 0, "sc": 0.48, "sp": [0.48, 0.25, 0.14, 0.09, 0.04] },
+      "hold_back": "no"
+    },
+    {
+      "alert_id": "ED-CLU-CLU-4ac52b079302-202611151623",
+      "signal_type": "CLUSTER_EMERGENCE",
+      "accounts": 4,
+      "headline": "Low-tier claim cluster (4 accounts): i can’t even find the site when googling it",
+      "answers": { "g": 0.4, "r": 0.11, "i": 0.12, "n": 0.95, "c": "none", "cp": 0.81, "p0": 0.01, "s": 0.59, "l": 0, "sc": 0.6, "sp": [0.6, 0.27, 0.1, 0.03, 0.01] },
+      "hold_back": "no"
+    },
+    {
+      "alert_id": "ED-CLU-CLU-d9b703e8eea6-202611151623",
+      "signal_type": "CLUSTER_EMERGENCE",
+      "accounts": 5,
+      "headline": "Low-tier claim cluster (5 accounts): A close-up, high-contrast image showing white text on a dark gray background, crit…",
+      "answers": { "g": 0.94, "r": 0.3, "i": 0.08, "n": 0.89, "c": "Product - Product failures - general software/service issues", "cp": 0.22, "p0": 0.12, "s": 1.46, "l": 1, "sc": 0.4, "sp": [0.2, 0.4, 0.22, 0.1, 0.08] },
+      "hold_back": "no"
+    }
+  ]
+}

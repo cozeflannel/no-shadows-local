@@ -31,8 +31,10 @@
  *                           lookup gives no picture for (Facebook, Reddit, Threads, LinkedIn, news and other sites;
  *                           Instagram and TikTok when their embed data shows none); never a site's logo, a banner or a
  *                           profile picture (PAGE_PIC_SKIP_RX_), never X's or Bluesky's pages (they show the author)
- *   alertPicture_(url, post) the picture under an alert the bot posts itself (a watch alert, a Direct BigQuery card):
- *                           screenshotFor_'s, else pagePicture_'s, downloaded by fetchScreenshot_
+ *   alertPicture_(url, post, pageOk) the picture under an alert the bot posts itself (a watch alert, a Direct BigQuery
+ *                           card, an Early Detection story card, a corrected alert in the Auto-correct space):
+ *                           screenshotFor_'s, else, unless pageOk is false, pagePicture_'s, downloaded by
+ *                           fetchScreenshot_. The Auto-correct space's (B10) pass false: the post's own imagery only
  *
  * Used for: the full video and audio Gemini watches and listens to (Media.gs), the thread that shows a post is a reply
  * under an alerted post or quotes one (Escalate.gs earlierAlerts_, BigQuery.gs related alerts), the post's own words in
@@ -662,8 +664,9 @@ function fetchScreenshot_(shot) {
 
 /**
  * The picture a post's page shows link previews (og:image, twitter:image), for an alert's picture when the post's own
- * lookup gives none (alertPicture_): Facebook, Reddit, Threads, LinkedIn, news and other sites, and Instagram or TikTok
- * when their embed data shows none. {url, label, video: true when the page is a video's}, or null. Social sites' pages
+ * lookup gives none (alertPicture_, unless its caller says pageOk false, as the Auto-correct space's cards do): Facebook,
+ * Reddit, Threads, LinkedIn, news and other sites, and Instagram or TikTok when their embed data shows none. {url,
+ * label, video: true when the page is a video's}, or null. Social sites' pages
  * are read as a link preview reads them (IG_EMBED_UA_: PAGE_PIC_AS_PREVIEW_RX_), other sites as the bot, then as a
  * link preview when that shows none. Never X's or Bluesky's pages (PAGE_PIC_NEVER_RX_: they show the author's picture,
  * and lookupPost_ reads their posts) or YouTube's (lookupPost_ gives its thumbnail). Cached for 30 minutes (a page
@@ -752,12 +755,15 @@ function videoLink_(url) {
 
 /**
  * The picture under an alert the bot posts itself about the post at `url` (WatchAlerts.gs watch alerts, BigQuery.gs
- * Direct BigQuery cards): the post's own, as the Social Alert email picks it (screenshotFor_ on `post`, or on
+ * Direct BigQuery cards, EarlyDetection.gs story cards, Bot.gs correctedAlertPicture_: the corrected alert in the
+ * Auto-correct space): the post's own, as the Social Alert email picks it (screenshotFor_ on `post`, or on
  * lookupPost_(url) when `post` isn't given: its photo, its video's frame, a video's thumbnail or cover, else its
- * preview), else, unless `pageOk` is false, the picture its page shows link previews (pagePicture_); downloaded by
- * fetchScreenshot_ (a PNG, JPEG, WebP or GIF of 3 MB at most). {img: {cid, mime, name, base64, label}, video: true
- * when it's a video's, or the link is a video's (videoLink_)}, or null (none, or it couldn't be downloaded: the alert
- * goes as text). Never throws.
+ * preview: what it shows from a quoted post or its link card), else, unless `pageOk` is false, the picture its page
+ * shows link previews (pagePicture_). The Auto-correct space's cards (B10) pass false: the post's own imagery only, as
+ * a site's generic image can be unrelated to the post. Downloaded by fetchScreenshot_ (a PNG, JPEG, WebP or GIF of 3 MB
+ * at most).
+ * {img: {cid, mime, name, base64, label}, video: true when it's a video's, or the link is a video's (videoLink_)}, or
+ * null (none, or it couldn't be downloaded: the alert goes as text). Never generates one. Never throws.
  */
 function alertPicture_(url, post, pageOk) {
   try {

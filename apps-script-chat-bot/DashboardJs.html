@@ -1,0 +1,3141 @@
+<script>
+/*
+ * DashboardJs.html — the live dashboard web app's behaviour (Control row 54, Live dashboard; row 55, Slide
+ * deliveries). Included by DashboardPage.html.
+ *
+ * The page asks the bot through google.script.run only (withSuccessHandler / withFailureHandler): dashSnapshot,
+ * dashDetail, dashWhyNot (DashboardData.gs, read-only), and dashDeliveries, dashDeckCheck, dashScheduleCheck,
+ * dashPreview, dashSaveDelivery, dashRunNow, dashSetDeliveryStatus (SlideDeliveries.gs). Every number and word about
+ * the bot's work on screen comes from those answers; nothing is made up, estimated or shown as a sample. A missing
+ * value is said to be missing. An answer {ok: false, denied | off | why} is shown in plain words with what to do.
+ *
+ * Every "Updated 14 s ago" and "3 min ago" counts from the bot's own clock (each answer's servedAt, plus the time
+ * passed since it arrived on this page's monotonic clock), never from the device's clock, which can be wrong.
+ *
+ * Text from the bot is always put on the page as text (never as markup); links open in a new tab and only http(s)
+ * links are made. The viewer's theme, area, view and map choices are remembered in localStorage (per viewer, inside
+ * try/catch: the page works the same without it). The Live area asks again every 60 seconds while the page is visible.
+ */
+(function () {
+  'use strict';
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // Words and constants
+  // -----------------------------------------------------------------------------------------------------------------
+
+  const REFRESH_MS = 60 * 1000;
+  const TICK_MS = 5 * 1000;
+  // what the page shows is past this age (the bot runs every minute; DashboardData.gs DL_RUN_OK_MS_): never shown as calm
+  const STALE_MS = 5 * 60 * 1000;
+  // how long a call to the bot may take before the page gives up on it (a preview or a run can take minutes)
+  const CALL_TIMEOUT_MS = { dashPreview: 330 * 1000, dashRunNow: 330 * 1000, '': 90 * 1000 };
+  const LEVELS = ['critical', 'high', 'medium', 'low'];
+  const LEVEL_WORDS = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low', unknown: 'Can\'t be sure' };
+  const LEVEL_RANK = { critical: 4, high: 3, medium: 2, low: 1, unknown: 0 };
+  const SPEEDS = ['surging', 'rising', 'steady', 'slowing', 'unknown'];
+  const SPEED_WORDS = { surging: 'Surging', rising: 'Rising', steady: 'Steady', slowing: 'Slowing', unknown: 'Speed not known' };
+  const CLUSTER_STATUS = {
+    forming: { label: 'Forming', tone: 'st-info' },
+    'at the bar': { label: 'At the bar for a card', tone: 'st-warn' },
+    carded: { label: 'Carded', tone: 'st-good' },
+    held: { label: 'Held back', tone: 'st-plain' },
+  };
+  const STATUS_TONE = {
+    'needs-review': 'st-info', 'needs-person': 'st-bad', 'fix-asked': 'st-warn', 'draft-waiting': 'st-warn', sent: 'st-good', tns: 'st-good',
+    'no-action': 'st-plain', failed: 'st-bad', superseded: 'st-plain', done: 'st-plain',
+  };
+  const KIND_WORDS = {
+    burson: 'Burson\'s alert', watch: 'Watch alert', direct: 'Direct BigQuery card', story: 'Story card',
+    update: 'Story update', early: 'Early signal', other: 'Other format', sheet: 'Sheet test',
+  };
+  const ITEM_KIND_WORDS = { alert: 'Alert', cluster: 'Story forming', health: 'The bot\'s health', stuck: 'Stuck' };
+  const VIEWS = [
+    { key: 'map', label: 'Story map' },
+    { key: 'alerts', label: 'Alerts' },
+    { key: 'pressure', label: 'Pressure' },
+    { key: 'pipeline', label: 'Pipeline' },
+    { key: 'early', label: 'Caught early' },
+    { key: 'held', label: 'Held back' },
+  ];
+  const VIEW_GO_WORDS = {
+    map: 'Show on the Story map', alerts: 'Show in Alerts', pressure: 'Show Pressure', pipeline: 'Show in Pipeline',
+    early: 'Show Caught early', held: 'Show Held back', health: 'See each source', now: 'Show what needs a person',
+    whynot: 'Look up a post',
+  };
+  const SOURCE_STATE = {
+    fresh: { label: 'Current', tone: 'st-good' }, late: { label: 'Late', tone: 'st-warn' },
+    off: { label: 'Off', tone: 'st-plain' }, missing: { label: 'No record', tone: 'st-bad' },
+  };
+  const FIELD_WORDS = {
+    issue_name: 'Issue name', issue_status: 'Issue status', product: 'Product', other_products: 'Other products',
+    exposure_tag: 'Exposure Tag', priority: 'Priority', risk_tags: 'Sensitive topics', kof: 'KOF', kof_lists: 'KOF lists',
+    engagement_level: 'Engagement level', total_engagement: 'Total engagement', social_network: 'Platform', author: 'Author',
+    post_url: 'Post', post_date: 'Posted', summary: 'Summary',
+  };
+  const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+  const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const DAY_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  // the lookback slider's stops, in hours: finer where a few hours matter, coarser out to 30 days
+  const LOOKBACK_STOPS = [1, 2, 3, 4, 6, 8, 12, 18, 24, 36, 48, 72, 96, 120, 168, 240, 336, 504, 720];
+  // what Slide deliveries says when the bot's answer gives no reason of its own (the Control tab's row 55 texts)
+  const DELIV_OFF_WHY = 'Slide deliveries is OFF on the Control tab (row 55): no pulse slides are delivered. Deliveries can be set up here and wait; Preview and Run now work once it is ON.';
+  const DELIV_SCOPE_WHY = 'The bot\'s account has not yet approved editing Google Slides (once; see the README, "Slide deliveries"). Until then Preview and Run now can\'t work.';
+  const POSITIVE_WHY = 'Not available: the source of the positive pulse is not known yet (the owner has been asked). The setting is kept; no positive slide is made from any other source.';
+
+  const ICONS = {
+    close: 'M6 6l12 12M18 6L6 18',
+    ext: 'M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5',
+    chevron: 'M6 9l6 6 6-6',
+    arrow: 'M5 12h14M13 6l6 6-6 6',
+    back: 'M19 12H5M11 18l-6-6 6-6',
+    search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4',
+    play: 'M8 5.5v13l11-6.5z',
+    pause: 'M9 5v14M15 5v14',
+    edit: 'M4 20h4L19 9l-4-4L4 16v4z',
+    plus: 'M12 5v14M5 12h14',
+    info: 'M12 8h.01M11 12h1v5h1M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z',
+    refresh: 'M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7',
+    eye: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
+  };
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // State
+  // -----------------------------------------------------------------------------------------------------------------
+
+  const S = {
+    area: 'live',
+    snap: null, snapErr: null, snapRefusal: null, loading: false, loadedAt: 0, loadedWall: 0, refreshFailed: null,
+    view: 'map', question: null, sourcesOpen: false, canSeeOpen: -1, canSeeList: false, pipelineFlash: false,
+    map: { filter: 'all', size: 'accounts', color: 'level', focus: '' },
+    alerts: { q: '', status: '', level: '', kind: '', flow: '', sort: 'newest', corrected: false },
+    held: 'today',
+    drawer: null,
+    dialog: null,
+    deliv: { loaded: false, loading: false, resp: null, err: null, results: {} },
+    editor: null,
+  };
+  // the bot's clock as its last answer told it: {at: the bot's ms, perf: this page's performance.now() then, wall: the
+  // device's clock then (performance.now() stands still while the device sleeps; the device's clock does not)}
+  const BOT_CLOCK = { at: 0, perf: 0, wall: 0 };
+  const reduceMotion = (function () {
+    try { return window.matchMedia('(prefers-reduced-motion: reduce)'); } catch (e) { return { matches: false }; }
+  })();
+  let mapObserver = null;
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // Small helpers
+  // -----------------------------------------------------------------------------------------------------------------
+
+  /** The first element matching `sel`. Pure but for the DOM. */
+  function $(sel, root) {
+    return (root || document).querySelector(sel);
+  }
+
+  /** Sets attributes on `el`: class, text, on (event handlers), style (object), aria-* (as strings), the rest as given. Never throws. */
+  function applyAttrs(el, attrs) {
+    if (!attrs) return;
+    Object.keys(attrs).forEach(k => {
+      const v = attrs[k];
+      if (v === undefined || v === null) return;
+      if (k.indexOf('aria-') === 0) { el.setAttribute(k, String(v)); return; }
+      if (v === false) return;
+      if (k === 'class') el.setAttribute('class', String(v));
+      else if (k === 'text') el.textContent = String(v);
+      else if (k === 'on') Object.keys(v).forEach(ev => el.addEventListener(ev, v[ev]));
+      else if (k === 'style' && typeof v === 'object') Object.keys(v).forEach(p => el.style.setProperty(p, v[p]));
+      else if (k === 'hidden' || k === 'disabled' || k === 'checked' || k === 'selected' || k === 'required') el[k] = !!v;
+      else if (k === 'value') el.value = String(v);
+      else el.setAttribute(k, v === true ? '' : String(v));
+    });
+  }
+
+  /** Appends children: strings and numbers become text, arrays are flattened, null and false are skipped. Never throws. */
+  function appendKids(el, kids) {
+    (kids || []).forEach(k => {
+      if (k === undefined || k === null || k === false || k === '') return;
+      if (Array.isArray(k)) appendKids(el, k);
+      else if (typeof k === 'string' || typeof k === 'number') el.appendChild(document.createTextNode(String(k)));
+      else el.appendChild(k);
+    });
+  }
+
+  /** Appends children to `el` the way h() does (arrays flattened; null, false and '' skipped). Returns `el`. Never throws. */
+  function add(el) {
+    appendKids(el, Array.prototype.slice.call(arguments, 1));
+    return el;
+  }
+
+  /** An HTML element; text is always text, never markup. Pure but for the DOM. */
+  function h(tag, attrs) {
+    const el = document.createElement(tag);
+    applyAttrs(el, attrs);
+    appendKids(el, Array.prototype.slice.call(arguments, 2));
+    return el;
+  }
+
+  /** An SVG element (attributes as strings). Pure but for the DOM. */
+  function sv(tag, attrs) {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    Object.keys(attrs || {}).forEach(k => {
+      const v = attrs[k];
+      if (v === undefined || v === null || v === false) return;
+      if (k === 'on') Object.keys(v).forEach(ev => el.addEventListener(ev, v[ev]));
+      else if (k === 'style' && typeof v === 'object') Object.keys(v).forEach(p => el.style.setProperty(p, v[p]));
+      else el.setAttribute(k, String(v));
+    });
+    appendKids(el, Array.prototype.slice.call(arguments, 2));
+    return el;
+  }
+
+  /** A line icon (decorative: hidden from screen readers). Pure but for the DOM. */
+  function icon(name, cls) {
+    return sv('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false', fill: 'none', stroke: 'currentColor',
+      'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', class: `ico${cls ? ` ${cls}` : ''}` }, sv('path', { d: ICONS[name] || '' }));
+  }
+
+  /** `v` when it is a plain object, else {}. Pure. */
+  function obj(v) {
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  }
+
+  /** `v` when it is an array, else []. Pure. */
+  function arr(v) {
+    return Array.isArray(v) ? v : [];
+  }
+
+  /** A value as one line of text ('' for none). Pure. */
+  function txt(v) {
+    return v === undefined || v === null ? '' : String(v).replace(/\s+/g, ' ').trim();
+  }
+
+  /** A finite number, or null. Pure. */
+  function numOr(v) {
+    if (v === undefined || v === null || v === '' || typeof v === 'boolean') return null;
+    const n = Number(v);
+    return isFinite(n) ? n : null;
+  }
+
+  /** A number written for people (1,234), or `none` when it is not a number. Pure. */
+  function fmt(v, none) {
+    const n = numOr(v);
+    return n === null ? (none === undefined ? 'not kept' : none) : n.toLocaleString('en-US');
+  }
+
+  /** "1 alert" / "3 alerts". Pure. */
+  function pl(n, one, many) {
+    const x = numOr(n);
+    return `${fmt(x, '0')} ${x === 1 ? one : many}`;
+  }
+
+  /** An http(s) link, or '' for anything else (never a javascript: or data: link). Pure. */
+  function safeUrl(u) {
+    const t = String(u || '').trim();
+    return /^https?:\/\/[^\s<>"']+$/i.test(t) ? t : '';
+  }
+
+  /** A link that opens in a new tab (with words for screen readers saying so); plain text when the link is not http(s). Pure but for the DOM. */
+  function extLink(url, text, cls) {
+    const u = safeUrl(url);
+    if (!u) return h('span', { class: cls || '' }, text);
+    return h('a', { href: u, target: '_blank', rel: 'noopener noreferrer', class: cls || '' },
+      text, icon('ext', 'icon-inline'), h('span', { class: 'sr-only' }, ' (opens in a new tab)'));
+  }
+
+  /** "14 s ago", "3 min ago", "2 h ago", "4 days ago" for an elapsed time in ms ('' when unknown). Pure. */
+  function agoWords(ms) {
+    const n = numOr(ms);
+    if (n === null) return '';
+    const s = Math.max(0, Math.round(n / 1000));
+    if (s < 60) return `${s} s ago`;
+    const m = Math.round(s / 60);
+    if (m < 60) return `${m} min ago`;
+    const hr = Math.round(m / 60);
+    if (hr < 48) return `${hr} h ago`;
+    const d = Math.round(hr / 24);
+    return `${d} days ago`;
+  }
+
+  /** This page's monotonic clock in ms (it never jumps when the device's clock is set). Never throws. */
+  function perfNow() {
+    try { return window.performance.now(); } catch (e) { return Date.now(); }
+  }
+
+  /** The device's clock in ms (only ever used for time passed, never for a moment). Never throws. */
+  function wallNow() {
+    try { return Date.now(); } catch (e) { return 0; }
+  }
+
+  /**
+   * The ms passed since a moment noted as (perf, wall): the larger of what the page clock and the device clock say
+   * (the page clock stands still while the device sleeps, so after waking only the device clock knows). Never throws.
+   */
+  function elapsed(perf, wall) {
+    return Math.max(0, perfNow() - perf, wall ? wallNow() - wall : 0);
+  }
+
+  /** Notes the bot's clock from an answer (servedAt; a snapshot without it: its asOf). Never throws. */
+  function noteBotClock(r) {
+    const x = obj(r);
+    const at = numOr(x.servedAt !== undefined ? x.servedAt : x.asOf);
+    if (at !== null && at > 0) { BOT_CLOCK.at = at; BOT_CLOCK.perf = perfNow(); BOT_CLOCK.wall = wallNow(); }
+  }
+
+  /** The bot's clock now (ms): its last answer's time plus the time passed since; null before any answer. Never throws. */
+  function botNow() {
+    return BOT_CLOCK.at ? BOT_CLOCK.at + elapsed(BOT_CLOCK.perf, BOT_CLOCK.wall) : null;
+  }
+
+  /** Notes that the Live answer (or its failure) came now. Never throws. */
+  function markLoaded() {
+    S.loadedAt = perfNow();
+    S.loadedWall = wallNow();
+  }
+
+  /** The ms since the Live answer (or its failure) came. Never throws. */
+  function sinceLoaded() {
+    return elapsed(S.loadedAt, S.loadedWall);
+  }
+
+  /** How long before the bot's clock now the moment `at` (ms) was ('' when unknown). Never the device's clock. Never throws. */
+  function since(at) {
+    const n = numOr(at);
+    const now = botNow();
+    return n === null || n <= 0 || now === null ? '' : agoWords(now - n);
+  }
+
+  /** A moment (ms) as "Nov 17, 9:05 AM" on this device, or in time zone `tz` with its short name. '' when unknown. Never throws. */
+  function clock(at, tz) {
+    const n = numOr(at);
+    if (n === null || n <= 0) return '';
+    const opts = { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+    if (tz) { opts.timeZone = tz; opts.timeZoneName = 'short'; }
+    try { return new Intl.DateTimeFormat('en-US', opts).format(new Date(n)); } catch (e) { return new Date(n).toLocaleString(); }
+  }
+
+  /** A time element: "3 min ago", with the full moment as its title. Pure but for the DOM. */
+  function timeEl(at) {
+    const n = numOr(at);
+    if (n === null || n <= 0) return h('span', { class: 'muted' }, 'time not kept');
+    return h('time', { datetime: new Date(n).toISOString(), title: clock(n) }, since(n) || clock(n));
+  }
+
+  /** The device's IANA time zone ('' when the browser does not say). Never throws. */
+  function deviceTz() {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { return ''; }
+  }
+
+  /** localStorage read (per viewer); null when storage is blocked or empty. Never throws. */
+  function lsGet(key) {
+    try { return window.localStorage.getItem(`dash1.${key}`); } catch (e) { return null; }
+  }
+
+  /** localStorage write (per viewer); nothing happens when storage is blocked. Never throws. */
+  function lsSet(key, value) {
+    try { window.localStorage.setItem(`dash1.${key}`, String(value)); } catch (e) { /* not remembered */ }
+  }
+
+  /** The level when it is one of the scale's words, else 'unknown'. Pure. */
+  function levelOf(l) {
+    return Object.prototype.hasOwnProperty.call(LEVEL_WORDS, l) ? l : 'unknown';
+  }
+
+  /** A seriousness pill (word and colour, with a dot). Pure but for the DOM. */
+  function levelPill(level, extraCls) {
+    const lv = levelOf(level);
+    return h('span', { class: `pill lv-${lv} ${extraCls || ''}` }, h('span', { class: 'dot', 'aria-hidden': 'true' }),
+      h('span', { class: 'sr-only' }, 'Seriousness: '), LEVEL_WORDS[lv]);
+  }
+
+  /** An alert's status pill ({key, label, derived}). Pure but for the DOM. */
+  function statusPill(st) {
+    const s = obj(st);
+    const key = txt(s.key);
+    const label = txt(s.label) || key || 'Status not kept';
+    return h('span', { class: `pill ${STATUS_TONE[key] || 'st-plain'}`, title: s.derived ? 'Worked out from what the alert\'s row keeps' : null }, label);
+  }
+
+  /** A story's status pill. Pure but for the DOM. */
+  function clusterStatusPill(status) {
+    const c = CLUSTER_STATUS[status] || { label: txt(status) || 'Status not kept', tone: 'st-plain' };
+    return h('span', { class: `pill ${c.tone}` }, c.label);
+  }
+
+  /** The words of an error, one line. Pure. */
+  function errWords(e) {
+    const m = txt((e && e.message) || e);
+    return m || 'no reason was given';
+  }
+
+  /** Scrolls `el` into view (instantly when motion is reduced). Never throws. */
+  function scrollToEl(el) {
+    if (!el) return;
+    try { el.scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'start' }); } catch (e) { el.scrollIntoView(); }
+  }
+
+  /** Shows a short message at the bottom of the screen for a few seconds. Never throws. */
+  function toast(message) {
+    const el = $('#toast');
+    if (!el) return;
+    el.textContent = message;
+    el.classList.remove('hidden');
+    clearTimeout(toast.t);
+    toast.t = setTimeout(() => el.classList.add('hidden'), 6000);
+  }
+
+  /** The focused element's focus key (data-fk) and caret, to give focus back after a part of the page is drawn again. Never throws. */
+  function rememberFocus() {
+    const a = document.activeElement;
+    const k = a && a.getAttribute ? a.getAttribute('data-fk') : null;
+    if (!k) return null;
+    let sel = null;
+    try { sel = typeof a.selectionStart === 'number' ? [a.selectionStart, a.selectionEnd] : null; } catch (e) { sel = null; }
+    return { k, sel };
+  }
+
+  /** Gives focus back to the element with the remembered focus key. Never throws. */
+  function restoreFocus(m) {
+    if (!m) return;
+    const el = Array.prototype.find.call(document.querySelectorAll('[data-fk]'), x => x.getAttribute('data-fk') === m.k);
+    if (!el) return;
+    try {
+      el.focus({ preventScroll: true });
+      if (m.sel && el.setSelectionRange) el.setSelectionRange(m.sel[0], m.sel[1]);
+    } catch (e) { /* focus stays where it is */ }
+  }
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // The bot (google.script.run)
+  // -----------------------------------------------------------------------------------------------------------------
+
+  /**
+   * Calls the bot's function `fn` with `args` through google.script.run: a promise of its answer (an object; an empty
+   * answer becomes {ok: false, why}), rejected with the Error when the call itself fails, or when no answer comes within
+   * CALL_TIMEOUT_MS (an answer after that is let go). Never throws.
+   */
+  function call(fn) {
+    const args = Array.prototype.slice.call(arguments, 1);
+    return new Promise((resolveIn, rejectIn) => {
+      let done = false;
+      const wait = CALL_TIMEOUT_MS[fn] || CALL_TIMEOUT_MS[''];
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        rejectIn(new Error(`the bot did not answer within ${Math.round(wait / 1000)} seconds`));
+      }, wait);
+      const resolve = r => { if (done) return; done = true; clearTimeout(timer); resolveIn(r); };
+      const reject = e => { if (done) return; done = true; clearTimeout(timer); rejectIn(e); };
+      let run = null;
+      try { run = window.google && window.google.script && window.google.script.run; } catch (e) { run = null; }
+      if (!run) {
+        reject(new Error('this page was opened outside the bot\'s web app, so it can\'t ask the bot (google.script.run is missing)'));
+        return;
+      }
+      try {
+        const runner = run.withSuccessHandler(r => { if (done) return; noteBotClock(r); resolve(r && typeof r === 'object' ? r : { ok: false, why: 'The bot sent back an empty answer.' }); })
+          .withFailureHandler(e => reject(e instanceof Error ? e : new Error(errWords(e))));
+        if (typeof runner[fn] !== 'function') throw new Error(`the bot has no ${fn} yet (this link may run an older version)`);
+        runner[fn].apply(runner, args);
+      } catch (e) {
+        reject(e instanceof Error ? e : new Error(errWords(e)));
+      }
+    });
+  }
+
+  /** What to show for an answer {ok: false, denied | off | why}: a titled notice with what to do and a button to try again. Pure but for the DOM. */
+  function refusalBlock(r, retry, what) {
+    const x = obj(r);
+    let title = `The dashboard could not get ${what || 'this'}`;
+    let why = txt(x.why) || 'The bot did not say why.';
+    let todo = 'Press Try again in a minute. If it keeps happening, tell the owner of the bot\'s sheet.';
+    if (x.denied) {
+      title = 'You can\'t see this yet';
+      todo = 'Once the bot\'s sheet is shared with you, press Try again (it can take up to 10 minutes to let you in).';
+    } else if (x.off) {
+      title = what === 'the deliveries' ? 'Slide deliveries is OFF' : 'The live dashboard is OFF';
+      todo = 'Once it is ON, press Try again.';
+    } else if (txt(x.todo)) {
+      todo = txt(x.todo);  // the bot's own next step for this answer (trying again would not help)
+    }
+    return h('div', { class: 'notice panel glass', role: 'alert' },
+      h('h2', {}, title), h('p', {}, why), h('p', { class: 'muted' }, h('b', {}, 'What to do: '), todo),
+      h('div', { class: 'answer-actions' }, h('button', { type: 'button', class: 'btn btn--primary', on: { click: retry } }, icon('refresh'), 'Try again')));
+  }
+
+  /** What to show when a call to the bot failed outright (the Error): what happened and what to do. Pure but for the DOM. */
+  function failBlock(e, retry, what) {
+    return h('div', { class: 'notice panel glass', role: 'alert' },
+      h('h2', {}, `The dashboard could not reach the bot for ${what || 'this'}`),
+      h('p', {}, `What happened: ${errWords(e)}.`),
+      h('p', { class: 'muted' }, h('b', {}, 'What to do: '), 'press Try again. If it keeps failing, the owner of the bot checks that the web app is deployed (README, "Live dashboard").'),
+      h('div', { class: 'answer-actions' }, h('button', { type: 'button', class: 'btn btn--primary', on: { click: retry } }, icon('refresh'), 'Try again')));
+  }
+
+  /** An inline note for a failed or refused small call (a check, a preview, a save). Pure but for the DOM. */
+  function inlineProblem(r, e) {
+    if (e) return h('div', { class: 'coverage warn', role: 'alert' }, `The bot could not be reached: ${errWords(e)}. Try again in a minute.`);
+    const x = obj(r);
+    return h('div', { class: 'coverage warn', role: 'alert' }, txt(x.why) || 'The bot did not say why it could not do this.');
+  }
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // Theme and areas
+  // -----------------------------------------------------------------------------------------------------------------
+
+  const THEME_NEXT = { device: 'light', light: 'dark', dark: 'device' };
+
+  /** The viewer's theme choice: 'device', 'light' or 'dark'. Never throws. */
+  function themeChoice() {
+    const t = lsGet('theme');
+    return t === 'light' || t === 'dark' ? t : 'device';
+  }
+
+  /** Applies a theme choice (and remembers it): Device follows prefers-color-scheme; Light and Dark set html[data-theme]. Never throws. */
+  function applyTheme(choice, remember) {
+    const root = document.documentElement;
+    if (choice === 'light' || choice === 'dark') root.setAttribute('data-theme', choice);
+    else root.removeAttribute('data-theme');
+    document.querySelectorAll('[data-theme-choice]').forEach(b => b.setAttribute('aria-pressed', String(b.getAttribute('data-theme-choice') === choice)));
+    // the phone's one button: shows the choice and moves to the next one
+    const cyc = $('#theme-cycle');
+    if (cyc) {
+      const words = { device: 'Device', light: 'Light', dark: 'Dark' };
+      const next = THEME_NEXT[choice] || 'light';
+      cyc.setAttribute('data-choice', choice in words ? choice : 'device');
+      cyc.setAttribute('aria-label', `Colour theme: ${words[choice] || 'Device'}. Press for ${words[next]}.`);
+      cyc.setAttribute('title', `Colour theme: ${words[choice] || 'Device'} (press for ${words[next]})`);
+    }
+    if (remember) lsSet('theme', choice);
+  }
+
+  /** Shows one area (Live or Slide deliveries) and loads what it needs the first time. Never throws. */
+  function setArea(area, focusTab) {
+    S.area = area === 'slides' ? 'slides' : 'live';
+    lsSet('area', S.area);
+    [['live', 'area-tab-live', 'area-live'], ['slides', 'area-tab-slides', 'area-slides']].forEach(([key, tabId, panelId]) => {
+      const tab = document.getElementById(tabId);
+      const on = S.area === key;
+      tab.setAttribute('aria-selected', String(on));
+      tab.setAttribute('tabindex', on ? '0' : '-1');
+      document.getElementById(panelId).hidden = !on;
+      if (on && focusTab) tab.focus();
+    });
+    if (S.area === 'slides') {
+      if (!S.deliv.loaded && !S.deliv.loading) loadDeliveries();
+      else renderSlides();
+    } else if (!S.loading && sinceLoaded() >= REFRESH_MS) {
+      loadSnapshot(false);
+    }
+    renderBanners();
+    updateFresh();
+  }
+
+  /** Arrow keys, Home and End move between the tabs of a tablist (and select the tab). Never throws. */
+  function tabKeys(ev, tabs, select) {
+    const i = tabs.indexOf(ev.currentTarget);
+    let j = -1;
+    if (ev.key === 'ArrowRight' || ev.key === 'ArrowDown') j = (i + 1) % tabs.length;
+    else if (ev.key === 'ArrowLeft' || ev.key === 'ArrowUp') j = (i - 1 + tabs.length) % tabs.length;
+    else if (ev.key === 'Home') j = 0;
+    else if (ev.key === 'End') j = tabs.length - 1;
+    if (j < 0) return;
+    ev.preventDefault();
+    select(j);
+  }
+
+  /** The mode chip in the header: Testing / LIVE / not known, as the bot last wrote it on the Control tab. Never throws. */
+  function renderMode() {
+    const el = $('#mode-chip');
+    if (!el) return;
+    el.replaceChildren();
+    if (!S.snap) return;
+    const m = S.snap.mode;
+    const title = 'The bot\'s mode as it last wrote it on the Control tab (C29). While Testing, emails go only to the testers in B30.';
+    const word = h('span', { class: 'mode-word' }, 'Mode: ');
+    if (m === 'testing') add(el, h('span', { class: 'pill st-warn', title }, word, 'Testing'));
+    else if (m === 'live') add(el, h('span', { class: 'pill st-info', title }, word, 'LIVE'));
+    else add(el, h('span', { class: 'pill st-plain', title }, word, 'not known'));
+  }
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // Live: loading, banners, freshness
+  // -----------------------------------------------------------------------------------------------------------------
+
+  /** Asks the bot for the Live snapshot (refresh: build it anew, past the bot's 45-second cache) and draws the answer. Never throws. */
+  function loadSnapshot(refresh) {
+    if (S.loading) return;
+    S.loading = true;
+    setRefreshBusy(true);
+    call('dashSnapshot', { refresh: !!refresh }).then(r => {
+      S.loading = false;
+      setRefreshBusy(false);
+      if (r && r.ok === true) {
+        S.snap = r;
+        S.snapErr = null;
+        S.snapRefusal = null;
+        S.refreshFailed = null;
+        markLoaded();
+      } else if (r && (r.denied || r.off)) {
+        // access taken away, or the switch turned OFF: the page shows nothing of the bot's work any more
+        S.snap = null;
+        S.snapRefusal = r;
+        markLoaded();
+      } else if (S.snap) {
+        S.refreshFailed = { why: txt(r && r.why) || 'The bot did not say why.' };
+        markLoaded();
+      } else {
+        S.snapRefusal = r || {};
+        markLoaded();
+      }
+      renderLive();
+      renderBanners();
+      renderMode();
+    }, e => {
+      S.loading = false;
+      setRefreshBusy(false);
+      markLoaded();
+      if (S.snap) S.refreshFailed = { why: `the bot could not be reached (${errWords(e)})` };
+      else S.snapErr = e;
+      renderLive();
+      renderBanners();
+    });
+  }
+
+  /** The Refresh button's busy state. Never throws. */
+  function setRefreshBusy(busy) {
+    const b = $('#refresh-btn');
+    if (!b) return;
+    b.setAttribute('aria-busy', String(!!busy));
+    b.disabled = !!busy;
+    const label = b.querySelector('span');
+    if (label) label.textContent = busy ? 'Refreshing' : 'Refresh';
+  }
+
+  /** The deployment id of this link, when the bot's answer gives it or its /exec link (…/macros/s/<id>/exec). '' otherwise. Pure. */
+  function deployIdOf(build) {
+    const b = obj(build);
+    const id = txt(b.deployId || b.deploymentId);
+    if (/^[A-Za-z0-9_-]{10,}$/.test(id)) return id;
+    // https://script.google.com/macros/s/<id>/exec, or for a Workspace domain .../a/macros/<domain>/s/<id>/exec
+    const m = txt(b.url || b.link).match(/\/macros\/(?:[^/?#]+\/)?s\/([A-Za-z0-9_-]{10,})\/exec\b/);
+    return m ? m[1] : '';
+  }
+
+  /** The banners at the top (warnings first): this link is older than the bot; the last refresh failed. Never throws. */
+  function renderBanners() {
+    const root = $('#banners');
+    if (!root) return;
+    root.replaceChildren();
+    const b = S.snap && obj(S.snap.build);
+    if (b && b.behind === true) {
+      const id = deployIdOf(b);
+      const how = id ? [h('code', { class: 'cmd' }, `clasp deploy -i ${id}`)]
+        : [h('code', { class: 'cmd' }, 'clasp deploy -i <deployment id>'), ', with the deployment id that ', h('code', { class: 'cmd' }, 'clasp deployments'), ' lists for the web app'];
+      add(root, h('div', { class: 'banner', role: 'status' }, icon('info'),
+        h('div', { class: 'banner-text' },
+          h('strong', {}, 'This link runs an older version than the bot. '),
+          `This link runs ${txt(b.web) || 'a version that is not named'}; the bot runs ${txt(b.bot) || 'a version that is not named'}, so parts of this page may be missing or out of date. `,
+          h('b', {}, 'What to do: '), 'the owner of the bot runs ', how, ' in the bot\'s folder (apps-script-chat-bot); then reload this page.')));
+    }
+    const acct = S.snap ? obj(S.snap.build) : obj(S.deliv.resp);
+    if (acct.sameAccount === false) {
+      // the bot's words start with the same sentence: the bold lead only when they are missing
+      add(root, h('div', { class: 'banner banner--bad', role: 'alert' }, icon('info'),
+        h('div', { class: 'banner-text' }, txt(acct.accountWhy) ? txt(acct.accountWhy)
+          : [h('strong', {}, 'This web app runs as a different Google account than the bot. '),
+            'The owner deploys it again signed in as the account in Control B8 (README, "Live dashboard").'])));
+    }
+    if (S.area === 'live' && S.snap && S.refreshFailed) {
+      add(root, h('div', { class: 'banner', role: 'alert' }, icon('info'),
+        h('div', { class: 'banner-text' }, h('strong', {}, 'The last refresh did not work: '), `${S.refreshFailed.why}. `,
+          `What you see is from ${since(S.snap.asOf) || 'earlier'}.`),
+        h('button', { type: 'button', class: 'btn btn--sm', on: { click: () => loadSnapshot(true) } }, 'Try again')));
+    }
+  }
+
+  /** The freshness line ("Updated 14 s ago · the bot ran 1 min ago"), updated every few seconds. Never throws. */
+  function updateFresh() {
+    const el = $('#fresh');
+    const short = $('#fresh-short');
+    if (!S.snap) { if (short) short.textContent = ''; return; }
+    const asOf = numOr(S.snap.asOf);
+    const run = numOr(obj(S.snap.health).lastRunAt);
+    const updated = asOf ? `Updated ${since(asOf) || 'at a time the bot did not say'}` : 'The bot did not say when this was read';
+    const ran = run ? `the bot ran ${since(run) || clock(run)}` : 'the bot\'s last run is not recorded';
+    if (el) el.textContent = `${updated} · ${ran}`;
+    if (short) short.textContent = `${updated}.`;
+  }
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // Live: the page
+  // -----------------------------------------------------------------------------------------------------------------
+
+  /** Draws the whole Live area from the snapshot (or the loading state, a refusal, a failure). Keeps focus where it was. Never throws. */
+  function renderLive() {
+    const root = $('#live-root');
+    if (!root) return;
+    const keep = rememberFocus();
+    root.replaceChildren();
+    if (!S.snap) {
+      if (S.snapRefusal) { root.setAttribute('aria-busy', 'false'); add(root, refusalBlock(S.snapRefusal, () => { S.snapRefusal = null; renderLive(); loadSnapshot(true); }, 'the bot\'s work')); return; }
+      if (S.snapErr) { root.setAttribute('aria-busy', 'false'); add(root, failBlock(S.snapErr, () => { S.snapErr = null; renderLive(); loadSnapshot(true); }, 'the bot\'s work')); return; }
+      root.setAttribute('aria-busy', 'true');
+      add(root, loadingBlock('Loading what the bot knows...'));
+      return;
+    }
+    root.setAttribute('aria-busy', 'false');
+    try {
+      add(root, nowStrip(), firstSection(), thenSection(), questionsSection(), viewsPanel());
+    } catch (e) {
+      root.replaceChildren(failBlock(new Error(`the bot's answer could not be shown: ${errWords(e)}`), () => loadSnapshot(true), 'the bot\'s work'));
+    }
+    restoreFocus(keep);
+    updateFresh();
+    afterViewDrawn();
+  }
+
+  /** The loading state: a skeleton and the words. Pure but for the DOM. */
+  function loadingBlock(words) {
+    return h('div', {},
+      h('div', { class: 'now panel glass', 'aria-live': 'polite' },
+        h('p', { class: 'loading-word' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), h('span', {}, words)),
+        h('div', { class: 'skel skel-head', 'aria-hidden': 'true' }),
+        h('div', { class: 'skel skel-line', style: { width: '46%' }, 'aria-hidden': 'true' }),
+        h('div', { class: 'skel skel-line', style: { width: '62%' }, 'aria-hidden': 'true' })),
+      h('div', { class: 'section', 'aria-hidden': 'true' },
+        h('div', { class: 'first-grid' }, h('div', { class: 'skel skel-card' }), h('div', { class: 'skel skel-card' }), h('div', { class: 'skel skel-card' }))));
+  }
+
+  /**
+   * How old what the page shows is, by the bot's clock (ms since the snapshot was built), and whether it is too old to
+   * show as it is: past STALE_MS, or the last refresh failed. {stale, age, why}. Never throws.
+   */
+  function staleness() {
+    const asOf = numOr(S.snap && S.snap.asOf);
+    const now = botNow();
+    const age = asOf && now !== null ? Math.max(0, now - asOf) : null;
+    const stale = !!S.refreshFailed || (age !== null && age > STALE_MS);
+    const why = S.refreshFailed ? `the last refresh did not work (${txt(S.refreshFailed.why)})` : 'no newer answer has come from the bot';
+    return { stale, age, why };
+  }
+
+  /** The Now strip: the level, the headline, how current the data is, the counts, what the page can't see, each source. Pure but for the DOM. */
+  function nowStrip() {
+    const now0 = obj(S.snap.now);
+    const health = obj(S.snap.health);
+    const old = staleness();
+    S.drawnStale = old.stale;
+    // what the page shows is old: "can't be sure", how old, and Refresh first (the cached calm headline is never shown then)
+    const now = old.stale ? Object.assign({}, now0, { level: 'unknown',
+      headline: `Can't be sure: what this page shows is from ${old.age !== null ? agoWords(old.age) : 'a time the bot did not say'}, and ${old.why}.`,
+      first: [{ kind: 'health', id: 'page', title: 'Refresh this page', why: old.why,
+        action: { text: 'Press Refresh. If it keeps failing, the owner of the bot checks that the web app is deployed (README, "Live dashboard").', view: 'refresh' } }] }) : now0;
+    const level = levelOf(now.level);
+    const serious = level === 'critical' || level === 'high' || level === 'unknown';
+    const box = h('section', { class: `now panel glass${serious ? ' edge glow' : ''}`, id: 'now', 'aria-labelledby': 'now-headline' });
+    add(box, h('div', { class: 'now-top' }, levelPill(level, 'now-level'), h('span', { class: 'fresh', id: 'fresh' })));
+    add(box, h('h1', { class: 'now-headline', id: 'now-headline' }, txt(now.headline) || txt(health.headline) || 'The bot\'s answer has no headline.'));
+    add(box, startBlock(now, level));
+
+    const c = obj(now.counts);
+    const countDefs = [['needAction', 'need a person', 'needs a person'], ['stuck', 'stuck', 'stuck'],
+      ['alerts24h', 'alerts in the last 24 hours', 'alert in the last 24 hours'], ['forming', 'stories forming', 'story forming'],
+      ['atBar', 'at the bar for a card', 'at the bar for a card']];
+    const counts = countDefs.filter(([k]) => numOr(c[k]) !== null)
+      .map(([k, many, one]) => h('div', { class: 'count-item' }, h('span', { class: 'count-num' }, fmt(c[k])), h('span', { class: 'count-label' }, numOr(c[k]) === 1 ? one : many)));
+    if (counts.length) add(box, h('div', { class: 'counts' }, counts));
+    const byLevel = LEVELS.filter(l => numOr(c[l]) !== null).map(l => `${fmt(c[l])} ${l}`);
+    if (byLevel.length) add(box, h('p', { class: 'small muted', style: { 'margin-top': '6px' } }, `The last 24 hours by seriousness: ${byLevel.join(', ')}.`));
+
+    const cannot = arr(health.cannotSee);
+    if (cannot.length) {
+      // on a phone the chips fold behind one button (the strip's first screen keeps the first thing to do in sight)
+      const chips = h('div', { class: `cansee${S.canSeeList ? ' open' : ''}`, id: 'cansee-chips' },
+        h('button', { type: 'button', class: 'chip cansee-toggle', 'aria-expanded': String(S.canSeeList), 'aria-controls': 'cansee-chips', 'data-fk': 'cansee:list',
+          on: { click: () => { S.canSeeList = !S.canSeeList; if (!S.canSeeList) S.canSeeOpen = -1; redrawNow(); } } },
+        icon('info', 'icon-inline'), `What this page can't see (${cannot.length})`, icon('chevron', 'icon-inline')),
+        h('span', { class: 'cansee-label', id: 'cansee-label' }, 'What this page can\'t see:'));
+      cannot.forEach((x, i) => {
+        add(chips, h('button', { type: 'button', class: 'chip', 'aria-expanded': String(S.canSeeOpen === i), 'aria-controls': 'cansee-explain',
+          'data-fk': `cansee:${i}`, on: { click: () => { S.canSeeOpen = S.canSeeOpen === i ? -1 : i; redrawNow(); } } }, icon('info', 'icon-inline'), txt(x.what) || 'Something not named'));
+      });
+      add(box, chips);
+      const open = cannot[S.canSeeOpen];
+      add(box, h('div', { class: 'explain', id: 'cansee-explain', hidden: !open, 'aria-live': 'polite' },
+        open ? [h('p', {}, h('b', {}, `${txt(open.what)}: `), txt(open.why) || 'The bot did not say why.'),
+          txt(open.fix) ? h('p', { class: 'muted' }, h('b', {}, 'What to do: '), txt(open.fix)) : null] : null));
+    }
+
+    const sources = arr(health.sources);
+    const status = txt(health.status);
+    const srcBtn = h('button', { type: 'button', class: 'btn btn--text btn--sm disclosure', 'aria-expanded': String(S.sourcesOpen), 'aria-controls': 'sources-list',
+      'data-fk': 'sources', id: 'sources-toggle', on: { click: () => { S.sourcesOpen = !S.sourcesOpen; redrawNow(); } } },
+    `How current each source is (${sources.length})`, icon('chevron'));
+    const list = h('ul', { class: 'sources-list', id: 'sources-list', hidden: !S.sourcesOpen });
+    sources.forEach(s => {
+      const st = SOURCE_STATE[s.state] || { label: txt(s.state) || 'Not known', tone: 'st-plain' };
+      add(list, h('li', { class: 'source-row' }, h('span', { class: `pill ${st.tone}` }, st.label),
+        h('div', { class: 'wrap-any' }, h('div', {}, txt(s.label) || txt(s.key)), txt(s.note) ? h('div', { class: 'small muted' }, txt(s.note)) : null),
+        h('span', { class: 'when' }, s.at ? timeEl(s.at) : (s.state === 'off' ? 'off' : 'no record'))));
+    });
+    if (!sources.length) add(list, h('li', { class: 'small muted' }, 'The bot\'s answer lists no sources.'));
+    const health2 = [];
+    if (txt(health.fix) && obj(S.snap.health).level !== 'ok') health2.push(h('p', { class: 'small', style: { 'margin-top': '8px' } }, h('b', {}, 'What to do: '), txt(health.fix)));
+    if (status) health2.push(h('p', { class: 'small muted', style: { 'margin-top': '8px' } }, `Status on the Control tab (B5): ${status}`));
+    add(box, h('div', { class: 'sources' }, srcBtn, list, health2));
+    return box;
+  }
+
+  /**
+   * The first thing to do, in the Now strip: the first "Look here first" item's next step and its button. Shown where
+   * the cards stack (a phone, a narrow window), so the first screen answers what to do; a wide screen has the cards
+   * right below. Null when the answer lists nothing. Pure but for the DOM.
+   */
+  function startBlock(now, level) {
+    const it = obj(arr(now.first)[0]);
+    if (!it.kind) return null;
+    const a = obj(it.action);
+    const needs = level === 'unknown' || numOr(obj(now.counts).needAction) > 0 || it.kind === 'health' || it.kind === 'stuck';
+    return h('div', { class: `now-start${needs ? ' needs' : ''}`, role: 'group', 'aria-labelledby': 'now-start-label' },
+      h('p', { class: 'now-start-label', id: 'now-start-label' }, needs ? 'Do this first' : 'Nothing needs a person. Start here'),
+      h('p', { class: 'now-start-title' }, txt(it.title) || 'Not named'),
+      txt(a.text) ? h('p', { class: 'now-start-next' }, h('b', {}, 'Next step: '), txt(a.text)) : null,
+      h('div', {}, h('button', { type: 'button', class: 'btn btn--primary', 'data-fk': `start:${it.kind}:${it.id}`,
+        on: { click: ev => runAction(a, ev.currentTarget) } }, actionWords(a), icon('arrow'))));
+  }
+
+  /** Draws the Now strip again in place (a chip or the sources list opened). Never throws. */
+  function redrawNow() {
+    const old = $('#now');
+    if (!old || !S.snap) return;
+    const keep = rememberFocus();
+    old.replaceWith(nowStrip());
+    restoreFocus(keep);
+    updateFresh();
+  }
+
+  /** The button words for an item's primary action: open its detail, or go to the view that shows it. Pure. */
+  function actionWords(action) {
+    if (obj(action).view === 'refresh') return 'Refresh';
+    const a = obj(action);
+    const d = obj(a.detail);
+    if (d.kind && d.id) return d.kind === 'cluster' ? 'Open the story' : 'Open the alert';
+    return VIEW_GO_WORDS[a.view] || 'Show it';
+  }
+
+  /** Runs an item's primary action. Never throws. */
+  function runAction(action, opener) {
+    if (obj(action).view === 'refresh') { loadSnapshot(true); return; }
+    const a = obj(action);
+    const d = obj(a.detail);
+    if (d.kind && d.id) openDetail(d.kind, d.id, false, opener);
+    else goView(a.view, a.filter);
+  }
+
+  /** Goes to what a view key names (a view tab, with its filter; the sources; the look-first list; the why-not form). Never throws. */
+  function goView(view, filter) {
+    if (view === 'health') {
+      S.sourcesOpen = true;
+      redrawNow();
+      scrollToEl($('#now'));
+      const t = $('#sources-toggle');
+      if (t) t.focus({ preventScroll: true });
+      return;
+    }
+    if (view === 'now') { scrollToEl($('#first')); return; }
+    if (view === 'whynot') { openWhyNot(); return; }
+    if (!VIEWS.some(v => v.key === view)) return;
+    setView(view, filter === undefined ? '' : filter);
+    scrollToEl($('#views'));
+  }
+
+  /** The "Look here first" section: 1-3 cards, each with why, level and a primary action. Pure but for the DOM. */
+  function firstSection() {
+    const items = arr(obj(S.snap.now).first);
+    const sec = h('section', { class: 'section', id: 'first', 'aria-labelledby': 'first-title' },
+      h('div', { class: 'section-head' }, h('h2', { class: 'section-title', id: 'first-title' }, 'Look here first'),
+        h('span', { class: 'section-note' }, 'Ranked by the bot: what needs a person (most serious, then oldest), then stories forming, then the rest of the last 24 hours.')));
+    if (!items.length) {
+      add(sec, h('div', { class: 'empty' }, h('h3', {}, 'Nothing to look at first'),
+        h('p', {}, 'The bot\'s answer lists nothing that needs a person, no story forming and no alert in the last 24 hours. The headline above says how current that is.')));
+      return sec;
+    }
+    add(sec, h('div', { class: 'first-grid' }, items.map((it, i) => itemCard(it, i))));
+    return sec;
+  }
+
+  /** One "Look here first" card. Pure but for the DOM. */
+  function itemCard(it, i) {
+    const x = obj(it);
+    const a = obj(x.action);
+    const titleId = `first-${i}`;
+    const lead = i === 0;
+    const card = h('article', { class: `item-card${lead ? ' edge glow' : ''}`, 'aria-labelledby': titleId },
+      h('div', { class: 'item-head' }, h('span', { class: 'rank', 'aria-hidden': 'true' }, String(i + 1)), levelPill(x.level),
+        h('span', { class: 'small muted' }, ITEM_KIND_WORDS[x.kind] || 'Item')),
+      h('h3', { class: 'item-title', id: titleId }, h('span', { class: 'sr-only' }, `Number ${i + 1}: `), txt(x.title) || 'Not named'),
+      txt(x.why) && txt(x.title).toLowerCase().indexOf(txt(x.why).toLowerCase()) < 0 ? h('p', { class: 'item-why' }, txt(x.why)) : null,
+      txt(a.text) ? h('p', { class: 'item-next' }, h('b', {}, 'Next step: '), txt(a.text)) : null);
+    const btn = h('button', { type: 'button', class: `btn ${lead ? 'btn--primary' : 'btn--tonal'}`, 'data-fk': `first:${x.kind}:${x.id}`,
+      on: { click: ev => runAction(a, ev.currentTarget) } }, actionWords(a), icon('arrow'));
+    add(card, h('div', { class: 'item-actions' }, btn));
+    return card;
+  }
+
+  /** The "Then" section: the next items, each with why, level and an action. Pure but for the DOM. */
+  function thenSection() {
+    const items = arr(obj(S.snap.now).then);
+    const sec = h('section', { class: 'section', 'aria-labelledby': 'then-title' },
+      h('div', { class: 'section-head' }, h('h2', { class: 'section-title', id: 'then-title' }, 'Then'),
+        h('span', { class: 'section-note' }, 'The next things in the same order.')));
+    if (!items.length) {
+      add(sec, h('p', { class: 'muted' }, 'Nothing more: the bot\'s answer lists nothing after the items above.'));
+      return sec;
+    }
+    const list = h('ul', { class: 'then-list glass' });
+    items.forEach(it => {
+      const x = obj(it);
+      const a = obj(x.action);
+      add(list, h('li', { class: 'then-row' }, levelPill(x.level),
+        h('div', { class: 'then-text' }, h('div', { class: 'then-title' }, txt(x.title) || 'Not named'),
+          h('div', { class: 'then-why' }, [txt(x.why), txt(a.text) ? `Next step: ${txt(a.text)}` : ''].filter(Boolean).join(' · '))),
+        h('button', { type: 'button', class: 'btn btn--sm btn--outlined', 'data-fk': `then:${x.kind}:${x.id}`, on: { click: ev => runAction(a, ev.currentTarget) } }, actionWords(a))));
+    });
+    add(sec, list);
+    return sec;
+  }
+
+  /** The common questions: chips; the picked one's answer card leads to the right view, filtered. Pure but for the DOM. */
+  function questionsSection() {
+    const qs = arr(S.snap.questions);
+    const sec = h('section', { class: 'section', id: 'questions', 'aria-labelledby': 'q-title' },
+      h('div', { class: 'section-head' }, h('h2', { class: 'section-title', id: 'q-title' }, 'Common questions'),
+        h('span', { class: 'section-note' }, 'Each answer comes from the same data as the rest of this page.')));
+    const chips = h('div', { class: 'questions' });
+    qs.forEach(q => {
+      const x = obj(q);
+      add(chips, h('button', { type: 'button', class: 'chip chip--q', 'aria-pressed': String(S.question === x.id), 'aria-controls': 'answer',
+        'data-fk': `q:${x.id}`, on: { click: () => { S.question = S.question === x.id ? null : x.id; redrawQuestions(); } } }, txt(x.text) || 'A question'));
+    });
+    if (!qs.some(q => obj(q).view === 'whynot')) {
+      add(chips, h('button', { type: 'button', class: 'chip chip--q', 'data-fk': 'q:whynot-form', on: { click: () => openWhyNot() } }, 'Why didn\'t a post get an alert?'));
+    }
+    add(sec, chips);
+    const q = qs.find(x => obj(x).id === S.question);
+    if (q) {
+      const x = obj(q);
+      const actions = h('div', { class: 'answer-actions' });
+      if (x.view === 'whynot') {
+        add(actions, h('button', { type: 'button', class: 'btn btn--primary', on: { click: () => openWhyNot() } }, 'Look up a post', icon('arrow')));
+      } else if (VIEW_GO_WORDS[x.view]) {
+        add(actions, h('button', { type: 'button', class: 'btn btn--primary', on: { click: () => goView(x.view, x.filter) } }, VIEW_GO_WORDS[x.view], icon('arrow')));
+      }
+      add(actions, h('button', { type: 'button', class: 'btn btn--text', on: { click: () => { S.question = null; redrawQuestions(); } } }, 'Close'));
+      // what the page shows is old: the answer (from the same snapshot) is never shown as current
+      const old = x.view === 'whynot' ? { stale: false } : staleness();
+      const said = txt(x.answer) || 'The bot\'s answer has no words for this question.';
+      add(sec, h('div', { class: 'answer glass edge', id: 'answer', role: 'region', 'aria-live': 'polite', 'aria-label': 'Answer' },
+        h('p', { class: 'answer-q' }, txt(x.text)),
+        old.stale ? h('p', { class: 'answer-a' }, h('b', {}, `Can't be sure: this answer is from ${old.age !== null ? agoWords(old.age) : 'a time the bot did not say'}, and ${old.why}. `),
+          `It said then: ${said}`) : h('p', { class: 'answer-a' }, said), actions));
+    } else {
+      add(sec, h('div', { id: 'answer', hidden: true }));
+    }
+    return sec;
+  }
+
+  /** Draws the common questions again in place. Never throws. */
+  function redrawQuestions() {
+    const old = $('#questions');
+    if (!old || !S.snap) return;
+    const keep = rememberFocus();
+    old.replaceWith(questionsSection());
+    restoreFocus(keep);
+  }
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // Live: the views
+  // -----------------------------------------------------------------------------------------------------------------
+
+  /** The views panel: the tabs and the picked view. Pure but for the DOM. */
+  function viewsPanel() {
+    const panel = h('section', { class: 'views-panel glass section', id: 'views', 'aria-label': 'Views' });
+    const tabs = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Views' });
+    const counts = { map: arr(S.snap.clusters).length, alerts: arr(S.snap.alerts).length };
+    const btns = VIEWS.map(v => h('button', { type: 'button', class: 'tab', role: 'tab', id: `tab-${v.key}`, 'aria-selected': String(S.view === v.key),
+      'aria-controls': 'view-panel', tabindex: S.view === v.key ? '0' : '-1', 'data-fk': `tab:${v.key}`,
+      on: { click: () => setView(v.key) } }, v.label, counts[v.key] !== undefined ? h('span', { class: 'count' }, String(counts[v.key])) : null));
+    btns.forEach(b => b.addEventListener('keydown', ev => tabKeys(ev, btns, j => { setView(VIEWS[j].key); const t = document.getElementById(`tab-${VIEWS[j].key}`); if (t) t.focus(); })));
+    add(tabs, btns);
+    const body = h('div', { class: 'view', id: 'view-panel', role: 'tabpanel', 'aria-labelledby': `tab-${S.view}` });
+    let content;
+    try { content = renderView(S.view); } catch (e) { content = h('div', { class: 'empty' }, h('h3', {}, 'This view could not be shown'), h('p', {}, `What happened: ${errWords(e)}.`)); }
+    add(body, content);
+    add(panel, tabs, body);
+    return panel;
+  }
+
+  /** One view's content. Pure but for the DOM. */
+  function renderView(key) {
+    if (key === 'alerts') return alertsView();
+    if (key === 'pressure') return pressureView();
+    if (key === 'pipeline') return pipelineView();
+    if (key === 'early') return earlyView();
+    if (key === 'held') return heldView();
+    return mapView();
+  }
+
+  /** Shows view `key` (with a filter from an item or a question: 'status:<key>', 'id:<story>', 'stuck', 'corrected'). Never throws. */
+  function setView(key, filter) {
+    S.view = VIEWS.some(v => v.key === key) ? key : 'map';
+    lsSet('view', S.view);
+    if (filter !== undefined) applyFilter(S.view, filter);
+    const old = $('#views');
+    if (!old || !S.snap) return;
+    const keep = rememberFocus();
+    old.replaceWith(viewsPanel());
+    restoreFocus(keep);
+    afterViewDrawn();
+  }
+
+  /** Applies a filter string to a view's controls. Never throws. */
+  function applyFilter(view, filter) {
+    const f = txt(filter);
+    if (view === 'alerts') {
+      S.alerts = { q: '', status: '', level: '', kind: '', flow: '', sort: S.alerts.sort || 'newest', corrected: false };
+      if (f.indexOf('status:') === 0) S.alerts.status = f.slice(7);
+      else if (f === 'corrected') S.alerts.corrected = true;
+    } else if (view === 'map') {
+      S.map.focus = f.indexOf('id:') === 0 ? f.slice(3) : '';
+      if (S.map.focus) S.map.filter = 'all';
+    } else if (view === 'pipeline') {
+      S.pipelineFlash = f === 'stuck';
+    }
+  }
+
+  /** Work that needs the view on the page (its size): the map's drawing, a flash on the stuck list. Never throws. */
+  function afterViewDrawn() {
+    if (!S.snap) return;
+    // the picked tab is kept in sight inside its strip (a phone shows only a few tabs at a time)
+    const tab = document.getElementById(`tab-${S.view}`);
+    const strip = tab && tab.parentNode;
+    if (strip && strip.scrollWidth > strip.clientWidth) {
+      const tr = tab.getBoundingClientRect();
+      const sr = strip.getBoundingClientRect();
+      strip.scrollLeft += (tr.left - sr.left) - (sr.width - tr.width) / 2;
+    }
+    if (S.view === 'map') {
+      const box = $('#map-box');
+      if (box) {
+        drawMap(box);
+        watchMapSize(box);
+      }
+    }
+    if (S.view === 'pipeline' && S.pipelineFlash) {
+      const st = $('#stuck');
+      if (st) { st.classList.add('flash'); scrollToEl(st); }
+      S.pipelineFlash = false;
+    }
+  }
+
+  /** A view's one-line lead ("What you're looking at: ..."). Pure but for the DOM. */
+  function lead(words) {
+    return h('p', { class: 'view-lead' }, h('b', {}, 'What you\'re looking at: '), words);
+  }
+
+  /** An empty state that says why it is empty and what to do (no dead ends). Pure but for the DOM. */
+  function emptyState(title, why, todo, action) {
+    return h('div', { class: 'empty' }, h('h3', {}, title), why ? h('p', {}, why) : null,
+      todo ? h('p', { class: 'muted' }, h('b', {}, 'What to do: '), todo) : null, action || null);
+  }
+
+  /** The cannot-see entry of the snapshot whose "what" matches `rx`, or null. Pure. */
+  function cannotSeeAbout(rx) {
+    return arr(obj(S.snap && S.snap.health).cannotSee).find(c => rx.test(txt(obj(c).what))) || null;
+  }
+
+  /** A Refresh button for empty states. Pure but for the DOM. */
+  function refreshButton() {
+    return h('button', { type: 'button', class: 'btn btn--tonal', on: { click: () => loadSnapshot(true) } }, icon('refresh'), 'Refresh');
+  }
+
+  // ---------- Story map ----------
+
+  /** A story's size value for the map's size switch (accounts, posts, engagement); null when not kept. Pure. */
+  function sizeVal(c, key) {
+    if (key === 'posts') return numOr(c.posts);
+    if (key === 'engagement') return numOr(c.engagement);
+    return numOr(c.accounts);
+  }
+
+  /** The platforms of the stories, each with its colour (one platform: its own; several: one colour for all). Pure. */
+  function platformColors(list) {
+    const names = Array.from(new Set(list.filter(c => arr(c.platforms).length === 1).map(c => txt(c.platforms[0])))).sort();
+    const map = {};
+    names.forEach((n, i) => { map[n] = i < 6 ? `var(--chart-${i + 1})` : 'var(--chart-neutral)'; });
+    return map;
+  }
+
+  /** A story's colour for the map's colour switch (seriousness, speed, platform). Pure. */
+  function nodeColor(c, pcolors) {
+    if (S.map.color === 'speed') return `var(--sp-${SPEEDS.indexOf(c.speed) >= 0 ? c.speed : 'unknown'})`;
+    if (S.map.color === 'platform') {
+      const p = arr(c.platforms);
+      if (p.length === 1) return pcolors[txt(p[0])] || 'var(--chart-neutral)';
+      return p.length ? 'var(--outline)' : 'var(--outline-variant)';
+    }
+    return `var(--lv-${levelOf(c.level)}-mark)`;
+  }
+
+  /** The stories the map's filter shows. Pure. */
+  function mapStories() {
+    const all = arr(S.snap.clusters).map(obj).filter(c => c.id !== undefined && c.id !== null);
+    const f = S.map.filter;
+    if (f === 'bar') return all.filter(c => c.status === 'at the bar');
+    if (f === 'carded') return all.filter(c => c.status === 'carded');
+    if (f === 'forming') return all.filter(c => c.status === 'forming');
+    return all;
+  }
+
+  /** The Story map view: filters, size and colour switches, the bubble map (d3) with its legend, and the list. Pure but for the DOM. */
+  function mapView() {
+    const all = arr(S.snap.clusters).map(obj);
+    const wrap = h('div');
+    const sizeWord = { accounts: 'accounts', posts: 'posts', engagement: 'engagement' }[S.map.size];
+    const colorWord = { level: 'seriousness', speed: 'speed', platform: 'platform' }[S.map.color];
+    add(wrap, lead(`the stories the Early Detection producer follows now (${all.length}), grouped by topic. Bubble size: ${sizeWord}. ` +
+      `Colour: ${colorWord}. The ring around a bubble shows its speed${reduceMotion.matches ? ' (a thicker ring is faster)' : ': it pulses faster as the story grows faster'}. ` +
+      'Numbers 1 to 3 mark the most important stories forming.'));
+    if (!all.length) {
+      const cs = cannotSeeAbout(/stor/i);
+      add(wrap, emptyState('No stories to show',
+        cs ? `${txt(cs.what)}: ${txt(cs.why)}` : 'The bot\'s answer holds no story the producer follows right now.',
+        cs && txt(cs.fix) ? txt(cs.fix) : 'Stories appear here as the Early Detection producer finds posts from several accounts telling the same story. Press Refresh to look again.',
+        refreshButton()));
+      return wrap;
+    }
+    const n = st => all.filter(c => c.status === st).length;
+    const filters = [['all', 'All', all.length], ['bar', 'At the bar', n('at the bar')], ['carded', 'Carded', n('carded')], ['forming', 'Forming', n('forming')]];
+    const tb = h('div', { class: 'toolbar' });
+    add(tb, h('div', { class: 'toolbar-group', role: 'group', 'aria-label': 'Show' }, h('span', { class: 'toolbar-label' }, 'Show'),
+      filters.map(([k, label, count]) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(S.map.filter === k), 'data-fk': `mapf:${k}`,
+        on: { click: () => { S.map.filter = k; setView('map'); } } }, label, h('span', { class: 'count' }, String(count))))));
+    add(tb, segGroup('Size', [['accounts', 'Accounts'], ['posts', 'Posts'], ['engagement', 'Engagement']], S.map.size, v => { S.map.size = v; lsSet('mapSize', v); setView('map'); }, 'maps'));
+    add(tb, segGroup('Colour', [['level', 'Seriousness'], ['speed', 'Speed'], ['platform', 'Platform']], S.map.color, v => { S.map.color = v; lsSet('mapColor', v); setView('map'); }, 'mapc'));
+    add(wrap, tb);
+    const focus = S.map.focus ? all.find(c => String(c.id) === S.map.focus) : null;
+    if (S.map.focus) {
+      add(wrap, h('div', { class: 'filter-note', role: 'status' },
+        focus ? `Showing the story your question is about: ${txt(focus.label) || txt(focus.topic) || focus.id}.` : 'The story your question was about is no longer in the bot\'s answer.',
+        h('button', { type: 'button', class: 'btn btn--sm btn--text', on: { click: () => { S.map.focus = ''; setView('map'); } } }, 'Show every story')));
+    }
+    const shown = mapStories();
+    const layout = h('div', { class: 'map-layout' });
+    const left = h('div');
+    add(left, h('div', { class: 'map-box', id: 'map-box' }));
+    add(left, mapLegend(shown));
+    const right = h('div');
+    add(right, h('h3', { class: 'overline', style: { margin: '0 0 8px' }, id: 'story-list-title' }, `The same stories as a list (${shown.length}), most important first`));
+    add(right, storyList(shown));
+    add(layout, left, right);
+    add(wrap, layout);
+    if (!shown.length) {
+      add(wrap, emptyState('No story matches this filter', `None of the ${all.length} stories is ${filters.find(f => f[0] === S.map.filter)[1].toLowerCase()}.`, 'Pick All to see every story.',
+        h('button', { type: 'button', class: 'btn btn--tonal', on: { click: () => { S.map.filter = 'all'; setView('map'); } } }, 'Show all')));
+    }
+    return wrap;
+  }
+
+  /** A labelled segmented switch (aria-pressed buttons). Pure but for the DOM. */
+  function segGroup(label, options, value, onPick, fk) {
+    return h('div', { class: 'toolbar-group' }, h('span', { class: 'toolbar-label', id: `${fk}-label` }, label),
+      h('div', { class: 'seg', role: 'group', 'aria-labelledby': `${fk}-label` },
+        options.map(([v, words]) => h('button', { type: 'button', class: 'seg-btn', 'aria-pressed': String(value === v), 'data-fk': `${fk}:${v}`,
+          on: { click: () => onPick(v) } }, words))));
+  }
+
+  /** The map's legend for the current colour switch, plus the ring, the numbers and the size notes. Pure but for the DOM. */
+  function mapLegend(shown) {
+    const items = [];
+    if (S.map.color === 'speed') {
+      SPEEDS.forEach(sp => items.push([`var(--sp-${sp})`, SPEED_WORDS[sp]]));
+    } else if (S.map.color === 'platform') {
+      const pc = platformColors(arr(S.snap.clusters).map(obj));
+      Object.keys(pc).forEach(p => items.push([pc[p], p]));
+      items.push(['var(--outline)', 'Several platforms']);
+      if (shown.some(c => !arr(c.platforms).length)) items.push(['var(--outline-variant)', 'No platform named']);
+    } else {
+      LEVELS.forEach(l => items.push([`var(--lv-${l}-mark)`, LEVEL_WORDS[l]]));
+    }
+    const legend = h('div', { class: 'legend', 'aria-label': 'Legend' },
+      items.map(([color, words]) => h('span', { class: 'legend-item' }, h('span', { class: 'legend-swatch', style: { background: color }, 'aria-hidden': 'true' }), words)),
+      h('span', { class: 'legend-item' }, h('span', { class: 'legend-ring', 'aria-hidden': 'true' }), reduceMotion.matches ? 'Ring: speed (thicker is faster)' : 'Ring: speed (pulses faster when faster)'),
+      h('span', { class: 'legend-item' }, h('span', { class: 'legend-num', 'aria-hidden': 'true' }, '1'), 'The most important stories forming'));
+    const notes = [`Bubble area follows ${S.map.size === 'posts' ? 'the posts' : S.map.size === 'engagement' ? 'the engagement' : 'the accounts'}; very small stories are drawn at a small minimum so they stay visible (the list has the exact numbers).`];
+    if (S.map.size === 'engagement' && shown.some(c => numOr(c.engagement) === null)) notes.push('A dashed outline: no engagement is kept for that story.');
+    return h('div', {}, legend, h('p', { class: 'legend-notes' }, notes.join(' ')));
+  }
+
+  /** The keyboard and screen-reader friendly list of the stories (the map's twin). Pure but for the DOM. */
+  function storyList(shown) {
+    const pc = platformColors(arr(S.snap.clusters).map(obj));
+    const list = h('ul', { class: 'story-list', 'aria-labelledby': 'story-list-title' });
+    shown.forEach(c => {
+      const label = txt(c.label) || txt(c.topic) || String(c.id);
+      const meta = [txt(c.topic), SPEED_WORDS[c.speed] || SPEED_WORDS.unknown, pl(c.accounts, 'account', 'accounts'), pl(c.posts, 'post', 'posts'),
+        `engagement ${fmt(c.engagement)}`, (CLUSTER_STATUS[c.status] || {}).label || txt(c.status)].filter(Boolean);
+      const aria = `${c.mark ? `Number ${c.mark}. ` : ''}${label}. ${LEVEL_WORDS[levelOf(c.level)]}. ${meta.join(', ')}. Open the story.`;
+      add(list, h('li', {}, h('button', { type: 'button', class: `story-row${String(c.id) === S.map.focus ? ' focus' : ''}`, id: `story-${cssId(c.id)}`,
+        'aria-label': aria, 'data-fk': `story:${c.id}`, on: { click: ev => openDetail('cluster', String(c.id), false, ev.currentTarget) } },
+      h('span', { class: 'story-dot', style: { background: nodeColor(c, pc) }, 'aria-hidden': 'true' }),
+      h('span', {}, h('span', { class: 'story-title' }, c.mark ? h('span', { class: 'rank', style: { 'margin-right': '8px', display: 'inline-grid' } }, String(c.mark)) : null, label),
+        h('span', { class: 'story-meta' }, levelPill(c.level), meta.join(' · '))))));
+    });
+    return list;
+  }
+
+  /** An id made safe for an element id. Pure. */
+  function cssId(id) {
+    return String(id).replace(/[^A-Za-z0-9_-]/g, '_');
+  }
+
+  /** Redraws the map when its box changes width (a phone turned, a window resized). Never throws. */
+  function watchMapSize(box) {
+    try {
+      if (mapObserver) mapObserver.disconnect();
+      if (!window.ResizeObserver) return;
+      let last = box.clientWidth;
+      mapObserver = new ResizeObserver(() => {
+        const w = box.clientWidth;
+        if (Math.abs(w - last) < 24) return;
+        last = w;
+        clearTimeout(watchMapSize.t);
+        watchMapSize.t = setTimeout(() => { if (document.body.contains(box)) drawMap(box); }, 150);
+      });
+      mapObserver.observe(box);
+    } catch (e) { /* drawn once */ }
+  }
+
+  /**
+   * Draws the bubble map into `box` with d3 (v7): stories packed inside their topic's circle, area by the size switch,
+   * fill by the colour switch, a ring whose pulse (or thickness, with reduced motion) shows speed, and the top three
+   * numbered with a gradient glow. Hover shows a card; a click opens the story. Without d3 it says so (the list has
+   * every story). Never throws.
+   */
+  function drawMap(box) {
+    try {
+      box.replaceChildren();
+      const items = mapStories();
+      if (!items.length) {
+        add(box, h('p', { class: 'muted', style: { padding: '24px' } }, 'No story matches this filter.'));
+        return;
+      }
+      const d3 = window.d3;
+      if (!d3 || !d3.pack || !d3.hierarchy) {
+        add(box, h('p', { class: 'muted', style: { padding: '24px' } }, 'The map could not be drawn: its drawing library (d3) did not load. Every story is in the list.'));
+        return;
+      }
+      const W = Math.max(280, Math.round(box.clientWidth || 600));
+      const H = Math.round(Math.min(680, Math.max(300, W < 600 ? W * 1.08 : W * 0.82)));
+      const TOP = 22;  // room above the topic circles for their names
+      const key = S.map.size;
+      const max = Math.max(1, ...items.map(c => sizeVal(c, key) || 0));
+      const floor = max / 30;
+      const groups = new Map();
+      items.forEach(c => {
+        const t = txt(c.topic) || 'No topic named';
+        if (!groups.has(t)) groups.set(t, []);
+        groups.get(t).push(c);
+      });
+      const root = d3.hierarchy({ children: Array.from(groups.entries()).map(([topic, list]) => ({ topic, children: list.map(c => ({ c })) })) })
+        .sum(d => (d.c ? Math.max(floor, sizeVal(d.c, key) || 0) : 0))
+        .sort((a, b) => b.value - a.value);
+      d3.pack().size([W - 8, H - TOP - 4]).padding(d => (d.depth === 0 ? 22 : 5))(root);
+      const pcolors = platformColors(arr(S.snap.clusters).map(obj));
+      const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img',
+        'aria-label': `Story map: ${items.length} ${items.length === 1 ? 'story' : 'stories'} in ${groups.size} ${groups.size === 1 ? 'topic' : 'topics'}. Every story is also in the list.` });
+      add(svg, sv('defs', {},
+        sv('linearGradient', { id: 'dashRingGrad', x1: '0', y1: '0', x2: '1', y2: '1' },
+          sv('stop', { offset: '0%', 'stop-color': '#3186ff' }), sv('stop', { offset: '55%', 'stop-color': '#ac87eb' }), sv('stop', { offset: '100%', 'stop-color': '#ee4d5d' })),
+        sv('filter', { id: 'dashGlowBlur', x: '-50%', y: '-50%', width: '200%', height: '200%' }, sv('feGaussianBlur', { stdDeviation: '3.5' }))));
+      const plot = sv('g', { transform: `translate(4,${TOP})` });
+      const topics = sv('g', { 'aria-hidden': 'true' });
+      (root.children || []).forEach(t => {
+        add(topics, sv('circle', { class: 'map-topic', cx: t.x.toFixed(1), cy: t.y.toFixed(1), r: t.r.toFixed(1) }));
+      });
+      add(plot, topics);
+      const nodes = sv('g', { 'aria-hidden': 'true' });
+      const tip = h('div', { class: 'map-tip', hidden: true, role: 'presentation' });
+      root.leaves().forEach(leaf => {
+        const c = leaf.data.c;
+        if (!c) return;
+        const r = leaf.r;
+        const dim = S.map.focus && String(c.id) !== S.map.focus;
+        const dashed = key === 'engagement' && numOr(c.engagement) === null;
+        const g = sv('g', { class: `map-node${dim ? ' dim' : ''}${String(c.id) === S.map.focus ? ' focus' : ''}${dashed ? ' dashed' : ''}`,
+          transform: `translate(${leaf.x.toFixed(1)},${leaf.y.toFixed(1)})` });
+        if (c.mark) {
+          add(g, sv('circle', { class: 'map-mark-glow', r: (r + 5).toFixed(1) }));
+          add(g, sv('circle', { class: 'map-mark-ring', r: (r + 3).toFixed(1) }));
+        }
+        const sp = SPEEDS.indexOf(c.speed) >= 0 ? c.speed : 'unknown';
+        add(g, sv('circle', { class: `map-ring spd-${sp}`, r: (r + 1.5).toFixed(1), style: { stroke: `var(--sp-${sp})` } }));
+        add(g, sv('circle', { class: 'body', r: r.toFixed(1), style: { fill: nodeColor(c, pcolors), 'fill-opacity': '0.92' } }));
+        if (r >= 24) {
+          const label = txt(c.label) || txt(c.topic) || '';
+          const fit = Math.max(4, Math.floor((r * 1.7) / 6.4));
+          add(g, sv('text', { class: 'map-label', 'text-anchor': 'middle', dy: '0.35em' }, label.length > fit ? `${label.slice(0, fit - 1).trim()}…` : label));
+        }
+        if (c.mark) {
+          const bx = r * 0.72;
+          add(g, sv('g', { class: 'map-badge', transform: `translate(${bx.toFixed(1)},${(-bx).toFixed(1)})` },
+            sv('circle', { r: '10' }), sv('text', { 'text-anchor': 'middle', dy: '0.36em' }, String(c.mark))));
+        }
+        const show = ev => {
+          tip.replaceChildren(h('b', {}, txt(c.label) || txt(c.topic) || String(c.id)),
+            h('div', {}, `${pl(c.accounts, 'account', 'accounts')} · ${pl(c.posts, 'post', 'posts')} · engagement ${fmt(c.engagement)}`),
+            h('div', {}, `${LEVEL_WORDS[levelOf(c.level)]} · ${SPEED_WORDS[sp]} · ${(CLUSTER_STATUS[c.status] || {}).label || txt(c.status)}`),
+            arr(c.platforms).length ? h('div', { class: 'muted' }, arr(c.platforms).join(', ')) : null,
+            h('div', { class: 'muted' }, 'Click to open the story'));
+          tip.hidden = false;
+          const rect = box.getBoundingClientRect();
+          const x = ev.clientX - rect.left;
+          const y = ev.clientY - rect.top;
+          const tw = Math.min(280, rect.width - 16);
+          tip.style.left = `${Math.max(8, Math.min(x + 14, rect.width - tw - 8))}px`;
+          tip.style.top = `${Math.max(8, Math.min(y + 14, rect.height - 120))}px`;
+        };
+        g.addEventListener('mouseenter', show);
+        g.addEventListener('mousemove', show);
+        g.addEventListener('mouseleave', () => { tip.hidden = true; });
+        g.addEventListener('click', () => {
+          tip.hidden = true;
+          const row = document.getElementById(`story-${cssId(c.id)}`);
+          openDetail('cluster', String(c.id), false, row || null);
+        });
+        add(nodes, g);
+      });
+      add(plot, nodes);
+      // topic names on top of everything, just above each topic's circle (never over a story)
+      const labels = sv('g', { 'aria-hidden': 'true' });
+      (root.children || []).forEach(t => {
+        const name = txt(t.data.topic);
+        const fit = Math.max(8, Math.floor((Math.max(t.r, 40) * 2.4) / 6.6));
+        add(labels, sv('text', { class: 'map-topic-label', x: t.x.toFixed(1), y: (t.y - t.r - 6).toFixed(1), 'text-anchor': 'middle' },
+          name.length > fit ? `${name.slice(0, fit - 1).trim()}…` : name));
+      });
+      add(plot, labels);
+      add(svg, plot);
+      add(box, svg, tip);
+      if (S.map.focus) {
+        const row = document.getElementById(`story-${cssId(S.map.focus)}`);
+        if (row && row.parentNode && row.closest('.story-list')) {
+          const list = row.closest('.story-list');
+          list.scrollTop = Math.max(0, row.parentNode.offsetTop - 40);
+        }
+      }
+    } catch (e) {
+      box.replaceChildren(h('p', { class: 'muted', style: { padding: '24px' } }, `The map could not be drawn (${errWords(e)}). Every story is in the list.`));
+    }
+  }
+
+  // ---------- Alerts ----------
+
+  /** The alerts the filters and the search let through, in the picked order. Pure. */
+  function filteredAlerts() {
+    const f = S.alerts;
+    const q = txt(f.q).toLowerCase();
+    const list = arr(S.snap.alerts).map(obj).filter(a => {
+      if (f.status && obj(a.status).key !== f.status) return false;
+      if (f.level && levelOf(a.level) !== f.level) return false;
+      if (f.kind && a.kind !== f.kind) return false;
+      if (f.flow && a.flow !== f.flow) return false;
+      if (f.corrected && !(numOr(a.corrections) > 0)) return false;
+      if (q) {
+        const hay = [a.id, a.issue, a.product, a.platform, a.author, a.tag, a.decision, obj(a.status).label, obj(a.owner).who, KIND_WORDS[a.kind], a.flow]
+          .concat(arr(a.topics)).map(txt).join(' ').toLowerCase();
+        if (hay.indexOf(q) < 0) return false;
+      }
+      return true;
+    });
+    const at = a => numOr(a.createdAt) || 0;
+    const by = {
+      newest: (x, y) => at(y) - at(x),
+      oldest: (x, y) => at(x) - at(y),
+      serious: (x, y) => LEVEL_RANK[levelOf(y.level)] - LEVEL_RANK[levelOf(x.level)] || at(y) - at(x),
+      engagement: (x, y) => (numOr(y.engagement) === null ? -1 : numOr(y.engagement)) - (numOr(x.engagement) === null ? -1 : numOr(x.engagement)) || at(y) - at(x),
+      issue: (x, y) => txt(x.issue).localeCompare(txt(y.issue)) || at(y) - at(x),
+    };
+    return list.sort(by[f.sort] || by.newest);
+  }
+
+  /** The Alerts view: search, filters, sort, and the list (a table on a laptop, cards on a phone). Pure but for the DOM. */
+  function alertsView() {
+    const all = arr(S.snap.alerts).map(obj);
+    const wrap = h('div');
+    const total = numOr(S.snap.alertsTotal);
+    add(wrap, lead(`the alerts of the last 7 days (${all.length}${total !== null && total > all.length ? ` of ${fmt(total)}` : ''}). ` +
+      'Status, who has it and the next step are worked out from what each alert\'s row keeps. Pick one to see everything about it.'));
+    if (!all.length) {
+      const cs = cannotSeeAbout(/^alerts/i);
+      add(wrap, emptyState('No alerts in the last 7 days',
+        cs ? `${txt(cs.what)}: ${txt(cs.why)}` : 'The Alert log has no alert recorded in the last 7 days.',
+        cs && txt(cs.fix) ? txt(cs.fix) : 'Alerts appear here as soon as the bot records them. Press Refresh to look again.', refreshButton()));
+      return wrap;
+    }
+    const opts = (vals, words) => [h('option', { value: '' }, 'All')].concat(vals.map(v => h('option', { value: v }, words(v))));
+    const uniq = pick => Array.from(new Set(all.map(pick).filter(Boolean)));
+    const statusLabels = {};
+    all.forEach(a => { const s = obj(a.status); if (s.key) statusLabels[s.key] = txt(s.label) || s.key; });
+    const select = (label, key, values, words) => h('label', { class: 'field' }, h('span', {}, label),
+      h('select', { class: 'select', 'data-fk': `af:${key}`, on: { change: ev => { S.alerts[key] = ev.target.value; redrawAlertResults(); } } },
+        opts(values, words).map(o => { if (o.value === S.alerts[key]) o.selected = true; return o; })));
+    const tb = h('div', { class: 'toolbar' });
+    add(tb, h('div', { class: 'search', role: 'search' }, icon('search'),
+      h('input', { type: 'search', class: 'input', 'aria-label': 'Search the alerts', placeholder: 'Search issue, product, author, id', value: S.alerts.q,
+        'data-fk': 'af:q', on: { input: ev => { S.alerts.q = ev.target.value; redrawAlertResults(); } } })));
+    add(tb, select('Status', 'status', Object.keys(statusLabels), v => statusLabels[v]));
+    add(tb, select('Seriousness', 'level', LEVELS.filter(l => all.some(a => levelOf(a.level) === l)), l => LEVEL_WORDS[l]));
+    add(tb, select('Kind', 'kind', uniq(a => a.kind), k => KIND_WORDS[k] || k));
+    const flows = uniq(a => a.flow);
+    if (flows.length) add(tb, select('Flow', 'flow', flows, f => f.charAt(0).toUpperCase() + f.slice(1)));
+    add(tb, h('label', { class: 'field' }, h('span', {}, 'Sort'),
+      h('select', { class: 'select', 'data-fk': 'af:sort', on: { change: ev => { S.alerts.sort = ev.target.value; redrawAlertResults(); } } },
+        [['newest', 'Newest first'], ['oldest', 'Oldest first'], ['serious', 'Most serious first'], ['engagement', 'Most engagement first'], ['issue', 'Issue, A to Z']]
+          .map(([v, w]) => h('option', { value: v, selected: S.alerts.sort === v }, w)))));
+    add(tb, h('button', { type: 'button', class: 'chip', 'aria-pressed': String(!!S.alerts.corrected), 'data-fk': 'af:corrected',
+      on: { click: () => { S.alerts.corrected = !S.alerts.corrected; setView('alerts'); } } }, 'Corrected by the bot'));
+    add(wrap, tb);
+    add(wrap, h('div', { id: 'alert-results' }, alertResults()));
+    return wrap;
+  }
+
+  /** Draws the alert results again (after a search or a filter change), keeping the controls. Never throws. */
+  function redrawAlertResults() {
+    const box = $('#alert-results');
+    if (!box) return;
+    box.replaceChildren(alertResults());
+  }
+
+  /** True when any alert filter or the search is set. Pure. */
+  function alertFiltersOn() {
+    const f = S.alerts;
+    return !!(f.q || f.status || f.level || f.kind || f.flow || f.corrected);
+  }
+
+  /** The alert results: the table, the phone cards, and the count line. Pure but for the DOM. */
+  function alertResults() {
+    const all = arr(S.snap.alerts);
+    const list = filteredAlerts();
+    const out = h('div');
+    if (alertFiltersOn()) {
+      add(out, h('div', { class: 'filter-note', role: 'status' }, `${pl(list.length, 'alert matches', 'alerts match')} the search and filters.`,
+        h('button', { type: 'button', class: 'btn btn--sm btn--text', on: { click: () => { applyFilter('alerts', ''); setView('alerts'); } } }, 'Clear the search and filters')));
+    }
+    if (!list.length) {
+      add(out, emptyState('No alert matches', `None of the ${all.length} alerts matches the search and filters.`, 'Clear the search and filters, or change them.',
+        h('button', { type: 'button', class: 'btn btn--tonal', on: { click: () => { applyFilter('alerts', ''); setView('alerts'); } } }, 'Clear the search and filters')));
+      return out;
+    }
+    const table = h('table', { class: 'table table-alerts' },
+      h('caption', { class: 'sr-only' }, 'Alerts of the last 7 days'),
+      h('thead', {}, h('tr', {}, ['Seriousness', 'Status', 'Issue', 'Product', 'Platform', 'Kind', 'When'].map(t => h('th', { scope: 'col' }, t)))));
+    const body = h('tbody');
+    const cards = h('ul', { class: 'alert-cards', 'aria-label': 'Alerts' });
+    list.forEach(a => {
+      const issue = txt(a.issue) || txt(a.id) || 'No issue name';
+      const subParts = [txt(a.author), txt(a.id)].filter(Boolean);
+      const corrected = numOr(a.corrections) > 0 ? h('span', { class: 'pill st-info', style: { 'margin-left': '6px' } }, `${a.corrections} corrected`) : null;
+      const open = ev => openDetail('alert', String(a.id), false, ev.currentTarget);
+      add(body, h('tr', {},
+        h('td', {}, levelPill(a.level)),
+        h('td', {}, statusPill(a.status)),
+        h('td', {}, h('button', { type: 'button', class: 'row-open', 'data-fk': `alert:${a.id}`, on: { click: open } }, issue), corrected,
+          subParts.length ? h('span', { class: 'sub' }, subParts.join(' · ')) : null,
+          obj(a.owner).who ? h('span', { class: 'sub' }, `With: ${txt(a.owner.who)}`) : null),
+        h('td', {}, txt(a.product) || h('span', { class: 'muted' }, 'none')),
+        h('td', {}, txt(a.platform) || h('span', { class: 'muted' }, 'none')),
+        h('td', {}, KIND_WORDS[a.kind] || txt(a.kind), a.flow ? h('span', { class: 'sub' }, `${a.flow} flow`) : null),
+        h('td', { class: 'nowrap' }, timeEl(a.createdAt))));
+      add(cards, h('li', { class: 'alert-card' },
+        h('div', { class: 'item-head' }, levelPill(a.level), statusPill(a.status), corrected),
+        h('button', { type: 'button', class: 'row-open', 'data-fk': `alertc:${a.id}`, on: { click: open } }, issue),
+        h('div', { class: 'meta' }, [txt(a.product), txt(a.platform), KIND_WORDS[a.kind] || txt(a.kind)].filter(Boolean).join(' · '), ' · ', timeEl(a.createdAt)),
+        obj(a.owner).who ? h('div', { class: 'small muted' }, `With: ${txt(a.owner.who)}`) : null));
+    });
+    add(table, body);
+    add(out, h('div', { class: 'table-wrap table-alerts' }, table), cards);
+    const total = numOr(S.snap.alertsTotal);
+    let foot = `Showing ${list.length} of the ${all.length} alerts in this answer.`;
+    if (total !== null && total > all.length) foot += ` The last 7 days hold ${fmt(total)}: this page got the newest ${all.length} (the answer is kept small).`;
+    add(out, h('p', { class: 'list-foot' }, foot));
+    return out;
+  }
+
+  // ---------- Pressure ----------
+
+  /** A change cell: +3 / -2 / 0, or "not counted" when the rows read do not reach back that far. Pure but for the DOM. */
+  function changeCell(v) {
+    const n = numOr(v);
+    if (n === null) return h('span', { class: 'muted', title: 'The rows read do not reach back that far, so it is not counted' }, 'not counted');
+    if (n > 0) return h('span', { class: 'change-up' }, `+${fmt(n)}`);
+    if (n < 0) return h('span', { class: 'change-down' }, `−${fmt(-n)}`);
+    return h('span', { class: 'muted' }, '0');
+  }
+
+  /** One pressure table (by issue, product or platform). Pure but for the DOM. */
+  function pressureTable(title, rows) {
+    const list = arr(rows).map(obj);
+    const card = h('div', { class: 'card' }, h('h3', {}, title));
+    if (!list.length) {
+      add(card, h('p', { class: 'muted' }, 'No alerts named one in these windows.'));
+      return card;
+    }
+    const max = Math.max(1, ...list.map(r => numOr(r.now24) || 0));
+    const cols = [['Name', ''], ['Last 24 h', 'num'], ['24 h before', 'num'], ['Change', 'num'], ['Last 7 days', 'num'], ['7 days before', 'num'], ['Change', 'num']];
+    add(card, h('div', { class: 'table-wrap', style: { 'margin-top': '0' } }, h('table', { class: 'table table-stack' },
+      h('thead', {}, h('tr', {}, cols.map(([c, cls]) => h('th', { scope: 'col', class: cls }, c)))),
+      h('tbody', {}, list.map(r => h('tr', {},
+        h('td', {}, h('span', { class: 'bar', style: { width: `${Math.round(((numOr(r.now24) || 0) / max) * 40)}px` }, 'aria-hidden': 'true' }), txt(r.name)),
+        h('td', { class: 'num', 'data-label': 'Last 24 h' }, fmt(r.now24, 'not counted')),
+        h('td', { class: 'num', 'data-label': '24 h before' }, fmt(r.prev24, 'not counted')),
+        h('td', { class: 'num', 'data-label': 'Change' }, changeCell(r.change24)),
+        h('td', { class: 'num', 'data-label': 'Last 7 days' }, fmt(r.now7, 'not counted')),
+        h('td', { class: 'num', 'data-label': '7 days before' }, fmt(r.prev7, 'not counted')),
+        h('td', { class: 'num', 'data-label': 'Change, 7 days' }, changeCell(r.change7))))))));
+    return card;
+  }
+
+  /** The Pressure view: alert counts by issue, product and platform (24 h and 7 days, each against the one before), the speed leaders, the bot's load. Pure but for the DOM. */
+  function pressureView() {
+    const p = obj(S.snap.pressure);
+    const wrap = h('div');
+    add(wrap, lead(`where alerts are rising: counts of ${txt(p.unit) || 'alerts'}, the last 24 hours against the 24 before, and 7 days against the 7 before. Biggest rises first.`));
+    if (!Object.keys(p).length) {
+      add(wrap, emptyState('Nothing to show', 'The bot\'s answer has no pressure figures.', 'Press Refresh to ask again.', refreshButton()));
+      return wrap;
+    }
+    if (txt(p.note)) add(wrap, h('div', { class: 'filter-note', role: 'note' }, txt(p.note)));
+    add(wrap, h('div', { style: { display: 'grid', gap: '16px', 'margin-top': '16px' } },
+      pressureTable('By issue', p.byIssue), pressureTable('By product', p.byProduct), pressureTable('By platform', p.byPlatform)));
+    const leaders = arr(p.speedLeaders).map(obj);
+    const lcard = h('div', { class: 'card' }, h('h3', {}, 'Stories growing fastest'));
+    if (obj(S.snap.switches).earlyWave !== true) add(lcard, h('p', { class: 'muted' }, 'Stories are not followed (Early Detection, row 19, is OFF), so none is shown here.'));
+    else if (!leaders.length) add(lcard, h('p', { class: 'muted' }, 'No story is rising or surging right now.'));
+    else {
+      add(lcard, h('ul', { class: 'plain-list' }, leaders.map(c => h('li', {},
+        h('button', { type: 'button', class: 'row-open', 'data-fk': `lead:${c.id}`, on: { click: ev => openDetail('cluster', String(c.id), false, ev.currentTarget) } }, txt(c.label) || String(c.id)),
+        h('div', { class: 'story-meta' }, levelPill(c.level), h('span', { class: 'pill st-warn' }, SPEED_WORDS[c.speed] || txt(c.speed)),
+          txt(c.why) ? h('span', {}, txt(c.why)) : null)))));
+    }
+    const load = obj(p.load);
+    const ldcard = h('div', { class: 'card' }, h('h3', {}, 'How hard the bot is working'));
+    if (load.measured === true) {
+      const rows = [];
+      if (numOr(load.runSec) !== null) rows.push(['Run time', `${fmt(load.runSec)} s of a ${fmt(load.budgetSec, 'not set')} s budget${numOr(load.share) !== null ? ` (${Math.round(load.share * 100)}%)` : ''}`]);
+      if (numOr(load.calls) !== null) rows.push(['Outside calls', `${fmt(load.calls)} of ${fmt(load.callBudget, 'no set number')}`]);
+      if (numOr(load.pickupP90Sec) !== null) rows.push(['Pick-up time', `90% within ${fmt(load.pickupP90Sec)} s (${pl(load.pickupRuns, 'run', 'runs')})`]);
+      const today = obj(load.today);
+      if (numOr(today.reviews) !== null || numOr(today.quickLooks) !== null) rows.push(['Today', `${pl(today.reviews, 'review', 'reviews')}, ${pl(today.quickLooks, 'quick look', 'quick looks')}`]);
+      const stop = obj(today.stop);
+      rows.push(['Safety stop today', stop.what ? `${txt(stop.what)}${stop.at ? ` at ${clock(stop.at)}` : ''}` : 'none']);
+      add(ldcard, h('dl', { class: 'kv' }, rows.map(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])));
+    } else {
+      add(ldcard, h('p', { class: 'muted' }, txt(load.why) || 'Not measured.'));
+    }
+    add(wrap, h('div', { class: 'grid-2' }, lcard, ldcard));
+    return wrap;
+  }
+
+  // ---------- Pipeline ----------
+
+  /** The Pipeline view: the stages of the last 7 days with their counts, and what is stuck (each with why and action). Pure but for the DOM. */
+  function pipelineView() {
+    const p = obj(S.snap.pipeline);
+    const wrap = h('div');
+    add(wrap, lead(`where each alert of the last ${fmt(p.days, '7')} days is, stage by stage, and what is stuck (each with why and what to do).`));
+    const stages = arr(p.stages).map(obj);
+    if (!stages.length) add(wrap, emptyState('No stages to show', 'The bot\'s answer has no pipeline figures.', 'Press Refresh to ask again.', refreshButton()));
+    else {
+      const row = h('ol', { class: 'stages', 'aria-label': 'Stages', style: { 'list-style': 'none', padding: '0' } });
+      stages.forEach((s, i) => {
+        if (i) add(row, h('li', { class: 'stage-arrow', 'aria-hidden': 'true' }, icon('arrow')));
+        add(row, h('li', { class: 'stage' }, h('div', { class: 'stage-count' }, fmt(s.count, 'not counted')), h('div', { class: 'stage-label' }, txt(s.label)),
+          txt(s.note) ? h('div', { class: 'stage-note' }, txt(s.note)) : null));
+      });
+      add(wrap, row);
+    }
+    const stuck = arr(p.stuck).map(obj);
+    const sec = h('div', { class: 'section', id: 'stuck', tabindex: '-1', style: { 'border-radius': '16px' } },
+      h('div', { class: 'section-head' }, h('h3', { class: 'section-title' }, `Stuck (${stuck.length})`),
+        h('span', { class: 'section-note' }, 'A draft waiting over 30 minutes, a fix asked over an hour ago, a failure, a story signal waiting over an hour, an outbox row waiting.')));
+    if (!stuck.length) add(sec, h('p', { class: 'muted' }, 'Nothing is stuck.'));
+    else {
+      add(sec, h('ul', { class: 'stuck-list' }, stuck.map(s => {
+        const d = obj(s.detail);
+        return h('li', { class: 'stuck-item' },
+          h('div', { class: 'wrap-any' }, h('div', { class: 'item-head' }, levelPill(s.level), s.since ? h('span', { class: 'small muted' }, 'since ', timeEl(s.since)) : null),
+            h('div', { class: 'then-title', style: { 'margin-top': '6px' } }, txt(s.title) || 'Not named'),
+            txt(s.why) ? h('p', { class: 'item-why' }, txt(s.why)) : null,
+            txt(s.action) ? h('p', { class: 'item-next' }, h('b', {}, 'Next step: '), txt(s.action)) : null),
+          d.kind && d.id ? h('div', {}, h('button', { type: 'button', class: 'btn btn--tonal btn--sm', 'data-fk': `stuck:${s.id}`,
+            on: { click: ev => openDetail(d.kind, String(d.id), false, ev.currentTarget) } }, d.kind === 'cluster' ? 'Open the story' : 'Open the alert'))
+            : safeUrl(s.link) ? h('div', {}, extLink(s.link, 'Open it in Chat', 'btn btn--tonal btn--sm')) : null);
+      })));
+    }
+    add(wrap, sec);
+    return wrap;
+  }
+
+  // ---------- Caught early ----------
+
+  /** The Caught early view: the Head start tab as the bot wrote it (its numbers and its stories). Pure but for the DOM. */
+  function earlyView() {
+    const e = obj(S.snap.early);
+    const wrap = h('div');
+    add(wrap, lead('the Head start tab as the bot wrote it: how often this app\'s own stories came before Burson\'s alerts, and by how much.'));
+    if (e.ok !== true) {
+      add(wrap, emptyState('The Head start tab can\'t be shown', txt(e.why) || 'The bot\'s answer does not say why.', 'Open the bot\'s sheet to see the tab; it is rebuilt every 10 minutes.', refreshButton()));
+      return wrap;
+    }
+    if (txt(e.rebuilt)) add(wrap, h('p', { class: 'small muted', style: { 'margin-top': '8px' } }, `Rebuilt ${txt(e.rebuilt)}.`));
+    const nums = arr(e.numbers).map(obj);
+    if (nums.length) {
+      add(wrap, h('div', { class: 'table-wrap' }, h('table', { class: 'table table-stack' },
+        h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, 'Headline number'), h('th', { scope: 'col' }, 'Last 7 days'), h('th', { scope: 'col' }, 'Last 30 days'))),
+        h('tbody', {}, nums.map(n => h('tr', {}, h('td', {}, txt(n.label)), h('td', { 'data-label': 'Last 7 days' }, txt(n.week) || '—'),
+          h('td', { 'data-label': 'Last 30 days' }, txt(n.month) || '—')))))));
+    } else {
+      add(wrap, emptyState('No headline numbers yet', 'The Head start tab has no numbers yet.', 'They come once this app has alerted on stories of its own.'));
+    }
+    const stories = arr(e.stories).map(obj);
+    add(wrap, h('h3', { class: 'section-title', style: { 'margin-top': '24px' } }, `Every story (${stories.length})`));
+    if (!stories.length) add(wrap, h('p', { class: 'muted' }, 'The Head start tab lists no story of this app\'s own yet.'));
+    else {
+      add(wrap, h('div', { class: 'table-wrap' }, h('table', { class: 'table table-stack' },
+        h('thead', {}, h('tr', {}, ['Story', 'This app alerted', 'Burson alerted', 'Head start', 'Matched on', 'Head start on the post', 'IMs\' email'].map(t => h('th', { scope: 'col' }, t)))),
+        h('tbody', {}, stories.map(s => h('tr', {},
+          h('td', {}, extLink(s.link, txt(s.story) || 'Not named'), h('span', { class: 'sub' }, [txt(s.type), txt(s.product), txt(s.tag), txt(s.appAlert)].filter(Boolean).join(' · '))),
+          h('td', { 'data-label': 'This app alerted' }, txt(s.at) || '—'),
+          h('td', { 'data-label': 'Burson alerted' }, txt(s.bursonAt) || '—'),
+          h('td', { 'data-label': 'Head start' }, txt(s.headStart) || '—'),
+          h('td', { 'data-label': 'Matched on' }, txt(s.matchedOn) || '—'),
+          // the race on the same post: Burson's first alert on one of the story's own posts (blank when Burson alerted none of them)
+          h('td', { 'data-label': 'Head start on the post' }, txt(s.postHeadStart) || '—',
+            txt(s.postBursonAt) ? h('span', { class: 'sub' }, `Burson on this post ${txt(s.postBursonAt)} ET`) : null),
+          h('td', { 'data-label': 'IMs\' email' }, txt(s.imsAt) || '—',
+            txt(s.imsHeadStart) ? h('span', { class: 'sub' }, txt(s.imsHeadStart)) : null)))))));
+    }
+    return wrap;
+  }
+
+  // ---------- Held back ----------
+
+  /** The Held back view: what was not posted and why, today or over the last 7 days. Pure but for the DOM. */
+  function heldView() {
+    const held = obj(S.snap.held);
+    const part = obj(held[S.held === 'week' ? 'week' : 'today']);
+    const days = arr(part.days).map(txt);
+    const wrap = h('div');
+    add(wrap, lead('what the bot did not post, and why: Early Detection stories let go or never reviewed, the fast triage\'s holds, Watch flags not posted, and Direct BigQuery\'s posts left out.'));
+    add(wrap, h('div', { class: 'toolbar' }, segGroup('When', [['today', 'Today'], ['week', 'Last 7 days']], S.held, v => { S.held = v; setView('held'); }, 'heldw')));
+    if (!Object.keys(held).length) {
+      add(wrap, emptyState('Nothing to show', 'The bot\'s answer has no held-back figures.', 'Press Refresh to ask again.', refreshButton()));
+      return wrap;
+    }
+    const ed = part.earlyDetection;
+    const edCard = h('div', { class: 'card' }, h('h3', {}, 'Early Detection'));
+    if (ed && typeof ed === 'object') {
+      add(edCard, h('div', { class: 'big' }, fmt(ed.total, '0')), h('p', { class: 'small muted' }, 'stories let go or never reviewed'));
+      if (arr(ed.byOutcome).length) add(edCard, h('ul', { class: 'plain-list' }, arr(ed.byOutcome).map(o => h('li', {}, `${fmt(obj(o).n)} · ${txt(obj(o).outcome)}`))));
+      if (numOr(part.fastTriage) !== null) add(edCard, h('p', { class: 'small', style: { 'margin-top': '8px' } }, `Of those, held back as routine noise by the fast triage: ${fmt(part.fastTriage)}.`));
+      if (numOr(part.fastTriageToday) !== null) add(edCard, h('p', { class: 'small muted' }, `Looked at by the fast triage today: ${fmt(part.fastTriageToday)}.`));
+    } else {
+      add(edCard, h('p', { class: 'muted' }, txt(obj(held.earlyDetection).why) || 'The Early Detection tab could not be read.'));
+    }
+    const w = part.watch;
+    const wCard = h('div', { class: 'card' }, h('h3', {}, 'Proactive watch'));
+    if (w && typeof w === 'object') {
+      add(wCard, h('div', { class: 'big' }, fmt(w.total, '0')), h('p', { class: 'small muted' }, 'flags not posted'));
+      if (arr(w.byCode).length) add(wCard, h('ul', { class: 'plain-list' }, arr(w.byCode).map(o => h('li', {}, `${fmt(obj(o).n)} · ${txt(obj(o).words) || txt(obj(o).code)}`))));
+    } else {
+      add(wCard, h('p', { class: 'muted' }, txt(obj(held.watch).why) || 'The Watch detections tab could not be read.'));
+    }
+    const d = obj(part.direct);
+    const dCard = h('div', { class: 'card' }, h('h3', {}, 'Direct BigQuery'));
+    if (d.kept === true) {
+      const words = obj(d.words);
+      const parts = ['a', 'b', 'o'].filter(k => numOr(d[k]) !== null).map(k => h('li', {}, `${fmt(d[k])} · not posted: ${txt(words[k]) || k}`));
+      const total = ['a', 'b', 'o'].reduce((s, k) => s + (numOr(d[k]) || 0), 0);
+      add(dCard, h('div', { class: 'big' }, fmt(total)), h('p', { class: 'small muted' }, 'posts not posted'), parts.length ? h('ul', { class: 'plain-list' }, parts) : null);
+    } else {
+      add(dCard, h('p', { class: 'muted' }, txt(d.why) || 'Not kept for this window.'));
+    }
+    add(wrap, h('div', { class: 'grid-3' }, edCard, wCard, dCard));
+
+    const inDays = r => !days.length || days.indexOf(txt(r.day)) >= 0;
+    const edRows = arr(obj(held.earlyDetection).rows).map(obj).filter(inDays);
+    add(wrap, h('h3', { class: 'section-title', style: { 'margin-top': '24px' } }, `Early Detection stories not carded (${edRows.length})`));
+    if (!edRows.length) add(wrap, h('p', { class: 'muted' }, obj(held.earlyDetection).ok === false ? (txt(obj(held.earlyDetection).why) || 'The Early Detection tab could not be read.') : 'None in this window.'));
+    else {
+      add(wrap, h('ul', { class: 'stuck-list' }, edRows.map(r => h('li', { class: 'stuck-item' }, h('div', { class: 'wrap-any' },
+        h('div', { class: 'item-head' }, h('span', { class: 'pill st-plain' }, txt(r.outcome) || 'Not named'), r.at ? timeEl(r.at) : h('span', { class: 'small muted' }, txt(r.when))),
+        h('div', { class: 'then-title', style: { 'margin-top': '6px' } }, r.link ? extLink(r.link, txt(r.story) || 'The story') : (txt(r.story) || 'Not named')),
+        txt(r.why) ? h('p', { class: 'item-why' }, txt(r.why)) : null,
+        h('p', { class: 'small muted' }, [r.accounts !== null && r.accounts !== undefined ? pl(r.accounts, 'account', 'accounts') : '', txt(r.platforms), txt(r.tag)].filter(Boolean).join(' · ')))))));
+    }
+    const wRows = arr(obj(held.watch).rows).map(obj).filter(inDays);
+    add(wrap, h('h3', { class: 'section-title', style: { 'margin-top': '24px' } }, `Watch flags not posted (${wRows.length})`));
+    if (!wRows.length) add(wrap, h('p', { class: 'muted' }, obj(held.watch).ok === false ? (txt(obj(held.watch).why) || 'The Watch detections tab could not be read.') : 'None in this window.'));
+    else {
+      add(wrap, h('ul', { class: 'stuck-list' }, wRows.map(r => h('li', { class: 'stuck-item' }, h('div', { class: 'wrap-any' },
+        h('div', { class: 'item-head' }, h('span', { class: 'pill st-plain' }, txt(r.watch) || 'Watch'), timeEl(r.at)),
+        h('div', { class: 'then-title', style: { 'margin-top': '6px' } }, txt(r.issue) || 'No issue named'),
+        txt(r.why) ? h('p', { class: 'item-why' }, txt(r.why)) : null,
+        h('p', { class: 'small muted' }, [txt(r.network), txt(r.author)].filter(Boolean).join(' · '), r.post ? ' · ' : '', r.post ? extLink(r.post, 'Open the post') : null))))));
+    }
+    return wrap;
+  }
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // The detail drawer (a story or an alert, SPEC 3.7)
+  // -----------------------------------------------------------------------------------------------------------------
+
+  /** Opens the drawer on one alert or story and asks the bot for it (`push`: from inside the drawer, so Back returns). Never throws. */
+  function openDetail(kind, id, push, opener) {
+    const prev = S.drawer;
+    const stack = prev && push ? prev.stack.concat([{ kind: prev.kind, id: prev.id }]) : [];
+    S.drawer = { kind, id, stack, resp: null, err: null, loading: true, opener: prev ? prev.opener : (opener || document.activeElement) };
+    renderDrawer(true);
+    const mine = S.drawer;
+    call('dashDetail', kind, id).then(r => {
+      if (S.drawer !== mine) return;
+      mine.loading = false;
+      mine.resp = r;
+      renderDrawer(false);
+    }, e => {
+      if (S.drawer !== mine) return;
+      mine.loading = false;
+      mine.err = e;
+      renderDrawer(false);
+    });
+  }
+
+  /** Closes the drawer and gives focus back to what opened it. Never throws. */
+  function closeDrawer() {
+    const d = S.drawer;
+    S.drawer = null;
+    const root = $('#overlay-root');
+    const drawer = $('#drawer');
+    const scrim = $('#drawer-scrim');
+    if (drawer) drawer.classList.remove('on');
+    if (scrim) scrim.classList.remove('on');
+    document.removeEventListener('keydown', drawerKeys, true);
+    setTimeout(() => {
+      if (S.drawer) return;
+      if (drawer && drawer.parentNode === root) drawer.remove();
+      if (scrim && scrim.parentNode === root) scrim.remove();
+    }, reduceMotion.matches ? 0 : 320);
+    const back = d && d.opener;
+    if (back && document.body.contains(back) && back.focus) back.focus();
+  }
+
+  /** Escape closes the drawer; Tab stays inside it. Never throws. */
+  function drawerKeys(ev) {
+    const drawer = $('#drawer');
+    if (!drawer || !S.drawer) return;
+    if (ev.key === 'Escape') { ev.preventDefault(); closeDrawer(); return; }
+    if (ev.key === 'Tab') trapTab(ev, drawer);
+  }
+
+  /** Keeps Tab focus inside `box`. Never throws. */
+  function trapTab(ev, box) {
+    const f = Array.prototype.filter.call(box.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'),
+      el => el.offsetParent !== null || el === document.activeElement);
+    if (!f.length) return;
+    const first = f[0];
+    const last = f[f.length - 1];
+    if (ev.shiftKey && (document.activeElement === first || !box.contains(document.activeElement))) { ev.preventDefault(); last.focus(); }
+    else if (!ev.shiftKey && (document.activeElement === last || !box.contains(document.activeElement))) { ev.preventDefault(); first.focus(); }
+  }
+
+  /** Draws the drawer (glass; full screen on a phone): the recommended action first, then every part of the answer. Never throws. */
+  function renderDrawer(opening) {
+    const d = S.drawer;
+    if (!d) return;
+    const root = $('#overlay-root');
+    let scrim = $('#drawer-scrim');
+    let drawer = $('#drawer');
+    if (!drawer) {
+      scrim = h('div', { class: 'scrim', id: 'drawer-scrim', on: { click: closeDrawer } });
+      drawer = h('aside', { class: 'drawer', id: 'drawer', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'drawer-title' });
+      add(root, scrim, drawer);
+      const sc = scrim;
+      const dr = drawer;
+      requestAnimationFrame(() => { if (S.drawer) { sc.classList.add('on'); dr.classList.add('on'); } });
+    } else {
+      scrim.classList.add('on');
+      drawer.classList.add('on');
+    }
+    document.addEventListener('keydown', drawerKeys, true);
+    const r = obj(d.resp);
+    const head = h('div', { class: 'drawer-head' });
+    const titleText = d.loading ? (d.kind === 'cluster' ? 'Opening the story' : 'Opening the alert') : r.ok === true ? (txt(r.title) || txt(r.id) || 'Not named')
+      : (d.kind === 'cluster' ? 'The story could not be opened' : 'The alert could not be opened');
+    const pills = h('div', { class: 'pills' });
+    if (r.ok === true) {
+      add(pills, h('span', { class: 'pill st-plain' }, r.kind === 'cluster' ? 'Story' : (KIND_WORDS[r.alertKind] || 'Alert')), levelPill(r.level));
+      if (r.kind === 'cluster') add(pills, clusterStatusPill(obj(r.status).key));
+      else add(pills, statusPill(r.status));
+    }
+    add(head, h('div', { style: { 'min-width': '0', flex: '1 1 auto' } }, h('h2', { id: 'drawer-title' }, titleText), pills));
+    const btns = h('div', { class: 'btns' });
+    if (d.stack.length) {
+      add(btns, h('button', { type: 'button', class: 'btn btn--icon', 'aria-label': 'Back to the previous item',
+        on: { click: () => { const p = d.stack[d.stack.length - 1]; const keepStack = d.stack.slice(0, -1); openDetail(p.kind, p.id, false); S.drawer.stack = keepStack; S.drawer.opener = d.opener; renderDrawer(false); } } }, icon('back')));
+    }
+    add(btns, h('button', { type: 'button', class: 'btn btn--icon', id: 'drawer-close', 'aria-label': 'Close the panel', on: { click: closeDrawer } }, icon('close')));
+    add(head, btns);
+    const body = h('div', { class: 'drawer-body' });
+    if (d.loading) {
+      add(body, h('p', { class: 'loading-word' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Reading what the bot keeps about it...'),
+        h('div', { class: 'skel skel-card', style: { height: '90px', 'margin-top': '16px' }, 'aria-hidden': 'true' }),
+        h('div', { class: 'skel skel-line', style: { width: '80%' }, 'aria-hidden': 'true' }), h('div', { class: 'skel skel-line', style: { width: '60%' }, 'aria-hidden': 'true' }));
+    } else if (d.err || r.ok !== true) {
+      const retry = () => openDetail(d.kind, d.id, false, d.opener);
+      add(body, d.err ? failBlock(d.err, retry, 'this item') : refusalBlock(r, retry, 'this item'));
+    } else {
+      try { add(body, detailBody(r)); } catch (e) { add(body, failBlock(new Error(`its answer could not be shown: ${errWords(e)}`), () => openDetail(d.kind, d.id, false, d.opener), 'this item')); }
+    }
+    drawer.replaceChildren(head, body);
+    drawer.setAttribute('aria-busy', String(!!d.loading));
+    if (opening || !drawer.contains(document.activeElement)) {
+      const c = $('#drawer-close');
+      if (c) c.focus({ preventScroll: true });
+    }
+  }
+
+  /** A titled section of the drawer. Pure but for the DOM. */
+  function dSection(title, kids) {
+    return h('section', { class: 'd-section' }, h('h3', {}, title), kids);
+  }
+
+  /** The drawer's body for a dashDetail answer (SPEC 3.7). Pure but for the DOM. */
+  function detailBody(r) {
+    const out = h('div');
+    const owner = obj(r.owner);
+    const action = obj(r.action);
+    add(out, dSection('What to do', h('div', { class: 'todo edge glow-soft' },
+      h('p', { class: 'todo-label' }, 'Recommended next step'),
+      h('p', { class: 'todo-text' }, txt(action.text) || 'The bot keeps no next step for this.'),
+      owner.who ? h('p', { class: 'small muted', style: { 'margin-top': '8px' } },
+        `Who has it: ${txt(owner.who)}${txt(owner.why) ? ` (${txt(owner.why)})` : ''}.${owner.derived ? ' Worked out from its state: the bot keeps no owner per alert.' : ''}`) : null)));
+    const why = [txt(r.levelWhy) ? h('p', {}, h('b', {}, `${LEVEL_WORDS[levelOf(r.level)]}: `), txt(r.levelWhy)) : null,
+      txt(r.explain) ? h('p', { class: 'muted', style: { 'margin-top': '6px' } }, txt(r.explain)) : null];
+    if (why.some(Boolean)) add(out, dSection('Why', why));
+
+    if (r.kind === 'cluster' && r.cluster) add(out, clusterFacts(obj(r.cluster)));
+
+    const posts = arr(r.posts).map(obj);
+    add(out, dSection(`Posts, in time order (${posts.length})`, posts.length
+      ? h('ol', { class: 'feed' }, posts.map(p => h('li', { class: 'feed-item' },
+        h('div', { class: 'feed-head' }, p.at ? timeEl(p.at) : h('span', {}, 'time not kept'), txt(p.author) ? h('span', {}, `· ${txt(p.author)}`) : null,
+          txt(p.platform) ? h('span', {}, `· ${txt(p.platform)}`) : null, numOr(p.engagement) !== null ? h('span', {}, `· engagement ${fmt(p.engagement)}`) : null),
+        txt(p.text) ? h('p', { class: 'feed-text' }, txt(p.text)) : null,
+        h('div', { class: 'feed-links' }, p.url ? extLink(p.url, 'Open the post') : h('span', { class: 'muted' }, 'No link kept'),
+          txt(p.source) ? h('span', { class: 'muted' }, txt(p.source)) : null))))
+      : h('p', { class: 'muted' }, 'No posts are kept for it.')));
+
+    const chat = arr(r.chat).map(obj);
+    add(out, dSection(`Chat messages (${chat.length})`, chat.length
+      ? h('ol', { class: 'feed' }, chat.map(m => h('li', { class: 'feed-item' },
+        h('div', { class: 'feed-head' }, m.at ? timeEl(m.at) : h('span', {}, 'time not kept'), txt(m.who) ? h('span', {}, `· ${txt(m.who)}`) : null,
+          txt(m.kind) ? h('span', { class: 'pill st-plain' }, txt(m.kind)) : null),
+        txt(m.text) ? h('p', { class: 'feed-text' }, txt(m.text)) : null,
+        m.link ? h('div', { class: 'feed-links' }, extLink(m.link, 'Open in Chat')) : null)))
+      : h('p', { class: 'muted' }, 'No Chat messages are kept for it.')));
+
+    if (r.alert) add(out, alertFacts(obj(r.alert)));
+
+    const tl = arr(r.timeline).map(obj);
+    add(out, dSection('Timeline', tl.length
+      ? h('ol', { class: 'timeline' }, tl.map(t => h('li', {}, h('div', { class: 'small muted' }, clock(t.at) || 'time not kept'), h('div', {}, txt(t.what)))))
+      : h('p', { class: 'muted' }, 'No times are kept for it.')));
+
+    const rel = arr(r.related).map(obj);
+    if (rel.length) {
+      add(out, dSection('Related', h('ul', { class: 'plain-list' }, rel.map(x => h('li', {},
+        (x.kind === 'alert' || x.kind === 'cluster') && x.id ? h('button', { type: 'button', class: 'row-open', on: { click: () => openDetail(x.kind, String(x.id), true) } },
+          txt(x.title) || String(x.id)) : h('b', {}, txt(x.title) || txt(x.id)),
+        txt(x.why) ? h('span', { class: 'sub' }, txt(x.why)) : null)))));
+    }
+    const cs = arr(r.cannotSee).map(obj);
+    if (cs.length) {
+      add(out, dSection('What the bot can\'t see', h('ul', { class: 'plain-list' }, cs.map(c => h('li', {},
+        h('b', {}, `${txt(c.what)}: `), txt(c.why), txt(c.fix) ? h('span', { class: 'sub' }, `What to do: ${txt(c.fix)}`) : null)))));
+    }
+    return out;
+  }
+
+  /** A story's facts in the drawer: size, speed by hour (24 bars; hatched where an hour was not read), risk words, status. Pure but for the DOM. */
+  function clusterFacts(c) {
+    const ph = arr(c.perHour);
+    const known = ph.filter(v => numOr(v) !== null);
+    const max = Math.max(1, ...known.map(Number));
+    const spark = h('div', { class: 'spark', role: 'img', 'aria-label': `Accounts per hour, the last 24 hours, oldest first: ${ph.map(v => (numOr(v) === null ? 'not read' : String(v))).join(', ')}` },
+      ph.map(v => (numOr(v) === null ? h('span', { class: 'none', title: 'Not read' }) : h('span', { style: { height: `${Math.max(4, Math.round((Number(v) / max) * 100))}%` }, title: `${v}` }))));
+    const rows = [['Accounts', fmt(c.accounts)], ['Posts', `${fmt(c.posts)}${numOr(c.postsKept) !== null && numOr(c.postsKept) !== numOr(c.posts) ? ` (${fmt(c.postsKept)} kept here)` : ''}`],
+      ['Engagement', fmt(c.engagement)], ['Platforms', arr(c.platforms).join(', ') || 'none named'], ['Topic', txt(c.topic) || 'none named'],
+      ['Speed', `${SPEED_WORDS[c.speed] || txt(c.speed)}${txt(c.speedWhy) ? `: ${txt(c.speedWhy)}` : ''}`],
+      ['First post', clock(c.firstAt) || 'not kept'], ['Last post', clock(c.lastAt) || 'not kept']];
+    if (arr(c.risk).length) rows.push(['Risk words', arr(c.risk).join(', ')]);
+    if (txt(c.heldWhy)) rows.push(['Held back', txt(c.heldWhy)]);
+    const card = obj(c.carded);
+    const kids = [h('dl', { class: 'kv' }, rows.map(([k, v]) => [h('dt', {}, k), h('dd', {}, v)]))];
+    if (ph.length) kids.push(h('p', { class: 'small muted', style: { 'margin-top': '12px' } }, 'Accounts per hour, the last 24 hours (hatched: not read)'), spark);
+    if (card.alertId) {
+      kids.push(h('p', { style: { 'margin-top': '12px' } }, `Its card: ${txt(card.alertId)}${txt(card.decision) ? ` (${txt(card.decision)})` : ''}. `,
+        h('button', { type: 'button', class: 'btn btn--sm btn--tonal', on: { click: () => openDetail('alert', String(card.alertId), true) } }, 'Open its card'),
+        card.link ? [' ', extLink(card.link, 'Open in Chat')] : null));
+    }
+    return dSection('The story', kids);
+  }
+
+  /** An alert's facts in the drawer: decision, corrections, fixes asked, the Social Alert email, T&S, escalation, follow-up, its fields. Pure but for the DOM. */
+  function alertFacts(a) {
+    const kids = [];
+    kids.push(h('p', {}, h('b', {}, 'Decision: '), txt(a.decision) || 'none recorded'));
+    if (a.ongoing === true) kids.push(h('p', { class: 'small' }, h('span', { class: 'pill st-warn' }, 'Ongoing issue')));
+    const corr = arr(a.corrections).map(obj);
+    if (corr.length) {
+      kids.push(h('h4', { class: 'overline', style: { 'margin-top': '14px' } }, `Corrections the bot made (${corr.length})`),
+        h('table', { class: 'corr' }, h('thead', {}, h('tr', {}, h('th', {}, 'Field'), h('th', {}, 'Was'), h('th', {}, 'Now'), h('th', {}, 'Why'))),
+          h('tbody', {}, corr.map(c => h('tr', {}, h('td', {}, txt(c.field)), h('td', { class: 'old', 'data-label': 'Was' }, txt(c.old) || 'blank'),
+            h('td', { 'data-label': 'Now' }, txt(c.new) || 'blank'), h('td', { 'data-label': 'Why' }, txt(c.reason)))))));
+    }
+    const asked = arr(a.fixesAsked).map(txt).filter(Boolean);
+    if (asked.length) kids.push(h('h4', { class: 'overline', style: { 'margin-top': '14px' } }, `Fixes asked of Burson (${asked.length})`), h('ul', { class: 'plain-list' }, asked.map(x => h('li', {}, x))));
+    const em = obj(a.email);
+    const emRows = [];
+    if (txt(em.status)) emRows.push(['Status', txt(em.status)]);
+    if (txt(em.subject)) emRows.push(['Subject', txt(em.subject)]);
+    if (arr(em.groups).length) emRows.push(['Teams', arr(em.groups).map(txt).join(', ')]);
+    if (em.sentAt) emRows.push(['Sent', clock(em.sentAt)]);
+    if (txt(em.sentBy)) emRows.push(['Sent by', txt(em.sentBy)]);
+    kids.push(h('h4', { class: 'overline', style: { 'margin-top': '14px' } }, 'Social Alert email'),
+      emRows.length ? h('dl', { class: 'kv' }, emRows.map(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])) : h('p', { class: 'muted' }, 'No Social Alert was made for it.'),
+      em.gmailLink ? h('p', { style: { 'margin-top': '6px' } }, extLink(em.gmailLink, 'Open in Gmail')) : null);
+    const tns = obj(a.tns);
+    kids.push(h('h4', { class: 'overline', style: { 'margin-top': '14px' } }, 'Trust & Safety form'),
+      h('p', {}, tns.submitted ? `Submitted${tns.at ? ` ${clock(tns.at)}` : ''}.` : 'Not submitted.', tns.link ? [' ', extLink(tns.link, 'Open the submission')] : null));
+    const esc = a.escalation ? obj(a.escalation) : null;
+    kids.push(h('h4', { class: 'overline', style: { 'margin-top': '14px' } }, 'Escalation'),
+      esc ? h('dl', { class: 'kv' }, [['Track', txt(esc.track) || 'none'], ['Priority', txt(esc.priority) || 'none'], ['Why', txt(esc.reasons) || 'not kept']]
+        .map(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])) : h('p', { class: 'muted' }, 'Not kept for it (escalation details are kept only for an alert that got a Social Alert).'));
+    const fu = a.followup ? obj(a.followup) : null;
+    if (fu) {
+      const q = fu.question ? obj(fu.question) : null;
+      const fuRows = [['Status', txt(fu.text) || txt(fu.status) || 'not kept']];
+      if (arr(fu.teams).length) fuRows.push(['Teams', arr(fu.teams).map(txt).join(', ')]);
+      if (arr(fu.replied).length) fuRows.push(['Replied', arr(fu.replied).map(txt).join(', ')]);
+      if (q) fuRows.push(['Question', `${txt(q.team) || 'A team'}${q.at ? `, ${clock(q.at)}` : ''}: ${txt(q.text)}`]);
+      if (txt(fu.next)) fuRows.push(['Next', txt(fu.next)]);
+      kids.push(h('h4', { class: 'overline', style: { 'margin-top': '14px' } }, 'Follow-up'), h('dl', { class: 'kv' }, fuRows.map(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])));
+    }
+    const fields = obj(a.fields);
+    const keys = Object.keys(fields);
+    if (keys.length) {
+      const det = h('details', { style: { 'margin-top': '14px' } }, h('summary', { class: 'btn btn--text btn--sm' }, `All its fields as reviewed (${keys.length})`),
+        h('dl', { class: 'kv', style: { 'margin-top': '8px' } }, keys.map(k => {
+          const v = fields[k];
+          const words = Array.isArray(v) ? v.map(txt).join(', ') : typeof v === 'object' && v !== null ? JSON.stringify(v) : txt(v);
+          return [h('dt', {}, FIELD_WORDS[k] || k.replace(/_/g, ' ')), h('dd', {}, safeUrl(words) ? extLink(words, words) : words)];
+        })));
+      kids.push(det);
+    }
+    return dSection('The alert', kids);
+  }
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // "Why didn't a post get an alert?" (dashWhyNot)
+  // -----------------------------------------------------------------------------------------------------------------
+
+  /** Opens the small form that looks a post up by its link in everything the bot keeps (read-only). Never throws. */
+  function openWhyNot() {
+    closeDialog(true);
+    const opener = document.activeElement;
+    S.dialog = { opener, busy: false, resp: null, err: null, url: '' };
+    const root = $('#overlay-root');
+    const scrim = h('div', { class: 'scrim dialog-scrim on', id: 'dialog-scrim', on: { click: () => closeDialog() } });
+    const dlg = h('div', { class: 'dialog', id: 'dialog', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dialog-title' });
+    add(root, scrim, dlg);
+    document.addEventListener('keydown', dialogKeys, true);
+    renderWhyNot();
+    const input = $('#whynot-url');
+    if (input) input.focus();
+  }
+
+  /** Escape closes the dialog; Tab stays inside it. Never throws. */
+  function dialogKeys(ev) {
+    const dlg = $('#dialog');
+    if (!dlg) return;
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopImmediatePropagation(); closeDialog(); return; }
+    if (ev.key === 'Tab') trapTab(ev, dlg);
+  }
+
+  /** Closes the dialog (focus goes back to what opened it unless `quiet`). Never throws. */
+  function closeDialog(quiet) {
+    const d = S.dialog;
+    S.dialog = null;
+    const dlg = $('#dialog');
+    const scrim = $('#dialog-scrim');
+    if (dlg) dlg.remove();
+    if (scrim) scrim.remove();
+    document.removeEventListener('keydown', dialogKeys, true);
+    if (!quiet && d && d.opener && document.body.contains(d.opener) && d.opener.focus) d.opener.focus();
+  }
+
+  /** Draws the why-not form and its answer. Never throws. */
+  function renderWhyNot() {
+    const dlg = $('#dialog');
+    const d = S.dialog;
+    if (!dlg || !d) return;
+    const keep = rememberFocus();
+    const input = h('input', { class: 'input', id: 'whynot-url', type: 'url', inputmode: 'url', autocomplete: 'off', value: d.url, 'aria-describedby': 'whynot-help',
+      'data-fk': 'whynot:url', on: { input: ev => { d.url = ev.target.value; } } });
+    const form = h('form', { class: 'form-row', on: { submit: ev => { ev.preventDefault(); askWhyNot(); } } },
+      h('label', { class: 'field', for: 'whynot-url' }, h('span', {}, 'The post\'s link'), input),
+      h('button', { type: 'submit', class: 'btn btn--primary', disabled: d.busy }, d.busy ? 'Looking...' : 'Look it up'));
+    const result = h('div', { 'aria-live': 'polite', style: { 'margin-top': '16px' } });
+    if (d.busy) add(result, h('p', { class: 'loading-word' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Looking through what the bot keeps...'));
+    else if (d.err) add(result, inlineProblem(null, d.err));
+    else if (d.resp && d.resp.ok !== true) add(result, inlineProblem(d.resp));
+    else if (d.resp) {
+      const r = d.resp;
+      add(result, h('p', { class: 'answer-a' }, txt(r.answer) || 'The bot\'s answer has no words for this post.'));
+      if (txt(r.todo)) add(result, h('p', { class: 'muted', style: { 'margin-top': '8px' } }, h('b', {}, 'What to do: '), txt(r.todo)));
+      const found = arr(r.found).map(obj);
+      if (found.length) {
+        add(result, h('ul', { class: 'feed', style: { 'margin-top': '12px' } }, found.map(f => {
+          const dt = obj(f.detail);
+          return h('li', { class: 'feed-item' }, h('div', { class: 'feed-head' }, h('span', { class: 'pill st-plain' }, txt(f.where)), f.at ? timeEl(f.at) : null),
+            h('p', { class: 'feed-text' }, txt(f.what)),
+            dt.kind && dt.id ? h('div', { class: 'feed-links' }, h('button', { type: 'button', class: 'btn btn--sm btn--tonal',
+              on: { click: () => { closeDialog(true); openDetail(dt.kind, String(dt.id), false, d.opener); } } }, dt.kind === 'cluster' ? 'Open the story' : 'Open the alert')) : null);
+        })));
+      }
+      const cs = arr(r.cannotSee).map(obj);
+      if (cs.length) {
+        add(result, h('h3', { class: 'overline', style: { 'margin-top': '16px' } }, 'What this look-up can\'t see'),
+          h('ul', { class: 'plain-list' }, cs.map(c => h('li', { class: 'small' }, h('b', {}, `${txt(c.what)}: `), txt(c.why)))));
+      }
+    }
+    dlg.replaceChildren(
+      h('div', { class: 'dialog-head' }, h('h2', { id: 'dialog-title' }, 'Why didn\'t a post get an alert?'),
+        h('button', { type: 'button', class: 'btn btn--icon', 'aria-label': 'Close', on: { click: () => closeDialog() } }, icon('close'))),
+      h('div', { class: 'dialog-body' },
+        h('p', { class: 'muted', id: 'whynot-help' }, 'Paste the post\'s full link. The dashboard looks it up in everything the bot keeps (alerts, its memory, Early Detection, the Watch) and changes nothing.'),
+        h('div', { style: { 'margin-top': '12px' } }, form), result));
+    restoreFocus(keep);
+    if (!dlg.contains(document.activeElement) && !d.busy) input.focus({ preventScroll: true });
+  }
+
+  /** Asks the bot about the typed link. Never throws. */
+  function askWhyNot() {
+    const d = S.dialog;
+    if (!d || d.busy) return;
+    const url = txt(d.url);
+    if (!/^https?:\/\//i.test(url)) {
+      d.resp = { ok: false, why: 'Paste the post\'s full link, starting with https://.' };
+      d.err = null;
+      renderWhyNot();
+      const i = $('#whynot-url');
+      if (i) i.focus();
+      return;
+    }
+    d.busy = true;
+    d.resp = null;
+    d.err = null;
+    renderWhyNot();
+    call('dashWhyNot', url).then(r => {
+      if (S.dialog !== d) return;
+      d.busy = false;
+      d.resp = r;
+      renderWhyNot();
+    }, e => {
+      if (S.dialog !== d) return;
+      d.busy = false;
+      d.err = e;
+      renderWhyNot();
+    });
+  }
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // Slide deliveries: the list
+  // -----------------------------------------------------------------------------------------------------------------
+
+  /** Asks the bot for the deliveries and draws the area. Never throws. */
+  function loadDeliveries() {
+    const dv = S.deliv;
+    if (dv.loading) return;
+    dv.loading = true;
+    setRefreshBusy(true);
+    renderSlides();
+    call('dashDeliveries').then(r => {
+      dv.loading = false;
+      dv.loaded = true;
+      dv.resp = r;
+      dv.err = null;
+      setRefreshBusy(false);
+      renderSlides();
+    }, e => {
+      dv.loading = false;
+      dv.loaded = true;
+      dv.err = e;
+      setRefreshBusy(false);
+      renderSlides();
+    });
+  }
+
+  /** The first boolean among `keys` of `o` (null when none is a boolean). Pure. */
+  function boolOf(o, keys) {
+    for (let i = 0; i < keys.length; i++) if (typeof o[keys[i]] === 'boolean') return o[keys[i]];
+    return null;
+  }
+
+  /**
+   * Whether Preview and Run now can work, from the deliveries answer (or the Live snapshot's switches): {on, scopeOk,
+   * canRun, why}. A flag the answer does not give is null (unknown: the buttons stay on and the bot's answer says).
+   * Pure.
+   */
+  function delivGate() {
+    const r = obj(S.deliv.resp);
+    // set up, run, pause: for the people who can edit the bot's sheet, as the bot's own answer says (never while it loads or fails)
+    const mayChange = r.ok === true && r.mayChange === true;
+    let on = boolOf(r, ['on', 'switchOn', 'enabled', 'slideDeliveries']);
+    if (on === null && obj(r.switches) && typeof obj(r.switches).slideDeliveries === 'boolean') on = r.switches.slideDeliveries;
+    if (on === null && S.snap && typeof obj(S.snap.switches).slideDeliveries === 'boolean') on = S.snap.switches.slideDeliveries;
+    const scopeOk = boolOf(r, ['scopeOk', 'scope', 'canEditSlides', 'authorized']);
+    let canRun = boolOf(r, ['canRun']);
+    if (canRun === null) canRun = on !== false && scopeOk !== false && r.paused !== true && r.controlOk !== false;
+    let why = '';
+    if (!canRun) {
+      why = r.controlOk === false ? txt(r.controlWhy) : on === false ? (txt(r.offWhy) || DELIV_OFF_WHY) : r.paused === true ? txt(r.pausedWhy)
+        : scopeOk === false ? (txt(r.scopeWhy) || DELIV_SCOPE_WHY) : txt(r.runWhy || r.why);
+    }
+    return { on, scopeOk, canRun, why, mayChange };
+  }
+
+  /** A delivery as the page reads it, whatever the answer's spelling (camelCase or the tab's column names). Pure. */
+  function normDelivery(raw) {
+    const d = obj(raw);
+    let st = d.settings;
+    if (typeof st === 'string') { try { st = JSON.parse(st); } catch (e) { st = {}; } }
+    st = obj(st);
+    const deck = Object.assign({}, obj(st.deck), obj(d.deck));
+    if (!deck.id && d.deck_id) deck.id = d.deck_id;
+    if (!deck.url && d.deck_url) deck.url = d.deck_url;
+    let last = d.lastRun || d.last_run || null;
+    if (typeof last === 'string') { try { last = JSON.parse(last); } catch (e) { last = null; } }
+    return {
+      id: txt(d.id || st.id), name: txt(d.name || st.name), deck,
+      settings: Object.assign({}, st, { deck, id: txt(d.id || st.id), name: txt(d.name || st.name) }),
+      status: txt(d.status) || 'active', lastRun: last && typeof last === 'object' ? last : null,
+      nextRun: numOr(d.nextRun !== undefined ? d.nextRun : d.next_run),
+      note: txt(d.note || d.problem) || (arr(d.problems).map(txt).filter(Boolean).length ? `Its saved settings need a look: ${arr(d.problems).map(txt).filter(Boolean).join(' ')}` : ''),
+      updatedAt: numOr(d.updatedAt !== undefined ? d.updatedAt : d.updated_at), updatedBy: txt(d.updatedBy || d.updated_by),
+      waiting: d.waiting && typeof d.waiting === 'object' ? obj(d.waiting) : null,
+    };
+  }
+
+  /** The deliveries of the answer. Pure. */
+  function deliveries() {
+    const r = obj(S.deliv.resp);
+    return arr(r.deliveries || r.list || r.items).map(normDelivery);
+  }
+
+  /** "After slide 3 (Agenda), before slide 4 (Pulse)" for a delivery's spot. Pure. */
+  function spotWords(spot) {
+    const s = obj(spot);
+    const a = txt(s.afterLabel);
+    const b = txt(s.beforeLabel);
+    if (a && b) return `After ${a}, before ${b}`;
+    if (a) return `At the end, after ${a}`;
+    if (b) return `At the start, before ${b}`;
+    if (s.afterId || s.beforeId) return 'A spot picked by slide (its names are not kept)';
+    return 'No spot picked yet';
+  }
+
+  /** "Weekdays at 09:00 (America/New_York)" for a schedule. Pure. */
+  function scheduleWords(sched) {
+    const s = obj(sched);
+    const days = arr(s.days).map(Number).filter(d => d >= 0 && d <= 6);
+    const set = new Set(days);
+    let dw = '';
+    if (!days.length) dw = 'No days picked';
+    else if (set.size === 7) dw = 'Every day';
+    else if (set.size === 5 && [1, 2, 3, 4, 5].every(d => set.has(d))) dw = 'Weekdays';
+    else dw = DAY_ORDER.filter(d => set.has(d)).map(d => DAY_SHORT[d]).join(', ');
+    const parts = [`${dw}${txt(s.time) ? ` at ${txt(s.time)}` : ''}${txt(s.tz) ? ` (${txt(s.tz)})` : ''}`];
+    if (s.sincePrevious) parts.push('each slide covers the time since the run before');
+    else if (s.mondayCoversWeekend) parts.push('Monday covers the weekend');
+    return parts.join('; ');
+  }
+
+  /** "12 hours", "1 day", "1 day and 12 hours", "30 days". Pure. */
+  function lookbackWords(hours) {
+    const n = numOr(hours);
+    if (n === null || n <= 0) return 'not set';
+    if (n < 24) return `${n} ${n === 1 ? 'hour' : 'hours'}`;
+    const d = Math.floor(n / 24);
+    const r = n % 24;
+    return `${d} ${d === 1 ? 'day' : 'days'}${r ? ` and ${r} ${r === 1 ? 'hour' : 'hours'}` : ''}`;
+  }
+
+  /** Draws the Slide deliveries area: the editor when one is open, else the list. Never throws. */
+  function renderSlides() {
+    const root = $('#slides-root');
+    if (!root) return;
+    const keep = rememberFocus();
+    root.replaceChildren();
+    try {
+      if (S.editor) add(root, editorView());
+      else add(root, deliveriesList());
+    } catch (e) {
+      add(root, failBlock(new Error(`the deliveries could not be shown: ${errWords(e)}`), () => loadDeliveries(), 'the deliveries'));
+    }
+    restoreFocus(keep);
+  }
+
+  /** The delivery list (deck, where, schedule, lookback, last run, next run; run now, pause or resume, edit; New). Pure but for the DOM. */
+  function deliveriesList() {
+    const dv = S.deliv;
+    const wrap = h('div');
+    const gate = delivGate();
+    // New, Edit, Preview, Run now and Pause are for the people who may set deliveries up: never drawn for anyone else
+    add(wrap, h('div', { class: 'section-head', style: { 'margin-top': '20px' } },
+      h('h1', { class: 'section-title', style: { font: 'var(--type-headline-m)' } }, 'Slide deliveries'),
+      gate.mayChange ? h('span', { style: { 'margin-left': 'auto' } }, h('button', { type: 'button', class: 'btn btn--primary', 'data-fk': 'deliv:new',
+        on: { click: () => openEditor(null) } }, icon('plus'), 'New delivery')) : null));
+    add(wrap, lead('the brand safety pulse slides the bot puts into Google Slides decks on a schedule. Each delivery is one deck, one spot in it, one schedule and how far back it looks.'));
+    const rr = obj(dv.resp);
+    if (rr.ok === true && rr.sameAccount === false && txt(rr.accountWhy)) {
+      add(wrap, h('div', { class: 'banner banner--bad', role: 'alert', style: { 'margin-top': '16px' } }, icon('info'), h('div', { class: 'banner-text' }, txt(rr.accountWhy))));
+    }
+    if (!gate.canRun && gate.why && dv.resp && obj(dv.resp).ok === true) {
+      add(wrap, h('div', { class: 'banner', role: 'note', style: { 'margin-top': '16px' } }, icon('info'), h('div', { class: 'banner-text' }, gate.why)));
+    }
+    if (dv.loading && !dv.resp) { add(wrap, h('div', { style: { 'margin-top': '16px' } }, loadingBlock('Loading the deliveries...'))); return wrap; }
+    if (dv.err && !dv.resp) { add(wrap, h('div', { style: { 'margin-top': '16px' } }, failBlock(dv.err, () => loadDeliveries(), 'the deliveries'))); return wrap; }
+    const r = obj(dv.resp);
+    if (r.ok !== true) { add(wrap, h('div', { style: { 'margin-top': '16px' } }, refusalBlock(r, () => loadDeliveries(), 'the deliveries'))); return wrap; }
+    if (dv.err) add(wrap, h('div', { class: 'banner', role: 'alert', style: { 'margin-top': '16px' } }, icon('info'), h('div', { class: 'banner-text' }, `The last refresh did not work: ${errWords(dv.err)}. What you see is from before.`)));
+    if (txt(r.note)) add(wrap, h('div', { class: 'filter-note', role: 'note' }, txt(r.note)));
+    // a "Slide deliveries" tab the bot did not make is never read: say so, warning first (else the list looks empty)
+    const tab = obj(r.tab);
+    if (tab.ok === false) {
+      add(wrap, h('div', { class: 'banner banner--bad', role: 'alert', style: { 'margin-top': '16px' } }, icon('info'),
+        h('div', { class: 'banner-text' }, h('strong', {}, 'The deliveries can\'t be read: '), txt(tab.why) || 'the bot did not say why.')));
+    }
+    if (r.mayChange === false) {
+      add(wrap, h('div', { class: 'banner', role: 'note', style: { 'margin-top': '16px' } }, icon('info'),
+        h('div', { class: 'banner-text' }, 'You can see the deliveries, but setting one up, running it now or pausing it is for the people who can edit the bot\'s sheet (as for its Control tab). Ask the owner of the bot\'s sheet for edit access.')));
+    }
+    const list = deliveries();
+    if (!list.length && tab.ok === false) return wrap;
+    if (!list.length) {
+      add(wrap, gate.mayChange
+        ? emptyState('No deliveries yet', 'Nothing is set up to be delivered.', 'Press New delivery: paste a Google Slides link, pick where the pulse slide goes, how far back it looks and when it is delivered.',
+          h('button', { type: 'button', class: 'btn btn--primary', on: { click: () => openEditor(null) } }, icon('plus'), 'New delivery'))
+        : emptyState('No deliveries yet', 'Nothing is set up to be delivered.', 'Someone who can edit the bot\'s sheet sets deliveries up here. Ask the owner of the bot\'s sheet for edit access to set one up yourself.'));
+      return wrap;
+    }
+    add(wrap, h('ul', { class: 'deliv-list' }, list.map(d => deliveryCard(d, gate))));
+    return wrap;
+  }
+
+  /** One delivery's card. Pure but for the DOM. */
+  function deliveryCard(d, gate) {
+    const st = obj(d.settings);
+    const sched = obj(st.schedule);
+    const paused = d.status === 'paused';
+    const res = S.deliv.results[d.id] || null;
+    const last = d.lastRun ? obj(d.lastRun) : null;
+    let lastEl;
+    if (!last) lastEl = h('span', { class: 'muted' }, 'Not run yet');
+    else if (last.ok === false || txt(last.error)) lastEl = h('span', {}, h('span', { class: 'pill st-bad' }, 'Failed'), ' ', last.at ? timeEl(last.at) : null, h('span', { class: 'sub' }, txt(last.error) || 'No reason kept.'));
+    else lastEl = h('span', {}, h('span', { class: 'pill st-good' }, 'Delivered'), ' ', last.at ? timeEl(last.at) : null,
+      numOr(last.slides) !== null ? h('span', { class: 'sub' }, pl(last.slides, 'slide', 'slides')) : null,
+      txt(last.window) ? h('span', { class: 'sub' }, `Window: ${txt(last.window)}`) : null,
+      notifiedWords(last.notified) ? h('span', { class: 'sub' }, notifiedWords(last.notified)) : null,
+      txt(last.note) ? h('span', { class: 'sub' }, `Note: ${txt(last.note)}.`) : null,
+      last.link ? h('span', { class: 'sub' }, extLink(last.link, 'Open the slide')) : null);
+    // a scheduled run waiting for Gemini: its time has passed, so the card says what it waits for and until when
+    const waitWords = !paused && d.waiting ? (txt(d.waiting.label) || 'Waiting for Gemini: it tries again every few minutes.') : '';
+    const next = paused ? 'Paused: no runs until it is resumed' : waitWords
+      ? h('span', {}, h('span', { class: 'pill st-warn' }, 'Waiting'), ' ', d.nextRun ? clock(d.nextRun, txt(sched.tz) || undefined) : '', h('span', { class: 'sub' }, waitWords))
+      : d.nextRun ? clock(d.nextRun, txt(sched.tz) || undefined) : 'Not scheduled';
+    const runReason = !gate.canRun ? gate.why : paused ? 'Resume it first to run it.' : '';
+    const reasonId = `run-why-${cssId(d.id)}`;
+    const busy = res && res.busy;
+    const opts = [];
+    opts.push(st.countOwn ? 'The bot\'s own finds count' : 'Burson\'s alerts only');
+    opts.push(st.linkSensitive ? 'T&S and sensitive posts linked' : 'T&S and sensitive posts not linked');
+    opts.push(st.mode === 'add' ? 'adds a new dated set each run' : 'replaces its slide each run');
+    if (arr(st.notify).length) opts.push(`notifies ${pl(arr(st.notify).length, 'address', 'addresses')}`);
+    const card = h('li', { class: 'deliv panel glass' },
+      h('div', { class: 'deliv-head' }, h('h3', {}, d.name || txt(d.deck.title) || 'A delivery with no name'),
+        h('span', { class: `pill ${paused ? 'st-plain' : 'st-good'}` }, paused ? 'Paused' : 'Active'),
+        d.updatedAt ? h('span', { class: 'small muted' }, `Changed ${since(d.updatedAt)}${d.updatedBy ? ` by ${d.updatedBy}` : ''}`) : null),
+      h('dl', { class: 'deliv-grid' },
+        h('div', {}, h('dt', {}, 'Deck'), h('dd', {}, d.deck.url ? extLink(d.deck.url, txt(d.deck.title) || 'Open the deck') : (txt(d.deck.title) || 'Not kept'))),
+        h('div', {}, h('dt', {}, 'Where'), h('dd', {}, spotWords(st.spot))),
+        h('div', {}, h('dt', {}, 'Schedule'), h('dd', {}, scheduleWords(sched))),
+        h('div', {}, h('dt', {}, 'Looks back'), h('dd', {}, lookbackWords(st.lookbackHours))),
+        h('div', {}, h('dt', {}, 'Last run'), h('dd', {}, lastEl)),
+        h('div', {}, h('dt', {}, 'Next run'), h('dd', {}, next))),
+      h('p', { class: 'small muted', style: { 'margin-top': '10px' } }, opts.join(' · ')),
+      d.note ? h('p', { class: 'why-off', style: { 'margin-top': '6px' } }, d.note) : null);
+    if (!gate.mayChange) return card;  // the delivery as it is, with no button that changes it
+    const actions = h('div', { class: 'deliv-actions' },
+      h('button', { type: 'button', class: 'btn btn--primary btn--sm', disabled: !!runReason || busy, 'aria-describedby': runReason ? reasonId : null,
+        'data-fk': `run:${d.id}`, on: { click: () => runNow(d) } }, icon('play'), busy && res.what === 'run' ? 'Running...' : 'Run now'),
+      h('button', { type: 'button', class: 'btn btn--sm', disabled: busy, 'data-fk': `pause:${d.id}`, on: { click: () => setStatus(d, paused ? 'active' : 'paused') } },
+        icon(paused ? 'play' : 'pause'), paused ? 'Resume' : 'Pause'),
+      h('button', { type: 'button', class: 'btn btn--sm btn--outlined', disabled: busy, 'data-fk': `edit:${d.id}`, on: { click: () => openEditor(d) } }, icon('edit'), 'Edit'),
+      runReason ? h('span', { class: 'why-off', id: reasonId }, `Run now is off: ${runReason}`) : null);
+    add(card, actions);
+    if (res && !res.busy && res.text) {
+      add(card, h('div', { class: `coverage${res.ok ? '' : ' warn'}`, role: 'status', style: { 'margin-top': '12px' } }, res.text, res.link ? [' ', extLink(res.link, 'Open the slide')] : null));
+    }
+    return card;
+  }
+
+  /**
+   * Who a run told, in a sentence: the bot keeps "emailed 2", or why nobody was emailed ("not emailed: Testing, and
+   * Control!B30 ... is blank"); '' when it keeps nothing. Pure.
+   */
+  function notifiedWords(v) {
+    const t = txt(v);
+    if (!t) return '';
+    const m = t.match(/^emailed (\d+)$/i);
+    if (m) return `Emailed ${pl(Number(m[1]), 'address', 'addresses')} on its notify list.`;
+    if (/^sending$/i.test(t)) return 'The notice email was being sent when this was read.';
+    return `${t.charAt(0).toUpperCase()}${t.slice(1)}${/[.!?]$/.test(t) ? '' : '.'}`;
+  }
+
+  /** Runs a delivery now (dashRunNow) and says what happened. Never throws. */
+  function runNow(d) {
+    S.deliv.results[d.id] = { busy: true, what: 'run' };
+    renderSlides();
+    call('dashRunNow', d.id).then(r => {
+      const x = obj(r);
+      const last = obj(x.lastRun || x.last_run);
+      const link = safeUrl(x.link || last.link);
+      const told = notifiedWords(x.notified || last.notified);
+      S.deliv.results[d.id] = { busy: false, ok: x.ok === true, link,
+        text: x.ok === true ? `${txt(x.note) || 'Delivered.'}${told ? ` ${told}` : ''}` : (txt(x.why) || 'The run did not deliver, and the bot did not say why.') };
+      loadDeliveries();
+    }, e => {
+      S.deliv.results[d.id] = { busy: false, ok: false, text: `The bot could not be reached: ${errWords(e)}. Try again in a minute.` };
+      renderSlides();
+    });
+  }
+
+  /** Pauses or resumes a delivery (dashSetDeliveryStatus). Never throws. */
+  function setStatus(d, status) {
+    S.deliv.results[d.id] = { busy: true, what: 'status' };
+    renderSlides();
+    call('dashSetDeliveryStatus', d.id, status).then(r => {
+      const x = obj(r);
+      S.deliv.results[d.id] = { busy: false, ok: x.ok === true,
+        text: x.ok === true ? (status === 'paused' ? 'Paused: it will not run until it is resumed.' : 'Resumed: it runs on its schedule again.') : (txt(x.why) || 'The bot did not change it, and did not say why.') };
+      loadDeliveries();
+    }, e => {
+      S.deliv.results[d.id] = { busy: false, ok: false, text: `The bot could not be reached: ${errWords(e)}. Try again in a minute.` };
+      renderSlides();
+    });
+  }
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // Slide deliveries: the editor
+  // -----------------------------------------------------------------------------------------------------------------
+
+  /** A new delivery's settings: weekdays at 09:00 on this device's time zone, a day back, own stories and sensitive links OFF. Pure. */
+  function newSettings() {
+    return {
+      name: '', deck: { id: '', url: '', title: '' }, spot: null, design: { mode: 'default', slideId: '' }, lookbackHours: 24,
+      schedule: { days: [1, 2, 3, 4, 5], time: '09:00', tz: deviceTz() || 'UTC', mondayCoversWeekend: true },
+      countOwn: false, linkSensitive: false, slides: { pulse: true, positive: false }, mode: 'replace', notify: [],
+    };
+  }
+
+  /** Opens the editor on a delivery (null: a new one); an existing deck is checked at once to show its slides. Never throws. */
+  function openEditor(d) {
+    if (!delivGate().mayChange) return;  // only for the people who may set deliveries up
+    const base = newSettings();
+    let s = base;
+    if (d) {
+      const st = obj(d.settings);
+      s = Object.assign({}, base, st, {
+        id: d.id, name: d.name || txt(st.name), deck: Object.assign({}, base.deck, obj(st.deck), d.deck),
+        design: Object.assign({}, base.design, obj(st.design)), schedule: Object.assign({}, base.schedule, obj(st.schedule)),
+        slides: Object.assign({}, base.slides, obj(st.slides)), notify: arr(st.notify).map(txt).filter(Boolean),
+        spot: st.spot ? obj(st.spot) : null,
+      });
+      if (numOr(s.lookbackHours) === null) s.lookbackHours = base.lookbackHours;
+    }
+    S.editor = { s, check: null, checking: false, checkErr: null, cover: null, covering: false, coverErr: null,
+      preview: null, previewing: false, previewErr: null, saving: false, saveResp: null, saveErr: null, notifyText: s.notify.join('\n'),
+      editing: !!d, spotLost: false };
+    renderSlides();
+    scrollToEl($('#slides-root'));
+    const first = $('#ed-name');
+    if (first) first.focus({ preventScroll: true });
+    if (d && txt(s.deck.url)) checkDeck();
+    scheduleCheckSoon(0);
+  }
+
+  /** Closes the editor without saving. Never throws. */
+  function closeEditor() {
+    S.editor = null;
+    renderSlides();
+    const b = $('[data-fk="deliv:new"]');
+    if (b) b.focus();
+  }
+
+  /** The settings the bot is sent (SPEC 4.2), from the editor. Pure. */
+  function settingsOut() {
+    const e = S.editor;
+    const s = e.s;
+    const out = {
+      name: txt(s.name), deck: { id: txt(s.deck.id), url: txt(s.deck.url), title: txt(s.deck.title) },
+      spot: s.spot ? { afterId: txt(s.spot.afterId), beforeId: txt(s.spot.beforeId), afterLabel: txt(s.spot.afterLabel), beforeLabel: txt(s.spot.beforeLabel) } : null,
+      design: { mode: s.design.mode === 'copy' ? 'copy' : 'default', slideId: s.design.mode === 'copy' ? txt(s.design.slideId) : '' },
+      lookbackHours: Math.round(numOr(s.lookbackHours) || 24),
+      schedule: { days: arr(s.schedule.days).map(Number).filter(d => d >= 0 && d <= 6).sort((a, b) => a - b), time: txt(s.schedule.time), tz: txt(s.schedule.tz),
+        mondayCoversWeekend: !!s.schedule.mondayCoversWeekend, sincePrevious: !!s.schedule.sincePrevious },
+      countOwn: !!s.countOwn, linkSensitive: !!s.linkSensitive, slides: { pulse: !!s.slides.pulse, positive: !!s.slides.positive },
+      mode: s.mode === 'add' ? 'add' : 'replace', notify: e.notifyText.split(/[\n,;]+/).map(txt).filter(Boolean),
+    };
+    if (s.id) out.id = s.id;
+    return out;
+  }
+
+  /** What is still missing before the delivery can be saved (plain words), [] when nothing is. Pure. */
+  function missingForSave() {
+    const e = S.editor;
+    const s = e.s;
+    const out = [];
+    if (!txt(s.name)) out.push('a name');
+    if (!txt(s.deck.id)) out.push('a checked deck (paste its link and press Check)');
+    if (!s.spot) out.push('the spot in the deck');
+    if (s.design.mode === 'copy' && !txt(s.design.slideId)) out.push('the slide whose look to copy');
+    if (!arr(s.schedule.days).length) out.push('at least one day');
+    if (!/^\d{2}:\d{2}$/.test(txt(s.schedule.time))) out.push('a time of day');
+    if (!txt(s.schedule.tz)) out.push('a time zone');
+    if (!s.slides.pulse) out.push('the pulse slide (the only slide that can be delivered now)');
+    return out;
+  }
+
+  /** The editor: the steps from the deck link to Save. Pure but for the DOM. */
+  function editorView() {
+    const e = S.editor;
+    const s = e.s;
+    const gate = delivGate();
+    const box = h('section', { class: 'editor glass', 'aria-labelledby': 'ed-title' });
+    add(box, h('div', { class: 'editor-head' }, h('h2', { id: 'ed-title' }, e.editing ? 'Edit the delivery' : 'New delivery'),
+      h('button', { type: 'button', class: 'btn btn--text', style: { 'margin-left': 'auto' }, on: { click: closeEditor } }, 'Cancel')));
+    add(box, h('label', { class: 'field', style: { 'margin-top': '16px', 'max-width': '520px' } }, h('span', {}, 'Name of this delivery'),
+      h('input', { class: 'input', id: 'ed-name', 'data-fk': 'ed:name', value: s.name, autocomplete: 'off', on: { input: ev => { s.name = ev.target.value; refreshSaveBar(); } } })));
+    const steps = h('ol', { class: 'steps' });
+    add(steps, stepDeck(), stepSpot(), stepDesign(), stepLookback(), stepSchedule(), stepOptions(), stepPreview(gate));
+    add(box, steps);
+    add(box, h('div', { id: 'save-bar' }, saveBar()));
+    return box;
+  }
+
+  /** A step of the editor. Pure but for the DOM. */
+  function step(title, help, done, locked, kids, id) {
+    return h('li', { class: `step${done ? ' done' : ''}${locked ? ' locked' : ''}`, id: id || null, 'aria-label': title },
+      h('h3', {}, title), help ? h('p', { class: 'step-help' }, help) : null, h('div', { class: 'step-body' }, kids));
+  }
+
+  /** Step 1: the deck link and its check (edit access, the bot account to share with, its slides). Pure but for the DOM. */
+  function stepDeck() {
+    const e = S.editor;
+    const s = e.s;
+    const r = e.check ? obj(e.check) : null;
+    const kids = [];
+    kids.push(h('form', { class: 'form-row', on: { submit: ev => { ev.preventDefault(); checkDeck(); } } },
+      h('label', { class: 'field' }, h('span', {}, 'The deck\'s link (Google Slides)'),
+        h('input', { class: 'input', type: 'url', inputmode: 'url', autocomplete: 'off', 'data-fk': 'ed:deck', value: s.deck.url,
+          on: { input: ev => { s.deck.url = ev.target.value; } } })),
+      h('button', { type: 'submit', class: 'btn btn--primary', disabled: e.checking, 'data-fk': 'ed:check' }, e.checking ? 'Checking...' : 'Check')));
+    if (e.checking) kids.push(h('p', { class: 'loading-word' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Checking the deck...'));
+    else if (e.checkErr) kids.push(inlineProblem(null, e.checkErr));
+    else if (r && r.ok !== true) kids.push(inlineProblem(r));
+    else if (r) {
+      const deck = obj(r.deck);
+      const bot = txt(r.botAccount || obj(S.deliv.resp).botAccount);
+      kids.push(h('div', { class: 'item-head' }, extLink(deck.url || s.deck.url, txt(deck.title) || 'The deck'),
+        r.canEdit === true ? h('span', { class: 'pill st-good' }, 'The bot can edit this deck') : h('span', { class: 'pill st-bad' }, 'The bot can\'t edit this deck yet'),
+        h('span', { class: 'small muted' }, pl(arr(r.slides).length, 'slide', 'slides'))));
+      if (r.canEdit !== true) {
+        kids.push(h('div', { class: 'coverage warn', role: 'alert' }, txt(r.why) ? h('p', {}, txt(r.why)) : null,
+          h('p', {}, 'What to do: share the deck with ', bot ? h('span', { class: 'share-with' }, bot) : 'the bot\'s account', ' as an editor (Share, then Editor), then press Check again.')));
+      }
+      if (e.spotLost) kids.push(h('div', { class: 'coverage warn', role: 'alert' }, 'The spot saved before is no longer in the deck (its slides were moved or deleted): pick it again below.'));
+    }
+    return step('The deck', 'Paste the link of the Google Slides deck. The bot checks it can edit the deck and reads its slides; it changes nothing now.', !!(r && r.ok === true && s.deck.id), false, kids, 'step-deck');
+  }
+
+  /** The checked deck's slides, in order. Pure. */
+  function deckSlides() {
+    const r = S.editor && S.editor.check ? obj(S.editor.check) : null;
+    if (!r || r.ok !== true) return [];
+    return arr(r.slides).map(obj).filter(x => txt(x.id)).sort((a, b) => (numOr(a.index) || 0) - (numOr(b.index) || 0));
+  }
+
+  /** "Slide 3: Agenda". Pure. */
+  function slideLabel(sl, i) {
+    return `slide ${i + 1}${txt(sl.title) ? ` (${txt(sl.title)})` : ''}`;
+  }
+
+  /** Step 2: the spot, picked by clicking a gap between two slides. Pure but for the DOM. */
+  function stepSpot() {
+    const e = S.editor;
+    const s = e.s;
+    const slides = deckSlides();
+    if (!slides.length) {
+      return step('Where the pulse slide goes', 'Check the deck first: its slides show here, and you pick the gap the pulse slide goes into.', false, true,
+        [h('p', { class: 'muted' }, s.spot ? `Saved before: ${spotWords(s.spot)}.` : 'No deck checked yet.')], 'step-spot');
+    }
+    const list = h('ol', { class: 'slides-pick', 'aria-label': 'The deck\'s slides and the gaps between them' });
+    const sp = obj(s.spot);
+    const gapBtn = g => {
+      const after = slides[g - 1] || null;
+      const before = slides[g] || null;
+      const picked = !!s.spot && txt(sp.afterId) === txt(after && after.id) && txt(sp.beforeId) === txt(before && before.id);
+      const words = !after ? 'Put it at the start, before slide 1' : !before ? `Put it at the end, after slide ${g}` : `Put it between slide ${g} and slide ${g + 1}`;
+      return h('li', {}, h('button', { type: 'button', class: 'gap-btn', 'aria-pressed': String(picked), 'data-fk': `gap:${g}`,
+        on: { click: () => {
+          s.spot = { afterId: after ? txt(after.id) : '', beforeId: before ? txt(before.id) : '', afterLabel: after ? slideLabel(after, g - 1) : '', beforeLabel: before ? slideLabel(before, g) : '' };
+          e.spotLost = false;
+          e.preview = null;
+          renderSlides();
+        } } }, picked ? 'The pulse slide goes here' : words));
+    };
+    slides.forEach((sl, i) => {
+      add(list, gapBtn(i));
+      add(list, h('li', { class: 'slide-item' }, h('span', { class: 'slide-num' }, String(i + 1)),
+        h('div', {}, h('div', { class: 'slide-title' }, txt(sl.title) || 'Untitled slide'),
+          txt(sl.text) ? h('div', { class: 'slide-text' }, txt(sl.text).slice(0, 160)) : null,
+          txt(sl.layoutName) ? h('div', { class: 'slide-text' }, `Layout: ${txt(sl.layoutName)}`) : null)));
+    });
+    add(list, gapBtn(slides.length));
+    return step('Where the pulse slide goes', 'Click the gap between two slides. If someone deletes the slide before it, the bot uses the slide after it; if both are gone, it delivers nothing and says so.',
+      !!s.spot, false, [s.spot ? h('p', { class: 'small' }, h('b', {}, 'Picked: '), spotWords(s.spot)) : null, list], 'step-spot');
+  }
+
+  /** Step 3: the design (follow the deck's own layout, or copy the look of a picked slide). Pure but for the DOM. */
+  function stepDesign() {
+    const e = S.editor;
+    const s = e.s;
+    const slides = deckSlides();
+    const radio = (value, words) => h('label', { class: 'check' }, h('input', { type: 'radio', name: 'ed-design', value, checked: s.design.mode === value, 'data-fk': `design:${value}`,
+      on: { change: () => { s.design.mode = value; e.preview = null; renderSlides(); } } }), h('span', {}, words));
+    const kids = [radio('default', 'Follow the deck\'s own design: its title-and-body layout and theme'),
+      radio('copy', 'Copy the look of one of its slides: its layout, background and text styles')];
+    if (s.design.mode === 'copy') {
+      kids.push(slides.length ? h('label', { class: 'field', style: { 'max-width': '520px' } }, h('span', {}, 'The slide whose look to copy'),
+        h('select', { class: 'select', 'data-fk': 'design:slide', on: { change: ev => { s.design.slideId = ev.target.value; stalePreview(); refreshSaveBar(); } } },
+          [h('option', { value: '' }, 'Pick a slide')].concat(slides.map((sl, i) => h('option', { value: txt(sl.id), selected: txt(sl.id) === txt(s.design.slideId),
+            disabled: sl.titled === false && s.mode !== 'add' }, `${i + 1}. ${txt(sl.title) || 'Untitled slide'}${sl.titled === false && s.mode !== 'add'
+              ? ' (its layout has no title box, so its look can\'t be copied)' : ''}`)))))
+        : h('p', { class: 'muted' }, 'Check the deck first to pick a slide.'));
+    }
+    return step('Design', 'The slide follows the deck\'s design, never this page\'s.', s.design.mode === 'default' || !!txt(s.design.slideId), false, kids, 'step-design');
+  }
+
+  /** The slider's stops with `hours` among them (a saved lookback that is not a stop is kept as it is). Pure. */
+  function lookbackStops(hours) {
+    const n = numOr(hours);
+    const stops = LOOKBACK_STOPS.slice();
+    if (n !== null && n >= 1 && n <= 720 && stops.indexOf(n) < 0) { stops.push(n); stops.sort((a, b) => a - b); }
+    return stops;
+  }
+
+  /** Step 4: how far back it looks (1 hour to 30 days, non-linear stops). Pure but for the DOM. */
+  function stepLookback() {
+    const e = S.editor;
+    const s = e.s;
+    const stops = lookbackStops(s.lookbackHours);
+    const idx = Math.max(0, stops.indexOf(Math.round(numOr(s.lookbackHours) || 24)));
+    const label = h('p', { class: 'range-label', id: 'lookback-label', 'aria-live': 'polite' }, `Looks back ${lookbackWords(stops[idx])}`);
+    const range = h('input', { type: 'range', class: 'range', min: '0', max: String(stops.length - 1), step: '1', value: String(idx), 'data-fk': 'ed:lookback',
+      'aria-label': 'How far back it looks', 'aria-valuetext': lookbackWords(stops[idx]),
+      on: { input: ev => {
+        const v = stops[Number(ev.target.value)] || 24;
+        s.lookbackHours = v;
+        stalePreview();
+        label.textContent = `Looks back ${lookbackWords(v)}`;
+        ev.target.setAttribute('aria-valuetext', lookbackWords(v));
+        scheduleCheckSoon(400);
+      } } });
+    const since = s.schedule.sincePrevious ? h('p', { class: 'small', role: 'note' }, 'Each slide covers the time since the scheduled run before it (Match, in the schedule below): this lookback is used only for a slide with no run before it in the last 8 days.') : null;
+    return step('How far back it looks', 'Each slide covers the alerts of this window before its run. From 1 hour to 30 days.', true, false,
+      [label, range, since, h('div', { class: 'small muted', style: { display: 'flex', 'justify-content': 'space-between', 'max-width': '520px' } }, h('span', {}, '1 hour'), h('span', {}, '30 days'))], 'step-lookback');
+  }
+
+  /** The time zones to offer: this device's first, then the saved one, then every zone the browser knows. Pure. */
+  function timeZones(current) {
+    const dev = deviceTz();
+    let all = [];
+    try { all = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : []; } catch (e) { all = []; }
+    const out = [];
+    [dev, current].concat(all, ['UTC']).forEach(z => { if (z && out.indexOf(z) < 0) out.push(z); });
+    return out;
+  }
+
+  /** Step 5: the schedule (days, time, time zone, Monday covers the weekend) with the coverage check and Match. Pure but for the DOM. */
+  function stepSchedule() {
+    const e = S.editor;
+    const s = e.s;
+    const sc = s.schedule;
+    const days = new Set(arr(sc.days).map(Number));
+    const chips = h('div', { class: 'daychips', role: 'group', 'aria-label': 'Days' }, DAY_ORDER.map(d => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(days.has(d)),
+      'aria-label': DAY_LONG[d], 'data-fk': `day:${d}`, on: { click: () => {
+        const set = new Set(arr(sc.days).map(Number));
+        if (set.has(d)) set.delete(d); else set.add(d);
+        sc.days = Array.from(set).sort((a, b) => a - b);
+        e.preview = null;
+        renderSlides();
+        scheduleCheckSoon(300);
+      } } }, DAY_SHORT[d])));
+    const dev = deviceTz();
+    const tz = h('label', { class: 'field' }, h('span', {}, 'Time zone'),
+      h('select', { class: 'select', 'data-fk': 'ed:tz', on: { change: ev => { sc.tz = ev.target.value; stalePreview(); scheduleCheckSoon(200); refreshSaveBar(); } } },
+        timeZones(sc.tz).map(z => h('option', { value: z, selected: z === sc.tz }, z === dev ? `${z} (this device)` : z))));
+    const time = h('label', { class: 'field' }, h('span', {}, 'Time'),
+      h('input', { class: 'input', type: 'time', value: txt(sc.time), 'data-fk': 'ed:time', on: { change: ev => { sc.time = ev.target.value; stalePreview(); scheduleCheckSoon(200); refreshSaveBar(); } } }));
+    const sinceBox = h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!sc.sincePrevious, 'data-fk': 'ed:since',
+      on: { change: ev => { sc.sincePrevious = ev.target.checked; e.preview = null; renderSlides(); scheduleCheckSoon(200); } } }),
+    h('span', {}, 'Each slide covers the time since the run before (for days with different gaps between them)'));
+    const monday = h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!sc.mondayCoversWeekend, 'data-fk': 'ed:monday',
+      on: { change: ev => { sc.mondayCoversWeekend = ev.target.checked; stalePreview(); scheduleCheckSoon(200); } } }),
+    h('span', {}, 'Monday covers the weekend (Monday\'s slide starts where Friday\'s ended)'));
+    return step('When it is delivered', 'Pick the days and the time. The bot checks the schedule against how far back it looks: hours no slide covers, or slides that repeat each other.',
+      days.size > 0 && !!txt(sc.time) && !!txt(sc.tz), false,
+      [chips, h('div', { class: 'inline-fields' }, time, tz), monday, sinceBox, h('div', { id: 'coverage' }, coverageBox())], 'step-schedule');
+  }
+
+  /** The coverage message from dashScheduleCheck, with a Match button when the bot offers a match. Pure but for the DOM. */
+  function coverageBox() {
+    const e = S.editor;
+    if (!e) return null;
+    if (e.covering && !e.cover) return h('p', { class: 'loading-word small' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Checking the schedule...');
+    if (e.coverErr) return inlineProblem(null, e.coverErr);
+    if (!e.cover) return null;
+    const r = obj(e.cover);
+    if (r.ok !== true) return inlineProblem(r);
+    const lines = [];
+    const words = x => (typeof x === 'string' ? txt(x) : txt(obj(x).text || obj(x).words || obj(x).why || obj(x).message));
+    // dashScheduleCheck: {coverage: {ok, gaps, overlaps} (sentences), next: [{at, label}], match, matched}
+    const cov = obj(r.coverage);
+    const gaps = arr(r.gaps).concat(arr(cov.gaps));
+    const overlaps = arr(r.overlaps).concat(arr(cov.overlaps));
+    arr(r.messages).forEach(m => { const w = words(m); if (w) lines.push(w); });
+    if (!lines.length && txt(r.message)) lines.push(txt(r.message));
+    if (!lines.length) gaps.concat(overlaps).forEach(m => { const w = words(m); if (w) lines.push(w); });
+    const problem = gaps.length > 0 || overlaps.length > 0 || r.covered === false || cov.ok === false;
+    const told = (Array.isArray(r.gaps) && Array.isArray(r.overlaps)) || (Array.isArray(cov.gaps) && Array.isArray(cov.overlaps));
+    if (!lines.length) {
+      if (told && !problem) lines.push('Every hour is on exactly one slide: no hour is left out, and no slide repeats the one before.');
+      else lines.push('The bot did not say whether this schedule covers every hour.');
+    }
+    const first = obj(arr(r.next)[0]);
+    const next = numOr(r.nextRun !== undefined ? r.nextRun : first.at !== undefined ? first.at : arr(r.nextRuns)[0]);
+    const nextLabel = txt(first.label);
+    const m = r.match ? obj(r.match) : null;
+    const s = e.s;
+    // "Match": each slide covering the time since the run before (when the times between runs differ), else a lookback
+    const since = !!(m && m.sincePrevious === true);
+    // a schedule covering the time since the run before that leaves no gap and no overlap is kept: a lookback would bring
+    // the gap or the overlap back at the next clock change past the 14 days checked
+    const matchDiffers = m && !(s.schedule.sincePrevious && !problem) &&
+      (since ? !s.schedule.sincePrevious : ((numOr(m.lookbackHours) !== null && numOr(m.lookbackHours) !== numOr(s.lookbackHours)) ||
+      (typeof m.mondayCoversWeekend === 'boolean' && m.mondayCoversWeekend !== !!s.schedule.mondayCoversWeekend) || !!s.schedule.sincePrevious));
+    const matchWords = !m ? '' : since ? 'cover the time since the run before on each slide' : [numOr(m.lookbackHours) !== null && numOr(m.lookbackHours) !== numOr(s.lookbackHours) ? `look back ${lookbackWords(m.lookbackHours)}` : '',
+      typeof m.mondayCoversWeekend === 'boolean' && m.mondayCoversWeekend !== !!s.schedule.mondayCoversWeekend
+        ? (m.mondayCoversWeekend ? 'let Monday cover the weekend' : 'stop Monday covering the weekend') : '',
+      s.schedule.sincePrevious ? 'use the lookback again' : ''].filter(Boolean).join(' and ');
+    return h('div', { class: `coverage${problem ? ' warn' : ''}`, role: 'status' },
+      lines.length === 1 ? h('p', {}, lines[0]) : h('ul', {}, lines.map(l => h('li', {}, l))),
+      next ? h('p', { class: 'small', style: { 'margin-top': '6px' } }, `First run: ${nextLabel || clock(next, txt(s.schedule.tz) || undefined)}`) : null,
+      m && txt(m.text) && matchDiffers ? h('p', { class: 'small', style: { 'margin-top': '6px' } }, txt(m.text)) : null,
+      matchDiffers && matchWords ? h('div', { style: { 'margin-top': '8px' } }, h('button', { type: 'button', class: 'btn btn--sm btn--tonal btn--wrap', 'data-fk': 'ed:match',
+        on: { click: () => {
+          if (numOr(m.lookbackHours) !== null) s.lookbackHours = Math.round(numOr(m.lookbackHours));
+          if (typeof m.mondayCoversWeekend === 'boolean') s.schedule.mondayCoversWeekend = m.mondayCoversWeekend;
+          s.schedule.sincePrevious = since;
+          e.preview = null;
+          renderSlides();
+          scheduleCheckSoon(0);
+        } } }, `Match: ${matchWords}`)) : null);
+  }
+
+  /** Asks the bot to check the schedule's coverage after a short pause (typing and sliding don't ask on every step). Never throws. */
+  function scheduleCheckSoon(ms) {
+    clearTimeout(scheduleCheckSoon.t);
+    scheduleCheckSoon.t = setTimeout(checkSchedule, ms || 0);
+  }
+
+  /** Asks dashScheduleCheck about the editor's schedule and draws the answer in place. Never throws. */
+  function checkSchedule() {
+    const e = S.editor;
+    if (!e) return;
+    if (!arr(e.s.schedule.days).length || !txt(e.s.schedule.time)) { e.cover = null; redrawCoverage(); return; }
+    e.covering = true;
+    e.coverErr = null;
+    const ask = ++checkSchedule.n;
+    redrawCoverage();
+    call('dashScheduleCheck', settingsOut()).then(r => {
+      if (S.editor !== e || ask !== checkSchedule.n) return;
+      e.covering = false;
+      e.cover = r;
+      redrawCoverage();
+    }, err => {
+      if (S.editor !== e || ask !== checkSchedule.n) return;
+      e.covering = false;
+      e.coverErr = err;
+      redrawCoverage();
+    });
+  }
+  checkSchedule.n = 0;
+
+  /** Draws the coverage box again in place. Never throws. */
+  function redrawCoverage() {
+    const box = $('#coverage');
+    if (!box) return;
+    const keep = rememberFocus();
+    box.replaceChildren(coverageBox() || '');
+    restoreFocus(keep);
+  }
+
+  /** Step 6: the options (own stories count, link T&S / sensitive posts, which slides, replace or add, who is told). Pure but for the DOM. */
+  function stepOptions() {
+    const e = S.editor;
+    const s = e.s;
+    const rr = obj(S.deliv.resp);
+    const posWhy = txt(obj(rr.positive).why || rr.positiveWhy) || POSITIVE_WHY;
+    const box = (key, words, sub, checked, onChange, disabled) => h('label', { class: `check${disabled ? ' unavailable' : ''}` },
+      h('input', { type: 'checkbox', checked, disabled, 'data-fk': `opt:${key}`, on: { change: ev => { onChange(ev.target.checked); stalePreview(); refreshSaveBar(); } } }),
+      h('span', {}, words, sub ? h('span', { class: disabled ? 'why' : 'sub' }, sub) : null));
+    const radio = (value, words) => h('label', { class: 'check' }, h('input', { type: 'radio', name: 'ed-mode', value, checked: s.mode === value, 'data-fk': `mode:${value}`,
+      on: { change: () => { s.mode = value; if (s.design.mode === 'copy') renderSlides(); } } }), h('span', {}, words));
+    const kids = [
+      box('own', 'Count the bot\'s own finds', 'Story cards, Watch alerts, Direct BigQuery cards and early signals count next to Burson\'s alerts. An issue with no Burson alert is marked "Found by the app".',
+        !!s.countOwn, v => { s.countOwn = v; }),
+      box('sensitive', 'Link posts tied to a T&S submission or a sensitive topic', 'When off, those posts can be described on the slide but are not linked.', !!s.linkSensitive, v => { s.linkSensitive = v; }),
+      h('fieldset', { style: { border: '0', padding: '0', margin: '0', display: 'grid', gap: '8px' } }, h('legend', { class: 'field-label', style: { 'margin-bottom': '6px' } }, 'Which slides'),
+        box('pulse', 'The brand safety pulse (the top three issues of the window)', '', !!s.slides.pulse, v => { s.slides.pulse = v; }),
+        box('positive', 'The positive pulse', posWhy, !!s.slides.positive, v => { s.slides.positive = v; }, true)),
+      h('fieldset', { style: { border: '0', padding: '0', margin: '0', display: 'grid', gap: '8px' } }, h('legend', { class: 'field-label', style: { 'margin-bottom': '6px' } }, 'Each run'),
+        radio('replace', 'Replaces the slide it put in last time (wherever someone moved it)'), radio('add', 'Adds a new dated set at the spot')),
+      h('label', { class: 'field', style: { 'max-width': '520px' } }, h('span', {}, 'Tell these people when a slide is delivered (one address per line; optional)'),
+        h('textarea', { class: 'textarea', rows: '3', 'data-fk': 'ed:notify', autocomplete: 'off', spellcheck: 'false', on: { input: ev => { e.notifyText = ev.target.value; } } }, e.notifyText)),
+      h('p', { class: 'small muted' }, 'While the bot is Testing, the notice goes only to the testers on the Control tab (B30); nothing is sent when B30 is blank.'),
+    ];
+    return step('Options', '', true, false, kids, 'step-options');
+  }
+
+  /** A setting the slide depends on changed: an earlier preview no longer matches, so it is taken away. Never throws. */
+  function stalePreview() {
+    const e = S.editor;
+    if (!e || !e.preview) return;
+    e.preview = null;
+    const el = $('#step-preview');
+    if (el) el.replaceWith(stepPreview(delivGate()));
+  }
+
+  /** Step 7: the preview (dashPreview), drawn as slides with the deck's own design values. Pure but for the DOM. */
+  function stepPreview(gate) {
+    const e = S.editor;
+    const missing = missingForSave().filter(m => m.indexOf('name') < 0);
+    const off = !gate.canRun;
+    const reason = off ? gate.why : missing.length ? `First pick ${missing.join(', ')}.` : '';
+    const kids = [h('div', { class: 'inline-fields' },
+      h('button', { type: 'button', class: 'btn btn--primary', disabled: !!reason || e.previewing, 'aria-describedby': reason ? 'preview-why' : null, 'data-fk': 'ed:preview',
+        on: { click: previewNow } }, icon('eye'), e.previewing ? 'Building the preview...' : 'Preview'),
+      reason ? h('span', { class: 'why-off', id: 'preview-why' }, `Preview is off: ${reason}`) : null)];
+    if (e.previewing) kids.push(h('p', { class: 'loading-word' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'The bot is building the slide from the alerts of the window (this can take a minute)...'));
+    else if (e.previewErr) kids.push(inlineProblem(null, e.previewErr));
+    else if (e.preview && obj(e.preview).ok !== true) kids.push(inlineProblem(e.preview));
+    else if (e.preview) kids.push(previewSlides(obj(e.preview)));
+    return step('Preview', 'See the slide as it would be delivered now, built from the bot\'s real alerts. Nothing is written to the deck.', !!(e.preview && obj(e.preview).ok === true), false, kids, 'step-preview');
+  }
+
+  /** Asks the bot for a preview. Never throws. */
+  function previewNow() {
+    const e = S.editor;
+    if (!e || e.previewing) return;
+    e.previewing = true;
+    e.preview = null;
+    e.previewErr = null;
+    renderSlides();
+    call('dashPreview', settingsOut()).then(r => {
+      if (S.editor !== e) return;
+      e.previewing = false;
+      e.preview = r;
+      if (r && (r.off || r.scope === false || r.scopeOk === false) && S.deliv.resp) {
+        if (r.off) S.deliv.resp.on = false;
+        if (r.scope === false || r.scopeOk === false) S.deliv.resp.scopeOk = false;
+        if (txt(r.why)) S.deliv.resp.runWhy = txt(r.why);
+      }
+      renderSlides();
+      const p = $('#step-preview');
+      if (p) scrollToEl(p);
+    }, err => {
+      if (S.editor !== e) return;
+      e.previewing = false;
+      e.previewErr = err;
+      renderSlides();
+    });
+  }
+
+  /** A CSS colour from the deck's design value, or '' when it is not a plain colour. Pure. */
+  function cssColor(v) {
+    const t = txt(v);
+    return /^#[0-9a-f]{3,8}$/i.test(t) || /^rgba?\([\d\s.,%]+\)$/i.test(t) ? t : '';
+  }
+
+  /** The preview's slides, drawn 16:9 with the deck's design values (background, font, colours, sizes in points). Pure but for the DOM. */
+  function previewSlides(r) {
+    const des = obj(r.design);
+    const bg = cssColor(des.bg || des.background);
+    const font = txt(des.font || des.fontFamily).replace(/["';<>{}]/g, '');
+    const tc = cssColor(des.titleColor);
+    const bc = cssColor(des.bodyColor);
+    const ts = numOr(des.titleSize);
+    const bs = numOr(des.bodySize);
+    const plain = !bg && !font && !tc && !bc && ts === null && bs === null;
+    const wrap = h('div', { style: { display: 'grid', gap: '12px' } });
+    const win = typeof r.window === 'string' ? txt(r.window) : txt(obj(r.window).label);
+    if (win) add(wrap, h('p', { class: 'small' }, h('b', {}, 'Window: '), win));
+    const slides = arr(r.slides).map(obj);
+    if (!slides.length) add(wrap, h('p', { class: 'muted' }, 'The bot\'s preview has no slides.'));
+    slides.forEach(sl => {
+      // a slide the bot can't make (the positive pulse): its reason, never an empty slide
+      if (sl.unavailable) {
+        add(wrap, h('div', { class: 'coverage warn', role: 'note' }, h('b', {}, `${txt(sl.title) || 'This slide'} is not made: `),
+          txt(sl.why) || 'the bot did not say why.'));
+        return;
+      }
+      // the bot's answer carries the slide's text exactly as it is written to the deck: drawn in the deck's own boxes
+      if (typeof obj(sl.model).body === 'string') {
+        add(wrap, deckSlide(sl, { bg, font, tc, bc, ts, bs, plain }));
+        return;
+      }
+      const card = h('div', { class: `slide-card${plain ? ' plain' : ''}`, role: 'group', 'aria-label': `Preview of the slide: ${txt(sl.title)}` });
+      if (bg) card.style.background = bg;
+      if (font) card.style.fontFamily = `"${font}", var(--font-sans)`;
+      if (bc) card.style.color = bc;
+      if (bs !== null) card.style.fontSize = `calc(${bs} * var(--pt))`;
+      const title = h('div', { class: 'slide-title-txt' }, txt(sl.title) || 'Untitled');
+      if (tc) title.style.color = tc;
+      title.style.fontSize = ts !== null ? `calc(${ts} * var(--pt))` : 'calc(26 * var(--pt))';
+      add(card, title);
+      if (txt(sl.windowLabel)) add(card, h('div', { class: 'slide-window' }, txt(sl.windowLabel)));
+      const issues = arr(sl.issues).map(obj);
+      const list = h('div', { class: 'slide-issues' });
+      if (!issues.length && !txt(sl.unnamedLine)) add(list, h('div', { class: 'slide-empty' }, txt(sl.empty) || 'No alerts in this window'));
+      issues.forEach(is => {
+        const summary = arr(is.summary).map(obj);
+        add(list, h('div', { class: 'slide-issue' },
+          h('div', {}, h('span', { class: 'slide-issue-name' }, txt(is.name) || 'Not named'), is.foundByApp ? h('span', { class: 'slide-tag' }, 'Found by the app') : null),
+          numbersLine(is.numbers),
+          summary.length ? h('div', {}, summary.map(seg => (safeUrl(seg.url)
+            ? h('a', { href: safeUrl(seg.url), target: '_blank', rel: 'noopener noreferrer' }, String(seg.text === undefined || seg.text === null ? '' : seg.text))
+            : String(seg.text === undefined || seg.text === null ? '' : seg.text)))) : null,
+          txt(is.status) ? h('div', { class: 'slide-status' }, txt(is.status)) : null));
+      });
+      if (txt(sl.unnamedLine)) add(list, h('div', { class: 'slide-status' }, issues.length ? `Also ${txt(sl.unnamedLine)}` : txt(sl.unnamedLine)));
+      add(card, list);
+      // text taller than the slide runs past its bottom edge in the deck: the preview shows where the slide ends and says so
+      const over = h('div', { class: 'coverage warn', role: 'alert', hidden: true },
+        h('b', {}, 'The text is taller than the slide: '), 'everything below the dashed line runs past the bottom edge of the slide in the deck. ' +
+        'Copy the look of a slide with smaller text (Design, above), or make the text smaller in the deck after it is delivered.');
+      add(card, h('div', { class: 'slide-end', 'aria-hidden': 'true' }, h('span', {}, 'End of the slide')));
+      add(wrap, over, h('div', { class: 'slide-scroll', tabindex: '0', role: 'region', 'aria-label': 'The slide preview (it scrolls sideways on a small screen)' },
+        h('div', { class: 'slide-wrap' }, card)));
+      watchOverflow(card, over);
+    });
+    const fitNote = arr(r.slides).map(x => txt(obj(obj(x).fit).note)).filter(Boolean)[0] || '';
+    add(wrap, h('p', { class: 'preview-note' }, plain ? `The bot did not send the deck's design values${txt(r.designWhy) ? ` (${txt(r.designWhy)})` : ''}, so this preview uses plain styles; the delivered slide follows the deck.`
+      : `Drawn with the deck's own background, font, colours, sizes and text boxes, with the words exactly as they go in. The links are on the phrases the summary cites.${fitNote ? ` On this slide ${fitNote}.` : ''}`));
+    return wrap;
+  }
+
+  /** A box ({x, y, w, h} in points) from the bot's answer, or `dflt`. Pure. */
+  function ptBox(b, dflt) {
+    const o = obj(b);
+    const v = ['x', 'y', 'w', 'h'].map(k => numOr(o[k]));
+    return v.every(x => x !== null) && v[2] > 0 && v[3] > 0 ? { x: v[0], y: v[1], w: v[2], h: v[3] } : dflt;
+  }
+
+  /**
+   * The body text of the slide's model ({body, bold: [[start, end]], links: [[start, end, url]]}) as text and links,
+   * bold where the deck has it bold; only http(s) links are made. Pure but for the DOM.
+   */
+  function modelRuns(m) {
+    const body = String(m.body);
+    const bold = arr(m.bold).filter(x => Array.isArray(x));
+    const links = arr(m.links).filter(x => Array.isArray(x) && safeUrl(x[2]));
+    const cuts = new Set([0, body.length]);
+    bold.concat(links).forEach(x => { cuts.add(Math.max(0, Math.min(body.length, Number(x[0]) || 0))); cuts.add(Math.max(0, Math.min(body.length, Number(x[1]) || 0))); });
+    const at = Array.from(cuts).sort((a, b) => a - b);
+    const out = [];
+    for (let i = 0; i < at.length - 1; i++) {
+      const a = at[i];
+      const z = at[i + 1];
+      if (z <= a) continue;
+      const piece = body.slice(a, z);
+      const isBold = bold.some(x => x[0] <= a && z <= x[1]);
+      const link = links.find(x => x[0] <= a && z <= x[1]);
+      let el = link ? h('a', { href: safeUrl(link[2]), target: '_blank', rel: 'noopener noreferrer' }, piece) : piece;
+      if (isBold) el = h('b', {}, el);
+      out.push(el);
+    }
+    return out;
+  }
+
+  /**
+   * One slide as it lands in the deck: the page at its own size, the title and the body in the deck's own boxes (from
+   * the bot's answer; a new deck's when it can't read them), the body at the size it is written at (fit.bodyPt), the
+   * words exactly as written. Text that runs past the page shows past a dashed line, with what to do. Pure but for the DOM.
+   */
+  function deckSlide(sl, d) {
+    const geo = obj(sl.box);
+    const pageW = numOr(geo.pageW) || 720;
+    const pageH = numOr(geo.pageH) || 405;
+    const tb = ptBox(geo.title, { x: 31.1, y: 22.3, w: 657.9, h: 62.6 });
+    const bb = ptBox(geo.body, { x: 31.1, y: 90.8, w: 657.9, h: 269.1 });
+    const bodyPt = numOr(obj(sl.fit).bodyPt) || d.bs || 18;
+    const titlePt = d.ts || 28;
+    const m = obj(sl.model);
+    const card = h('div', { class: `slide-card slide-card--deck${d.plain ? ' plain' : ''}`, role: 'group', 'aria-label': `Preview of the slide: ${txt(m.title) || txt(sl.title)}` });
+    card.style.setProperty('--pw', String(pageW));
+    card.style.setProperty('--ph', String(pageH));
+    if (d.bg) card.style.background = d.bg;
+    if (d.font) card.style.fontFamily = `"${d.font}", var(--font-sans)`;
+    if (d.bc) card.style.color = d.bc;
+    const place = (el, b) => {
+      el.style.left = `calc(${b.x} * var(--pt))`;
+      el.style.top = `calc(${b.y} * var(--pt))`;
+      el.style.width = `calc(${b.w} * var(--pt))`;
+      return el;
+    };
+    const title = place(h('div', { class: 'slide-box slide-box--title' }, h('div', {}, txt(m.title) || txt(sl.title) || 'Untitled')), tb);
+    title.style.height = `calc(${tb.h} * var(--pt))`;
+    title.style.fontSize = `calc(${titlePt} * var(--pt))`;
+    if (d.tc) title.style.color = d.tc;
+    const body = place(h('div', { class: 'slide-box slide-box--body' }, modelRuns(m)), bb);
+    body.style.minHeight = `calc(${bb.h} * var(--pt))`;
+    body.style.fontSize = `calc(${bodyPt} * var(--pt))`;
+    add(card, title, body, h('div', { class: 'slide-end', 'aria-hidden': 'true' }, h('span', {}, 'End of the slide')));
+    const over = h('div', { class: 'coverage warn', role: 'alert', hidden: true },
+      h('b', {}, 'The text is taller than the slide: '), 'everything below the dashed line runs past the bottom edge of the slide in the deck. ' +
+      'Copy the look of a slide with a larger text box (Design, above), or a shorter lookback with fewer alerts.');
+    const out = h('div', { style: { display: 'grid', gap: '12px' } }, over,
+      h('div', { class: 'slide-scroll', tabindex: '0', role: 'region', 'aria-label': 'The slide preview (it scrolls sideways on a small screen)' }, h('div', { class: 'slide-wrap' }, card)));
+    watchDeckOverflow(card, body, over, pageH / pageW);
+    return out;
+  }
+
+  /**
+   * Shows `note` and grows `card` (the dashed line stays at the page's edge) while the body runs past the bottom of the
+   * page; checked again whenever the card's size changes (fonts arriving, a narrower window). Never throws.
+   */
+  function watchDeckOverflow(card, body, note, ratio) {
+    const check = () => {
+      try {
+        if (!card.isConnected) return;
+        const page = card.clientWidth * ratio;
+        const bottom = body.offsetTop + body.offsetHeight;
+        const tall = bottom > page + 1;
+        card.classList.toggle('over', tall);
+        card.style.height = tall ? `${Math.ceil(bottom + 10)}px` : '';
+        note.hidden = !tall;
+      } catch (e) { /* the preview stays as drawn */ }
+    };
+    const soon = () => requestAnimationFrame(check);
+    try { if (typeof ResizeObserver === 'function') new ResizeObserver(soon).observe(body); } catch (e) { /* checked below */ }
+    soon();
+    try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(soon); } catch (e) { /* checked above */ }
+  }
+
+  /**
+   * Shows `note` and marks the slide's end on `card` while the card's text is taller than a 16:9 slide (checked again
+   * whenever its size changes: fonts arriving, a narrower window). Never throws.
+   */
+  function watchOverflow(card, note) {
+    const check = () => {
+      try {
+        if (!card.isConnected) return;
+        const tall = card.scrollHeight > Math.ceil((card.clientWidth * 9) / 16) + 2;
+        card.classList.toggle('over', tall);
+        note.hidden = !tall;
+      } catch (e) { /* the preview stays as drawn */ }
+    };
+    // the change is made a frame later, never inside the observer's own callback (no resize loop)
+    const soon = () => requestAnimationFrame(check);
+    try { if (typeof ResizeObserver === 'function') new ResizeObserver(soon).observe(card); } catch (e) { /* checked below */ }
+    soon();
+    try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(soon); } catch (e) { /* checked above */ }
+  }
+
+  /** An issue's numbers line: the bot's own words, or its numbers written out (only those it gives). Pure but for the DOM. */
+  function numbersLine(n) {
+    if (typeof n === 'string') return txt(n) ? h('div', {}, txt(n)) : null;
+    const o = obj(n);
+    if (txt(o.text || o.line)) return h('div', {}, txt(o.text || o.line));
+    const parts = [];
+    if (numOr(o.alerts) !== null) parts.push(pl(o.alerts, 'alert', 'alerts'));
+    if (numOr(o.accounts) !== null) parts.push(pl(o.accounts, 'account', 'accounts'));
+    if (numOr(o.platforms) !== null) parts.push(pl(o.platforms, 'platform', 'platforms'));
+    if (o.engagement !== undefined) parts.push(numOr(o.engagement) !== null ? `${fmt(o.engagement)} engagement` : 'engagement not counted');
+    if (txt(o.change)) parts.push(txt(o.change));
+    return parts.length ? h('div', {}, parts.join(' · ')) : null;
+  }
+
+  /** The Save bar: Save (with what is missing), Cancel, and the save's answer. Pure but for the DOM. */
+  function saveBar() {
+    const e = S.editor;
+    if (!e) return h('div');
+    const missing = missingForSave();
+    const gate = delivGate();
+    const kids = [h('button', { type: 'button', class: 'btn btn--primary btn--lg', disabled: missing.length > 0 || e.saving, 'aria-describedby': missing.length ? 'save-why' : null,
+      'data-fk': 'ed:save', on: { click: saveNow } }, e.saving ? 'Saving...' : 'Save'),
+    h('button', { type: 'button', class: 'btn btn--lg', on: { click: closeEditor } }, 'Cancel')];
+    if (missing.length) kids.push(h('span', { class: 'why-off', id: 'save-why' }, `To save, add ${missing.join(', ')}.`));
+    else if (gate.on === false) kids.push(h('span', { class: 'small muted' }, 'It can be saved now; it waits until Slide deliveries (row 55) is ON.'));
+    const out = h('div', {}, h('div', { class: 'save-bar' }, kids));
+    if (e.saveErr) add(out, inlineProblem(null, e.saveErr));
+    else if (e.saveResp && obj(e.saveResp).ok !== true) add(out, inlineProblem(e.saveResp));
+    return out;
+  }
+
+  /** Draws the Save bar again in place (after a typed change). Never throws. */
+  function refreshSaveBar() {
+    const bar = $('#save-bar');
+    if (!bar || !S.editor) return;
+    const keep = rememberFocus();
+    bar.replaceChildren(saveBar());
+    restoreFocus(keep);
+  }
+
+  /** Saves the delivery (dashSaveDelivery): works while row 55 is OFF (it waits). Never throws. */
+  function saveNow() {
+    const e = S.editor;
+    if (!e || e.saving || missingForSave().length) return;
+    e.saving = true;
+    e.saveErr = null;
+    e.saveResp = null;
+    refreshSaveBar();
+    call('dashSaveDelivery', settingsOut()).then(r => {
+      if (S.editor !== e) return;
+      e.saving = false;
+      if (r && r.ok === true) {
+        S.editor = null;
+        toast(txt(r.note) || (delivGate().on === false ? 'Saved. It waits until Slide deliveries (row 55) is ON.' : 'Saved.'));
+        loadDeliveries();
+      } else {
+        e.saveResp = r;
+        refreshSaveBar();
+      }
+    }, err => {
+      if (S.editor !== e) return;
+      e.saving = false;
+      e.saveErr = err;
+      refreshSaveBar();
+    });
+  }
+
+  /** Checks the deck (dashDeckCheck): edit access, the bot account to share with, its slides. Keeps a saved spot when its slides are still there. Never throws. */
+  function checkDeck() {
+    const e = S.editor;
+    if (!e || e.checking) return;
+    const url = txt(e.s.deck.url);
+    if (!/^https?:\/\//i.test(url)) {
+      e.check = { ok: false, why: 'Paste the deck\'s full link, starting with https://docs.google.com/presentation/.' };
+      e.checkErr = null;
+      renderSlides();
+      return;
+    }
+    e.checking = true;
+    e.checkErr = null;
+    renderSlides();
+    call('dashDeckCheck', url).then(r => {
+      if (S.editor !== e) return;
+      e.checking = false;
+      e.check = r;
+      if (r && r.ok === true) {
+        const deck = obj(r.deck);
+        e.s.deck = { id: txt(deck.id), url: txt(deck.url) || url, title: txt(deck.title) };
+        if (!txt(e.s.name) && txt(deck.title)) e.s.name = txt(deck.title);
+        const ids = new Set(arr(r.slides).map(x => txt(obj(x).id)));
+        const sp = obj(e.s.spot);
+        if (e.s.spot && !(ids.has(txt(sp.afterId)) || ids.has(txt(sp.beforeId)))) { e.s.spot = null; e.spotLost = true; }
+        if (e.s.design.mode === 'copy' && txt(e.s.design.slideId) && !ids.has(txt(e.s.design.slideId))) e.s.design.slideId = '';
+      }
+      renderSlides();
+    }, err => {
+      if (S.editor !== e) return;
+      e.checking = false;
+      e.checkErr = err;
+      renderSlides();
+    });
+  }
+
+  // -----------------------------------------------------------------------------------------------------------------
+  // Start
+  // -----------------------------------------------------------------------------------------------------------------
+
+  /** Wires the header, restores the viewer's choices, and asks the bot for the first answers. Never throws. */
+  function start() {
+    applyTheme(themeChoice(), false);
+    document.querySelectorAll('[data-theme-choice]').forEach(b => b.addEventListener('click', () => applyTheme(b.getAttribute('data-theme-choice'), true)));
+    const cyc = $('#theme-cycle');
+    if (cyc) cyc.addEventListener('click', () => applyTheme(THEME_NEXT[themeChoice()] || 'light', true));
+    const v = lsGet('view');
+    if (VIEWS.some(x => x.key === v)) S.view = v;
+    const ms = lsGet('mapSize');
+    if (ms === 'accounts' || ms === 'posts' || ms === 'engagement') S.map.size = ms;
+    const mc = lsGet('mapColor');
+    if (mc === 'level' || mc === 'speed' || mc === 'platform') S.map.color = mc;
+    const areaTabs = [document.getElementById('area-tab-live'), document.getElementById('area-tab-slides')];
+    areaTabs.forEach((t, i) => {
+      t.addEventListener('click', () => setArea(i === 0 ? 'live' : 'slides'));
+      t.addEventListener('keydown', ev => tabKeys(ev, areaTabs, j => setArea(j === 0 ? 'live' : 'slides', true)));
+    });
+    $('#refresh-btn').addEventListener('click', () => { if (S.area === 'slides') loadDeliveries(); else loadSnapshot(true); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && S.area === 'live' && !S.loading && sinceLoaded() >= REFRESH_MS) loadSnapshot(false);
+    });
+    let lastTick = wallNow();
+    setInterval(() => {
+      // the device's clock jumped past a few ticks: it slept (the page clock stood still), so ask the bot at once
+      const woke = wallNow() - lastTick > 3 * TICK_MS;
+      lastTick = wallNow();
+      updateFresh();
+      // what the page shows became too old (or fresh again): the Now strip and the answers say so at once
+      if (S.snap && S.area === 'live' && staleness().stale !== !!S.drawnStale) { redrawNow(); redrawQuestions(); }
+      if (document.visibilityState === 'visible' && S.area === 'live' && !S.loading && S.loadedAt && (woke || sinceLoaded() >= REFRESH_MS)) loadSnapshot(false);
+    }, TICK_MS);
+    loadSnapshot(false);
+    if (lsGet('area') === 'slides') setArea('slides');
+  }
+
+  start();
+})();
+</script>

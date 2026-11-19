@@ -565,7 +565,10 @@ module.exports = function (H) {
       eq([sh.cell(39, 1), sh.cell(39, 2), sh.validations['39,2'].values], ['Fast triage: rank and early watch', 'OFF', ['ON', 'OFF']]);
       eq([sh.cell(40, 1), sh.cell(40, 2), sh.validations['40,2'].values], ['Fast triage: hold back noise', 'OFF', ['ON', 'OFF']]);
       eq([sh.cell(46, 1), sh.cell(46, 2), sh.validations['46,2'].values], ['Write early-wave records to BigQuery', 'OFF', ['ON', 'OFF']]);
-      eq([sh.cell(47, 1), sh.cell(48, 1), sh.cell(49, 1)], ['Early watch: independent_reports at or above', '', 'How it works']);
+      eq([sh.cell(47, 1), sh.cell(48, 1), sh.cell(49, 1), sh.cell(50, 1), sh.cell(51, 1), sh.cell(52, 1), sh.cell(53, 1), sh.cell(54, 1),
+        sh.cell(55, 1), sh.cell(56, 1), sh.cell(57, 1)],
+        ['Early watch: independent_reports at or above', 'Early Detection: also read the AMIE table', 'Early Detection: also read Brandwatch live (not X)', 'Proactive watch: also read the AMIE table', 'Open engine: judgment in place of caps', '', '',
+          'Live dashboard', 'Slide deliveries', '', 'How it works']);
 
       if (disableFastTriageHooks) {
         t.bot.ftStart_ = () => null;
@@ -790,7 +793,11 @@ module.exports = function (H) {
     holdSeed.t.control().getRange(40, 2).setValue('ON');
     holdSeed.t.poll();
     assert.match(holdSeed.t.control().cell(40, 3), /^✓ ON: a low-severity signal that meets the hold-back bars in B41:B43 is dropped without a review/);
-    assert.match(holdSeed.t.control().cell(19, 3), / · 2 filtered by fast triage$/); // ED-VEL-CLUSTER (g=0.07) and the Chrome gripe (n=0.95, sc=0.60) held back at seed
+    // ED-VEL-CLUSTER (g=0.07) and the Chrome gripe (n=0.95, sc=0.60) held back at seed: C19 counts them among the signals let go, and the
+    // run's record names each as held back as noise
+    assert.match(holdSeed.t.control().cell(19, 3), / · today: 4 found, 2 cards, 0 under another alert, 2 let go, 0 never reviewed, 0 waiting · the Early Detection tab lists each one$/);
+    eq(holdSeed.t.bot.edNotesOfRun_().map(r => holdSeed.t.bot.edNoteObj_(r)).filter(r => r.outcome === 'Held back as noise (no review)').map(r => r.id),
+      ['ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402', 'ED-CLU-CLU-3aa05dedf0a7-202611072231']);
     assert.match(holdSeed.t.g.logs.join('\n'), /early detection: fast triage held back ED-VEL-CLUSTER-1dd1392bf7db140af902df1be556969f-202611080402: not about Google/);
     assert.match(holdSeed.t.g.logs.join('\n'), /early detection: fast triage held back ED-CLU-CLU-3aa05dedf0a7-202611072231: routine noise/);
     eq(edCardsOf(holdSeed.t).map(m => /ED-CLU-CLU-(?:dc5a8afd13da|abe6decf9a2a)/.test(m.text)), [true, true]);  // the P0-group signal and the one below the noise bar: reviewed
@@ -812,7 +819,8 @@ module.exports = function (H) {
     holdEdited.t.control().getRange(43, 2).setValue('0.65');
     holdEdited.t.poll();
 
-    assert.match(holdEdited.t.control().cell(19, 3), / · 2 filtered by fast triage$/);
+    assert.match(holdEdited.t.control().cell(19, 3), / · today: 4 found, 2 cards, 0 under another alert, 2 let go, 0 never reviewed, 0 waiting · the Early Detection tab lists each one$/);
+    eq(holdEdited.t.bot.edNotesOfRun_().map(r => holdEdited.t.bot.edNoteObj_(r)).filter(r => r.outcome === 'Held back as noise (no review)').length, 2);
     eq(edCardsOf(holdEdited.t).length, 2); // P0-group signal + low-confidence Chrome adblock signal both reviewed and carded!
     assert.ok(edCardsOf(holdEdited.t).some(m => m.text.includes('ED-CLU-CLU-dc5a8afd13da-202611061731')), 'P0-group signal never held back');
     assert.ok(edCardsOf(holdEdited.t).some(m => m.text.includes('ED-CLU-CLU-3aa05dedf0a7-202611072231')), 'below-confidence signal never held back');
@@ -860,7 +868,7 @@ module.exports = function (H) {
 
       eq(JSON.parse(env.t.g.props.get('LAST_RUN')).errors, [], fm.name);
       eq(edCardsOf(env.t).map(m => m.text), baselineCards, `${fm.name}: cards identical to OFF baseline`);
-      assert.ok(!env.t.control().cell(19, 3).includes('filtered by fast triage'), fm.name);
+      assert.match(env.t.control().cell(19, 3), /, 0 let go, /, fm.name);  // nothing was held back
       const c38 = env.t.control().cell(38, 3);
       if (fm.paused) {
         assert.match(c38, /paused until .*: signals go on without it/, `${fm.name}: C38 shows cooldown`);
@@ -990,7 +998,7 @@ module.exports = function (H) {
         slrr: { is_slrr: true, confidence: 0.9, product: 'Gmail', exposure_tag: 'Product - Scams involving Google products', sensitive_topics: [] },
       },
     }, NOW);
-    assert.ok(cardText.includes('*Early signal:* this rests on 3 accounts so far (a story is usually flagged at 5).'), cardText);
+    eq(cardText.split('\n')[0], '\u26a1 *EARLY SIGNAL* \u00b7 3 accounts so far (a story is usually flagged at 5)');  // the card's first line says so
     const parsedCard = bot.edParseCard_(cardText, []);
     assert.ok(parsedCard && parsedCard.headline === 'Early malware reports targeting Gmail sessions');
     eq(bot.detectAlert_(cardText, bot.parseAlert_(cardText), ''), false);
@@ -1137,8 +1145,10 @@ module.exports = function (H) {
     const topCards1 = edCardsOf(cal.t);
     eq(topCards1.length, 1);
     const firstCard = topCards1[0];
-    assert.ok(firstCard.text.includes('*Early signal:* this rests on 3 accounts so far (a story is usually flagged at 5).'), firstCard.text);
-    assert.match(cal.t.control().cell(19, 3), /0 cluster, 0 velocity alerts today · 1 early watch/);
+    eq(firstCard.text.split('\n')[0], '\u26a1 *EARLY SIGNAL* \u00b7 3 accounts so far (a story is usually flagged at 5)');
+    // C19 counts the early signal's card among the day's cards; the run's record says which kind it was
+    assert.match(cal.t.control().cell(19, 3), / · today: 1 found, 1 card, 0 under another alert, 0 let go, 0 never reviewed, 0 waiting · /);
+    eq(cal.t.bot.edNotesOfRun_().map(r => cal.t.bot.edNoteObj_(r)).map(r => [r.kind, /^Card posted: /.test(r.outcome)]), [['Early signal (3-4 accounts)', true]]);
 
     // 15 minutes later: 2 more distinct accounts report the same story (total 5 -> crosses normal promotion bar!)
     cal.t.g.clock.now += 15 * MIN;
@@ -1152,8 +1162,16 @@ module.exports = function (H) {
       m.threadReply && m.thread.name === firstCard.thread.name && /^client-zeda-/.test(m.clientAssignedMessageId || '')
     );
     eq(threadReplies.length, 1, 'normal promotion arrives as an Early Detection Update in the first card\'s thread');
-    assert.ok(threadReplies[0].text.startsWith('📈 *Early Detection Update*'), threadReplies[0].text);
+    assert.ok(threadReplies[0].text.startsWith('📈 *UPDATE* \u00b7 More on a story already alerted\n'), threadReplies[0].text);
     assert.match(threadReplies[0].text, /\*What's new:\* 5 accounts now, up from 3: the story is now past the usual bar/);
+    // The Alert-log rows the flow wrote say which kind of signal each alert was (the Early Detection snapshot's
+    // signal_type, EarlyDetection.gs edSnap_): the Head start tab types the story by its first alert's ("Early signal"),
+    // and counts the card and its update as one story
+    const edRows = cal.t.bot.sheetBackend_(cal.t.sheet()).loadAlerts().filter(r => r.ingested === cal.t.bot.ev('ED_ALERT_INGESTED_'));
+    eq(edRows.map(r => [r.forwarded_fields.early_detection.signal_type, cal.t.bot.headStartOwnType_(r)]),
+      [[cal.t.bot.ev('EWS_WATCH_SIGNAL_'), 'Early signal'], ['CLUSTER_EMERGENCE', 'Early Detection']]);
+    eq(cal.t.bot.headStartReport_(edRows, null, cal.t.g.clock.now).stories.map(s => [s.type, s.alerts, s.alert_ids]),
+      [['Early signal', 2, edRows.map(r => r.alert_id)]]);
 
     // 3. Watch-tier failed review (Decision 11 / Rule 2): posts NO card, retries once more up to ED_QUEUE_MAX_TRIES_ (2), then drops
     const watchSample = Object.assign({}, FX.signals[2], {
@@ -1218,7 +1236,7 @@ module.exports = function (H) {
 
     // 2. Control C19 ON text derives dynamically from EW_EVERY_MS_
     const ewSwitch = bot.ev('CONTROL_SWITCHES_').find(s => s.key === 'earlyWave');
-    assert.match(ewSwitch.on(), /^✓ ON: every 15 min, groups new low-reach posts/);
+    assert.match(ewSwitch.on(), /^✓ ON: every 15 min, groups new posts from small accounts into stories/);
     eq(
       bot.ev('(() => { const was = EW_EVERY_MS_; return `every ${Math.round((5 * 60 * 1000) / 60000)} min (now ${Math.round(was / 60000)} min)`; })()'),
       'every 5 min (now 15 min)'
@@ -1415,7 +1433,7 @@ module.exports = function (H) {
     ]);
     const PROBS = ['0.05', '0.10', '0.15', '0.20', '0.25', '0.30', '0.35', '0.40', '0.45', '0.50', '0.55', '0.60', '0.65', '0.70', '0.75', '0.80', '0.85', '0.90', '0.95'];
     eq(specs.map(s => s.choices), [PROBS, PROBS, PROBS, PROBS, ['2', '3', '4'], PROBS]);
-    eq([sh.cell(46, 1), sh.cell(48, 1), sh.cell(49, 1)], ['Write early-wave records to BigQuery', '', 'How it works']);
+    eq([sh.cell(46, 1), sh.cell(48, 1), sh.cell(49, 1), sh.cell(52, 1), sh.cell(53, 1), sh.cell(56, 1), sh.cell(57, 1)], ['Write early-wave records to BigQuery', 'Early Detection: also read the AMIE table', 'Early Detection: also read Brandwatch live (not X)', '', '', '', 'How it works']);
 
     // 1. Every bar row has strict dropdown validation (allowInvalid === false) and seed value on setup()
     for (const s of specs) {
@@ -1457,8 +1475,8 @@ module.exports = function (H) {
 
     // 4. A tab the first build made (rows 41-46 as it left them: one bar for the three early-watch answers in row 44, the confidence bar
     //    seeded 0.80, "How it works" from row 48): on the next run row 44 keeps its value under its new label, row 47 is the
-    //    independent_reports bar at its seed, "How it works" moves to row 49, and the confidence cell still at that build's seed
-    //    (0.80) moves to 0.55, once. Rows 38-46 keep what people set.
+    //    independent_reports bar at its seed, row 48 the AMIE table's switch (OFF), "How it works" moves to row 57, and the
+    //    confidence cell still at that build's seed (0.80) moves to 0.55, once. Rows 38-46 keep what people set.
     const older = (conf) => {
       const o = e2e();
       o.bot.setup();
@@ -1474,11 +1492,13 @@ module.exports = function (H) {
       return { o, tab };
     };
     const first = older('0.80');
-    eq([41, 42, 43, 44, 45, 46, 47, 48, 49].map(r => [first.tab.cell(r, 1), first.tab.cell(r, 2)]), [
+    eq([41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57].map(r => [first.tab.cell(r, 1), first.tab.cell(r, 2)]), [
       ['Hold-back: about_google at or below', '0.10'], ['Hold-back: routine_noise at or above', '0.90'],
       ['Hold-back and early watch: answer confidence at or above', '0.55'],
       ['Early watch: about_google and brand_risk, each at or above', '0.70'], ['Early watch: distinct accounts, at least', '4'],
-      ['Write early-wave records to BigQuery', 'ON'], ['Early watch: independent_reports at or above', '0.30'], ['', ''], ['How it works', '']]);
+      ['Write early-wave records to BigQuery', 'ON'], ['Early watch: independent_reports at or above', '0.30'],
+      ['Early Detection: also read the AMIE table', 'OFF'], ['Early Detection: also read Brandwatch live (not X)', 'OFF'], ['Proactive watch: also read the AMIE table', 'OFF'], ['Open engine: judgment in place of caps', 'OFF'], ['', ''], ['', ''],
+      ['Live dashboard', 'OFF'], ['Slide deliveries', 'OFF'], ['', ''], ['How it works', '']]);
     assert.match(first.tab.cell(43, 3), /^✓ Hold-back \(row 40\) and early watch \(row 39\) require answer confidence at or above 0\.55/);
     eq(first.tab.rows.filter(r => String(r[0]).trim() === 'How it works').length, 1);
     eq(first.o.bot.ftBarsFor_(first.o.bot.readControl_(first.tab).ftBars).values, { about: 0.10, noise: 0.90, conf: 0.55, watch: 0.70, accounts: 4, independent: 0.30 });

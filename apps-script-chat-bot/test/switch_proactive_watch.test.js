@@ -11,7 +11,7 @@
 'use strict';
 
 module.exports = H => {
-  const { test, eq, assert, B, e2e } = H;
+  const { test, eq, assert, B, e2e, makeGoogle, loadBot, NOW } = H;
   const ROW = 34;
   const MIN = 60 * 1000;
   const HOUR = 60 * MIN;
@@ -362,7 +362,7 @@ module.exports = H => {
     eq([Number(third.params.until_ms) - Number(third.params.since_ms), Number(third.params.until_ms)], [30 * MIN, t.g.clock.now - MIN]);
   });
 
-  test('proactive watch: a look BigQuery refuses is noted (naming its sources) and tried again at the next look from the same start, the other location carrying on; after 3 tries its window is skipped (noted), so one bad window never stops the watch; a look still running after 4 minutes is cancelled and counts as a try', () => {
+  test('proactive watch: a look BigQuery refuses is noted (naming its sources, since when and why, until a look of that location succeeds again) and tried again at the next look from the same start, the other location carrying on; after 3 tries its window is skipped (the log says so), so one bad window never stops the watch; a look still running after 4 minutes is cancelled and counts as a try', () => {
     const { t, bq } = watching();
     bq.submit = look => (look.location === C1 ? { code: 500, message: 'Backend error' } : null);  // us-central1 refuses; US is fine
     bq.answers = { [US]: { rows: [] } };
@@ -371,7 +371,14 @@ module.exports = H => {
     const start = c1()[0].params.since_ms;
     eq([t.g.props.get('PW_TRIES'), t.g.props.get('PW_SINCE'), t.g.props.get('PW_JOB'), t.g.props.get('PW_US_TRIES'), lanes(bq).us.length],
       ['1', start, undefined, undefined, 1]);
-    assert.match(note(t), / · ⚠️ the last look at Sonar and Tubular failed \(BigQuery HTTP 500: Backend error\); it tries again at the next look$/);
+    // C34 says so from the first failed try on, in one form, behind a warning sign: since when (with its time zone, as
+    // the Watch sources tab writes it), and why in plain words (BigQuery's own words are in the run log only; no look has
+    // been collected yet)
+    const failedAt = t.g.clock.now;
+    const SINCE = ` · ⚠️ the look at Sonar and Tubular has failed since ${B.pwWhen_(failedAt, true)}: `;
+    const TODAY = ' · today: 0 flagged, 0 near misses';
+    eq(note(t), `${ON_TEXT} · first look on its way${SINCE}BigQuery had a problem of its own${TODAY}`);
+    assert.ok(t.g.logs.some(l => /^Proactive watch: the look at Sonar and Tubular for .* failed \(try 1\): BigQuery HTTP 500: Backend error$/.test(l)));
     for (let i = 0; i < 4; i++) t.poll();
     eq(c1().length, 1, 'not again before 5 minutes');
     t.poll();  // try 2
@@ -379,7 +386,10 @@ module.exports = H => {
     for (let i = 0; i < 4; i++) t.poll();  // try 3, 5 minutes after try 2
     eq([c1().length, c1().map(l => l.params.since_ms)], [3, [start, start, start]]);
     eq([t.g.props.get('PW_TRIES'), t.g.props.get('PW_SINCE')], [undefined, c1()[2].params.until_ms]);
-    assert.match(note(t), / · ⚠️ skipped \d\d:\d\d-\d\d:\d\d for Sonar and Tubular after 3 tries \(BigQuery HTTP 500: Backend error\); the next look carries on$/);
+    // the skip is in the log; C34 keeps saying since when the look has failed, after the other location's last look
+    assert.ok(t.g.logs.some(l => /^Proactive watch: skipped \d\d:\d\d-\d\d:\d\d for Sonar and Tubular after 3 tries; the next look carries on$/.test(l)));
+    const failing = why => new RegExp(`^ · last look Oct 14, \\d+:\\d\\d [AP]M EDT: 0 new posts, 0 flagged${SINCE}${why}${TODAY}$`);
+    assert.match(note(t).slice(ON_TEXT.length), failing('BigQuery had a problem of its own'));
     // the skipped window moved the location's other sources past it
     const marks = JSON.parse(t.g.props.get('PW_MARKS'));
     eq([marks.tubular, marks.outbound], [Number(c1()[2].params.until_ms), undefined]);
@@ -397,7 +407,9 @@ module.exports = H => {
     eq([bq.cancels.length, c1().length, retry.tries, retry.since, t.g.props.get('PW_TRIES')],
       [1, 5, 1, Number(c1()[3].params.since_ms), '1']);
     assert.match(bq.cancels[0], new RegExp(`/projects/brand-social-central-data/jobs/${c1()[3].jobId}/cancel\\?location=us-central1$`));
-    assert.match(note(t), / · ⚠️ the last look at Sonar and Tubular failed \(BigQuery took more than 4 minutes\); it tries again at the next look$/);
+    // still the same failure (no look of that location has succeeded since the first failed try), with the latest reason
+    assert.match(note(t).slice(ON_TEXT.length), failing('BigQuery took more than 4 minutes'));
+    eq(JSON.parse(t.g.props.get('PW_LAST')).lanes.c1, { fail: { since: failedAt, why: 'BigQuery took more than 4 minutes' } });
   });
 
   test('proactive watch: while the bot is paused nothing is looked at; back ON, the watch starts afresh from the last 15 minutes (not from where it stopped), every source from its first-look start', () => {
@@ -994,5 +1006,198 @@ module.exports = H => {
       forwarded_fields: { post_url: 'https://x.com/a/status/2', issue_name: big, triage: { stream: big, summary: big } } }], 0, 10000);
     eq(items.length, 1);
     assert.ok(Object.values(items[0]).every(v => String(v).length <= 1500), 'every field capped');
+  });
+
+  // ===========================================================================================================
+  // Row 50: the AMIE table as a source of the Watch (step 3b of the new sources; the owner asked on 16 Nov 2026 for the
+  // table to be read again). The restored tests of ace865c^'s BMIE source, under the key amie, as the plan changes it.
+  // ===========================================================================================================
+
+  const AMIE = 'Brandwatch alert feeds (AMIE)';
+  const AMIE_TABLE = 'brand-social-central-data.social_alerts_dataset.all_sundar_mentions';
+  /** The AMIE table's metadata (tables.get) answered in world `t`: its columns (`drop`: one left out). Its calls, recorded. */
+  const amieMeta = (t, o) => {
+    const x = o || {};
+    const prev = t.g.services.UrlFetchApp.fetch;
+    const calls = [];
+    t.g.services.UrlFetchApp.fetch = (link, params) => {
+      const url = String(link);
+      if (!url.endsWith('/datasets/social_alerts_dataset/tables/all_sundar_mentions')) return prev(link, params);
+      calls.push(url);
+      const fields = [['url'], ['alert_source'], ['snippet'], ['authorHandle'], ['SocialNetwork'], ['Sentiment'], ['postTime', 'TIMESTAMP'],
+        ['ingestionTimestamp', 'TIMESTAMP'], ['followers', 'INTEGER'], ['KOF'], ['product'], ['engagement']].filter(f => f[0] !== x.drop)
+        .map(([name, type]) => ({ name, type: type || 'STRING', mode: 'NULLABLE' }));
+      return { getResponseCode: () => 200, getHeaders: () => ({}), getContentText: () => JSON.stringify({ lastModifiedTime: String(t.g.clock.now),
+        timePartitioning: { type: 'DAY', field: 'ingestionTimestamp' }, schema: { fields } }) };
+    };
+    return calls;
+  };
+  /** watching(), with Control row 50 ON and the AMIE table's metadata answered. */
+  const watchingAmie = o => {
+    const w = world();
+    const meta = amieMeta(w.t, o);
+    switchOn(w.t);
+    w.t.control().getRange(50, 2).setValue('ON');
+    w.t.poll();
+    watches(w.t).getRange(3, 2).setValue('ON');
+    w.t.poll();  // the first look goes out
+    return Object.assign(w, { meta });
+  };
+  const US_AMIE = US_SOURCES.concat(['amie']);
+  /** pwKeySql_ worked in JS, from the SQL it writes (its two RE2 patterns are the same in JS): a link's key. */
+  const keyOf = url => {
+    const sql = B.pwKeySql_('u');
+    const pats = Array.from(sql.matchAll(/r'([^']*)'/g)).map(m => m[1]);
+    const low = String(url || '').trim().toLowerCase();
+    if (new RegExp(pats[0]).test(low)) return 'x:' + low.match(new RegExp(pats[1]))[1];
+    return low.replace(new RegExp(pats[2]), '').replace(new RegExp(pats[3]), 'x.com/').replace(new RegExp(pats[4], 'g'), '');
+  };
+
+  test('proactive watch (row 50 OFF): the looks are what they were: with rows 48 and 49 ON too, every lane\'s SQL and parameters are byte for byte those with every new row OFF, nothing names the AMIE table, no metadata is read and nothing of it is kept', () => {
+    const until = Date.UTC(2026, 9, 14, 12, 0);
+    const watch = B.pwWatchFrom_([BRAND, 'ON', 'Q?', '', '', '', '', ''], 3);
+    const sql = sw => {
+      B.ewsRunSwitches_(sw);
+      return ['c1', 'us'].map(lane => JSON.stringify(B.pwSql_(lane, [watch], { since: until - 15 * MIN, until, froms: B.pwFroms_({ amie: until - MIN }, until), chat: [] })));
+    };
+    const base = sql({});
+    eq(sql({ edAmie: true, edBwLive: true, earlyWave: true, proactiveWatch: true }), base);
+    assert.ok(!/all_sundar_mentions|'amie'|amie_from|amie_seen|'amk'/.test(base.join('')));
+    B.ewsRunSwitches_({});
+    eq(B.pwSources_(), B.ev('PW_SOURCES_'));
+    // a full run with row 50 OFF reads no metadata and keeps nothing of the AMIE table
+    const { t, bq } = watching();
+    const meta = amieMeta(t);
+    t.poll();
+    eq([meta.length, t.g.props.get('PW_AMIE') || null, t.g.cache.get('pw:amie:k') || null], [0, null, null]);
+    assert.ok(!lanes(bq).us.some(l => DROPPED_TABLES.test(l.sql)));
+    eq(sources(t).rows.slice(B.ev('PW_SRC_HEAD_ROW_')).map(r => r[0]).filter(Boolean), SOURCE_NAMES);
+  });
+
+  test('proactive watch (row 50 ON): the US look also reads the AMIE table, its table\'s metadata checked first: its own block (the table named only there and in the __TABLES__ read), 100 a look, from an hour back at first, the keys of the last 24 hours left out (@amie_seen), one row a post by its key, why each row is asked about, the optional columns read as numbers and text; it is last on the Watch sources tab', () => {
+    const w = watchingAmie();
+    const { t, bq } = w;
+    const { us } = lanes(bq);
+    eq([us.length, w.meta.length], [1, 1]);
+    const sql = us[0].sql;
+    const until = Number(us[0].params.until_ms);
+    eq([Number(us[0].params.amie_from), us[0].params.amie_seen, us[0].types.amie_seen, capIn(sql, 'amie')], [until - 60 * MIN, '', 'STRING', 100]);
+    const block = blockOf(sql, 'amie');
+    assert.ok(block.includes(`FROM \`${AMIE_TABLE}\``), block);
+    // its block names it; when its table last changed is read from its dataset's __TABLES__
+    eq([sql.split(AMIE_TABLE).length - 1, sql.includes("social_alerts_dataset.__TABLES__` WHERE table_id = 'all_sundar_mentions'")], [1, true]);
+    for (const piece of ['GROUP BY k', "NOT IN UNNEST(SPLIT(@amie_seen, ','))", "'brand-safety query'", "'negative'", "'KOF author'", "'risk words'",
+      "'sample'", "'skipped'", 'SAFE_CAST(followers AS INT64) AS followers', 'SAFE_CAST(engagement AS INT64) AS eng', 'SAFE_CAST(KOF AS STRING) AS kof',
+      'SAFE_CAST(product AS STRING) AS product', `r'${B.ev('PW_AMIE_FULL_RX_')}'`, `r'${B.ev('PW_AMIE_RISK_RX_')}'`, 'INTERVAL 72 HOUR',
+      'TIMESTAMP_SUB(TIMESTAMP_MILLIS(@amie_from), INTERVAL 24 HOUR)']) {
+      assert.ok(block.includes(piece), piece);
+    }
+    // the keys it hands over come back (kind 'amk'), and posts are told apart by the X status-id key
+    assert.ok(sql.includes("SELECT 'amk', 'amie'") && sql.includes(`PARTITION BY ${B.pwKeySql_('n.post_url')}`));
+    assert.ok(!/\b(INSERT INTO|DELETE FROM|UPDATE|MERGE INTO|CREATE (?:OR REPLACE )?TABLE)\s+`/i.test(sql));
+    eq(sources(t).rows.slice(B.ev('PW_SRC_HEAD_ROW_')).map(r => r[0]).filter(Boolean), SOURCE_NAMES.concat([AMIE]));
+    assert.ok(t.control().cell(50, 3).startsWith('✓ ON: the Watch (row 34) also checks new rows of the AMIE table'), t.control().cell(50, 3));
+  });
+
+  test('proactive watch (row 50 ON): a collected look moves the AMIE mark to the newest row handed over and keeps the keys it handed over; the next look reads from 40 minutes before the mark, so a row that lands 30 minutes late is read, and leaves out the keys already handed over, so none goes twice; the keys are kept 24 hours', () => {
+    const w = watchingAmie();
+    const { t, bq } = w;
+    const newest = t.g.clock.now - 4 * MIN;
+    const H1 = '0123456789ab';
+    const H2 = 'abcdef012345';
+    bq.answers = { [C1]: { rows: srcs(C1_SOURCES) },
+      [US]: { rows: srcs(US_AMIE, { amie: { found: 2, checked: 2, newest_ms: newest } }).concat([{ kind: 'amk', source: 'amie', why: H1 }, { kind: 'amk', source: 'amie', why: H2 }]) } };
+    t.poll();
+    eq(JSON.parse(t.g.props.get('PW_MARKS')).amie, newest);
+    eq(dataRows(t), []);  // the key rows are not detections
+    t.g.clock.now += B.ev('PW_EVERY_MS_');
+    t.poll();
+    const look = lanes(bq).us.slice(-1)[0];
+    eq([Number(look.params.amie_from), look.params.amie_seen.split(',').sort()], [newest - 40 * MIN, [H1, H2]]);
+    assert.ok(Number(look.params.amie_from) <= newest - 30 * MIN, 'a row ingested 30 minutes before the mark is read again');
+    // 24 hours on, the keys are let go
+    eq(B.pwAmieKeys_(t.g.clock.now + 25 * 3600 * 1000), []);
+  });
+
+  test('proactive watch (row 50 ON): the X status-id key makes AMIE\'s copy and the Brandwatch query\'s copy of one X post one row for Gemini, whatever its link: x.com or twitter.com, /status/ or /statuses/, a handle or i; other links keep the old key', () => {
+    eq(['https://x.com/newsdesk/status/2116390716536770729', 'http://twitter.com/newsdesk/statuses/2116390716536770729',
+      'https://mobile.twitter.com/newsdesk/status/2116390716536770729?s=20', 'https://x.com/i/status/2116390716536770729',
+      'https://www.twitter.com/i/web/status/2116390716536770729/'].map(keyOf), Array(5).fill('x:2116390716536770729'));
+    eq([keyOf('https://www.reddit.com/r/google/comments/abc/post/'), keyOf('https://www.tiktok.com/@a/video/1#x')],
+      ['reddit.com/r/google/comments/abc/post', 'tiktok.com/@a/video/1']);
+    // in a look with the AMIE table (row 50 ON, its check passed), the posts Gemini gets are one a key
+    const g = makeGoogle(NOW);
+    const b = loadBot(g.services, g.clock);
+    g.props.set('PW_AMIE', JSON.stringify({ mt: NOW - MIN, opt: ['followers'] }));
+    b.ewsRunSwitches_({ watchAmie: true });
+    const until = Date.UTC(2026, 9, 14, 12, 0);
+    const watch = b.pwWatchFrom_([BRAND, 'ON', 'Q?', '', '', '', '', ''], 3);
+    const q = b.pwSql_('us', [watch], { since: until - 15 * MIN, until, froms: b.pwFroms_({}, until), chat: [] });
+    assert.ok(q.sql.includes(`ROW_NUMBER() OVER (PARTITION BY ${B.pwKeySql_('n.post_url')} ORDER BY n.first_seen, n.source) AS dup`));
+  });
+
+  test('proactive watch (row 50 ON): a needed column missing from the AMIE table stops this source alone, with a plain reason on its row of the Watch sources tab (the tab\'s words for an error); the other sources are read; the metadata is not asked again that UTC day', () => {
+    const w = watchingAmie({ drop: 'snippet' });
+    const { t, bq } = w;
+    const { us } = lanes(bq);
+    eq([us.length, blockOf(us[0].sql, 'amie'), us[0].sql.includes(AMIE_TABLE)], [1, '', false]);
+    assert.ok(blockOf(us[0].sql, 'bwm').length > 0);
+    const row = sources(t).rows.find(r => r[0] === AMIE);
+    eq(row[3], '⚠️ error at the last look: the AMIE table has no column "snippet" any more, so it isn\'t read (tried again at the next look)');
+    t.g.clock.now += B.ev('PW_EVERY_MS_') + 2 * 3600 * 1000;
+    t.poll();
+    eq(w.meta.length, 1);
+  });
+
+  test('proactive watch (row 50): a flag from the AMIE table, or from Brandwatch\'s mentions table, asks the alert memory about the last 7 days (its copy can come days late); every other source, and every source with row 50 OFF, the memory\'s 24 hours as before', () => {
+    B.ewsRunSwitches_({ watchAmie: true });
+    eq([B.pwLateSeen_({ source: AMIE }), B.pwLateSeen_({ source: `${AMIE} · negative` }), B.pwLateSeen_({ source: BWM }),
+      B.pwLateSeen_({ source: `${BWM} · negative` }), B.pwLateSeen_({ source: 'Sonar' }), B.pwLateSeen_({ source: BWQ }), B.pwLateSeen_(null)],
+    [{ hours: 168 }, { hours: 168 }, { hours: 168 }, { hours: 168 }, undefined, undefined, undefined]);
+    B.ewsRunSwitches_({});
+    eq([B.pwLateSeen_({ source: AMIE }), B.pwLateSeen_({ source: BWM })], [undefined, undefined]);
+  });
+
+  test('proactive watch (row 50 ON, step 3a): a post a story card claimed (the card went out as a Social Alert) gets no Watch card from this source: the memory has it as seen by the story\'s card, and the Watch skips it', () => {
+    const g = makeGoogle(NOW);
+    const b = loadBot(g.services, g.clock);
+    b.ewsRunSwitches_({ watchAmie: true, proactiveWatch: true });
+    const t = e2e(g);
+    t.bot.setup();
+    const mem = b.alertMemoryStart_(t.sheet());
+    const POST = 'https://x.com/i/status/2116390716536770777';
+    const story = { alert_id: 'QA-7001', created_at: NOW - 30 * MIN, space: 'SLRR Auto-correct Test (auto-correct)', ingested: 'Early detection',
+      email_status: 'sent', forwarded_fields: { post_url: 'https://x.com/maincase/status/1' } };
+    eq(mem.notePosts(story, ['https://x.com/maincase/status/1', 'http://twitter.com/someone/statuses/2116390716536770777']), 1);
+    const seen = mem.seenPost(POST, b.pwLateSeen_({ source: AMIE }));
+    eq([seen && seen.outcome, seen && seen.alert_id], ['seen', 'QA-7001']);
+    eq(b.pwStoryCardOnly_({ choice: 'autocorrect', bqPastStoryCards: true }, [Object.assign({}, story, { space: 'SLRR Auto-correct Test (auto-correct)' })], seen, NOW), false);
+  });
+
+  test('proactive watch (row 50): OFF forgets the AMIE table\'s check, its keys, its mark and its row\'s numbers (ON again checks the table afresh and reads from an hour back); its row leaves the Watch sources tab; the stored values stay inside their limits in their worst case', () => {
+    const w = watchingAmie();
+    const { t, bq } = w;
+    bq.answers = { [C1]: { rows: srcs(C1_SOURCES) },
+      [US]: { rows: srcs(US_AMIE, { amie: { found: 1, checked: 1, newest_ms: t.g.clock.now - 4 * MIN } }).concat([{ kind: 'amk', source: 'amie', why: '0123456789ab' }]) } };
+    t.poll();
+    eq(['PW_AMIE' in Object.fromEntries(t.g.props), !!t.g.cache.get('pw:amie:k'), 'amie' in JSON.parse(t.g.props.get('PW_MARKS'))], [true, true, true]);
+    t.control().getRange(50, 2).setValue('OFF');
+    t.poll();
+    eq([t.g.props.get('PW_AMIE') || null, t.g.cache.get('pw:amie:k') || null, 'amie' in JSON.parse(t.g.props.get('PW_MARKS') || '{}'),
+      'amie' in JSON.parse(t.g.props.get('PW_SOURCES') || '{}')], [null, null, false, false]);
+    t.g.clock.now += B.ev('PW_EVERY_MS_');
+    t.poll();
+    eq(sources(t).rows.slice(B.ev('PW_SRC_HEAD_ROW_')).map(r => r[0]).filter(Boolean), SOURCE_NAMES);
+    assert.ok(t.control().cell(50, 3).startsWith('OFF (the Watch does not read the AMIE table)'));
+    // the keys' cache item in its worst case: more keys than it keeps, all within 24 hours
+    const g = makeGoogle(NOW);
+    const b = loadBot(g.services, g.clock);
+    for (let h = 0; h < 24; h++) {
+      b.pwAmieKeysAdd_(Array.from({ length: 400 }, (_, i) => (h * 1000 + i).toString(16).padStart(12, '0')), NOW + h * 3600 * 1000);
+    }
+    const raw = g.cache.get('pw:amie:k');
+    const kept = JSON.parse(raw).reduce((n, x) => n + x.k.split(',').length, 0);
+    assert.ok(raw.length <= 95000, `pw:amie:k ${raw.length}`);
+    eq(kept, B.ev('PW_AMIE_KEYS_MAX_'));
   });
 };
