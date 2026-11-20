@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Temp check (test app)</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>Temp check <span class="tag">test app</span></h1>
+  <div id="about" class="chips"></div>
+</header>
+<main>
+  <section id="left">
+    <div class="card">
+      <h2>New temp check</h2>
+      <div class="seg">
+        <button type="button" data-mode="query" class="on">From a Brandwatch query</button>
+        <button type="button" data-mode="alert">No query yet</button>
+      </div>
+
+      <div id="mode-query">
+        <label for="q-search">Brandwatch query <span class="hint">search the [G EVENT] queries, or paste a link or id</span></label>
+        <input id="q-search" type="text" placeholder="e.g. gmail outage" autocomplete="off">
+        <div id="q-list" class="list"></div>
+        <div id="q-picked" class="picked" hidden></div>
+      </div>
+
+      <div id="mode-alert" hidden>
+        <p class="note">For the moment an alert fires, before anyone has built the Brandwatch query. Brandwatch is still asked, through its standing Google queries, and every table of ours is searched with the same query. The write-up says where its numbers come from.</p>
+        <label for="a-issue">Issue name</label>
+        <input id="a-issue" type="text" placeholder="e.g. Alleged Gmail Outage">
+        <label for="a-text">The alert post <span class="hint">optional: its words, for drafting a query</span></label>
+        <textarea id="a-text" rows="3"></textarea>
+        <label for="a-at">When the alert fired <span class="hint">your computer's time; blank means now</span></label>
+        <input id="a-at" type="datetime-local">
+        <button type="button" id="a-draft">Draft a broad query (Gemini)</button>
+        <span id="a-draft-note" class="hint"></span>
+      </div>
+
+      <fieldset>
+        <legend>Count from</legend>
+        <label class="row"><input type="radio" name="from" value="auto" checked> <span id="from-auto-label">The issue's start (the first hour with 100+ mentions)</span></label>
+        <label class="row"><input type="radio" name="from" value="since"> A time I choose <input id="since" type="datetime-local" disabled> <span class="hint">your computer's time</span></label>
+      </fieldset>
+
+      <fieldset id="own">
+        <legend>Our own data</legend>
+        <label class="row" id="own-on-row"><input type="checkbox" id="own-on" checked> Also search our own tables, next to Brandwatch's numbers</label>
+        <div id="own-body">
+          <div class="row wrap" id="own-tables"></div>
+          <div class="sub">Search them with</div>
+          <label class="row" id="own-auto-row"><input type="radio" name="ownq" value="auto" checked> The Brandwatch query's own Boolean, converted</label>
+          <label class="row"><input type="radio" name="ownq" value="typed"> A Boolean query I type or paste</label>
+          <label class="row"><input type="radio" name="ownq" value="filters"> Filters</label>
+          <textarea id="own-boolean" rows="5" placeholder='(gmail OR "google mail") NEAR/10 (down OR outage*) NOT giveaway' hidden></textarea>
+          <div id="own-filters" class="filters" hidden>
+            <label for="f-all">All of these <span class="hint">words or phrases, comma separated</span></label><input id="f-all" type="text">
+            <label for="f-any">Any of these</label><input id="f-any" type="text">
+            <label for="f-none">None of these</label><input id="f-none" type="text">
+            <label>On</label><div class="row wrap" id="f-platforms"></div>
+            <label for="f-authors">By these accounts</label><input id="f-authors" type="text" placeholder="@handle, @handle">
+            <label for="f-followers">With at least this many followers</label><input id="f-followers" type="number" min="0" step="100">
+          </div>
+          <label for="own-reuse">Reuse posts gathered earlier <span class="hint">searches only the time since</span></label>
+          <select id="own-reuse"><option value="">No: search afresh</option></select>
+          <div class="row"><button type="button" id="preview">Show how the query converts</button></div>
+          <div id="preview-out"></div>
+        </div>
+      </fieldset>
+
+      <label class="row"><input type="checkbox" id="writeup" checked> Have Gemini write the summary, negativity drivers and themes</label>
+      <button type="button" id="run" class="primary">Run temp check</button>
+      <div id="progress" class="progress"></div>
+    </div>
+
+    <div class="card">
+      <h2>Past temp checks</h2>
+      <div id="history" class="list"></div>
+    </div>
+
+    <div class="card">
+      <h2>Automatic temp checks</h2>
+      <div id="watch-state"></div>
+      <button type="button" id="watch-toggle"></button>
+      <details>
+        <summary>The rules, and their numbers</summary>
+        <p class="note">The team's documents name the occasions for a temp check, not the numbers. These are starting values taken from a week of real alerts. Change them, then try them on past alerts before saving.</p>
+        <div id="watch-settings" class="filters"></div>
+        <div class="row wrap">
+          <button type="button" id="watch-try">Try on the newest 500 alerts (nothing runs)</button>
+          <button type="button" id="watch-save">Save these numbers</button>
+        </div>
+      </details>
+      <div id="watch-try-out"></div>
+      <h3>What it did</h3>
+      <div id="watch-log" class="list"></div>
+    </div>
+
+    <div class="card">
+      <h2>In Chat</h2>
+      <div id="chat-state"></div>
+      <h3>The newest story cards</h3>
+      <div id="chat-stories" class="list tall"></div>
+      <h3>What it did</h3>
+      <div id="chat-log" class="list"></div>
+    </div>
+
+    <div class="card">
+      <h2>Concern level benchmark</h2>
+      <div id="bench" class="note"></div>
+      <button type="button" id="fill">Read past issues' hourly counts from Brandwatch</button>
+    </div>
+  </section>
+
+  <section id="right">
+    <div id="result" class="card">
+      <p class="note">Pick a Brandwatch query on the left and run a temp check. The numbers come from Brandwatch's API with no export; the posts and their words come from Brandwatch's top posts, X's embed data and our own tables.</p>
+    </div>
+  </section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+<script src="/visuals.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

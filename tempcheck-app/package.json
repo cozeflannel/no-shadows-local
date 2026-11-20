@@ -1,0 +1,13 @@
+{
+  "name": "tempcheck-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Test app: a Brand Safety temp check from Brandwatch's API and our own BigQuery tables, with no export and no Apps Script.",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
