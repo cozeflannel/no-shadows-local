@@ -396,7 +396,7 @@ def _check_bigquery(ctx: AgentContext) -> list[dict[str, Any]]:
     out.append(_detail("Dataset", lambda: f"{dataset} in {gw.get_dataset(dataset).get('location', 'its location')}."))
     events = bq_admin.table(ctx, "events")
     if events:
-        out.append(_detail("Events table", lambda: f"{events}: {gw.get_table(events).get('num_rows', 0)} rows."))
+        out.append(_detail("Events table", lambda: f"{events}: {gw.get_table(events).get('rows') or 0} rows."))
     else:
         out.append({"label": "Events table", "ok": False, "message": "Not created yet. Use Create what is missing."})
     return out
@@ -563,8 +563,7 @@ def options(ctx: AgentContext, name: str) -> list[dict[str, str]]:
     _need_cloud()
     if name == "datasets":
         gw = bq_admin.get_gateway(ctx)
-        return [{"value": f"{gw.project}.{d['dataset']}" if "dataset" in d else str(d.get("id")), "label": str(d.get("dataset") or d.get("id"))}
-                for d in gw.list_datasets()]
+        return [{"value": d["full_id"], "label": d["dataset"]} for d in gw.list_datasets()]
     if name == "runtimes":
         return [{"value": r.split("|")[0], "label": r.split("|")[1] or r.split("|")[0].rsplit("/", 1)[-1]} for r in _runtimes(ctx)]
     if name in ("topics", "subscriptions"):
@@ -630,10 +629,9 @@ def autofill(request: Request, ctx: AgentContext = Depends(get_ctx), user: User 
             gw = bq_admin.get_gateway(probe)
             holding = []
             for d in gw.list_datasets()[:40]:
-                name = f"{gw.project}.{d.get('dataset') or d.get('id')}"
                 try:
-                    gw.get_table(f"{name}.agent_events")
-                    holding.append(name)
+                    gw.get_table(f"{d['full_id']}.agent_events")
+                    holding.append(d["full_id"])
                 except Exception:  # noqa: BLE001 - this dataset does not hold the agent's tables
                     continue
             if len(holding) > 1:

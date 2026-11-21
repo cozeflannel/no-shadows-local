@@ -7,9 +7,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-import pytest
-
 from conftest import GOOD_ALERT
+from console.backend import connections
 from test_platform import ADMIN, IM, LEAD, _llm, alert, client, flags, iap, triage  # noqa: F401 - fixtures
 from triage_agent import knowledge, stories
 
@@ -247,3 +246,71 @@ def test_the_deployer_is_listed_as_the_admin_until_an_admin_is_named(ctx, client
     got = client.get("/api/admin/overview", headers=iap("deployer@ops.test")).json()
     row = next(p for p in got["people"] if p["email"] == "deployer@ops.test")
     assert row["role"] == "admin" and row["role_source"] == "deploy", "the person who can sign in as admin is on the list"
+
+
+class DeniedSonar:
+    """BigQuery as the in-house check meets it: queries run, and the Sonar dataset refuses this account."""
+
+    project = "this-project"
+    _settings_key = ("", "", 0)
+
+    def test(self):
+        return {"ok": True, "project": self.project, "location": "US", "identity": "agent@project.test"}
+
+    def dry_run(self, sql, params=None, *, location=None):
+        if "sonar" in sql:
+            raise RuntimeError("403 Access Denied: Table sonar_raw: User does not have permission to query table")
+        return 2048
+
+
+def test_a_denied_table_names_the_account_and_the_grant_to_run(ctx, client, monkeypatch):
+    monkeypatch.setattr(connections, "_on_cloud", lambda: True)  # the check runs as it does on Cloud Run
+    ctx.bq = DeniedSonar()
+    got = client.post("/api/connections/inhouse/test", headers=iap(ADMIN)).json()
+    lines = {d["label"]: d for d in got["test"]["details"]}
+    project, dataset, _ = ctx.config.inhouse.sonar_table.split(".")
+    assert got["test"]["ok"] is False and got["connection"]["state"] == "failing"
+    assert lines["Alert log table"]["ok"] is True and lines["Story selection view"]["ok"] is True
+    assert lines["Sonar table"]["message"] == ("Access denied. The dataset's owners run: GRANT `roles/bigquery.dataViewer` ON SCHEMA "
+                                               f'`{project}`.`{dataset}` TO "serviceAccount:agent@project.test"')
+
+
+class OwnTables:
+    """BigQuery as the Console meets it in its own project: two datasets, one of them holding the agent's tables."""
+
+    project = "seen-project"
+    _settings_key = ("seen-project", "", 0)
+
+    def test(self):
+        return {"ok": True, "project": self.project, "location": "US", "identity": "agent@project.test"}
+
+    def list_datasets(self):
+        return [{"dataset": name, "project": self.project, "full_id": f"{self.project}.{name}"} for name in ("marketing", "slrr_triage")]
+
+    def get_dataset(self, dataset):
+        return {"dataset": dataset.split(".")[-1], "project": self.project, "location": "US"}
+
+    def get_table(self, table_id):
+        if not table_id.startswith("seen-project.slrr_triage."):
+            raise RuntimeError(f"404 Not found: {table_id}")
+        return {"full_id": table_id, "rows": 12}
+
+
+def test_on_the_cloud_find_and_fill_picks_the_one_runtime_and_the_dataset_that_holds_the_agents_tables(ctx, client, monkeypatch):
+    runtime = "projects/1/locations/us-central1/reasoningEngines/77"
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "seen-project")
+    monkeypatch.setenv("GOOGLE_CLOUD_REGION", "us-central1")
+    monkeypatch.setattr(connections, "_on_cloud", lambda: True)
+    monkeypatch.setattr(connections, "_runtimes", lambda ctx_: [f"{runtime}|triage agent"])  # what the Vertex AI list call returns
+    ctx.bq = OwnTables()
+    got = client.post("/api/connections/autofill", headers=iap(ADMIN)).json()
+    filled = {f["path"]: f["value"] for f in got["filled"]}
+    assert filled["platform.gcp.agent_runtime_resource"] == runtime and filled["platform.bigquery.dataset"] == "seen-project.slrr_triage"
+    assert filled["platform.bigquery.tables.events"] == "seen-project.slrr_triage.agent_events"
+    assert not any(left["tool"] in ("gcp", "runtime", "bigquery") for left in got["left"])
+    ctx.bq = OwnTables()  # the saved settings name the same project: the same gateway answers
+    choices = client.get("/api/connections/bigquery/options", params={"field": "platform.bigquery.dataset"}, headers=iap(ADMIN)).json()
+    assert [o["value"] for o in choices["options"]] == ["seen-project.marketing", "seen-project.slrr_triage"]
+    checked = client.post("/api/connections/bigquery/test", headers=iap(ADMIN)).json()
+    assert checked["test"]["ok"] is True and checked["connection"]["state"] == "connected"
+    assert [d["message"] for d in checked["test"]["details"]][-1] == "seen-project.slrr_triage.agent_events: 12 rows."
