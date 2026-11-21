@@ -6,6 +6,7 @@ import { apiSend, type ApiError, type FieldError } from "../api/client";
 import { useApi } from "../api/hooks";
 import type { Json, SaveSectionResponse, SettingsHistoryEntry, SettingsResponse } from "../api/types";
 import { ActionsEditor, type ActionRow } from "../components/settings/ActionsEditor";
+import { SpacesEditor } from "../components/settings/SpacesEditor";
 import { DistributionEditor, type Distribution } from "../components/settings/DistributionEditor";
 import { JsonEditor } from "../components/settings/JsonEditor";
 import { StructuredEditor } from "../components/settings/StructuredEditor";
@@ -122,6 +123,7 @@ export default function SettingsPage() {
     if (!meta || draft === null) return <EmptyState title="Unknown section" />;
     const disabled = !canEdit;
     if (meta.kind === "structured") return <StructuredEditor section={section} value={draft as Record<string, Json>} onChange={change} fieldErrors={fieldErrors} disabled={disabled} />;
+    if (section === "spaces") return <SpacesEditor value={draft as unknown as any[]} onChange={change} disabled={disabled} />;
     if (section === "distribution") return <DistributionEditor value={draft as unknown as Distribution} onChange={change} disabled={disabled} />;
     if (section === "actions") {
       const groups = ((data?.config.distribution as unknown as Distribution | undefined)?.groups ?? []).map((g) => ({ name: g.name, action_code: g.action_code }));

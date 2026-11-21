@@ -641,7 +641,7 @@ def get_store() -> Store:
     """TRIAGE_BACKEND=gcp -> Firestore, otherwise local SQLite (TRIAGE_LOCAL_DB)."""
     if os.environ.get("TRIAGE_BACKEND", "local") == "gcp":
         return FirestoreStore(
-            project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
+            project=os.environ.get("TRIAGE_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT"),
             database=os.environ.get("TRIAGE_FIRESTORE_DB", "(default)"),
         )
     return SqliteStore(os.environ.get("TRIAGE_LOCAL_DB", ".local/triage.db"))

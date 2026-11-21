@@ -264,5 +264,5 @@ class BigQueryEventLogger:
 def get_event_logger() -> EventLogger:
     """TRIAGE_BACKEND=gcp -> BigQuery (TRIAGE_BQ_TABLE), otherwise local SQLite."""
     if os.environ.get("TRIAGE_BACKEND", "local") == "gcp":
-        return BigQueryEventLogger(os.environ["TRIAGE_BQ_TABLE"], project=os.environ.get("GOOGLE_CLOUD_PROJECT"))
+        return BigQueryEventLogger(os.environ["TRIAGE_BQ_TABLE"], project=(os.environ.get("TRIAGE_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")))
     return SqliteEventLogger(os.environ.get("TRIAGE_LOCAL_DB", ".local/triage.db"))

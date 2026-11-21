@@ -63,7 +63,7 @@ class VertexGemini:
         self.location = os.environ.get("TRIAGE_LLM_LOCATION") or location or "global"
         self.client = genai.Client(
             vertexai=True,
-            project=project or os.environ.get("GOOGLE_CLOUD_PROJECT") or "brand-social-central-data",
+            project=project or (os.environ.get("TRIAGE_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")) or "brand-social-central-data",
             location=self.location,
             http_options=types.HttpOptions(timeout=int(timeout_s * 1000)),
         )

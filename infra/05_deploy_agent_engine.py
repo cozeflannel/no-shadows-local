@@ -62,6 +62,7 @@ def runtime_env_vars() -> dict[str, str]:
     project = env("PROJECT_ID", required=True)
     return {
         "TRIAGE_BACKEND": "gcp",
+        "TRIAGE_PROJECT_ID": project,
         "TRIAGE_ENV": env("TRIAGE_ENV", "dev"),
         "TRIAGE_FIRESTORE_DB": env("FIRESTORE_DB", "(default)"),
         "TRIAGE_BQ_TABLE": f"{project}.{env('DATASET', 'slrr_triage_agent')}.agent_events",

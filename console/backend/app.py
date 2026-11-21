@@ -28,7 +28,7 @@ from triage_agent.models import CaseStatus
 from triage_agent.operations import registered_operations
 from triage_agent.render import FIELD_LABELS
 
-from . import gmail_oauth, routes_cases, routes_learning, routes_metrics, routes_rosters, routes_settings
+from . import gmail_oauth, routes_cases, routes_learning, routes_metrics, routes_rosters, routes_settings, chat_stream
 from .auth import User, current_user, get_ctx, require_viewer
 from .state import ConsoleState
 
@@ -123,7 +123,7 @@ def create_app(ctx: AgentContext | None = None, state: ConsoleState | None = Non
             "kpi_count": len(KPI_DEFINITIONS),
         }
 
-    for module in (routes_metrics, routes_cases, routes_rosters, routes_settings, routes_learning, gmail_oauth):
+    for module in (routes_metrics, routes_cases, routes_rosters, routes_settings, routes_learning, gmail_oauth, chat_stream):
         app.include_router(module.router)
 
     # -- static frontend (SPA) -------------------------------------------------

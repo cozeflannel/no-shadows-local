@@ -17,6 +17,7 @@ import RostersPage from "./pages/Rosters";
 import SettingsPage from "./pages/Settings";
 import SuppressedPage from "./pages/Suppressed";
 import TestChannelPage from "./pages/TestChannel";
+import ChatPage from "./pages/Chat";
 
 export default function App() {
   const { me, gmail, bootError } = useApp();
@@ -71,6 +72,7 @@ export default function App() {
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/learning" element={<LearningPage />} />
         <Route path="/outbox" element={<OutboxPage />} />
+        <Route path="/chat" element={<ChatPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

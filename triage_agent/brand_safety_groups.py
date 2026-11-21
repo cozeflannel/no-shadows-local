@@ -164,7 +164,7 @@ def fetch_workbook_email_config(
         return list(cached[1]), cached[2]
 
     bearer = token or _adc_access_token()
-    project = os.environ.get("GOOGLE_CLOUD_PROJECT") or "brand-social-central-data"
+    project = (os.environ.get("TRIAGE_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")) or "brand-social-central-data"
     ranges = [f"{BRAND_SAFETY_GROUPS_TAB}!A1:B250", CONTROL_TESTERS_RANGE]
     query = "&".join(["valueRenderOption=FORMATTED_VALUE", *(f"ranges={urllib.parse.quote(r)}" for r in ranges)])
     url = f"https://sheets.googleapis.com/v4/spreadsheets/{urllib.parse.quote(sid)}/values:batchGet?{query}"

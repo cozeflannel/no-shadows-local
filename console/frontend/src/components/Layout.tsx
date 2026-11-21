@@ -18,6 +18,7 @@ const PRIMARY_NAV: { to: string; label: string; icon: ReactNode }[] = [
   { to: "/cases", label: "Triaged Cases", icon: <FolderSearch className="size-4" /> },
   { to: "/escalations", label: "Emails & T&S", icon: <Mail className="size-4" /> },
   { to: "/settings", label: "Config & Distros", icon: <Settings className="size-4" /> },
+  { to: "/chat", label: "Chat", icon: <Activity className="size-4" /> },
   { to: "/rosters", label: "On-Call Rosters", icon: <CalendarClock className="size-4" /> },
 ];
 
