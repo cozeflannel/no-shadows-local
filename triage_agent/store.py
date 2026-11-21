@@ -121,6 +121,7 @@ class Store(Protocol):
     def list_docs(self, collection: str, *, where: dict[str, Any] | None = None, since: datetime | None = None,
                   limit: int = 200) -> list[dict]: ...
     def create_doc(self, collection: str, doc_id: str, data: dict) -> bool: ...  # False = it already exists
+    def delete_docs_before(self, collection: str, field: str, before: datetime, limit: int = 2000) -> int: ...  # by the row's own time
 
 
 def _claim_plan(
@@ -437,6 +438,19 @@ class SqliteStore:
             con.commit()
             return cur.rowcount == 1
 
+    def delete_docs_before(self, collection, field, before, limit=2000):
+        if not field.replace("_", "").isalnum():
+            raise ValueError(f"invalid field: {field}")
+        with self._lock:
+            con = self._conn()
+            cur = con.execute(
+                f"DELETE FROM docs WHERE collection = ? AND id IN (SELECT id FROM docs WHERE collection = ? "
+                f"AND json_extract(data, '$.{field}') < ? LIMIT ?)",
+                (f"x:{collection}", f"x:{collection}", utc_isoformat(before), int(limit)),
+            )
+            con.commit()
+            return cur.rowcount
+
     def list_docs(self, collection, *, where=None, since=None, limit=200):
         sql, args = "SELECT data FROM docs WHERE collection = ?", [f"x:{collection}"]
         for key, value in (where or {}).items():
@@ -714,6 +728,19 @@ class FirestoreStore:
             if type(exc).__name__ in ("AlreadyExists", "Conflict"):
                 return False
             raise
+
+    def delete_docs_before(self, collection, field, before, limit=2000):
+        removed = 0
+        batch = self.db.batch()
+        for snap in self.db.collection(collection).where(field, "<", utc_isoformat(before)).limit(int(limit)).stream():
+            batch.delete(snap.reference)
+            removed += 1
+            if removed % 400 == 0:  # a batch holds at most 500 writes
+                batch.commit()
+                batch = self.db.batch()
+        if removed % 400:
+            batch.commit()
+        return removed
 
     def list_docs(self, collection, *, where=None, since=None, limit=200):
         col = self.db.collection(collection)

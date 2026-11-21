@@ -943,6 +943,10 @@ def test_access_comes_from_settings_and_the_deployer_is_admin_only_until_one_is_
     ctx.config.analysts = []
     me = client.get("/api/me", headers=iap("deployer@corp.test")).json()
     assert me["role"] == "admin" and me["role_source"] == "bootstrap"
+    triage(ctx)
+    done = client.post("/api/feed/TRG-1001/assessment", json={"agree": True}, headers=iap("deployer@corp.test"))
+    assert done.status_code == 200, "the Console decided this person's role; the operation does not ask again"
+    assert golden.get(ctx, "TRG-1001").assessments[0].actor == "deployer@corp.test"
 
 
 def test_worker_delivers_pushes_and_runs_jobs(ctx, monkeypatch):
@@ -983,3 +987,140 @@ def test_a_deployed_worker_refuses_a_caller_without_a_signed_token(ctx, monkeypa
     with TestClient(worker.app) as c:
         assert c.post("/jobs/followups").status_code == 401
         assert c.post("/pubsub/outbound", json={}, headers={"Authorization": "Bearer not-a-token"}).status_code == 401
+
+
+# -- retention ----------------------------------------------------------------------------------------------------------------
+def test_old_audit_and_chat_rows_are_removed_after_their_retention(ctx, clock):
+    from triage_agent import retention
+
+    cfg = ctx.config.platform.telemetry
+    cfg.audit_retention_days, cfg.chat_retention_days = 30, 7
+    triage(ctx)  # writes audit and Chat rows now
+    assert audit.search(ctx) and chatlog.search(ctx)
+    clock.advance(days=8)
+    out = retention.run(ctx)
+    assert out["removed"]["chat_activity"] >= 2 and out["removed"]["audit"] == 0, "Chat rows pass 7 days; audit rows are kept 30"
+    assert chatlog.search(ctx, since=clock.now - timedelta(days=30)) == []
+    assert [e for e in audit.search(ctx, since=clock.now - timedelta(days=30)) if e.action == "op.triage_message"]
+    assert retention.run(ctx)["skipped"] == "ran within the hour", "it runs at most once an hour"
+    clock.advance(days=31)
+    out = retention.run(ctx)
+    assert out["removed"]["audit"] >= 1
+    kept = audit.search(ctx, since=clock.now - timedelta(days=400))
+    assert [e.action for e in kept] == ["retention.removed"], "what was removed is itself recorded"
+
+
+def test_hot_events_are_only_removed_when_bigquery_holds_them(ctx, clock):
+    from triage_agent import retention
+    from triage_agent.events import HOT_COLLECTION, StoreEventLogger, TeeEventLogger
+
+    hot = StoreEventLogger(ctx.store)
+    ctx.events = hot  # the fast store is the only copy
+    ctx.emit("alert.received", case_id="TRG-1")
+    clock.advance(days=30)
+    assert retention.run(ctx)["removed"].get("events_hot", 0) == 0 and ctx.store.list_docs(HOT_COLLECTION)
+
+    class Cold:
+        def log(self, event):
+            pass
+
+        def query(self, **kw):
+            return []
+
+    ctx.events = TeeEventLogger(hot, Cold(), hot_window_hours=48)
+    clock.advance(hours=2)
+    assert retention.run(ctx)["removed"]["events_hot"] == 1
+    assert [r["event_type"] for r in ctx.store.list_docs(HOT_COLLECTION)] == ["audit.recorded"], "only the record of the removal itself is left"
+
+
+def test_an_alerts_post_is_read_again_and_a_climb_starts_a_temp_check(ctx, fake_llm, clock):
+    flags(ctx, temp_checks=True, auto_temp_checks=True)
+    cfg = ctx.config.platform.temp_check
+    cfg.sources = [tc_source()]
+    cfg.momentum_recheck_minutes = [30, 90]
+
+    class Table(Rows):
+        eng = 3000.0
+
+        def query(self, sql, params=None, **kw):
+            self.asked.append((sql, params))
+            if "AS post_eng" in sql:
+                return [{"post_eng": self.eng}]
+            return super().query(sql, params, **kw)
+
+    ctx.bq = Table([], [])
+    ctx.bq._settings_key = ("", "", 0)
+    tempcheck.auto_run(ctx)  # switched on: from now
+    clock.advance(minutes=1)
+    triage(ctx)  # engagement 2,450: under the high bar, one alert, nothing starts
+    clock.advance(minutes=1)
+    assert tempcheck.auto_run(ctx)["started"] == 0
+    clock.advance(minutes=31)
+    out = tempcheck.auto_run(ctx)
+    asked = [(s, p) for s, p in ctx.bq.asked if "AS post_eng" in s]
+    assert len(asked) == 1 and "FROM `p.d.sonar_raw`" in asked[0][0] and "1845123456789012345" in asked[0][1]["pat"]
+    assert out["started"] == 0, "one reading is not a climb"
+    clock.advance(minutes=20)
+    tempcheck.auto_run(ctx)
+    assert len([1 for s, _ in ctx.bq.asked if "AS post_eng" in s]) == 1, "not read again before the next recheck is due"
+    ctx.bq.eng = 6000.0
+    clock.advance(minutes=45)
+    fake_llm.on("temp_check.query", {"subject": ["gemini"], "specifics": ["citations"], "angle": ["fabricated"], "why": "draft"})
+    out = tempcheck.auto_run(ctx)
+    assert out["started"] == 1
+    row = (ctx.store.get_kv("tc:auto_log") or {})["rows"][0]
+    assert row["rule"] == "momentum" and row["case_id"] == "TRG-1001" and "3,000 to 6,000" in row["reasons"][0]
+    check = tempcheck.get(ctx, row["check_id"])
+    assert check.trigger == "momentum" and check.via == "auto" and check.case_id == "TRG-1001"
+    clock.advance(minutes=30)
+    assert tempcheck.auto_run(ctx)["started"] == 0, "the same climb does not start another"
+
+
+def test_a_finished_temp_check_is_kept_as_a_document_when_a_folder_is_set(ctx, fake_llm, clock, monkeypatch):
+    flags(ctx, temp_checks=True)
+    cfg = ctx.config.platform.temp_check
+    cfg.sources = [tc_source()]
+    base = clock.now.replace(minute=0, second=0, microsecond=0)
+    posts = [{"platform": "x", "author": "@n", "text": "Gmail scam spreads", "url": "https://x.com/n/status/11", "posted": base, "followers": 1,
+              "eng": 5.0, "sentiment": "negative", "language": "en", "one": "u1", "matched": 1}]
+    ctx.bq = Rows(posts, [{"platform": "x", "hr": int((base - timedelta(hours=1)).timestamp() * 1000), "sentiment": "negative", "n": 120, "eng": 9}])
+    ctx.bq._settings_key = ("", "", 0)
+    fake_llm.on("temp_check.writeup", {"summary": "People warn about the scam.", "negativity_drivers": "", "themes": ""})
+    made = []
+
+    def create(folder_id, title, html):
+        made.append((folder_id, title, html))
+        return "https://docs.google.com/document/d/abc/edit"
+
+    monkeypatch.setattr(tempcheck, "create_document", create)
+    check = tempcheck.run(ctx, tempcheck.TempCheckRequest(issue="Gmail scam", boolean="gmail AND scam", requested_by=IM))
+    assert check.status == "complete" and check.doc_url == "" and made == [], "no folder set: no document is made"
+    cfg.docs_folder_id = "folder123"
+    check = tempcheck.run(ctx, tempcheck.TempCheckRequest(issue="Gmail scam", boolean="gmail AND scam", requested_by=IM))
+    assert check.doc_url == "https://docs.google.com/document/d/abc/edit" and tempcheck.get(ctx, check.check_id).doc_url == check.doc_url
+    assert made[0][0] == "folder123" and "Gmail scam" in made[0][1] and "People warn about the scam." in made[0][2]
+    monkeypatch.setattr(tempcheck, "create_document", lambda *a: (_ for _ in ()).throw(RuntimeError("the folder is not shared with the agent")))
+    check = tempcheck.run(ctx, tempcheck.TempCheckRequest(issue="Gmail scam", boolean="gmail AND scam", requested_by=IM))
+    assert check.status == "complete" and check.doc_url == "" and any("not shared" in n for n in check.notes), "the check still completes; the note says why"
+
+
+def test_the_console_asks_the_deployed_agent_whether_it_is_on_the_same_settings(ctx, client, monkeypatch):
+    from console.backend import routes_admin
+
+    assert client.get("/api/agent-runtime", headers=iap(IM)).json()["error"].startswith("No Agent Runtime")
+    ctx.config.platform.gcp.agent_runtime_resource = "projects/1/locations/us-central1/reasoningEngines/2"
+    calls = []
+
+    def answer(resource, op, payload):  # the deployed agent runs the same code: its health operation answers
+        calls.append((resource, op))
+        return handle({"op": op, "payload": payload}, ctx).model_dump(mode="json")
+
+    monkeypatch.setattr(routes_admin, "query_agent_runtime", answer)
+    got = client.get("/api/agent-runtime", headers=iap(IM)).json()
+    assert calls == [("projects/1/locations/us-central1/reasoningEngines/2", "health")]
+    assert got["reachable"] is True and got["same_settings"] is True and got["agent_config_version"] == ctx.config_version
+    monkeypatch.setattr(routes_admin, "query_agent_runtime", lambda *a: (_ for _ in ()).throw(RuntimeError("HTTP 403: denied")))
+    got = client.get("/api/agent-runtime", headers=iap(IM)).json()
+    assert got["reachable"] is False and "403" in got["error"]
+    steps = {s["key"]: s["done"] for s in client.get("/api/setup", headers=iap(ADMIN)).json()["steps"]}
+    assert steps["runtime"] is True

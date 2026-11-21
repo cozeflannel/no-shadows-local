@@ -35,8 +35,8 @@ TOPICS: list[dict[str, Any]] = [
         "summary": "Live numbers, charts and a feed you can act from.",
         "sections": [
             {"heading": "Pick a period", "steps": [
-                "Use the range buttons: Last hour, Today, 7 days, 30 days, or Custom.",
-                "Custom: set a start and an end, then Apply.",
+                "Use the range buttons: Hour, Today, 24 h, 7 days, 30 days or Custom.",
+                "Custom: set the start and the end. The numbers update at once.",
                 "Each card shows the change against the period before it."]},
             {"heading": "Read the cards", "items": [
                 "Needs you now: alerts waiting for review, unacknowledged alerts, SLAs at risk. Click a card to open the Review Feed.",
@@ -54,7 +54,7 @@ TOPICS: list[dict[str, Any]] = [
         "sections": [
             {"heading": "Find an alert", "steps": [
                 "Needs action shows what is waiting for a person, most urgent first.",
-                "Switch the view to All, Held for review, Verified, Suppressed or Closed.",
+                "Switch the view: Review, Verified, Suppressed, Closed or All.",
                 "Search by case id, product, tag or issue."]},
             {"heading": "Read a card", "items": [
                 "Verdict and confidence: the agent's decision and how sure it was.",
@@ -63,16 +63,16 @@ TOPICS: list[dict[str, Any]] = [
                 "Sources: the knowledge passages the assessment cited. Click one to open the document.",
                 "Suggested actions: what the routing rules recommend."]},
             {"heading": "Decide an alert held for review", "steps": [
-                "Open the alert.", "Forward it (set a field first if a value is wrong), bounce it, or suppress it.",
-                "Bounce and suppress need a reason."]},
+                "Open the alert.", "Tick the proposed corrections to apply, then Apply and forward. Or Send back to Burson, or Suppress.",
+                "Send back needs a reason."]},
             {"heading": "Take an action", "steps": [
                 "Open the alert and pick an action: Acknowledge, Email (PAs), T&S form, add a team, crisis chat, close, superseded.",
                 "A draft lands in your own Gmail. Connect Gmail from the top bar first."]},
             {"heading": "Assess the agent", "steps": [
-                "Open the alert, then Assessment.",
-                "Agree, or give the right verdict or field values and a note.",
+                "Open the alert and go to Was the agent right?",
+                "Click Right. Or pick the correct verdict or write a note, then click Wrong.",
                 "Your assessment is kept as a golden example."]},
-            {"heading": "Add an alert by hand", "steps": ["Click Add alert.", "Paste the alert's text.", "It is triaged like any other and gets a case."]},
+            {"heading": "Add an alert by hand", "steps": ["Click Triage an alert.", "Paste the alert's text.", "It is triaged like any other and gets a case."]},
         ],
     },
     {
@@ -80,7 +80,7 @@ TOPICS: list[dict[str, Any]] = [
         "summary": "Everything the agent received from Chat and posted back.",
         "sections": [
             {"heading": "Browse", "steps": [
-                "Pick a space on the left. Counts are for the period shown.",
+                "Click a space's card to see only that space. Counts are for the period shown.",
                 "Messages are grouped by thread, newest first.",
                 "Filter by direction (received or posted), or search the text."]},
             {"heading": "Statuses", "items": [
@@ -99,7 +99,7 @@ TOPICS: list[dict[str, Any]] = [
                                          "Answers cite the documents and cases they rest on."]},
             {"heading": "Have it act", "steps": [
                 "Ask for the action in plain words: \"forward TRG-1042 with product Gemini App\", \"draft the email for TRG-1042\", \"run a temp check on the Gmail outage\".",
-                "An action waits for your Confirm before it runs. Cancel stops it.",
+                "An action waits for you: Do it runs it, Cancel stops it.",
                 "Actions need the analyst role and the chat agent's action switch (Feature flags → console_chat_agent)."]},
             {"heading": "What it can do", "items": [
                 "Find and explain alerts; show the review queue.", "Triage a pasted alert.", "Review decisions, reverts, closing.",
@@ -114,16 +114,16 @@ TOPICS: list[dict[str, Any]] = [
         "summary": "Run, read and act on temp checks.",
         "sections": [
             {"heading": "Run one", "steps": [
-                "Click New temp check.",
-                "Choose how to count: a Brandwatch query, a Boolean, the filter form, or a draft from an alert.",
-                "Check how the query converts before running: the page shows what converted, what was approximated and what was left out.",
-                "Run. The result opens when it is ready."]},
+                "Name the issue under Run one.",
+                "Choose Boolean, Saved query or Draft it for me.",
+                "With a Boolean, the page shows how many terms it understood and what it left out as you type.",
+                "Click Run temp check. The result opens when it is ready."]},
             {"heading": "Read the result", "items": [
-                "Write-up: the team's template. Copy it as text.", "Numbers: hourly volume, sentiment, sources, mention types.",
-                "Posts: the posts read, most engagement first.", "Tables: what each of our tables found.",
+                "Write-up: the team's template. Copy it as text.", "Numbers: posts an hour, velocity since the peak, share negative, where the posts are.",
+                "Posts: the posts read, most engagement first.",
                 "Concern level: the issue ranked against past issues at the same hours in. It needs enough past issues to compare."]},
-            {"heading": "Act on it", "steps": ["Mark it Used, Sent or Dismissed.", "Refresh makes an update that reports what is new since the last one.",
-                                              "Keep refreshed sets hourly refreshes for a day."]},
+            {"heading": "Act on it", "steps": ["Mark as used, or Dismiss.", "Run again makes an update that reports what is new since the last one.",
+                                              "Keep refreshed (hours), set when you run it, repeats the check until that time passes."]},
             {"heading": "From Chat", "text": "Type `temp check` in an alert's thread, or follow it with a Brandwatch query's name or a Boolean."},
             {"heading": "Automatic", "text": "With the auto switch on, an alert starts a draft when it is high-engaging, when it is the third post on an issue in a day, or when its post is climbing. The numbers are under Settings → Temp check."},
         ],
@@ -134,9 +134,9 @@ TOPICS: list[dict[str, Any]] = [
         "sections": [
             {"heading": "Now", "items": ["Who is on shift and until when.", "Open load and load per IM.", "Live volume against the forecast, hour by hour. A gap alert shows when volume runs over."]},
             {"heading": "Build the schedule", "steps": [
-                "Open Schedule.", "Add people (name and email).", "Add a recurring slot: person, days, start and end time.",
-                "Add one-off coverage with Add coverage (a person and a time window).", "The grid shows each hour's staffing against what the forecast needs. Red hours are short."]},
-            {"heading": "Shifts", "steps": ["Open Schedule → Shifts.", "Add or edit named shifts (name, start, end, timezone). Handover timing follows them."]},
+                "Open Schedule and click Edit rosters and shifts.", "On Rosters: add people, recurring slots, and one-off coverage for a time window.",
+                "Back on Schedule, the grid shows each hour's staffing against what the forecast needs. Red hours are short."]},
+            {"heading": "Shifts", "steps": ["Open Settings → Shifts.", "Add or edit named shifts (name, start, end, timezone) and Save. Handover timing follows them."]},
             {"heading": "Forecast", "steps": [
                 "Open Forecast. Run forecast runs it now; the schedule runs it on its own when the switch is on.",
                 "Recommendations list the hours that are short or over-staffed.",
@@ -161,16 +161,16 @@ TOPICS: list[dict[str, Any]] = [
         "summary": "The documents the agent reads, the classification mapping and the golden set.",
         "sections": [
             {"heading": "Add a document", "steps": [
-                "Click Add document.", "Choose Text (paste it), Web page (a public link) or Drive (a Docs, Sheets or Slides link).",
+                "Click Add a document.", "Choose Text (paste it), Web page (a public link) or Drive (a Docs, Sheets or Slides link).",
                 "Say what it covers. Add tags.", "Mark Guidance if it should outrank other documents.",
-                "Mark External only if it may be used in answers to a space outside the company.", "Save. Status shows Ready, or what to fix."]},
+                "Tick May be quoted in the Burson space only if it may be used in answers there.", "Save. Status shows Ready, or what to fix."]},
             {"heading": "Drive documents", "text": "Share the file with the agent's service account (Viewer). PDFs and Office files can't be read: save them as Google Docs first."},
             {"heading": "Map classes to documents", "steps": [
-                "Open Classification.", "Each class lists the documents it reads.",
+                "Open Classes.", "Each class lists the documents it reads.",
                 "Tie a document to a class on the document itself (Classes), or give the class tags under Settings → Classification."]},
             {"heading": "Try retrieval", "steps": ["Open Try a search.", "Type a question or paste an alert.", "The passages the agent would read are listed with their scores."]},
             {"heading": "Golden set", "items": ["Every alert an IM confirmed or corrected is kept as a labelled example.", "Export downloads them in the eval harness's format."]},
-            {"heading": "Learning", "text": "Facts taught in Chat and proposed configuration changes wait here for approval."},
+            {"heading": "Learning", "text": "Facts taught in Chat and proposed configuration changes wait under Proposed rules and facts."},
         ],
     },
     {
@@ -179,10 +179,10 @@ TOPICS: list[dict[str, Any]] = [
         "sections": [
             {"heading": "Campaigns", "items": [
                 "Each campaign shows its status, query, alert, space, threshold, cap and today's counts.",
-                "Change a campaign: edit a setting and Save. The campaigns service applies it within a minute and writes the result back.",
-                "Shut down closes the campaign."]},
+                "Change a campaign: click Change, fill in only what should change, Request change. The campaigns service applies it within a minute and writes the result back.",
+                "End now closes the campaign."]},
             {"heading": "Add a watch", "steps": [
-                "Open Watches → Add watch.", "Name it.", "Write what to look for as a yes/no question.",
+                "Open Watches and click New watch.", "Name it.", "Write what to look for as a yes/no question.",
                 "Write how to score impact from 1 to 10.", "List topics. Set the bar (the score that flags).", "Save, then turn it On."]},
             {"heading": "Read detections", "items": [
                 "At the bar: flagged. Near miss: within the near-miss range, kept so you can tune the bar.",
@@ -206,12 +206,12 @@ TOPICS: list[dict[str, Any]] = [
             {"heading": "Change a setting", "steps": ["Open Settings and pick a section on the left.", "Edit the fields.", "Save. A note is optional and is kept in the history.",
                                                       "Reset returns a section to its defaults."]},
             {"heading": "Sections", "items": [
-                "Agent behavior: thresholds, corrections, models, AI instructions.", "Spaces: the Chat spaces by key.",
-                "Rosters: links to Workforce.", "Distribution & recipients: who receives each alert.",
-                "Secrets & credentials: Secret Manager.", "BigQuery: connection, datasets, tables, views, mapping.",
-                "Knowledge & classification.", "Taxonomy: exposure tags, sensitive topics, tiers.",
-                "Feature flags: what the agent may do. All start OFF.", "Forecasting.", "Audit log."]},
-            {"heading": "History", "text": "Every change is listed with who made it and what changed, under History and in the audit log."},
+                "Platform: feature flags, access, project, safety, delivery, BigQuery, forecasting, chat agent, classification, knowledge retrieval, temp check, campaigns & watches, costs, telemetry.",
+                "Agent: spaces, analysts & roles, shifts, distribution and recipients, actions, taxonomy and the rest. Rosters opens the Rosters page.",
+                "Tools: secrets & credentials, AI instructions, audit log, change history.",
+                "BigQuery, Delivery, Safety, Costs and Project show their own panel under the form: tables and views, topics and dead letters, runtime checks, usage, the deployed agent.",
+                "Feature flags: what the agent may do. All start OFF."]},
+            {"heading": "History", "text": "Every change is listed with who made it and what changed, under Change history and in the audit log."},
         ],
     },
     {
@@ -221,7 +221,7 @@ TOPICS: list[dict[str, Any]] = [
             {"heading": "Turn a switch on", "steps": ["Open Settings → Feature flags.", "Read what the switch does.", "Turn it on and Save."]},
             {"heading": "Before turning on", "items": [
                 "Knowledge retrieval and the classification layer: add documents first.",
-                "Pub/Sub delivery: set the topics under Delivery and run Provision.",
+                "Pub/Sub delivery: set the topics under Delivery and click Create what is missing.",
                 "Temp checks: set Brandwatch and the post tables.", "Forecasting: connect BigQuery and map the events table.",
                 "BigQuery admin and Secret admin: turn on only while you make changes."]},
         ],
@@ -230,9 +230,9 @@ TOPICS: list[dict[str, Any]] = [
         "id": "secrets", "page": "Settings", "title": "Secrets & credentials", "audience": "admins",
         "summary": "Add and rotate secrets. Values are never shown.",
         "sections": [
-            {"heading": "Add a secret", "steps": ["Turn on Feature flags → secret_admin.", "Open Settings → Secrets.", "Click Add secret, give the name and the value, Save.",
+            {"heading": "Add a secret", "steps": ["Turn on Feature flags → secret_admin.", "Open Settings → Secrets.", "Click New secret, give the name and the value, Save.",
                                                   "Enter the secret's name in the setting that uses it (for example Temp check → Brandwatch token secret)."]},
-            {"heading": "Rotate", "steps": ["Open the secret.", "Add version with the new value.", "Disable the old version once the new one works."]},
+            {"heading": "Rotate", "steps": ["Open the secret.", "Click New value and enter it.", "Disable the old version once the new one works."]},
             {"heading": "Gmail", "text": "IMs connect their own Gmail from the top bar. Their tokens are kept as secrets and are listed here by a hashed name."},
         ],
     },
@@ -240,8 +240,8 @@ TOPICS: list[dict[str, Any]] = [
         "id": "bigquery", "page": "Settings", "title": "BigQuery", "audience": "admins",
         "summary": "Connect, create the agent's tables, and manage datasets, tables and views.",
         "sections": [
-            {"heading": "Connect", "steps": ["Open Settings → BigQuery.", "Enter the project, location and the agent's dataset. Save.", "Test connection shows the identity queries run as."]},
-            {"heading": "Create the agent's tables", "steps": ["Turn on Feature flags → bigquery_admin.", "Click Create the agent's tables.", "The events, forecasts and golden tables are created and mapped."]},
+            {"heading": "Connect", "steps": ["Open Settings → BigQuery.", "Enter the project, location and the agent's dataset. Save.", "The banner shows whether it connected and the identity queries run as."]},
+            {"heading": "Create the agent's tables", "steps": ["Turn on Feature flags → bigquery_admin.", "Click Create and map.", "The events, forecasts and golden tables are created and mapped."]},
             {"heading": "Map tables", "text": "Mapping says which table holds what. Events is required for long dashboard ranges and the forecast."},
             {"heading": "Edit schemas and views", "steps": ["Open a dataset, then a table.", "Add columns or edit descriptions and Save. Existing columns can't change type.", "For a view, edit the SQL and Save. A view that doesn't compile is refused."]},
             {"heading": "Limits", "text": "The Console only changes datasets listed under Datasets the Console may change, and the agent's own dataset."},
@@ -253,7 +253,7 @@ TOPICS: list[dict[str, Any]] = [
         "sections": [
             {"heading": "How it works", "text": "The agent queues a post, publishes an action to Pub/Sub, and the worker rings the doorbell that starts the Studio Outbox flow. A delivery that keeps failing goes to the dead-letter topic."},
             {"heading": "Set up", "steps": ["Open Settings → Delivery.", "Enter the topic and subscription names, the worker URL and the push service account. Save.",
-                                            "Click Provision to create them.", "Turn on Feature flags → pubsub_delivery."]},
+                                            "Click Create what is missing.", "Turn on Feature flags → pubsub_delivery."]},
             {"heading": "Dead letters", "steps": ["Open Settings → Delivery → Dead letters.", "Read the error.", "Fix the cause, then Replay. Discard closes it with a reason."]},
         ],
     },
@@ -265,7 +265,7 @@ TOPICS: list[dict[str, Any]] = [
                 "Open Settings → AI instructions and pick a task.", "Read the built-in instructions.",
                 "Write the new version. Put {{default}} where the built-in text should stay, then add your rules after it.",
                 "Optionally set a model or temperature for that task.", "Publish. The new version is used from the next call."]},
-            {"heading": "Roll back", "steps": ["Open the task.", "Click Use on an earlier version, or Use built-in."]},
+            {"heading": "Roll back", "steps": ["Open the task.", "Click Use this on an earlier version, or Use built-in."]},
             {"heading": "Models", "text": "The default models for triage, drafting and conversation are under Settings → Models."},
         ],
     },

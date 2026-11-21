@@ -27,7 +27,7 @@ OPS = {
     "inhouse": ("ingest_inhouse", {}),
     "handover": ("generate_handover", {}),
 }
-PLATFORM_JOBS = ("knowledge", "forecast", "watches", "temp-checks", "maintenance")  # console.backend.worker.run_job
+PLATFORM_JOBS = ("knowledge", "forecast", "watches", "temp-checks", "maintenance")  # triage_agent.platform_jobs.run_job
 JOBS = sorted([*OPS, "digest", *PLATFORM_JOBS])  # digest is not an operation: it calls burson_digest(force=True), see main()
 
 
@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"ok": True, "job": "digest", "queued": queued}))
         return 0
     if args.job in PLATFORM_JOBS:
-        from console.backend.worker import run_job
+        from triage_agent.platform_jobs import run_job
 
         result = run_job(ctx, args.job)
         print(json.dumps(result, default=str))

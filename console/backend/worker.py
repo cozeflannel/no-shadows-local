@@ -19,17 +19,9 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 
 from triage_agent import pubsub, telemetry
 from triage_agent.context import AgentContext, build_context
-from triage_agent.operations import handle
+from triage_agent.platform_jobs import JOB_NAMES, run_job
 
 log = logging.getLogger(__name__)
-
-JOB_OPS: dict[str, tuple[str, dict[str, Any]]] = {
-    "followups": ("run_followups", {}),
-    "inhouse": ("ingest_inhouse", {}),
-    "knowledge": ("refresh_knowledge", {}),
-    "forecast": ("run_forecast", {}),
-    "watches": ("run_watches", {}),
-}
 
 app = FastAPI(title="Triage Agent worker", docs_url=None, redoc_url=None, openapi_url=None)
 _state: dict[str, AgentContext] = {}
@@ -99,29 +91,6 @@ async def dead_letter(request: Request, caller: str = Depends(verify_caller), ct
         return {"ok": False, "acknowledged": True}
     pubsub.record_dead_letter(ctx, action, delivery_attempt=attempt, message_id=message_id)
     return {"ok": True}
-
-
-def run_job(ctx: AgentContext, name: str) -> dict[str, Any]:
-    """One scheduled job by name. Used by the worker's /jobs route and by `python -m jobs.run_job`."""
-    from triage_agent import tempcheck, workforce
-
-    if name in JOB_OPS:
-        op, payload = JOB_OPS[name]
-        resp = handle({"op": op, "payload": payload, "context": {"deliver": "outbox", "flow": "job", "invoked_by": f"job:{name}"}}, ctx)
-        out: dict[str, Any] = {"ok": resp.ok and not (resp.data or {}).get("failed_steps"), "op": op,
-                               "summary": resp.outputs.get("summary"), "error": resp.error, "data": resp.data}
-        if name == "forecast" and resp.ok:
-            out["gap_alerts"] = workforce.check_gap_alerts(ctx)
-        return out
-    if name == "temp-checks":
-        return {"ok": True, **tempcheck.auto_run(ctx)}
-    if name == "maintenance":
-        results = {n: run_job(ctx, n) for n in ("knowledge", "watches", "temp-checks", "forecast")}
-        return {"ok": all(r.get("ok", True) for r in results.values()), "jobs": results}
-    raise KeyError(name)
-
-
-JOB_NAMES = sorted([*JOB_OPS, "temp-checks", "maintenance"])
 
 
 @app.post("/jobs/{name}")

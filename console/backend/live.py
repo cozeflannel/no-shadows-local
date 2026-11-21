@@ -505,7 +505,7 @@ def post_intake(body: IntakeBody, ctx: AgentContext = Depends(get_ctx), user: Us
     from triage_agent import tools
 
     try:
-        out = tools.run(ctx, "triage_alert", {"text": body.text}, tools.Caller(email=user.email, role="analyst", surface="chat"))
+        out = tools.run(ctx, "triage_alert", {"text": body.text}, tools.Caller(email=user.email, role="analyst", surface="console"))
     except tools.ToolError as exc:
         raise HTTPException(400, {"error": str(exc), "code": "op_rejected"}) from exc
     case = ctx.store.get_case(out["case_id"]) if out.get("case_id") else None

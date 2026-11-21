@@ -130,6 +130,7 @@ class TempCheck(BaseModel):
     error: str = ""
     actions: list[dict[str, Any]] = Field(default_factory=list)
     keep_refreshed_until: datetime | None = None
+    doc_url: str = ""  # the Google Doc kept for it, when a Drive folder is set
     env: str = "dev"
 
 
@@ -951,6 +952,12 @@ def run(ctx: "AgentContext", req: TempCheckRequest) -> TempCheck:
         log.exception("temp check %s failed", check.check_id)
         check.status, check.error = "failed", str(exc)[:500]
     check.completed_at = ctx.now()
+    folder = ctx.config.platform.temp_check.docs_folder_id
+    if folder and check.status == "complete" and check.writeup_html:
+        try:
+            check.doc_url = create_document(folder, f"Temp check: {check.issue or check.title} ({check.check_id})", check.writeup_html)
+        except Exception as exc:  # noqa: BLE001 - the check stands without its document
+            check.notes.append(f"The document was not made: {str(exc)[:200]}")
     _save(ctx, check)
     if check.status == "failed":
         ctx.emit(PlatformEvent.TEMP_CHECK_FAILED, actor=req.requested_by, case_id=check.case_id,
@@ -1219,6 +1226,90 @@ def decide(alert: dict[str, Any], issue: dict[str, Any] | None, cfg: Any, bar: f
         f"{cfg.multiple_alerts_hours} hours, no rise seen."]}
 
 
+def create_document(folder_id: str, title: str, html: str) -> str:
+    """Make a Google Doc from the write-up in the Drive folder (shared with the service's account as Editor); its link."""
+    import google.auth
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaInMemoryUpload
+
+    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/drive.file"])
+    drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+    body = f"<html><body><h1>{html_mod.escape(title)}</h1>{html}</body></html>".encode()
+    made = drive.files().create(body={"name": title, "mimeType": "application/vnd.google-apps.document", "parents": [folder_id]},
+                                media_body=MediaInMemoryUpload(body, mimetype="text/html", resumable=False),
+                                fields="id,webViewLink", supportsAllDrives=True).execute()
+    return made.get("webViewLink") or f"https://docs.google.com/document/d/{made['id']}/edit"
+
+
+def post_engagement(ctx: "AgentContext", url: str, since: datetime) -> float | None:
+    """A post's engagement in our own tables now: the largest value across the tables that hold the post."""
+    from . import bq_admin
+
+    key = post_key(url)
+    if not key:
+        return None
+    if key.startswith("x:"):
+        pat = rf"/status(es)?/{key[2:]}(\D|$)"
+    elif key.startswith("yt:"):
+        pat = re.escape(key[3:].lower())
+    else:
+        pat = re.escape(key.lower())
+    gw = bq_admin.get_gateway(ctx)
+    best: float | None = None
+    for src in ctx.config.platform.temp_check.sources:
+        if not (src.enabled and src.url_column and src.engagement_expr):
+            continue
+        recent = f" AND {src.time_column} >= @since" if src.time_column else ""
+        sql = (f"SELECT MAX({src.engagement_expr}) AS post_eng FROM `{bq_admin.check_table_id(src.table)}`\n"
+               f"WHERE REGEXP_CONTAINS(LOWER(CAST({src.url_column} AS STRING)), @pat){recent}")
+        try:
+            rows = gw.query(sql, {"pat": pat, "since": since}, location=src.location or None)
+        except Exception as exc:  # noqa: BLE001 - one table failing must not stop the others
+            log.warning("could not read the post again in %s: %s", src.key, exc)
+            continue
+        value = rows[0].get("post_eng") if rows else None
+        if value is not None:
+            best = max(best or 0.0, float(value))
+    return best
+
+
+def recheck_posts(ctx: "AgentContext", now: datetime) -> list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]]:
+    """Read each recent alert's post again at the set minutes after the alert. Returns (issue, alert, climb) for every
+    post found climbing whose issue has not just had a temp check."""
+    cfg = ctx.config.platform.temp_check
+    minutes = sorted(set(cfg.momentum_recheck_minutes))
+    if not minutes or not any(s.enabled and s.url_column and s.engagement_expr for s in cfg.sources):
+        return []
+    horizon = timedelta(minutes=minutes[-1]) + timedelta(hours=cfg.momentum_within_hours)
+    found = []
+    for state in ctx.store.list_docs(ISSUES, since=now - horizon - HOUR, limit=500):
+        changed, climbing = False, None
+        for alert in state.get("alerts", []):
+            at = datetime.fromisoformat(alert["at"])
+            if not alert.get("url") or now - at > horizon:
+                continue
+            readings = state.setdefault("readings", {}).setdefault(alert["post"], [])
+            for m in minutes:
+                if now < at + timedelta(minutes=m) or any(r.get("m") == m for r in readings):
+                    continue
+                eng = post_engagement(ctx, alert["url"], at - timedelta(hours=cfg.lookback_hours))
+                readings.append({"at": now.isoformat(), "eng": eng, "src": "own", "m": m})
+                changed = True
+                break  # one reading a run: two rechecks that fell due together would be the same number
+            climb = rising([r for r in readings if r.get("src") == "own"], cfg)
+            if climb and state.get("climb_seen", {}).get(alert["post"]) != climb["to"]:
+                state.setdefault("climb_seen", {})[alert["post"]] = climb["to"]
+                changed = True
+                recent = state.get("check_at") and (now - datetime.fromisoformat(state["check_at"])) < timedelta(minutes=cfg.refresh_min_minutes)
+                if not recent and climbing is None:
+                    climbing = (alert, climb)
+        if changed:
+            ctx.store.put_doc(ISSUES, state["key"], state)
+        if climbing:
+            found.append((state, *climbing))
+    return found
+
+
 def auto_run(ctx: "AgentContext", actor: str = "agent") -> dict[str, Any]:
     """Put alerts verified since the last run through the occasions; start or refresh temp checks (within the daily limit).
 
@@ -1245,8 +1336,11 @@ def auto_run(ctx: "AgentContext", actor: str = "agent") -> dict[str, Any]:
         if not key:
             continue
         state = ctx.store.get_doc(ISSUES, key) or {"key": key, "alerts": [], "readings": {}}
+        fields = case.latest.result.normalized or {}
+        link = next((str(fields[f]) for f in (ctx.config.alert_template.record_key_fields or ["post_url"])
+                     if str(fields.get(f) or "").startswith("http")), "")
         alert = {"id": case.case_id, "at": case.created_at.isoformat(), "eng": float((a.engagement_total if a else 0) or 0),
-                 "post": case.record_key or case.case_id}
+                 "post": case.record_key or case.case_id, "url": link}
         d = decide(alert, state, cfg, bar)
         state["alerts"] = [*state.get("alerts", []), alert][-50:]
         state.setdefault("readings", {}).setdefault(alert["post"], []).append({"at": alert["at"], "eng": alert["eng"], "src": "alert"})
@@ -1262,6 +1356,18 @@ def auto_run(ctx: "AgentContext", actor: str = "agent") -> dict[str, Any]:
                                                   requested_by=actor, via="auto", trigger=d["rule"], reasons=d["reasons"]))
                 entry.update({"check_id": check.check_id, "status": check.status})
                 started += 1
+        decisions.append(entry)
+    for state, alert, climb in recheck_posts(ctx, now):
+        entry = {"case_id": alert["id"], "issue": state.get("issue") or "", "action": "refresh" if state.get("check_id") else "start", "rule": "momentum",
+                 "reasons": [f"Engagement on the alert's post rose from {climb['from']:,.0f} to {climb['to']:,.0f} in {climb['hours']:.1f} hours."]}
+        if started >= cfg.daily_limit:
+            entry["held"] = f"The day's limit of {cfg.daily_limit} automatic temp checks is reached."
+        else:
+            check = run(ctx, TempCheckRequest(case_id=alert["id"], issue=entry["issue"], draft_query=True,
+                                              update_of=state.get("check_id") if entry["action"] == "refresh" else None,
+                                              requested_by=actor, via="auto", trigger="momentum", reasons=entry["reasons"]))
+            entry.update({"check_id": check.check_id, "status": check.status})
+            started += 1
         decisions.append(entry)
     for check in list_checks(ctx, limit=200):  # scheduled coverage: "keep refreshed for a day"
         if (check.keep_refreshed_until and check.keep_refreshed_until > now and check.status == "complete" and started < cfg.daily_limit

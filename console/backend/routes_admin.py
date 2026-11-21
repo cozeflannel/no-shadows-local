@@ -117,6 +117,43 @@ def platform_put(part: str, body: PartBody, request: Request, ctx: AgentContext 
     return {"ok": True, "part": part, "value": after, "config_version": saved["config_version"], "changed": changed}
 
 
+# -- the deployed agent ------------------------------------------------------------------------------------------------
+def query_agent_runtime(resource: str, op: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Call the deployed agent the way the Studio flows do (:query)."""
+    import google.auth
+    from google.auth.transport.requests import AuthorizedSession
+
+    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    region = resource.split("/locations/")[1].split("/")[0]
+    resp = AuthorizedSession(creds).post(f"https://{region}-aiplatform.googleapis.com/v1/{resource}:query", timeout=60,
+                                         json={"class_method": "query", "input": {"op": op, "payload": payload, "context": {"flow": "console"}}})
+    if resp.status_code != 200:
+        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+    return resp.json().get("output") or {}
+
+
+@router.get("/agent-runtime")
+def agent_runtime(ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> dict[str, Any]:
+    """Is the deployed agent answering, and is it on the same settings as the Console?"""
+    resource = ctx.config.platform.gcp.agent_runtime_resource
+    out: dict[str, Any] = {"resource": resource, "console_config_version": ctx.config_version, "reachable": False, "error": ""}
+    if not resource:
+        out["error"] = "No Agent Runtime is named in Settings, Project."
+        return out
+    if "/locations/" not in resource or "/reasoningEngines/" not in resource:
+        out["error"] = "The resource should look like projects/NUMBER/locations/REGION/reasoningEngines/ID."
+        return out
+    try:
+        answer = query_agent_runtime(resource, "health", {})
+    except Exception as exc:  # noqa: BLE001 - shown on the page
+        out["error"] = str(exc)[:400]
+        return out
+    data = answer.get("data") or {}
+    out.update({"reachable": bool(answer.get("ok")), "agent_config_version": data.get("config_version"), "env": data.get("env"),
+                "same_settings": data.get("config_version") == ctx.config_version, "error": answer.get("error") or ""})
+    return out
+
+
 # -- secrets -----------------------------------------------------------------------------------------------------------
 class SecretBody(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
@@ -551,6 +588,8 @@ def setup_status(ctx: AgentContext = Depends(get_ctx), user: User = Depends(requ
     steps = [
         {"key": "admins", "title": "Name the admins", "done": bool(cfg.admin_emails() or plat.access.bootstrap_admins),
          "detail": f"{len(cfg.admin_emails()) + len(plat.access.bootstrap_admins)} admin(s) set", "to": "/settings/analysts"},
+        {"key": "runtime", "title": "Deploy the agent", "done": bool(plat.gcp.agent_runtime_resource),
+         "detail": "The Agent Runtime the Studio flows call. infra/deploy.sh fills this in.", "to": "/settings/gcp"},
         {"key": "identity", "title": "Enter the agent's account", "done": bool(cfg.agent.email), "detail": "The Triage Agent account that owns the Studio flows.", "to": "/settings/agent"},
         {"key": "spaces", "title": "Set the Chat spaces", "done": {"burson", "clean"} <= set(spaces_set), "detail": f"{len(spaces_set)} of {len(cfg.spaces)} spaces have a link or id", "to": "/settings/spaces"},
         {"key": "roster", "title": "Build the IM roster", "done": bool(im.people and im.rotation), "detail": f"{len(im.people)} people, {len(im.rotation)} recurring slots", "to": "/workforce"},

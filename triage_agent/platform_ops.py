@@ -20,11 +20,15 @@ def _actor(payload: dict[str, Any], rc: RequestContext) -> str:
     return str(payload.get("actor") or rc.invoked_by or "agent")
 
 
-def _require_im(ctx: AgentContext, actor: str) -> None:
+CONSOLE_FLOWS = ("console", "chat_agent")  # the Console decides a person's role before it calls an operation
+
+
+def _require_im(ctx: AgentContext, actor: str, rc: RequestContext) -> None:
+    """From Chat, only an analyst or someone on the IM roster; a Console call was already checked against the person's role."""
     from .context import ROSTER_IM
     from .oncall.roster import person_by_email
 
-    if ctx.config.analyst(actor) or person_by_email(ctx.roster(ROSTER_IM), actor):
+    if rc.flow in CONSOLE_FLOWS or ctx.config.analyst(actor) or person_by_email(ctx.roster(ROSTER_IM), actor):
         return
     raise UserFacingError("Only Incident Managers and analysts can do that.")
 
@@ -34,7 +38,7 @@ def record_assessment(ctx: AgentContext, payload: dict[str, Any], rc: RequestCon
     from . import golden
 
     actor = _actor(payload, rc)
-    _require_im(ctx, actor)
+    _require_im(ctx, actor, rc)
     case_id = str(payload.get("case_id") or "").upper()
     if ctx.store.get_case(case_id) is None:
         raise UserFacingError(f"I don't know {case_id or 'that case'}.")

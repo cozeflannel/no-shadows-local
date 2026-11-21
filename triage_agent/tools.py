@@ -36,7 +36,7 @@ class ToolError(RuntimeError):
 class Caller:
     email: str
     role: str = "viewer"  # viewer | analyst | lead | admin
-    surface: str = "chat_agent"  # chat_agent | chat
+    surface: str = "chat_agent"  # chat_agent | chat | console (a person using a Console page)
 
     def has(self, role: str) -> bool:
         return ROLE_RANK.get(self.role, 0) >= ROLE_RANK[role]
