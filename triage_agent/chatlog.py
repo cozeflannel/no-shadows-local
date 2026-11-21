@@ -93,31 +93,34 @@ def record_inbound(ctx: "AgentContext", op: str, payload: dict[str, Any], rc: "R
     cfg = ctx.config
     try:
         if op in ("triage_message", "converse"):
-            m = payload.get("message") or {}
-            sender = m.get("sender") or {}
-            text = str(m.get("text") or "")
-            space_key = cfg.space_key_for(m.get("space_id"), m.get("space_name"))
-            if not space_key and str(m.get("conversation_type") or "").lower() in ("dm", "direct_message", "direct"):
+            from .converse.handler import message_from_payload
+
+            msg = message_from_payload(payload.get("message") and payload or {**payload, "message": None})
+            text = msg.text or ""
+            space_key = cfg.space_key_for(msg.space_id, msg.space_name)
+            if not space_key and str(msg.conversation_type or "").upper() == "DM":
                 space_key = "dm"
             case_id, esc_id = _ids_in(text, ctx)
-            mid = m.get("message_id") or _digest(m.get("space_id"), m.get("create_time"), text)
+            mid = msg.message_id or _digest(msg.space_id, msg.create_time, text)
             act = ChatActivity(
                 activity_id=f"in-{_digest(op, mid)}", ts=ctx.now(), direction="inbound", kind="message", space_key=space_key,
-                space_id=m.get("space_id"), thread_id=m.get("thread_id"), message_id=m.get("message_id"), link=m.get("link"),
-                actor=(sender.get("email") or sender.get("name") or "unknown"), actor_name=sender.get("name"),
+                space_id=msg.space_id, thread_id=msg.thread_id, message_id=msg.message_id, link=msg.link,
+                actor=(msg.sender.email or msg.sender.name or "unknown"), actor_name=msg.sender.name,
                 text=text[:MAX_TEXT], case_id=case_id, escalation_id=esc_id, op=op, flow=rc.flow or "", env=cfg.env)
         elif op in ("record_reaction", "start_escalation"):
-            m = payload.get("message") or {}
-            user = payload.get("user") or {}
-            text = str(m.get("text") or "")
+            from .actions import reaction_from_payload
+
+            ev = reaction_from_payload(payload)
+            msg = ev.message
+            text = msg.text or ""
             case_id, esc_id = _ids_in(text, ctx)
-            ref = m.get("message_id") or m.get("link") or _digest(text)
+            ref = msg.message_id or msg.link or _digest(text)
             act = ChatActivity(
-                activity_id=f"rx-{_digest(ref, payload.get('emoji'), user.get('email'))}", ts=ctx.now(), direction="inbound",
-                kind="reaction", space_key=cfg.space_key_for(m.get("space_id"), m.get("space_name")), space_id=m.get("space_id"),
-                thread_id=m.get("thread_id"), message_id=m.get("message_id"), link=m.get("link"),
-                actor=(user.get("email") or user.get("name") or "unknown"), actor_name=user.get("name"), text=text[:MAX_TEXT],
-                emoji=payload.get("emoji"), case_id=case_id, escalation_id=esc_id, op=op, flow=rc.flow or "", env=cfg.env)
+                activity_id=f"rx-{_digest(ref, ev.emoji, ev.user.email)}", ts=ctx.now(), direction="inbound",
+                kind="reaction", space_key=cfg.space_key_for(msg.space_id, msg.space_name), space_id=msg.space_id,
+                thread_id=msg.thread_id, message_id=msg.message_id, link=msg.link,
+                actor=(ev.user.email or ev.user.name or "unknown"), actor_name=ev.user.name, text=text[:MAX_TEXT],
+                emoji=ev.emoji, case_id=case_id, escalation_id=esc_id, op=op, flow=rc.flow or "", env=cfg.env)
         elif op == "ingest_email":
             body = str(payload.get("body") or "")
             subject = str(payload.get("subject") or "")

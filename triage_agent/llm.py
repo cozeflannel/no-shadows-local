@@ -129,6 +129,25 @@ class VertexGemini:
         resp = self._call(model, prompt, config)
         return (resp.text or "").strip()
 
+    def embed(self, *, texts: list[str], model: str, dimensions: int | None = None, location: str | None = None) -> list[list[float]]:
+        """Embeddings for retrieval (model from Settings → Knowledge). Batches of 50."""
+        types = self._types
+        client = self.client
+        if location and location != self.location:
+            from google import genai
+
+            client = genai.Client(vertexai=True, project=self.client._api_client.project, location=location)
+        config = types.EmbedContentConfig(output_dimensionality=dimensions) if dimensions else None
+        out: list[list[float]] = []
+        for start in range(0, len(texts), 50):
+            batch = texts[start:start + 50]
+            try:
+                resp = client.models.embed_content(model=model, contents=batch, config=config)
+            except Exception as exc:  # noqa: BLE001
+                raise LLMError(f"Embedding call failed ({model}): {exc}") from exc
+            out.extend([list(e.values) for e in resp.embeddings])
+        return out
+
 
 Handler = Callable[[dict[str, Any]], Any]
 

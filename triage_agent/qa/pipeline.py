@@ -94,13 +94,37 @@ def run_qa(ctx: "AgentContext", parsed: ParsedAlert, *, source: str, received_at
         if c.applied:
             fields[c.field] = c.new
 
-    # 2. Gemini judgment checks + enrichment
+    # 2. Classification layer first (Console switch): the class picks the knowledge the assessment reads
+    context = dict(parsed.extra or {})
+    knowledge_text, class_label, passages = "", "", []
+    if cfg.thresholds.llm_checks_enabled and (cfg.platform.flag("classification_layer") or cfg.platform.flag("knowledge_rag")):
+        from .. import classify as classify_mod
+        from .. import knowledge as knowledge_mod
+
+        classification = classify_mod.classify(ctx, fields, parsed.extra)
+        if classification is not None:
+            checks_run.append("classify")
+            context["classification"] = classification.model_dump(mode="json")
+            class_label = classification.label if classification.trusted else ""
+        if cfg.platform.flag("knowledge_rag"):
+            query = " ".join(str(fields.get(k) or "") for k in ("alert_name", "issue_name", "exposure_tag", "product", "summary",
+                                                                "post_content", "risk_tags"))
+            try:
+                passages = knowledge_mod.retrieve(ctx, query, label=class_label or None, include_cases=True,
+                                                  exclude_case_id=None)
+                knowledge_text = knowledge_mod.render_passages(passages)
+            except Exception as exc:  # noqa: BLE001 - the assessment still runs without the documents
+                log.warning("knowledge retrieval failed: %s", exc)
+            if passages:
+                checks_run.append("knowledge")
+
+    # 3. Gemini judgment checks + enrichment (structured, one confidence per check)
     enrichment: Enrichment | None = None
     llm_issues: list[Issue] = []
     confidences: list[float] = []
     model = None
     try:
-        result = assess(ctx, fields, parsed.extra)
+        result = assess(ctx, fields, parsed.extra, knowledge=knowledge_text, classification=class_label)
     except LLMError as exc:
         log.warning("Gemini assessment unavailable: %s", exc)
         result = None
@@ -111,6 +135,20 @@ def run_qa(ctx: "AgentContext", parsed: ParsedAlert, *, source: str, received_at
         model = cfg.models.triage
         enrichment = result.enrichment
         specs = {c.id: c for c in cfg.alert_template.llm_checks}
+        field_confidence: dict[str, float] = {}
+        for check in result.checks:
+            spec = specs.get(check.id)
+            for name in ([spec.correctable_field] if spec and spec.correctable_field else []) + (list(spec.fields) if spec else []):
+                if name:
+                    field_confidence[name] = round(min(field_confidence.get(name, 1.0), check.confidence), 3)
+        if field_confidence:
+            context["field_confidence"] = field_confidence
+        if passages:
+            from .. import knowledge as knowledge_mod
+
+            cited = knowledge_mod.citations(passages, result.citations) if result.citations else []
+            context["citations"] = cited
+            context["knowledge_read"] = [c["ref"] for c in knowledge_mod.citations(passages)]
         for check in result.checks:
             spec = specs.get(check.id)
             confidences.append(check.confidence)
@@ -142,7 +180,8 @@ def run_qa(ctx: "AgentContext", parsed: ParsedAlert, *, source: str, received_at
             if c.applied:
                 fields["product"] = recl
 
-    return finalize(ctx, parsed_extra=parsed.extra, flags=parsed.flags, fields=fields, corrections=corrections,
+    return finalize(ctx, parsed_extra=context if context != (parsed.extra or {}) else parsed.extra, flags=parsed.flags,
+                    fields=fields, corrections=corrections,
                     extra_issues=llm_issues, enrichment=enrichment, received_at=received_at, record_key=record_key,
                     confidences=confidences, checks_run=checks_run, model=model, started=t0, now=now)
 

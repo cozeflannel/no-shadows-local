@@ -30,7 +30,7 @@ from . import teach
 log = logging.getLogger(__name__)
 
 # Commands that only make sense for Google staff (not the external agency in the Burson space).
-INTERNAL_ONLY = {"revise", "forward", "bounce", "suppress", "revert", "tns_submitted", "tns_withdraw", "bug", "handover",
+INTERNAL_ONLY = {"temp_check", "revise", "forward", "bounce", "suppress", "revert", "tns_submitted", "tns_withdraw", "bug", "handover",
                  "config_change", "decide", "action"}
 SPACE_KINDS = {"burson", "clean", "youtube", "doodle", "team", "crisis"}
 TZ_ABBR = {
@@ -537,7 +537,30 @@ def _question(turn: Turn, intent: intents_mod.Intent) -> Result:
                                            "stakeholder": ans.stakeholder.id if ans.stakeholder else None}
 
 
+def _temp_check(turn: Turn, intent: intents_mod.Intent) -> Result:
+    """`temp check` in an alert's thread, or with a Brandwatch query (its name, id or link) or a Boolean after it."""
+    rest = str(intent.args.get("rest") or "").strip()
+    case_id = intent.case_id
+    if not case_id:
+        case = _case_for_thread(turn.ctx, turn.msg.thread_id)
+        case_id = case.case_id if case else None
+    for found in ([case_id] if case_id else []):
+        rest = rest.replace(found, "").strip()
+    payload: dict[str, Any] = {"case_id": case_id, "actor": turn.asker, "via": "chat", "silent": True}
+    if not rest:
+        if not case_id:
+            return turn.reply("Which issue? Type `temp check` in an alert's thread, or follow it with a Brandwatch query's "
+                              "name, id or link, or a Boolean."), {"intent": "temp_check"}
+        payload["draft_query"] = True
+    elif re.search(r"\b(?:AND|OR|NOT|NEAR/\d+)\b|[\"()]", rest):
+        payload.update({"boolean": rest, "issue": "" if case_id else rest[:80]})
+    else:
+        payload.update({"query_ref": rest, "issue": rest[:120]})
+    return dispatch_op(turn, "run_temp_check", payload)
+
+
 HANDLERS: dict[str, Callable[[Turn, intents_mod.Intent], Result]] = {
+    "temp_check": _temp_check,
     "revise": _revise, "forward": _review, "bounce": _review, "suppress": _review, "revert": _revert,
     "tns_submitted": _tns_submitted, "tns_withdraw": _tns_withdraw, "bug": _bug, "status": _status,
     "oncall_set": _oncall_set, "oncall_handoff": _oncall_handoff, "oncall_who": _oncall_who, "handover": _handover,

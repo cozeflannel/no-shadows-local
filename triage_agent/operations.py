@@ -217,6 +217,11 @@ def handle(request: OperationRequest | dict[str, Any], ctx: AgentContext | None 
         """Chat tracking and the audit entry for one finished operation (never raises)."""
         try:
             chatlog.link_inbound(ctx, inbound, outputs.case_id or None, outputs.escalation_id or None)
+            if outputs.case_id and status == "ok":
+                from . import golden
+
+                if req.op in golden.CAPTURE_OPS:
+                    golden.capture(ctx, outputs.case_id)
             if req.context.deliver != "outbox" and req.op != "drain_outbox" and (inbound is None or inbound_new):
                 chatlog.record_outputs(ctx, req.op, outputs, req.context, inbound)
             quiet = req.op in QUIET_OPS and status == "ok" and not (

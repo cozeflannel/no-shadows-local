@@ -903,7 +903,7 @@ class ForecastingConfig(ConfigModel):
 
     model: Literal["timesfm", "arima_plus"] = Field("timesfm", description="Primary method: timesfm (AI.FORECAST) or arima_plus (explainable).")
     fallback: Literal["arima_plus", "timesfm", "none"] = Field("arima_plus", description="Used when the primary method fails.")
-    timesfm_version: str = Field("TimesFM 2.0", description="Model name passed to AI.FORECAST.")
+    timesfm_version: str = Field("", description="Model name passed to AI.FORECAST, for example TimesFM 2.5. Blank = BigQuery's default.")
     arima_model: str = Field("", description="dataset.model the ARIMA_PLUS model is trained into. Blank = <dataset>.alert_volume_arima.")
     horizon_hours: int = Field(48, ge=1, le=720, description="Hours ahead to forecast.")
     confidence_level: float = Field(0.9, gt=0, lt=1, description="Confidence level of the prediction interval.")
@@ -969,43 +969,67 @@ class TempCheckSource(ConfigModel):
     key: str
     label: str = ""
     table: str = Field("", description="project.dataset.table")
-    location: str = ""
+    location: str = Field("", description="BigQuery location of the table. Blank = the agent's own.")
     enabled: bool = True
     text_columns: list[str] = Field(default_factory=list, description="Columns searched for the query's words.")
     url_column: str = ""
-    id_column: str = ""
+    id_column: str = Field("", description="Row id, for tables where many rows share one link (comments).")
     author_column: str = ""
-    time_column: str = ""
+    time_column: str = Field("", description="When the post was made (TIMESTAMP).")
     platform_column: str = ""
+    platform_value: str = Field("", description="Platform name for a table that holds one platform only.")
+    followers_column: str = ""
+    language_column: str = ""
     engagement_expr: str = Field("", description="SQL expression for a post's engagement.")
     sentiment_column: str = ""
-    filter_sql: str = Field("", description="Extra WHERE condition, for example to leave out Google's own posts.")
+    filter_sql: str = Field("", description="Extra WHERE condition, for example to leave out the company's own posts.")
     dedupe_by: Literal["url", "id"] = "url"
+    freshness: str = Field("", description="How fresh the table is, shown beside its results.")
+
+
+class ConcernBand(ConfigModel):
+    label: str
+    top_pct: int = Field(..., ge=1, le=100, description="The issue is above all but this percent of past issues, or fewer.")
+    action: str = ""
 
 
 class TempCheckConfig(ConfigModel):
     """Temp checks: numbers from Brandwatch, posts from the team's own tables, a write-up by Gemini."""
 
-    brandwatch_api_base: str = Field("", description="Brandwatch API base URL.")
+    brandwatch_api_base: str = Field("https://api.brandwatch.com", description="Brandwatch API base URL.")
     brandwatch_project_id: str = Field("", description="Brandwatch project the queries live in.")
-    brandwatch_token_secret: str = Field("", description="Secret Manager secret holding the Brandwatch token.")
-    event_query_prefix: str = Field("", description="Name prefix of the event queries offered in the picker.")
-    landscape_query_ids: list[str] = Field(default_factory=list, description="Standing queries searched when there is no query for the issue yet.")
+    brandwatch_token_secret: str = Field("", description="Name of the secret (Settings → Secrets) holding the Brandwatch token.")
+    event_query_prefix: str = Field("", description="Name prefix of the event queries offered in the picker and used for the concern level.")
+    landscape_query_ids: list[str] = Field(default_factory=list, description="Standing queries searched when the issue has no query of its own yet.")
     sources: list[TempCheckSource] = Field(default_factory=list, description="The tables searched for posts.")
     model: str = Field("", description="Model that writes the write-up. Blank = the drafting model.")
-    top_posts: int = Field(25, ge=1, le=200)
-    top_negative_posts: int = Field(15, ge=0, le=200)
-    lookback_hours: int = Field(72, ge=1, le=720)
+    timezone: str = Field("", description="Timezone the write-up's times are given in. Blank = the display timezone.")
+    top_posts: int = Field(25, ge=1, le=200, description="Most-engaged posts read.")
+    top_negative_posts: int = Field(15, ge=0, le=200, description="Most-engaged negative posts read.")
+    writeup_posts: int = Field(7, ge=1, le=25, description="Highest-engaging posts listed in the write-up.")
+    lookback_hours: int = Field(168, ge=1, le=720, description="How far back an issue's start is looked for.")
+    spike_mentions: int = Field(100, ge=1, description="An issue counts from the first hour with this many mentions.")
+    row_limit: int = Field(3000, ge=100, le=5000, description="Posts read from one table.")
     max_scan_gb: float = Field(0, ge=0, description="Largest scan one search may bill, in GB. 0 = no cap.")
     daily_limit: int = Field(20, ge=0, description="Automatic temp checks started in one day.")
-    high_engagement_percentile: float = Field(0.9, gt=0, lt=1, description="An alert above this share of recent alerts starts one.")
+    high_engagement_share: float = Field(0.9, gt=0, lt=1, description="High-engaging: more engagement than this share of recent alerts.")
+    high_min_alerts: int = Field(100, ge=1, description="Recent alerts needed before that share is used.")
+    high_floor: int = Field(20000, ge=0, description="Engagements that count as high-engaging until enough alerts are known.")
     multiple_alerts_count: int = Field(3, ge=2, description="This many different posts alerted on one issue starts one.")
     multiple_alerts_hours: int = Field(24, ge=1)
     momentum_recheck_minutes: list[int] = Field(default_factory=lambda: [30, 90], description="When an alert's post is read again for momentum.")
-    momentum_growth: float = Field(0.5, gt=0, description="Growth since the alert that starts one (0.5 = up by half).")
+    momentum_growth: float = Field(0.5, gt=0, description="Growth between two readings that starts one (0.5 = up by half).")
+    momentum_within_hours: int = Field(6, ge=1)
+    momentum_min: int = Field(500, ge=0, description="Engagements the later reading needs.")
     refresh_min_minutes: int = Field(60, ge=5, description="Shortest time between refreshes of one temp check.")
-    benchmark_min_issues: int = Field(3, ge=1, description="Past issues needed before a concern level is given.")
-    concern_levels: list[str] = Field(default_factory=lambda: ["Low", "Moderate", "Elevated", "High"], description="Concern level names, lowest first.")
+    benchmark_min_issues: int = Field(20, ge=1, description="Past issues needed before a concern level is given.")
+    benchmark_fill_per_run: int = Field(3, ge=0, le=50, description="Past issues' volume read from Brandwatch in one run, for the concern level.")
+    concern_bands: list[ConcernBand] = Field(default_factory=lambda: [
+        ConcernBand(label="HIGH", top_pct=20, action="Action"), ConcernBand(label="MODERATELY HIGH", top_pct=39, action="Action"),
+        ConcernBand(label="MODERATE", top_pct=59, action="Monitor"), ConcernBand(label="MODERATELY LOW", top_pct=79, action="Monitor"),
+        ConcernBand(label="LOW", top_pct=100, action="No action")], description="Concern levels, highest first.")
+    relevance_posts: int = Field(40, ge=5, le=100, description="Posts Gemini reads to check a drafted query.")
+    relevance_min_share: float = Field(0.5, gt=0, le=1, description="Share of the posts read that must be about the issue for a count to be given.")
     docs_folder_id: str = Field("", description="Drive folder temp check documents are kept in. Blank = no document is made.")
     post_to_space: str = Field("", description="Space key temp check results are posted to. Blank = Console only.")
 
@@ -1047,12 +1071,23 @@ class SafetyConfig(ConfigModel):
 class CampaignsConfig(ConfigModel):
     """Campaigns and watches shown in the Console."""
 
-    firestore_database: str = Field("", description="Firestore database the campaigns service keeps its state in. Blank = the agent's own.")
-    service_url: str = Field("", description="Base URL of the campaigns service, for actions that run there.")
-    service_audience: str = Field("", description="Audience for calls to the campaigns service. Blank = its URL.")
-    watch_sources: list[str] = Field(default_factory=list, description="Source keys a watch may read.")
-    watch_interval_minutes: int = Field(5, ge=1)
-    watch_post_target: str = Field("", description="Space key watch detections are posted to. Blank = recorded only.")
+    firestore_database: str = Field("", description="Firestore database the campaigns service keeps its state in.")
+    firestore_project: str = Field("", description="Project of that database. Blank = the project the service runs in.")
+    watch_sources: list[str] = Field(default_factory=list, description="Keys of the post tables (Temp check → sources) a watch reads.")
+    watch_interval_minutes: int = Field(5, ge=1, description="How often the watches look.")
+    watch_max_enabled: int = Field(5, ge=1, le=20, description="Watches ON at once (each post costs one question a watch).")
+    watch_default_bar: float = Field(7, ge=1, le=10, description="A watch's bar when its own is blank.")
+    watch_near_miss: float = Field(2, ge=0, le=9, description="Scores within this of the bar are kept as near misses, to tune the bar.")
+    watch_posts_per_look: int = Field(60, ge=1, le=500, description="Posts one source hands over in one look.")
+    watch_posted_within_hours: int = Field(72, ge=1, description="Only posts made within this many hours are asked about.")
+    watch_min_followers: int = Field(1000, ge=0, description="A post is asked about when its author has this many followers...")
+    watch_min_engagement: int = Field(100, ge=0, description="...or the post has this many engagements.")
+    watch_first_look_minutes: int = Field(60, ge=5, description="How far back a source's first look goes.")
+    watch_max_look_minutes: int = Field(360, ge=5, description="The most one look covers after a pause.")
+    watch_default_topics: list[str] = Field(default_factory=list, description="Topics offered when a watch names none.")
+    watch_ai_connection: str = Field("", description="BigQuery connection for the AI functions. Blank = the service's own credentials.")
+    watch_post_target: str = Field("", description="Space key detections at the bar are posted to. Blank = recorded only.")
+    watch_lead_window_hours: int = Field(72, ge=1, description="A detection counts as catching an alert on the same post within this many hours.")
 
 
 class GcpConfig(ConfigModel):
