@@ -268,6 +268,19 @@ def get_event_logger() -> EventLogger:
     return SqliteEventLogger(os.environ.get("TRIAGE_LOCAL_DB", ".local/triage.db"))
 
 
+_writes = 0
+
+
+def note_write() -> None:
+    """Called for every event this process writes, so its own caches know to read again."""
+    global _writes
+    _writes += 1
+
+
+def writes() -> int:
+    return _writes
+
+
 class PlatformEvent:
     """Event types of the Console-era platform (audit, Chat tracking, delivery, AI usage, workforce).
 

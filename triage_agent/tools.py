@@ -239,7 +239,7 @@ def metrics(ctx: "AgentContext", args: dict[str, Any], caller: Caller) -> dict[s
     hours = max(1, min(24 * 90, int(args.get("hours") or 24)))
     events = ctx.events.query(since=ctx.now() - timedelta(hours=hours), env=ctx.config.env)
     out = compute_kpis(events, ctx.config)
-    return {"hours": hours, "counts": out.get("counts"), "derived": out.get("derived")}
+    return {"hours": hours, "counts": out.get("kpis"), "derived": out.get("derived")}
 
 
 @tool("who_is_on", "Who is on shift now, on the IM roster or the Burson on-call roster.",

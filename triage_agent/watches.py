@@ -300,21 +300,23 @@ def rate(ctx: "AgentContext", detection_id: str, rating: str, actor: str) -> Det
 
 
 def link_alerts(ctx: "AgentContext") -> int:
-    """Tie detections to the alert that later came in on the same post, with the watch's lead over it."""
-    from .qa.record_key import record_key
+    """Tie detections to the alert that came in on the same post, with the watch's lead over it."""
+    from .qa.record_key import normalize_url
 
     cfg = ctx.config.platform.campaigns
-    now = ctx.now()
+    window = timedelta(hours=cfg.watch_lead_window_hours)
+    waiting = [d for d in list_detections(ctx, days=max(1, cfg.watch_lead_window_hours // 24 + 1), limit=1000) if not d.case_id]
+    if not waiting:
+        return 0
+    by_post: dict[str, Any] = {}  # each part of a case's record key -> the first case on it
+    for case in ctx.store.list_cases(since=min(d.seen_at for d in waiting) - window, limit=2000):
+        for part in (case.record_key or "").split("|"):
+            if part and (part not in by_post or case.created_at < by_post[part].created_at):
+                by_post[part] = case
     linked = 0
-    for det in list_detections(ctx, days=max(1, cfg.watch_lead_window_hours // 24 + 1), limit=1000):
-        if det.case_id:
-            continue
-        try:
-            key = record_key(det.post_url)
-        except Exception:  # noqa: BLE001
-            continue
-        case = ctx.store.find_case_by_record_key(key) if key else None
-        if case is None or abs((case.created_at - det.seen_at).total_seconds()) > cfg.watch_lead_window_hours * 3600:
+    for det in waiting:
+        case = by_post.get(normalize_url(det.post_url) or "")
+        if case is None or abs(case.created_at - det.seen_at) > window:
             continue
         det.case_id = case.case_id
         det.lead_minutes = round((case.created_at - det.seen_at).total_seconds() / 60, 1)

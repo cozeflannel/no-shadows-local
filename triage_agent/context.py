@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from .config import AgentConfig, load_config
-from .events import EventLogger, EventType, build_event_logger, make_event
+from .events import EventLogger, EventType, build_event_logger, make_event, note_write
 from .llm import LLMClient, get_llm
 from .models import AgentEvent, OnCallResolution, OutboxItem, Roster, utcnow
 from .store import Store, get_store
@@ -93,6 +93,7 @@ class AgentContext:
             **fields,
         )
         self.events.log(event)
+        note_write()
         return event
 
     # -- rosters ---------------------------------------------------------------
