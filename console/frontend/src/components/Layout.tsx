@@ -1,5 +1,5 @@
 import {
-  BookOpen, CalendarClock, ChevronDown, CircleHelp, FolderSearch, Gauge, Inbox, LayoutDashboard, Mail, Megaphone, MessagesSquare, Moon,
+  BookOpen, CalendarClock, ChevronDown, CircleHelp, FolderSearch, Gauge, Inbox, LayoutDashboard, Mail, Megaphone, Menu, MessagesSquare, Moon,
   PanelLeftClose, PanelLeftOpen, Settings, Sparkles, Sun, Thermometer, UsersRound,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
@@ -26,6 +26,19 @@ export function helpPathFor(pathname: string): string {
     return `/help/${byPart[second] ?? "settings"}`;
   }
   return `/help/${HELP_TOPIC[first ?? ""] ?? "getting-started"}`;
+}
+
+/** True from the `lg` breakpoint up: the menu sits beside the page. Below it the menu is a drawer. */
+function useWide(): boolean {
+  const query = "(min-width: 1024px)";
+  const [wide, setWide] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const on = () => setWide(media.matches);
+    media.addEventListener("change", on);
+    return () => media.removeEventListener("change", on);
+  }, []);
+  return wide;
 }
 
 function Mark({ className }: { className?: string }) {
@@ -58,13 +71,17 @@ function Item({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
 export function Layout({ children }: { children: ReactNode }) {
   const { me, counts, theme, toggleTheme } = useApp();
   const location = useLocation();
-  const [collapsed, setCollapsed] = useState(() => {
+  const wide = useWide();
+  const [folded, setFolded] = useState(() => {
     try { return localStorage.getItem("console-nav") === "collapsed"; } catch { return false; }
   });
+  const [drawer, setDrawer] = useState(false);
   const [more, setMore] = useState(false);
   useEffect(() => {
-    try { localStorage.setItem("console-nav", collapsed ? "collapsed" : "open"); } catch { /* private mode */ }
-  }, [collapsed]);
+    try { localStorage.setItem("console-nav", folded ? "collapsed" : "open"); } catch { /* private mode */ }
+  }, [folded]);
+  useEffect(() => { setDrawer(false); }, [location.pathname, location.search]);
+  const collapsed = folded && wide; // the drawer always shows labels
 
   const icon = "size-[18px]";
   const groups: NavItem[][] = [
@@ -96,7 +113,10 @@ export function Layout({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-full">
-      <aside className={cx("scroll-thin sticky top-0 flex h-screen shrink-0 flex-col overflow-y-auto bg-zinc-100/70 px-3 py-4 dark:bg-zinc-900/60", collapsed ? "w-[68px]" : "w-64")}>
+      {drawer && !wide && <button type="button" aria-label="Close the menu" onClick={() => setDrawer(false)} className="fixed inset-0 z-40 bg-black/50" />}
+      <aside aria-label="Menu" className={cx("scroll-thin flex h-dvh shrink-0 flex-col overflow-y-auto px-3 py-4",
+        wide ? cx("sticky top-0 bg-zinc-100/70 dark:bg-zinc-900/60", collapsed ? "w-[68px]" : "w-64")
+          : cx("fixed inset-y-0 left-0 z-50 w-72 bg-zinc-100 transition-transform duration-200 dark:bg-zinc-900", drawer ? "translate-x-0" : "-translate-x-full"))}>
         <div className={cx("mb-5 flex items-center gap-2", collapsed ? "justify-center" : "px-2")}>
           <Link to="/" className="flex min-w-0 items-center gap-2.5" aria-label="Dashboard">
             <Mark className="size-7 shrink-0" />
@@ -121,18 +141,27 @@ export function Layout({ children }: { children: ReactNode }) {
           )}
         </nav>
         <div className="mt-4 flex flex-col gap-0.5">
+          {!wide && <div className="px-1 pb-2"><GmailButton /></div>}
           <Item item={{ to: "/help", label: "Help", icon: <CircleHelp className={icon} /> }} collapsed={collapsed} />
           {me?.is_admin || me?.is_lead ? <Item item={{ to: "/settings", label: "Settings", icon: <Settings className={icon} /> }} collapsed={collapsed} /> : null}
-          <button type="button" onClick={() => setCollapsed((c) => !c)} title={collapsed ? "Open the menu" : "Collapse the menu"}
-            className={cx("flex items-center gap-3 rounded-full px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-400 dark:hover:bg-zinc-800", collapsed && "justify-center px-0")}>
-            {collapsed ? <PanelLeftOpen className={icon} /> : <PanelLeftClose className={icon} />}{!collapsed && "Collapse"}
-          </button>
+          {wide && (
+            <button type="button" onClick={() => setFolded((c) => !c)} title={collapsed ? "Open the menu" : "Collapse the menu"}
+              className={cx("flex items-center gap-3 rounded-full px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-400 dark:hover:bg-zinc-800", collapsed && "justify-center px-0")}>
+              {collapsed ? <PanelLeftOpen className={icon} /> : <PanelLeftClose className={icon} />}{!collapsed && "Collapse"}
+            </button>
+          )}
         </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex items-center justify-end gap-2 bg-zinc-50/85 px-6 py-3 backdrop-blur dark:bg-zinc-950/85">
-          <GmailButton />
+        <header className="sticky top-0 z-30 flex items-center gap-2 bg-zinc-50/85 px-4 py-3 backdrop-blur sm:px-6 dark:bg-zinc-950/85">
+          {!wide && (
+            <button type="button" onClick={() => setDrawer(true)} aria-label="Open the menu" aria-expanded={drawer} className="-ml-1 flex items-center gap-2 rounded-full p-2 text-zinc-700 hover:bg-zinc-200/70 dark:text-zinc-200 dark:hover:bg-zinc-800">
+              <Menu className="size-5" /><Mark className="size-6" />
+            </button>
+          )}
+          <span className="flex-1" />
+          {wide && <GmailButton />}
           <Link to={helpPathFor(location.pathname)} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800">
             <CircleHelp className="size-4" />Help
           </Link>
@@ -141,14 +170,14 @@ export function Layout({ children }: { children: ReactNode }) {
             {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
           </button>
           {me && (
-            <span className="ml-1 inline-flex items-center gap-2 rounded-full border border-zinc-200 py-1 pl-1 pr-3 text-sm dark:border-zinc-800" title={`${me.email} (${me.role})`}>
+            <span className="ml-1 inline-flex items-center gap-2 rounded-full border border-zinc-200 p-1 text-sm sm:pr-3 dark:border-zinc-800" title={`${me.email} (${me.role})`}>
               <span className="bg-spark flex size-6 items-center justify-center rounded-full text-xs font-medium text-white">{(me.name || me.email).slice(0, 1).toUpperCase()}</span>
               <span className="hidden max-w-40 truncate text-zinc-700 sm:inline dark:text-zinc-200">{me.name || me.email.split("@")[0]}</span>
-              <span className="text-xs text-zinc-500">{me.role}</span>
+              <span className="hidden text-xs text-zinc-500 sm:inline">{me.role}</span>
             </span>
           )}
         </header>
-        <main className="mx-auto w-full max-w-[1500px] flex-1 px-6 pb-12 pt-2">{children}</main>
+        <main className="mx-auto w-full max-w-[1500px] flex-1 px-4 pb-12 pt-2 sm:px-6">{children}</main>
       </div>
     </div>
   );

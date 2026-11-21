@@ -1,15 +1,16 @@
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
-import { NavLink, useParams } from "react-router";
+import { NavLink, useNavigate, useParams } from "react-router";
 
 import { useApi } from "../api/hooks";
-import { Card, cx, EmptyState, ErrorState, Input, PageHeader, Spinner } from "../components/ui";
+import { Card, cx, EmptyState, ErrorState, Input, PageHeader, Select, Spinner } from "../components/ui";
 
 interface Section { heading: string; steps?: string[]; items?: string[]; text?: string }
 interface Topic { id: string; page: string; title: string; audience: string; summary: string; sections: Section[] }
 
 export default function HelpPage() {
   const { topic = "getting-started" } = useParams();
+  const navigate = useNavigate();
   const { data, error, loading, reload } = useApi<{ topics: Topic[] }>("/help");
   const [q, setQ] = useState("");
   const needle = q.trim().toLowerCase();
@@ -29,11 +30,14 @@ export default function HelpPage() {
   );
   return (
     <div>
-      <PageHeader title="Help" actions={<div className="relative"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-zinc-400" /><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search help" aria-label="Search help" className="w-64 pl-9" /></div>} />
+      <PageHeader title="Help" actions={<div className="relative"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-zinc-400" /><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search help" aria-label="Search help" className="w-full pl-9 sm:w-64" /></div>} />
       <ErrorState error={error} onRetry={reload} />
       {loading && !data ? <Spinner /> : data && (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[15rem_1fr]">
-          <nav aria-label="Help topics" className="h-fit space-y-4 lg:sticky lg:top-16">
+          <Select className="lg:hidden" aria-label="Help topic" value={current?.id ?? ""} onChange={(e) => { setQ(""); navigate(`/help/${e.target.value}`); }}>
+            {pages.map((page) => <optgroup key={page} label={page}>{data.topics.filter((t) => t.page === page).map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}</optgroup>)}
+          </Select>
+          <nav aria-label="Help topics" className="hidden h-fit space-y-4 lg:sticky lg:top-16 lg:block">
             {pages.map((page) => (
               <div key={page} className="space-y-0.5">
                 <p className="px-3 pb-1 text-xs text-zinc-500">{page}</p>

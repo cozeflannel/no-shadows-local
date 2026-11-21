@@ -174,7 +174,7 @@ function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legen
           <tbody>
             {fields.map(([f, v]) => (
               <tr key={f} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
-                <td className="w-44 px-5 py-2 align-top text-xs text-zinc-500">{label(f)}</td>
+                <td className="w-28 px-5 py-2 align-top text-xs text-zinc-500 sm:w-44">{label(f)}</td>
                 <td className="break-words px-2 py-2 align-top text-zinc-800 dark:text-zinc-200">{fmtValue(v)}</td>
                 <td className="w-28 px-5 py-2 text-right align-top">{f in c.field_confidence ? <Confidence value={c.field_confidence[f]} /> : null}</td>
               </tr>
@@ -287,19 +287,19 @@ export default function FeedPage() {
     <div>
       <PageHeader title="Review feed"
         actions={<>
-          <div className="relative"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-zinc-400" /><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" aria-label="Search" className="w-52 pl-9" /></div>
+          <div className="relative w-full sm:w-auto"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-zinc-400" /><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" aria-label="Search" className="w-full pl-9 sm:w-52" /></div>
           <Segmented label="View" value={view} onChange={(v) => setSearch(v === "action" ? {} : { view: v }, { replace: true })} options={VIEWS} />
           {me?.can_act && <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setIntake(true)}>Triage an alert</Button>}
         </>} />
       <ErrorState error={list.error} onRetry={list.reload} />
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(22rem,2fr)_3fr]">
-        <div className={cx("space-y-3", caseId && "hidden xl:block")}>
+      <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-[minmax(22rem,2fr)_3fr]">
+        <div className={cx("min-w-0 space-y-3", caseId && "hidden xl:block")}>
           {list.loading && !list.data ? <Spinner /> : cards.length === 0 ? (
             <Card><EmptyState icon={<Inbox className="size-8" />} title={view === "action" ? "Nothing is waiting" : "No alerts in this view"}>{view === "action" ? "New alerts appear here the moment they are triaged." : "Try another view or a wider search."}</EmptyState></Card>
           ) : cards.map((c) => <CardRow key={c.case_id} card={c} selected={c.case_id === caseId} onOpen={() => navigate(`/feed/${c.case_id}${search.toString() ? `?${search}` : ""}`)} />)}
           {list.data && list.data.total > cards.length && <p className="text-center text-xs text-zinc-500">Showing {cards.length} of {list.data.total}. Search to narrow.</p>}
         </div>
-        <div className={cx(!caseId && "hidden xl:block")}>
+        <div className={cx("min-w-0", !caseId && "hidden xl:block")}>
           {caseId ? <>
             <button type="button" onClick={() => navigate(`/feed${search.toString() ? `?${search}` : ""}`)} className="mb-3 inline-flex items-center gap-1 text-sm text-blue-600 xl:hidden dark:text-blue-200"><ArrowLeft className="size-4" />Back to the feed</button>
             <Detail key={caseId} caseId={caseId} legend={list.data?.legend ?? []} verdicts={list.data?.verdicts ?? []} onChanged={changed} />

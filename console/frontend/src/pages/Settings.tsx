@@ -1,12 +1,12 @@
 import { RotateCcw, Save } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { NavLink, useParams } from "react-router";
+import { NavLink, useNavigate, useParams } from "react-router";
 
 import { apiSend, type ApiError } from "../api/client";
 import { useApi } from "../api/hooks";
 import type { SettingsResponse } from "../api/types";
 import { SchemaForm, type Schema } from "../components/SchemaForm";
-import { Alert, Badge, Button, Card, cx, ErrorState, Input, PageHeader, Spinner } from "../components/ui";
+import { Alert, Badge, Button, Card, cx, ErrorState, Input, PageHeader, Select, Spinner } from "../components/ui";
 import { useApp } from "../context";
 import { ConfigSection, HistoryList } from "./settings/ConfigSection";
 import { AuditPanel, BigQueryPanel, CostsPanel, DeliveryPanel, PromptsPanel, RuntimePanel, SafetyPanel, SecretsPanel } from "./settings/Panels";
@@ -83,6 +83,7 @@ function NavItem({ to, label, marked }: { to: string; label: string; marked?: bo
 export default function SettingsPage() {
   const { me } = useApp();
   const { key = "flags" } = useParams();
+  const navigate = useNavigate();
   const parts = useApi<PartList>("/platform");
   const config = useApi<SettingsResponse>("/settings");
   const partKeys = new Set(parts.data?.parts.map((p) => p.key));
@@ -105,7 +106,12 @@ export default function SettingsPage() {
       <PageHeader title="Settings" actions={parts.data && <span className="text-xs text-zinc-500">version {parts.data.config_version}</span>} />
       <ErrorState error={parts.error || config.error} onRetry={() => { parts.reload(); config.reload(); }} />
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[15rem_1fr]">
-        <nav aria-label="Settings" className="scroll-thin h-fit space-y-4 lg:sticky lg:top-16 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
+        <Select className="lg:hidden" aria-label="Setting" value={`/settings/${key}`} onChange={(e) => navigate(e.target.value)}>
+          <optgroup label="Platform">{(parts.data?.parts ?? []).map((p) => <option key={p.key} value={`/settings/${p.key}`}>{p.label}</option>)}</optgroup>
+          <optgroup label="Agent">{sections.map((s) => <option key={s.key} value={sectionPath(s.key)}>{s.label}</option>)}<option value="/rosters">Rosters</option></optgroup>
+          <optgroup label="Tools">{TOOLS.filter((t) => !t.admin || me?.is_admin).map((t) => <option key={t.key} value={`/settings/${t.key}`}>{t.label}</option>)}</optgroup>
+        </Select>
+        <nav aria-label="Settings" className="scroll-thin hidden h-fit space-y-4 lg:sticky lg:top-16 lg:block lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
           <div className="space-y-0.5">
             <p className="px-3 pb-1 text-xs text-zinc-500">Platform</p>
             {(parts.data?.parts ?? []).map((p) => <NavItem key={p.key} to={`/settings/${p.key}`} label={p.label} marked={p.overridden} />)}

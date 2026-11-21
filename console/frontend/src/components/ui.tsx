@@ -23,10 +23,10 @@ export function Card({ title, subtitle, actions, children, className, bodyClassN
             {title && <h2 className="text-sm font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">{title}</h2>}
             {subtitle && <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{subtitle}</p>}
           </div>
-          {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+          {actions && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div>}
         </header>
       )}
-      <div className={cx(padded && "p-5", bodyClassName)}>{children}</div>
+      <div className={cx(padded ? "p-5" : "overflow-x-auto", bodyClassName)}>{children}</div>
     </section>
   );
 }
@@ -38,7 +38,7 @@ export function PageHeader({ title, description, actions }: { title: string; des
         <h1 className="text-[1.75rem] font-medium leading-tight tracking-tight text-zinc-950 dark:text-zinc-50">{title}</h1>
         {description && <p className="mt-1 max-w-3xl text-sm text-zinc-500 dark:text-zinc-400">{description}</p>}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }
@@ -133,7 +133,7 @@ export function Toggle({ checked, onChange, label, disabled }: { checked: boolea
 
 export function Segmented<T extends string | number>({ options, value, onChange, label }: { options: { value: T; label: ReactNode }[]; value: T; onChange: (v: T) => void; label?: string }) {
   return (
-    <div role="group" aria-label={label} className="inline-flex rounded-full bg-zinc-100 p-1 dark:bg-zinc-900 dark:ring-1 dark:ring-zinc-800">
+    <div role="group" aria-label={label} className="scroll-thin inline-flex max-w-full overflow-x-auto rounded-full bg-zinc-100 p-1 dark:bg-zinc-900 dark:ring-1 dark:ring-zinc-800">
       {options.map((o) => (
         <button
           key={String(o.value)}

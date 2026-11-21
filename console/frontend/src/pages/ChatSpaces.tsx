@@ -28,7 +28,7 @@ export default function ChatSpacesPage() {
     <div>
       <PageHeader title="Chat spaces"
         actions={<>
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search messages" aria-label="Search messages" className="w-52" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search messages" aria-label="Search messages" className="w-full sm:w-52" />
           <Select value={direction} onChange={(e) => setDirection(e.target.value)} aria-label="Direction" className="w-auto">
             <option value="">In and out</option><option value="inbound">Received</option><option value="outbound">Sent by the agent</option>
           </Select>

@@ -100,7 +100,7 @@ export default function AgentPage() {
   const messages = session?.messages ?? [];
   const pending = session?.pending;
   return (
-    <div className="grid h-[calc(100vh-5.5rem)] grid-cols-1 gap-5 lg:grid-cols-[15rem_1fr]">
+    <div className="grid h-[calc(100dvh-5.5rem)] grid-cols-1 gap-5 lg:grid-cols-[15rem_1fr]">
       <aside className="scroll-thin hidden overflow-y-auto lg:block">
         <Button variant="secondary" icon={<Plus className="size-4" />} className="mb-3 w-full" onClick={() => navigate("/agent")}>New chat</Button>
         <ul className="space-y-0.5">
@@ -118,12 +118,19 @@ export default function AgentPage() {
       </aside>
 
       <section className="flex min-h-0 flex-col">
+        <div className="mb-3 flex items-center gap-2 lg:hidden">
+          <select aria-label="Chats" value={sessionId ?? ""} onChange={(e) => navigate(e.target.value ? `/agent/${e.target.value}` : "/agent")}
+            className="min-w-0 flex-1 rounded-full border border-zinc-300 bg-transparent px-3 py-1.5 text-sm dark:border-zinc-700">
+            <option value="">New chat</option>{(list.data?.sessions ?? []).map((s) => <option key={s.session_id} value={s.session_id}>{s.title}</option>)}
+          </select>
+          {sessionId && <Button size="sm" icon={<Plus className="size-3.5" />} onClick={() => navigate("/agent")}>New</Button>}
+        </div>
         {list.data && !list.data.actions_switch && me?.can_act && <OffNotice what="Acting from the chat agent" flag="console_chat_agent">It can look things up and answer; it cannot change anything yet.</OffNotice>}
         <div className="scroll-thin flex-1 overflow-y-auto pr-1">
           {messages.length === 0 ? (
             <div className="mx-auto flex h-full max-w-2xl flex-col justify-center pb-10">
-              <h1 className="text-spark w-fit text-4xl font-medium leading-tight tracking-tight">Hello{me?.name ? `, ${me.name.split(" ")[0]}` : ""}</h1>
-              <p className="mt-2 text-2xl text-zinc-400 dark:text-zinc-500">Ask about any alert, or have it handled.</p>
+              <h1 className="text-spark w-fit text-3xl font-medium leading-tight tracking-tight sm:text-4xl">Hello{me?.name ? `, ${me.name.split(" ")[0]}` : ""}</h1>
+              <p className="mt-2 text-xl text-zinc-400 sm:text-2xl dark:text-zinc-500">Ask about any alert, or have it handled.</p>
               <div className="mt-8 grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {STARTERS.map((s) => <button key={s} type="button" onClick={() => send(s)} className="rounded-2xl bg-zinc-100 p-4 text-left text-sm text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800">{s}</button>)}
               </div>
