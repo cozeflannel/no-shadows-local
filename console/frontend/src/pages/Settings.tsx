@@ -1,6 +1,6 @@
 import { RotateCcw, Save } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { NavLink, useNavigate, useParams } from "react-router";
+import { Link, NavLink, useNavigate, useParams } from "react-router";
 
 import { apiSend, type ApiError } from "../api/client";
 import { useApi } from "../api/hooks";
@@ -20,6 +20,8 @@ const TOOLS = [
   { key: "audit", label: "Audit log", admin: false },
   { key: "history", label: "Change history", admin: false },
 ];
+/** The parts whose main values connect a tool: those are set under Integrations. */
+const PART_TOOL: Record<string, string> = { gcp: "gcp", bigquery: "bigquery", pubsub: "delivery", temp_check: "brandwatch", campaigns: "campaigns" };
 const PART_PANEL: Record<string, () => React.ReactNode> = {
   bigquery: () => <BigQueryPanel />, pubsub: () => <DeliveryPanel />, safety: () => <SafetyPanel />, costs: () => <CostsPanel />, gcp: () => <RuntimePanel />,
 };
@@ -58,6 +60,7 @@ function PartEditor({ part, onSaved }: { part: string; onSaved: () => void }) {
         {changed && <Button size="sm" icon={<RotateCcw className="size-3.5" />} disabled={!data.can_edit || saving} onClick={() => { if (window.confirm(`Reset ${data.label} to the defaults?`)) void save(data.default, "Reset"); }}>Reset</Button>}
         <Button size="sm" variant="primary" icon={<Save className="size-3.5" />} loading={saving} disabled={!data.can_edit || !dirty} onClick={() => save(draft, "Saved")}>Save</Button>
       </>}>
+      {PART_TOOL[part] && <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">The values that connect this tool are set under <Link to={`/connections/${PART_TOOL[part]}`} className="text-blue-700 hover:underline dark:text-blue-300">Integrations</Link>. The rest here is tuning.</p>}
       {!data.can_edit && <Alert tone="blue" className="mb-3" title="Read-only">Only admins can change settings{me ? ` (you are ${me.role})` : ""}.</Alert>}
       {saveError && saveError.status !== 409 && <ErrorState error={saveError} />}
       <SchemaForm schema={data.schema} value={draft} errors={errors} disabled={!data.can_edit} onChange={(v) => { setDraft(v); setDirty(true); }} />
@@ -80,20 +83,73 @@ function NavItem({ to, label, marked }: { to: string; label: string; marked?: bo
   );
 }
 
+interface Glance {
+  tools: { summary: { required: number; ready: number; connected: number; failing: number } } | null;
+  admin: { people: unknown[]; status: { switches_on: string[]; switches: number; safety: { passed: boolean; testing: boolean } } } | null;
+}
+
+function StartCard({ n, title, state, to, action, done }: { n: number; title: string; state: string; to: string; action: string; done: boolean }) {
+  return (
+    <Link to={to} className="flex items-start gap-4 rounded-2xl border border-zinc-200 bg-white p-5 transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800/60">
+      <span className={cx("flex size-7 shrink-0 items-center justify-center rounded-full text-sm tabular-nums", done ? "bg-emerald-600 text-white" : "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-100")}>{n}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[15px] font-medium text-zinc-950 dark:text-zinc-50">{title}</span>
+        <span className="mt-0.5 block text-sm text-zinc-600 dark:text-zinc-400">{state}</span>
+        <span className="mt-2 block text-sm font-medium text-blue-700 dark:text-blue-300">{action}</span>
+      </span>
+    </Link>
+  );
+}
+
+/** What an admin fills in, in order. Everything else has a working default. */
+function SettingsHome({ tools, admin }: Glance) {
+  const t = tools?.summary;
+  const s = admin?.status;
+  return (
+    <div className="max-w-3xl">
+      <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">Four things to fill in. Every other setting has a working default and sits under Advanced.</p>
+      <div className="flex flex-col gap-3">
+        <StartCard n={1} title="Integrations" done={!!t && t.ready === t.required} to="/connections" action="Open Integrations"
+          state={t ? `${t.ready} of ${t.required} needed tools are set${t.failing ? `, ${t.failing} failing a check` : ""}. Find and fill writes what the project already has.` : "The tools the agent is connected to."} />
+        <StartCard n={2} title="People" done={!!admin && admin.people.length > 1} to="/admin" action="Open People"
+          state={admin ? `${admin.people.length} ${admin.people.length === 1 ? "person has" : "people have"} a role. Add a person once: their role and roster place come from that record.` : "Who can work alerts and who can change settings."} />
+        <StartCard n={3} title="Feature flags" done={!!s && s.switches_on.length > 0} to="/settings/flags" action="Open Feature flags"
+          state={s ? `${s.switches_on.length} of ${s.switches} on. Every feature starts OFF.` : "What the agent may do on its own."} />
+        <StartCard n={4} title="Safety" done={!!s && s.safety.passed} to="/settings/safety" action="Open Safety"
+          state={s ? `Testing is ${s.safety.testing ? "ON: emails go only to the testing recipients" : "OFF: emails go to real recipients"}.` : "Testing recipients, allow-lists and the leak guard."} />
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { me } = useApp();
-  const { key = "flags" } = useParams();
+  const { key } = useParams();
   const navigate = useNavigate();
   const parts = useApi<PartList>("/platform");
   const config = useApi<SettingsResponse>("/settings");
+  const tools = useApi<Glance["tools"]>(key ? null : "/connections");
+  const admin = useApi<Glance["admin"]>(key ? null : "/admin/overview");
+  const [find, setFind] = useState("");
+  const [open, setOpen] = useState(false);
   const partKeys = new Set(parts.data?.parts.map((p) => p.key));
   const taken = new Set([...partKeys, ...TOOLS.map((t) => t.key)]);
   const sections = (config.data?.sections ?? []).filter((s) => s.key !== "platform");
   const sectionPath = (k: string) => `/settings/${taken.has(k) ? `config.${k}` : k}`;
-  const sectionKey = key.startsWith("config.") ? key.slice(7) : !taken.has(key) ? key : null;
+  const sectionKey = !key ? null : key.startsWith("config.") ? key.slice(7) : !taken.has(key) ? key : null;
+  const start = ["flags", "safety"];
+  const needle = find.trim().toLowerCase();
+  const match = (label: string) => !needle || label.toLowerCase().includes(needle);
+  const groups: { title: string; items: { to: string; label: string; marked?: boolean }[] }[] = [
+    { title: "Platform", items: (parts.data?.parts ?? []).filter((p) => !start.includes(p.key) && match(p.label)).map((p) => ({ to: `/settings/${p.key}`, label: p.label, marked: p.overridden })) },
+    { title: "Agent", items: [...sections.filter((s) => match(s.label)).map((s) => ({ to: sectionPath(s.key), label: s.label, marked: s.overridden })), ...(match("Rosters") ? [{ to: "/rosters", label: "Rosters" }] : [])] },
+    { title: "Tools", items: TOOLS.filter((t) => (!t.admin || me?.is_admin) && match(t.label)).map((t) => ({ to: `/settings/${t.key}`, label: t.label })) },
+  ];
+  const advanced = open || !!needle || (!!key && !start.includes(key));
 
   let body: React.ReactNode;
-  if (key === "secrets") body = <SecretsPanel />;
+  if (!key) body = <SettingsHome tools={tools.data} admin={admin.data} />;
+  else if (key === "secrets") body = <SecretsPanel />;
   else if (key === "prompts") body = <PromptsPanel />;
   else if (key === "audit") body = <AuditPanel />;
   else if (key === "history") body = <Card title="Change history"><HistoryList /></Card>;
@@ -106,24 +162,37 @@ export default function SettingsPage() {
       <PageHeader title="Settings" actions={parts.data && <span className="text-xs text-zinc-500">version {parts.data.config_version}</span>} />
       <ErrorState error={parts.error || config.error} onRetry={() => { parts.reload(); config.reload(); }} />
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[15rem_1fr]">
-        <Select className="lg:hidden" aria-label="Setting" value={`/settings/${key}`} onChange={(e) => navigate(e.target.value)}>
-          <optgroup label="Platform">{(parts.data?.parts ?? []).map((p) => <option key={p.key} value={`/settings/${p.key}`}>{p.label}</option>)}</optgroup>
-          <optgroup label="Agent">{sections.map((s) => <option key={s.key} value={sectionPath(s.key)}>{s.label}</option>)}<option value="/rosters">Rosters</option></optgroup>
-          <optgroup label="Tools">{TOOLS.filter((t) => !t.admin || me?.is_admin).map((t) => <option key={t.key} value={`/settings/${t.key}`}>{t.label}</option>)}</optgroup>
+        <Select className="lg:hidden" aria-label="Setting" value={key ? `/settings/${key}` : "/settings"} onChange={(e) => navigate(e.target.value)}>
+          <optgroup label="Start here">
+            <option value="/settings">What to fill in</option><option value="/connections">Integrations</option><option value="/admin">People</option>
+            <option value="/settings/flags">Feature flags</option><option value="/settings/safety">Safety</option>
+          </optgroup>
+          {groups.map((g) => <optgroup key={g.title} label={`Advanced: ${g.title}`}>{g.items.map((i) => <option key={i.to} value={i.to}>{i.label}</option>)}</optgroup>)}
         </Select>
         <nav aria-label="Settings" className="scroll-thin hidden h-fit space-y-4 lg:sticky lg:top-16 lg:block lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
           <div className="space-y-0.5">
-            <p className="px-3 pb-1 text-xs text-zinc-500">Platform</p>
-            {(parts.data?.parts ?? []).map((p) => <NavItem key={p.key} to={`/settings/${p.key}`} label={p.label} marked={p.overridden} />)}
+            <p className="px-3 pb-1 text-xs text-zinc-500">Start here</p>
+            <NavLink to="/settings" end className={({ isActive }) => cx("flex rounded-full px-3 py-1.5 text-sm", isActive ? "bg-blue-100 font-medium text-blue-800 dark:bg-blue-200/15 dark:text-blue-200" : "text-zinc-700 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800")}>What to fill in</NavLink>
+            <NavItem to="/connections" label="Integrations" />
+            <NavItem to="/admin" label="People" />
+            <NavItem to="/settings/flags" label="Feature flags" marked={parts.data?.parts.find((p) => p.key === "flags")?.overridden} />
+            <NavItem to="/settings/safety" label="Safety" marked={parts.data?.parts.find((p) => p.key === "safety")?.overridden} />
           </div>
-          <div className="space-y-0.5">
-            <p className="px-3 pb-1 text-xs text-zinc-500">Agent</p>
-            {sections.map((s) => <NavItem key={s.key} to={sectionPath(s.key)} label={s.label} marked={s.overridden} />)}
-            <NavItem to="/rosters" label="Rosters" />
-          </div>
-          <div className="space-y-0.5">
-            <p className="px-3 pb-1 text-xs text-zinc-500">Tools</p>
-            {TOOLS.filter((t) => !t.admin || me?.is_admin).map((t) => <NavItem key={t.key} to={`/settings/${t.key}`} label={t.label} />)}
+          <div>
+            <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={advanced} className="flex w-full items-center justify-between rounded-full px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800">
+              Advanced<span className="text-xs text-zinc-500">{advanced ? "Hide" : "Show"}</span>
+            </button>
+            {advanced && (
+              <div className="mt-2 space-y-4">
+                <Input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Find a setting" aria-label="Find a setting" />
+                {groups.map((g) => g.items.length > 0 && (
+                  <div key={g.title} className="space-y-0.5">
+                    <p className="px-3 pb-1 text-xs text-zinc-500">{g.title}</p>
+                    {g.items.map((i) => <NavItem key={i.to} to={i.to} label={i.label} marked={i.marked} />)}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </nav>
         <div className="min-w-0">{body}</div>

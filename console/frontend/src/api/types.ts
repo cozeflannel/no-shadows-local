@@ -49,6 +49,7 @@ export interface Meta {
   operations: string[];
   rosters: { name: string; label: string; description: string }[];
   kpi_count: number;
+  notifications: { enabled: boolean; event_types: string[]; sources: string[]; seconds: number; max_on_screen: number };
 }
 
 export interface Window { days: number; since: string; until: string; env?: string | null }

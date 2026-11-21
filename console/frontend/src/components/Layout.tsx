@@ -1,11 +1,12 @@
 import {
   BookOpen, CalendarClock, ChevronDown, CircleHelp, FolderSearch, Gauge, Inbox, LayoutDashboard, Mail, Megaphone, Menu, MessagesSquare, Moon,
-  PanelLeftClose, PanelLeftOpen, Settings, Sparkles, Sun, Thermometer, UsersRound,
+  PanelLeftClose, PanelLeftOpen, Plug, Scale, Settings, ShieldCheck, Sparkles, Sun, Thermometer, UsersRound, Waypoints,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router";
 
 import { useApp } from "../context";
+import { AlertPopups } from "./AlertPopups";
 import { GmailButton } from "./GmailButton";
 import { cx } from "./ui";
 
@@ -16,6 +17,7 @@ const HELP_TOPIC: Record<string, string> = {
   "": "dashboard", feed: "review-feed", chat: "chat-spaces", agent: "chat-agent", "temp-check": "temp-check", workforce: "workforce",
   rosters: "rosters", knowledge: "knowledge", campaigns: "campaigns", cases: "cases", escalations: "cases", settings: "settings",
   suppressed: "cases", parity: "cases", learning: "knowledge", outbox: "delivery", activity: "audit", help: "getting-started",
+  stories: "stories", compare: "compare", connections: "integrations", admin: "admin",
 };
 
 export function helpPathFor(pathname: string): string {
@@ -88,6 +90,7 @@ export function Layout({ children }: { children: ReactNode }) {
     [
       { to: "/", label: "Dashboard", icon: <LayoutDashboard className={icon} /> },
       { to: "/feed", label: "Review feed", icon: <Inbox className={icon} />, count: counts.review },
+      { to: "/stories", label: "Stories", icon: <Waypoints className={icon} /> },
       { to: "/chat", label: "Chat spaces", icon: <MessagesSquare className={icon} /> },
       { to: "/agent", label: "Chat agent", icon: <Sparkles className={icon} /> },
     ],
@@ -101,6 +104,7 @@ export function Layout({ children }: { children: ReactNode }) {
       { to: "/cases", label: "Cases", icon: <FolderSearch className={icon} /> },
       { to: "/escalations", label: "Emails & T&S", icon: <Mail className={icon} /> },
       { to: "/rosters", label: "Rosters", icon: <CalendarClock className={icon} /> },
+      { to: "/compare", label: "Compare", icon: <Scale className={icon} /> },
     ],
   ];
   const extra: NavItem[] = [
@@ -143,7 +147,11 @@ export function Layout({ children }: { children: ReactNode }) {
         <div className="mt-4 flex flex-col gap-0.5">
           {!wide && <div className="px-1 pb-2"><GmailButton /></div>}
           <Item item={{ to: "/help", label: "Help", icon: <CircleHelp className={icon} /> }} collapsed={collapsed} />
-          {me?.is_admin || me?.is_lead ? <Item item={{ to: "/settings", label: "Settings", icon: <Settings className={icon} /> }} collapsed={collapsed} /> : null}
+          {(me?.is_admin || me?.is_lead) && <>
+            <Item item={{ to: "/connections", label: "Integrations", icon: <Plug className={icon} /> }} collapsed={collapsed} />
+            <Item item={{ to: "/admin", label: "Admin", icon: <ShieldCheck className={icon} /> }} collapsed={collapsed} />
+            <Item item={{ to: "/settings", label: "Settings", icon: <Settings className={icon} /> }} collapsed={collapsed} />
+          </>}
           {wide && (
             <button type="button" onClick={() => setFolded((c) => !c)} title={collapsed ? "Open the menu" : "Collapse the menu"}
               className={cx("flex items-center gap-3 rounded-full px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-400 dark:hover:bg-zinc-800", collapsed && "justify-center px-0")}>
@@ -162,6 +170,7 @@ export function Layout({ children }: { children: ReactNode }) {
           )}
           <span className="flex-1" />
           {wide && <GmailButton />}
+          <AlertPopups />
           <Link to={helpPathFor(location.pathname)} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800">
             <CircleHelp className="size-4" />Help
           </Link>

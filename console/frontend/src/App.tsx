@@ -4,10 +4,14 @@ import { GmailButton } from "./components/GmailButton";
 import { Layout } from "./components/Layout";
 import { Alert, Spinner } from "./components/ui";
 import { useApp } from "./context";
+import { LiveProvider } from "./lib/live";
 import ActivityPage from "./pages/Activity";
+import AdminPage from "./pages/Admin";
 import AgentPage from "./pages/Agent";
 import CampaignsPage from "./pages/Campaigns";
 import CasesPage from "./pages/Cases";
+import ComparePage from "./pages/Compare";
+import ConnectionsPage from "./pages/Connections";
 import ChatSpacesPage from "./pages/ChatSpaces";
 import DashboardPage from "./pages/Dashboard";
 import EscalationsPage from "./pages/Escalations";
@@ -20,6 +24,7 @@ import OverviewPage from "./pages/Overview";
 import ParityPage from "./pages/Parity";
 import RostersPage from "./pages/Rosters";
 import SettingsPage from "./pages/Settings";
+import StoriesPage from "./pages/Stories";
 import SuppressedPage from "./pages/Suppressed";
 import TempCheckPage from "./pages/TempCheck";
 import WelcomePage from "./pages/Welcome";
@@ -59,12 +64,20 @@ export default function App() {
     <Routes>
       <Route path="/welcome" element={<WelcomePage />} />
       <Route path="*" element={
+        <LiveProvider>
         <Layout>
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/feed" element={<FeedPage />} />
             <Route path="/feed/:caseId" element={<FeedPage />} />
             <Route path="/review" element={<Navigate to="/feed?view=review" replace />} />
+            <Route path="/stories" element={<StoriesPage />} />
+            <Route path="/stories/:storyId" element={<StoriesPage />} />
+            <Route path="/compare" element={<ComparePage />} />
+            <Route path="/connections" element={<ConnectionsPage />} />
+            <Route path="/connections/:toolKey" element={<ConnectionsPage />} />
+            <Route path="/admin" element={<AdminPage />} />
+            <Route path="/admin/:tab" element={<AdminPage />} />
             <Route path="/chat" element={<ChatSpacesPage />} />
             <Route path="/agent" element={<AgentPage />} />
             <Route path="/agent/:sessionId" element={<AgentPage />} />
@@ -91,6 +104,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Layout>
+        </LiveProvider>
       } />
     </Routes>
   );
