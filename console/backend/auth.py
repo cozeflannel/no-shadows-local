@@ -14,7 +14,7 @@ Identity:
 Roles:
   * `config.analysts` -> admin | lead | analyst | im (an IM ranks as an analyst)
   * people in roster("slrr_im") -> analyst (Incident Managers)
-  * any other @google.com user -> viewer (read-only)
+  * anyone at a domain listed in Settings -> Access -> viewer domains -> viewer (read-only)
   * anyone else -> none (no access)
 """
 
@@ -28,6 +28,7 @@ from typing import Any, Callable
 
 from fastapi import Depends, HTTPException, Request
 
+from triage_agent.config import AccessConfig
 from triage_agent.context import ROSTER_IM, AgentContext
 from triage_agent.oncall.roster import person_by_email
 
@@ -35,7 +36,9 @@ IAP_EMAIL_HEADER = "X-Goog-Authenticated-User-Email"
 IAP_JWT_HEADER = "X-Goog-IAP-JWT-Assertion"
 IAP_CERTS_URL = "https://www.gstatic.com/iap/verify/public_key"
 DEFAULT_DEV_USER = "dev@local.invalid"
-VIEWER_DOMAIN = "google.com"  # anyone signed in at this domain may read (role "viewer"); no address is ever written here
+BOOTSTRAP_ADMIN_ENV = "TRIAGE_BOOTSTRAP_ADMIN"  # set by the deploy script to the deployer: admin until Settings names one
+# The first default viewer domain (Settings → Access → viewer domains decides at runtime; this is only its default).
+VIEWER_DOMAIN = (AccessConfig().viewer_domains or [""])[0]
 
 # `im` is the config label for Incident Managers (config.Analyst.role); it carries analyst rights.
 ROLE_RANK = {"none": 0, "viewer": 1, "analyst": 2, "im": 2, "lead": 3, "admin": 4}
@@ -130,13 +133,20 @@ def resolve_role(ctx: AgentContext, email: str) -> tuple[str, str | None, str]:
     analyst = ctx.config.analyst(email)
     if analyst:
         return analyst.role, analyst.name, "config"
+    access = ctx.config.platform.access
+    if email in {e.strip().lower() for e in access.bootstrap_admins if e.strip()}:
+        return "admin", None, "settings"
+    bootstrap = {e.strip().lower() for e in os.environ.get(BOOTSTRAP_ADMIN_ENV, "").split(",") if e.strip()}
+    if email in bootstrap and not ctx.config.admin_emails() and not access.bootstrap_admins:
+        return "admin", None, "bootstrap"  # the deployer, until an admin is named in Settings
     try:
         person = person_by_email(ctx.roster(ROSTER_IM), email)
     except Exception:  # noqa: BLE001 - roster unavailable: fall through to domain rules
         person = None
     if person:
         return "analyst", person.name, "roster"
-    if email.endswith("@" + VIEWER_DOMAIN):
+    domains = {d.strip().lower().lstrip("@") for d in access.viewer_domains if d.strip()}
+    if email.rsplit("@", 1)[-1] in domains:
         return "viewer", None, "domain"
     return "none", None, "none"
 

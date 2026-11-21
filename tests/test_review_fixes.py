@@ -176,7 +176,9 @@ def test_followups_job_exits_nonzero_when_a_step_failed(ctx, monkeypatch, capsys
 
 
 def test_job_names_are_unchanged():
-    assert run_job.JOBS == ["digest", "followups", "handover", "inhouse"]
+    # the four original jobs keep their names; the platform jobs were added beside them on purpose
+    assert [j for j in run_job.JOBS if j not in run_job.PLATFORM_JOBS] == ["digest", "followups", "handover", "inhouse"]
+    assert sorted(run_job.PLATFORM_JOBS) == ["forecast", "knowledge", "maintenance", "temp-checks", "watches"]
 
 
 # ---------------------------------------------------------------------------

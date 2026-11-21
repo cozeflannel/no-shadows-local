@@ -147,7 +147,7 @@ export function AttemptsList({ attempts }: { attempts: Attempt[] }) {
   return (
     <ol className="space-y-3">
       {[...attempts].reverse().map((att) => (
-        <li key={att.attempt} className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-[#0c0c0f]">
+        <li key={att.attempt} className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="font-semibold">Attempt {att.attempt}</span>
             <VerdictBadge verdict={att.result.verdict} />

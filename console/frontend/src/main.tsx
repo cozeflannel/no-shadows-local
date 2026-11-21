@@ -1,5 +1,5 @@
-import "@fontsource-variable/dm-sans/index.css";
-import "@fontsource-variable/jetbrains-mono/index.css";
+import "@fontsource-variable/google-sans-flex/index.css";
+import "@fontsource-variable/google-sans-code/index.css";
 import "./index.css";
 
 import { StrictMode } from "react";

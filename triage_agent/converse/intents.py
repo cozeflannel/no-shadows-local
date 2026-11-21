@@ -27,7 +27,7 @@ PURPOSE_INTENT = "converse.intent"
 INTENTS = (
     "revise", "forward", "bounce", "suppress", "revert", "tns_submitted", "tns_withdraw", "bug", "status",
     "oncall_set", "oncall_handoff", "oncall_who", "handover", "metrics", "teach", "config_change", "decide", "action",
-    "question",
+    "temp_check", "question",
 )
 # Intents that need an explicit TRG-/ESC- id in the text before acting on a Gemini guess.
 NEEDS_ID = {"forward", "bounce", "suppress", "revert", "tns_submitted", "tns_withdraw", "bug", "status"}
@@ -129,6 +129,8 @@ def match_regex(text: str, config: AgentConfig) -> Intent | None:
         return Intent(name=name, text=t, case_id=cases[0] if cases else None, escalation_id=escs[0] if escs else None,
                       args={k: v for k, v in args.items() if v not in (None, "")})
 
+    if m := re.match(r"^(?:please\s+)?(?:run\s+(?:a\s+)?)?temp(?:erature)?[\s-]*check\b\s*(?:on|for|:)?\s*(?P<rest>.*)$", t, flags):
+        return make("temp_check", rest=m["rest"].strip())
     if m := re.match(r"^(?P<decision>approve|reject)\s+(?P<id>(?:FACT|PROP)-\d+)\b", t, flags):
         return make("decide", decision=m["decision"].lower(), item_id=m["id"].upper())
     if (m := re.match(rf"^(?P<code>\S+)\s+(?P<case>{case_re})\s*[.!]?$", t, flags)) and (

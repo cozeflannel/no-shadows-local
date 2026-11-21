@@ -133,6 +133,10 @@ def drain(ctx: "AgentContext", claimed_by: str = "drain_outbox") -> tuple[ChatOu
         {"clean": cfg.clean_items_per_drain}, cfg.max_items_per_target, claimed_by, max_chars=MAX_CHARS
     )
     remaining = len(ctx.store.list_outbox(undelivered_only=True, limit=1000))
+    if items:
+        from . import chatlog
+
+        chatlog.mark_delivered(ctx, items)
     return outputs_from_items(items), {
         "delivered_ids": [i.outbox_id for i in items],
         "remaining": remaining,

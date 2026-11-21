@@ -45,6 +45,7 @@ class Enrichment(BaseModel):
 class Assessment(BaseModel):
     checks: list[CheckResult] = Field(default_factory=list)
     enrichment: Enrichment = Field(default_factory=Enrichment)
+    citations: list[str] = Field(default_factory=list)  # labels of the knowledge passages relied on, e.g. "KD-4f2a"
 
 
 def _taxonomy(config: AgentConfig) -> str:
@@ -62,7 +63,15 @@ def _taxonomy(config: AgentConfig) -> str:
     )
 
 
-def build_prompts(config: AgentConfig, fields: dict[str, Any], extra: dict[str, Any] | None = None) -> tuple[str, str]:
+KNOWLEDGE_NOTE = (
+    "KNOWLEDGE: the team's own documents for this kind of alert. Guidance outranks documents; documents outrank the "
+    "rules in your instructions; exact tag, topic and product names still come from the taxonomy. Put the label of "
+    "every passage you relied on in `citations` (for example KD-4f2a or Case TRG-1042); leave it empty if none applied."
+)
+
+
+def build_prompts(config: AgentConfig, fields: dict[str, Any], extra: dict[str, Any] | None = None,
+                  knowledge: str = "", classification: str = "") -> tuple[str, str]:
     checks = [c for c in config.alert_template.llm_checks if c.enabled]
     check_lines = "\n".join(
         f"- id={c.id} fields={c.fields}" + (f" correctable_field={c.correctable_field}" if c.correctable_field else "")
@@ -93,15 +102,22 @@ def build_prompts(config: AgentConfig, fields: dict[str, Any], extra: dict[str, 
     if extra:
         payload["_context"] = {k: v for k, v in extra.items() if k in ("language", "relevance_score", "transcript_snippet")}
     prompt = f"<alert>\n{json.dumps(payload, ensure_ascii=False, default=str)[:12000]}\n</alert>"
+    if classification:
+        prompt = f"CLASS: {classification}\n\n{prompt}"
+    if knowledge:
+        prompt = f"{KNOWLEDGE_NOTE}\n<knowledge>\n{knowledge}\n</knowledge>\n\n{prompt}"
     return system, prompt
 
 
-def assess(ctx: "AgentContext", fields: dict[str, Any], extra: dict[str, Any] | None = None) -> Assessment | None:
-    """Run the Gemini assessment; None when disabled. Raises LLMError on model failure."""
+def assess(ctx: "AgentContext", fields: dict[str, Any], extra: dict[str, Any] | None = None, *,
+           knowledge: str = "", classification: str = "") -> Assessment | None:
+    """Run the Gemini assessment; None when disabled. Raises LLMError on model failure.
+
+    `knowledge` is the rendered passages the classification layer picked (empty = as before)."""
     cfg = ctx.config
     if not cfg.thresholds.llm_checks_enabled:
         return None
-    system, prompt = build_prompts(cfg, fields, extra)
+    system, prompt = build_prompts(cfg, fields, extra, knowledge=knowledge, classification=classification)
     result = ctx.llm.generate_json(
         model=cfg.models.triage, system=system, prompt=prompt, schema=Assessment,
         temperature=cfg.models.temperature_triage, purpose="triage.assess",

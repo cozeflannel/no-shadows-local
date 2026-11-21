@@ -838,6 +838,286 @@ class KnowledgeConfig(ConfigModel):
     faq: list[FAQ] = Field(default_factory=list)
 
 
+# ---------------------------------------------------------------------------
+# Platform settings (Console → Settings). Every value is set in the Console; nothing operational is
+# written in code or in the YAML. Empty = not configured yet; every switch starts OFF.
+# ---------------------------------------------------------------------------
+
+
+class AccessConfig(ConfigModel):
+    """Who may open the Console."""
+
+    viewer_domains: list[str] = Field(default_factory=lambda: ["google.com"], description="Signed-in users at these domains may read the Console (role: viewer).")
+    bootstrap_admins: list[str] = Field(default_factory=list, description="Extra admins, by email. Until an admin exists, the deployer set at deploy time is the only admin.")
+
+
+class FeatureFlags(ConfigModel):
+    """What the agent and the Console may do on their own. Every switch starts OFF."""
+
+    classification_layer: bool = Field(False, description="Classify each alert first; the class picks the knowledge the assessment reads.")
+    knowledge_rag: bool = Field(False, description="Give the assessment and answers the matching knowledge passages, and cite them.")
+    pubsub_delivery: bool = Field(False, description="Send outbound actions through Pub/Sub (retries, dead letters) instead of ringing the doorbell directly.")
+    console_chat_agent: bool = Field(False, description="The in-Console chat agent may run actions (review, escalate, temp checks). OFF: it only reads and answers.")
+    temp_checks: bool = Field(False, description="Temp checks can be run from the Console and from Chat.")
+    auto_temp_checks: bool = Field(False, description="Start a temp check draft on the occasions set under Temp check settings.")
+    workforce_forecasting: bool = Field(False, description="Run the volume forecast in BigQuery on the schedule and write staffing recommendations for approval.")
+    forecast_gap_alerts: bool = Field(False, description="DM the leads when live volume runs over the forecast by more than the gap threshold.")
+    campaigns: bool = Field(False, description="Campaigns can be changed and ended from the Console (they are started in Chat).")
+    watches: bool = Field(False, description="Watches can be created, changed and run.")
+    golden_set_capture: bool = Field(False, description="Record every correction, review decision and IM assessment as a golden example.")
+    bigquery_admin: bool = Field(False, description="Admins may create and change datasets, tables and views from the Console.")
+    secret_admin: bool = Field(False, description="Admins may add secrets and secret versions from the Console.")
+
+
+class PubSubConfig(ConfigModel):
+    """Outbound delivery. Topic and subscription ids are short names inside `project`."""
+
+    project: str = Field("", description="Project that holds the topics. Blank = the project the service runs in.")
+    outbound_topic: str = Field("", description="Topic outbound actions are published to.")
+    outbound_subscription: str = Field("", description="Push subscription that delivers outbound actions to the worker.")
+    dead_letter_topic: str = Field("", description="Topic an action goes to after the delivery attempts run out.")
+    dead_letter_subscription: str = Field("", description="Push subscription that hands dead letters to the worker.")
+    max_delivery_attempts: int = Field(5, ge=5, le=100, description="Delivery attempts before an action is dead-lettered (Pub/Sub allows 5 to 100).")
+    ack_deadline_s: int = Field(60, ge=10, le=600, description="Seconds the worker has to finish one delivery.")
+    min_backoff_s: int = Field(10, ge=0, le=600, description="Shortest wait before a retry.")
+    max_backoff_s: int = Field(600, ge=0, le=600, description="Longest wait before a retry.")
+    worker_url: str = Field("", description="Base URL of the worker service that receives pushes.")
+    push_service_account: str = Field("", description="Service account Pub/Sub signs its pushes as. The worker accepts only this identity.")
+    push_audience: str = Field("", description="Audience in the push token. Blank = the worker URL.")
+
+
+class BigQueryConfig(ConfigModel):
+    """The agent's own BigQuery connection and where each kind of row lives."""
+
+    project: str = Field("", description="Project queries run in and are billed to. Blank = the project the service runs in.")
+    location: str = Field("", description="Location of the agent's dataset, for example US.")
+    dataset: str = Field("", description="The agent's own dataset. New tables the Console creates go here.")
+    tables: dict[str, str] = Field(default_factory=dict, description="Which table holds what: events, volume, forecasts, golden, llm_usage, chat_activity, audit. Each value is project.dataset.table.")
+    hot_window_hours: int = Field(48, ge=1, le=720, description="Recent events kept in the fast store for live views. Older ranges are read from BigQuery.")
+    max_bytes_billed: int = Field(0, ge=0, description="Cap on bytes one Console query may bill. 0 = no cap.")
+    admin_allowed_datasets: list[str] = Field(default_factory=list, description="Datasets the Console may create or change objects in. Others are read-only.")
+
+
+class ForecastingConfig(ConfigModel):
+    """Volume forecast and the staffing math built on it."""
+
+    model: Literal["timesfm", "arima_plus"] = Field("timesfm", description="Primary method: timesfm (AI.FORECAST) or arima_plus (explainable).")
+    fallback: Literal["arima_plus", "timesfm", "none"] = Field("arima_plus", description="Used when the primary method fails.")
+    timesfm_version: str = Field("", description="Model name passed to AI.FORECAST, for example TimesFM 2.5. Blank = BigQuery's default.")
+    arima_model: str = Field("", description="dataset.model the ARIMA_PLUS model is trained into. Blank = <dataset>.alert_volume_arima.")
+    horizon_hours: int = Field(48, ge=1, le=720, description="Hours ahead to forecast.")
+    confidence_level: float = Field(0.9, gt=0, lt=1, description="Confidence level of the prediction interval.")
+    history_days: int = Field(56, ge=7, le=730, description="Days of past volume the forecast reads.")
+    volume_event_types: list[str] = Field(default_factory=lambda: ["alert.received"], description="Events counted as volume.")
+    refresh_minutes: int = Field(60, ge=15, le=1440, description="How often the forecast is rerun.")
+    minutes_per_alert: float = Field(10, gt=0, description="Handling time one alert takes an IM.")
+    target_utilization: float = Field(0.7, gt=0, le=1, description="Share of an IM's hour planned for alert work.")
+    min_staff: int = Field(1, ge=0, description="Fewest IMs on shift in any hour.")
+    use_upper_bound: bool = Field(False, description="Staff to the upper bound of the interval instead of the forecast value.")
+    gap_alert_pct: float = Field(25, ge=0, description="Live volume over forecast by this percent raises a gap alert.")
+    gap_alert_min_alerts: int = Field(5, ge=0, description="Gap alerts need at least this many alerts over forecast.")
+    timezone: str = Field("", description="Timezone for hour-of-day views. Blank = the display timezone.")
+
+
+class ChatAgentConfig(ConfigModel):
+    """The in-Console chat agent."""
+
+    model: str = Field("", description="Model for the chat agent. Blank = the converse model.")
+    temperature: float = Field(0.2, ge=0, le=2)
+    max_steps: int = Field(8, ge=1, le=30, description="Tool calls allowed in one turn.")
+    history_turns: int = Field(20, ge=0, le=200, description="Earlier turns sent with each message.")
+    retrieval_top_k: int = Field(6, ge=0, le=30, description="Knowledge passages retrieved for a question.")
+    confirm_actions: bool = Field(True, description="Ask before running a tool that changes something.")
+
+
+class ClassDef(ConfigModel):
+    name: str
+    description: str = ""
+    knowledge_tags: list[str] = Field(default_factory=list, description="Knowledge docs with any of these tags are read for this class.")
+    knowledge_docs: list[str] = Field(default_factory=list, description="Knowledge doc ids always read for this class.")
+
+
+class ClassificationConfig(ConfigModel):
+    """The classification layer: the classes an alert can fall in and the knowledge each one reads."""
+
+    classes: list[ClassDef] = Field(default_factory=list, description="Blank = one class for each exposure tag category in the taxonomy.")
+    model: str = Field("", description="Model for classification. Blank = the triage model.")
+    min_confidence: float = Field(0.5, ge=0, le=1, description="Below this the class is not trusted and all knowledge is searched.")
+    fallback_class: str = Field("", description="Class used when none fits. Blank = no class.")
+
+
+class KnowledgeRagConfig(ConfigModel):
+    """How knowledge docs are stored and retrieved."""
+
+    embedding_model: str = Field("", description="Embedding model for retrieval. Blank = keyword retrieval only.")
+    embedding_location: str = Field("", description="Location for the embedding model. Blank = the model location.")
+    embedding_dimensions: int = Field(0, ge=0, description="Output size to ask for. 0 = the model's own.")
+    chunk_chars: int = Field(1200, ge=200, le=8000)
+    chunk_overlap: int = Field(150, ge=0, le=2000)
+    top_k: int = Field(6, ge=1, le=30)
+    min_score: float = Field(0.12, ge=0, le=1, description="Passages scoring lower are left out.")
+    max_doc_chars: int = Field(1000000, ge=1000, description="Characters kept of one document.")
+    refresh_minutes: int = Field(15, ge=5, description="How often linked documents are checked for changes.")
+    web_refresh_hours: int = Field(6, ge=1, description="How often web pages are read again.")
+    past_cases_days: int = Field(30, ge=0, description="Past cases searched as context. 0 = none.")
+    past_cases_top_k: int = Field(3, ge=0, le=20)
+
+
+class TempCheckSource(ConfigModel):
+    """One table of posts a temp check searches."""
+
+    key: str
+    label: str = ""
+    table: str = Field("", description="project.dataset.table")
+    location: str = Field("", description="BigQuery location of the table. Blank = the agent's own.")
+    enabled: bool = True
+    text_columns: list[str] = Field(default_factory=list, description="Columns searched for the query's words.")
+    url_column: str = ""
+    id_column: str = Field("", description="Row id, for tables where many rows share one link (comments).")
+    author_column: str = ""
+    time_column: str = Field("", description="When the post was made (TIMESTAMP).")
+    platform_column: str = ""
+    platform_value: str = Field("", description="Platform name for a table that holds one platform only.")
+    followers_column: str = ""
+    language_column: str = ""
+    engagement_expr: str = Field("", description="SQL expression for a post's engagement.")
+    sentiment_column: str = ""
+    filter_sql: str = Field("", description="Extra WHERE condition, for example to leave out the company's own posts.")
+    dedupe_by: Literal["url", "id"] = "url"
+    freshness: str = Field("", description="How fresh the table is, shown beside its results.")
+
+
+class ConcernBand(ConfigModel):
+    label: str
+    top_pct: int = Field(..., ge=1, le=100, description="The issue is above all but this percent of past issues, or fewer.")
+    action: str = ""
+
+
+class TempCheckConfig(ConfigModel):
+    """Temp checks: numbers from Brandwatch, posts from the team's own tables, a write-up by Gemini."""
+
+    brandwatch_api_base: str = Field("https://api.brandwatch.com", description="Brandwatch API base URL.")
+    brandwatch_project_id: str = Field("", description="Brandwatch project the queries live in.")
+    brandwatch_token_secret: str = Field("", description="Name of the secret (Settings → Secrets) holding the Brandwatch token.")
+    event_query_prefix: str = Field("", description="Name prefix of the event queries offered in the picker and used for the concern level.")
+    landscape_query_ids: list[str] = Field(default_factory=list, description="Standing queries searched when the issue has no query of its own yet.")
+    sources: list[TempCheckSource] = Field(default_factory=list, description="The tables searched for posts.")
+    model: str = Field("", description="Model that writes the write-up. Blank = the drafting model.")
+    timezone: str = Field("", description="Timezone the write-up's times are given in. Blank = the display timezone.")
+    top_posts: int = Field(25, ge=1, le=200, description="Most-engaged posts read.")
+    top_negative_posts: int = Field(15, ge=0, le=200, description="Most-engaged negative posts read.")
+    writeup_posts: int = Field(7, ge=1, le=25, description="Highest-engaging posts listed in the write-up.")
+    lookback_hours: int = Field(168, ge=1, le=720, description="How far back an issue's start is looked for.")
+    spike_mentions: int = Field(100, ge=1, description="An issue counts from the first hour with this many mentions.")
+    row_limit: int = Field(3000, ge=100, le=5000, description="Posts read from one table.")
+    max_scan_gb: float = Field(0, ge=0, description="Largest scan one search may bill, in GB. 0 = no cap.")
+    daily_limit: int = Field(20, ge=0, description="Automatic temp checks started in one day.")
+    high_engagement_share: float = Field(0.9, gt=0, lt=1, description="High-engaging: more engagement than this share of recent alerts.")
+    high_min_alerts: int = Field(100, ge=1, description="Recent alerts needed before that share is used.")
+    high_floor: int = Field(20000, ge=0, description="Engagements that count as high-engaging until enough alerts are known.")
+    multiple_alerts_count: int = Field(3, ge=2, description="This many different posts alerted on one issue starts one.")
+    multiple_alerts_hours: int = Field(24, ge=1)
+    momentum_recheck_minutes: list[int] = Field(default_factory=lambda: [30, 90], description="When an alert's post is read again for momentum.")
+    momentum_growth: float = Field(0.5, gt=0, description="Growth between two readings that starts one (0.5 = up by half).")
+    momentum_within_hours: int = Field(6, ge=1)
+    momentum_min: int = Field(500, ge=0, description="Engagements the later reading needs.")
+    refresh_min_minutes: int = Field(60, ge=5, description="Shortest time between refreshes of one temp check.")
+    benchmark_min_issues: int = Field(20, ge=1, description="Past issues needed before a concern level is given.")
+    benchmark_fill_per_run: int = Field(3, ge=0, le=50, description="Past issues' volume read from Brandwatch in one run, for the concern level.")
+    concern_bands: list[ConcernBand] = Field(default_factory=lambda: [
+        ConcernBand(label="HIGH", top_pct=20, action="Action"), ConcernBand(label="MODERATELY HIGH", top_pct=39, action="Action"),
+        ConcernBand(label="MODERATE", top_pct=59, action="Monitor"), ConcernBand(label="MODERATELY LOW", top_pct=79, action="Monitor"),
+        ConcernBand(label="LOW", top_pct=100, action="No action")], description="Concern levels, highest first.")
+    relevance_posts: int = Field(40, ge=5, le=100, description="Posts Gemini reads to check a drafted query.")
+    relevance_min_share: float = Field(0.5, gt=0, le=1, description="Share of the posts read that must be about the issue for a count to be given.")
+    docs_folder_id: str = Field("", description="Drive folder temp check documents are kept in. Blank = no document is made.")
+    post_to_space: str = Field("", description="Space key temp check results are posted to. Blank = Console only.")
+
+
+class ModelPrice(ConfigModel):
+    input_per_million: float = Field(0, ge=0)
+    output_per_million: float = Field(0, ge=0)
+
+
+class CostConfig(ConfigModel):
+    """Cost views. Prices are entered here; nothing is assumed."""
+
+    currency: str = Field("USD")
+    model_prices: dict[str, ModelPrice] = Field(default_factory=dict, description="Price per million tokens for each model name.")
+    billing_export_table: str = Field("", description="BigQuery billing export table for the service cost view.")
+    monthly_budget: float = Field(0, ge=0, description="Shown as the budget line. 0 = none.")
+
+
+class TelemetryConfig(ConfigModel):
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    tracing: bool = Field(False, description="Export traces to Cloud Trace.")
+    trace_sample_rate: float = Field(0.1, ge=0, le=1)
+    audit_retention_days: int = Field(400, ge=1, description="Days audit entries are kept in the fast store.")
+    chat_retention_days: int = Field(90, ge=1, description="Days Chat activity is kept in the fast store.")
+
+
+class SafetyConfig(ConfigModel):
+    """Runtime guards. A failed check blocks the action it protects."""
+
+    external_spaces: list[str] = Field(default_factory=lambda: ["burson"], description="Space keys people outside the company can read. The leak guard runs on everything bound for them.")
+    leak_terms: list[str] = Field(default_factory=list, description="Words that must never appear in a message to an external space.")
+    testing: bool = Field(True, description="Testing: emails go only to the testing recipients below and nothing is sent when there are none.")
+    testing_recipients: list[str] = Field(default_factory=list, description="Who receives every email while Testing is ON (5 at most).")
+    allowed_recipient_domains: list[str] = Field(default_factory=list, description="Email is only ever drafted to these domains. Blank = no restriction.")
+    allowed_post_targets: list[str] = Field(default_factory=lambda: ["burson", "clean", "dm", "youtube", "doodle", "team", "crisis", "handover"], description="Targets the agent may post to. A target not listed is held, never posted.")
+    block_on_failed_check: bool = Field(True, description="A failed runtime check stops outbound delivery until it passes.")
+
+
+class CampaignsConfig(ConfigModel):
+    """Campaigns and watches shown in the Console."""
+
+    firestore_database: str = Field("", description="Firestore database the campaigns service keeps its state in.")
+    firestore_project: str = Field("", description="Project of that database. Blank = the project the service runs in.")
+    watch_sources: list[str] = Field(default_factory=list, description="Keys of the post tables (Temp check → sources) a watch reads.")
+    watch_interval_minutes: int = Field(5, ge=1, description="How often the watches look.")
+    watch_max_enabled: int = Field(5, ge=1, le=20, description="Watches ON at once (each post costs one question a watch).")
+    watch_default_bar: float = Field(7, ge=1, le=10, description="A watch's bar when its own is blank.")
+    watch_near_miss: float = Field(2, ge=0, le=9, description="Scores within this of the bar are kept as near misses, to tune the bar.")
+    watch_posts_per_look: int = Field(60, ge=1, le=500, description="Posts one source hands over in one look.")
+    watch_posted_within_hours: int = Field(72, ge=1, description="Only posts made within this many hours are asked about.")
+    watch_min_followers: int = Field(1000, ge=0, description="A post is asked about when its author has this many followers...")
+    watch_min_engagement: int = Field(100, ge=0, description="...or the post has this many engagements.")
+    watch_first_look_minutes: int = Field(60, ge=5, description="How far back a source's first look goes.")
+    watch_max_look_minutes: int = Field(360, ge=5, description="The most one look covers after a pause.")
+    watch_default_topics: list[str] = Field(default_factory=list, description="Topics offered when a watch names none.")
+    watch_ai_connection: str = Field("", description="BigQuery connection for the AI functions. Blank = the service's own credentials.")
+    watch_post_target: str = Field("", description="Space key detections at the bar are posted to. Blank = recorded only.")
+    watch_lead_window_hours: int = Field(72, ge=1, description="A detection counts as catching an alert on the same post within this many hours.")
+
+
+class GcpConfig(ConfigModel):
+    project: str = Field("", description="Project the agent runs in. Blank = detected from the runtime.")
+    region: str = Field("", description="Region of the Cloud Run services.")
+    agent_runtime_resource: str = Field("", description="Agent Runtime resource name the Studio flows call.")
+    secret_prefix: str = Field("", description="Only secrets whose name starts with this are shown and managed in the Console.")
+    console_url: str = Field("", description="Public URL of the Console, used in links the agent posts.")
+
+
+class PlatformConfig(ConfigModel):
+    access: AccessConfig = Field(default_factory=AccessConfig)
+    flags: FeatureFlags = Field(default_factory=FeatureFlags)
+    gcp: GcpConfig = Field(default_factory=GcpConfig)
+    pubsub: PubSubConfig = Field(default_factory=PubSubConfig)
+    bigquery: BigQueryConfig = Field(default_factory=BigQueryConfig)
+    forecasting: ForecastingConfig = Field(default_factory=ForecastingConfig)
+    chat_agent: ChatAgentConfig = Field(default_factory=ChatAgentConfig)
+    classification: ClassificationConfig = Field(default_factory=ClassificationConfig)
+    knowledge: KnowledgeRagConfig = Field(default_factory=KnowledgeRagConfig)
+    temp_check: TempCheckConfig = Field(default_factory=TempCheckConfig)
+    costs: CostConfig = Field(default_factory=CostConfig)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+    safety: SafetyConfig = Field(default_factory=SafetyConfig)
+    campaigns: CampaignsConfig = Field(default_factory=CampaignsConfig)
+
+    def flag(self, name: str) -> bool:
+        return bool(getattr(self.flags, name, False))
+
+
 def space_id_of(value: str | None) -> str | None:
     """Bare (lower-cased) space id from spaces/ID, ID, a room URL (…/room/ID?cls=…) or a Gmail chat URL
     (…#chat/space/ID). None for display names and other URLs."""
@@ -889,6 +1169,7 @@ class AgentConfig(ConfigModel):
     watchdog: WatchdogConfig = Field(default_factory=WatchdogConfig)
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     seed_rosters: dict[str, Roster] = Field(default_factory=dict)  # "slrr_im", "burson"; seeds an empty store
+    platform: PlatformConfig = Field(default_factory=PlatformConfig)  # Console-managed: connections, switches, models
 
     # -- helpers -------------------------------------------------------------
     def config_version(self) -> str:

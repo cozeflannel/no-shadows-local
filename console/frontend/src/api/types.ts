@@ -19,6 +19,7 @@ export interface Me {
   timezone: string;
   agent: { display_name: string; email: string; message_prefix: string };
   dev_mode: boolean;
+  flags: Record<string, boolean>;
 }
 
 export interface KpiDefinition { key: string; label: string; description: string; group: string }

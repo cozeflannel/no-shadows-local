@@ -55,6 +55,8 @@ SECTION_INFO: dict[str, tuple[str, str]] = {
     "watchdog": ("Watchdog emails", "Watchdog Anti-Abuse Alert email handling."),
     "knowledge": ("Knowledge", "Docs and FAQ used to answer questions."),
     "seed_rosters": ("Seed rosters", "Only used to seed an empty store; edit live rosters on the Rosters page."),
+    "platform": ("Platform", "Connections, switches and limits. Edit each part under its own Settings page."),
+    "burson_qa": ("Burson QA bot", "Settings of the chat bot's alert QA."),
 }
 
 _NOTHING = object()
@@ -200,9 +202,16 @@ def get_section(section: str, ctx: AgentContext = Depends(get_ctx), user: User =
     section = _section_or_404(section)
     _, defaults = default_config()
     overrides = ctx.store.get_config_overrides() or {}
+    try:
+        from pydantic import TypeAdapter
+
+        schema = TypeAdapter(AgentConfig.model_fields[section].annotation).json_schema()
+    except Exception:  # noqa: BLE001 - the JSON editor still works without it
+        schema = None
     return {
         "section": section,
         "kind": editor_kind(section),
+        "schema": schema,
         "value": ctx.config.model_dump(mode="json")[section],
         "default": defaults.get(section),
         "override": overrides.get(section),

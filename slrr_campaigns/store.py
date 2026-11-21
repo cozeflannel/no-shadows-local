@@ -307,6 +307,31 @@ class CampaignStore:
         except GoogleAPICallError as exc:
             raise StoreError(f"Failed to list campaigns: {exc}", operation="list_campaigns") from exc
 
+    def list_console_requests(self) -> list[dict[str, Any]]:
+        """Return change requests written by the Agent Console that are still pending, oldest first."""
+        try:
+            snaps = self._db.collection("campaign_console_requests").where("status", "==", "pending").stream()
+            items = [s.to_dict() or {} for s in snaps]
+            items.sort(key=lambda r: str(r.get("requested_at") or ""))
+            return items
+        except GoogleAPICallError as exc:
+            raise StoreError(
+                f"Failed to list console requests: {exc}", operation="list_console_requests"
+            ) from exc
+
+    def finish_console_request(self, request_id: str, *, status: str, result: str) -> None:
+        """Record the outcome of one Agent Console change request."""
+        try:
+            self._db.collection("campaign_console_requests").document(request_id).set(
+                {"status": status, "result": result, "finished_at": datetime.now(UTC).isoformat()},
+                merge=True,
+            )
+        except GoogleAPICallError as exc:
+            raise StoreError(
+                f"Failed to finish console request {request_id}: {exc}",
+                operation="finish_console_request",
+            ) from exc
+
     def is_created_space(self, space_name: str) -> bool:
         """Verify that space_name belongs to a campaign provisioned by slrr-campaigns."""
         try:

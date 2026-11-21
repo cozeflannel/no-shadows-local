@@ -8,6 +8,7 @@ All model calls go through `LLMClient` so that:
 
 import json
 import os
+import threading
 import time
 from typing import Any, Callable, Protocol, TypeVar
 
@@ -63,11 +64,23 @@ class VertexGemini:
         self.location = os.environ.get("TRIAGE_LLM_LOCATION") or location or "global"
         self.client = genai.Client(
             vertexai=True,
-            project=project or (os.environ.get("TRIAGE_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")) or "brand-social-central-data",
+            project=project or os.environ.get("TRIAGE_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT") or None,
             location=self.location,
             http_options=types.HttpOptions(timeout=int(timeout_s * 1000)),
         )
         self.max_retries = max_retries
+        self._usage = threading.local()
+
+    def last_usage(self) -> dict[str, Any] | None:
+        """Token counts of this thread's most recent call, as the model reported them."""
+        return getattr(self._usage, "value", None)
+
+    def _note_usage(self, resp: Any) -> None:
+        meta = getattr(resp, "usage_metadata", None)
+        self._usage.value = None if meta is None else {
+            "input_tokens": getattr(meta, "prompt_token_count", None),
+            "output_tokens": getattr(meta, "candidates_token_count", None),
+        }
 
     @staticmethod
     def _retryable(exc: Exception) -> bool:
@@ -80,7 +93,9 @@ class VertexGemini:
         delay = 1.0
         for attempt in range(self.max_retries):
             try:
-                return self.client.models.generate_content(model=model, contents=prompt, config=config)
+                resp = self.client.models.generate_content(model=model, contents=prompt, config=config)
+                self._note_usage(resp)
+                return resp
             except Exception as exc:  # noqa: BLE001
                 if not self._retryable(exc) or attempt == self.max_retries - 1:
                     raise LLMError(f"Gemini call failed ({model} @ {self.location}): {exc}") from exc
@@ -113,6 +128,25 @@ class VertexGemini:
         config = types.GenerateContentConfig(system_instruction=system, temperature=temperature)
         resp = self._call(model, prompt, config)
         return (resp.text or "").strip()
+
+    def embed(self, *, texts: list[str], model: str, dimensions: int | None = None, location: str | None = None) -> list[list[float]]:
+        """Embeddings for retrieval (model from Settings → Knowledge). Batches of 50."""
+        types = self._types
+        client = self.client
+        if location and location != self.location:
+            from google import genai
+
+            client = genai.Client(vertexai=True, project=self.client._api_client.project, location=location)
+        config = types.EmbedContentConfig(output_dimensionality=dimensions) if dimensions else None
+        out: list[list[float]] = []
+        for start in range(0, len(texts), 50):
+            batch = texts[start:start + 50]
+            try:
+                resp = client.models.embed_content(model=model, contents=batch, config=config)
+            except Exception as exc:  # noqa: BLE001
+                raise LLMError(f"Embedding call failed ({model}): {exc}") from exc
+            out.extend([list(e.values) for e in resp.embeddings])
+        return out
 
 
 Handler = Callable[[dict[str, Any]], Any]
@@ -160,8 +194,8 @@ class FakeLLM:
         return str(self._resolve(call, self.default_text))
 
 
-def get_llm(location: str | None = None) -> LLMClient:
+def get_llm(location: str | None = None, project: str | None = None) -> LLMClient:
     """TRIAGE_LLM=fake -> FakeLLM (offline), otherwise Vertex AI Gemini (location: env > argument > global)."""
     if os.environ.get("TRIAGE_LLM", "vertex") == "fake":
         return FakeLLM(default_json=None)
-    return VertexGemini(location=location)
+    return VertexGemini(project=project or None, location=location)

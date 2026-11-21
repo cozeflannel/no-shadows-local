@@ -113,6 +113,16 @@ class Store(Protocol):
         self, per_target: dict[str, int], default_limit: int, claimed_by: str, max_chars: int = 3500
     ) -> list[OutboxItem]: ...
 
+    # generic documents (audit log, chat activity, knowledge, sessions, workforce, ...). `where` is an equality
+    # filter on top-level keys; results are newest first by the time the document was last written.
+    def put_doc(self, collection: str, doc_id: str, data: dict) -> None: ...
+    def get_doc(self, collection: str, doc_id: str) -> dict | None: ...
+    def delete_doc(self, collection: str, doc_id: str) -> None: ...
+    def list_docs(self, collection: str, *, where: dict[str, Any] | None = None, since: datetime | None = None,
+                  limit: int = 200) -> list[dict]: ...
+    def create_doc(self, collection: str, doc_id: str, data: dict) -> bool: ...  # False = it already exists
+    def delete_docs_before(self, collection: str, field: str, before: datetime, limit: int = 2000) -> int: ...  # by the row's own time
+
 
 def _claim_plan(
     items: list[OutboxItem], per_target: dict[str, int], default_limit: int, max_chars: int = 3500
@@ -405,6 +415,65 @@ class SqliteStore:
         return chosen
 
 
+    # -- generic documents ---------------------------------------------------------
+    def put_doc(self, collection, doc_id, data):
+        self._put(f"x:{collection}", doc_id, data)
+
+    def get_doc(self, collection, doc_id):
+        return self._get(f"x:{collection}", doc_id)
+
+    def delete_doc(self, collection, doc_id):
+        with self._lock:
+            con = self._conn()
+            con.execute("DELETE FROM docs WHERE collection = ? AND id = ?", (f"x:{collection}", doc_id))
+            con.commit()
+
+    def create_doc(self, collection, doc_id, data):
+        with self._lock:
+            con = self._conn()
+            cur = con.execute(
+                "INSERT OR IGNORE INTO docs (collection, id, data, updated_at) VALUES (?, ?, ?, ?)",
+                (f"x:{collection}", doc_id, json.dumps(data, default=str), utcnow().isoformat()),
+            )
+            con.commit()
+            return cur.rowcount == 1
+
+    def delete_docs_before(self, collection, field, before, limit=2000):
+        if not field.replace("_", "").isalnum():
+            raise ValueError(f"invalid field: {field}")
+        with self._lock:
+            con = self._conn()
+            cur = con.execute(
+                f"DELETE FROM docs WHERE collection = ? AND id IN (SELECT id FROM docs WHERE collection = ? "
+                f"AND json_extract(data, '$.{field}') < ? LIMIT ?)",
+                (f"x:{collection}", f"x:{collection}", utc_isoformat(before), int(limit)),
+            )
+            con.commit()
+            return cur.rowcount
+
+    def list_docs(self, collection, *, where=None, since=None, limit=200):
+        sql, args = "SELECT data FROM docs WHERE collection = ?", [f"x:{collection}"]
+        for key, value in (where or {}).items():
+            if not key.replace("_", "").isalnum():
+                raise ValueError(f"invalid filter key: {key}")
+            if isinstance(value, bool):
+                sql += f" AND json_extract(data, '$.{key}') = ?"
+                args.append(1 if value else 0)
+            elif value is None:
+                sql += f" AND json_extract(data, '$.{key}') IS NULL"
+            else:
+                sql += f" AND json_extract(data, '$.{key}') = ?"
+                args.append(value)
+        if since is not None:
+            sql += " AND updated_at >= ?"
+            args.append(utc_isoformat(since))
+        sql += " ORDER BY updated_at DESC LIMIT ?"
+        args.append(int(limit))
+        with self._lock:
+            rows = self._conn().execute(sql, args).fetchall()
+        return [json.loads(r[0]) for r in rows]
+
+
 # ---------------------------------------------------------------------------
 # Firestore implementation (GCP)
 # ---------------------------------------------------------------------------
@@ -635,6 +704,66 @@ class FirestoreStore:
             return chosen
 
         return _claim(transaction)
+
+    # generic documents: one Firestore collection each, with the write time in `_updated_at`
+    def put_doc(self, collection, doc_id, data):
+        self._doc(collection, doc_id).set({**json.loads(json.dumps(data, default=str)), "_updated_at": utcnow().isoformat()})
+
+    def get_doc(self, collection, doc_id):
+        snap = self._doc(collection, doc_id).get()
+        if not snap.exists:
+            return None
+        data = snap.to_dict() or {}
+        data.pop("_updated_at", None)
+        return data
+
+    def delete_doc(self, collection, doc_id):
+        self._doc(collection, doc_id).delete()
+
+    def create_doc(self, collection, doc_id, data):
+        try:
+            self._doc(collection, doc_id).create({**json.loads(json.dumps(data, default=str)), "_updated_at": utcnow().isoformat()})
+            return True
+        except Exception as exc:  # noqa: BLE001 - AlreadyExists (409) means another writer got there first
+            if type(exc).__name__ in ("AlreadyExists", "Conflict"):
+                return False
+            raise
+
+    def delete_docs_before(self, collection, field, before, limit=2000):
+        removed = 0
+        batch = self.db.batch()
+        for snap in self.db.collection(collection).where(field, "<", utc_isoformat(before)).limit(int(limit)).stream():
+            batch.delete(snap.reference)
+            removed += 1
+            if removed % 400 == 0:  # a batch holds at most 500 writes
+                batch.commit()
+                batch = self.db.batch()
+        if removed % 400:
+            batch.commit()
+        return removed
+
+    def list_docs(self, collection, *, where=None, since=None, limit=200):
+        col = self.db.collection(collection)
+        if where:
+            # Equality filters only, sorted here: no composite index is needed for any collection.
+            q = col
+            for key, value in where.items():
+                q = q.where(key, "==", value)
+            rows = [d.to_dict() or {} for d in q.limit(max(int(limit) * 5, 500)).stream()]
+            if since is not None:
+                floor = utc_isoformat(since)
+                rows = [r for r in rows if str(r.get("_updated_at", "")) >= floor]
+            rows.sort(key=lambda r: str(r.get("_updated_at", "")), reverse=True)
+            rows = rows[: int(limit)]
+        else:
+            q = col
+            if since is not None:
+                q = q.where("_updated_at", ">=", utc_isoformat(since))
+            q = q.order_by("_updated_at", direction=self._fs.Query.DESCENDING).limit(int(limit))
+            rows = [d.to_dict() or {} for d in q.stream()]
+        for r in rows:
+            r.pop("_updated_at", None)
+        return rows
 
 
 def get_store() -> Store:

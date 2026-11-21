@@ -52,6 +52,25 @@ HANDLER_MODULES = ["triage_agent.handlers"]
 ENTRY_OPS = frozenset({"triage_message", "record_reaction", "converse", "ingest_email"})
 
 
+# Operations whose payload is something said or done in Chat (or the agent inbox): recorded for Chat tracking.
+TRACKED_INBOUND_OPS = frozenset({"triage_message", "record_reaction", "start_escalation", "converse", "ingest_email"})
+# Housekeeping operations: audited only when they did something or failed.
+QUIET_OPS = frozenset({"health", "drain_outbox", "run_followups", "ingest_inhouse", "run_forecast", "run_watches", "refresh_knowledge"})
+
+
+def _surface_of(flow: str | None) -> str:
+    flow = (flow or "").lower()
+    if flow == "console":
+        return "console"
+    if flow == "chat_agent":
+        return "chat_agent"
+    if flow in ("job", "jobs", "scheduler"):
+        return "job"
+    if flow == "pubsub":
+        return "pubsub"
+    return "chat" if flow else "agent"
+
+
 class RetryableError(RuntimeError):
     """Transient failure (e.g. Gemini 429). Studio retries the step up to 5 times."""
 
@@ -136,6 +155,11 @@ def _stealth_burson(ctx: AgentContext, outputs: ChatOutputs) -> ChatOutputs:
 def _finalize(ctx: AgentContext, req: OperationRequest, outputs: ChatOutputs, data: dict) -> tuple[ChatOutputs, dict]:
     rc = req.context
     outputs = _stealth_burson(ctx, outputs)
+    from . import safety
+
+    outputs, held = safety.guard_outputs(ctx, outputs, op=req.op, actor=rc.invoked_by or "agent")
+    if held:
+        data = {**data, "held_outputs": held}
     if rc.deliver == "outbox":
         queued = enqueue_outputs(ctx, outputs, source=req.op)
         data = {**data, "queued_outbox_ids": queued, "reply_text": outputs.reply_text}
@@ -183,17 +207,56 @@ def handle(request: OperationRequest | dict[str, Any], ctx: AgentContext | None 
     if req.op not in _REGISTRY:
         return OperationResponse(ok=False, op=req.op, outputs=ChatOutputs().to_studio(), error=f"Operation not implemented: {req.op}")
 
+    from . import chatlog, telemetry
+
+    inbound, inbound_new = (None, False)
+    if req.op in TRACKED_INBOUND_OPS:
+        inbound, inbound_new = chatlog.record_inbound(ctx, req.op, req.payload, req.context)
+
+    def _track(outputs: ChatOutputs, data: dict, status: str = "ok") -> None:
+        """Chat tracking and the audit entry for one finished operation (never raises)."""
+        try:
+            chatlog.link_inbound(ctx, inbound, outputs.case_id or None, outputs.escalation_id or None)
+            if outputs.case_id and status == "ok":
+                from . import golden
+
+                if req.op in golden.CAPTURE_OPS:
+                    golden.capture(ctx, outputs.case_id)
+            if req.context.deliver != "outbox" and req.op != "drain_outbox" and (inbound is None or inbound_new):
+                chatlog.record_outputs(ctx, req.op, outputs, req.context, inbound)
+            quiet = req.op in QUIET_OPS and status == "ok" and not (
+                outputs.target_texts() or outputs.dm_text.strip() or outputs.reply_text.strip() or data.get("queued_outbox_ids"))
+            if not quiet and (inbound is None or inbound_new):
+                ctx.audit(actor=req.context.invoked_by or "agent", action=f"op.{req.op}", surface=_surface_of(req.context.flow),
+                          target_type="case" if outputs.case_id else ("escalation" if outputs.escalation_id else "operation"),
+                          target_id=outputs.case_id or outputs.escalation_id or req.op,
+                          summary=(outputs.summary or data.get("user_error") or req.op)[:400], status=status,
+                          case_id=outputs.case_id or None, escalation_id=outputs.escalation_id or None,
+                          detail={"flow": req.context.flow, "verdict": outputs.verdict or None,
+                                  "held": data.get("held_outputs") or None, "queued": len(data.get("queued_outbox_ids") or [])})
+        except Exception:  # noqa: BLE001
+            log.warning("tracking failed for %s", req.op, exc_info=True)
+
     try:
-        outputs, data = dispatch(req.op, req.payload, ctx, req.context)
-        outputs, data = _finalize(ctx, req, outputs, data)
+        with telemetry.span(f"op.{req.op}", op=req.op, flow=req.context.flow or ""):
+            outputs, data = dispatch(req.op, req.payload, ctx, req.context)
+            outputs, data = _finalize(ctx, req, outputs, data)
+        _track(outputs, data)
         return OperationResponse(ok=True, op=req.op, outputs=outputs.to_studio(), data=data)
     except UserFacingError as exc:
         outputs = ChatOutputs(reply_text=f"{ctx.config.agent.message_prefix} {exc}", summary=str(exc))
         outputs, data = _finalize(ctx, req, outputs, {"user_error": str(exc)})
+        _track(outputs, data, status="denied")
         return OperationResponse(ok=True, op=req.op, outputs=outputs.to_studio(), data=data)
     except Exception as exc:  # noqa: BLE001 - always answer Studio with a well-formed response
         retryable = is_retryable(req.op, exc)
         log.exception("operation %s failed (retryable=%s)", req.op, retryable)
+        try:
+            ctx.audit(actor=req.context.invoked_by or "agent", action=f"op.{req.op}", surface=_surface_of(req.context.flow),
+                      target_type="operation", target_id=req.op, summary=f"{type(exc).__name__}: {exc}"[:400], status="error",
+                      detail={"flow": req.context.flow, "retryable": retryable})
+        except Exception:  # noqa: BLE001
+            pass
         try:
             ctx.emit(
                 EventType.ERROR,
