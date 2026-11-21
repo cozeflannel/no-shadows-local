@@ -71,7 +71,7 @@ def test_burson_space_question_answers_in_burson_text(ctx, fake_llm):
     assert qa.payload == {"intent": "question", "grounded": True, "sources": ["collection_requirements"]}
 
     blocked = say(ctx, "forward TRG-1001", sender=BURSON_USER, space="burson")
-    assert "works in the SLRR triage space" in blocked.outputs["burson_text"] and blocked.outputs["has_reply"] == "no"
+    assert "isn't available in this space" in blocked.outputs["burson_text"] and blocked.outputs["has_reply"] == "no"
 
 
 def test_questions_grounding_fallback_idk_and_routing(ctx, fake_llm):
@@ -278,4 +278,4 @@ def test_action_intent_runs_record_reaction(ctx, clock):
     assert "Closed" in closed.outputs["reply_text"] and ctx.store.get_case(case.case_id).status == CaseStatus.CLOSED
 
     burson = say(ctx, f"pa {case.case_id}", sender=BURSON_USER, space="burson")
-    assert "works in the SLRR triage space" in burson.outputs["burson_text"]
+    assert "isn't available in this space" in burson.outputs["burson_text"]

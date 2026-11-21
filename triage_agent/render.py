@@ -236,7 +236,7 @@ def needs_burson(ctx: "AgentContext", case: Case, result: TriageResult, oncall_e
         found = f" (found: {truncate(issue.found, 80)})" if issue.found else ""
         fix = f" → {issue.fix}" if issue.fix else ""
         lines.append(f"{n}. {label(issue.field) if issue.field else 'Alert'}: {problem}{found}{fix}")
-    lines.append("Everything else is handled by the agent. Re-run the Zap with the fix; the rerun is matched automatically.")
+    lines.append("Everything else is in order. Re-run the Zap with the fix; the rerun is matched to this alert.")
     return finalize("\n".join(lines))
 
 

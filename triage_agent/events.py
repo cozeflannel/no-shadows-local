@@ -266,3 +266,140 @@ def get_event_logger() -> EventLogger:
     if os.environ.get("TRIAGE_BACKEND", "local") == "gcp":
         return BigQueryEventLogger(os.environ["TRIAGE_BQ_TABLE"], project=(os.environ.get("TRIAGE_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")))
     return SqliteEventLogger(os.environ.get("TRIAGE_LOCAL_DB", ".local/triage.db"))
+
+
+class PlatformEvent:
+    """Event types of the Console-era platform (audit, Chat tracking, delivery, AI usage, workforce).
+
+    Kept apart from EventType so the KPI definitions and the SQL views built on EventType stay as they are."""
+
+    AUDIT_RECORDED = "audit.recorded"  # payload: action, surface, target, status
+    CHAT_INBOUND = "chat.inbound"  # a message, reaction or email the agent was handed
+    CHAT_OUTBOUND = "chat.outbound"  # a post the agent returned or delivered
+    CLASSIFIED = "triage.classified"  # payload: label, confidence, docs
+    ASSESSMENT_RECORDED = "assessment.recorded"  # an IM's own assessment of an alert
+    GOLDEN_RECORDED = "golden.recorded"
+    SAFETY_BLOCKED = "safety.blocked"  # payload: check, target, hits
+    SAFETY_CHECKED = "safety.checked"
+    OUTBOUND_PUBLISHED = "outbound.published"
+    OUTBOUND_DELIVERED = "outbound.delivered"
+    OUTBOUND_FAILED = "outbound.failed"
+    OUTBOUND_DEAD_LETTERED = "outbound.dead_lettered"
+    OUTBOUND_REPLAYED = "outbound.replayed"
+    LLM_USAGE = "llm.usage"  # payload: purpose, input_tokens, output_tokens, prompt_version
+    PROMPT_PUBLISHED = "prompt.published"
+    AGENT_CHAT_TURN = "agent_chat.turn"
+    AGENT_CHAT_TOOL = "agent_chat.tool"
+    TEMP_CHECK_STARTED = "temp_check.started"
+    TEMP_CHECK_COMPLETED = "temp_check.completed"
+    TEMP_CHECK_FAILED = "temp_check.failed"
+    TEMP_CHECK_ACTIONED = "temp_check.actioned"
+    FORECAST_RUN = "forecast.run"
+    FORECAST_FAILED = "forecast.failed"
+    RECOMMENDATION_CREATED = "workforce.recommendation_created"
+    RECOMMENDATION_DECIDED = "workforce.recommendation_decided"
+    GAP_ALERT = "workforce.gap_alert"
+    SHIFT_UPDATED = "workforce.shift_updated"
+    KNOWLEDGE_DOC_SAVED = "knowledge.doc_saved"
+    KNOWLEDGE_DOC_REMOVED = "knowledge.doc_removed"
+    KNOWLEDGE_INDEXED = "knowledge.indexed"
+    WATCH_SAVED = "watch.saved"
+    WATCH_DETECTED = "watch.detected"
+    CAMPAIGN_SAVED = "campaign.saved"
+    BIGQUERY_CHANGED = "bigquery.changed"
+    SECRET_CHANGED = "secret.changed"
+
+    @classmethod
+    def all(cls) -> list[str]:
+        return sorted(v for k, v in vars(cls).items() if k.isupper() and isinstance(v, str))
+
+
+# ---------------------------------------------------------------------------
+# Fast recent reads (GCP): events are also written to the document store
+# ---------------------------------------------------------------------------
+
+HOT_COLLECTION = "events_hot"
+
+
+class StoreEventLogger:
+    """Events in the state store's `events_hot` collection: cheap to read by time for live views."""
+
+    def __init__(self, store: Any):
+        self.store = store
+
+    def log(self, event: AgentEvent) -> None:
+        self.store.put_doc(HOT_COLLECTION, event.event_id, event.model_dump(mode="json"))
+
+    def query(self, since=None, until=None, types=None, case_id=None, escalation_id=None, env=None, limit=None):
+        where: dict[str, Any] = {}
+        if case_id:
+            where["case_id"] = case_id
+        elif escalation_id:
+            where["escalation_id"] = escalation_id
+        rows = self.store.list_docs(HOT_COLLECTION, where=where or None, since=since, limit=int(limit or 20000) * (1 if not types else 4))
+        wanted = set(types) if types else None
+        out = []
+        for row in rows:
+            e = AgentEvent.model_validate(row)
+            if wanted is not None and e.event_type not in wanted:
+                continue
+            if escalation_id and e.escalation_id != escalation_id:
+                continue
+            if env and e.env != env:
+                continue
+            if since is not None and e.event_ts < since:
+                continue
+            if until is not None and e.event_ts >= until:
+                continue
+            out.append(e)
+        out.sort(key=lambda e: e.event_ts, reverse=True)
+        return out[: int(limit)] if limit else out
+
+
+class TeeEventLogger:
+    """Writes each event to the fast store and to BigQuery; reads recent windows from the fast store.
+
+    `cold` is None until BigQuery is connected in the Console: the agent runs on the fast store alone."""
+
+    def __init__(self, hot: StoreEventLogger, cold: Any | None, hot_window_hours: int = 48):
+        self.hot, self.cold, self.hot_window_hours = hot, cold, hot_window_hours
+
+    def log(self, event: AgentEvent) -> None:
+        self.hot.log(event)
+        if self.cold is not None:
+            try:
+                self.cold.log(event)
+            except Exception:  # noqa: BLE001 - the fast store has it; analytics catches up on the next write
+                import logging
+
+                logging.getLogger(__name__).exception("BigQuery event write failed for %s", event.event_type)
+
+    def query(self, since=None, until=None, types=None, case_id=None, escalation_id=None, env=None, limit=None):
+        recent = since is not None and (utcnow() - since).total_seconds() <= self.hot_window_hours * 3600
+        if self.cold is None or recent or case_id or escalation_id:
+            rows = self.hot.query(since, until, types, case_id, escalation_id, env, limit)
+            if rows or self.cold is None or recent:
+                return rows
+        return self.cold.query(since, until, types, case_id, escalation_id, env, limit)
+
+
+def events_table(config: Any | None) -> str:
+    """Where events go in BigQuery: Settings → BigQuery → tables.events (TRIAGE_BQ_TABLE for older deployments)."""
+    table = ""
+    if config is not None:
+        table = str(config.platform.bigquery.tables.get("events") or "")
+    return table or os.environ.get("TRIAGE_BQ_TABLE", "")
+
+
+def build_event_logger(store: Any, config: Any | None) -> EventLogger:
+    """Event logger for a context: SQLite locally; on GCP the fast store plus BigQuery once it is connected."""
+    if os.environ.get("TRIAGE_BACKEND", "local") != "gcp":
+        return SqliteEventLogger(os.environ.get("TRIAGE_LOCAL_DB", ".local/triage.db"))
+    table = events_table(config)
+    project = None
+    if config is not None:
+        project = config.platform.bigquery.project or config.platform.gcp.project or None
+    project = project or os.environ.get("TRIAGE_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
+    cold = BigQueryEventLogger(table, project=project) if table else None
+    hours = config.platform.bigquery.hot_window_hours if config is not None else 48
+    return TeeEventLogger(StoreEventLogger(store), cold, hours)

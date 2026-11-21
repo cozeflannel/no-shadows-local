@@ -417,7 +417,7 @@ def _oncall_set(turn: Turn, intent: intents_mod.Intent) -> Result:
     label = ROSTER_LABELS[name]
     person = person_for_sender(ctx.roster(name), turn.asker, turn.asker_name)
     if person is None:
-        return turn.reply(f"You're not in the {label} roster, so I can't put you on. An admin can add you in the Agent Console."), {"roster": name}
+        return turn.reply(f"You're not in the {label} roster, so I can't put you on. An admin can add you to the roster."), {"roster": name}
     until = parse_until(ctx, intent.args.get("until"))
     if until is None:
         return turn.reply("Until when? e.g. `I'm on until 6pm ET`."), {"roster": name}
@@ -431,7 +431,7 @@ def _oncall_handoff(turn: Turn, intent: intents_mod.Intent) -> Result:
     label = ROSTER_LABELS[name]
     roster = ctx.roster(name)
     if person_for_sender(roster, turn.asker, turn.asker_name) is None:
-        return turn.reply(f"You're not in the {label} roster, so you can't hand it off. An admin can change it in the Agent Console."), {"roster": name}
+        return turn.reply(f"You're not in the {label} roster, so you can't hand it off. An admin can change the roster."), {"roster": name}
     who = (intent.args.get("who") or "").strip()
     target = person_by_email(roster, who) if "@" in who else next(
         (p for p in roster.people if p.name.lower() == who.lower() or p.id.lower() == who.lower()
@@ -574,8 +574,8 @@ def converse(ctx: AgentContext, payload: dict[str, Any], rc: RequestContext):
         else:
             intent = intents_mod.classify(ctx, text)
             if turn.external and intent.name in INTERNAL_ONLY:
-                out, data = turn.reply("That command works in the SLRR triage space or in a DM with me." if turn.burson
-                                       else "That command is only available to the SLRR team."), {}
+                out, data = turn.reply("That command isn't available in this space." if turn.burson
+                                       else "That command isn't available to you."), {}
             else:
                 try:
                     out, data = HANDLERS.get(intent.name, _question)(turn, intent)
