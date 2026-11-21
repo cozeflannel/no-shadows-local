@@ -69,6 +69,9 @@ flowchart LR
 | `evals/` | Golden set: agent decision vs. IM decision |
 | `scripts/simulate.py` | Local end-to-end simulation of the Studio flows |
 | `console/` | Agent Console (FastAPI + React) |
+| `triage_agent/{audit,chatlog,safety,pubsub,prompts,telemetry,retention}.py` | Platform: audit log, Chat tracking, outbound guards and runtime checks, Pub/Sub delivery, versioned AI instructions, logs and traces, retention |
+| `triage_agent/{knowledge,classify,golden,tools,chat_agent}.py` | Knowledge retrieval, classification layer, golden set, the shared tool surface, the in-Console chat agent |
+| `triage_agent/{tempcheck,bwquery,workforce,watches,campaigns_admin,bq_admin,secret_admin}.py` | Temp checks, Boolean conversion, workforce and forecasting, watches, campaign change requests, BigQuery and Secret Manager gateways |
 | `studio-addon/` · `flows/` · `analytics/` · `infra/` | Studio custom steps, flow setup + Phase 0 spike, BigQuery views, deployment |
 
 ## Quickstart (local, offline)
@@ -121,6 +124,7 @@ Use real Gemini with `--live` (needs `GOOGLE_CLOUD_PROJECT` and ADC):
 ## Configuration
 
 - Everything rule-like lives in `config/*.yaml` and can be overridden per section from the Console's Settings page. Every event records the config version.
+- Platform settings (feature flags, access, project, safety, delivery, BigQuery, forecasting, chat agent, classification, knowledge, temp check, campaigns, costs, telemetry) exist only in the Console. Every switch starts OFF. Secrets are kept in Secret Manager and named in settings.
 - Values marked `PLACEHOLDER` need real inputs:
   - the alert template labels (from real Burson samples);
   - space ids, IM shift roster, Burson roster;
@@ -131,6 +135,8 @@ Use real Gemini with `--live` (needs `GOOGLE_CLOUD_PROJECT` and ADC):
 - See `flows/PHASE0_SPIKE.md` for how to collect them.
 
 ## Deploy
+
+`infra/deploy.sh --project PROJECT_ID --region REGION` runs every step and fills the Console's settings with what it knows.
 
 Start with the Phase 0 spike ([`flows/PHASE0_SPIKE.md`](flows/PHASE0_SPIKE.md)), then follow:
 - [`infra/README.md`](infra/README.md): APIs, service accounts, Firestore, BigQuery, the Agent Runtime, jobs, Console + IAP, Gmail OAuth, and the cutover to production.

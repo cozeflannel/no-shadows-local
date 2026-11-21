@@ -25,6 +25,8 @@ flowchart LR
 | Agent (all operations) | Agent Runtime (Gemini Enterprise Agent Platform, formerly Vertex AI Agent Engine) | `05_deploy_agent_engine.py` |
 | Minute-level work (SLA nudges, reminders, sent detection, digest, handover, Path B) | Cloud Run jobs + Cloud Scheduler | `06_jobs.sh` |
 | Agent Console (metrics, review queue, escalations, rosters, settings, learning) | Cloud Run behind IAP | `07_console.sh` |
+| Worker (Pub/Sub pushes for delivery and dead letters; the once-a-minute tick for knowledge, watches, temp checks, forecast, retention) | Cloud Run, private | `09_worker.sh` |
+| Outbound delivery | Pub/Sub topics and push subscriptions | Console: Settings, Delivery, "Create what is missing" |
 | State / analytics | Firestore / BigQuery | `03_firestore.sh` / `04_bigquery.sh` |
 | Studio custom steps | Apps Script add-on (Triage Agent account) | [`../studio-addon/README.md`](../studio-addon/README.md) |
 | Studio flows | Workspace Studio (Triage Agent account) | [`../flows/FLOW_SETUP.md`](../flows/FLOW_SETUP.md) |
@@ -43,6 +45,18 @@ flowchart LR
   - The project venv (`.venv/bin/pip install -r requirements.txt`, Python 3.12+).
   - `clasp` for the add-on.
   - Node 22 only for local Console builds; Cloud Build builds the images.
+
+## One command
+
+```bash
+gcloud auth login && gcloud auth application-default login
+infra/deploy.sh --project PROJECT_ID --region REGION     # add --env prod, --agent-account ADDRESS when ready
+```
+
+It writes `infra/.env` if there is none, then runs every step below in order, deploys the worker (`09_worker.sh`) and
+writes what it knows (project, region, addresses, Agent Runtime, dataset) into the Console's settings
+(`10_seed_settings.py`, empty settings only). Safe to run again. You become the Console's first admin; its Dashboard
+lists the setup steps left. Two steps stay manual: the Gmail OAuth client (`08_gmail_oauth.sh`) and the Studio flows.
 
 ## Steps
 
