@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from . import audit, chatlog
+from . import audit, chatlog, stories
 from .events import HOT_COLLECTION, TeeEventLogger
 
 if TYPE_CHECKING:
@@ -30,6 +30,7 @@ def run(ctx: "AgentContext", force: bool = False) -> dict[str, Any]:
     plan: list[tuple[str, str, datetime]] = [
         (audit.COLLECTION, "ts", now - timedelta(days=cfg.telemetry.audit_retention_days)),
         (chatlog.COLLECTION, "ts", now - timedelta(days=cfg.telemetry.chat_retention_days)),
+        (stories.VECTORS, "last_at", now - timedelta(days=cfg.stories.keep_days)),  # a story that is over is never matched again
     ]
     if isinstance(ctx.events, TeeEventLogger) and ctx.events.cold is not None:
         plan.append((HOT_COLLECTION, "event_ts", now - timedelta(hours=2 * cfg.bigquery.hot_window_hours)))

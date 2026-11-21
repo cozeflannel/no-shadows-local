@@ -29,8 +29,8 @@ from triage_agent.operations import registered_operations
 from triage_agent.render import FIELD_LABELS
 
 from . import (
-    gmail_oauth, help_content, live, routes_admin, routes_cases, routes_learning, routes_metrics, routes_rosters, routes_settings,
-    routes_work,
+    connections, gmail_oauth, help_content, live, routes_admin, routes_cases, routes_insight, routes_learning, routes_metrics, routes_rosters,
+    routes_settings, routes_work,
 )
 from .audit_mw import audit_requests
 from .auth import User, current_user, get_ctx, require_viewer
@@ -108,6 +108,9 @@ def create_app(ctx: AgentContext | None = None, state: ConsoleState | None = Non
             "escalation_id_prefix": cfg.escalation_id_prefix,
             "event_types": sorted([*EventType.all(), *PlatformEvent.all()]),
             "flags": cfg.platform.flags.model_dump(),
+            "notifications": {"enabled": cfg.platform.flags.alert_popups, "event_types": cfg.platform.notifications.popup_event_types,
+                              "sources": cfg.platform.notifications.popup_sources, "seconds": cfg.platform.notifications.popup_seconds,
+                              "max_on_screen": cfg.platform.notifications.max_on_screen},
             "spaces": [{"key": s.key, "name": s.display_name, "configured": bool(s.space_id or s.url)} for s in cfg.spaces],
             "statuses": [s.value for s in CaseStatus],
             "sources": ["burson_chat", "inhouse", "watchdog", "manual"],
@@ -137,7 +140,7 @@ def create_app(ctx: AgentContext | None = None, state: ConsoleState | None = Non
         return {"topics": help_content.topics()}
 
     for module in (routes_metrics, routes_cases, routes_rosters, routes_admin, routes_settings, routes_learning, gmail_oauth, live,
-                   routes_work):
+                   routes_work, routes_insight, connections):
         app.include_router(module.router)
 
     # -- static frontend (SPA) -------------------------------------------------

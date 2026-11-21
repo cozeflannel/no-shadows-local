@@ -1,0 +1,249 @@
+"""Stories (the bot's same-story rules), the comparison page, alert pop-up settings and the Admin overview.
+
+Alerts go through the real pipeline on the local store; the API is called through the FastAPI app.
+"""
+
+from __future__ import annotations
+
+from datetime import timedelta
+
+import pytest
+
+from conftest import GOOD_ALERT
+from test_platform import ADMIN, IM, LEAD, _llm, alert, client, flags, iap, triage  # noqa: F401 - fixtures
+from triage_agent import knowledge, stories
+
+
+def named(n: int, issue: str, **more: str) -> str:
+    return alert(n, Issue_Name=issue, **more)
+
+
+def arrive(ctx, clock, text: str = GOOD_ALERT):
+    """An alert posted now (a Chat message carries its own time)."""
+    return triage(ctx, text, create_time=clock.now)
+
+
+# -- the same-story rules, as the Chat bot's alert memory has them -------------------------------------------------------------
+def test_story_text_and_identifiers(ctx):
+    cfg = ctx.config.platform.stories
+    text = stories.story_text({"issue_name": "Gemini outage", "product": "Gemini App", "exposure_tag": "Product - Outage",
+                               "summary": "Automated Alert via Burson (beta)\nUsers cannot log in. " + "x" * 600}, cfg)
+    assert text.startswith("Gemini outage. Gemini App. Product - Outage. Users cannot log in.") and "Automated Alert" not in text
+    assert len(text) <= len("Gemini outage. Gemini App. Product - Outage. ") + 400
+    assert stories.story_text({"product": "x"}, cfg) == ""
+    idt = stories.idents("CVE-2026-12345 hits @vendor and @poster: 25,000 likes, build 12345678 https://x.com/a/status/99999", ["@poster"])
+    assert idt == {"c": ["CVE-2026-12345"], "n": ["12345678"], "a": ["vendor"]}, "links, counts and the post's own author are left out"
+    assert stories.idents_clash({"c": ["CVE-2026-1"], "n": [], "a": []}, {"c": ["CVE-2026-2"], "n": [], "a": []})
+    assert not stories.idents_clash({"c": ["CVE-2026-1"], "n": [], "a": ["x"]}, {"c": [], "n": [], "a": ["x", "y"]})
+
+
+def test_same_story_by_meaning_and_by_words(ctx):
+    cfg = ctx.config.platform.stories
+    a = {"tag": "Product - Outage", "product": "Gemini App", "idt": {}}
+    b = {"tag": "product - outage", "product": "gemini app", "idt": {}}
+    other = {"tag": "Brand - Boycott", "product": "Gemini App", "idt": {}}
+    assert stories.same_story(0.86, a, other, cfg), "this alike is the same story whatever the tag"
+    assert stories.same_story(0.81, a, b, cfg) and not stories.same_story(0.81, a, other, cfg), "the gray band needs the same tag and product"
+    assert not stories.same_story(0.79, a, b, cfg)
+    assert not stories.same_story(0.99, {**a, "idt": {"c": ["CVE-2026-1"]}}, {**b, "idt": {"c": ["CVE-2026-2"]}}, cfg)
+    words = stories.same_story_words({**a, "tok": ["gemini", "fabricate", "citation"]}, {**b, "tok": ["gemini", "fabricate", "citation", "again"]}, 0.6)
+    assert words == 0.75 and stories.same_story_words({**a, "tok": ["gemini"]}, {**other, "tok": ["gemini"]}, 0.6) == 0, "by words, only with the same tag"
+
+
+# -- grouping real alerts -------------------------------------------------------------------------------------------------------
+def test_alerts_on_one_story_are_grouped_with_their_smaller_stories(ctx, clock):
+    arrive(ctx, clock)                                                      # "Gemini fabricates academic citations"
+    clock.advance(hours=1)
+    arrive(ctx, clock, named(2, "Gemini fabricates academic citations again"))
+    clock.advance(hours=1)
+    arrive(ctx, clock, named(3, "Chrome update breaks the password manager"))
+    assert stories.refresh(ctx) == 3 and stories.refresh(ctx) == 0, "each alert is placed once"
+    found = stories.list_stories(ctx, since=clock.now - timedelta(days=1))
+    assert sorted(len(s.members) for s in found) == [1, 2]
+    big = next(s for s in found if len(s.members) == 2)
+    assert big.title == "Gemini fabricates academic citations" and [m.case_id for m in big.members] == ["TRG-1001", "TRG-1002"]
+    card = stories.summary(ctx, big, since=clock.now - timedelta(days=1))
+    assert card["alerts"] == 2 and card["engagement"] == 4900 and card["status"] == "growing"
+    assert [(s["name"], s["alerts"]) for s in card["sub"]] == [("Gemini fabricates academic citations", 1), ("Gemini fabricates academic citations again", 1)]
+    assert [p["alerts"] for p in card["growth"]][-3:] == [1, 2, 2], "the growth line is cumulative by the hour"
+    clock.advance(hours=7)
+    assert stories.summary(ctx, big, since=clock.now - timedelta(days=1))["status"] == "quiet"
+
+
+def test_different_identifiers_and_old_stories_start_new_ones(ctx, clock):
+    arrive(ctx, clock, named(1, "Chrome zero day CVE-2026-11111 exploited"))
+    arrive(ctx, clock, named(2, "Chrome zero day CVE-2026-22222 exploited"))
+    stories.refresh(ctx)
+    assert len(stories.list_stories(ctx, since=clock.now - timedelta(days=1))) == 2, "two CVEs are two stories, however alike the words"
+    clock.advance(days=ctx.config.platform.stories.keep_days + 1)
+    arrive(ctx, clock, named(3, "Chrome zero day CVE-2026-11111 exploited"))
+    stories.refresh(ctx)
+    assert len(stories.list_stories(ctx, since=clock.now - timedelta(days=60))) == 3, "a story silent past its keep-time is over"
+
+
+def test_meaning_is_used_when_an_embedding_model_is_set(ctx, clock, monkeypatch):
+    ctx.config.platform.knowledge.embedding_model = "text-embedding-test"
+    vectors = {"Gemini invents sources": [1.0, 0.0], "Made-up references in AI answers": [0.9, 0.3], "Pixel battery drain": [0.0, 1.0]}
+    monkeypatch.setattr(knowledge, "embed", lambda ctx_, texts: [next(v for k, v in vectors.items() if t.startswith(k)) for t in texts])
+    for i, name in enumerate(vectors, start=1):
+        triage(ctx, named(i, name))
+    stories.refresh(ctx)
+    found = stories.list_stories(ctx, since=clock.now - timedelta(days=1))
+    assert sorted(len(s.members) for s in found) == [1, 2], "no shared words, yet the same story by meaning (cosine 0.95)"
+
+
+# -- the API ---------------------------------------------------------------------------------------------------------------------
+def test_story_map_and_drill_down(ctx, client, clock):
+    arrive(ctx, clock)
+    clock.advance(minutes=30)
+    arrive(ctx, clock, named(2, "Gemini fabricates academic citations again"))
+    got = client.get("/api/stories", params={"hours": 24}, headers=iap(IM)).json()
+    assert got["size_by"] == "engagement" and len(got["stories"]) == 1 and got["stories"][0]["alerts"] == 2
+    story = got["stories"][0]
+    assert story["needs"] == 2 and story["platforms"] == ["X"] and len(story["sub"]) == 2
+    detail = client.get(f"/api/stories/{story['story_id']}", headers=iap(IM)).json()
+    assert [a["case_id"] for a in detail["alerts"]] == ["TRG-1002", "TRG-1001"] and detail["alerts"][0]["post_url"].startswith("https://x.com/")
+    assert {c["case_id"] for c in detail["chat"]} == {"TRG-1001", "TRG-1002"} and detail["story"]["title"] == story["title"]
+    assert client.get("/api/stories/STORY-nope", headers=iap(IM)).status_code == 404
+
+
+def test_comparison_page_numbers(ctx, client, clock, fake_llm):
+    from test_platform import assess_ok
+
+    triage(ctx)                                                             # passes as Burson sent it
+    assess_ok(fake_llm, exposure_tag_fit={"ok": False, "confidence": 0.75, "finding": "medical claim",
+                                          "proposed_value": "Product - Dangerous results (e.g. medical/legal)"})
+    triage(ctx, alert(2))                                                   # held for an IM
+    client.post("/api/feed/TRG-1001/assessment", json={"agree": True}, headers=iap(IM))
+    client.post("/api/feed/TRG-1002/assessment", json={"agree": False, "verdict": "PASS"}, headers=iap(IM))
+    clock.advance(minutes=1)
+    got = client.get("/api/compare", params={"days": 7}, headers=iap(IM)).json()
+    rows = {r["key"]: r for s in got["sections"] for r in s["rows"]}
+    assert [s["key"] for s in got["sections"]] == ["burson", "detection", "ims", "speed"]
+    assert rows["alerts_received"]["value"] == 2 and rows["first_pass_yield"]["value"] == 0.5 and rows["held_for_review"]["value"] == 1
+    assert rows["im_agreement"]["value"] == 0.5 and rows["im_right"]["value"] == 1 and rows["im_wrong"]["value"] == 1
+    assert rows["parity_recall"]["value"] is None and "in-house" in rows["parity_recall"]["note"].lower()
+    assert all({"key", "label", "value", "unit"} <= set(r) for r in rows.values())
+
+
+def test_popups_are_off_until_switched_on_and_carry_their_settings(ctx, client):
+    assert client.get("/api/meta", headers=iap(IM)).json()["notifications"]["enabled"] is False
+    flags(ctx, alert_popups=True)
+    ctx.config.platform.notifications.popup_seconds = 20
+    got = client.get("/api/meta", headers=iap(IM)).json()["notifications"]
+    assert got == {"enabled": True, "event_types": ["alert.received"], "sources": ["burson_chat"], "seconds": 20, "max_on_screen": 3}
+    triage(ctx)
+    item = next(i for i in client.get("/api/live/feed", headers=iap(IM)).json()["items"] if i["event_type"] == "alert.received")
+    assert item["payload"]["source"] == "burson_chat" and item["case"]["alert_name"], "a pop-up has the alert's name and source to show"
+
+
+def test_admin_overview(ctx, client, clock):
+    from triage_agent import platform_jobs
+
+    assert client.get("/api/admin/overview", headers=iap(IM)).status_code == 403, "leads and admins only"
+    triage(ctx)
+    client.put("/api/platform/flags", json={"value": {"alert_popups": True}}, headers=iap(ADMIN))
+    platform_jobs.run_job(ctx, "maintenance")
+    got = client.get("/api/admin/overview", headers=iap(LEAD)).json()
+    people = {p["email"]: p for p in got["people"]}
+    assert people[ADMIN]["role"] == "admin" and people[IM]["on_roster"] is True and people[IM]["role"] in ("im", "analyst", "lead", "admin")
+    assert got["access"]["viewer_domains"] and got["status"]["tick"]["minutes_ago"] == 0 and got["status"]["tick"]["ok"] is True
+    assert got["status"]["safety"]["passed"] is True and got["status"]["switches_on"] == ["alert_popups"]
+    assert got["changes"][0]["action"] == "settings.flags" and got["changes"][0]["actor"] == ADMIN
+    assert any(a["actor"] == ADMIN and a["actions"] >= 1 for a in got["active"])
+
+
+# -- integrations: each tool is connected in one place ---------------------------------------------------------------------------
+def test_integrations_catalog_says_what_each_tool_still_needs(ctx, client):
+    got = client.get("/api/connections", headers=iap(IM)).json()
+    by = {c["key"]: c for c in got["connections"]}
+    assert {"gcp", "gemini", "runtime", "chat", "bigquery", "delivery", "secrets", "gmail", "drive", "brandwatch", "inhouse"} <= set(by)
+    assert by["bigquery"]["state"] == "incomplete" and by["bigquery"]["missing"] == ["Dataset"] and by["bigquery"]["required"] is True
+    assert by["brandwatch"]["state"] == "not_connected" and by["brandwatch"]["required"] is False
+    assert by["chat"]["state"] == "ready", "the agent's account and both spaces are set; nothing has tested it yet"
+    assert got["summary"]["required"] == sum(1 for c in by.values() if c["required"]) and got["summary"]["ready"] < got["summary"]["required"]
+    assert all(f["path"] and f["label"] for c in by.values() for f in c["fields"]) and all(c["steps"] for c in by.values())
+
+
+def test_connecting_a_tool_saves_its_values_once_and_is_audited(ctx, client, clock):
+    values = {"platform.bigquery.dataset": "proj.slrr_triage", "platform.bigquery.location": "US"}
+    assert client.put("/api/connections/bigquery", json={"values": values}, headers=iap(IM)).status_code == 403
+    assert client.put("/api/connections/bigquery", json={"values": {"platform.safety.testing": False}}, headers=iap(ADMIN)).status_code == 422, \
+        "a connection only writes its own fields"
+    saved = client.put("/api/connections/bigquery", json={"values": values}, headers=iap(ADMIN))
+    assert saved.status_code == 200 and saved.json()["connection"]["state"] == "ready" and saved.json()["connection"]["missing"] == []
+    fresh = client.get("/api/platform/bigquery", headers=iap(ADMIN)).json()["value"]
+    assert fresh["dataset"] == "proj.slrr_triage" and fresh["location"] == "US" and fresh["hot_window_hours"] == 48, "the other settings stay"
+    space = client.put("/api/connections/chat", json={"values": {"spaces.youtube.url": "https://chat.google.com/room/AAAAyt"}}, headers=iap(ADMIN))
+    assert space.status_code == 200 and ctx.store.get_config_overrides()["spaces"]
+    clock.advance(minutes=1)
+    entry = client.get("/api/audit", params={"action": "connection."}, headers=iap(ADMIN)).json()["entries"][0]
+    assert entry["action"] == "connection.save" and entry["actor"] == ADMIN and entry["target_id"] == "chat"
+
+
+def test_testing_a_tool_is_a_live_check_whose_result_is_kept_until_its_values_change(ctx, client):
+    assert client.post("/api/connections/gemini/test", headers=iap(IM)).status_code == 403
+    ran = client.post("/api/connections/gemini/test", headers=iap(ADMIN)).json()
+    assert ran["test"]["ok"] is True and ran["connection"]["state"] == "connected" and ran["test"]["details"][0]["label"] == "Model for alerts"
+    again = {c["key"]: c for c in client.get("/api/connections", headers=iap(IM)).json()["connections"]}
+    assert again["gemini"]["state"] == "connected" and again["gemini"]["test"]["at"]
+    client.put("/api/connections/gemini", json={"values": {"models.triage": "gemini-next"}}, headers=iap(ADMIN))
+    after = {c["key"]: c for c in client.get("/api/connections", headers=iap(IM)).json()["connections"]}
+    assert after["gemini"]["state"] == "ready" and after["gemini"]["test"] is None, "a test of the old values proves nothing about the new ones"
+    cloud = client.post("/api/connections/bigquery/test", headers=iap(ADMIN)).json()
+    assert cloud["test"]["ok"] is False and cloud["connection"]["state"] == "incomplete" and "Dataset" in cloud["test"]["message"]
+
+
+def test_disconnecting_clears_an_optional_tool_and_never_a_required_one(ctx, client):
+    client.put("/api/connections/brandwatch", json={"values": {"platform.temp_check.brandwatch_project_id": "123",
+                                                               "platform.temp_check.brandwatch_token_secret": "bw-token"}}, headers=iap(ADMIN))
+    assert client.delete("/api/connections/gemini", headers=iap(ADMIN)).status_code == 422
+    gone = client.delete("/api/connections/brandwatch", headers=iap(ADMIN)).json()
+    assert gone["connection"]["state"] == "not_connected" and ctx.store.get_config_overrides().get("platform", {}).get("temp_check", {}).get("brandwatch_project_id") in (None, "")
+
+
+# -- people: one record, access everywhere ------------------------------------------------------------------------------------------
+def test_adding_a_person_once_gives_them_their_role_and_their_place_on_the_roster(ctx, client):
+    new = "nia@ops.test"
+    body = {"name": "Nia New", "role": "im", "on_roster": True}
+    assert client.put(f"/api/admin/people/{new}", json=body, headers=iap(LEAD)).status_code == 403
+    made = client.put(f"/api/admin/people/{new}", json=body, headers=iap(ADMIN))
+    assert made.status_code == 200 and made.json()["person"]["on_roster"] is True and made.json()["person"]["role"] == "im"
+    assert client.get("/api/me", headers=iap(new)).json()["role"] == "im"
+    roster = client.get("/api/rosters/slrr_im", headers=iap(ADMIN)).json()
+    assert any(p["email"] == new and p["name"] == "Nia New" for p in roster["roster"]["people"])
+    lead = client.put(f"/api/admin/people/{new}", json={"name": "Nia New", "role": "lead", "on_roster": False}, headers=iap(ADMIN)).json()
+    assert lead["person"]["role"] == "lead" and lead["person"]["on_roster"] is False
+    assert client.get("/api/me", headers=iap(new)).json()["role"] == "lead"
+    assert client.put("/api/admin/people/not-an-address", json=body, headers=iap(ADMIN)).status_code == 422
+
+
+def test_removing_a_person_takes_their_access_and_keeps_the_console_and_the_shifts_safe(ctx, client):
+    assert client.delete(f"/api/admin/people/{ADMIN}", headers=iap(ADMIN)).status_code == 422, "the last admin stays"
+    held = client.delete(f"/api/admin/people/{IM}", headers=iap(ADMIN))
+    assert held.status_code == 422 and "shift" in held.json()["error"], "someone holding shifts is moved off them first"
+    client.put("/api/admin/people/temp@ops.test", json={"name": "Temp", "role": "analyst", "on_roster": True}, headers=iap(ADMIN))
+    assert client.delete("/api/admin/people/temp@ops.test", headers=iap(ADMIN)).status_code == 200
+    assert client.get("/api/me", headers=iap("temp@ops.test")).json()["role"] == "none"
+    emails = {p["email"] for p in client.get("/api/admin/overview", headers=iap(ADMIN)).json()["people"]}
+    assert "temp@ops.test" not in emails
+
+
+def test_find_and_fill_writes_what_the_service_can_see_and_lists_what_is_left(ctx, client, monkeypatch):
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "seen-project")
+    monkeypatch.setenv("GOOGLE_CLOUD_REGION", "us-central1")
+    assert client.post("/api/connections/autofill", headers=iap(IM)).status_code == 403
+    got = client.post("/api/connections/autofill", headers=iap(ADMIN)).json()
+    assert {(f["path"], f["value"]) for f in got["filled"]} == {("platform.gcp.project", "seen-project"), ("platform.gcp.region", "us-central1")}
+    assert ctx.store.get_config_overrides()["platform"]["gcp"] == {"project": "seen-project", "region": "us-central1"}
+    assert {"tool": "bigquery", "name": "BigQuery", "label": "Dataset", "required": True} in got["left"]
+    again = client.post("/api/connections/autofill", headers=iap(ADMIN)).json()
+    assert again["filled"] == [], "a value already set is never changed"
+
+
+def test_the_deployer_is_listed_as_the_admin_until_an_admin_is_named(ctx, client, monkeypatch):
+    ctx.config.analysts = []
+    monkeypatch.setenv("TRIAGE_BOOTSTRAP_ADMIN", "deployer@ops.test")
+    got = client.get("/api/admin/overview", headers=iap("deployer@ops.test")).json()
+    row = next(p for p in got["people"] if p["email"] == "deployer@ops.test")
+    assert row["role"] == "admin" and row["role_source"] == "deploy", "the person who can sign in as admin is on the list"

@@ -497,7 +497,7 @@ def _bm25(index: _Index, query_tokens: list[str]) -> list[float]:
     return scores
 
 
-def _cosine(a: list[float], b: list[float]) -> float:
+def cosine(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     na, nb = math.sqrt(sum(x * x for x in a)), math.sqrt(sum(y * y for y in b))
     return dot / (na * nb) if na and nb else 0.0
@@ -568,7 +568,7 @@ def retrieve(ctx: "AgentContext", query: str, *, label: str | None = None, exter
                     for i in candidates:
                         vec = index.chunks[i].get("embedding")
                         if vec:
-                            scores[i] = 0.5 * scores[i] + 0.5 * max(0.0, _cosine(qv[0], vec))
+                            scores[i] = 0.5 * scores[i] + 0.5 * max(0.0, cosine(qv[0], vec))
             ranked = sorted(candidates, key=lambda i: scores[i], reverse=True)
             chosen = [(i, scores[i]) for i in ranked if scores[i] >= cfg.min_score][:k]
             guidance = [(i, max(scores[i], cfg.min_score)) for i in candidates

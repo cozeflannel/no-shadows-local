@@ -70,6 +70,7 @@ flowchart LR
 | `scripts/simulate.py` | Local end-to-end simulation of the Studio flows |
 | `console/` | Agent Console (FastAPI + React) |
 | `triage_agent/{audit,chatlog,safety,pubsub,prompts,telemetry,retention}.py` | Platform: audit log, Chat tracking, outbound guards and runtime checks, Pub/Sub delivery, versioned AI instructions, logs and traces, retention |
+| `triage_agent/stories.py` · `console/backend/{routes_insight,connections}.py` | Stories (the Chat bot's same-story rules), the comparison page, Admin and people, Integrations |
 | `triage_agent/{knowledge,classify,golden,tools,chat_agent}.py` | Knowledge retrieval, classification layer, golden set, the shared tool surface, the in-Console chat agent |
 | `triage_agent/{tempcheck,bwquery,workforce,watches,campaigns_admin,bq_admin,secret_admin}.py` | Temp checks, Boolean conversion, workforce and forecasting, watches, campaign change requests, BigQuery and Secret Manager gateways |
 | `studio-addon/` · `flows/` · `analytics/` · `infra/` | Studio custom steps, flow setup + Phase 0 spike, BigQuery views, deployment |

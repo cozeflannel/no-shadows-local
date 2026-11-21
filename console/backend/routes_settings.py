@@ -234,10 +234,28 @@ def _save(request: Request, ctx: AgentContext, user: User, section: str, overrid
     return {
         "ok": True,
         "section": section,
-        "value": ctx.config.model_dump(mode="json")[section],
+        "value": ctx.config.model_dump(mode="json").get(section),
         "overridden": section in overrides,
         "config_version": ctx.config_version,
     }
+
+
+def save_sections(request: Request, ctx: AgentContext, user: User, target: dict[str, Any], note: str) -> AgentContext:
+    """Save whole sections of the effective settings (as JSON), kept as their difference from the defaults.
+
+    Raises pydantic's ValidationError when the result would not be a valid configuration; nothing is saved then.
+    """
+    base, defaults = default_config()
+    overrides = copy.deepcopy(ctx.store.get_config_overrides() or {})
+    for section, value in target.items():
+        patch = merge_patch(defaults.get(section), value)
+        if patch is _NOTHING:
+            overrides.pop(section, None)
+        else:
+            overrides[section] = patch
+    _validate(base, overrides)
+    _save(request, ctx, user, ", ".join(sorted(target)), overrides, note, reset=False)
+    return request.app.state.console.ctx
 
 
 @router.put("/settings/{section}")

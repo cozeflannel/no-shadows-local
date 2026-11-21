@@ -867,6 +867,7 @@ class FeatureFlags(ConfigModel):
     golden_set_capture: bool = Field(False, description="Record every correction, review decision and IM assessment as a golden example.")
     bigquery_admin: bool = Field(False, description="Admins may create and change datasets, tables and views from the Console.")
     secret_admin: bool = Field(False, description="Admins may add secrets and secret versions from the Console.")
+    alert_popups: bool = Field(False, description="People in the Console get a pop-up when an alert comes in.")
 
 
 class PubSubConfig(ConfigModel):
@@ -1048,12 +1049,37 @@ class CostConfig(ConfigModel):
     monthly_budget: float = Field(0, ge=0, description="Shown as the budget line. 0 = none.")
 
 
+class StoriesConfig(ConfigModel):
+    """How alerts are grouped into stories (the Chat bot's alert memory rules) and what the story map shows."""
+
+    same_story_similarity: float = Field(0.85, ge=0, le=1, description="Two alerts this alike in meaning are the same story.")
+    gray_similarity: float = Field(0.80, ge=0, le=1, description="This alike is the same story only with the same exposure tag and product.")
+    summary_chars: int = Field(400, ge=0, le=4000, description="Characters of the summary that count toward a story's text.")
+    boilerplate_patterns: list[str] = Field(
+        default_factory=lambda: [r"Automated Alert via Burson[\s\S]*?(?:\n|$)", r"Note: This is an automated message[\s\S]*?(?:\n|$)"],
+        description="Text removed from a summary before stories are compared (regular expressions).")
+    keep_days: int = Field(14, ge=1, le=365, description="A story with no new alert for this many days is over; a later alert starts a new one.")
+    active_hours: int = Field(6, ge=1, le=168, description="A story with an alert in the last this many hours shows as growing.")
+    map_hours: int = Field(72, ge=1, le=24 * 30, description="Hours the story map shows when it opens.")
+    size_by: Literal["engagement", "alerts"] = Field("engagement", description="What a circle's size stands for.")
+
+
+class NotificationsConfig(ConfigModel):
+    """Pop-ups in the Console (switch: Feature flags, alert_popups)."""
+
+    popup_event_types: list[str] = Field(default_factory=lambda: ["alert.received"], description="Events that raise a pop-up.")
+    popup_sources: list[str] = Field(default_factory=lambda: ["burson_chat"], description="Alert sources that raise a pop-up. Blank = every source.")
+    popup_seconds: int = Field(12, ge=3, le=120, description="Seconds a pop-up stays on screen.")
+    max_on_screen: int = Field(3, ge=1, le=10, description="Pop-ups shown at once; older ones give way.")
+
+
 class TelemetryConfig(ConfigModel):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     tracing: bool = Field(False, description="Export traces to Cloud Trace.")
     trace_sample_rate: float = Field(0.1, ge=0, le=1)
     audit_retention_days: int = Field(400, ge=1, description="Days audit entries are kept in the fast store.")
     chat_retention_days: int = Field(90, ge=1, description="Days Chat activity is kept in the fast store.")
+    tick_late_minutes: int = Field(5, ge=1, le=1440, description="Admin shows the scheduled work as late after this many minutes without a run.")
 
 
 class SafetyConfig(ConfigModel):
@@ -1111,6 +1137,8 @@ class PlatformConfig(ConfigModel):
     temp_check: TempCheckConfig = Field(default_factory=TempCheckConfig)
     costs: CostConfig = Field(default_factory=CostConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+    stories: StoriesConfig = Field(default_factory=StoriesConfig)
+    notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     campaigns: CampaignsConfig = Field(default_factory=CampaignsConfig)
 

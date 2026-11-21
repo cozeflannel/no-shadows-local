@@ -40,6 +40,8 @@ PART_INFO: dict[str, tuple[str, str]] = {
     "campaigns": ("Campaigns & watches", "The campaigns database and the watches' limits."),
     "costs": ("Costs", "Model prices and the billing export."),
     "telemetry": ("Telemetry", "Logging, tracing and retention."),
+    "stories": ("Stories", "How alerts are grouped into stories and what the story map shows."),
+    "notifications": ("Notifications", "Pop-ups in the Console when an alert comes in."),
 }
 
 
@@ -583,20 +585,18 @@ def setup_status(ctx: AgentContext = Depends(get_ctx), user: User = Depends(requ
 
     cfg = ctx.config
     plat = cfg.platform
-    spaces_set = [s.key for s in cfg.spaces if s.space_id or s.url]
     im = ctx.roster("slrr_im")
+    from .connections import catalog
+
+    tools = catalog(ctx)["summary"]
     steps = [
-        {"key": "admins", "title": "Name the admins", "done": bool(cfg.admin_emails() or plat.access.bootstrap_admins),
-         "detail": f"{len(cfg.admin_emails()) + len(plat.access.bootstrap_admins)} admin(s) set", "to": "/settings/analysts"},
-        {"key": "runtime", "title": "Deploy the agent", "done": bool(plat.gcp.agent_runtime_resource),
-         "detail": "The Agent Runtime the Studio flows call. infra/deploy.sh fills this in.", "to": "/settings/gcp"},
-        {"key": "identity", "title": "Enter the agent's account", "done": bool(cfg.agent.email), "detail": "The Triage Agent account that owns the Studio flows.", "to": "/settings/agent"},
-        {"key": "spaces", "title": "Set the Chat spaces", "done": {"burson", "clean"} <= set(spaces_set), "detail": f"{len(spaces_set)} of {len(cfg.spaces)} spaces have a link or id", "to": "/settings/spaces"},
-        {"key": "roster", "title": "Build the IM roster", "done": bool(im.people and im.rotation), "detail": f"{len(im.people)} people, {len(im.rotation)} recurring slots", "to": "/workforce"},
+        {"key": "integrations", "title": "Connect the tools", "done": tools["ready"] == tools["required"],
+         "detail": f"{tools['ready']} of {tools['required']} needed tools are set. Find and fill writes what the project already has.", "to": "/connections"},
+        {"key": "admins", "title": "Add your people", "done": bool(cfg.admin_emails() or plat.access.bootstrap_admins),
+         "detail": f"{len(cfg.admin_emails()) + len(plat.access.bootstrap_admins)} admin(s) named", "to": "/admin"},
+        {"key": "roster", "title": "Give the IMs shifts", "done": bool(im.people and im.rotation), "detail": f"{len(im.people)} people, {len(im.rotation)} recurring slots", "to": "/workforce"},
         {"key": "distribution", "title": "Check distribution and recipients", "done": any(p.pa for p in cfg.distribution.products), "detail": "Who receives each product's Social Alert.", "to": "/settings/distribution"},
         {"key": "safety", "title": "Review safety settings", "done": all(c.passed for c in safety.run_checks(ctx) if c.severity == "blocker"), "detail": "Leak guard, Testing recipients, allow-lists.", "to": "/settings/safety"},
-        {"key": "bigquery", "title": "Connect BigQuery", "done": bool(plat.bigquery.dataset and (plat.bigquery.tables.get("events") or os.environ.get("TRIAGE_BQ_TABLE"))), "detail": "Dataset and the events table.", "to": "/settings/bigquery"},
-        {"key": "delivery", "title": "Set up delivery", "done": bool(plat.pubsub.outbound_topic and plat.pubsub.dead_letter_topic) or cfg.outbox.doorbell != "none", "detail": "The doorbell, and Pub/Sub topics for retries and dead letters.", "to": "/settings/pubsub"},
         {"key": "knowledge", "title": "Add knowledge docs", "done": bool(knowledge.list_docs(ctx)), "detail": "The documents the agent reads and cites.", "to": "/knowledge"},
         {"key": "flags", "title": "Turn on what you want", "done": any(plat.flags.model_dump().values()), "detail": "Every switch starts OFF.", "to": "/settings/flags"},
     ]

@@ -661,6 +661,19 @@ Response schemas are pydantic models next to the code that uses them.
 store's overrides, edited per part through `GET/PUT /api/platform/{part}`. Every flag defaults to `False`. Agent Runtime, jobs, worker and
 Console re-read overrides within 5 seconds.
 
+**Stories** (`stories.py`, settings `platform.stories`): alerts are placed on stories by the Chat bot's same-story rules (story text,
+identifier clash, `same_story_similarity`, `gray_similarity` with the same tag and product, word likeness without vectors, `keep_days`).
+Collections `stories`, `story_members` (case id to story), `story_vectors` (removed past `keep_days`). `stories.refresh` runs on
+`GET /api/stories` and in the once-a-minute tick. `GET /api/stories?hours=` returns each story's size, status (`new`, `growing`, `quiet`),
+smaller stories, per-alert points and hourly running totals; `GET /api/stories/{id}` adds its alerts and Chat messages.
+
+**Compare, Admin, Integrations:** `GET /api/compare?days=` (four sections of `{key, label, value, unit, note, previous}`),
+`GET /api/admin/overview` (leads), `PUT|DELETE /api/admin/people/{email}` (admins; audit `people.save`, `people.remove`),
+`GET /api/connections`, `PUT|DELETE /api/connections/{key}`, `POST /api/connections/{key}/test`, `GET /api/connections/{key}/options?field=`,
+`POST /api/connections/autofill` (admins; audit `connection.*`). A connection writes only its own fields, through the same overrides as
+Settings. A check's result is kept in kv `connection:test:<key>` with a fingerprint of the values and dropped when they change.
+`GET /api/meta` carries `notifications` for the pop-ups. The tick records kv `tick:last`.
+
 **Operations** (`platform_ops.py`): `record_assessment {case_id, agree, verdict?, fields?, note?, actor}`, `run_temp_check {issue?, boolean?,
 query_ref?, filters?, draft_query?, case_id?, hours?, update_of?, keep_refreshed_hours?, actor}`, `run_forecast {force?}`, `refresh_knowledge {}`,
 `run_watches {}`. From Chat an assessment needs an analyst or IM; a Console call was already checked against the person's role.

@@ -924,7 +924,7 @@ def test_chat_tracking_knowledge_agent_and_setup_endpoints(ctx, client, fake_llm
     assert listing["can_act"] is False and len(listing["sessions"]) == 1
     setup = client.get("/api/setup", headers=iap(ADMIN)).json()
     steps = {s["key"]: s["done"] for s in setup["steps"]}
-    assert steps["knowledge"] is True and steps["bigquery"] is False and steps["flags"] is False
+    assert steps["knowledge"] is True and steps["integrations"] is False and steps["flags"] is False
     help_topics = client.get("/api/help", headers=iap(IM)).json()["topics"]
     assert {"dashboard", "review-feed", "chat-agent", "temp-check", "workforce", "settings"} <= {t["id"] for t in help_topics}
     safe = client.get("/api/safety", headers=iap(IM)).json()
@@ -1122,5 +1122,5 @@ def test_the_console_asks_the_deployed_agent_whether_it_is_on_the_same_settings(
     monkeypatch.setattr(routes_admin, "query_agent_runtime", lambda *a: (_ for _ in ()).throw(RuntimeError("HTTP 403: denied")))
     got = client.get("/api/agent-runtime", headers=iap(IM)).json()
     assert got["reachable"] is False and "403" in got["error"]
-    steps = {s["key"]: s["done"] for s in client.get("/api/setup", headers=iap(ADMIN)).json()["steps"]}
-    assert steps["runtime"] is True
+    tools = {c["key"]: c["state"] for c in client.get("/api/connections", headers=iap(ADMIN)).json()["connections"]}
+    assert tools["runtime"] == "ready"
