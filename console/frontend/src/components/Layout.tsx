@@ -1,6 +1,6 @@
 import {
-  BookOpen, CalendarClock, ChevronDown, CircleHelp, FolderSearch, Gauge, Inbox, LayoutDashboard, Mail, Megaphone, Menu, MessagesSquare, Moon,
-  PanelLeftClose, PanelLeftOpen, Plug, Scale, Settings, ShieldCheck, Sparkles, Sun, Thermometer, UsersRound, Waypoints,
+  BookOpen, BrainCircuit, CalendarClock, ChevronDown, CircleHelp, FolderSearch, Gauge, Inbox, LayoutDashboard, Mail, Megaphone, Menu, MessagesSquare, Moon,
+  PanelLeftClose, PanelLeftOpen, Plug, Radar, Route, Scale, Settings, ShieldCheck, Sparkles, Sun, Thermometer, UsersRound, Waypoints,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router";
@@ -17,7 +17,7 @@ const HELP_TOPIC: Record<string, string> = {
   "": "dashboard", feed: "review-feed", chat: "chat-spaces", agent: "chat-agent", "temp-check": "temp-check", workforce: "workforce",
   rosters: "rosters", knowledge: "knowledge", campaigns: "campaigns", cases: "cases", escalations: "cases", settings: "settings",
   suppressed: "cases", parity: "cases", learning: "knowledge", outbox: "delivery", activity: "audit", help: "getting-started",
-  stories: "stories", compare: "compare", connections: "integrations", admin: "admin",
+  stories: "stories", compare: "compare", connections: "integrations", admin: "admin", early: "early-detection", routing: "routing", ai: "ai",
 };
 
 export function helpPathFor(pathname: string): string {
@@ -91,6 +91,7 @@ export function Layout({ children }: { children: ReactNode }) {
       { to: "/", label: "Dashboard", icon: <LayoutDashboard className={icon} /> },
       { to: "/feed", label: "Review feed", icon: <Inbox className={icon} />, count: counts.review },
       { to: "/stories", label: "Stories", icon: <Waypoints className={icon} /> },
+      { to: "/early", label: "Early Detection", icon: <Radar className={icon} /> },
       { to: "/chat", label: "Chat spaces", icon: <MessagesSquare className={icon} /> },
       { to: "/agent", label: "Chat agent", icon: <Sparkles className={icon} /> },
     ],
@@ -148,6 +149,8 @@ export function Layout({ children }: { children: ReactNode }) {
           {!wide && <div className="px-1 pb-2"><GmailButton /></div>}
           <Item item={{ to: "/help", label: "Help", icon: <CircleHelp className={icon} /> }} collapsed={collapsed} />
           {(me?.is_admin || me?.is_lead) && <>
+            <Item item={{ to: "/routing", label: "Routing", icon: <Route className={icon} /> }} collapsed={collapsed} />
+            <Item item={{ to: "/ai", label: "AI", icon: <BrainCircuit className={icon} /> }} collapsed={collapsed} />
             <Item item={{ to: "/connections", label: "Integrations", icon: <Plug className={icon} /> }} collapsed={collapsed} />
             <Item item={{ to: "/admin", label: "Admin", icon: <ShieldCheck className={icon} /> }} collapsed={collapsed} />
             <Item item={{ to: "/settings", label: "Settings", icon: <Settings className={icon} /> }} collapsed={collapsed} />

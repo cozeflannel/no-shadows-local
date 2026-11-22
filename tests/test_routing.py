@@ -353,3 +353,12 @@ def test_the_copy_runs_in_the_once_a_minute_tick(api, world):
     world.clock.advance(minutes=1)
     assert run_job(api.ctx, "maintenance")["jobs"]["routing"]["copied"]["mirror"] == 1
     assert api.get("/api/routing").json()["last_run"]["ok"] is True
+
+
+def test_the_safety_valve_is_set_from_the_routing_page_and_the_other_safety_settings_stay(api, world):
+    api.put("/api/platform/safety", {"value": {"testing": True, "testing_recipients": ["tester@ops.test"]}})
+    state = route(api, bot_on=True, source=SRC, safety_valve=False)
+    assert state["safety_valve"] is False and state["mode"]["live"] is True
+    safety_now = api.ctx.config.platform.safety
+    assert safety_now.testing is False and safety_now.testing_recipients == ["tester@ops.test"]
+    assert route(api, safety_valve=True)["mode"] == {"live": False, "why": "the Safety valve is ON"}

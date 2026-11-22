@@ -269,6 +269,82 @@ TOPICS: list[dict[str, Any]] = [
         ],
     },
     {
+        "id": "routing", "page": "Routing", "title": "Routing: which space is read, copied and written", "audience": "admins",
+        "summary": "Set the space the QA chatbot reads, the spaces it copies to, and whether it may write back.",
+        "sections": [
+            {"heading": "Set it up", "steps": [
+                "Sign the QA chatbot in under Integrations, Google Chat, and add its account to each space.",
+                "Open Routing.",
+                "Paste the source space's link: Burson's space, or any other.",
+                "Paste the second space's link. It gets every message from the source, in the same order.",
+                "Optional: paste a third space's link. It gets everything that reached the second space.",
+                "Turn QA chatbot ON and press Save. Copying starts from the last 15 minutes."]},
+            {"heading": "When the QA chatbot writes in the source space", "items": [
+                "Safety valve ON: never. The second and third spaces still get every message.",
+                "Safety valve OFF and a second space set: never. Its work goes to the copy spaces.",
+                "Safety valve OFF and no second space: fully open. It reads and writes in the source space.",
+                "Ask before each post to the source, ON: each message waits under Waiting for Send until someone presses Send or Skip.",
+                "A space people outside Google can join is never written, unless it is the source and the source is open."]},
+            {"heading": "What is copied", "items": [
+                "Alerts: an exact copy, without the credit line the sending app adds.",
+                "With Copy replies and emojis too ON: replies under the matching message, people's messages, and each emoji once.",
+                "Never copied: the QA chatbot's own posts, another app's replies in a thread, edits, deletions and removed emojis.",
+                "A message that fails holds the ones behind it, so nothing arrives out of order. After five tries it is given up on and its row says why."]},
+            {"heading": "Names", "text": "Chat gives the QA chatbot each person's id and no name. Under People seen in the source space, type the name once and mark Burson or Google. Their copied messages then read Name (Burson): text."},
+            {"heading": "A copy space is refused when", "items": [
+                "It is the source space.", "People outside Google can join it.", "The second and third space are the same space.",
+                "The QA chatbot's account is not in it."]},
+        ],
+    },
+    {
+        "id": "early-detection", "page": "Early Detection", "title": "Early Detection", "audience": "everyone",
+        "summary": "Posts on one theme from small accounts, grouped into a story before anyone raises an alert.",
+        "sections": [
+            {"heading": "Work a story", "steps": [
+                "Open Early Detection. New holds the stories Gemini has written up.",
+                "Read the headline, the call (Escalate or Monitor) and the posts.",
+                "Size it with a temp check when you need numbers.",
+                "Press Escalate, Acknowledge or Dismiss. Add a note when it helps. Each step is on the record."]},
+            {"heading": "How a story is made", "items": [
+                "Every 15 minutes BigQuery reads the new posts of the tables named in Settings, Early Detection.",
+                "Only small accounts are read: 5,000 followers or fewer, under 500 engagements, 40 characters or more, posted in the last 24 hours.",
+                "Vertex AI turns each post into an embedding inside BigQuery. A post joins the nearest story, or starts one with its closest posts when two or more accounts are among them.",
+                "A story is raised at 5 separate accounts (4 on two platforms) and 2 posts within 3 hours.",
+                "A story already raised goes out again only as an Update: twice the accounts and three more, or a new platform."]},
+            {"heading": "Scoring with Gemini Decisions", "text": "With the switch Score early stories with Gemini Decisions ON, each raised story is scored first. Plain noise goes to Held back. A small story (3 accounts) that scores high is raised as an Early signal. The most severe are written up first."},
+            {"heading": "The tabs", "items": [
+                "New: written up, waiting for a person.", "Waiting for write-up: raised, Gemini has not written it up yet.",
+                "Acted on: acknowledged or escalated.", "Held back: Gemini Decisions scored it as noise, with the reason.",
+                "Dismissed: Gemini or a person dismissed it. Move back to New undoes it."]},
+            {"heading": "Turn it on", "steps": [
+                "Settings, Early Detection: name the post tables under sources (their keys from Settings, Temp check, sources).",
+                "Settings, Switches: turn on Change BigQuery from here once, so its three tables can be created.",
+                "Settings, Switches: turn on Early Detection.",
+                "Open AI and press Check now on Vertex AI in BigQuery. Every statement is checked against the real tables."]},
+        ],
+    },
+    {
+        "id": "ai", "page": "AI", "title": "AI: three engines, one job each", "audience": "admins",
+        "summary": "What each AI engine does here, whether it is connected, and a live check of each.",
+        "sections": [
+            {"heading": "The engines", "items": [
+                "Gemini talks with people: the Console chat agent, the QA chatbot's replies, alert write-ups and each early story's headline and call.",
+                "Gemini Decisions decides: it answers set questions with probabilities and writes no text. It picks an alert's class and scores early stories.",
+                "Vertex AI in BigQuery reads the post tables: Early Detection's embeddings and grouping, and the Watches' questions and scores, run next to the data.",
+                "Document search finds the passages of your Knowledge documents that bear on a question, so Gemini answers company questions from them and cites them."]},
+            {"heading": "Connect Gemini Decisions", "steps": [
+                "Put the Gemini API key in a secret in Secret Manager (or under Settings, Secrets).",
+                "Settings, Gemini Decisions: enter the secret's name under secret and Save.",
+                "Open AI and press Check now on Gemini Decisions.",
+                "Settings, Switches: turn on Gemini Decisions sorts alerts, and Score early stories with Gemini Decisions."]},
+            {"heading": "When Gemini Decisions fails", "text": "It is never asked twice. After a failure no call is made for 15 minutes and work goes on without it: Gemini picks the class, and every raised story goes to its write-up. The card shows the pause and the reason."},
+            {"heading": "Check now", "items": [
+                "Gemini: each model answers one word.", "Gemini Decisions: one question comes back with a probability.",
+                "Vertex AI in BigQuery: one embedding is made, then each Early Detection statement is checked against the real tables without running. A failing line shows BigQuery's own reason.",
+                "Document search: a test question finds passages."]},
+        ],
+    },
+    {
         "id": "admin", "page": "Admin", "title": "Admin", "audience": "leads",
         "summary": "People and roles, system status, and recent changes.",
         "sections": [

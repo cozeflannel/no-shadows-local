@@ -32,14 +32,22 @@ class RoutingBody(BaseModel):
 
 @router.put("/routing")
 def routing_put(body: RoutingBody, request: Request, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_admin)) -> dict[str, Any]:
-    """Saves the spaces and switches. A space may be pasted as a link or an id; a setting left out keeps its value."""
-    value = {**ctx.config.platform.routing.model_dump(mode="json"), **body.value}
+    """Saves the spaces and switches. A space may be pasted as a link or an id; a setting left out keeps its value.
+    The Safety valve is the Testing switch under Safety and Testing: one valve for emails and for Chat."""
+    given = dict(body.value)
+    valve = given.pop("safety_valve", None)
+    value = {**ctx.config.platform.routing.model_dump(mode="json"), **given}
     for key in SPACES:
         try:
             value[key] = mirror.space_ref(str(value.get(key) or ""))
         except ValueError as exc:
             raise HTTPException(422, {"error": str(exc), "code": "validation_error", "field": key}) from exc
     save_part("routing", PartBody(value=value), request, ctx, user, label="Routing", action="routing.save")
+    if valve is not None and bool(valve) != ctx.config.platform.safety.testing:
+        fresh = request.app.state.console.ctx
+        safety = {**fresh.config.platform.safety.model_dump(mode="json"), "testing": bool(valve)}
+        save_part("safety", PartBody(value=safety, note=f"Safety valve turned {'ON' if valve else 'OFF'} on the Routing page"), request, fresh, user,
+                  label="Safety valve", action="routing.valve")
     return _status(request.app.state.console.ctx, user)
 
 

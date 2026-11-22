@@ -7,11 +7,13 @@ import { useApp } from "./context";
 import { LiveProvider } from "./lib/live";
 import ActivityPage from "./pages/Activity";
 import AdminPage from "./pages/Admin";
+import AiPage from "./pages/Ai";
 import AgentPage from "./pages/Agent";
 import CampaignsPage from "./pages/Campaigns";
 import CasesPage from "./pages/Cases";
 import ComparePage from "./pages/Compare";
 import ConnectionsPage from "./pages/Connections";
+import EarlyPage from "./pages/Early";
 import ChatSpacesPage from "./pages/ChatSpaces";
 import DashboardPage from "./pages/Dashboard";
 import EscalationsPage from "./pages/Escalations";
@@ -24,6 +26,7 @@ import OverviewPage from "./pages/Overview";
 import ParityPage from "./pages/Parity";
 import RostersPage from "./pages/Rosters";
 import SettingsPage from "./pages/Settings";
+import RoutingPage from "./pages/Routing";
 import StoriesPage from "./pages/Stories";
 import SuppressedPage from "./pages/Suppressed";
 import TempCheckPage from "./pages/TempCheck";
@@ -74,6 +77,9 @@ export default function App() {
             <Route path="/stories" element={<StoriesPage />} />
             <Route path="/stories/:storyId" element={<StoriesPage />} />
             <Route path="/compare" element={<ComparePage />} />
+            <Route path="/early" element={<EarlyPage />} />
+            <Route path="/routing" element={<RoutingPage />} />
+            <Route path="/ai" element={<AiPage />} />
             <Route path="/connections" element={<ConnectionsPage />} />
             <Route path="/connections/:toolKey" element={<ConnectionsPage />} />
             <Route path="/admin" element={<AdminPage />} />
