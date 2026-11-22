@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from . import audit, chatlog, mirror, stories
+from . import audit, chatlog, early, mirror, stories
 from .events import HOT_COLLECTION, TeeEventLogger
 
 if TYPE_CHECKING:
@@ -33,6 +33,7 @@ def run(ctx: "AgentContext", force: bool = False) -> dict[str, Any]:
         (stories.VECTORS, "last_at", now - timedelta(days=cfg.stories.keep_days)),  # a story that is over is never matched again
         (mirror.COPIES, "at", now - timedelta(days=cfg.routing.keep_days)),  # the record of what was copied between spaces
         (mirror.QUEUE, "at", now - timedelta(days=cfg.routing.keep_days)),
+        (early.SIGNALS, "raised", now - timedelta(days=cfg.early.keep_days)),  # raised early stories
     ]
     if isinstance(ctx.events, TeeEventLogger) and ctx.events.cold is not None:
         plan.append((HOT_COLLECTION, "event_ts", now - timedelta(hours=2 * cfg.bigquery.hot_window_hours)))

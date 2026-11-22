@@ -43,6 +43,27 @@ STANDARD_TABLES: dict[str, dict[str, Any]] = {
                    ("lower_bound", "FLOAT64", "NULLABLE"), ("upper_bound", "FLOAT64", "NULLABLE"),
                    ("confidence_level", "FLOAT64", "NULLABLE")],
     },
+    "early_posts": {
+        "description": "Early Detection: each post read from the post tables, with the numbers Vertex AI gave it (its embedding).",
+        "partition": "seen", "cluster": ["post_id"],
+        "schema": [("post_id", "STRING", "REQUIRED"), ("source", "STRING", "NULLABLE"), ("platform", "STRING", "NULLABLE"),
+                   ("author", "STRING", "NULLABLE"), ("text", "STRING", "NULLABLE"), ("url", "STRING", "NULLABLE"),
+                   ("posted", "TIMESTAMP", "NULLABLE"), ("seen", "TIMESTAMP", "REQUIRED"), ("followers", "INT64", "NULLABLE"),
+                   ("engagement", "FLOAT64", "NULLABLE"), ("embedding", "FLOAT64", "REPEATED")],
+    },
+    "early_members": {
+        "description": "Early Detection: which story each post belongs to.",
+        "partition": "joined", "cluster": ["story_id"],
+        "schema": [("post_id", "STRING", "REQUIRED"), ("story_id", "STRING", "REQUIRED"), ("sim", "FLOAT64", "NULLABLE"),
+                   ("joined", "TIMESTAMP", "REQUIRED")],
+    },
+    "early_signals": {
+        "description": "Early Detection: each time a story reached the bar (story), grew (update) or was raised early (early).",
+        "partition": "raised", "cluster": ["story_id"],
+        "schema": [("signal_id", "STRING", "REQUIRED"), ("story_id", "STRING", "REQUIRED"), ("kind", "STRING", "REQUIRED"),
+                   ("raised", "TIMESTAMP", "REQUIRED"), ("accounts", "INT64", "NULLABLE"), ("posts", "INT64", "NULLABLE"),
+                   ("platforms", "STRING", "NULLABLE"), ("first_posted", "TIMESTAMP", "NULLABLE"), ("last_posted", "TIMESTAMP", "NULLABLE")],
+    },
     "golden": {
         "description": "Golden examples: alerts the Incident Managers confirmed or corrected.",
         "partition": "updated_at", "cluster": ["label"],
@@ -313,8 +334,9 @@ def require_admin(ctx: "AgentContext", full_id: str) -> None:
         raise NotAllowed(f"The Console may not change {dataset}. Add it under Settings → BigQuery → datasets the Console may change.")
 
 
-def ensure_standard_tables(ctx: "AgentContext") -> list[dict[str, Any]]:
-    """Create the agent's own tables in its dataset (missing ones only) and map them in Settings is left to the caller."""
+def ensure_standard_tables(ctx: "AgentContext", only: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+    """Create the agent's own tables in its dataset (missing ones only); mapping them in Settings is left to the caller.
+    With `only`, just the tables named."""
     cfg = ctx.config.platform.bigquery
     if not cfg.dataset:
         raise ValueError("Set the agent's dataset first (Settings → BigQuery → Dataset).")
@@ -329,6 +351,8 @@ def ensure_standard_tables(ctx: "AgentContext") -> list[dict[str, Any]]:
         gw.create_dataset(dataset.split(".")[-1], cfg.location)
         steps.append({"step": f"dataset {dataset}", "ok": True, "detail": "created"})
     for name, spec in STANDARD_TABLES.items():
+        if only is not None and name not in only:
+            continue
         full = f"{dataset}.agent_{name}"
         try:
             gw.get_table(full)

@@ -870,6 +870,10 @@ class FeatureFlags(ConfigModel):
     golden_set_capture: bool = Field(False, title="Keep checked examples", description="ON: every fix, review decision and IM assessment is kept as an example of the right answer, used later to test the agent. OFF: only assessments an IM records are kept.")
     bigquery_admin: bool = Field(False, title="Change BigQuery from here", description="ON: admins can create and change datasets, tables and views from the Console. OFF: the Console only reads them.")
     secret_admin: bool = Field(False, title="Add secrets from here", description="ON: admins can add secrets (API tokens) from the Console. OFF: secrets are added in Google Cloud.")
+    decisions_classifier: bool = Field(False, title="Gemini Decisions sorts alerts", description="ON: Gemini Decisions picks each alert's class; when it is unsure or fails, Gemini picks. OFF: Gemini picks every class.")
+    early_detection: bool = Field(False, title="Early Detection", description="ON: the post tables are read in BigQuery every few minutes, posts on one theme are grouped into a story, and a story that reaches the bar is raised. OFF: nothing is read.")
+    early_fast_triage: bool = Field(False, title="Score early stories with Gemini Decisions", description="ON: Gemini Decisions scores each story first; plain noise is held back, the most severe are written up first, and a small story that scores high is raised as an early signal. OFF: every story goes straight to its write-up.")
+    early_cards: bool = Field(False, title="Post early stories in Chat", description="ON: each written-up story is posted in the second space on the Routing page. OFF: stories show in the Console only.")
     alert_popups: bool = Field(False, title="Alert pop-ups", description="ON: people in the Console get a pop-up when an alert comes in; each person can mute their own. OFF: no pop-ups.")
 
 
@@ -1154,6 +1158,64 @@ class RoutingConfig(ConfigModel):
     keep_days: int = Field(30, ge=1, le=365, description="How long the record of what was copied is kept.")
 
 
+class DecisionsConfig(ConfigModel):
+    """Gemini Decisions: the decision maker. It answers set questions with probabilities and writes no text."""
+
+    secret: str = Field("", description="Name of the secret that holds the Gemini API key. Blank = Gemini Decisions is not used.")
+    model: str = Field("gemini-decision-1", description="The Decisions model.")
+    base_url: str = Field("https://generativelanguage.googleapis.com", description="Where the Decisions API is reached.")
+    api_version: str = Field("v1beta", description="The API version in the address.")
+    max_per_day: int = Field(300, ge=0, le=100000, description="The most questions-calls in a day. Past it, work goes on without Gemini Decisions.")
+    slow_ms: int = Field(10000, ge=500, le=120000, description="An answer slower than this many milliseconds counts as failed.")
+    pause_minutes: int = Field(15, ge=1, le=1440, description="After a failure no call is made for this long.")
+    input_max_chars: int = Field(4000, ge=200, le=20000, description="The longest input sent in one call.")
+    class_min_confidence: float = Field(0.7, ge=0, le=1, description="Sorting alerts: at or above this, the class Gemini Decisions picked is used. Below it, Gemini picks.")
+    hold_about_max: float = Field(0.10, ge=0, le=1, description="Early stories: a low-severity story is held back when 'about the company' is at or below this.")
+    hold_noise_min: float = Field(0.90, ge=0, le=1, description="Early stories: a low-severity story is held back when 'routine chatter' is at or above this.")
+    confidence_min: float = Field(0.55, ge=0, le=1, description="Early stories: an answer below this confidence holds nothing back and raises nothing.")
+    watch_min: float = Field(0.80, ge=0, le=1, description="Early signal: 'about the company' and 'a risk to the brand' must each reach this.")
+    independent_min: float = Field(0.30, ge=0, le=1, description="Early signal: 'separate accounts report it first-hand' must reach this.")
+    watch_min_level: int = Field(2, ge=0, le=4, description="Early signal: the lowest severity that raises one (0 none, 1 low, 2 medium, 3 high, 4 critical).")
+
+
+class EarlyConfig(ConfigModel):
+    """Early Detection: posts on one theme are grouped into a story inside BigQuery, before anyone raises an alert."""
+
+    sources: list[str] = Field(default_factory=list, description="Keys of the post tables read (Settings, Temp check, sources).")
+    interval_minutes: int = Field(15, ge=1, le=1440, description="How often the post tables are read.")
+    embedding_endpoint: str = Field("text-embedding-005", description="The Vertex AI model that turns each post into numbers, run from BigQuery.")
+    ai_connection: str = Field("", description="BigQuery connection for the Vertex AI call (project.location.name). Blank = the service's own sign-in.")
+    company: str = Field("Google or Alphabet", description="Who the stories must be about, as Gemini Decisions is asked.")
+    about_true: str = Field("They are about Google or Alphabet, an executive of theirs, or a product or service of theirs, such as Search, AI Overviews, Gemini, Pixel, Android, Chrome, Chromebook, YouTube, Gmail, Workspace, Maps, Waze, Photos, Drive, Cloud, Play, Pay, Wallet, Ads, Nest, Fitbit, Waymo, DeepMind, NotebookLM, Veo or Imagen.",
+                            description="What counts as about the company.")
+    about_false: str = Field("An unrelated keyword or homonym: the generic verb (\"google it\"), Gemini the star sign (season, moon, rising, horoscope, zodiac), Chrome Hearts or chrome wheels and rims, a store badge (\"Available on Google Play\", \"Get it on Google Play\"), or posts about something else entirely.",
+                             description="What does not count as about the company.")
+    max_followers: int = Field(5000, ge=0, description="Only posts by accounts with this many followers or fewer are read (bigger accounts reach alerts another way).")
+    max_engagement: int = Field(500, ge=0, description="Only posts with fewer engagements than this are read.")
+    min_chars: int = Field(40, ge=1, description="A post needs at least this many characters.")
+    min_words: int = Field(7, ge=1, description="A post needs at least this many words.")
+    posted_within_hours: int = Field(24, ge=1, le=168, description="Only posts made within this many hours are read.")
+    lag_minutes: int = Field(30, ge=0, le=720, description="Each read goes this far back again, for posts that reach the table late. None is read twice.")
+    skip_authors: list[str] = Field(default_factory=lambda: ["grok", "automoderator", "[deleted]"], description="Accounts whose posts are left out.")
+    posts_per_check: int = Field(200, ge=1, le=2000, description="The most new posts one table hands over in one read.")
+    pool_hours: int = Field(6, ge=1, le=72, description="A post with no story yet can start or join one for this many hours.")
+    active_hours: int = Field(24, ge=1, le=168, description="A story takes new posts for this many hours after its last one.")
+    join_similarity: float = Field(0.82, ge=0.5, le=1, description="A post joins a story when it is at least this close to the story's centre.")
+    start_similarity: float = Field(0.80, ge=0.5, le=1, description="Posts start a story together when they are at least this close to each other.")
+    neighbours: int = Field(20, ge=2, le=200, description="How many of a post's closest posts are looked at when a story starts.")
+    window_minutes: int = Field(180, ge=15, le=1440, description="A story is measured over its last this many minutes.")
+    min_accounts: int = Field(5, ge=2, description="A story is raised at this many separate accounts...")
+    min_accounts_two_platforms: int = Field(4, ge=2, description="...or at this many when it is on two or more platforms.")
+    min_links: int = Field(2, ge=1, description="A story needs at least this many separate posts.")
+    early_accounts: int = Field(3, ge=2, description="An early signal looks at stories with at least this many accounts (with Gemini Decisions scoring ON).")
+    max_per_check: int = Field(5, ge=1, le=100, description="The most stories raised from one read.")
+    max_per_day: int = Field(40, ge=1, le=1000, description="The most stories raised in a day.")
+    reviews_per_minute: int = Field(2, ge=1, le=20, description="How many raised stories Gemini writes up each minute.")
+    posts_shown: int = Field(12, ge=1, le=50, description="How many of a story's posts are kept with it.")
+    escalate_min_confidence: float = Field(0.8, ge=0, le=1, description="Gemini must be at least this sure to call Escalate. Below it the call is Monitor.")
+    keep_days: int = Field(14, ge=1, le=365, description="How long raised stories are kept in the Console.")
+
+
 class PlatformConfig(ConfigModel):
     access: AccessConfig = Field(default_factory=AccessConfig)
     flags: FeatureFlags = Field(default_factory=FeatureFlags)
@@ -1171,6 +1233,8 @@ class PlatformConfig(ConfigModel):
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    decisions: DecisionsConfig = Field(default_factory=DecisionsConfig)
+    early: EarlyConfig = Field(default_factory=EarlyConfig)
     campaigns: CampaignsConfig = Field(default_factory=CampaignsConfig)
 
     def flag(self, name: str) -> bool:

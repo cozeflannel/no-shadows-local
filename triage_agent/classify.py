@@ -30,6 +30,7 @@ class Classification(BaseModel):
     rationale: str = ""
     secondary: list[str] = Field(default_factory=list)
     trusted: bool = False  # confidence reached Settings → Classification → min_confidence
+    decided_by: str = "Gemini"  # "Gemini Decisions" when it picked the class (Settings → Switches)
 
 
 def _class_lines(ctx_or_config: Any, classes: list[Any]) -> str:
@@ -68,6 +69,13 @@ def classify(ctx: "AgentContext", fields: dict[str, Any], extra: dict[str, Any] 
         return None
     settings = cfg.platform.classification
     payload = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in fields.items() if v not in (None, "", [])}
+    if cfg.platform.flag("decisions_classifier"):  # the decision maker goes first; unsure or unreachable, Gemini picks as before
+        from . import decisions
+
+        picked = decisions.classify(ctx, payload, classes)
+        if picked and picked["sure"]:
+            return Classification(label=picked["label"], confidence=picked["confidence"], rationale="Picked by Gemini Decisions.",
+                                  trusted=picked["confidence"] >= settings.min_confidence, decided_by="Gemini Decisions")
     try:
         out = ctx.llm.generate_json(
             model=settings.model or cfg.models.triage, system=build_system(cfg, classes),
