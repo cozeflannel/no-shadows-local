@@ -601,7 +601,7 @@ def setup_status(ctx: AgentContext = Depends(get_ctx), user: User = Depends(requ
     tools = catalog(ctx)["summary"]
     steps = [
         {"key": "integrations", "title": "Connect the tools", "done": tools["ready"] == tools["required"],
-         "detail": f"{tools['ready']} of {tools['required']} needed tools are set. Find and fill writes what the project already has.", "to": "/connections"},
+         "detail": f"{tools['ready']} of {tools['required']} needed tools are set. Set up fills what the project already has and checks each tool.", "to": "/connections"},
         {"key": "admins", "title": "Add your people", "done": bool(cfg.admin_emails() or plat.access.bootstrap_admins),
          "detail": f"{len(cfg.admin_emails()) + len(plat.access.bootstrap_admins)} admin(s) named", "to": "/admin"},
         {"key": "roster", "title": "Give the IMs shifts", "done": bool(im.people and im.rotation), "detail": f"{len(im.people)} people, {len(im.rotation)} recurring slots", "to": "/workforce"},

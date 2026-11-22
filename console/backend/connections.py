@@ -1,10 +1,15 @@
 """Integrations: every tool the agent uses, connected in one place.
 
 Each tool lists the few values it needs, whether they are set, and a live check of the access the Console's account
-has. Find and fill writes what the running service can see for itself (the project, the region, its own address, the
-one Agent Runtime, the dataset that holds the agent's tables) and the temp check app's setup (config/temp_check_app.yaml:
-its tables of posts and Brandwatch values), so only what a person alone knows is left to enter.
+has. The page's Set up button fills, creates and checks in one press. The fill writes what the running service can see
+for itself (the project, the region, its own address, the one Agent Runtime, the dataset that holds the agent's tables)
+and the temp check app's setup (config/temp_check_app.yaml: its tables of posts and Brandwatch values), so only what a
+person alone knows is left to enter.
 Values are saved to the same settings the rest of the Console edits; a check's result is kept until its values change.
+
+BigQuery is one card: the agent's own dataset, and every table the app reads listed once with what reads it. A table
+several settings name is one row, and changing it there changes each of them. A table's location is read from BigQuery
+by the check, never typed. The catalog also carries what is left to do across every tool, and each GRANT line once.
 """
 
 from __future__ import annotations
@@ -14,7 +19,6 @@ import hashlib
 import json
 import logging
 import os
-import time
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Callable
@@ -60,6 +64,15 @@ class Tool:
     watch: tuple[str, ...] = ()  # settings a check depends on besides its fields: a check is forgotten when one changes
 
 
+TABLES_PATH = "platform.temp_check.sources"
+EARLY_PATH = "platform.early.sources"
+WATCH_PATH = "platform.campaigns.watch_sources"
+# What decides which tables BigQuery's check asks for, and where: a check is forgotten when one of these changes.
+TABLE_SETTINGS = (TABLES_PATH, EARLY_PATH, WATCH_PATH, "inhouse.enabled", "inhouse.mark_delivered", "inhouse.outbox_view", "inhouse.alert_log_table",
+                  "inhouse.location", "inhouse.sonar_location", "sonar_lookup.enabled", "sonar_lookup.table", "sonar_lookup.slrr_table",
+                  "sonar_lookup.alert_log_table", "sonar_lookup.location", "platform.costs.billing_export_table")
+
+
 def _spaces(ctx: AgentContext) -> tuple[F, ...]:
     return tuple(F(f"spaces.{s.key}.url", f"{s.display_name} space", required=s.key in ("burson", "clean"), alt=f"spaces.{s.key}.space_id",
                    help="The space's link from Chat.") for s in ctx.config.spaces)
@@ -82,11 +95,13 @@ def tools(ctx: AgentContext) -> list[Tool]:
         Tool("chat", "Google Chat", "The spaces the QA chatbot reads and posts in.", True,
              (F("agent.email", "The QA chatbot's account", True, help="The Google account the QA chatbot reads and posts as."), *_spaces(ctx)),
              ("Alerts in", "Posts out"), "The QA chatbot's account is a member of each space.", "/settings/spaces"),
-        Tool("bigquery", "BigQuery", "Keeps events and audit entries, and runs forecasts and watches.", True,
-             (F("platform.bigquery.dataset", "Dataset", True, options="datasets", help="The agent's own dataset."),
-              F("platform.bigquery.location", "Location"), F("platform.bigquery.project", "Project", help="Blank: the Cloud project.")),
-             ("Event log", "Workforce forecast", "Watches", "Costs"), "BigQuery Data Editor on the dataset and BigQuery Job User on the project.",
-             "/settings/bigquery", "/api/bigquery/provision"),
+        Tool("bigquery", "BigQuery", "The app's own dataset, and every table it reads.", True,
+             (F("platform.bigquery.dataset", "Dataset", True, options="datasets", help="The app's own dataset. What it creates goes here."),
+              F("platform.bigquery.location", "Location", help="For a new dataset. Read from BigQuery once the dataset exists."),
+              F("platform.bigquery.project", "Project", help="Blank: the Cloud project.")),
+             ("Event log", "Temp checks", "Early Detection", "Watches", "Our own alerts", "Find missing links", "Workforce forecast", "Costs"),
+             "BigQuery Data Editor on its own dataset, BigQuery Job User on the project, and BigQuery Data Viewer on each dataset it reads.",
+             "/settings/bigquery", "/api/bigquery/provision", watch=TABLE_SETTINGS),
         Tool("delivery", "Delivery", "How the agent's posts and emails go out, with retries.", False,
              (F("outbox.doorbell", "How Chat is told a post is waiting", True, choices=("none", "sheet", "email"), help="A row in a sheet, an email, or none."),
               F("platform.pubsub.outbound_topic", "Outbound topic", options="topics"),
@@ -112,14 +127,6 @@ def tools(ctx: AgentContext) -> list[Tool]:
                 help="The active queries named this way are searched when an issue has no query of its own yet."),
               F("platform.temp_check.standing_query_skip", "Leave out standing queries named with", help="A word: a standing query whose name has it is not searched.")),
              ("Temp checks",), "A Brandwatch API token, kept in Secret Manager.", "/settings/temp_check"),
-        Tool("post_tables", "Post tables", "The tables of posts that temp checks, Early Detection and watches search.", False, (),
-             ("Temp checks", "Early Detection", "Watches"), "BigQuery Data Viewer on each table's dataset.", "/settings/temp_check",
-             watch=("platform.temp_check.sources",)),
-        Tool("inhouse", "Sonar and DSD tables", "The tables in-house detection reads.", False,
-             (F("inhouse.sonar_table", "Sonar table", True), F("inhouse.outbox_view", "Story selection view", True),
-              F("inhouse.alert_log_table", "Alert log table", True), F("inhouse.project", "Project that runs the queries", True),
-              F("inhouse.location", "Location"), F("inhouse.sonar_location", "Sonar location")),
-             ("In-house detection", "Comparison with Burson"), "BigQuery Data Viewer on each table's dataset.", "/settings/config.inhouse"),
         Tool("campaigns", "Campaigns service", "Campaign briefs and the watches built on them.", False,
              (F("platform.campaigns.firestore_project", "Project", True), F("platform.campaigns.firestore_database", "Database", True),
               F("platform.campaigns.watch_ai_connection", "BigQuery connection for AI functions")),
@@ -167,6 +174,98 @@ def _is_set(settings: dict[str, Any], f: F) -> bool:
     return any(str(read(settings, p) or "").strip() not in ("", "none") for p in (f.path, f.alt) if p)
 
 
+# -- the tables the app reads, each listed once --------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Slot:
+    """One setting that names a table."""
+
+    path: str  # the setting that holds the table's id
+    name: str  # what the table is
+    what: str
+    use: str = ""  # the feature that reads the table from this setting; none: the setting only follows the table
+    on: bool = False  # that feature is ON
+    location: str = ""  # the setting that holds the table's location, when one does
+    post: str = ""  # the key of the table of posts: what reads it is chosen per table
+
+
+@dataclass
+class Row:
+    slots: list[Slot]
+    table: str
+
+    @property
+    def id(self) -> str:
+        return self.slots[0].path
+
+
+def _slots(settings: dict[str, Any]) -> list[Slot]:
+    from triage_agent import inhouse
+
+    own, look = settings.get("inhouse") or {}, settings.get("sonar_lookup") or {}
+    out = [Slot(f"{TABLES_PATH}.{t['key']}.table", t.get("label") or t["key"], t.get("what") or "", location=f"{TABLES_PATH}.{t['key']}.location", post=t["key"])
+           for t in read(settings, TABLES_PATH) or []]
+    alerts, links = bool(own.get("enabled")), bool(look.get("enabled"))
+    out += [
+        Slot("inhouse.outbox_view", "Story selection view", "Where the team's own alerts are read from.", "Our own alerts", alerts,
+             "inhouse." + inhouse.view_location_setting(str(own.get("outbox_view") or ""))),
+        Slot("inhouse.alert_log_table", "Alert log", "Every alert the team logged.", "Our own alerts", alerts and bool(own.get("mark_delivered")), "inhouse.location"),
+        Slot("sonar_lookup.slrr_table", "Alert log", "Every alert the team logged.", "Find missing links", links),
+        Slot("inhouse.sonar_table", "Sonar", "Sonar's record of each post."),
+        Slot("sonar_lookup.table", "Sonar", "Sonar's record of each post.", "Find missing links", links, "sonar_lookup.location"),
+    ]
+    if str(look.get("alert_log_table") or "").strip():
+        out.append(Slot("sonar_lookup.alert_log_table", "Second alert log", "A second log looked in for a missing link.", "Find missing links", links))
+    out.append(Slot("platform.costs.billing_export_table", "Billing export", "Google Cloud's billing export, for the Costs page.", "Costs", True))
+    return out
+
+
+def _table_rows(settings: dict[str, Any]) -> list[Row]:
+    """Every table the app reads, once: each table of posts is a row, and a setting that names the same table joins it."""
+    rows: list[Row] = []
+    for slot in _slots(settings):
+        table = str(read(settings, slot.path) or "").strip()
+        same = None if slot.post else next((r for r in rows if table and r.table == table), None)
+        if same is not None:
+            same.slots.append(slot)
+        elif table or slot.use or slot.post:  # an empty setting nothing reads from is not a row
+            rows.append(Row([slot], table))
+    return rows
+
+
+def _reads(settings: dict[str, Any], row: Row) -> list[str]:
+    if not row.table:
+        return []
+    out: list[str] = []
+    for slot in row.slots:
+        if slot.post:
+            t = read(settings, f"{TABLES_PATH}.{slot.post}") or {}
+            out += [name for name, on in (("Temp checks", t.get("enabled")), ("Early Detection", slot.post in (read(settings, EARLY_PATH) or [])),
+                                          ("Watches", slot.post in (read(settings, WATCH_PATH) or []))) if on]
+        elif slot.use and slot.on:
+            out.append(slot.use)
+    return list(dict.fromkeys(out))
+
+
+def _row_location(settings: dict[str, Any], row: Row) -> str:
+    return next((v for v in (str(read(settings, slot.location) or "").strip() for slot in row.slots if slot.location) if v), "")
+
+
+def table_list(settings: dict[str, Any], test: dict[str, Any] | None) -> list[dict[str, Any]]:
+    checked = {d["row"]: d for d in (test or {}).get("details") or [] if d.get("row")}
+    out = []
+    for row in _table_rows(settings):
+        first = row.slots[0]
+        post = None
+        if first.post:
+            t = read(settings, f"{TABLES_PATH}.{first.post}") or {}
+            post = {"key": first.post, "temp_checks": bool(t.get("enabled")), "early": first.post in (read(settings, EARLY_PATH) or []),
+                    "watches": first.post in (read(settings, WATCH_PATH) or [])}
+        was = checked.get(row.id)
+        out.append({"id": row.id, "name": first.name, "what": first.what, "table": row.table, "set": bool(row.table), "location": _row_location(settings, row),
+                    "post": post, "reads": _reads(settings, row), "status": {"ok": was["ok"], "message": was["message"]} if was else None})
+    return out
+
+
 # -- state ---------------------------------------------------------------------------------------------------------------------
 def _fingerprint(settings: dict[str, Any], t: Tool) -> str:
     paths = [f.path for f in t.fields] + list(t.watch)
@@ -195,7 +294,8 @@ def state_of(ctx: AgentContext, t: Tool, settings: dict[str, Any] | None = None)
     needed = [f for f in fields if f["required"]]
     missing = [f["label"] for f in needed if not f["set"]]
     kept = ctx.store.get_kv(TEST_KV + t.key) or {}
-    test = {k: kept.get(k) for k in ("ok", "message", "details", "at", "by")} if kept.get("fingerprint") == _fingerprint(settings, t) else None
+    test = ({**{k: kept.get(k) for k in ("ok", "message", "details", "at", "by")}, "grants": kept.get("grants") or []}
+            if kept.get("fingerprint") == _fingerprint(settings, t) else None)
     facts: list[dict[str, Any]] = []
     if t.key == "gmail":
         g = _gmail_facts(ctx)
@@ -204,11 +304,6 @@ def state_of(ctx: AgentContext, t: Tool, settings: dict[str, Any] | None = None)
                  {"label": "Sign-in", "value": "simulated (TRIAGE_GMAIL=fake)" if g["mode"] == "fake" else ("set up" if g["oauth_client"] else "not set up")}]
         if not usable:
             missing = ["A Google sign-in client for Gmail (set at deploy)"]
-    if t.key == "post_tables":
-        rows = [x for x in read(settings, "platform.temp_check.sources") or [] if x.get("enabled") and x.get("table")]
-        facts = [{"label": x.get("label") or x["key"], "value": x["table"]} for x in rows]
-        if not rows:
-            missing = ["A table of posts"]
     signin = t.key == "chat"
     if signin:
         signed = chatapi.signed_in(ctx)
@@ -220,23 +315,42 @@ def state_of(ctx: AgentContext, t: Tool, settings: dict[str, Any] | None = None)
     else:
         state = "connected" if test["ok"] else "failing"
     steps = ([{"key": "values", "title": "Choose its values" if any(f["options"] for f in fields) else "Enter its values"}] if fields else
-             [{"key": "tables", "title": "The tables searched"}] if t.key == "post_tables" else
              [{"key": "people", "title": "Each person connects their own mailbox"}])
     if signin:
         steps.append({"key": "signin", "title": "Sign in as the QA chatbot"})
     if t.create:
         steps.append({"key": "create", "title": "Create what is missing"})
+    out = {"key": t.key, "name": t.name, "what": t.what, "required": t.required, "uses": list(t.uses), "access": t.access,
+           "settings": t.settings, "create": t.create, "fields": fields, "missing": missing, "state": state, "test": test,
+           "facts": facts, "steps": steps}
+    if t.key == "bigquery":
+        steps.append({"key": "tables", "title": "The tables it reads"})
+        out["tables"] = table_list(settings, test)
     steps.append({"key": "test", "title": "Check access"})
-    return {"key": t.key, "name": t.name, "what": t.what, "required": t.required, "uses": list(t.uses), "access": t.access,
-            "settings": t.settings, "create": t.create, "fields": fields, "missing": missing, "state": state, "test": test,
-            "facts": facts, "steps": steps}
+    return out
+
+
+def _todo(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """What is left for a person, across every tool: a value to set, or what a check found. A tool that is optional
+    and untouched is not on the list."""
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        line = {"tool": r["key"], "name": r["name"], "required": r["required"]}
+        if r["required"] or r["state"] != "not_connected":
+            out += [{**line, "text": f"Set {label}"} for label in r["missing"]]
+        if r["test"] and not r["test"]["ok"]:
+            failed = [f"{d['label']}: no access. Send the line below to the dataset's owners." if d.get("grant") else f"{d['label']}: {d['message']}"
+                      for d in r["test"]["details"] if not d["ok"]]
+            out += [{**line, "text": text} for text in failed or [r["test"]["message"]]]
+    return out
 
 
 def catalog(ctx: AgentContext) -> dict[str, Any]:
     settings = ctx.config.model_dump(mode="json")
     rows = [state_of(ctx, t, settings) for t in tools(ctx)]
     needed = [r for r in rows if r["required"]]
-    return {"connections": rows, "backend": os.environ.get("TRIAGE_BACKEND", "local"),
+    return {"connections": rows, "backend": "gcp" if _on_cloud() else "local", "todo": _todo(rows),
+            "grants": [g for r in rows for g in (r["test"] or {}).get("grants") or []],
             "summary": {"required": len(needed), "ready": sum(1 for r in needed if r["state"] in ("ready", "connected")),
                         "connected": sum(1 for r in rows if r["state"] == "connected"),
                         "failing": sum(1 for r in rows if r["state"] == "failing"), "total": len(rows)}}
@@ -284,6 +398,69 @@ def put_connection(key: str, body: ValuesBody, request: Request, ctx: AgentConte
     return {"ok": True, "changed": changed, "connection": state_of(fresh, tool(fresh, key))}
 
 
+class TableChange(BaseModel):
+    id: str = Field(max_length=200)
+    table: str = Field("", max_length=300)
+
+
+class ReadsChange(BaseModel):
+    key: str = Field(max_length=80)
+    temp_checks: bool
+    early: bool
+    watches: bool
+
+
+class TablesBody(BaseModel):
+    tables: list[TableChange] = Field(default_factory=list, max_length=60)
+    reads: list[ReadsChange] = Field(default_factory=list, max_length=60)
+
+
+def _refuse(text: str) -> HTTPException:
+    return HTTPException(422, {"error": text, "code": "validation_error"})
+
+
+@router.put("/connections/bigquery/tables")
+def put_tables(body: TablesBody, request: Request, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_admin)) -> dict[str, Any]:
+    """Change a table the app reads, in every setting that names it, and choose what reads each table of posts."""
+    if not body.tables and not body.reads:
+        raise _refuse("Nothing to save")
+    before = ctx.config.model_dump(mode="json")
+    rows = {r.id: r for r in _table_rows(before)}
+    changes: dict[str, Any] = {}
+    for change in body.tables:
+        row = rows.get(change.id)
+        if row is None:
+            raise _refuse(f"BigQuery reads no table set at {change.id}")
+        table = change.table.strip().strip("`")
+        if table:
+            try:
+                table = bq_admin.check_table_id(table)
+            except ValueError as exc:
+                raise _refuse(str(exc)) from exc
+        changes.update({slot.path: table for slot in row.slots})
+    posts = {t["key"] for t in read(before, TABLES_PATH) or []}
+    lists = {EARLY_PATH: list(read(before, EARLY_PATH) or []), WATCH_PATH: list(read(before, WATCH_PATH) or [])}
+    for choice in body.reads:
+        if choice.key not in posts:
+            raise _refuse(f"There is no table of posts '{choice.key}'")
+        changes[f"{TABLES_PATH}.{choice.key}.enabled"] = choice.temp_checks
+        for path, on in ((EARLY_PATH, choice.early), (WATCH_PATH, choice.watches)):
+            if on and choice.key not in lists[path]:
+                lists[path].append(choice.key)
+            elif not on:
+                lists[path] = [k for k in lists[path] if k != choice.key]
+    if body.reads:
+        changes.update(lists)
+    t = tool(ctx, "bigquery")
+    fresh = _apply(request, ctx, user, changes, "BigQuery tables changed in the Console")
+    after = fresh.config.model_dump(mode="json")
+    changed = sorted(path for path in changes if read(before, path) != read(after, path))
+    audit.record(fresh, actor=user.email, action="connection.save", surface="console", target_type="connection", target_id=t.key,
+                 summary=f"{t.name}: set {', '.join(changed) or 'nothing new'}"[:300],
+                 detail={"changed": {path: {"before": read(before, path), "after": read(after, path)} for path in changed}})
+    return {"ok": True, "changed": changed, "connection": state_of(fresh, tool(fresh, "bigquery"))}
+
+
 @router.delete("/connections/{key}")
 def disconnect(key: str, request: Request, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_admin)) -> dict[str, Any]:
     from .routes_settings import default_config
@@ -291,8 +468,6 @@ def disconnect(key: str, request: Request, ctx: AgentContext = Depends(get_ctx),
     t = tool(ctx, key)
     if t.required:
         raise HTTPException(422, {"error": f"{t.name} is needed for the agent to work. Change its values instead.", "code": "validation_error"})
-    if t.key == "post_tables":
-        raise HTTPException(422, {"error": "Switch a table OFF, or take it out, under Settings, Temp check.", "code": "validation_error"})
     if not t.fields:
         raise HTTPException(422, {"error": f"{t.name} is connected per person: each person disconnects their own.", "code": "validation_error"})
     defaults = default_config()[1]
@@ -407,7 +582,12 @@ def _check_chat(ctx: AgentContext) -> list[dict[str, Any]]:
     return out
 
 
+GRANT = 'GRANT `roles/bigquery.dataViewer` ON SCHEMA `{project}`.`{dataset}` TO "serviceAccount:{who}"'
+
+
 def _check_bigquery(ctx: AgentContext) -> list[dict[str, Any]]:
+    """The agent's own dataset, then every table something reads: where it lives, and an estimate of its read. Both
+    are free to ask. A line may carry `grant` (what the table's owners run) and `set` (a location read from BigQuery)."""
     cfg = ctx.config.platform.bigquery
     state: dict[str, Any] = {}
 
@@ -415,7 +595,7 @@ def _check_bigquery(ctx: AgentContext) -> list[dict[str, Any]]:
         _need_cloud()
         state["gw"] = bq_admin.get_gateway(ctx)
         info = state["gw"].test()
-        state["who"] = info.get("identity")
+        state["who"] = str(info.get("identity") or "")
         return f"Queries run in {info['project']} as {info.get('identity')}."
 
     out = [_detail("Queries", signed_in)]
@@ -423,39 +603,84 @@ def _check_bigquery(ctx: AgentContext) -> list[dict[str, Any]]:
         return out
     gw = state["gw"]
     dataset = cfg.dataset if "." in cfg.dataset else f"{gw.project}.{cfg.dataset}"
-    out.append(_detail("Dataset", lambda: f"{dataset} in {gw.get_dataset(dataset).get('location', 'its location')}."))
+
+    def own_dataset() -> str:
+        state["where"] = str(gw.get_dataset(dataset).get("location") or "")
+        return f"{dataset} in {state['where'] or 'its location'}."
+
+    out.append(_detail("Dataset", own_dataset))
+    if state.get("where") and state["where"] != cfg.location:
+        out[-1]["set"] = {"platform.bigquery.location": state["where"]}
     events = bq_admin.table(ctx, "events")
     if events:
         out.append(_detail("Events table", lambda: f"{events}: {gw.get_table(events).get('rows') or 0} rows."))
     else:
         out.append({"label": "Events table", "ok": False, "message": "Not created yet. Use Create what is missing."})
-    return out
+    return out + _check_tables(ctx, gw, state["who"])
 
 
-def _check_inhouse(ctx: AgentContext) -> list[dict[str, Any]]:
-    cfg = ctx.config.inhouse
+def _check_tables(ctx: AgentContext, gw: Any, who: str) -> list[dict[str, Any]]:
+    from triage_agent import tempcheck
+
+    settings = ctx.config.model_dump(mode="json")
+    posts = {t.key: t for t in ctx.config.platform.temp_check.sources}
+    now = ctx.now()
+    claimed: dict[str, tuple[str, str]] = {}  # a location setting -> (the location, the table that set it)
     out: list[dict[str, Any]] = []
-    who = ""
-    try:
-        _need_cloud()
-        gw = bq_admin.get_gateway(ctx)
-        who = str(gw.test().get("identity") or "")
-    except Exception as exc:  # noqa: BLE001
-        return [{"label": "Queries", "ok": False, "message": str(exc)[:400]}]
-    for label, table_id, location in (("Sonar table", cfg.sonar_table, cfg.sonar_location), ("Story selection view", cfg.outbox_view, cfg.location),
-                                      ("Alert log table", cfg.alert_log_table, cfg.location)):
-        def scan(table_id: str = table_id, location: str = location) -> str:
-            try:
-                size = gw.dry_run(f"SELECT * FROM `{bq_admin.check_table_id(table_id)}` LIMIT 1", location=location or None)
-            except Exception as exc:  # noqa: BLE001
-                text = str(exc)
-                if "Access Denied" in text or "403" in text:
-                    dataset = ".".join(table_id.split(".")[:2])
-                    raise RuntimeError(f"Access denied. The dataset's owners run: GRANT `roles/bigquery.dataViewer` ON SCHEMA "
-                                       f"`{dataset.replace('.', '`.`')}` TO \"serviceAccount:{who}\"") from exc
-                raise
-            return f"Readable ({size:,} bytes for a full read)."
-        out.append(_detail(label, scan))
+    for row in _table_rows(settings):
+        if not _reads(settings, row):
+            continue
+        first = row.slots[0]
+        line: dict[str, Any] = {"label": first.name, "row": row.id, "ok": False}
+        out.append(line)
+
+        def denied(exc: Exception, table: str = row.table) -> bool:
+            if "Access Denied" not in str(exc) and "403" not in str(exc):
+                return False
+            project, name = table.split(".")[:2]
+            line["grant"] = GRANT.format(project=project, dataset=name, who=who)
+            line["message"] = f"Access denied. The dataset's owners run: {line['grant']}"
+            return True
+
+        try:
+            table = bq_admin.check_table_id(row.table)
+        except ValueError as exc:
+            line["message"] = str(exc)
+            continue
+        where = ""
+        try:
+            where = str(gw.get_table(table).get("location") or "")
+        except Exception as exc:  # noqa: BLE001 - the reason is the result
+            if denied(exc):
+                continue
+            if "404" in str(exc) or "Not found" in str(exc):
+                line["message"] = f"BigQuery has no table {table}."
+                continue
+        stored = _row_location(settings, row)
+        try:
+            if first.post:
+                sql = ("SELECT platform, author, text, url, posted, followers, eng, sentiment, language, shares, replies, seen, one\n"
+                       f"FROM (\n    {tempcheck.read_of(posts[first.post])}\n)\nLIMIT 1")
+                size = gw.dry_run(sql, {"t_from": now - timedelta(days=1), "t_to": now}, location=where or stored or None)
+                line["message"] = f"Readable. A day's read scans {size / tempcheck.GB:.1f} GB."
+            else:
+                gw.dry_run(f"SELECT * FROM `{table}` LIMIT 1", location=where or stored or None)
+                line["message"] = "Readable."
+        except Exception as exc:  # noqa: BLE001 - the reason is the result
+            if not denied(exc):
+                line["message"] = f"BigQuery would not take this table's read: {str(exc)[:300]}"
+            continue
+        line["ok"] = True
+        wanted = {slot.location for slot in row.slots if slot.location and (slot.on or slot.post)} if where else set()
+        for path in sorted(wanted):
+            other = claimed.setdefault(path, (where, first.name))
+            if other[0] != where:
+                line["ok"] = False
+                line["message"] = f"It is in {where} and {other[1]} is in {other[0]}. The two are read together, so they have to be in one location."
+            elif str(read(settings, path) or "").strip() != where:
+                line.setdefault("set", {})[path] = where
+        if line["ok"] and line.get("set"):
+            line["message"] += f" Its location is now set to {where}."
     return out
 
 
@@ -493,7 +718,8 @@ def _check_gmail(ctx: AgentContext) -> list[dict[str, Any]]:
     return [{"label": "Sign-in", "ok": g["available"] and (g["mode"] == "fake" or g["oauth_client"]),
              "message": "Simulated (TRIAGE_GMAIL=fake): drafts stay in memory." if g["mode"] == "fake" else
              ("Set up." if g["oauth_client"] else "No Google sign-in client is set (TRIAGE_OAUTH_CLIENT at deploy).")},
-            {"label": "People connected", "ok": g["connected"] > 0, "message": f"{g['connected']} of {g['people']}"}]
+            {"label": "People connected", "ok": g["connected"] > 0,
+             "message": f"{g['connected']} of {g['people']}" + ("" if g["connected"] else ". Each person presses Connect Gmail at the top of the page.")}]
 
 
 def _check_drive(ctx: AgentContext) -> list[dict[str, Any]]:
@@ -525,36 +751,6 @@ def _check_brandwatch(ctx: AgentContext) -> list[dict[str, Any]]:
     return [_detail("API token", token)]
 
 
-def _check_post_tables(ctx: AgentContext) -> list[dict[str, Any]]:
-    """Each table of posts, asked for a day with its own read: free to ask, and it fails the way a temp check would."""
-    from triage_agent import tempcheck
-
-    try:
-        _need_cloud()
-        gw = bq_admin.get_gateway(ctx)
-        who = str(gw.test().get("identity") or "")
-    except Exception as exc:  # noqa: BLE001
-        return [{"label": "Queries", "ok": False, "message": str(exc)[:400]}]
-    now = ctx.now()
-    out: list[dict[str, Any]] = []
-    for src in tempcheck.own_sources(ctx):
-        def scan(src: Any = src) -> str:
-            try:
-                sql = ("SELECT platform, author, text, url, posted, followers, eng, sentiment, language, shares, replies, seen, one\n"
-                       f"FROM (\n    {tempcheck.read_of(src)}\n)\nLIMIT 1")
-                size = gw.dry_run(sql, {"t_from": now - timedelta(days=1), "t_to": now}, location=src.location or None)
-            except Exception as exc:  # noqa: BLE001
-                text = str(exc)
-                if "Access Denied" in text or "403" in text:
-                    dataset = ".".join(src.table.split(".")[:2])
-                    raise RuntimeError(f"Access denied. The dataset's owners run: GRANT `roles/bigquery.dataViewer` ON SCHEMA "
-                                       f"`{dataset.replace('.', '`.`')}` TO \"serviceAccount:{who}\"") from exc
-                raise RuntimeError(f"BigQuery would not take this table's read: {text[:300]}") from exc
-            return f"Readable. A day's read scans {size / tempcheck.GB:.1f} GB."
-        out.append(_detail(src.label or src.key, scan))
-    return out
-
-
 def _check_campaigns(ctx: AgentContext) -> list[dict[str, Any]]:
     def listed() -> str:
         from triage_agent import campaigns_admin
@@ -567,22 +763,31 @@ def _check_campaigns(ctx: AgentContext) -> list[dict[str, Any]]:
 
 CHECKS: dict[str, Callable[[AgentContext], list[dict[str, Any]]]] = {
     "gcp": _check_gcp, "gemini": _check_gemini, "runtime": _check_runtime, "chat": _check_chat, "bigquery": _check_bigquery,
-    "inhouse": _check_inhouse, "delivery": _check_delivery, "secrets": _check_secrets, "gmail": _check_gmail, "drive": _check_drive,
-    "brandwatch": _check_brandwatch, "post_tables": _check_post_tables, "campaigns": _check_campaigns,
+    "delivery": _check_delivery, "secrets": _check_secrets, "gmail": _check_gmail, "drive": _check_drive,
+    "brandwatch": _check_brandwatch, "campaigns": _check_campaigns,
 }
 
 
 @router.post("/connections/{key}/test")
-def test_connection(key: str, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_admin)) -> dict[str, Any]:
+def test_connection(key: str, request: Request, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_admin)) -> dict[str, Any]:
     t = tool(ctx, key)
     settings = ctx.config.model_dump(mode="json")
     current = state_of(ctx, t, settings)
     if current["missing"]:
-        result = {"ok": False, "message": f"Set these first: {', '.join(current['missing'])}.", "details": [], "at": ctx.now().isoformat(), "by": user.email}
+        result = {"ok": False, "message": f"Set these first: {', '.join(current['missing'])}.", "details": [], "grants": [],
+                  "at": ctx.now().isoformat(), "by": user.email}
         return {"test": result, "connection": current}
     details = CHECKS[t.key](ctx)
+    read_here = {path: value for d in details for path, value in (d.pop("set", None) or {}).items()}
+    if read_here:  # what the check read for itself (a table's location) is written, so nobody types it
+        ctx = _apply(request, ctx, user, read_here, f"{t.name}: read by its check")
+        settings = ctx.config.model_dump(mode="json")
+        audit.record(ctx, actor=user.email, action="connection.save", surface="console", target_type="connection", target_id=t.key,
+                     summary=f"{t.name}: its check read {', '.join(f'{path} = {value}' for path, value in sorted(read_here.items()))}"[:300],
+                     detail={"read": read_here})
     failed = [d for d in details if not d["ok"]]
     result = {"ok": not failed, "details": details, "at": ctx.now().isoformat(), "by": user.email,
+              "grants": sorted({d["grant"] + ";" for d in details if d.get("grant")}),
               "message": "Connected." if not failed else f"{failed[0]['label']}: {failed[0]['message']}"}
     ctx.store.put_kv(TEST_KV + t.key, {**result, "fingerprint": _fingerprint(settings, t)})
     audit.record(ctx, actor=user.email, action="connection.test", surface="console", target_type="connection", target_id=t.key,
@@ -652,9 +857,6 @@ def _cloud_run_region() -> str:
     return resp.text.strip().rsplit("/", 1)[-1] if resp.status_code == 200 else ""
 
 
-TABLES_PATH = "platform.temp_check.sources"
-
-
 def _offer_app_setup(ctx: AgentContext, settings: dict[str, Any], found: dict[str, Any], offer: Callable[[str, Callable[[], Any], str], None]) -> None:
     """The temp check app's setup (config/temp_check_app.yaml), for the settings that are still empty: its Brandwatch
     values, and its five tables of posts when no table is set. The token's secret is named only when the project holds it."""
@@ -677,8 +879,8 @@ def _offer_app_setup(ctx: AgentContext, settings: dict[str, Any], found: dict[st
 
 @router.post("/connections/autofill")
 def autofill(request: Request, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_admin)) -> dict[str, Any]:
-    """Find and fill: write every empty value the running service can see for itself, and the temp check app's setup
-    (its tables of posts and Brandwatch values). Nothing already set is changed."""
+    """The first step of Set up: write every empty value the running service can see for itself, and the temp check
+    app's setup (its tables of posts and Brandwatch values). Nothing already set is changed."""
     settings = ctx.config.model_dump(mode="json")
     found: dict[str, Any] = {}
     notes: list[str] = []
@@ -740,7 +942,6 @@ def autofill(request: Request, ctx: AgentContext = Depends(get_ctx), user: User 
                      summary=f"Found and filled: {', '.join(sorted(found))}", detail={"filled": found})
     after = catalog(fresh)
     labels = {f.path: (t.name, f.label) for t in tools(fresh) for f in t.fields}
-    labels[TABLES_PATH] = ("Post tables", "Tables")
+    labels[TABLES_PATH] = ("BigQuery", "Tables of posts")
     return {"filled": [{"path": p, "value": v, "tool": labels.get(p, ("", ""))[0], "label": labels.get(p, ("", p))[1]} for p, v in sorted(found.items())],
-            "left": [{"tool": c["key"], "name": c["name"], "label": m, "required": c["required"]} for c in after["connections"] for m in c["missing"]],
             "notes": notes, **after}

@@ -158,8 +158,11 @@ def test_admin_overview(ctx, client, clock):
 def test_integrations_catalog_says_what_each_tool_still_needs(ctx, client):
     got = client.get("/api/connections", headers=iap(IM)).json()
     by = {c["key"]: c for c in got["connections"]}
-    assert {"gcp", "gemini", "runtime", "chat", "bigquery", "delivery", "secrets", "gmail", "drive", "brandwatch", "inhouse"} <= set(by)
+    assert set(by) == {"gcp", "gemini", "runtime", "chat", "bigquery", "delivery", "secrets", "gmail", "drive", "brandwatch", "campaigns"}, \
+        "BigQuery is one card: its own dataset and every table it reads"
     assert by["bigquery"]["state"] == "incomplete" and by["bigquery"]["missing"] == ["Dataset"] and by["bigquery"]["required"] is True
+    assert {"tool": "bigquery", "name": "BigQuery", "text": "Set Dataset", "required": True} in got["todo"]
+    assert not any(item["tool"] == "brandwatch" for item in got["todo"]), "an optional tool nobody started is not on the list"
     assert by["brandwatch"]["state"] == "not_connected" and by["brandwatch"]["required"] is False
     assert by["chat"]["state"] == "ready", "the agent's account and both spaces are set; nothing has tested it yet"
     assert got["summary"]["required"] == sum(1 for c in by.values() if c["required"]) and got["summary"]["ready"] < got["summary"]["required"]
@@ -247,7 +250,7 @@ def test_find_and_fill_writes_what_the_service_can_see_and_lists_what_is_left(ct
     seen = {(f["path"], f["value"]) for f in got["filled"] if f["tool"] == "Google Cloud"}
     assert seen == {("platform.gcp.project", "seen-project"), ("platform.gcp.region", "us-central1")}
     assert ctx.store.get_config_overrides()["platform"]["gcp"] == {"project": "seen-project", "region": "us-central1"}
-    assert {"tool": "bigquery", "name": "BigQuery", "label": "Dataset", "required": True} in got["left"]
+    assert {"tool": "bigquery", "name": "BigQuery", "text": "Set Dataset", "required": True} in got["todo"], "what is left comes back with the fill"
     again = client.post("/api/connections/autofill", headers=iap(ADMIN)).json()
     assert again["filled"] == [], "a value already set is never changed"
 
@@ -260,7 +263,7 @@ def test_find_and_fill_brings_the_temp_check_apps_tables_and_brandwatch_values(c
     filled = {f["path"]: f for f in got["filled"]}
     cfg = ctx.config.platform.temp_check
     assert [s.key for s in cfg.sources] == ["alerts", "sonar", "brandwatch", "sprinklr", "tubular"] and cfg.sources[1].read_sql == app["tables"][1].read_sql
-    assert filled["platform.temp_check.sources"]["tool"] == "Post tables"
+    assert filled["platform.temp_check.sources"]["tool"] == "BigQuery"
     assert filled["platform.temp_check.sources"]["value"] == "Sundar all mentions, Sonar, Brandwatch stored mentions, Sprinklr comments, Tubular videos"
     assert (cfg.brandwatch_project_id, cfg.event_query_prefix, cfg.standing_query_name, cfg.standing_query_skip) == ("1998344909", "[G EVENT]", "[V2] MAIN G Landscape (", "benchmark")
     assert filled["platform.temp_check.brandwatch_project_id"]["tool"] == "Brandwatch" and filled["platform.temp_check.standing_query_name"]["label"] == "Standing query names start with"
@@ -287,11 +290,11 @@ def test_find_and_fill_leaves_tables_and_brandwatch_values_a_person_set(ctx, cli
     assert "platform.temp_check.sources" not in {f["path"] for f in got["filled"]}
 
 
-class SomeDenied:
-    """BigQuery as the post tables check meets it: every read is estimated, and the Sonar dataset refuses this account."""
+class ReadTables:
+    """BigQuery as its card meets it: the agent's own dataset is there, each table says where it lives, every read is
+    estimated, the Sonar dataset refuses this account and Tubular's read names a column its table does not have."""
 
     project = "this-project"
-    _settings_key = ("", "", 0)
 
     def __init__(self):
         self.asked: list[tuple[str, dict, str | None]] = []
@@ -299,39 +302,160 @@ class SomeDenied:
     def test(self):
         return {"ok": True, "project": self.project, "location": "US", "identity": "agent@project.test"}
 
+    def get_dataset(self, dataset):
+        return {"dataset": dataset.split(".")[-1], "project": dataset.split(".")[0], "location": "US"}
+
+    def get_table(self, table_id):
+        if ".google_bg." in table_id:
+            raise RuntimeError("403 Access Denied: Table sonar_raw: User does not have bigquery.tables.get permission")
+        if table_id.endswith(".gone"):
+            raise RuntimeError(f"404 Not found: Table {table_id} was not found in location US")
+        return {"full_id": table_id, "rows": 12, "location": "EU" if "brandwatch_raw" in table_id else "us-central1" if "tubular" in table_id else "US"}
+
     def dry_run(self, sql, params=None, *, location=None):
         self.asked.append((sql, dict(params or {}), location))
-        if "sonar_raw" in sql:
-            raise RuntimeError("403 Access Denied: Table sonar_raw: User does not have permission to query table")
         if "tubular_videos" in sql:
             raise RuntimeError("400 Unrecognized name: video_title at [1:40]")
         return 3 * 1024 ** 3
 
 
-def test_the_post_tables_card_checks_each_table_and_names_the_grant_it_needs(ctx, client, monkeypatch, own_secrets):
-    by = lambda: {c["key"]: c for c in client.get("/api/connections", headers=iap(IM)).json()["connections"]}  # noqa: E731
-    card = by()["post_tables"]
-    assert card["state"] == "not_connected" and card["required"] is False and card["missing"] == ["A table of posts"]
+def bigquery_card(client):
+    return next(c for c in client.get("/api/connections", headers=iap(IM)).json()["connections"] if c["key"] == "bigquery")
+
+
+def own_dataset(client, ctx):
+    """The agent's own dataset and its events table, as a deploy leaves them."""
+    value = {**ctx.config.platform.bigquery.model_dump(mode="json"), "dataset": "this-project.slrr_triage", "tables": {"events": "this-project.slrr_triage.agent_events"}}
+    assert client.put("/api/platform/bigquery", json={"value": value, "note": "as deployed"}, headers=iap(ADMIN)).status_code == 200
+
+
+def test_the_bigquery_card_lists_each_table_the_app_reads_once_with_what_reads_it(ctx, client, own_secrets):
+    rows = bigquery_card(client)["tables"]
+    assert [(r["name"], r["reads"]) for r in rows] == [("Story selection view", []), ("Alert log", []), ("Sonar", []), ("Billing export", [])], \
+        "before any table of posts is set, with Our own alerts and Find missing links OFF"
+    ctx.config.inhouse.enabled = ctx.config.sonar_lookup.enabled = True
+    rows = bigquery_card(client)["tables"]
+    assert [r["reads"] for r in rows] == [["Our own alerts"], ["Find missing links"], ["Find missing links"], []], "a feature reads a table while it is ON"
+    assert rows[-1]["set"] is False and rows[-1]["table"] == "" and all(r["post"] is None for r in rows)
+
     client.post("/api/connections/autofill", headers=iap(ADMIN))
-    card = by()["post_tables"]
-    assert card["state"] == "ready" and [f["label"] for f in card["facts"]][:2] == ["Sundar all mentions", "Sonar"]
-    assert card["facts"][1]["value"] == "bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw"
+    rows = bigquery_card(client)["tables"]
+    assert [r["name"] for r in rows] == ["Sundar all mentions", "Sonar", "Brandwatch stored mentions", "Sprinklr comments", "Tubular videos",
+                                         "Story selection view", "Alert log", "Billing export"]
+    sonar = rows[1]
+    assert sonar["table"] == "bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw" and sonar["location"] == "us-central1"
+    assert sonar["reads"] == ["Temp checks", "Find missing links"], "one row for the table three settings name"
+    assert sonar["post"] == {"key": "sonar", "temp_checks": True, "early": False, "watches": False}
+    assert rows[0]["reads"] == ["Temp checks"] and rows[6]["table"] == ctx.config.inhouse.alert_log_table and rows[6]["status"] is None
+
+
+def test_changing_a_table_on_the_bigquery_card_changes_it_in_every_setting_that_names_it(ctx, client, clock, own_secrets):
+    client.post("/api/connections/autofill", headers=iap(ADMIN))
+    ctx.config.sonar_lookup.enabled = True
+    sonar = bigquery_card(client)["tables"][1]
+    body = {"tables": [{"id": sonar["id"], "table": "other-project.listening.sonar_events"}]}
+    assert client.put("/api/connections/bigquery/tables", json=body, headers=iap(IM)).status_code == 403
+    bad = client.put("/api/connections/bigquery/tables", json={"tables": [{"id": sonar["id"], "table": "sonar_events"}]}, headers=iap(ADMIN))
+    assert bad.status_code == 422 and "project.dataset.table" in bad.json()["error"]
+    assert client.put("/api/connections/bigquery/tables", json={"tables": [{"id": "platform.safety.testing", "table": "a.b.c"}]}, headers=iap(ADMIN)).status_code == 422
+    clock.advance(minutes=1)
+    saved = client.put("/api/connections/bigquery/tables", json=body, headers=iap(ADMIN))
+    assert saved.status_code == 200
+    cfg = ctx.config
+    assert (cfg.inhouse.sonar_table, cfg.sonar_lookup.table, cfg.platform.temp_check.sources[1].table) == ("other-project.listening.sonar_events",) * 3
+    row = saved.json()["connection"]["tables"][1]
+    assert row["table"] == "other-project.listening.sonar_events" and row["reads"] == ["Temp checks", "Find missing links"]
+    entry = client.get("/api/audit", params={"action": "connection.save"}, headers=iap(ADMIN)).json()["entries"][0]
+    assert entry["target_id"] == "bigquery" and "inhouse.sonar_table" in entry["summary"] and "sonar_lookup.table" in entry["summary"]
+
+    billing = saved.json()["connection"]["tables"][-1]
+    client.put("/api/connections/bigquery/tables", json={"tables": [{"id": billing["id"], "table": "this-project.billing.export_v1"}]}, headers=iap(ADMIN))
+    assert ctx.config.platform.costs.billing_export_table == "this-project.billing.export_v1"
+    client.put("/api/connections/bigquery/tables", json={"tables": [{"id": billing["id"], "table": ""}]}, headers=iap(ADMIN))
+    assert ctx.config.platform.costs.billing_export_table == "", "a table nothing needs can be cleared"
+
+
+def test_the_bigquery_card_chooses_what_reads_each_table_of_posts(ctx, client, own_secrets):
+    client.post("/api/connections/autofill", headers=iap(ADMIN))
+    reads = [{"key": "alerts", "temp_checks": True, "early": True, "watches": True}, {"key": "tubular", "temp_checks": False, "early": True, "watches": False}]
+    saved = client.put("/api/connections/bigquery/tables", json={"reads": reads}, headers=iap(ADMIN))
+    assert saved.status_code == 200
+    plat = ctx.config.platform
+    assert plat.early.sources == ["alerts", "tubular"] and plat.campaigns.watch_sources == ["alerts"]
+    assert [s.enabled for s in plat.temp_check.sources] == [True, True, True, True, False]
+    rows = {r["name"]: r for r in saved.json()["connection"]["tables"]}
+    assert rows["Sundar all mentions"]["reads"] == ["Temp checks", "Early Detection", "Watches"] and rows["Tubular videos"]["reads"] == ["Early Detection"]
+    client.put("/api/connections/bigquery/tables", json={"reads": [{"key": "alerts", "temp_checks": True, "early": False, "watches": True}]}, headers=iap(ADMIN))
+    assert ctx.config.platform.early.sources == ["tubular"], "the other tables' choices stay"
+    assert client.put("/api/connections/bigquery/tables", json={"reads": [{"key": "nope", "temp_checks": True, "early": False, "watches": False}]},
+                      headers=iap(ADMIN)).status_code == 422
+    assert client.put("/api/connections/bigquery/tables", json={}, headers=iap(ADMIN)).status_code == 422
+
+
+def test_the_bigquery_card_checks_every_table_and_names_each_grant_once(ctx, client, monkeypatch, own_secrets):
+    client.post("/api/connections/autofill", headers=iap(ADMIN))
+    own_dataset(client, ctx)
+    ctx.config.inhouse.enabled = ctx.config.sonar_lookup.enabled = True
+    assert bigquery_card(client)["state"] == "ready"
+    client.put("/api/connections/bigquery/tables", json={"reads": [{"key": "sprinklr", "temp_checks": False, "early": False, "watches": False}]}, headers=iap(ADMIN))
 
     monkeypatch.setattr(connections, "_on_cloud", lambda: True)  # the check runs as it does on Cloud Run
-    ctx.bq = gw = SomeDenied()
-    assert client.post("/api/connections/post_tables/test", headers=iap(IM)).status_code == 403
-    got = client.post("/api/connections/post_tables/test", headers=iap(ADMIN)).json()
+    ctx.bq = gw = ReadTables()
+    assert client.post("/api/connections/bigquery/test", headers=iap(IM)).status_code == 403
+    got = client.post("/api/connections/bigquery/test", headers=iap(ADMIN)).json()
     lines = {d["label"]: d for d in got["test"]["details"]}
     assert got["test"]["ok"] is False and got["connection"]["state"] == "failing"
-    assert lines["Sundar all mentions"] == {"label": "Sundar all mentions", "ok": True, "message": "Readable. A day's read scans 3.0 GB."}
-    assert lines["Sonar"]["message"] == ("Access denied. The dataset's owners run: GRANT `roles/bigquery.dataViewer` ON SCHEMA "
-                                         '`bsip-s-bsip-gg-26-2cf3`.`google_bg` TO "serviceAccount:agent@project.test"')
+    assert list(lines) == ["Queries", "Dataset", "Events table", "Sundar all mentions", "Sonar", "Brandwatch stored mentions", "Tubular videos",
+                           "Story selection view", "Alert log"], "a table nothing reads, and one that is not set, are not asked for"
+    assert lines["Sundar all mentions"]["ok"] is True and lines["Sundar all mentions"]["message"] == "Readable. A day's read scans 3.0 GB."
+    grant = 'GRANT `roles/bigquery.dataViewer` ON SCHEMA `bsip-s-bsip-gg-26-2cf3`.`google_bg` TO "serviceAccount:agent@project.test"'
+    assert lines["Sonar"]["ok"] is False and lines["Sonar"]["message"] == f"Access denied. The dataset's owners run: {grant}"
+    assert got["test"]["grants"] == [grant + ";"], "one line for the dataset, though three settings read its table"
     assert lines["Tubular videos"]["ok"] is False and lines["Tubular videos"]["message"].startswith("BigQuery would not take this table's read: 400 Unrecognized name: video_title")
-    sql, params, location = next(a for a in gw.asked if "sonar_raw" in a[0])
-    assert "JSON_VALUE(payload" in sql and location == "us-central1" and params["t_to"] - params["t_from"] == timedelta(days=1), "the table's own read, over a day"
+    assert lines["Story selection view"]["message"] == "Readable." and lines["Alert log"]["ok"] is True
 
-    ctx.config.platform.temp_check.sources[1].enabled = False
-    assert by()["post_tables"]["test"] is None, "a check is forgotten once the tables change"
+    assert lines["Brandwatch stored mentions"]["message"] == "Readable. A day's read scans 3.0 GB. Its location is now set to EU."
+    assert ctx.config.platform.temp_check.sources[2].location == "EU", "a table's location is read from BigQuery, not typed"
+    sql, params, location = next(a for a in gw.asked if "brandwatch_raw" in a[0])
+    assert location == "EU" and params["t_to"] - params["t_from"] == timedelta(days=1), "the table's own read, over a day, where the table lives"
+    assert next(a for a in gw.asked if "DSD-story-selection" in a[0])[2] == "US"
+
+    card = bigquery_card(client)
+    rows = {r["name"]: r for r in card["tables"]}
+    assert card["state"] == "failing" and rows["Sonar"]["status"]["ok"] is False and rows["Sundar all mentions"]["status"]["ok"] is True
+    assert rows["Sprinklr comments"]["status"] is None and rows["Brandwatch stored mentions"]["location"] == "EU"
+    listed = client.get("/api/connections", headers=iap(IM)).json()
+    assert {"tool": "bigquery", "name": "BigQuery", "text": "Sonar: no access. Send the line below to the dataset's owners.", "required": True} in listed["todo"]
+    assert listed["grants"] == [grant + ";"], "the line itself is listed once, to copy"
+
+    alert_log = rows["Alert log"]
+    client.put("/api/connections/bigquery/tables", json={"tables": [{"id": alert_log["id"], "table": "this-project.slrr_alerts.gone"}]}, headers=iap(ADMIN))
+    assert bigquery_card(client)["test"] is None, "a check is forgotten once a table changes"
+    ctx.bq = ReadTables()
+    again = client.post("/api/connections/bigquery/test", headers=iap(ADMIN)).json()
+    gone = next(d for d in again["test"]["details"] if d["label"] == "Alert log")
+    assert gone["ok"] is False and gone["message"] == "BigQuery has no table this-project.slrr_alerts.gone."
+
+
+def test_what_is_left_says_how_people_connect_gmail(ctx, client):
+    people = len({a.email.lower() for a in ctx.config.analysts})
+    client.post("/api/connections/gmail/test", headers=iap(ADMIN))
+    todo = client.get("/api/connections", headers=iap(IM)).json()["todo"]
+    assert {"tool": "gmail", "name": "Gmail", "required": False,
+            "text": f"People connected: 0 of {people}. Each person presses Connect Gmail at the top of the page."} in todo
+
+
+def test_two_tables_read_together_have_to_live_in_one_location(ctx, client, monkeypatch, own_secrets):
+    own_dataset(client, ctx)
+    ctx.config.inhouse.enabled = ctx.config.inhouse.mark_delivered = True  # Our own alerts reads its view and writes the alert log
+    monkeypatch.setattr(connections, "_on_cloud", lambda: True)
+    ctx.bq = gw = ReadTables()
+    monkeypatch.setattr(gw, "get_table", lambda table_id: {"full_id": table_id, "rows": 1, "location": "EU" if "DSD" in table_id else "US"})
+    got = client.post("/api/connections/bigquery/test", headers=iap(ADMIN)).json()
+    lines = {d["label"]: d for d in got["test"]["details"]}
+    assert lines["Story selection view"]["ok"] is True and ctx.config.inhouse.location == "EU"
+    assert lines["Alert log"] == {"label": "Alert log", "row": "inhouse.alert_log_table", "ok": False,
+                                  "message": "It is in US and Story selection view is in EU. The two are read together, so they have to be in one location."}
 
 
 def test_the_deployer_is_listed_as_the_admin_until_an_admin_is_named(ctx, client, monkeypatch):
@@ -342,35 +466,9 @@ def test_the_deployer_is_listed_as_the_admin_until_an_admin_is_named(ctx, client
     assert row["role"] == "admin" and row["role_source"] == "deploy", "the person who can sign in as admin is on the list"
 
 
-class DeniedSonar:
-    """BigQuery as the in-house check meets it: queries run, and the Sonar dataset refuses this account."""
-
-    project = "this-project"
-    _settings_key = ("", "", 0)
-
-    def test(self):
-        return {"ok": True, "project": self.project, "location": "US", "identity": "agent@project.test"}
-
-    def dry_run(self, sql, params=None, *, location=None):
-        if "sonar" in sql:
-            raise RuntimeError("403 Access Denied: Table sonar_raw: User does not have permission to query table")
-        return 2048
-
-
-def test_a_denied_table_names_the_account_and_the_grant_to_run(ctx, client, monkeypatch):
-    monkeypatch.setattr(connections, "_on_cloud", lambda: True)  # the check runs as it does on Cloud Run
-    ctx.bq = DeniedSonar()
-    got = client.post("/api/connections/inhouse/test", headers=iap(ADMIN)).json()
-    lines = {d["label"]: d for d in got["test"]["details"]}
-    project, dataset, _ = ctx.config.inhouse.sonar_table.split(".")
-    assert got["test"]["ok"] is False and got["connection"]["state"] == "failing"
-    assert lines["Alert log table"]["ok"] is True and lines["Story selection view"]["ok"] is True
-    assert lines["Sonar table"]["message"] == ("Access denied. The dataset's owners run: GRANT `roles/bigquery.dataViewer` ON SCHEMA "
-                                               f'`{project}`.`{dataset}` TO "serviceAccount:agent@project.test"')
-
-
 class OwnTables:
-    """BigQuery as the Console meets it in its own project: two datasets, one of them holding the agent's tables."""
+    """BigQuery as the Console meets it in its own project: two datasets, one of them holding the agent's tables. The
+    tables the app reads live in other projects, and this account can read them."""
 
     project = "seen-project"
     _settings_key = ("seen-project", "", 0)
@@ -385,9 +483,12 @@ class OwnTables:
         return {"dataset": dataset.split(".")[-1], "project": self.project, "location": "US"}
 
     def get_table(self, table_id):
-        if not table_id.startswith("seen-project.slrr_triage."):
+        if table_id.startswith("seen-project.") and not table_id.startswith("seen-project.slrr_triage."):
             raise RuntimeError(f"404 Not found: {table_id}")
-        return {"full_id": table_id, "rows": 12}
+        return {"full_id": table_id, "rows": 12, "location": "US"}
+
+    def dry_run(self, sql, params=None, *, location=None):
+        return 1024 ** 3
 
 
 def test_on_the_cloud_find_and_fill_picks_the_one_runtime_and_the_dataset_that_holds_the_agents_tables(ctx, client, monkeypatch, own_secrets):
@@ -401,13 +502,15 @@ def test_on_the_cloud_find_and_fill_picks_the_one_runtime_and_the_dataset_that_h
     filled = {f["path"]: f["value"] for f in got["filled"]}
     assert filled["platform.gcp.agent_runtime_resource"] == runtime and filled["platform.bigquery.dataset"] == "seen-project.slrr_triage"
     assert filled["platform.bigquery.tables.events"] == "seen-project.slrr_triage.agent_events"
-    assert not any(left["tool"] in ("gcp", "runtime", "bigquery") for left in got["left"])
+    assert not any(item["tool"] in ("gcp", "runtime", "bigquery") for item in got["todo"])
     ctx.bq = OwnTables()  # the saved settings name the same project: the same gateway answers
     choices = client.get("/api/connections/bigquery/options", params={"field": "platform.bigquery.dataset"}, headers=iap(ADMIN)).json()
     assert [o["value"] for o in choices["options"]] == ["seen-project.marketing", "seen-project.slrr_triage"]
     checked = client.post("/api/connections/bigquery/test", headers=iap(ADMIN)).json()
     assert checked["test"]["ok"] is True and checked["connection"]["state"] == "connected"
-    assert [d["message"] for d in checked["test"]["details"]][-1] == "seen-project.slrr_triage.agent_events: 12 rows."
+    lines = {d["label"]: d["message"] for d in checked["test"]["details"]}
+    assert lines["Events table"] == "seen-project.slrr_triage.agent_events: 12 rows." and lines["Sundar all mentions"] == "Readable. A day's read scans 1.0 GB."
+    assert checked["test"]["grants"] == [] and ctx.config.platform.bigquery.location == "US", "the dataset's location is read, not typed"
 
 
 # -- plain words: every Settings page and every switch explains itself ---------------------------------------------------------------

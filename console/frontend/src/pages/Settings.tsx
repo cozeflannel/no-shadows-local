@@ -110,7 +110,7 @@ function SettingsHome({ tools, admin }: Glance) {
       <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">Four things to fill in. Everything else already has a value that works; change one under More settings only when you need to.</p>
       <div className="flex flex-col gap-3">
         <StartCard n={1} title="Integrations" done={!!t && t.ready === t.required} to="/connections" action="Open Integrations"
-          state={t ? `${t.ready} of ${t.required} needed tools are set${t.failing ? `, ${t.failing} failing a check` : ""}. Find and fill writes what the project already has.` : "The tools the agent is connected to."} />
+          state={t ? `${t.ready} of ${t.required} needed tools are set${t.failing ? `, ${t.failing} failing a check` : ""}. Set up fills what the project already has and checks each tool.` : "The tools the agent is connected to."} />
         <StartCard n={2} title="People" done={!!admin && admin.people.length > 1} to="/admin" action="Open People"
           state={admin ? `${admin.people.length} ${admin.people.length === 1 ? "person has" : "people have"} a role. Add a person once: their role and roster place come from that record.` : "Who can work alerts and who can change settings."} />
         <StartCard n={3} title="Switches" done={!!s && s.switches_on.length > 0} to="/settings/flags" action="Open Switches"

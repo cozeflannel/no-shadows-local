@@ -1,34 +1,49 @@
-import {
-  Bot, CircleCheck, CircleX, Cloud, Database, FolderOpen, KeyRound, Mail, Megaphone, MessagesSquare, Radar, Rows3, Send, Sparkles, Table2,
-} from "lucide-react";
+import { Bot, CircleCheck, CircleX, Cloud, Copy, Database, FolderOpen, KeyRound, Mail, Megaphone, MessagesSquare, Radar, Send, Sparkles } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
-import { apiGet, apiSend } from "../api/client";
+import { apiGet, apiSend, toApiError } from "../api/client";
 import { useAction, useApi } from "../api/hooks";
-import { Alert, Badge, Button, cx, Drawer, ErrorState, Field, Input, PageHeader, Select, Spinner } from "../components/ui";
+import { Alert, Badge, Button, cx, Drawer, ErrorState, Field, Input, PageHeader, Select, Spinner, Toggle } from "../components/ui";
 import { useApp } from "../context";
 import { fmtRelative } from "../lib/format";
 
 interface FieldRow { path: string; label: string; required: boolean; help: string; options: string; choices: string[]; value: string | null; set: boolean }
-interface Detail { label: string; ok: boolean; message: string }
-interface Test { ok: boolean; message: string; details: Detail[]; at: string; by: string }
+interface Detail { label: string; ok: boolean; message: string; row?: string }
+interface Test { ok: boolean; message: string; details: Detail[]; grants: string[]; at: string; by: string }
 type State = "connected" | "ready" | "incomplete" | "not_connected" | "failing";
+interface Reads { key: string; temp_checks: boolean; early: boolean; watches: boolean }
+/** A table the app reads. One row even when several settings name it. */
+interface TableRow {
+  id: string; name: string; what: string; table: string; set: boolean; location: string; post: Reads | null; reads: string[];
+  status: { ok: boolean; message: string } | null;
+}
 interface Tool {
   key: string; name: string; what: string; required: boolean; uses: string[]; access: string; settings: string; create: string; fields: FieldRow[];
   missing: string[]; state: State; test: Test | null; facts: { label: string; value: string }[]; steps: { key: string; title: string }[];
+  tables?: TableRow[];
 }
-interface Catalog { connections: Tool[]; backend: string; is_admin: boolean; summary: { required: number; ready: number; connected: number; failing: number; total: number } }
-interface Filled { filled: { path: string; value: string; tool: string; label: string }[]; left: { tool: string; name: string; label: string; required: boolean }[]; notes: string[] }
+interface Todo { tool: string; name: string; text: string; required: boolean }
+interface Catalog {
+  connections: Tool[]; backend: string; is_admin: boolean; todo: Todo[]; grants: string[];
+  summary: { required: number; ready: number; connected: number; failing: number; total: number };
+}
+interface Filled { filled: { path: string; value: string; tool: string; label: string }[]; notes: string[] }
+interface SetUp { filled: number; created: number; checked: number; connected: number; notes: string[] }
 
 const ICON: Record<string, ReactNode> = {
   gcp: <Cloud />, gemini: <Sparkles />, runtime: <Bot />, chat: <MessagesSquare />, bigquery: <Database />, delivery: <Send />, secrets: <KeyRound />,
-  gmail: <Mail />, drive: <FolderOpen />, brandwatch: <Radar />, inhouse: <Table2 />, post_tables: <Rows3 />, campaigns: <Megaphone />,
+  gmail: <Mail />, drive: <FolderOpen />, brandwatch: <Radar />, campaigns: <Megaphone />,
 };
+const POST_READS: [keyof Omit<Reads, "key">, string][] = [["temp_checks", "Temp checks"], ["early", "Early Detection"], ["watches", "Watches"]];
 
 function stateOf(t: Tool): { label: string; tone: "emerald" | "blue" | "amber" | "zinc" | "rose" } {
   if (t.state === "connected") return { label: "Connected", tone: "emerald" };
   if (t.state === "ready") return { label: "Set, not checked", tone: "blue" };
+  const failed = t.test?.details.filter((d) => !d.ok) ?? [];
+  if (t.state === "failing" && failed.length > 0 && failed.every((d) => d.row)) {
+    return { label: `${failed.length} ${failed.length === 1 ? "table" : "tables"} not readable`, tone: "rose" };
+  }
   if (t.state === "failing") return { label: "Check failed", tone: "rose" };
   if (t.state === "incomplete") return { label: `Needs ${t.missing.length} ${t.missing.length === 1 ? "value" : "values"}`, tone: "amber" };
   return { label: "Not connected", tone: "zinc" };
@@ -104,6 +119,85 @@ function BotSignIn({ n, admin, onChanged }: { n: number; admin: boolean; onChang
   );
 }
 
+/** Lines for the owners of the data to run, with one Copy for all of them. */
+function Grants({ lines, className }: { lines: string[]; className?: string }) {
+  const { toast } = useApp();
+  if (!lines.length) return null;
+  return (
+    <div className={className}>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Send to the owners of the data</p>
+        <Button size="sm" icon={<Copy className="size-3.5" />}
+          onClick={async () => { await navigator.clipboard.writeText(lines.join("\n")); toast(lines.length === 1 ? "Line copied" : `${lines.length} lines copied`, "success"); }}>Copy</Button>
+      </div>
+      <pre className="mt-2 overflow-x-auto rounded-lg bg-zinc-100 p-3 font-mono text-xs text-zinc-800 dark:bg-zinc-800/70 dark:text-zinc-200">{lines.join("\n")}</pre>
+      <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">Each line lets this Console read one dataset. Check again once they have run them.</p>
+    </div>
+  );
+}
+
+/** What a check found beyond the row's badge: "Readable" is already on the badge. */
+const said = (status: { ok: boolean; message: string }) => (status.ok ? status.message.replace(/^Readable\.\s*/, "") : status.message);
+
+/** Every table the app reads, once: its id, what reads it, and what the last check found. */
+function TablesStep({ n, rows, admin, onChanged }: { n: number; rows: TableRow[]; admin: boolean; onChanged: () => void }) {
+  const { toast } = useApp();
+  const [ids, setIds] = useState<Record<string, string>>({});
+  const [reads, setReads] = useState<Record<string, Reads>>({});
+  const saved = JSON.stringify(rows.map((r) => [r.id, r.table, r.post]));
+  useEffect(() => { setIds({}); setReads({}); }, [saved]);  // what is typed stays through the page's refresh, and clears once it is saved
+  const tables = rows.filter((r) => ids[r.id] !== undefined && ids[r.id].trim() !== r.table).map((r) => ({ id: r.id, table: ids[r.id].trim() }));
+  const chosen = rows.flatMap((r) => {
+    const now = r.post && reads[r.post.key];
+    return r.post && now && POST_READS.some(([k]) => now[k] !== r.post?.[k]) ? [now] : [];
+  });
+  const save = useAction(() => apiSend("put", "/connections/bigquery/tables", { tables, reads: chosen }));
+  const count = tables.length + chosen.length;
+  return (
+    <Step n={n} title="The tables it reads" done={rows.some((r) => r.status?.ok) && rows.every((r) => !r.status || r.status.ok)}>
+      {save.error && <Alert tone="rose" className="mb-3">{save.error.message}</Alert>}
+      <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-800">
+        {rows.map((r) => {
+          const now = r.post ? reads[r.post.key] ?? r.post : null;
+          const others = r.reads.filter((x) => !POST_READS.some(([, label]) => label === x));
+          return (
+            <li key={r.id} className="py-4 first:pt-0 last:pb-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-zinc-950 dark:text-zinc-50">{r.name}</span>
+                {!r.set ? <Badge tone="zinc">Not set</Badge> : r.status ? <Badge tone={r.status.ok ? "emerald" : "rose"}>{r.status.ok ? "Readable" : "Not readable"}</Badge>
+                  : !r.reads.length ? <Badge tone="zinc">Nothing reads it</Badge> : null}
+                {r.location && <span className="text-xs text-zinc-500 dark:text-zinc-400">in {r.location}</span>}
+              </div>
+              {r.what && <p className="mt-0.5 truncate text-sm text-zinc-600 dark:text-zinc-400" title={r.what}>{r.what}</p>}
+              <Input className="mt-2 font-mono text-xs" aria-label={`${r.name} table`} placeholder="project.dataset.table" value={ids[r.id] ?? r.table} disabled={!admin}
+                autoComplete="off" spellCheck={false} onChange={(e) => setIds((old) => ({ ...old, [r.id]: e.target.value }))} />
+              {now && (
+                <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2">
+                  <span className="text-sm text-zinc-600 dark:text-zinc-400">Read by</span>
+                  {POST_READS.map(([k, label]) => <Toggle key={k} label={label} checked={now[k]} disabled={!admin} onChange={(v) => setReads((old) => ({ ...old, [now.key]: { ...now, [k]: v } }))} />)}
+                </div>
+              )}
+              {others.length > 0 && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{now ? "Also read by" : "Read by"} {others.join(", ")}</p>}
+              {r.status && said(r.status) && <p className={cx("mt-2 break-words text-sm", r.status.ok ? "text-zinc-600 dark:text-zinc-400" : "text-rose-700 dark:text-rose-300")}>{said(r.status)}</p>}
+            </li>
+          );
+        })}
+      </ul>
+      {admin && (
+        <div className="mt-4 flex items-center gap-3">
+          <Button variant="primary" disabled={!count} loading={save.loading}
+            onClick={async () => { if (await save.run()) { toast("Tables saved", "success"); onChanged(); } }}>Save</Button>
+          {count > 0 && <span className="text-sm text-zinc-500 dark:text-zinc-400">{count} changed</span>}
+        </div>
+      )}
+      <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
+        A table is set once here and changes everywhere it is used. Its location is read from BigQuery by the check. Add a table of posts under{" "}
+        <Link to="/settings/temp_check" className="text-blue-700 hover:underline dark:text-blue-300">Settings, Temp check</Link>.
+      </p>
+    </Step>
+  );
+}
+
 function ToolFlow({ tool, admin, onChanged }: { tool: Tool; admin: boolean; onChanged: () => void }) {
   const { toast } = useApp();
   const [values, setValues] = useState<Record<string, string>>({});
@@ -111,11 +205,12 @@ function ToolFlow({ tool, admin, onChanged }: { tool: Tool; admin: boolean; onCh
   const [created, setCreated] = useState<{ step: string; ok: boolean; detail?: string }[] | null>(null);
   const [confirm, setConfirm] = useState(false);
 
+  const saved = JSON.stringify(tool.fields.map((f) => [f.path, f.value]));
   useEffect(() => {
     setValues(Object.fromEntries(tool.fields.map((f) => [f.path, f.value === null || f.value === undefined ? "" : String(f.value)])));
     setCreated(null);
     setConfirm(false);
-  }, [tool.key, tool.fields]);
+  }, [tool.key, saved]);  // eslint-disable-line react-hooks/exhaustive-deps -- what is typed stays through the page's refresh
   useEffect(() => {
     if (!admin) return;
     let live = true;
@@ -135,6 +230,8 @@ function ToolFlow({ tool, admin, onChanged }: { tool: Tool; admin: boolean; onCh
   const [result, setResult] = useState<Test | null>(null);
   useEffect(() => setResult(null), [tool.key]);
   const test = result ?? tool.test;
+  // The tool itself answers; a table it reads may still need access.
+  const works = !!test && (test.ok || (test.details.length > 0 && test.details.every((d) => d.ok || d.row)));
   const error = save.error ?? check.error ?? create.error ?? cut.error;
   let n = 0;
 
@@ -192,15 +289,6 @@ function ToolFlow({ tool, admin, onChanged }: { tool: Tool; admin: boolean; onCh
             </div>
           )}
         </Step>
-      ) : tool.steps[0]?.key === "tables" ? (
-        <Step n={++n} title={tool.steps[0].title} done={!tool.missing.length}>
-          {tool.facts.length ? (
-            <dl className="grid gap-3 text-sm sm:grid-cols-2">
-              {tool.facts.map((f) => <div key={f.value} className="min-w-0"><dt className="text-zinc-900 dark:text-zinc-100">{f.label}</dt><dd className="mt-0.5 break-all font-mono text-xs text-zinc-500 dark:text-zinc-400">{f.value}</dd></div>)}
-            </dl>
-          ) : <p className="text-sm text-zinc-600 dark:text-zinc-400">None yet. Find and fill, at the top of this page, adds the five tables the temp check app searches.</p>}
-          <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">Change a table, switch one OFF or add one under <Link to="/settings/temp_check" className="text-blue-700 hover:underline dark:text-blue-300">Settings, Temp check</Link>.</p>
-        </Step>
       ) : (
         <Step n={++n} title={tool.steps[0]?.title ?? "People"} done={tool.state === "connected"}>
           <dl className="grid grid-cols-2 gap-4 text-sm">
@@ -221,22 +309,30 @@ function ToolFlow({ tool, admin, onChanged }: { tool: Tool; admin: boolean; onCh
         </Step>
       )}
 
-      <Step n={++n} title="Check access" done={!!test?.ok}>
+      {tool.tables && <TablesStep n={++n} rows={tool.tables} admin={admin} onChanged={() => { setResult(null); onChanged(); }} />}
+
+      <Step n={++n} title="Check access" done={works}>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">Needs: {tool.access}</p>
         {admin && <Button className="mt-3" variant={test?.ok ? "secondary" : "primary"} loading={check.loading} disabled={changed.length > 0}
           onClick={async () => { const r = await check.run(); if (r) { setResult(r.test); onChanged(); } }}>{test ? "Check again" : "Check now"}</Button>}
         {test && (
           <div className="mt-4">
-            <p className={cx("text-sm font-medium", test.ok ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>{test.ok ? "Connected" : "Not connected yet"}<span className="ml-2 font-normal text-zinc-500 dark:text-zinc-400">checked {fmtRelative(test.at)}</span></p>
+            <p className={cx("text-sm font-medium", works ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>{works ? "Connected" : "Not connected yet"}<span className="ml-2 font-normal text-zinc-500 dark:text-zinc-400">checked {fmtRelative(test.at)}</span></p>
             {!test.details.length && <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">{test.message}</p>}
+            {tool.tables && test.details.some((d) => d.row) && (
+              <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">
+                {test.details.filter((d) => d.row && d.ok).length} of {test.details.filter((d) => d.row).length} tables are readable. Each table's line is in the list above.
+              </p>
+            )}
             <ul className="mt-2 flex flex-col gap-2">
-              {test.details.map((d) => (
+              {test.details.filter((d) => !d.row).map((d) => (
                 <li key={d.label} className="flex items-start gap-2 text-sm">
                   {d.ok ? <CircleCheck className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" /> : <CircleX className="mt-0.5 size-4 shrink-0 text-rose-600 dark:text-rose-400" />}
                   <span className="min-w-0"><span className="font-medium text-zinc-900 dark:text-zinc-100">{d.label}</span><span className="block break-words text-zinc-600 dark:text-zinc-400">{d.message}</span></span>
                 </li>
               ))}
             </ul>
+            <Grants lines={test.grants ?? []} className="mt-4" />
           </div>
         )}
       </Step>
@@ -254,30 +350,81 @@ function ToolFlow({ tool, admin, onChanged }: { tool: Tool; admin: boolean; onCh
   );
 }
 
+/** What is left for a person across every tool, and the lines to send to the owners of the data. */
+function LeftToDo({ todo, grants, onOpen }: { todo: Todo[]; grants: string[]; onOpen: (key: string) => void }) {
+  if (!todo.length) return null;
+  const needed = todo.filter((t) => t.required);
+  return (
+    <section className="mb-7 rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+      <h2 className="text-sm font-medium text-zinc-950 dark:text-zinc-50">Left to do <span className="ml-1 font-normal tabular-nums text-zinc-500 dark:text-zinc-400">{todo.length}</span></h2>
+      <ul className="mt-3 flex flex-col gap-2.5">
+        {[...needed, ...todo.filter((t) => !t.required)].map((t) => (
+          <li key={`${t.tool}:${t.text}`} className="flex items-start gap-3 text-sm">
+            <button type="button" onClick={() => onOpen(t.tool)} className="w-36 shrink-0 text-left font-medium text-blue-700 hover:underline dark:text-blue-300">{t.name}</button>
+            <span className="min-w-0 break-words text-zinc-700 dark:text-zinc-300">{t.text}</span>
+          </li>
+        ))}
+      </ul>
+      <Grants lines={grants} className="mt-5 border-t border-zinc-100 pt-4 dark:border-zinc-800" />
+    </section>
+  );
+}
+
 export default function ConnectionsPage() {
   const { toolKey } = useParams();
   const navigate = useNavigate();
   const data = useApi<Catalog>("/connections", undefined, 60_000);
-  const [filled, setFilled] = useState<Filled | null>(null);
-  const fill = useAction(() => apiSend<Filled>("post", "/connections/autofill"));
+  const [step, setStep] = useState("");
+  const [done, setDone] = useState<SetUp | null>(null);
   const tools = data.data?.connections ?? [];
   const open = tools.find((t) => t.key === toolKey) ?? null;
   const admin = !!data.data?.is_admin;
   const sum = data.data?.summary;
   const groups: [string, Tool[]][] = [["Needed for the agent to work", tools.filter((t) => t.required)], ["Optional", tools.filter((t) => !t.required)]];
 
+  /** One press: fill what the service can see, create what the needed tools are missing, then check every tool that has its values. */
+  const setUp = useAction(async () => {
+    setDone(null);
+    const notes: string[] = [];
+    let created = 0;
+    let checked = 0;
+    try {
+      setStep("Finding values");
+      const found = await apiSend<Filled & Catalog>("post", "/connections/autofill");
+      notes.push(...found.notes);
+      const set = found.connections.filter((t) => !t.missing.length);
+      if (found.backend !== "local") {
+        for (const t of set.filter((x) => x.required && x.create)) {
+          setStep(`Creating what ${t.name} needs`);
+          try {
+            const made = await apiSend<{ steps: { detail?: string; name?: string }[] }>("post", t.create.replace(/^\/api/, ""));
+            created += made.steps.filter((x) => x.name && x.detail === "created").length;
+          } catch (err) { notes.push(`${t.name}: ${toApiError(err).message}`); }
+        }
+        for (const t of set) {
+          setStep(`Checking ${t.name}, ${checked + 1} of ${set.length}`);
+          try { await apiSend("post", `/connections/${t.key}/test`); } catch (err) { notes.push(`${t.name}: ${toApiError(err).message}`); }
+          checked += 1;
+        }
+      }
+      const after = await apiGet<Catalog>("/connections");
+      data.setData(after);
+      setDone({ filled: found.filled.length, created, checked, connected: after.summary.connected, notes });
+    } finally { setStep(""); }
+  });
+
   return (
     <div>
-      <PageHeader title="Integrations" description={sum ? `${sum.ready} of ${sum.required} needed tools are set · ${sum.connected} checked and connected` : undefined}
-        actions={admin ? <Button variant="primary" loading={fill.loading} onClick={async () => { const r = await fill.run(); if (r) { setFilled(r); data.reload(); } }}>Find and fill</Button> : undefined} />
-      <ErrorState error={data.error ?? fill.error} onRetry={data.reload} />
-      {filled && (
-        <Alert tone={filled.filled.length ? "emerald" : "blue"} className="mb-4" title={filled.filled.length ? `Filled ${filled.filled.length} ${filled.filled.length === 1 ? "value" : "values"}` : "Nothing new was found"}>
-          {filled.filled.length > 0 && <p>{filled.filled.map((f) => `${f.tool}: ${f.label}`).join(" · ")}</p>}
-          {filled.left.some((l) => l.required) && <p className="mt-1">Left for you: {filled.left.filter((l) => l.required).map((l) => `${l.name}: ${l.label}`).join(" · ")}</p>}
-          {filled.notes.map((note) => <p key={note} className="mt-1">{note}</p>)}
+      <PageHeader title="Integrations" description={step ? `${step}…` : sum ? `${sum.ready} of ${sum.required} needed tools are set · ${sum.connected} checked and connected` : undefined}
+        actions={admin ? <Button variant="primary" loading={setUp.loading} onClick={() => void setUp.run()}>Set up</Button> : undefined} />
+      <ErrorState error={data.error ?? setUp.error} onRetry={data.reload} />
+      {done && (
+        <Alert tone={data.data?.todo.length ? "blue" : "emerald"} className="mb-4"
+          title={[`Filled ${done.filled} ${done.filled === 1 ? "value" : "values"}`, done.created ? `created ${done.created} ${done.created === 1 ? "table" : "tables"}` : "", done.checked ? `checked ${done.checked} tools, ${done.connected} connected` : ""].filter(Boolean).join(" · ")}>
+          {done.notes.map((note) => <p key={note}>{note}</p>)}
         </Alert>
       )}
+      {data.data && <LeftToDo todo={data.data.todo} grants={data.data.grants} onOpen={(key) => navigate(`/connections/${key}`)} />}
       {data.loading && !data.data ? <Spinner /> : groups.map(([title, list]) => list.length > 0 && (
         <section key={title} className="mb-7">
           <h2 className="mb-3 text-sm font-medium text-zinc-600 dark:text-zinc-400">{title}</h2>

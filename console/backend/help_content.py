@@ -283,27 +283,32 @@ TOPICS: list[dict[str, Any]] = [
         "sections": [
             {"heading": "Set everything up", "steps": [
                 "Open Integrations.",
-                "Click Find and fill. It writes the project, region, this Console's address, the deployed agent and the dataset when it can see them. "
-                "It also brings the temp check app's setup: its five tables of posts and its Brandwatch values. Nothing already set is changed.",
-                "Open each tile under Needed for the agent to work that still says Needs values.",
-                "Enter or choose its values and Save.",
-                "Click Create when the tile offers it (BigQuery tables, Pub/Sub topics).",
-                "Click Check now. Each line says what passed and what to fix."]},
+                "Click Set up. It fills what the project already has (the project, region, this Console's address, the deployed agent, the app's dataset) "
+                "and the temp check app's setup: its five tables of posts and its Brandwatch values. Nothing already set is changed.",
+                "It then creates the app's own tables if they are missing, and checks every tool that has its values.",
+                "Read Left to do. Each line names a tool and what it still needs. Click the tool's name to open it.",
+                "Copy the lines under Send to the owners of the data and send them to the people who own those datasets.",
+                "Click Set up again when something has changed. It is safe to press as often as you like."]},
             {"heading": "Sign in as the QA chatbot", "steps": [
                 "Open Integrations, then Google Chat.",
                 "Enter the QA chatbot's account (the Google account it reads and posts as) and Save.",
                 "Click Sign in as the QA chatbot. At Google, choose that account and leave every box ticked.",
                 "Click Check now. Each space shows its latest message and whether people outside Google can join it.",
                 "A space that says Add the account to this space: add it in Chat, then check again."]},
-            {"heading": "Post tables", "items": [
-                "The tables of posts that temp checks, Early Detection and watches search. Find and fill adds the five the temp check app searches.",
+            {"heading": "BigQuery", "items": [
+                "One tile holds the app's own dataset and every table the app reads.",
+                "The app's own dataset is the only place it creates anything. Every other table is only read.",
+                "Each table is listed once with what reads it. A table used in several places is one row: change it there and it changes everywhere.",
+                "For a table of posts, tick what reads it: Temp checks, Early Detection, Watches.",
+                "You never type a location. The check reads where each table lives and sets it.",
                 "Check now asks each table for a day of posts, which costs nothing. A table the Console can't read shows the GRANT line its owners run.",
-                "Change a table, switch one OFF or add one under Settings, Temp check. Early Detection and watches read the ones named in their own settings."]},
+                "Add a table of posts, or change how one is read, under Settings, Temp check."]},
             {"heading": "What a tile says", "items": [
                 "Connected: its values are set and the last check passed.",
                 "Set, not checked: its values are set. Run the check.",
                 "Needs values: something required is empty.",
                 "Check failed: the last check found a problem. Open the tile for the fix.",
+                "2 tables not readable: BigQuery itself works, and that many tables it reads need access or a correction.",
                 "Not connected: an optional tool nobody has set up."]},
             {"heading": "When access is denied", "text": "The check names the account and the exact grant to run. For a dataset in another project, send that line to the dataset's owners."},
             {"heading": "Disconnect", "text": "Optional tools can be disconnected: their values go back to the defaults. Tools the agent needs cannot be disconnected, only changed."},
@@ -418,8 +423,8 @@ TOPICS: list[dict[str, Any]] = [
         "summary": "Tuning values. Every one has a working default; change one only when you need to.",
         "sections": [
             {"heading": "What to fill in", "steps": [
-                "Open Integrations and click Find and fill. It writes what the project already has.",
-                "Connect what is left under Needed for the agent to work.",
+                "Open Integrations and click Set up. It fills what the project already has and checks each tool.",
+                "Do what Left to do lists.",
                 "Add people under Admin → People.",
                 "Turn on the features you want under Settings → Switches.",
                 "Nothing else is required."]},
