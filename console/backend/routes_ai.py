@@ -119,44 +119,53 @@ def _step(name: str, fn: Any) -> dict[str, Any]:
 
 
 def _check_gemini(ctx: AgentContext) -> list[dict[str, Any]]:
+    """What each model's real calls say. No test prompt is sent."""
+    from triage_agent.prompts import call_evidence
+
     cfg = ctx.config
     models = dict.fromkeys(m for m in (cfg.models.triage, cfg.platform.chat_agent.model or cfg.models.converse) if m)
-    return [_step(f"{m} answers", lambda m=m: "said: " + ctx.llm.generate_text(model=m, system="Answer in one word.", prompt="Say ready.",
-                                                                              temperature=0.0, purpose="ai.check").strip()[:40]) for m in models]
+    return [_step(f"{m}: its real calls", lambda m=m: call_evidence(ctx, m)) for m in models]
 
 
 def _check_decisions(ctx: AgentContext) -> list[dict[str, Any]]:
-    def one() -> str:
-        q = {"risk": {"type": "noul", "instructions": "Does the input describe a service outage?",
-                      "criteria": {"true_description": "A service is down.", "false_description": "Nothing is down."}}}
-        r = decisions.ask(ctx, "Several people report that the service has been down for an hour.", q, purpose="ai.check")
-        if not r["ok"]:
-            raise RuntimeError(r["why"])
-        return f"answered {r['answers']['risk']['p']:.2f} in {r['ms']} ms"
+    """Today's real calls to Gemini Decisions. No test question is asked."""
+    def state() -> str:
+        st = decisions.status(ctx)
+        if not st["connected"]:
+            raise RuntimeError("no API key is set (Settings, Gemini Decisions)")
+        if st["paused_until"]:
+            raise RuntimeError(f"paused after a failure: {st['paused_why']}")
+        t = st["today"]
+        if not t["asked"]:
+            return "Not asked yet today. It is asked when an alert or an early story comes in with one of its switches ON; a failure shows here."
+        return f"asked {t['asked']} times today, {t['failed']} failed, {t['refused']} refused by the safety filter"
 
-    return [_step("One question is answered with a probability", one)]
+    return [_step("Its real calls today", state)]
 
 
 def _check_bigquery(ctx: AgentContext) -> list[dict[str, Any]]:
+    """Each Early Detection statement is checked by BigQuery against the real tables without running (a dry run),
+    and the last real read of each table is reported."""
     gw = bq_admin.get_gateway(ctx)
-    e = ctx.config.platform.early
-    home = ctx.config.platform.bigquery.location or None
-    steps = [_step("Vertex AI makes an embedding from BigQuery", lambda: str(gw.query(
-        f"SELECT ARRAY_LENGTH(AI.EMBED('ready', endpoint => '{e.embedding_endpoint}', task_type => 'SEMANTIC_SIMILARITY'{early._connection(e)}).result) AS n",
-        location=home, labels=early.LABELS)[0]["n"]) + " numbers")]
     try:
         plan = early.plan(ctx, ctx.now())
     except Exception as exc:  # noqa: BLE001
-        return steps + [{"step": "Early Detection's statements", "ok": False, "detail": str(exc)[:400], "ms": 0}]
-    for item in plan:  # a dry run of each statement: BigQuery checks it against the real tables and runs nothing
-        steps.append(_step(f"Early Detection: {item['what']}", lambda item=item: f"valid, would read {gw.dry_run(item['sql'], item['params'], location=item['location']):,} bytes"))
+        return [{"step": "Early Detection's statements", "ok": False, "detail": str(exc)[:400], "ms": 0}]
+    steps = [_step(f"Early Detection: {item['what']}", lambda item=item: f"valid, would read {gw.dry_run(item['sql'], item['params'], location=item['location']):,} bytes")
+             for item in plan]
+    for src in early.status(ctx)["sources"]:
+        steps.append({"step": f"Last real read of {src.get('label') or src['key']}", "ok": src.get("status") == "live",
+                      "detail": src.get("error") or f"{src.get('how', 'read')} at {str(src.get('at', ''))[:16].replace('T', ' ')} UTC", "ms": 0})
     return steps
 
 
 def _check_documents(ctx: AgentContext) -> list[dict[str, Any]]:
-    steps = [_step("A search finds passages", lambda: f"{len(knowledge.retrieve(ctx, 'escalation process'))} passages for a test question")]
+    """What the documents themselves show. No test question is searched."""
+    docs = knowledge.list_docs(ctx)
+    steps = [{"step": "Documents kept", "ok": bool(docs), "ms": 0,
+              "detail": f"{len(docs)} documents, {sum(d.chunks for d in docs)} passages" if docs else "No document yet. Add one on the Knowledge page."}]
     if ctx.config.platform.knowledge.embedding_model:
-        steps.append(_step("The embedding model answers", lambda: f"{len((knowledge.embed(ctx, ['ready']) or [[]])[0])} numbers"))
+        steps.append(_step("Embeddings", lambda: knowledge.embedding_evidence(ctx)))
     return steps
 
 

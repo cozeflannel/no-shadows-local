@@ -260,6 +260,37 @@ class ManagedLLM:
         return out
 
 
+def recent_calls(ctx: Any, hours: int = 24) -> dict[str, dict[str, Any]]:
+    """What each model's real calls say about it, from the record every call leaves (`llm.usage`):
+    {model: {calls, failed, last_ok, last_ok_ms, last_purpose, last_error, last_error_at}}. No call is made to find out."""
+    from datetime import timedelta
+
+    out: dict[str, dict[str, Any]] = {}
+    events = ctx.events.query(since=ctx.now() - timedelta(hours=hours), types=[PlatformEvent.LLM_USAGE], limit=20000)
+    for e in sorted(events, key=lambda e: e.event_ts):
+        payload = e.payload or {}
+        m = out.setdefault(e.model or "unknown", {"calls": 0, "failed": 0, "last_ok": "", "last_ok_ms": None, "last_purpose": "",
+                                                 "last_error": "", "last_error_at": ""})
+        m["calls"] += 1
+        if payload.get("ok", True):
+            m.update(last_ok=e.event_ts.isoformat(), last_ok_ms=e.latency_ms, last_purpose=payload.get("purpose") or "")
+        else:
+            m["failed"] += 1
+            m.update(last_error=str(payload.get("error") or "the call failed"), last_error_at=e.event_ts.isoformat())
+    return out
+
+
+def call_evidence(ctx: Any, model: str, hours: int = 24) -> str:
+    """One model's state in a sentence, from its real calls. Raises when its latest call failed."""
+    m = recent_calls(ctx, hours).get(model)
+    if not m:
+        return f"{model}: no call in the last {hours} hours. The next alert or question makes one, and a failure shows here."
+    if m["last_error_at"] and m["last_error_at"] > m["last_ok"]:
+        raise RuntimeError(f"{model}: the latest call failed at {m['last_error_at'][:16].replace('T', ' ')} UTC: {m['last_error']}")
+    return (f"{model}: {m['calls']} calls in the last {hours} hours, {m['failed']} failed; the latest answered at "
+            f"{m['last_ok'][:16].replace('T', ' ')} UTC in {m['last_ok_ms']} ms ({m['last_purpose']})")
+
+
 def usage_summary(events: list[Any], prices: dict[str, Any], currency: str = "USD") -> dict[str, Any]:
     """Calls, tokens and cost by purpose and by model from `llm.usage` events. Cost only where a price is set."""
     by_purpose: dict[str, dict[str, Any]] = {}

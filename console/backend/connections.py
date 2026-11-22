@@ -324,27 +324,15 @@ def _check_gcp(ctx: AgentContext) -> list[dict[str, Any]]:
 
 
 def _check_gemini(ctx: AgentContext) -> list[dict[str, Any]]:
+    """What each model's real calls say. Gemini is not sent a test prompt: the calls the agent makes are the evidence."""
+    from triage_agent.prompts import call_evidence
+
     m = ctx.config.models
-    simulated = " (simulated: TRIAGE_LLM=fake)" if (os.environ.get("TRIAGE_LLM") or "").lower() == "fake" else ""
-    out, asked = [], {}
+    out: list[dict[str, Any]] = []
     for label, model in (("Model for alerts", m.triage), ("Model for drafts", m.drafting), ("Model for answers", m.converse)):
-        if model not in asked:
-            def ask(model: str = model) -> str:
-                started = time.monotonic()
-                answer = ctx.llm.generate_text(model=model, system="This is a connection test.", prompt="Reply with the single word OK.",
-                                               temperature=0.0, purpose="connection.test")
-                if not str(answer or "").strip():
-                    raise RuntimeError(f"{model} returned nothing.")
-                return f"{model} answered in {int((time.monotonic() - started) * 1000)} ms{simulated}"
-            asked[model] = _detail(label, ask)
-        out.append({**asked[model], "label": label})
+        out.append(_detail(label, lambda model=model: call_evidence(ctx, model)))
     if ctx.config.platform.knowledge.embedding_model:
-        def embed() -> str:
-            vectors = knowledge.embed(ctx, ["connection test"])
-            if not vectors:
-                raise RuntimeError(f"{ctx.config.platform.knowledge.embedding_model} returned no vector.")
-            return f"{len(vectors[0])} dimensions"
-        out.append(_detail("Embedding model", embed))
+        out.append(_detail("Embedding model", lambda: knowledge.embedding_evidence(ctx)))
     return out
 
 

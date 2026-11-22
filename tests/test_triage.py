@@ -155,17 +155,42 @@ def test_rerun_of_failed_case_reports_time_to_correction(ctx, clock):
     assert ev.attempt == 2 and ev.payload["after_bounce"] and ev.payload["time_to_correction_s"] == 1800
 
 
-def test_llm_correction_applied_or_held_for_review(ctx, fake_llm):
-    ok_llm(fake_llm, exposure_tag_fit={"ok": False, "confidence": 0.92, "finding": "medical claim",
-                                       "proposed_value": "Product - Dangerous results (e.g. medical/legal)"})
-    r = triage(ctx, alert(9))
-    assert r.outputs["verdict"] == "CORRECTED"
-    assert ctx.store.get_case(r.outputs["case_id"]).priority == "P0"
-    ok_llm(fake_llm, exposure_tag_fit={"ok": False, "confidence": 0.62, "finding": "maybe offensive",
-                                       "proposed_value": "Product - Offensive or explicit results"})
-    held = triage(ctx, alert(10))
-    assert held.outputs["verdict"] == "NEEDS_REVIEW"
+def test_a_fix_gemini_proposes_is_applied_only_when_gemini_decisions_puts_it_at_the_bar(ctx, fake_llm, monkeypatch):
+    """Gemini is not asked how sure it is. A fix it proposes waits for a person unless Gemini Decisions' probability
+    that the fix is right reaches Settings' auto-apply bar (0.85)."""
+    from triage_agent import decisions
+
+    ok_llm(fake_llm, exposure_tag_fit={"ok": False, "finding": "medical claim", "proposed_value": "Product - Dangerous results (e.g. medical/legal)"})
+    held = triage(ctx, alert(9))
+    assert held.outputs["verdict"] == "NEEDS_REVIEW", "no probability: the fix waits for a person"
     assert held.outputs["dm_recipients"] == "im1@ops.test" and "forward TRG-" in held.outputs["dm_text"]
+    assert "confidence" not in next(c for c in fake_llm.calls if c["purpose"] == "triage.assess")["system"], "Gemini is not asked to rate itself"
+
+    chance = {"fix_exposure_tag_fit": 0.92, "review": 0.05}
+    asked: list[dict] = []
+
+    def answer(c, text, questions, purpose=""):
+        asked.append(questions)
+        return {"ok": True, "tokens": 0, "ms": 1, "answers": {k: {"type": "noul", "p": chance[k], "confidence": 0.9} for k in questions}}
+
+    monkeypatch.setattr(decisions, "ask", answer)
+    ctx.config.platform.flags.decisions_review = True
+    r = triage(ctx, alert(10))
+    case = ctx.store.get_case(r.outputs["case_id"])
+    assert r.outputs["verdict"] == "CORRECTED" and case.priority == "P0"
+    fix = next(c for c in case.latest.result.corrections if c.field == "exposure_tag")
+    assert fix.applied and fix.confidence == 0.92 and case.latest.result.review_probability == 0.05
+    assert 'should the Exposure Tag be "Product - Dangerous results (e.g. medical/legal)" rather than' in asked[0]["fix_exposure_tag_fit"]["instructions"]
+
+    chance["fix_exposure_tag_fit"] = 0.62
+    unsure = triage(ctx, alert(14))
+    result = ctx.store.get_case(unsure.outputs["case_id"]).latest.result
+    assert unsure.outputs["verdict"] == "NEEDS_REVIEW" and "(62% likely right)" in result.review_reasons[0]
+
+    chance.update(fix_exposure_tag_fit=0.95, review=0.6)
+    doubted = triage(ctx, alert(15))
+    reasons = ctx.store.get_case(doubted.outputs["case_id"]).latest.result.review_reasons
+    assert doubted.outputs["verdict"] == "NEEDS_REVIEW" and reasons == ["Gemini Decisions puts the chance this needs a person at 60%"]
 
 
 def test_exclusions(ctx):

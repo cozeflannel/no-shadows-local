@@ -5,18 +5,20 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { apiSend, type ApiError } from "../api/client";
 import { useApi } from "../api/hooks";
 import type { ActionDef } from "../api/types";
-import { Alert, Badge, Button, Card, Confidence, cx, EmptyState, ErrorState, Field, Input, Modal, PageHeader, Segmented, Select, Spinner, StatusBadge, Textarea, VerdictBadge } from "../components/ui";
+import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, Field, Input, Modal, PageHeader, Segmented, Select, Spinner, StatusBadge, Textarea, VerdictBadge } from "../components/ui";
 import { useApp } from "../context";
 import { fmtDateTime, fmtMinutes, fmtRelative, fmtValue } from "../lib/format";
 import { useLive } from "../lib/live";
 
 type View = "action" | "review" | "verified" | "suppressed" | "closed" | "all";
 interface Correction { field: string; old: unknown; new: unknown; reason: string; confidence: number | null; applied: boolean; reverted_by: string | null }
+interface Burson { filled: number; right: number; wrong: string[]; in_question: string[]; pct: number | null }
+interface Kept { kept: number; of: number; rate: number }
 interface FeedCard {
   case_id: string; status: string; alert_name: string | null; issue_name: string | null; product: string | null; exposure_tag: string | null;
-  priority: string | null; platform: string | null; verdict: string | null; confidence: number | null; needs: string; waiting_min: number;
-  classification: { label: string; confidence: number; rationale: string; trusted: boolean } | null;
-  field_confidence: Record<string, number>;
+  priority: string | null; platform: string | null; verdict: string | null; review_probability: number | null; burson: Burson | null; needs: string; waiting_min: number;
+  classification: { label: string; probability: number | null; rationale: string; trusted: boolean; decided_by: string } | null;
+  field_agreement: { days: number; assessments: number; fields: Record<string, Kept> };
   citations: { ref: string; title: string; link: string; kind: string; excerpt: string }[];
   proposed_actions: { code: string; label: string; kind: string }[];
   actions_taken: { code: string; actor: string; at: string; note: string | null; escalation_id: string | null }[];
@@ -76,7 +78,7 @@ function CardRow({ card, selected, onOpen }: { card: FeedCard; selected: boolean
       <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
         <span>{card.case_id}</span>{card.product && <span>{card.product}</span>}{card.exposure_tag && <span className="truncate">{card.exposure_tag}</span>}
         {card.classification && <span>Class: {card.classification.label}</span>}
-        <Confidence value={card.confidence} />
+        <Numbers burson={card.burson} review={card.review_probability} />
       </p>
     </button>
   );
@@ -106,17 +108,18 @@ function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legen
 
   return (
     <div className="space-y-4">
-      <Card title={<span className="flex flex-wrap items-center gap-2">{c.case_id}<StatusBadge status={c.status} /><VerdictBadge verdict={c.verdict} /><Confidence value={c.confidence} /></span>}
+      <Card title={<span className="flex flex-wrap items-center gap-2">{c.case_id}<StatusBadge status={c.status} /><VerdictBadge verdict={c.verdict} /></span>}
         subtitle={c.alert_name || c.issue_name || undefined}
         actions={<>
           {c.post_url && <a href={c.post_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 dark:text-blue-200">Post<ExternalLink className="size-3" /></a>}
           <Link to={`/cases/${c.case_id}`} className="text-xs font-medium text-blue-600 dark:text-blue-200">Full case</Link>
         </>}>
+        <p className="mb-3 flex flex-wrap gap-x-3 gap-y-1 text-sm text-zinc-700 dark:text-zinc-300"><Numbers burson={c.burson} review={c.review_probability} long /></p>
         {c.classification && (
           <p className="mb-3 text-sm text-zinc-700 dark:text-zinc-300">
             <span className="font-medium text-zinc-900 dark:text-zinc-100">Class: {c.classification.label}</span>
-            <span className="mx-2"><Confidence value={c.classification.confidence} /></span>
-            {!c.classification.trusted && <Badge tone="amber">below the confidence floor</Badge>} {c.classification.rationale}
+            {c.classification.probability !== null && <span className="mx-2 text-zinc-500">{Math.round(c.classification.probability * 100)}% (Gemini Decisions)</span>}
+            {" "}{c.classification.rationale}
           </p>
         )}
         {c.review_reasons.length > 0 && <Alert tone="amber" title="Why it was held" className="mb-3"><ul className="list-disc pl-4">{c.review_reasons.map((r) => <li key={r}>{r}</li>)}</ul></Alert>}
@@ -134,7 +137,7 @@ function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legen
                     onChange={(e) => setAccept((a) => ({ ...a, [p.field]: e.target.checked }))} aria-label={`Apply the proposed ${label(p.field)}`} />
                   <span className="min-w-0 flex-1">
                     <span className="font-medium text-zinc-900 dark:text-zinc-100">{label(p.field)}</span>: <span className="text-zinc-500 line-through">{fmtValue(p.old)}</span> to <span className="font-medium">{fmtValue(p.new)}</span>
-                    <span className="ml-2"><Confidence value={p.confidence} /></span>
+                    <span className="ml-2 text-xs text-zinc-500">{p.confidence !== null ? `${Math.round(p.confidence * 100)}% likely right (Gemini Decisions)` : "no probability: your call"}</span>
                     <span className="block text-xs text-zinc-500">{p.reason}</span>
                   </span>
                 </li>
@@ -169,14 +172,19 @@ function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legen
         )}
       </Card>
 
-      <Card title="Fields and confidence" padded={false}>
+      <Card title="Fields" padded={false}
+        subtitle={c.field_agreement.assessments > 0 ? `Right column: how often incident managers kept the app's value, from ${c.field_agreement.assessments} assessments in the last ${c.field_agreement.days} days.` : "Once incident managers record assessments, each field shows how often they kept the app's value."}>
         <table className="w-full text-sm">
           <tbody>
             {fields.map(([f, v]) => (
               <tr key={f} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
                 <td className="w-28 px-5 py-2 align-top text-xs text-zinc-500 sm:w-44">{label(f)}</td>
                 <td className="break-words px-2 py-2 align-top text-zinc-800 dark:text-zinc-200">{fmtValue(v)}</td>
-                <td className="w-28 px-5 py-2 text-right align-top">{f in c.field_confidence ? <Confidence value={c.field_confidence[f]} /> : null}</td>
+                <td className="w-40 px-5 py-2 text-right align-top text-xs text-zinc-500">
+                  {c.burson?.wrong.includes(f) && <Badge tone="rose">Burson had it wrong</Badge>}
+                  {c.burson?.in_question.includes(f) && <Badge tone="amber">In question</Badge>}
+                  {c.field_agreement.fields[f] && <span className="block tabular-nums">kept {c.field_agreement.fields[f].kept} of {c.field_agreement.fields[f].of}</span>}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -247,6 +255,20 @@ function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legen
   );
 }
 
+/** The two real numbers for an alert: Burson's fields counted against the checks, and Gemini Decisions' chance it needs a person. */
+function Numbers({ burson, review, long = false }: { burson: Burson | null; review: number | null; long?: boolean }) {
+  return (
+    <>
+      {burson && burson.pct !== null && (
+        <span title="Counted: of the fields Burson filled in, how many stood up to the checks">
+          Burson {burson.right} of {burson.filled} right ({Math.round(burson.pct * 100)}%){long && burson.in_question.length > 0 ? `, ${burson.in_question.length} in question` : ""}
+        </span>
+      )}
+      {review !== null && <span title="Gemini Decisions' probability that a person needs to look at this alert">{Math.round(review * 100)}% likely to need a person{long ? " (Gemini Decisions)" : ""}</span>}
+    </>
+  );
+}
+
 export default function FeedPage() {
   const { me, toast, refreshCounts } = useApp();
   const { caseId } = useParams();
@@ -303,7 +325,7 @@ export default function FeedPage() {
           {caseId ? <>
             <button type="button" onClick={() => navigate(`/feed${search.toString() ? `?${search}` : ""}`)} className="mb-3 inline-flex items-center gap-1 text-sm text-blue-600 xl:hidden dark:text-blue-200"><ArrowLeft className="size-4" />Back to the feed</button>
             <Detail key={caseId} caseId={caseId} legend={list.data?.legend ?? []} verdicts={list.data?.verdicts ?? []} onChanged={changed} />
-          </> : <Card><EmptyState title="Pick an alert">Its classification, confidence, citations and actions open here.</EmptyState></Card>}
+          </> : <Card><EmptyState title="Pick an alert">Its classification, the measured numbers, citations and actions open here.</EmptyState></Card>}
         </div>
       </div>
       <Modal open={intake} title="Triage an alert" onClose={() => setIntake(false)} wide

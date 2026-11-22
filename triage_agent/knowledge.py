@@ -314,6 +314,19 @@ def embed(ctx: "AgentContext", texts: list[str]) -> list[list[float]] | None:
         return None
 
 
+def embedding_evidence(ctx: "AgentContext") -> str:
+    """What the documents themselves say about the embedding model: how many were embedded when they were last read.
+    Raises when the model is set and no document has embeddings. Nothing is sent to the model to find out."""
+    model = ctx.config.platform.knowledge.embedding_model
+    docs = list_docs(ctx)
+    done = [d for d in docs if d.embedded]
+    if not docs:
+        return f"{model}: no document yet. The first one added is embedded with it."
+    if not done:
+        raise RuntimeError(f"{model} is set, and none of the {len(docs)} documents has embeddings. Refresh a document on the Knowledge page.")
+    return f"{model}: {len(done)} of {len(docs)} documents embedded ({sum(d.chunks for d in done)} passages)"
+
+
 def index_doc(ctx: "AgentContext", doc: KnowledgeDoc, text: str, actor: str) -> KnowledgeDoc:
     """Store `text` as the document's content: text parts, chunks and (when set up) embeddings."""
     cfg = ctx.config.platform.knowledge

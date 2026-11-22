@@ -61,7 +61,10 @@ TOPICS: list[dict[str, Any]] = [
                 "Switch the view: Review, Verified, Suppressed, Closed or All.",
                 "Search by case id, product, tag or issue."]},
             {"heading": "Read a card", "items": [
-                "Verdict and confidence: the agent's decision and how sure it was.",
+                "Verdict: the agent's decision.",
+                "Burson 3 of 5 right (60%): of the fields Burson filled in, how many stood up to the checks. Counted, not estimated.",
+                "72% likely to need a person: Gemini Decisions' probability, shown when the switch Gemini Decisions scores each alert is ON.",
+                "Kept 47 of 50, beside a field: how often incident managers kept the app's value for that field in their own assessments, last 30 days.",
                 "Class: the classification layer's class (when that switch is on).",
                 "Corrections: what the agent changed, old to new. Proposed corrections wait for you.",
                 "Sources: the knowledge passages the assessment cited. Click one to open the document.",
@@ -339,9 +342,15 @@ TOPICS: list[dict[str, Any]] = [
                 "Settings, Switches: turn on Gemini Decisions sorts alerts, and Score early stories with Gemini Decisions."]},
             {"heading": "When Gemini Decisions fails", "text": "It is never asked twice. After a failure no call is made for 15 minutes and work goes on without it: Gemini picks the class, and every raised story goes to its write-up. The card shows the pause and the reason."},
             {"heading": "Check now", "items": [
-                "Gemini: each model answers one word.", "Gemini Decisions: one question comes back with a probability.",
-                "Vertex AI in BigQuery: one embedding is made, then each Early Detection statement is checked against the real tables without running. A failing line shows BigQuery's own reason.",
-                "Document search: a test question finds passages."]},
+                "Nothing is sent to a model as a test. Each check reads what the real work left behind.",
+                "Gemini: each model's real calls in the last 24 hours, and the latest failure when there is one.",
+                "Gemini Decisions: how often it was asked today, how often it failed, and a pause with its reason.",
+                "Vertex AI in BigQuery: each Early Detection statement is checked by BigQuery against the real tables without running, and the last real read of each table is shown. A failing line shows BigQuery's own reason.",
+                "Document search: how many documents and passages are kept, and how many are embedded."]},
+            {"heading": "No model is asked for a number", "items": [
+                "Gemini judges and writes. It is never asked how sure it is: a number a model writes about itself is not a measurement.",
+                "A fix Gemini proposes is applied without a person only when Gemini Decisions puts the chance it is right at the bar in Settings. With no answer, the fix waits for a person.",
+                "Everything else shown as a number is counted: Burson's fields right, how often incident managers kept a value, temp check volumes, the staffing forecast."]},
         ],
     },
     {

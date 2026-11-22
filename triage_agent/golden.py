@@ -101,7 +101,7 @@ def capture(ctx: "AgentContext", case_id: str | None, *, force: bool = False) ->
     if not record.agent:  # the agent's first call is kept as it was made
         r = first.result
         record.agent = _jsonable({
-            "verdict": r.verdict.value, "confidence": r.confidence, "model": r.model, "rules_version": r.rules_version,
+            "verdict": r.verdict.value, "review_probability": r.review_probability, "burson": r.burson, "model": r.model, "rules_version": r.rules_version,
             "track": r.assessment.track if r.assessment else None,
             "issue_status": r.assessment.issue_status if r.assessment else None,
             "classification": (r.extra or {}).get("classification"),

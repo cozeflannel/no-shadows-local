@@ -337,7 +337,8 @@ def test_classification_layer_runs_first_and_the_assessment_reads_and_cites_the_
     result = ctx.store.get_case("TRG-1001").latest.result
     assert result.extra["classification"]["label"] == "Product" and result.extra["classification"]["trusted"]
     assert [c["ref"] for c in result.extra["citations"]] == [doc.doc_id]
-    assert result.extra["field_confidence"]["exposure_tag"] == 0.95 and "classify" in result.checks_run and "knowledge" in result.checks_run
+    assert "field_confidence" not in result.extra and "classify" in result.checks_run and "knowledge" in result.checks_run
+    assert result.review_probability is None and result.burson["right"] == result.burson["filled"] - len(result.burson["wrong"])
 
 
 def test_switches_off_leave_the_assessment_prompt_exactly_as_it_was(ctx, fake_llm):
@@ -349,14 +350,16 @@ def test_switches_off_leave_the_assessment_prompt_exactly_as_it_was(ctx, fake_ll
     assert "classification" not in result.extra and "citations" not in result.extra
 
 
-def test_a_low_confidence_class_is_not_trusted(ctx, fake_llm):
+def test_gemini_names_the_class_without_rating_itself(ctx, fake_llm):
     flags(ctx, classification_layer=True)
     ctx.config.platform.classification.classes = [ClassDef(name="Outage", description="service down")]
-    fake_llm.on("triage.classify", {"label": "Outage", "confidence": 0.2})
+    fake_llm.on("triage.classify", {"label": "Outage"})
     triage(ctx)
     cls = ctx.store.get_case("TRG-1001").latest.result.extra["classification"]
-    assert cls["label"] == "Outage" and cls["trusted"] is False
-    assert "CLASS:" not in next(c for c in fake_llm.calls if c["purpose"] == "triage.assess")["prompt"]
+    assert cls["label"] == "Outage" and cls["trusted"] is True and cls["probability"] is None and "confidence" not in cls
+    asked = next(c for c in fake_llm.calls if c["purpose"] == "triage.classify")["system"]
+    assert "confidence" not in asked and "probability" not in asked, "Gemini names the class; it is not asked for a number"
+    assert "CLASS: Outage" in next(c for c in fake_llm.calls if c["purpose"] == "triage.assess")["prompt"]
 
 
 # -- golden set ---------------------------------------------------------------------------------------------------------------

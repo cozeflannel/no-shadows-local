@@ -102,13 +102,14 @@ def test_gemini_decisions_picks_the_class_when_it_is_sure_and_gemini_picks_when_
     question = dec.requests[0]["body"]["questions"]["class"]
     assert question["type"] == "choice" and question["criteria"] == {"Outage": "service down", "Praise": "kind words"}
     cls = ctx.store.get_case("TRG-1001").latest.result.extra["classification"]
-    assert (cls["label"], cls["confidence"], cls["trusted"], cls["decided_by"]) == ("Outage", 0.91, True, "Gemini Decisions")
+    assert (cls["label"], cls["probability"], cls["trusted"], cls["decided_by"]) == ("Outage", 0.91, True, "Gemini Decisions")
     assert "triage.classify" not in [c["purpose"] for c in fake_llm.calls], "no Gemini call when Decisions is sure"
 
     dec.replies = [(200, {"answers": {"class": {"type": "choice", "choice": "Outage", "probabilities": {"Outage": 0.55, "Praise": 0.45}}}})]
-    fake_llm.on("triage.classify", {"label": "Praise", "confidence": 0.8})
+    fake_llm.on("triage.classify", {"label": "Praise"})
     assess_ok(fake_llm)
     triage(ctx, alert(2))
     cases = sorted(ctx.store.list_cases(), key=lambda c: c.case_id)
     second = cases[-1].latest.result.extra["classification"]
-    assert (second["label"], second["decided_by"]) == ("Praise", "Gemini") and "triage.classify" in [c["purpose"] for c in fake_llm.calls]
+    assert (second["label"], second["decided_by"], second["probability"]) == ("Praise", "Gemini", None)
+    assert "triage.classify" in [c["purpose"] for c in fake_llm.calls]

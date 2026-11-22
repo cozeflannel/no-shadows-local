@@ -124,8 +124,8 @@ def dec(api, monkeypatch):
     return type("Dec", (), {"scores": scores, "calls": calls})
 
 
-def write_up(api, call: str = "escalate", confidence: float = 0.9, **over: Any) -> None:
-    api.ctx.llm.on(early.PURPOSE, {"headline": "Chrome update logs people out", "call": call, "severity": "high", "confidence": confidence,
+def write_up(api, call: str = "escalate", **over: Any) -> None:
+    api.ctx.llm.on(early.PURPOSE, {"headline": "Chrome update logs people out", "call": call, "severity": "high",
                                    "story": "Several accounts say Chrome signs them out since today's update.", "why": "Independent first-hand reports.",
                                    "exposure_tag": "", "next_steps": ["Size it with a temp check"], "temp_check_query": "chrome logged out update", **over})
 
@@ -196,20 +196,16 @@ def test_a_raised_story_is_written_up_by_gemini_and_people_act_on_it(api, bq):
     assert entry["action"] == "early.escalate" and entry["actor"] == IM
 
 
-def test_gemini_is_not_sure_enough_to_escalate_so_the_call_is_monitor_and_a_dismissal_is_not_shown_as_new(api, bq):
+def test_geminis_call_stands_as_written_and_a_dismissal_is_not_shown_as_new(api, bq):
     flags(api.ctx, early_detection=True)
     bq.raised = [raised(1), raised(2)]
     early.check(api.ctx)
-    replies = iter([("escalate", 0.6), ("dismiss", 0.9)])
-
-    def respond(call: dict[str, Any]) -> dict[str, Any]:
-        verdict, confidence = next(replies)
-        return {"headline": "A headline", "call": verdict, "severity": "medium", "confidence": confidence, "story": "s", "why": "w"}
-
-    api.ctx.llm.on(early.PURPOSE, respond)
+    replies = iter(["escalate", "dismiss"])
+    api.ctx.llm.on(early.PURPOSE, lambda call: {"headline": "A headline", "call": next(replies), "severity": "medium", "story": "s", "why": "w"})
     early.drain(api.ctx)
     by_id = {s["id"]: s for s in api.get("/api/early").json()["signals"]}
-    assert by_id["sig-1"]["review"]["call"] == "monitor" and by_id["sig-1"]["status"] == "new"
+    assert by_id["sig-1"]["review"]["call"] == "escalate" and by_id["sig-1"]["status"] == "new"
+    assert "confidence" not in by_id["sig-1"]["review"], "Gemini makes the call; it is not asked how sure it is"
     assert by_id["sig-2"]["status"] == "dismissed"
 
 
@@ -279,9 +275,9 @@ def test_the_ai_page_shows_what_each_engine_is_for_and_whether_it_is_connected(a
 def test_the_bigquery_check_dry_runs_every_statement_and_names_the_one_that_fails(api, bq):
     assert api.post("/api/ai/bigquery/check", user=IM).status_code == 403
     good = api.post("/api/ai/bigquery/check").json()
-    assert good["ok"] and good["steps"][0] == {"step": "Vertex AI makes an embedding from BigQuery", "ok": True, "detail": "768 numbers", "ms": good["steps"][0]["ms"]}
+    assert good["ok"] and "valid, would read 1,048,576 bytes" in good["steps"][0]["detail"]
     assert [d["location"] for d in bq.dry] == ["US", "us-central1", "US", "US", "US", "US"] and all(d["params"] for d in bq.dry)
-    assert "valid, would read 1,048,576 bytes" in good["steps"][1]["detail"]
+    assert bq.ran == [], "nothing is run and nothing is sent to a model: BigQuery only checks the statements"
     bq.fail = "other.google_bg.sonar_raw"
     bad = api.post("/api/ai/bigquery/check").json()
     failing = [s for s in bad["steps"] if not s["ok"]]
@@ -289,14 +285,16 @@ def test_the_bigquery_check_dry_runs_every_statement_and_names_the_one_that_fail
     assert api.get("/api/ai").json()["engines"][2]["check"]["ok"] is False, "the last check stays on the page"
 
 
-def test_each_engine_check_says_why_when_it_cannot_run(api, bq, dec):
+def test_each_engine_check_reports_its_real_calls_and_sends_no_test_prompt(api, bq, dec):
     api.ctx.config.platform.decisions.secret = ""
     r = api.post("/api/ai/decisions/check").json()
     assert r["ok"] is False and r["steps"][0]["detail"] == "no API key is set (Settings, Gemini Decisions)"
     api.ctx.config.platform.decisions.secret = "decisions-key"
-    dec.scores.update(risk=0.97)
-    assert "answered 0.97" in api.post("/api/ai/decisions/check").json()["steps"][0]["detail"]
-    api.ctx.llm.on("ai.check", "ready")
-    assert all("said: ready" in s["detail"] for s in api.post("/api/ai/gemini/check").json()["steps"])
-    assert api.post("/api/ai/documents/check").json()["steps"][0]["step"] == "A search finds passages"
+    assert api.post("/api/ai/decisions/check").json()["steps"][0]["detail"].startswith("Not asked yet today.") and dec.calls == []
+    decisions.ask(api.ctx, "Posts say a service is down.", {"risk": early.questions(api.ctx)["risk"]}, purpose="early.score")
+    assert api.post("/api/ai/decisions/check").json()["steps"][0]["detail"] == "asked 1 times today, 0 failed, 0 refused by the safety filter"
+    before = len(api.ctx.llm.calls)
+    gemini = api.post("/api/ai/gemini/check").json()
+    assert gemini["ok"] and all("its real calls" in s["step"] for s in gemini["steps"]) and len(api.ctx.llm.calls) == before, "no prompt is sent"
+    assert api.post("/api/ai/documents/check").json()["steps"][0]["step"] == "Documents kept"
     assert api.post("/api/ai/nothing/check").status_code == 404

@@ -11,7 +11,7 @@ import { fmtTime } from "../lib/format";
 
 interface Post { url: string; platform: string; author: string; text: string; posted: string }
 interface Scores { about: number; risk: number; independent: number; noise: number; category: string; severity: number; level: number; confidence: number }
-interface Review { headline: string; call: "escalate" | "monitor" | "dismiss"; severity: string; confidence: number; story: string; why: string;
+interface Review { headline: string; call: "escalate" | "monitor" | "dismiss"; severity: string; story: string; why: string;
   exposure_tag: string; next_steps: string[]; temp_check_query: string }
 interface Signal {
   id: string; kind: "story" | "update" | "early"; raised: string; accounts: number; posts: number; platforms: string[];

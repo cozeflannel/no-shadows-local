@@ -301,26 +301,20 @@ def _health(ctx: AgentContext, payload: dict[str, Any], rc: RequestContext) -> H
         "gmail": ctx.gmail is not None,
         "models": {"triage": ctx.config.models.triage, "location": ctx.config.models.location},
     }
-    if payload.get("probe_llm"):  # opt-in: one tiny Gemini call (catches retired or mislocated models)
+    if payload.get("probe_llm"):  # what the model's real calls say (catches retired or mislocated models); no call is made
         data["llm_probe"] = _probe_llm(ctx)
     ok = data.get("llm_probe", {}).get("ok", True)
     return ChatOutputs(summary=f"{'ok' if ok else 'degraded'} env={ctx.config.env} config={ctx.config_version}"), data
 
 
-class _Probe(BaseModel):
-    ok: bool
-
-
 def _probe_llm(ctx: AgentContext) -> dict[str, Any]:
-    import time
+    from .prompts import call_evidence
 
-    t0 = time.monotonic()
+    model = ctx.config.models.triage
     try:
-        ctx.llm.generate_json(model=ctx.config.models.triage, system="Health check.", prompt='Return {"ok": true}.',
-                              schema=_Probe, temperature=0.0, purpose="health.probe")
-        return {"ok": True, "model": ctx.config.models.triage, "latency_ms": int((time.monotonic() - t0) * 1000)}
+        return {"ok": True, "model": model, "evidence": call_evidence(ctx, model)}
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "model": ctx.config.models.triage, "error": str(exc)[:300]}
+        return {"ok": False, "model": model, "error": str(exc)[:300]}
 
 
 @operation("drain_outbox")

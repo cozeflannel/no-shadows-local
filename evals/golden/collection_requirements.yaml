@@ -246,16 +246,25 @@ cases:
       shares: 0
     expect: {track: URGENT, corrections: {exposure_tag: Product - Perceived bias}}
 
-  - id: llm_tag_fix_high_confidence
-    description: Gemini is confident the tag should be Dangerous results -> auto-corrected
+  - id: llm_tag_fix_decisions_sure
+    description: Gemini proposes Dangerous results and Gemini Decisions puts the fix at 0.92 -> applied
     llm:
-      exposure_tag_fit: {ok: false, confidence: 0.92, finding: medical claim, proposed_value: Product - Dangerous results (e.g. medical/legal)}
+      exposure_tag_fit: {ok: false, finding: medical claim, proposed_value: Product - Dangerous results (e.g. medical/legal)}
+    decisions: {fix_exposure_tag_fit: 0.92}
     alert: {}
     expect: {verdict: CORRECTED, corrections: {exposure_tag: Product - Dangerous results (e.g. medical/legal)}}
 
-  - id: llm_tag_fix_low_confidence
-    description: Gemini unsure -> IM decides
+  - id: llm_tag_fix_decisions_unsure
+    description: Gemini Decisions puts the proposed fix at 0.6, below the bar -> IM decides
     llm:
-      exposure_tag_fit: {ok: false, confidence: 0.6, finding: maybe offensive, proposed_value: Product - Offensive or explicit results}
+      exposure_tag_fit: {ok: false, finding: maybe offensive, proposed_value: Product - Offensive or explicit results}
+    decisions: {fix_exposure_tag_fit: 0.6}
+    alert: {}
+    expect: {verdict: NEEDS_REVIEW}
+
+  - id: llm_tag_fix_no_probability
+    description: Gemini proposes a fix and Gemini Decisions is not asked -> IM decides (a model's own rating applies nothing)
+    llm:
+      exposure_tag_fit: {ok: false, finding: medical claim, proposed_value: Product - Dangerous results (e.g. medical/legal)}
     alert: {}
     expect: {verdict: NEEDS_REVIEW}

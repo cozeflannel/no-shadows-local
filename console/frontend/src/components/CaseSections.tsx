@@ -80,7 +80,7 @@ export function CorrectionsTable({ corrections, canRevert, revertible, onRevert,
                 <span className="mx-1.5 text-zinc-400">→</span>
                 <span className="font-medium text-emerald-700 dark:text-emerald-400">{fmtValue(c.new)}</span>
               </td>
-              <td className={cx(TD, "text-xs text-zinc-500")}>{c.reason || "—"}<br /><span className="font-mono">{c.source} · {c.confidence.toFixed(2)}</span></td>
+              <td className={cx(TD, "text-xs text-zinc-500")}>{c.reason || "—"}<br /><span className="font-mono">{c.source}{c.confidence !== null ? ` · ${Math.round(c.confidence * 100)}% likely right (Gemini Decisions)` : ""}</span></td>
               <td className={TD}>
                 {c.reverted_by ? <Badge tone="zinc" title={`Reverted by ${c.reverted_by}`}>reverted</Badge> : c.applied ? <Badge tone="emerald">applied</Badge> : <Badge tone="amber">proposed</Badge>}
               </td>
@@ -111,7 +111,7 @@ export function IssuesList({ issues }: { issues: Issue[] }) {
             <Badge tone={i.severity === "blocking" ? "rose" : "amber"}>{i.severity}</Badge>
             <span className="font-medium">{i.field ? meta?.field_labels[i.field] ?? i.field : "Alert"}</span>
             <span className="font-mono text-xs text-zinc-500">{i.rule}</span>
-            <span className="ml-auto text-xs text-zinc-400">{i.source} · {i.confidence.toFixed(2)}</span>
+            <span className="ml-auto text-xs text-zinc-400">{i.source}{i.confidence !== null ? ` · ${Math.round(i.confidence * 100)}% likely real` : ""}</span>
           </div>
           {(i.found || i.expected) && <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Found: {i.found ?? "—"} · Expected: {i.expected ?? "—"}</p>}
           {i.fix && <p className="mt-1 text-xs text-zinc-700 dark:text-zinc-300">Fix: {i.fix}</p>}
@@ -151,7 +151,7 @@ export function AttemptsList({ attempts }: { attempts: Attempt[] }) {
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="font-semibold">Attempt {att.attempt}</span>
             <VerdictBadge verdict={att.result.verdict} />
-            <span className="text-xs text-zinc-500">{fmtDateTime(att.received_at)} · confidence {att.result.confidence.toFixed(2)} · {(att.result.latency_ms / 1000).toFixed(1)} s · {att.result.model ?? "—"}</span>
+            <span className="text-xs text-zinc-500">{fmtDateTime(att.received_at)}{att.result.burson && att.result.burson.pct !== null ? ` · Burson ${att.result.burson.right} of ${att.result.burson.filled} fields right` : ""} · {(att.result.latency_ms / 1000).toFixed(1)} s · {att.result.model ?? "—"}</span>
             {att.message.link && <a href={att.message.link} target="_blank" rel="noreferrer" className="ml-auto inline-flex items-center gap-1 text-xs text-blue-600 hover:underline dark:text-blue-400">Chat message <ExternalLink className="size-3" /></a>}
           </div>
           {att.result.review_reasons.length > 0 && <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">Review: {att.result.review_reasons.join("; ")}</p>}

@@ -248,7 +248,7 @@ def review_dm(ctx: "AgentContext", case: Case, result: TriageResult) -> str:
         lines.append("Why: " + "; ".join(truncate(r, 160) for r in result.review_reasons[:4]))
     proposed = result.proposed_corrections
     if proposed:
-        lines.append("Proposed: " + " · ".join(f"{correction_text(c)} [{c.confidence:.2f}]" for c in proposed[:4]))
+        lines.append("Proposed: " + " · ".join(correction_text(c) + (f" [{c.confidence:.0%} likely right]" if c.confidence is not None else "") for c in proposed[:4]))
     example = f" {proposed[0].field}={fmt_value(proposed[0].new)}" if proposed else ""
     lines.append(
         f"Reply: `forward {cid}` · `forward {cid}{example}` · `bounce {cid}: reason` · `suppress {cid}: reason` "

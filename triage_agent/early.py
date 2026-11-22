@@ -55,7 +55,6 @@ class Review(BaseModel):
     headline: str = Field(..., description="What is happening, in one plain line of 12 words or fewer.")
     call: Literal["escalate", "monitor", "dismiss"]
     severity: Literal["none", "low", "medium", "high", "critical"] = "low"
-    confidence: float = Field(0.5, ge=0, le=1)
     story: str = Field("", description="Two to four sentences: what the accounts say, in their own terms.")
     why: str = Field("", description="One sentence: why this call.")
     exposure_tag: str = ""
@@ -503,8 +502,6 @@ def review(ctx: "AgentContext", signal: dict[str, Any]) -> dict[str, Any]:
     names = {t.name.lower(): t for t in cfg.collection.exposure_tags}
     tag = names.get(out.exposure_tag.strip().lower())
     out.exposure_tag = tag.name if tag else ""
-    if out.call == "escalate" and out.confidence < cfg.platform.early.escalate_min_confidence and not (tag and tag.priority == "P0"):
-        out.call = "monitor"  # not sure enough to escalate: analyst eyes first
     data = out.model_dump()
     data["citations"] = knowledge.citations(passages, out.citations) if passages else []
     return data

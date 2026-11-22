@@ -117,7 +117,7 @@ def process_alert(ctx: AgentContext, parsed: ParsedAlert, *, source: str, receiv
     for c in result.corrections:
         ctx.emit(EventType.CORRECTION_APPLIED if c.applied else EventType.CORRECTION_PROPOSED, case_id=case.case_id,
                  attempt=attempt_no, payload={"field": c.field, "old": fmt_value(c.old), "new": fmt_value(c.new),
-                                              "confidence": c.confidence, "source": c.source.value, "reason": c.reason})
+                                              "probability": c.confidence, "source": c.source.value, "reason": c.reason})
 
     outputs = ChatOutputs(case_id=case.case_id, verdict=result.verdict.value)
     after_bounce = prev_status == CaseStatus.FAILED
@@ -135,7 +135,8 @@ def process_alert(ctx: AgentContext, parsed: ParsedAlert, *, source: str, receiv
 
     a = result.assessment
     payload: dict[str, Any] = {
-        "first_pass": attempt_no == 1, "confidence": result.confidence, "source": source,
+        "first_pass": attempt_no == 1, "review_probability": result.review_probability, "burson_right_pct": (result.burson or {}).get("pct"),
+        "source": source,
         "track": a.track if a else None, "priority": a.priority if a else None, "after_bounce": after_bounce,
     }
     if after_bounce and v in (Verdict.PASS, Verdict.CORRECTED):

@@ -66,7 +66,8 @@ def triage_events(sim: Sim, spec: Spec, case: Case, att: Attempt, *, after_bounc
                       "detect_latency_s": round(detect) if detect is not None and detect > 0 else None})
     sim.correction_events(case, att.attempt, td, r.corrections)
     v = r.verdict
-    payload: dict = {"first_pass": att.attempt == 1, "confidence": r.confidence, "source": spec.source,
+    payload: dict = {"first_pass": att.attempt == 1, "review_probability": r.review_probability,
+                     "burson_right_pct": (r.burson or {}).get("pct"), "source": spec.source,
                      "track": a.track if a else None, "priority": a.priority if a else None, "after_bounce": after_bounce}
     if after_bounce and bounced_at and v in (Verdict.PASS, Verdict.CORRECTED):
         payload["time_to_correction_s"] = round((t - bounced_at).total_seconds())

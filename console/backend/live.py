@@ -378,8 +378,22 @@ async def live_stream(request: Request, ctx: AgentContext = Depends(get_ctx), us
 
 
 # -- the Review Feed ---------------------------------------------------------------------------------------------------------
+_AGREEMENT: dict[str, Any] = {"at": 0.0, "value": {}}
+
+
+def _agreement(ctx: AgentContext) -> dict[str, Any]:
+    """Measured agreement per field, counted once a minute (every card on the feed shows the same counts)."""
+    import time
+
+    from triage_agent.qa import certainty
+
+    if time.monotonic() - _AGREEMENT["at"] > 60 or not _AGREEMENT["value"]:
+        _AGREEMENT.update(at=time.monotonic(), value=certainty.field_agreement(ctx))
+    return _AGREEMENT["value"]
+
+
 def feed_card(ctx: AgentContext, case: Case, *, detail: bool = False) -> dict[str, Any]:
-    """One alert as the Review Feed shows it: the classification, confidence, citations and what can be done."""
+    """One alert as the Review Feed shows it: the classification, the measured numbers, citations and what can be done."""
     card = case_summary(case)
     latest = case.latest
     result = latest.result if latest else None
@@ -389,7 +403,7 @@ def feed_card(ctx: AgentContext, case: Case, *, detail: bool = False) -> dict[st
     card.update({
         "needs": needs_of(ctx, case),
         "classification": extra.get("classification"),
-        "field_confidence": extra.get("field_confidence") or {},
+        "field_agreement": _agreement(ctx),  # per field: how often IMs kept the app's value (counted, last 30 days)
         "citations": extra.get("citations") or [],
         "knowledge_read": extra.get("knowledge_read") or [],
         "proposed_actions": [{"code": c, "label": actions[c].label if c in actions else c, "kind": actions[c].kind if c in actions else ""}

@@ -43,8 +43,8 @@ models:   # Gemini 2.5 retires 2026-10-20; Gemini 3.x is served from the global 
   temperature_drafting: 0.4
 
 thresholds:
-  needs_review_below: 0.70
-  llm_block_min_confidence: 0.80
+  needs_review_below: 0.70       # review when Gemini Decisions puts the chance the alert is ready below this
+  llm_block_min_confidence: 0.80 # a problem Gemini raised holds the alert unless Gemini Decisions puts it below this
   llm_checks_enabled: true
   url_check_enabled: false
   url_check_timeout_s: 4.0
@@ -54,7 +54,7 @@ thresholds:
 
 corrections:
   mode: auto                     # auto-apply high-confidence corrections; IM can revert (👎)
-  auto_apply_min_confidence: 0.85
+  auto_apply_min_confidence: 0.85  # a fix Gemini proposed is applied only when Gemini Decisions puts it at or above this
   never_auto_correct: [post_url]
 
 burson_feedback:                 # legacy Studio path only (V1 uses burson_qa below)

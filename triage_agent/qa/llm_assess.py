@@ -22,7 +22,6 @@ PROMPT_VERSION = "assess-v1"
 class CheckResult(BaseModel):
     id: str
     ok: bool = True
-    confidence: float = 1.0
     finding: str = ""
     proposed_value: str | None = None  # lists: comma-separated; booleans: "Yes"/"No"
 
@@ -85,8 +84,7 @@ def build_prompts(config: AgentConfig, fields: dict[str, Any], extra: dict[str, 
         f"{_taxonomy(config)}\n\n"
         "CHECKS (return one result per id, in order):\n"
         f"{check_lines}\n\n"
-        "For each check: ok=false only when the value is clearly wrong; confidence is your probability (0-1) that "
-        "your judgment is right; when a correctable_field is wrong, give proposed_value using the exact taxonomy / "
+        "For each check: ok=false only when the value is clearly wrong; when a correctable_field is wrong, give proposed_value using the exact taxonomy / "
         "product names (lists comma-separated, booleans Yes/No).\n"
         "ENRICHMENT: sundar_mention (Sundar Pichai mentioned); non_us_markets (countries/regions other than the US "
         "that the post is about or from); secondary_products (other Google products involved, distribution names); "
@@ -124,8 +122,6 @@ def assess(ctx: "AgentContext", fields: dict[str, Any], extra: dict[str, Any] | 
     )
     known = {c.id for c in cfg.alert_template.llm_checks if c.enabled}
     result.checks = [c for c in result.checks if c.id in known]
-    for c in result.checks:
-        c.confidence = max(0.0, min(1.0, float(c.confidence)))
     return result
 
 

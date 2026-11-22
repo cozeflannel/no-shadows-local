@@ -395,15 +395,3 @@ export function Dot({ tone = "zinc", pulse = false }: { tone?: "zinc" | "emerald
   const c = { zinc: "bg-zinc-400", emerald: "bg-emerald-500", amber: "bg-amber-500", rose: "bg-rose-500", blue: "bg-blue-400" }[tone];
   return <span className={cx("inline-block size-2 shrink-0 rounded-full", c, pulse && "animate-pulse")} aria-hidden />;
 }
-
-/** Confidence as a short bar with the number. */
-export function Confidence({ value }: { value: number | null | undefined }) {
-  if (value === null || value === undefined) return <span className="text-zinc-400">n/a</span>;
-  const pct = Math.round(value * 100);
-  return (
-    <span className="inline-flex items-center gap-1.5 tabular-nums" title={`Confidence ${pct}%`}>
-      <span className="h-1.5 w-12 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"><span className="bg-spark block h-full" style={{ width: `${pct}%` }} /></span>
-      <span className="text-xs text-zinc-600 dark:text-zinc-300">{pct}%</span>
-    </span>
-  );
-}

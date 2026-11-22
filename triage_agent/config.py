@@ -870,6 +870,7 @@ class FeatureFlags(ConfigModel):
     golden_set_capture: bool = Field(False, title="Keep checked examples", description="ON: every fix, review decision and IM assessment is kept as an example of the right answer, used later to test the agent. OFF: only assessments an IM records are kept.")
     bigquery_admin: bool = Field(False, title="Change BigQuery from here", description="ON: admins can create and change datasets, tables and views from the Console. OFF: the Console only reads them.")
     secret_admin: bool = Field(False, title="Add secrets from here", description="ON: admins can add secrets (API tokens) from the Console. OFF: secrets are added in Google Cloud.")
+    decisions_review: bool = Field(False, title="Gemini Decisions scores each alert", description="ON: Gemini Decisions gives the probability that each fix Gemini proposes is right, and the chance the alert needs a person; a fix at or above the bar is applied. OFF: every fix Gemini proposes waits for a person.")
     decisions_classifier: bool = Field(False, title="Gemini Decisions sorts alerts", description="ON: Gemini Decisions picks each alert's class; when it is unsure or fails, Gemini picks. OFF: Gemini picks every class.")
     early_detection: bool = Field(False, title="Early Detection", description="ON: the post tables are read in BigQuery every few minutes, posts on one theme are grouped into a story, and a story that reaches the bar is raised. OFF: nothing is read.")
     early_fast_triage: bool = Field(False, title="Score early stories with Gemini Decisions", description="ON: Gemini Decisions scores each story first; plain noise is held back, the most severe are written up first, and a small story that scores high is raised as an early signal. OFF: every story goes straight to its write-up.")
@@ -961,7 +962,7 @@ class ClassificationConfig(ConfigModel):
 
     classes: list[ClassDef] = Field(default_factory=list, description="Blank = one class for each exposure tag category in the taxonomy.")
     model: str = Field("", description="Model for classification. Blank = the triage model.")
-    min_confidence: float = Field(0.5, ge=0, le=1, description="Below this the class is not trusted and all knowledge is searched.")
+    min_confidence: float = Field(0.5, ge=0, le=1, description="When Gemini Decisions picks the class: below this probability the class is not trusted and all knowledge is searched.")
     fallback_class: str = Field("", description="Class used when none fits. Blank = no class.")
 
 
@@ -1212,7 +1213,6 @@ class EarlyConfig(ConfigModel):
     max_per_day: int = Field(40, ge=1, le=1000, description="The most stories raised in a day.")
     reviews_per_minute: int = Field(2, ge=1, le=20, description="How many raised stories Gemini writes up each minute.")
     posts_shown: int = Field(12, ge=1, le=50, description="How many of a story's posts are kept with it.")
-    escalate_min_confidence: float = Field(0.8, ge=0, le=1, description="Gemini must be at least this sure to call Escalate. Below it the call is Monitor.")
     keep_days: int = Field(14, ge=1, le=365, description="How long raised stories are kept in the Console.")
 
 

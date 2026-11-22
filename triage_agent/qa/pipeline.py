@@ -15,6 +15,7 @@ from ..config import AgentConfig
 from ..llm import LLMError
 from ..models import Correction, Issue, IssueSource, ParsedAlert, Severity, TriageResult, Verdict
 from .. import cases as case_mod
+from . import certainty
 from .llm_assess import PROMPT_VERSION, Enrichment, assess
 from .parser import normalize_value
 from .requirements import evaluate
@@ -42,9 +43,11 @@ def _apply_policy(config: AgentConfig, c: Correction) -> Correction:
     elif pol.mode == "propose":
         c.applied = False
     elif c.source == IssueSource.LLM:
-        c.applied = bool(spec and spec.correctable) and c.confidence >= pol.auto_apply_min_confidence
+        # A fix Gemini proposed is applied without a person only when Gemini Decisions puts the chance it is right at
+        # or above the bar. With no probability (the switch OFF, or no answer) it waits for a person.
+        c.applied = bool(spec and spec.correctable) and c.confidence is not None and c.confidence >= pol.auto_apply_min_confidence
     else:
-        c.applied = c.confidence >= pol.auto_apply_min_confidence
+        c.applied = True  # a rule's fix: the rulebook decides, no probability is involved
     return c
 
 
@@ -80,6 +83,7 @@ def run_qa(ctx: "AgentContext", parsed: ParsedAlert, *, source: str, received_at
     cfg, now = ctx.config, ctx.now()
     checks_run = ["parse", "rules"]
     fields = dict(parsed.fields)
+    received = [name for name, value in fields.items() if value not in (None, "", [])]  # what Burson filled in, before any fix
 
     # 0. Optional ground truth: fill blanks from the in-house record of the same post
     if ctx.sonar is not None:
@@ -118,10 +122,10 @@ def run_qa(ctx: "AgentContext", parsed: ParsedAlert, *, source: str, received_at
             if passages:
                 checks_run.append("knowledge")
 
-    # 3. Gemini judgment checks + enrichment (structured, one confidence per check)
+    # 3. Gemini judgment checks + enrichment. Gemini judges and proposes; it is not asked how sure it is.
     enrichment: Enrichment | None = None
     llm_issues: list[Issue] = []
-    confidences: list[float] = []
+    review_probability: float | None = None
     model = None
     try:
         result = assess(ctx, fields, parsed.extra, knowledge=knowledge_text, classification=class_label)
@@ -135,60 +139,59 @@ def run_qa(ctx: "AgentContext", parsed: ParsedAlert, *, source: str, received_at
         model = cfg.models.triage
         enrichment = result.enrichment
         specs = {c.id: c for c in cfg.alert_template.llm_checks}
-        field_confidence: dict[str, float] = {}
-        for check in result.checks:
-            spec = specs.get(check.id)
-            for name in ([spec.correctable_field] if spec and spec.correctable_field else []) + (list(spec.fields) if spec else []):
-                if name:
-                    field_confidence[name] = round(min(field_confidence.get(name, 1.0), check.confidence), 3)
-        if field_confidence:
-            context["field_confidence"] = field_confidence
         if passages:
             from .. import knowledge as knowledge_mod
 
             cited = knowledge_mod.citations(passages, result.citations) if result.citations else []
             context["citations"] = cited
             context["knowledge_read"] = [c["ref"] for c in knowledge_mod.citations(passages)]
+        # What Gemini proposed and what it complained about, then one Gemini Decisions call for the probability of each.
+        proposals: list[dict[str, Any]] = []
+        complaints: list[dict[str, Any]] = []
         for check in result.checks:
             spec = specs.get(check.id)
-            confidences.append(check.confidence)
             if check.ok or spec is None:
                 continue
             target = spec.correctable_field
-            if target and check.proposed_value not in (None, ""):
-                new = _coerce(cfg, target, check.proposed_value)
-                if new != fields.get(target):
-                    c = _apply_policy(cfg, Correction(field=target, old=fields.get(target), new=new, reason=check.finding[:200],
-                                                     confidence=check.confidence, source=IssueSource.LLM))
-                    corrections.append(c)
-                    if c.applied:
-                        fields[target] = new
-                    continue
-            severity = spec.severity
-            if severity == Severity.BLOCKING and check.confidence < cfg.thresholds.llm_block_min_confidence:
-                severity = Severity.WARNING  # low-confidence complaints don't hold the alert
-            llm_issues.append(Issue(field=target or (spec.fields[0] if spec.fields else None), rule=f"llm:{check.id}",
-                                    severity=severity, found=None, fix=check.finding[:300] or None,
-                                    source=IssueSource.LLM, confidence=check.confidence))
+            new = _coerce(cfg, target, check.proposed_value) if target and check.proposed_value not in (None, "") else None
+            if new is not None and new != fields.get(target):
+                proposals.append({"key": f"fix_{check.id}", "field": target, "old": fields.get(target), "new": new, "reason": check.finding[:200]})
+            else:
+                complaints.append({"key": f"problem_{check.id}", "field": target or (spec.fields[0] if spec.fields else None),
+                                   "rule": f"llm:{check.id}", "severity": spec.severity, "finding": check.finding[:300]})
         # Removed distro with several targets (e.g. Central AI): Gemini reclassifies
         distro = cfg.distribution.product(fields.get("product"))
         recl = enrichment.product_reclassification
         if distro and distro.deprecated and len(distro.redirect_to) > 1 and recl and recl in distro.redirect_to:
-            c = _apply_policy(cfg, Correction(field="product", old=fields.get("product"), new=recl, confidence=0.9,
-                                              reason=f"{distro.name} distro removed; reclassified", source=IssueSource.LLM))
+            proposals.append({"key": "fix_product_reclassification", "field": "product", "old": fields.get("product"), "new": recl,
+                              "reason": f"{distro.name} distro removed; reclassified"})
+        chance = certainty.judge(ctx, fields, proposals, complaints)
+        if chance:
+            checks_run.append("decisions")
+        review_probability = chance.get(certainty.REVIEW)
+        for p in proposals:
+            c = _apply_policy(cfg, Correction(field=p["field"], old=p["old"], new=p["new"], reason=p["reason"],
+                                              confidence=chance.get(p["key"]), source=IssueSource.LLM))
             corrections.append(c)
             if c.applied:
-                fields["product"] = recl
+                fields[c.field] = c.new
+        for c in complaints:
+            likely = chance.get(c["key"])
+            severity = c["severity"]
+            if severity == Severity.BLOCKING and likely is not None and likely < cfg.thresholds.llm_block_min_confidence:
+                severity = Severity.WARNING  # Gemini Decisions doubts the complaint: it does not hold the alert
+            llm_issues.append(Issue(field=c["field"], rule=c["rule"], severity=severity, found=None, fix=c["finding"] or None,
+                                    source=IssueSource.LLM, confidence=likely))
 
     return finalize(ctx, parsed_extra=context if context != (parsed.extra or {}) else parsed.extra, flags=parsed.flags,
                     fields=fields, corrections=corrections,
                     extra_issues=llm_issues, enrichment=enrichment, received_at=received_at, record_key=record_key,
-                    confidences=confidences, checks_run=checks_run, model=model, started=t0, now=now)
+                    review_probability=review_probability, received=received, checks_run=checks_run, model=model, started=t0, now=now)
 
 
 def finalize(ctx: "AgentContext", *, parsed_extra: dict, flags: dict, fields: dict, corrections: list[Correction],
              extra_issues: list[Issue], enrichment: Enrichment | None, received_at: datetime, record_key: str | None,
-             confidences: list[float], checks_run: list[str], model: str | None, started: float, now: datetime,
+             review_probability: float | None, received: list[str], checks_run: list[str], model: str | None, started: float, now: datetime,
              forced_alertable: bool = False, pinned: dict[str, Any] | None = None) -> TriageResult:
     """Requirements + remaining issues + verdict (shared by run_qa and reassess)."""
     cfg = ctx.config
@@ -219,14 +222,14 @@ def finalize(ctx: "AgentContext", *, parsed_extra: dict, flags: dict, fields: di
     soft = [i for i in blocking if not unfixable(i)]
     proposed = [c for c in corrections if not c.applied]
     applied = [c for c in corrections if c.applied]
-    confidence = min([1.0, *confidences, *(c.confidence for c in applied if c.source == IssueSource.LLM)])
     a = req.assessment
 
     reasons = list(req.review_reasons)
-    reasons += [f"{c.field}: proposed \"{c.new}\" ({c.confidence:.2f}) — {c.reason}" for c in proposed]
+    reasons += [f"{c.field}: proposed \"{c.new}\"" + (f" ({c.confidence:.0%} likely right)" if c.confidence is not None else "") + f" — {c.reason}"
+                for c in proposed]
     reasons += [f"{i.field or 'alert'}: {i.fix or i.rule}" for i in soft]
-    if confidence < cfg.thresholds.needs_review_below:
-        reasons.append(f"low overall confidence ({confidence:.2f})")
+    if review_probability is not None and 1 - review_probability < cfg.thresholds.needs_review_below:
+        reasons.append(f"Gemini Decisions puts the chance this needs a person at {review_probability:.0%}")
 
     alert_field_trouble = any(i.field in ALERTABILITY_FIELDS for i in blocking) or any(c.field in ALERTABILITY_FIELDS for c in proposed)
     if forced_alertable:
@@ -245,7 +248,8 @@ def finalize(ctx: "AgentContext", *, parsed_extra: dict, flags: dict, fields: di
         verdict = Verdict.PASS
 
     return TriageResult(
-        verdict=verdict, confidence=round(confidence, 3), issues=issues, corrections=corrections, assessment=a,
+        verdict=verdict, review_probability=review_probability, burson=certainty.burson_score(cfg, received, corrections, issues),
+        issues=issues, corrections=corrections, assessment=a,
         record_key=record_key, normalized=fields, checks_run=checks_run, review_reasons=reasons if verdict == Verdict.NEEDS_REVIEW else [],
         extra=parsed_extra or {}, flags=flags or {}, model=model, rules_version=f"{cfg.collection.version}/{PROMPT_VERSION}",
         latency_ms=int((time.monotonic() - started) * 1000),
@@ -272,7 +276,7 @@ def reassess(ctx: "AgentContext", previous: TriageResult, *, received_at: dateti
         new = _coerce(cfg, name, value)
         if fields.get(name) != new:
             corrections.append(Correction(field=name, old=fields.get(name), new=new, reason=f"set by {actor}",
-                                          confidence=1.0, source=IssueSource.RULE, applied=True))
+                                          source=IssueSource.RULE, applied=True))
             fields[name] = new
     # Derived corrections are recomputed by finalize(); drop the stale ones.
     derived = {"issue_status", "engagement_level", "alert_name"}
@@ -287,5 +291,7 @@ def reassess(ctx: "AgentContext", previous: TriageResult, *, received_at: dateti
     pinned = {c.field: c.old for c in corrections if c.reverted_by and c.field not in (overrides or {})}
     return finalize(ctx, parsed_extra=previous.extra, flags=previous.flags, fields=fields, corrections=corrections,
                     extra_issues=llm_issues, enrichment=_enrichment_from(previous), received_at=received_at,
-                    record_key=previous.record_key, confidences=[1.0], checks_run=["reassess"], model=previous.model,
+                    record_key=previous.record_key, review_probability=previous.review_probability,
+                    received=list((previous.burson or {}).get("fields") or []),
+                    checks_run=["reassess", *(["decisions"] if "decisions" in previous.checks_run else [])], model=previous.model,
                     started=time.monotonic(), now=ctx.now(), forced_alertable=forced_alertable, pinned=pinned)

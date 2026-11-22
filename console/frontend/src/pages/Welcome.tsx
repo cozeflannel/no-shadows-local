@@ -8,7 +8,7 @@ import { useApp } from "../context";
 export default function WelcomePage({ state = "signed-in", children }: { state?: "signed-out" | "no-access" | "signed-in"; children?: ReactNode }) {
   const { me, theme, toggleTheme } = useApp();
   const points: { icon: ReactNode; title: string; text: string }[] = [
-    { icon: <Inbox className="size-5" />, title: "Every alert, triaged", text: "Classified, checked and corrected, with the confidence behind each field." },
+    { icon: <Inbox className="size-5" />, title: "Every alert, triaged", text: "Classified, checked and corrected, with how many fields Burson got right." },
     { icon: <MessagesSquare className="size-5" />, title: "Chat and Console as one", text: "Work an alert in the space or here. Both land in the same case and audit log." },
     { icon: <Sparkles className="size-5" />, title: "An agent you can direct", text: "Ask it, or have it carry an alert through, with your confirmation before it acts." },
     { icon: <ShieldCheck className="size-5" />, title: "Nothing leaves unchecked", text: "Allow-lists, a leak guard and switches that start off." },
