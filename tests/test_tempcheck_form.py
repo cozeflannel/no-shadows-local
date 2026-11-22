@@ -616,3 +616,25 @@ def test_with_our_own_tables_as_the_basis_the_posts_read_are_our_own(ctx, setup,
     assert check.basis == "own" and [p["key"] for p in check.read_posts] == [f"x:{1000 + i}" for i in range(3)]
     assert check.read_posts[0]["x"] and check.read_posts[0]["id"] == "1000" and check.read_posts[0]["text_from"] == "Sonar"
     assert check.coverage == {} and check.chart["unit"] == "Posts" and check.chart["points"], "the chart's hours are kept with the check"
+
+
+# -- what the result's tabs need ---------------------------------------------------------------------------------------------
+def test_an_update_keeps_what_it_is_compared_with(ctx, setup, clock):
+    setup(hours={3: 150})
+    first = run(ctx, query_ref=str(QUERY["id"]))
+    assert first.update is None
+    clock.advance(hours=1)
+    second = run(ctx, update_of=first.check_id)
+    assert second.update == {"at": first.window_to.isoformat(), "total": first.total}, "the Numbers tab says how many are new since then"
+    other_kind = run(ctx, update_of=first.check_id, since=ctx.now() - timedelta(hours=2))
+    assert other_kind.update is None, "a count from a chosen time is not compared with the earlier one"
+
+
+def test_the_our_data_tab_gets_the_most_engaged_posts_kept_with_the_check(ctx, setup, client):
+    setup(queries=[])
+    check = run(ctx, issue="Alleged Gmail Outage", boolean="gmail AND outage")
+    got = client.get(f"/api/temp-checks/{check.check_id}/own-posts", params={"limit": 2}, headers=iap(VIEWER)).json()
+    assert got["kept"] == 3 and [p["key"] for p in got["posts"]] == ["x:1000", "x:1001"], "the most engaged first"
+    first = got["posts"][0]
+    assert (first["source"], first["author"], first["text_from"], first["negative"]) == ("X", "person0", "Sonar", True) and first["url"].endswith("/status/1000")
+    assert client.get("/api/temp-checks/TC-nope/own-posts", headers=iap(VIEWER)).status_code == 404

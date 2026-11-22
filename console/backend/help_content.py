@@ -133,8 +133,10 @@ TOPICS: list[dict[str, Any]] = [
                 "Show how the query converts lists what was read, what was approximated or left out, what each table would scan, and the SQL. Nothing runs.",
                 "Reuse posts gathered earlier searches only the time since that temp check."]},
             {"heading": "Read the result", "items": [
-                "Write-up: the team's template. Copy it as text.", "Numbers: posts an hour, velocity since the peak, share negative, where the posts are.",
-                "Posts: the posts read, most engagement first.",
+                "Write-up: the team's template with its chart. Copy write-up copies it with the chart, ready to paste into an email or a doc. Download chart saves the chart as a picture.",
+                "Numbers: the total, the peak hour, the last full hour, sentiment, mention types and sources, as charts and as a table.",
+                "Our data next to Brandwatch: what our own tables hold beside Brandwatch's count, hour by hour, how the query was converted, and the posts found.",
+                "Posts read: the posts Gemini read. Open a card to read the post without leaving the Console.",
                 "Concern level: a Brandwatch query's count ranked against past issues at the same hours in. It needs enough past issues to compare."]},
             {"heading": "Act on it", "steps": ["Mark as used, or Dismiss.", "Refresh (send as an update) reports what is new since the last one.",
                                               "Keep refreshed for a day refreshes it every hour. Stop refreshing ends it."]},

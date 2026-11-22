@@ -279,6 +279,16 @@ def temp_check_get(check_id: str, ctx: AgentContext = Depends(get_ctx), user: Us
     return {"check": check.model_dump(mode="json"), "related": [_check_brief(c) for c in chain]}
 
 
+@router.get("/temp-checks/{check_id}/own-posts")
+def temp_check_own_posts(check_id: str, limit: int = Query(60, ge=1, le=500), ctx: AgentContext = Depends(get_ctx),
+                         user: User = Depends(require_viewer)) -> dict[str, Any]:
+    """The posts our own tables found for a temp check, the most engaged first (the "Our data" tab's cards)."""
+    if tempcheck.get(ctx, check_id) is None:
+        raise _missing("temp check")
+    kept = tempcheck.kept_posts(ctx, check_id)
+    return {"kept": len(kept), "posts": [tempcheck.as_writeup_post(p) for p in kept[:limit]]}
+
+
 @router.post("/temp-checks/{check_id}/action")
 def temp_check_action(check_id: str, body: TempActionBody, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_analyst)) -> dict[str, Any]:
     try:

@@ -156,6 +156,7 @@ class TempCheck(BaseModel):
     read_posts: list[dict[str, Any]] = Field(default_factory=list)  # the posts Gemini read, in order (a [phrase](#N) names one)
     coverage: dict[str, Any] = Field(default_factory=dict)  # where the words of Brandwatch's X posts came from
     chart: dict[str, Any] = Field(default_factory=dict)  # {title, unit, points: [{label, n}]}: the full hours counted
+    update: dict[str, Any] | None = None  # {at, total}: the earlier temp check this one is compared with
     tables: list[dict[str, Any]] = Field(default_factory=list)  # what each of our tables found
     own_total: int | None = None
     gem: dict[str, Any] = Field(default_factory=dict)
@@ -1798,6 +1799,7 @@ def _build(ctx: "AgentContext", check: TempCheck, req: TempCheckRequest, previou
     update = None
     if previous and previous.window_to and since is None and _kind(previous) == kind:
         update = {"at": previous.window_to, "total": previous.total}
+        check.update = {"at": previous.window_to.isoformat(), "total": previous.total}
     if not req.writeup:
         check.gem = {"why": "the write-up lines were not asked for"}
     elif check.read_posts:
