@@ -2,3 +2,4 @@
 -r requirements-runtime.txt
 fastapi==0.142.2
 uvicorn==0.54.0
+pypdf==7.1.1

@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
-# Gmail OAuth client for "Connect Gmail" in the Agent Console.
+# Google sign-in client for the Console: "Connect Gmail" for each person, and "Sign in as the QA chatbot" for Chat.
+#
+# The QA chatbot's account signs in once (Integrations -> Google Chat) so the Console can read and post in Chat as that
+# account, the way the sheet-based bot does. It asks for: chat.messages.readonly, chat.messages.create,
+# chat.messages.reactions.create, chat.spaces.readonly, chat.memberships.readonly. Its token is kept in Secret Manager
+# under its own name. The same client and the same redirect URI below serve both sign-ins.
+#
+# The QA chatbot is not a Chat app. No app is set up for it in the Cloud console: it needs the Google Chat API turned
+# on (01_enable_apis.sh) and a sign-in client from the same Google Cloud project the sheet-based bot runs in.
 #
 # Each Incident Manager connects their own Gmail once (scopes: gmail.compose + gmail.metadata) so the agent can
 # create Social Alert drafts in their mailbox (From: the Brand Social send-as alias) and see when they're sent.
@@ -8,8 +16,10 @@
 #
 # OAuth web clients can't be created from the CLI, so:
 #   1. Cloud console -> Google Auth Platform -> Branding: app name "SLRR Triage Agent", audience **Internal**.
-#   2. Data access: add .../auth/gmail.compose, .../auth/gmail.metadata, .../auth/gmail.send.
-#   3. Clients -> Create client -> Web application. Authorized redirect URIs:
+#   2. Data access: add .../auth/gmail.compose, .../auth/gmail.metadata, .../auth/gmail.send, and the five
+#      .../auth/chat.* permissions listed above.
+#   3. Clients: open a Web application client the project already has, or Create client -> Web application.
+#      (Not a Desktop client, and not the one IAP uses.) Authorized redirect URIs:
 #        <Console URL from 07_console.sh>/api/gmail/callback
 #        http://localhost:8000/api/gmail/callback          (local development, optional)
 #   4. Download the JSON, then run:  infra/08_gmail_oauth.sh path/to/client_secret.json
@@ -20,7 +30,7 @@ source "$(dirname "$0")/_lib.sh"
 
 CLIENT_JSON="${1:-}"
 if [[ -z "${CLIENT_JSON}" || ! -f "${CLIENT_JSON}" ]]; then
-  sed -n '2,17p' "$0"
+  sed -n '2,27p' "$0"
   echo
   echo "Usage: infra/08_gmail_oauth.sh path/to/client_secret.json" >&2
   exit 1

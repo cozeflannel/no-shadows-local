@@ -2,17 +2,54 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* The palette: Gemini's neutral surfaces and Google blue, mapped onto the scales the components use. Dark is the default. */
 @theme {
-  --font-sans: "DM Sans Variable", "DM Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: "Google Sans Flex Variable", "Google Sans Flex", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Google Sans Code Variable", "Google Sans Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-zinc-50: #f0f4f9;
+  --color-zinc-100: #e9eef6;
+  --color-zinc-200: #dde3ea;
+  --color-zinc-300: #c4c7c5;
+  --color-zinc-400: #9aa0a6;
+  --color-zinc-500: #80868b;
+  --color-zinc-600: #5f6368;
+  --color-zinc-700: #444746;
+  --color-zinc-800: #333537;
+  --color-zinc-900: #1e1f20;
+  --color-zinc-950: #131314;
+
+  --color-blue-50: #ecf3fe;
+  --color-blue-100: #d3e3fd;
+  --color-blue-200: #a8c7fa;
+  --color-blue-300: #7cacf8;
+  --color-blue-400: #4c8df6;
+  --color-blue-500: #1b6ef3;
+  --color-blue-600: #0b57d0;
+  --color-blue-700: #0842a0;
+  --color-blue-800: #062e6f;
+  --color-blue-900: #041e49;
+  --color-blue-950: #03142f;
+
+  --color-spark-blue: #4285f4;
+  --color-spark-violet: #9b72cb;
+  --color-spark-rose: #d96570;
+}
+
+@property --glow-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 120deg;
 }
 
 :root {
   color-scheme: light;
+  --glow-soft: 0.1;
 }
 
 .dark {
   color-scheme: dark;
+  --glow-soft: 0.22;
 }
 
 html,
@@ -22,18 +59,90 @@ body,
 }
 
 body {
-  @apply bg-zinc-50 font-sans text-zinc-900 antialiased dark:bg-[#09090b] dark:text-zinc-100;
+  @apply bg-zinc-50 font-sans text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+  font-optical-sizing: auto;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-blue-400);
+  outline-offset: 2px;
+}
+
+/* The edge: a thin three-colour border with a soft glow. Used where something is live or waiting for a person. */
+.glow {
+  position: relative;
+  box-shadow:
+    -10px 0 32px -18px rgb(66 133 244 / calc(var(--glow-soft) * 4)),
+    10px 0 32px -18px rgb(217 101 112 / calc(var(--glow-soft) * 4)),
+    0 12px 36px -22px rgb(155 114 203 / calc(var(--glow-soft) * 4));
+}
+
+.glow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(from var(--glow-angle), #4285f4, #9b72cb, #d96570, #9b72cb, #4285f4);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.glow-live::before {
+  animation: glow-turn 5s linear infinite;
+}
+
+@keyframes glow-turn {
+  to {
+    --glow-angle: 480deg;
+  }
+}
+
+.text-spark {
+  background: linear-gradient(92deg, #4285f4 0%, #9b72cb 48%, #d96570 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.bg-spark {
+  background: linear-gradient(92deg, #4285f4 0%, #9b72cb 48%, #d96570 100%);
 }
 
 /* Thin, unobtrusive scrollbars inside panels */
 .scroll-thin {
   scrollbar-width: thin;
-  scrollbar-color: rgb(161 161 170 / 0.5) transparent;
+  scrollbar-color: rgb(128 134 139 / 0.45) transparent;
 }
 
 /* Recharts focus outlines look noisy on click */
 .recharts-wrapper *:focus {
   outline: none;
+}
+
+/* Text an agent or a document wrote: readable line length, plain lists and links */
+.prose-plain {
+  @apply max-w-[72ch] text-sm leading-relaxed;
+}
+.prose-plain a {
+  @apply text-blue-600 underline decoration-blue-600/30 underline-offset-2 dark:text-blue-200;
+}
+.prose-plain p + p,
+.prose-plain ul,
+.prose-plain ol {
+  margin-top: 0.6em;
+}
+.prose-plain ul {
+  list-style: disc;
+  padding-left: 1.2em;
+}
+.prose-plain b,
+.prose-plain strong {
+  font-weight: 600;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -42,5 +151,40 @@ body {
   *::after {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
+
+
+/* The document editor's page (Knowledge): a sheet of paper with a word processor's type sizes. */
+.doc-page {
+  margin: 0 auto;
+  max-width: 816px;
+  min-height: 46vh;
+  padding: 2.5rem clamp(1rem, 5vw, 4rem);
+  background: #fff;
+  color: #1f1f1f;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.15);
+  font-size: 15px;
+  line-height: 1.6;
+  outline: none;
+}
+.dark .doc-page { background: #1e1f20; color: #e3e3e3; box-shadow: 0 0 0 1px #3c4043; }
+.doc-page:focus-visible { box-shadow: 0 0 0 2px #4285f4; }
+.doc-page h1 { font-size: 1.75rem; font-weight: 500; line-height: 1.25; margin: 0 0 0.75rem; }
+.doc-page h2 { font-size: 1.35rem; font-weight: 500; margin: 1.5rem 0 0.5rem; }
+.doc-page h3 { font-size: 1.12rem; font-weight: 600; margin: 1.25rem 0 0.4rem; }
+.doc-page h4 { font-size: 1rem; font-weight: 600; margin: 1rem 0 0.3rem; }
+.doc-page p { margin: 0 0 0.75rem; }
+.doc-page ul { list-style: disc; padding-left: 1.5rem; margin: 0 0 0.75rem; }
+.doc-page ol { list-style: decimal; padding-left: 1.5rem; margin: 0 0 0.75rem; }
+.doc-page li > p { margin: 0; }
+.doc-page a { color: #1a73e8; text-decoration: underline; }
+.dark .doc-page a { color: #8ab4f8; }
+.doc-page blockquote { border-left: 3px solid #c4c7c5; margin: 0 0 0.75rem; padding-left: 1rem; color: #5f6368; }
+.dark .doc-page blockquote { color: #9aa0a6; border-color: #5f6368; }
+.doc-page table { border-collapse: collapse; width: 100%; margin: 0 0 0.75rem; table-layout: fixed; }
+.doc-page td, .doc-page th { border: 1px solid #9aa0a6; padding: 0.35rem 0.6rem; vertical-align: top; }
+.doc-page td > p, .doc-page th > p { margin: 0; }
+.doc-page .selectedCell { background: rgb(66 133 244 / 0.15); }

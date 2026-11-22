@@ -44,6 +44,13 @@ class LazyLLM:
     def generate_text(self, **kwargs: Any) -> str:
         return self._get().generate_text(**kwargs)
 
+    def last_usage(self) -> Any:
+        usage = getattr(self._llm, "last_usage", None) if self._llm is not None else None
+        return usage() if callable(usage) else usage
+
+    def __getattr__(self, name: str) -> Any:  # anything else the client offers (the test double's .on / .calls)
+        return getattr(self._get(), name)
+
 
 def default_context_factory() -> AgentContext:
     """build_context() from env (TRIAGE_BACKEND=local -> SQLite at TRIAGE_LOCAL_DB)."""

@@ -45,7 +45,7 @@ function Delta({ value, previous, lowerIsBetter = false, asPct = false }: { valu
 
 function HeadlineCard({ icon, label, value, help, delta }: { icon: ReactNode; label: string; value: string; help: string; delta?: ReactNode }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-[#0c0c0f]">
+    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900">
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400">{icon}{label}</span>
         <Tooltip content={help}><Info className="size-3.5 cursor-help text-zinc-400" aria-label={help} /></Tooltip>
@@ -95,8 +95,8 @@ export default function OverviewPage() {
   return (
     <div>
       <PageHeader
-        title="Overview"
-        description="What the agent did, how well, and how fast. Hover a metric for its definition (triage_agent.metrics)."
+        title="Breakdowns"
+        description="Measures by tag, error and on-call. Hover a measure for its definition."
         actions={<>
           <Segmented label="Window" value={days} onChange={setDays} options={[1, 7, 14, 30].map((n) => ({ value: n, label: n === 1 ? "24 h" : `${n} days` }))} />
           <Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={reload} loading={kpis.loading && !!kpis.data}>Refresh</Button>

@@ -26,35 +26,47 @@ NOT_EDITABLE = {"version", "env"}
 STRUCTURED_SECTIONS = ("thresholds", "corrections", "burson_feedback", "outbox", "handover", "metrics", "models")
 TABLE_SECTIONS = ("distribution", "actions")
 
-SECTION_INFO: dict[str, tuple[str, str]] = {
-    "timezone": ("Display timezone", "Timezone for times in chat messages and the Console."),
-    "case_id_prefix": ("Case id prefix", "Prefix of case ids (TRG-1042)."),
-    "escalation_id_prefix": ("Escalation id prefix", "Prefix of escalation ids (ESC-1207)."),
-    "agent": ("Agent identity", "The Triage Agent account and message prefix."),
-    "spaces": ("Chat spaces", "Spaces the agent reads from and posts to."),
-    "analysts": ("Analysts & roles", "Console roles: admin, lead, analyst."),
-    "shifts": ("Shifts", "Named IM shifts (handover timing)."),
-    "alert_template": ("Alert template", "How Burson alerts are parsed and validated."),
-    "collection": ("Collection Requirements", "Exposure tags, sensitive topics, exclusions, tiers and SLAs."),
-    "distribution": ("Distribution", "Product alert POCs and non-product groups."),
-    "protocols": ("Protocols", "YouTube, Doodle and leadership escalation protocols."),
-    "actions": ("Emoji actions legend", "What the agent does when an IM reacts on a clean-space alert."),
-    "reference_lists": ("Reference lists", "Lookup lists used by validation rules."),
-    "thresholds": ("Thresholds", "Confidence thresholds, wait limits and reminder timing."),
-    "corrections": ("Corrections", "When the agent auto-applies corrections."),
-    "burson_feedback": ("Burson feedback", "How corrections are reported back to Burson."),
-    "sonar_lookup": ("Sonar lookup", "Optional ground truth from Sonar data in BigQuery."),
-    "inhouse": ("In-house alerts (Path B)", "brand_safety_alerting outbox ingestion and parity mode."),
-    "outbox": ("Outbox", "How queued posts reach the Studio Outbox flow."),
-    "handover": ("Handover", "Shift handover summaries."),
-    "metrics": ("Metrics", "Assumptions behind the time-saved estimate."),
-    "models": ("Models", "Gemini models and temperatures."),
-    "stakeholders": ("Stakeholders", "Q&A routing directory."),
-    "escalation": ("Escalation email", "Brand Social alias, subjects and email templates."),
-    "tns": ("Trust & Safety", "go/WD-Triage form, criteria and the Watchdog email loop."),
-    "watchdog": ("Watchdog emails", "Watchdog Anti-Abuse Alert email handling."),
-    "knowledge": ("Knowledge", "Docs and FAQ used to answer questions."),
-    "seed_rosters": ("Seed rosters", "Only used to seed an empty store; edit live rosters on the Rosters page."),
+# The groups Settings lists its pages under, in order.
+GROUPS: list[dict[str, str]] = [
+    {"key": "day", "title": "Day to day"},
+    {"key": "decide", "title": "How the agent decides"},
+    {"key": "people", "title": "Who gets what"},
+    {"key": "tech", "title": "Connections and upkeep"},
+    {"key": "sheet", "title": "Sheet-based bot"},
+]
+
+# Each section: its name, what it is for in one sentence, and its group.
+SECTION_INFO: dict[str, tuple[str, str, str]] = {
+    "timezone": ("Time zone", "The time zone times are shown in.", "day"),
+    "shifts": ("Shift names and hours", "The named shifts a handover summary is written for.", "day"),
+    "handover": ("Shift handover", "The summary posted when a shift ends.", "day"),
+    "actions": ("Emoji legend", "What the agent does when an IM reacts to an alert with each emoji.", "day"),
+    "alert_template": ("Alert format", "The fields a Burson alert must have, and how each one is checked.", "decide"),
+    "collection": ("Collection Requirements", "Exposure tags, sensitive topics, what is left out, and the time allowed on each platform.", "decide"),
+    "thresholds": ("How sure the agent must be", "The confidence it needs before acting, how long it waits, and when it reminds people.", "decide"),
+    "corrections": ("Auto-correct", "Which mistakes in an alert the agent fixes on its own.", "decide"),
+    "protocols": ("Escalation protocols", "YouTube, Doodle and leadership: who is told, and when.", "decide"),
+    "tns": ("Trust & Safety", "The T&S form, when T&S should see an alert, and the confirmation emails that come back.", "decide"),
+    "reference_lists": ("Lists the checks use", "Names the checks compare an alert against.", "decide"),
+    "sonar_lookup": ("Find missing links", "Look for a missing link or author in the listening data before asking Burson.", "decide"),
+    "inhouse": ("Our own alerts", "Alerts taken straight from the team's tables, next to Burson's.", "decide"),
+    "knowledge": ("Built-in answers", "Common questions the agent can answer. Documents are added on the Knowledge page.", "decide"),
+    "models": ("Gemini models", "Which Gemini model does each job.", "decide"),
+    "metrics": ("Time-saved estimate", "The minutes per alert used to estimate time saved.", "decide"),
+    "analysts": ("People and roles", "Who has a role. Add and change people under Admin, People.", "people"),
+    "distribution": ("Who gets each alert email", "For each product: the contacts and groups a Social Alert goes to.", "people"),
+    "stakeholders": ("Who answers which question", "Teams, their topics and their contacts, used to send a question to the right people.", "people"),
+    "escalation": ("Social Alert email", "The sender name, subject, signature and templates of the Social Alert email.", "people"),
+    "burson_feedback": ("What Burson is told", "How a fix is reported back to Burson.", "people"),
+    "watchdog": ("Watchdog emails", "How Watchdog Anti-Abuse emails are handled.", "people"),
+    "agent": ("The agent's account", "The account the agent posts as, and the mark at the start of its messages.", "tech"),
+    "spaces": ("Chat spaces", "The spaces the agent reads and posts in. Connect them under Integrations, Google Chat.", "tech"),
+    "outbox": ("Waiting to post", "How posts that are waiting to go out reach Chat.", "tech"),
+    "case_id_prefix": ("Alert number prefix", "The letters before each alert's number (TRG-1042).", "tech"),
+    "escalation_id_prefix": ("Email number prefix", "The letters before each Social Alert email's number (ESC-1207).", "tech"),
+    "seed_rosters": ("Starting rosters", "Used once, when no roster exists yet. Change rosters on the Rosters page.", "tech"),
+    "platform": ("Everything under the other headings", "Kept for the record. Each part has its own page.", "tech"),
+    "burson_qa": ("Sheet-based bot", "Settings of the sheet-based Burson QA bot. A change here reaches that bot only when its script is rebuilt.", "sheet"),
 }
 
 _NOTHING = object()
@@ -158,13 +170,15 @@ def get_settings(ctx: AgentContext = Depends(get_ctx), user: User = Depends(requ
         "sections": [
             {
                 "key": key,
-                "label": SECTION_INFO.get(key, (key.replace("_", " ").title(), ""))[0],
-                "description": SECTION_INFO.get(key, ("", ""))[1],
+                "label": SECTION_INFO.get(key, (key.replace("_", " ").capitalize(), "", "tech"))[0],
+                "description": SECTION_INFO.get(key, ("", "", "tech"))[1],
+                "group": SECTION_INFO.get(key, ("", "", "tech"))[2],
                 "kind": editor_kind(key),
                 "overridden": key in overrides,
             }
             for key in config_sections()
         ],
+        "groups": GROUPS,
         "config_version": ctx.config_version,
         "version": ctx.config.version,
         "env": ctx.config.env,
@@ -200,9 +214,16 @@ def get_section(section: str, ctx: AgentContext = Depends(get_ctx), user: User =
     section = _section_or_404(section)
     _, defaults = default_config()
     overrides = ctx.store.get_config_overrides() or {}
+    try:
+        from pydantic import TypeAdapter
+
+        schema = TypeAdapter(AgentConfig.model_fields[section].annotation).json_schema()
+    except Exception:  # noqa: BLE001 - the JSON editor still works without it
+        schema = None
     return {
         "section": section,
         "kind": editor_kind(section),
+        "schema": schema,
         "value": ctx.config.model_dump(mode="json")[section],
         "default": defaults.get(section),
         "override": overrides.get(section),
@@ -225,10 +246,28 @@ def _save(request: Request, ctx: AgentContext, user: User, section: str, overrid
     return {
         "ok": True,
         "section": section,
-        "value": ctx.config.model_dump(mode="json")[section],
+        "value": ctx.config.model_dump(mode="json").get(section),
         "overridden": section in overrides,
         "config_version": ctx.config_version,
     }
+
+
+def save_sections(request: Request, ctx: AgentContext, user: User, target: dict[str, Any], note: str) -> AgentContext:
+    """Save whole sections of the effective settings (as JSON), kept as their difference from the defaults.
+
+    Raises pydantic's ValidationError when the result would not be a valid configuration; nothing is saved then.
+    """
+    base, defaults = default_config()
+    overrides = copy.deepcopy(ctx.store.get_config_overrides() or {})
+    for section, value in target.items():
+        patch = merge_patch(defaults.get(section), value)
+        if patch is _NOTHING:
+            overrides.pop(section, None)
+        else:
+            overrides[section] = patch
+    _validate(base, overrides)
+    _save(request, ctx, user, ", ".join(sorted(target)), overrides, note, reset=False)
+    return request.app.state.console.ctx
 
 
 @router.put("/settings/{section}")

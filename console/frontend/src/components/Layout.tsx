@@ -1,145 +1,197 @@
 import {
-  Activity, CalendarClock, ChevronDown, ClipboardCheck, FolderSearch, LayoutDashboard, Mail, Moon, Settings, Sun, UserRound,
+  BookOpen, BrainCircuit, CalendarClock, ChevronDown, CircleHelp, FolderSearch, Gauge, Inbox, LayoutDashboard, Mail, Megaphone, Menu, MessagesSquare, Moon,
+  PanelLeftClose, PanelLeftOpen, Plug, Radar, Route, Scale, Settings, ShieldCheck, Sparkles, Sun, Thermometer, UsersRound, Waypoints,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
-import { NavLink } from "react-router";
+import { useEffect, useState, type ReactNode } from "react";
+import { Link, NavLink, useLocation } from "react-router";
 
-import { useApi } from "../api/hooks";
-import type { OnCallNow } from "../api/types";
 import { useApp } from "../context";
-import { fmtTime } from "../lib/format";
-import { ONCALL_SOURCE_TONE, TONE_CLASSES } from "../lib/labels";
+import { AlertPopups } from "./AlertPopups";
 import { GmailButton } from "./GmailButton";
-import { Badge, cx, Tooltip } from "./ui";
+import { cx } from "./ui";
 
-const PRIMARY_NAV: { to: string; label: string; icon: ReactNode }[] = [
-  { to: "/", label: "Overview", icon: <LayoutDashboard className="size-4" /> },
-  { to: "/review", label: "Review Queue", icon: <ClipboardCheck className="size-4" /> },
-  { to: "/cases", label: "Triaged Cases", icon: <FolderSearch className="size-4" /> },
-  { to: "/escalations", label: "Emails & T&S", icon: <Mail className="size-4" /> },
-  { to: "/settings", label: "Config & Distros", icon: <Settings className="size-4" /> },
-  { to: "/chat", label: "Chat", icon: <Activity className="size-4" /> },
-  { to: "/rosters", label: "On-Call Rosters", icon: <CalendarClock className="size-4" /> },
-];
+interface NavItem { to: string; label: string; icon: ReactNode; count?: number }
 
-// Diagnostics and dev tools; the Live Test Channel writes real cases, so it stays out of the primary nav.
-const ADVANCED_NAV: { to: string; label: string }[] = [
-  { to: "/activity", label: "Activity Log" },
-  { to: "/suppressed", label: "Suppressed" },
-  { to: "/parity", label: "In-House Parity" },
-  { to: "/learning", label: "Learning" },
-  { to: "/outbox", label: "Outbox" },
-  { to: "/test", label: "Live Test Channel" },
-];
+/** The Help topic that goes with each page (the first path segment). */
+const HELP_TOPIC: Record<string, string> = {
+  "": "dashboard", feed: "review-feed", chat: "chat-spaces", agent: "chat-agent", "temp-check": "temp-check", workforce: "workforce",
+  rosters: "rosters", knowledge: "knowledge", campaigns: "campaigns", cases: "cases", escalations: "cases", settings: "settings",
+  suppressed: "cases", parity: "cases", learning: "knowledge", outbox: "delivery", activity: "audit", help: "getting-started",
+  stories: "stories", compare: "compare", connections: "integrations", admin: "admin", early: "early-detection", routing: "routing", ai: "ai",
+};
 
-function OnCallChips() {
-  const { data } = useApi<OnCallNow>("/oncall/now", undefined, 60_000);
-  if (!data) return null;
+export function helpPathFor(pathname: string): string {
+  const [first, second] = pathname.split("/").filter(Boolean);
+  if (first === "settings" && second) {
+    const byPart: Record<string, string> = { flags: "feature-flags", secrets: "secrets", bigquery: "bigquery", pubsub: "delivery", prompts: "ai-behavior",
+      safety: "safety", audit: "audit", costs: "costs", gcp: "deploy" };
+    return `/help/${byPart[second] ?? "settings"}`;
+  }
+  return `/help/${HELP_TOPIC[first ?? ""] ?? "getting-started"}`;
+}
+
+/** True from the `lg` breakpoint up: the menu sits beside the page. Below it the menu is a drawer. */
+function useWide(): boolean {
+  const query = "(min-width: 1024px)";
+  const [wide, setWide] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const on = () => setWide(media.matches);
+    media.addEventListener("change", on);
+    return () => media.removeEventListener("change", on);
+  }, []);
+  return wide;
+}
+
+function Mark({ className }: { className?: string }) {
   return (
-    <div className="hidden items-center gap-2 lg:flex">
-      {Object.entries(data.rosters).map(([name, r]) => (
-        <Tooltip key={name} content={<>
-          <span className="font-medium">{r.label}</span>: {r.person ? `${r.person.name} (${r.person.email})` : "nobody"} via {r.source}
-          {r.until ? ` until ${fmtTime(r.until)}` : ""}{r.next?.name ? `, then ${r.next.name}` : ""}
-        </>}>
-          <span className={cx("inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs ring-1 ring-inset", TONE_CLASSES[ONCALL_SOURCE_TONE[r.source] ?? "zinc"])}>
-            <UserRound className="size-3.5" />
-            <span className="font-medium">{name === "slrr_im" ? "IM" : "Burson"}:</span>
-            <span className="max-w-[9rem] truncate">{r.person?.name ?? "nobody"}</span>
-          </span>
-        </Tooltip>
-      ))}
-    </div>
+    <svg viewBox="0 0 32 32" className={className} aria-hidden>
+      <defs>
+        <linearGradient id="mark-g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#4285f4" /><stop offset=".5" stopColor="#9b72cb" /><stop offset="1" stopColor="#d96570" />
+        </linearGradient>
+      </defs>
+      <path fill="url(#mark-g)" d="M16 2c1.1 7.6 6.4 12.9 14 14-7.6 1.1-12.9 6.4-14 14-1.1-7.6-6.4-12.9-14-14 7.6-1.1 12.9-6.4 14-14z" />
+    </svg>
+  );
+}
+
+function Item({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
+  return (
+    <NavLink to={item.to} end={item.to === "/"} title={collapsed ? item.label : undefined}
+      className={({ isActive }) => cx("flex items-center gap-3 rounded-full px-3 py-2 text-sm transition-colors",
+        collapsed && "justify-center px-0",
+        isActive ? "bg-blue-100 font-medium text-blue-800 dark:bg-blue-200/15 dark:text-blue-200" : "text-zinc-700 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800")}>
+      <span className="shrink-0">{item.icon}</span>
+      {!collapsed && <span className="min-w-0 flex-1 truncate">{item.label}</span>}
+      {!collapsed && !!item.count && <span className="rounded-full bg-rose-500 px-1.5 text-xs font-medium tabular-nums text-white">{item.count}</span>}
+      {collapsed && !!item.count && <span className="sr-only">{item.count} waiting</span>}
+    </NavLink>
   );
 }
 
 export function Layout({ children }: { children: ReactNode }) {
-  const { me, theme, toggleTheme } = useApp();
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const { me, counts, theme, toggleTheme } = useApp();
+  const location = useLocation();
+  const wide = useWide();
+  const [folded, setFolded] = useState(() => {
+    try { return localStorage.getItem("console-nav") === "collapsed"; } catch { return false; }
+  });
+  const [drawer, setDrawer] = useState(false);
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    try { localStorage.setItem("console-nav", folded ? "collapsed" : "open"); } catch { /* private mode */ }
+  }, [folded]);
+  useEffect(() => { setDrawer(false); }, [location.pathname, location.search]);
+  const collapsed = folded && wide; // the drawer always shows labels
+
+  const icon = "size-[18px]";
+  const groups: NavItem[][] = [
+    [
+      { to: "/", label: "Dashboard", icon: <LayoutDashboard className={icon} /> },
+      { to: "/feed", label: "Review feed", icon: <Inbox className={icon} />, count: counts.review },
+      { to: "/stories", label: "Stories", icon: <Waypoints className={icon} /> },
+      { to: "/early", label: "Early Detection", icon: <Radar className={icon} /> },
+      { to: "/chat", label: "Chat spaces", icon: <MessagesSquare className={icon} /> },
+      { to: "/agent", label: "Chat agent", icon: <Sparkles className={icon} /> },
+    ],
+    [
+      { to: "/temp-check", label: "Temp check", icon: <Thermometer className={icon} /> },
+      { to: "/workforce", label: "Workforce", icon: <UsersRound className={icon} /> },
+      { to: "/campaigns", label: "Campaigns & watches", icon: <Megaphone className={icon} /> },
+      { to: "/knowledge", label: "Knowledge", icon: <BookOpen className={icon} />, count: counts.learning },
+    ],
+    [
+      { to: "/cases", label: "Cases", icon: <FolderSearch className={icon} /> },
+      { to: "/escalations", label: "Emails & T&S", icon: <Mail className={icon} /> },
+      { to: "/rosters", label: "Rosters", icon: <CalendarClock className={icon} /> },
+      { to: "/compare", label: "Compare", icon: <Scale className={icon} /> },
+    ],
+  ];
+  const extra: NavItem[] = [
+    { to: "/suppressed", label: "Suppressed", icon: <Gauge className={icon} /> },
+    { to: "/parity", label: "Our alerts vs Burson's", icon: <Gauge className={icon} /> },
+    { to: "/outbox", label: "Waiting to post", icon: <Gauge className={icon} />, count: counts.outbox },
+    { to: "/activity", label: "Event log", icon: <Gauge className={icon} /> },
+  ];
+  const extraActive = extra.some((e) => location.pathname.startsWith(e.to));
 
   return (
-    <div className="flex min-h-full flex-col bg-zinc-50 dark:bg-[#09090b]">
-      <header className="sticky top-0 z-30 flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white/95 px-4 py-2.5 backdrop-blur md:px-6 dark:border-zinc-800 dark:bg-[#0c0c0f]/95">
-        <div className="flex items-center gap-2 pr-2">
-          <span className="text-lg" aria-hidden>🤖</span>
-          <div className="leading-tight">
-            <p className="text-sm font-bold tracking-tight text-zinc-950 dark:text-zinc-50">SLRR Triage Config</p>
-            <p className="text-[11px] text-zinc-500">All triage & escalations happen in Google Chat</p>
-          </div>
+    <div className="flex h-full">
+      {drawer && !wide && <button type="button" aria-label="Close the menu" onClick={() => setDrawer(false)} className="fixed inset-0 z-40 bg-black/50" />}
+      <aside aria-label="Menu" className={cx("scroll-thin flex h-dvh shrink-0 flex-col overflow-y-auto px-3 py-4",
+        wide ? cx("sticky top-0 bg-zinc-100/70 dark:bg-zinc-900/60", collapsed ? "w-[68px]" : "w-64")
+          : cx("fixed inset-y-0 left-0 z-50 w-72 bg-zinc-100 transition-transform duration-200 dark:bg-zinc-900", drawer ? "translate-x-0" : "-translate-x-full"))}>
+        <div className={cx("mb-5 flex items-center gap-2", collapsed ? "justify-center" : "px-2")}>
+          <Link to="/" className="flex min-w-0 items-center gap-2.5" aria-label="Dashboard">
+            <Mark className="size-7 shrink-0" />
+            {!collapsed && <span className="truncate text-[15px] font-medium tracking-tight text-zinc-900 dark:text-zinc-50">SLRR Triage</span>}
+          </Link>
+          {!collapsed && me?.env && me.env !== "prod" && <span className="rounded-full border border-zinc-300 px-2 text-xs text-zinc-500 dark:border-zinc-700">{me.env}</span>}
         </div>
-
-        <nav className="flex items-center gap-1" aria-label="Main">
-          {PRIMARY_NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === "/"}
-              className={({ isActive }) => cx(
-                "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
-                isActive
-                  ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-                  : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-100",
-              )}
-            >
-              {item.icon}
-              <span>{item.label}</span>
-            </NavLink>
+        <nav className="flex flex-1 flex-col gap-1" aria-label="Main">
+          {groups.map((group, i) => (
+            <div key={i} className={cx("flex flex-col gap-0.5", i > 0 && "mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800")}>
+              {group.map((item) => <Item key={item.to} item={item} collapsed={collapsed} />)}
+            </div>
           ))}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowAdvanced((v) => !v)}
-              className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800"
-            >
-              <Activity className="size-3.5" />
-              <span>More</span>
-              <ChevronDown className="size-3" />
-            </button>
-            {showAdvanced && (
-              <div
-                className="absolute left-0 top-full z-50 mt-1 w-44 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
-                onMouseLeave={() => setShowAdvanced(false)}
-              >
-                {ADVANCED_NAV.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    onClick={() => setShowAdvanced(false)}
-                    className={({ isActive }) => cx(
-                      "block rounded-md px-3 py-1.5 text-xs font-medium",
-                      isActive ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800",
-                    )}
-                  >
-                    {item.label}
-                  </NavLink>
-                ))}
-              </div>
-            )}
-          </div>
+          {!collapsed && (
+            <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+              <button type="button" onClick={() => setMore((m) => !m)} aria-expanded={more || extraActive}
+                className="flex w-full items-center gap-3 rounded-full px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-400 dark:hover:bg-zinc-800">
+                <ChevronDown className={cx(icon, "transition-transform", (more || extraActive) && "rotate-180")} />More
+              </button>
+              {(more || extraActive) && <div className="mt-0.5 flex flex-col gap-0.5">{extra.map((item) => <Item key={item.to} item={{ ...item, icon: <span className="size-[18px]" /> }} collapsed={false} />)}</div>}
+            </div>
+          )}
         </nav>
+        <div className="mt-4 flex flex-col gap-0.5">
+          {!wide && <div className="px-1 pb-2"><GmailButton /></div>}
+          <Item item={{ to: "/help", label: "Help", icon: <CircleHelp className={icon} /> }} collapsed={collapsed} />
+          {(me?.is_admin || me?.is_lead) && <>
+            <Item item={{ to: "/routing", label: "Routing", icon: <Route className={icon} /> }} collapsed={collapsed} />
+            <Item item={{ to: "/ai", label: "AI", icon: <BrainCircuit className={icon} /> }} collapsed={collapsed} />
+            <Item item={{ to: "/connections", label: "Integrations", icon: <Plug className={icon} /> }} collapsed={collapsed} />
+            <Item item={{ to: "/admin", label: "Admin", icon: <ShieldCheck className={icon} /> }} collapsed={collapsed} />
+            <Item item={{ to: "/settings", label: "Settings", icon: <Settings className={icon} /> }} collapsed={collapsed} />
+          </>}
+          {wide && (
+            <button type="button" onClick={() => setFolded((c) => !c)} title={collapsed ? "Open the menu" : "Collapse the menu"}
+              className={cx("flex items-center gap-3 rounded-full px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-400 dark:hover:bg-zinc-800", collapsed && "justify-center px-0")}>
+              {collapsed ? <PanelLeftOpen className={icon} /> : <PanelLeftClose className={icon} />}{!collapsed && "Collapse"}
+            </button>
+          )}
+        </div>
+      </aside>
 
-        <div className="ml-auto flex items-center gap-2">
-          <OnCallChips />
-          <GmailButton />
-          {me && (
-            <Badge tone={me.env === "prod" ? "rose" : "zinc"} title={`config ${me.config_version}`}>{me.env}</Badge>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-30 flex items-center gap-2 bg-zinc-50/85 px-4 py-3 backdrop-blur sm:px-6 dark:bg-zinc-950/85">
+          {!wide && (
+            <button type="button" onClick={() => setDrawer(true)} aria-label="Open the menu" aria-expanded={drawer} className="-ml-1 flex items-center gap-2 rounded-full p-2 text-zinc-700 hover:bg-zinc-200/70 dark:text-zinc-200 dark:hover:bg-zinc-800">
+              <Menu className="size-5" /><Mark className="size-6" />
+            </button>
           )}
-          {me && (
-            <Tooltip content={<>{me.email}<br />Role: {me.role} ({me.role_source}){me.dev_mode ? " · local dev user" : ""}</>}>
-              <span className="hidden items-center gap-1.5 rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs text-zinc-700 sm:inline-flex dark:bg-zinc-800 dark:text-zinc-300">
-                <UserRound className="size-3.5" />
-                <span className="max-w-[10rem] truncate">{me.name ?? me.email}</span>
-                <span className="rounded bg-white px-1 font-medium text-zinc-500 dark:bg-zinc-900">{me.role}</span>
-              </span>
-            </Tooltip>
-          )}
-          <button type="button" onClick={toggleTheme} aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-            className="rounded-lg p-2 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-100">
+          <span className="flex-1" />
+          {wide && <GmailButton />}
+          <AlertPopups />
+          <Link to={helpPathFor(location.pathname)} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800">
+            <CircleHelp className="size-4" />Help
+          </Link>
+          <button type="button" onClick={toggleTheme} aria-label={theme === "dark" ? "Use the light theme" : "Use the dark theme"}
+            className="rounded-full p-2 text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800">
             {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
           </button>
-        </div>
-      </header>
-      <main className="mx-auto w-full max-w-[1400px] flex-1 p-4 md:p-6">{children}</main>
+          {me && (
+            <span className="ml-1 inline-flex items-center gap-2 rounded-full border border-zinc-200 p-1 text-sm sm:pr-3 dark:border-zinc-800" title={`${me.email} (${me.role})`}>
+              <span className="bg-spark flex size-6 items-center justify-center rounded-full text-xs font-medium text-white">{(me.name || me.email).slice(0, 1).toUpperCase()}</span>
+              <span className="hidden max-w-40 truncate text-zinc-700 sm:inline dark:text-zinc-200">{me.name || me.email.split("@")[0]}</span>
+              <span className="hidden text-xs text-zinc-500 sm:inline">{me.role}</span>
+            </span>
+          )}
+        </header>
+        <main className="mx-auto w-full max-w-[1500px] flex-1 px-4 pb-12 pt-2 sm:px-6">{children}</main>
+      </div>
     </div>
   );
 }
+

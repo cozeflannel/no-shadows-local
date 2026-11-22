@@ -30,8 +30,11 @@ echo "Runtime SA roles:"
 # secretmanager.admin: the Console's Gmail-connect callback creates one gmail-token-<hash> secret per IM.
 # Tighter alternative: a custom role with secretmanager.secrets.create/delete + versions.add/access, or a
 # dedicated project for token secrets.
-for role in roles/aiplatform.user roles/datastore.user roles/bigquery.jobUser roles/secretmanager.admin \
-            roles/logging.logWriter; do
+# pubsub.editor: the Console creates the delivery topics and subscriptions and publishes to them.
+# bigquery.user: datasets created from the Console (the creator owns what it creates; nothing else is granted).
+# cloudtrace.agent + telemetry.tracesWriter: traces, when tracing is switched on in Settings.
+for role in roles/aiplatform.user roles/datastore.user roles/bigquery.jobUser roles/bigquery.user roles/secretmanager.admin \
+            roles/logging.logWriter roles/pubsub.editor roles/cloudtrace.agent roles/telemetry.tracesWriter; do
   bind "serviceAccount:${RUNTIME_SA}" "${role}"
 done
 
@@ -43,6 +46,14 @@ done
 
 echo "Scheduler SA roles:"
 bind "serviceAccount:${SCHEDULER_SA}" roles/run.invoker
+
+# Pub/Sub signs its pushes to the worker as the scheduler SA: its service agent must be able to mint that token.
+PUBSUB_AGENT="service-${PROJECT_NUMBER}@gcp-sa-pubsub.iam.gserviceaccount.com"
+gcloud beta services identity create --service=pubsub.googleapis.com --project="${PROJECT_ID}" --quiet >/dev/null 2>&1 || true
+gcloud iam service-accounts add-iam-policy-binding "${SCHEDULER_SA}" --project="${PROJECT_ID}" \
+  --member="serviceAccount:${PUBSUB_AGENT}" --role=roles/iam.serviceAccountTokenCreator --quiet >/dev/null \
+  && echo "  roles/iam.serviceAccountTokenCreator on ${SCHEDULER_SA} -> ${PUBSUB_AGENT}" \
+  || echo "  could not let Pub/Sub sign pushes as ${SCHEDULER_SA}; re-run this script once the Pub/Sub API is enabled."
 
 # The Studio custom steps call the Agent Runtime's :query with the Triage Agent account's OAuth token
 # (ScriptApp.getOAuthToken), which needs aiplatform.reasoningEngines.query (in roles/aiplatform.user).

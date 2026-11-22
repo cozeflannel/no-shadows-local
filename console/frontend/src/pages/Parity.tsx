@@ -15,7 +15,7 @@ type Tab = "matched" | "burson_only" | "inhouse_only" | "pending";
 function Stat({ label, value, help, tone }: { label: string; value: string | number; help: string; tone?: string }) {
   return (
     <Tooltip content={help} className="block">
-      <div className="w-full cursor-help rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-[#0c0c0f]">
+      <div className="w-full cursor-help rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
         <p className="text-xs font-medium text-zinc-500">{label}</p>
         <p className={cx("mt-1 font-mono text-2xl font-semibold", tone ?? "text-zinc-950 dark:text-zinc-50")}>{value}</p>
       </div>
@@ -38,7 +38,7 @@ function UnmatchedTable({ rows, empty }: { rows: { case: CaseSummary; at?: strin
   return (
     <div className="scroll-thin max-h-[60vh] overflow-auto">
       <table className="w-full min-w-[720px]">
-        <thead><tr><th className={TH}>Case</th><th className={TH}>Track</th><th className={TH}>Exposure tag</th><th className={TH}>Received</th><th className={TH}>Reconciled</th></tr></thead>
+        <thead><tr><th className={TH}>Case</th><th className={TH}>Track</th><th className={TH}>Exposure tag</th><th className={TH}>Received</th><th className={TH}>Compared on</th></tr></thead>
         <tbody>
           {rows.map(({ case: c, at }) => (
             <tr key={c.case_id} className={TR}>
@@ -66,7 +66,7 @@ export default function ParityPage() {
 
   return (
     <div>
-      <PageHeader title="Parity (Path B)" description="In-house alerts (brand_safety_alerting) compared with Burson's for the same post. Unmatched alerts are reconciled after the match window."
+      <PageHeader title="Our alerts vs Burson's" description="The alerts found from the team's own tables, next to Burson's alert for the same post. An alert with no match is listed once the wait for a match has passed."
         actions={<>
           <Segmented label="Window" value={days} onChange={setDays} options={[7, 14, 30].map((n) => ({ value: n, label: `${n} d` }))} />
           <Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={reload}>Refresh</Button>
@@ -130,8 +130,8 @@ export default function ParityPage() {
                   )}
                 </>
               )}
-              {tab === "burson_only" && <UnmatchedTable rows={data.burson_only.map((r) => ({ case: r.case, at: r.reconciled_at }))} empty="Every Burson alert had an in-house counterpart" />}
-              {tab === "inhouse_only" && <UnmatchedTable rows={data.inhouse_only.map((r) => ({ case: r.case, at: r.reconciled_at }))} empty="No in-house-only alerts" />}
+              {tab === "burson_only" && <UnmatchedTable rows={data.burson_only.map((r) => ({ case: r.case, at: r.reconciled_at }))} empty="Every Burson alert was also found by us" />}
+              {tab === "inhouse_only" && <UnmatchedTable rows={data.inhouse_only.map((r) => ({ case: r.case, at: r.reconciled_at }))} empty="Nothing was found only by us" />}
               {tab === "pending" && <UnmatchedTable rows={data.pending.map((c) => ({ case: c }))} empty={`Nothing inside the ${data.match_window_hours} h match window`} />}
             </Card>
           </div>

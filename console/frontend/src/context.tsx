@@ -6,6 +6,7 @@ import type { Fact, GmailStatus, Me, Meta, OutboxResponse, Proposal, ReviewItem 
 import { cx } from "./components/ui";
 import { setDisplayTimezone } from "./lib/format";
 import { gmailMissingScopesMessage } from "./lib/labels";
+import { setSwitchNames } from "./lib/switches";
 
 type ToastTone = "success" | "error" | "info";
 interface Toast { id: number; message: string; tone: ToastTone }
@@ -78,7 +79,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setMe(value);
         refreshGmail(); // also for users without a Console role (the Triage Agent account connects its mailbox)
         if (!value.can_view) return;
-        apiGet<Meta>("/meta").then(setMeta).catch((err) => setBootError(toApiError(err)));
+        apiGet<Meta>("/meta").then((m) => { setSwitchNames(m.switch_names); setMeta(m); }).catch((err) => setBootError(toApiError(err)));
         refreshCounts();
         timer = window.setInterval(refreshCounts, 60_000);
       })
