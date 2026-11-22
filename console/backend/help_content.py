@@ -283,7 +283,8 @@ TOPICS: list[dict[str, Any]] = [
         "sections": [
             {"heading": "Set everything up", "steps": [
                 "Open Integrations.",
-                "Click Find and fill. It writes the project, region, this Console's address, the deployed agent and the dataset when it can see them.",
+                "Click Find and fill. It writes the project, region, this Console's address, the deployed agent and the dataset when it can see them. "
+                "It also brings the temp check app's setup: its five tables of posts and its Brandwatch values. Nothing already set is changed.",
                 "Open each tile under Needed for the agent to work that still says Needs values.",
                 "Enter or choose its values and Save.",
                 "Click Create when the tile offers it (BigQuery tables, Pub/Sub topics).",
@@ -294,6 +295,10 @@ TOPICS: list[dict[str, Any]] = [
                 "Click Sign in as the QA chatbot. At Google, choose that account and leave every box ticked.",
                 "Click Check now. Each space shows its latest message and whether people outside Google can join it.",
                 "A space that says Add the account to this space: add it in Chat, then check again."]},
+            {"heading": "Post tables", "items": [
+                "The tables of posts that temp checks, Early Detection and watches search. Find and fill adds the five the temp check app searches.",
+                "Check now asks each table for a day of posts, which costs nothing. A table the Console can't read shows the GRANT line its owners run.",
+                "Change a table, switch one OFF or add one under Settings, Temp check. Early Detection and watches read the ones named in their own settings."]},
             {"heading": "What a tile says", "items": [
                 "Connected: its values are set and the last check passed.",
                 "Set, not checked: its values are set. Run the check.",

@@ -2,7 +2,8 @@
 
 Each tool lists the few values it needs, whether they are set, and a live check of the access the Console's account
 has. Find and fill writes what the running service can see for itself (the project, the region, its own address, the
-one Agent Runtime, the dataset that holds the agent's tables), so only what a person alone knows is left to enter.
+one Agent Runtime, the dataset that holds the agent's tables) and the temp check app's setup (config/temp_check_app.yaml:
+its tables of posts and Brandwatch values), so only what a person alone knows is left to enter.
 Values are saved to the same settings the rest of the Console edits; a check's result is kept until its values change.
 """
 
@@ -15,6 +16,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -55,6 +57,7 @@ class Tool:
     access: str  # what the Console's account needs, in a sentence
     settings: str = ""  # where its tuning values live
     create: str = ""  # the route that creates what it needs, when the Console can
+    watch: tuple[str, ...] = ()  # settings a check depends on besides its fields: a check is forgotten when one changes
 
 
 def _spaces(ctx: AgentContext) -> tuple[F, ...]:
@@ -103,8 +106,15 @@ def tools(ctx: AgentContext) -> list[Tool]:
         Tool("brandwatch", "Brandwatch", "Mention volumes and posts for temp checks.", False,
              (F("platform.temp_check.brandwatch_project_id", "Project id", True),
               F("platform.temp_check.brandwatch_token_secret", "Token secret", True, options="secrets", help="The secret that holds the API token."),
-              F("platform.temp_check.brandwatch_api_base", "API address")),
+              F("platform.temp_check.brandwatch_api_base", "API address"),
+              F("platform.temp_check.event_query_prefix", "Event query names start with", help="The queries offered in the temp check's search box and used for the concern level."),
+              F("platform.temp_check.standing_query_name", "Standing query names start with",
+                help="The active queries named this way are searched when an issue has no query of its own yet."),
+              F("platform.temp_check.standing_query_skip", "Leave out standing queries named with", help="A word: a standing query whose name has it is not searched.")),
              ("Temp checks",), "A Brandwatch API token, kept in Secret Manager.", "/settings/temp_check"),
+        Tool("post_tables", "Post tables", "The tables of posts that temp checks, Early Detection and watches search.", False, (),
+             ("Temp checks", "Early Detection", "Watches"), "BigQuery Data Viewer on each table's dataset.", "/settings/temp_check",
+             watch=("platform.temp_check.sources",)),
         Tool("inhouse", "Sonar and DSD tables", "The tables in-house detection reads.", False,
              (F("inhouse.sonar_table", "Sonar table", True), F("inhouse.outbox_view", "Story selection view", True),
               F("inhouse.alert_log_table", "Alert log table", True), F("inhouse.project", "Project that runs the queries", True),
@@ -159,7 +169,8 @@ def _is_set(settings: dict[str, Any], f: F) -> bool:
 
 # -- state ---------------------------------------------------------------------------------------------------------------------
 def _fingerprint(settings: dict[str, Any], t: Tool) -> str:
-    return hashlib.sha256(json.dumps([[f.path, read(settings, f.path)] for f in t.fields], default=str).encode()).hexdigest()[:16]
+    paths = [f.path for f in t.fields] + list(t.watch)
+    return hashlib.sha256(json.dumps([[path, read(settings, path)] for path in paths], default=str).encode()).hexdigest()[:16]
 
 
 def _gmail_facts(ctx: AgentContext) -> dict[str, Any]:
@@ -193,6 +204,11 @@ def state_of(ctx: AgentContext, t: Tool, settings: dict[str, Any] | None = None)
                  {"label": "Sign-in", "value": "simulated (TRIAGE_GMAIL=fake)" if g["mode"] == "fake" else ("set up" if g["oauth_client"] else "not set up")}]
         if not usable:
             missing = ["A Google sign-in client for Gmail (set at deploy)"]
+    if t.key == "post_tables":
+        rows = [x for x in read(settings, "platform.temp_check.sources") or [] if x.get("enabled") and x.get("table")]
+        facts = [{"label": x.get("label") or x["key"], "value": x["table"]} for x in rows]
+        if not rows:
+            missing = ["A table of posts"]
     signin = t.key == "chat"
     if signin:
         signed = chatapi.signed_in(ctx)
@@ -204,6 +220,7 @@ def state_of(ctx: AgentContext, t: Tool, settings: dict[str, Any] | None = None)
     else:
         state = "connected" if test["ok"] else "failing"
     steps = ([{"key": "values", "title": "Choose its values" if any(f["options"] for f in fields) else "Enter its values"}] if fields else
+             [{"key": "tables", "title": "The tables searched"}] if t.key == "post_tables" else
              [{"key": "people", "title": "Each person connects their own mailbox"}])
     if signin:
         steps.append({"key": "signin", "title": "Sign in as the QA chatbot"})
@@ -274,6 +291,8 @@ def disconnect(key: str, request: Request, ctx: AgentContext = Depends(get_ctx),
     t = tool(ctx, key)
     if t.required:
         raise HTTPException(422, {"error": f"{t.name} is needed for the agent to work. Change its values instead.", "code": "validation_error"})
+    if t.key == "post_tables":
+        raise HTTPException(422, {"error": "Switch a table OFF, or take it out, under Settings, Temp check.", "code": "validation_error"})
     if not t.fields:
         raise HTTPException(422, {"error": f"{t.name} is connected per person: each person disconnects their own.", "code": "validation_error"})
     defaults = default_config()[1]
@@ -506,6 +525,36 @@ def _check_brandwatch(ctx: AgentContext) -> list[dict[str, Any]]:
     return [_detail("API token", token)]
 
 
+def _check_post_tables(ctx: AgentContext) -> list[dict[str, Any]]:
+    """Each table of posts, asked for a day with its own read: free to ask, and it fails the way a temp check would."""
+    from triage_agent import tempcheck
+
+    try:
+        _need_cloud()
+        gw = bq_admin.get_gateway(ctx)
+        who = str(gw.test().get("identity") or "")
+    except Exception as exc:  # noqa: BLE001
+        return [{"label": "Queries", "ok": False, "message": str(exc)[:400]}]
+    now = ctx.now()
+    out: list[dict[str, Any]] = []
+    for src in tempcheck.own_sources(ctx):
+        def scan(src: Any = src) -> str:
+            try:
+                sql = ("SELECT platform, author, text, url, posted, followers, eng, sentiment, language, shares, replies, seen, one\n"
+                       f"FROM (\n    {tempcheck.read_of(src)}\n)\nLIMIT 1")
+                size = gw.dry_run(sql, {"t_from": now - timedelta(days=1), "t_to": now}, location=src.location or None)
+            except Exception as exc:  # noqa: BLE001
+                text = str(exc)
+                if "Access Denied" in text or "403" in text:
+                    dataset = ".".join(src.table.split(".")[:2])
+                    raise RuntimeError(f"Access denied. The dataset's owners run: GRANT `roles/bigquery.dataViewer` ON SCHEMA "
+                                       f"`{dataset.replace('.', '`.`')}` TO \"serviceAccount:{who}\"") from exc
+                raise RuntimeError(f"BigQuery would not take this table's read: {text[:300]}") from exc
+            return f"Readable. A day's read scans {size / tempcheck.GB:.1f} GB."
+        out.append(_detail(src.label or src.key, scan))
+    return out
+
+
 def _check_campaigns(ctx: AgentContext) -> list[dict[str, Any]]:
     def listed() -> str:
         from triage_agent import campaigns_admin
@@ -519,7 +568,7 @@ def _check_campaigns(ctx: AgentContext) -> list[dict[str, Any]]:
 CHECKS: dict[str, Callable[[AgentContext], list[dict[str, Any]]]] = {
     "gcp": _check_gcp, "gemini": _check_gemini, "runtime": _check_runtime, "chat": _check_chat, "bigquery": _check_bigquery,
     "inhouse": _check_inhouse, "delivery": _check_delivery, "secrets": _check_secrets, "gmail": _check_gmail, "drive": _check_drive,
-    "brandwatch": _check_brandwatch, "campaigns": _check_campaigns,
+    "brandwatch": _check_brandwatch, "post_tables": _check_post_tables, "campaigns": _check_campaigns,
 }
 
 
@@ -603,9 +652,33 @@ def _cloud_run_region() -> str:
     return resp.text.strip().rsplit("/", 1)[-1] if resp.status_code == 200 else ""
 
 
+TABLES_PATH = "platform.temp_check.sources"
+
+
+def _offer_app_setup(ctx: AgentContext, settings: dict[str, Any], found: dict[str, Any], offer: Callable[[str, Callable[[], Any], str], None]) -> None:
+    """The temp check app's setup (config/temp_check_app.yaml), for the settings that are still empty: its Brandwatch
+    values, and its five tables of posts when no table is set. The token's secret is named only when the project holds it."""
+    from triage_agent import tempcheck
+
+    app = tempcheck.app_setup()
+    for name, value in app["brandwatch"].items():
+        def held(value: str = value) -> str:
+            if value not in {str(x.get("name")) for x in secret_admin.get_gateway(ctx).list("")}:
+                raise RuntimeError(f"the project holds no secret named {value}. Add the Brandwatch token as a secret, then pick it under Brandwatch")
+            return value
+        if name == "brandwatch_token_secret":
+            offer(f"platform.temp_check.{name}", held, "Brandwatch token secret")
+        else:
+            offer(f"platform.temp_check.{name}", lambda value=value: value, name)
+    if app["tables"] and not read(settings, TABLES_PATH):
+        settings["platform"]["temp_check"]["sources"] = [t.model_dump(mode="json") for t in app["tables"]]
+        found[TABLES_PATH] = ", ".join(t.label or t.key for t in app["tables"])  # the tables' names: what a person reads, in the answer and the audit log
+
+
 @router.post("/connections/autofill")
 def autofill(request: Request, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_admin)) -> dict[str, Any]:
-    """Find and fill: write every empty value the running service can see for itself. Nothing already set is changed."""
+    """Find and fill: write every empty value the running service can see for itself, and the temp check app's setup
+    (its tables of posts and Brandwatch values). Nothing already set is changed."""
     settings = ctx.config.model_dump(mode="json")
     found: dict[str, Any] = {}
     notes: list[str] = []
@@ -656,6 +729,7 @@ def autofill(request: Request, ctx: AgentContext = Depends(get_ctx), user: User 
             found["platform.bigquery.tables.events"] = settings["platform"]["bigquery"]["tables"]["events"]
     else:
         notes.append(LOCAL)
+    _offer_app_setup(ctx, settings, found, offer)
     fresh = ctx
     if found:
         try:
@@ -666,6 +740,7 @@ def autofill(request: Request, ctx: AgentContext = Depends(get_ctx), user: User 
                      summary=f"Found and filled: {', '.join(sorted(found))}", detail={"filled": found})
     after = catalog(fresh)
     labels = {f.path: (t.name, f.label) for t in tools(fresh) for f in t.fields}
+    labels[TABLES_PATH] = ("Post tables", "Tables")
     return {"filled": [{"path": p, "value": v, "tool": labels.get(p, ("", ""))[0], "label": labels.get(p, ("", p))[1]} for p, v in sorted(found.items())],
             "left": [{"tool": c["key"], "name": c["name"], "label": m, "required": c["required"]} for c in after["connections"] for m in c["missing"]],
             "notes": notes, **after}

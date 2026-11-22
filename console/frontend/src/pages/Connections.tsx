@@ -1,5 +1,5 @@
 import {
-  Bot, CircleCheck, CircleX, Cloud, Database, FolderOpen, KeyRound, Mail, Megaphone, MessagesSquare, Radar, Send, Sparkles, Table2,
+  Bot, CircleCheck, CircleX, Cloud, Database, FolderOpen, KeyRound, Mail, Megaphone, MessagesSquare, Radar, Rows3, Send, Sparkles, Table2,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
@@ -23,7 +23,7 @@ interface Filled { filled: { path: string; value: string; tool: string; label: s
 
 const ICON: Record<string, ReactNode> = {
   gcp: <Cloud />, gemini: <Sparkles />, runtime: <Bot />, chat: <MessagesSquare />, bigquery: <Database />, delivery: <Send />, secrets: <KeyRound />,
-  gmail: <Mail />, drive: <FolderOpen />, brandwatch: <Radar />, inhouse: <Table2 />, campaigns: <Megaphone />,
+  gmail: <Mail />, drive: <FolderOpen />, brandwatch: <Radar />, inhouse: <Table2 />, post_tables: <Rows3 />, campaigns: <Megaphone />,
 };
 
 function stateOf(t: Tool): { label: string; tone: "emerald" | "blue" | "amber" | "zinc" | "rose" } {
@@ -191,6 +191,15 @@ function ToolFlow({ tool, admin, onChanged }: { tool: Tool; admin: boolean; onCh
               {changed.length > 0 && <span className="text-sm text-zinc-500 dark:text-zinc-400">{changed.length} changed</span>}
             </div>
           )}
+        </Step>
+      ) : tool.steps[0]?.key === "tables" ? (
+        <Step n={++n} title={tool.steps[0].title} done={!tool.missing.length}>
+          {tool.facts.length ? (
+            <dl className="grid gap-3 text-sm sm:grid-cols-2">
+              {tool.facts.map((f) => <div key={f.value} className="min-w-0"><dt className="text-zinc-900 dark:text-zinc-100">{f.label}</dt><dd className="mt-0.5 break-all font-mono text-xs text-zinc-500 dark:text-zinc-400">{f.value}</dd></div>)}
+            </dl>
+          ) : <p className="text-sm text-zinc-600 dark:text-zinc-400">None yet. Find and fill, at the top of this page, adds the five tables the temp check app searches.</p>}
+          <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">Change a table, switch one OFF or add one under <Link to="/settings/temp_check" className="text-blue-700 hover:underline dark:text-blue-300">Settings, Temp check</Link>.</p>
         </Step>
       ) : (
         <Step n={++n} title={tool.steps[0]?.title ?? "People"} done={tool.state === "connected"}>

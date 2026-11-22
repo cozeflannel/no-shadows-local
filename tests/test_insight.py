@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
+
 from conftest import GOOD_ALERT
 from console.backend import connections
 from test_platform import ADMIN, IM, LEAD, _llm, alert, client, flags, iap, triage  # noqa: F401 - fixtures
@@ -228,16 +230,108 @@ def test_removing_a_person_takes_their_access_and_keeps_the_console_and_the_shif
     assert "temp@ops.test" not in emails
 
 
-def test_find_and_fill_writes_what_the_service_can_see_and_lists_what_is_left(ctx, client, monkeypatch):
+@pytest.fixture
+def own_secrets(ctx, tmp_path):
+    """An empty secret store of the test's own, so Find and fill sees no secret a developer keeps locally."""
+    from triage_agent import secret_admin
+
+    ctx.secrets = secret_admin.LocalSecrets(tmp_path / "secrets.json")
+    return ctx.secrets
+
+
+def test_find_and_fill_writes_what_the_service_can_see_and_lists_what_is_left(ctx, client, monkeypatch, own_secrets):
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "seen-project")
     monkeypatch.setenv("GOOGLE_CLOUD_REGION", "us-central1")
     assert client.post("/api/connections/autofill", headers=iap(IM)).status_code == 403
     got = client.post("/api/connections/autofill", headers=iap(ADMIN)).json()
-    assert {(f["path"], f["value"]) for f in got["filled"]} == {("platform.gcp.project", "seen-project"), ("platform.gcp.region", "us-central1")}
+    seen = {(f["path"], f["value"]) for f in got["filled"] if f["tool"] == "Google Cloud"}
+    assert seen == {("platform.gcp.project", "seen-project"), ("platform.gcp.region", "us-central1")}
     assert ctx.store.get_config_overrides()["platform"]["gcp"] == {"project": "seen-project", "region": "us-central1"}
     assert {"tool": "bigquery", "name": "BigQuery", "label": "Dataset", "required": True} in got["left"]
     again = client.post("/api/connections/autofill", headers=iap(ADMIN)).json()
     assert again["filled"] == [], "a value already set is never changed"
+
+
+def test_find_and_fill_brings_the_temp_check_apps_tables_and_brandwatch_values(ctx, client, own_secrets):
+    from triage_agent import tempcheck
+
+    app = tempcheck.app_setup()
+    got = client.post("/api/connections/autofill", headers=iap(ADMIN)).json()
+    filled = {f["path"]: f for f in got["filled"]}
+    cfg = ctx.config.platform.temp_check
+    assert [s.key for s in cfg.sources] == ["alerts", "sonar", "brandwatch", "sprinklr", "tubular"] and cfg.sources[1].read_sql == app["tables"][1].read_sql
+    assert filled["platform.temp_check.sources"]["tool"] == "Post tables"
+    assert filled["platform.temp_check.sources"]["value"] == "Sundar all mentions, Sonar, Brandwatch stored mentions, Sprinklr comments, Tubular videos"
+    assert (cfg.brandwatch_project_id, cfg.event_query_prefix, cfg.standing_query_name, cfg.standing_query_skip) == ("1998344909", "[G EVENT]", "[V2] MAIN G Landscape (", "benchmark")
+    assert filled["platform.temp_check.brandwatch_project_id"]["tool"] == "Brandwatch" and filled["platform.temp_check.standing_query_name"]["label"] == "Standing query names start with"
+    assert cfg.brandwatch_token_secret == "" and any("slrr-campaigns-bw-token" in note for note in got["notes"]), "a secret the project does not hold is not named"
+    assert ctx.config.platform.early.sources == [] and ctx.config.platform.campaigns.watch_sources == [], "which tables Early Detection and watches read stays a person's choice"
+
+    own_secrets.create("slrr-campaigns-bw-token", "token-value")
+    cfg.sources[0].enabled = False
+    again = client.post("/api/connections/autofill", headers=iap(ADMIN)).json()
+    assert [f["path"] for f in again["filled"]] == ["platform.temp_check.brandwatch_token_secret"], "only what was still empty; the tables already there are left alone"
+    assert ctx.config.platform.temp_check.brandwatch_token_secret == "slrr-campaigns-bw-token"
+
+
+def test_find_and_fill_leaves_tables_and_brandwatch_values_a_person_set(ctx, client, own_secrets):
+    from triage_agent.config import TempCheckSource
+
+    cfg = ctx.config.platform.temp_check
+    mine = TempCheckSource(key="mine", label="My table", table="p.d.mine", text_columns=["text"], url_column="url", time_column="posted")
+    client.put("/api/platform/temp_check", json={"value": {**cfg.model_dump(mode="json"), "sources": [mine.model_dump(mode="json")], "brandwatch_project_id": "77",
+                                                          "event_query_prefix": "[EVENT]"}, "note": "set by hand"}, headers=iap(ADMIN))
+    got = client.post("/api/connections/autofill", headers=iap(ADMIN)).json()
+    cfg = ctx.config.platform.temp_check
+    assert [s.key for s in cfg.sources] == ["mine"] and cfg.brandwatch_project_id == "77" and cfg.event_query_prefix == "[EVENT]"
+    assert "platform.temp_check.sources" not in {f["path"] for f in got["filled"]}
+
+
+class SomeDenied:
+    """BigQuery as the post tables check meets it: every read is estimated, and the Sonar dataset refuses this account."""
+
+    project = "this-project"
+    _settings_key = ("", "", 0)
+
+    def __init__(self):
+        self.asked: list[tuple[str, dict, str | None]] = []
+
+    def test(self):
+        return {"ok": True, "project": self.project, "location": "US", "identity": "agent@project.test"}
+
+    def dry_run(self, sql, params=None, *, location=None):
+        self.asked.append((sql, dict(params or {}), location))
+        if "sonar_raw" in sql:
+            raise RuntimeError("403 Access Denied: Table sonar_raw: User does not have permission to query table")
+        if "tubular_videos" in sql:
+            raise RuntimeError("400 Unrecognized name: video_title at [1:40]")
+        return 3 * 1024 ** 3
+
+
+def test_the_post_tables_card_checks_each_table_and_names_the_grant_it_needs(ctx, client, monkeypatch, own_secrets):
+    by = lambda: {c["key"]: c for c in client.get("/api/connections", headers=iap(IM)).json()["connections"]}  # noqa: E731
+    card = by()["post_tables"]
+    assert card["state"] == "not_connected" and card["required"] is False and card["missing"] == ["A table of posts"]
+    client.post("/api/connections/autofill", headers=iap(ADMIN))
+    card = by()["post_tables"]
+    assert card["state"] == "ready" and [f["label"] for f in card["facts"]][:2] == ["Sundar all mentions", "Sonar"]
+    assert card["facts"][1]["value"] == "bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw"
+
+    monkeypatch.setattr(connections, "_on_cloud", lambda: True)  # the check runs as it does on Cloud Run
+    ctx.bq = gw = SomeDenied()
+    assert client.post("/api/connections/post_tables/test", headers=iap(IM)).status_code == 403
+    got = client.post("/api/connections/post_tables/test", headers=iap(ADMIN)).json()
+    lines = {d["label"]: d for d in got["test"]["details"]}
+    assert got["test"]["ok"] is False and got["connection"]["state"] == "failing"
+    assert lines["Sundar all mentions"] == {"label": "Sundar all mentions", "ok": True, "message": "Readable. A day's read scans 3.0 GB."}
+    assert lines["Sonar"]["message"] == ("Access denied. The dataset's owners run: GRANT `roles/bigquery.dataViewer` ON SCHEMA "
+                                         '`bsip-s-bsip-gg-26-2cf3`.`google_bg` TO "serviceAccount:agent@project.test"')
+    assert lines["Tubular videos"]["ok"] is False and lines["Tubular videos"]["message"].startswith("BigQuery would not take this table's read: 400 Unrecognized name: video_title")
+    sql, params, location = next(a for a in gw.asked if "sonar_raw" in a[0])
+    assert "JSON_VALUE(payload" in sql and location == "us-central1" and params["t_to"] - params["t_from"] == timedelta(days=1), "the table's own read, over a day"
+
+    ctx.config.platform.temp_check.sources[1].enabled = False
+    assert by()["post_tables"]["test"] is None, "a check is forgotten once the tables change"
 
 
 def test_the_deployer_is_listed_as_the_admin_until_an_admin_is_named(ctx, client, monkeypatch):
@@ -296,7 +390,7 @@ class OwnTables:
         return {"full_id": table_id, "rows": 12}
 
 
-def test_on_the_cloud_find_and_fill_picks_the_one_runtime_and_the_dataset_that_holds_the_agents_tables(ctx, client, monkeypatch):
+def test_on_the_cloud_find_and_fill_picks_the_one_runtime_and_the_dataset_that_holds_the_agents_tables(ctx, client, monkeypatch, own_secrets):
     runtime = "projects/1/locations/us-central1/reasoningEngines/77"
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "seen-project")
     monkeypatch.setenv("GOOGLE_CLOUD_REGION", "us-central1")
