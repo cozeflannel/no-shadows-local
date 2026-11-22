@@ -38,6 +38,8 @@ class ChatWorld:
         self.dms: dict[str, str] = {}  # a person's address -> the direct message space the bot's account has with them
         self.writes: list[tuple[str, str]] = []
         self.fail_posts_to: set[str] = set()
+        self.refuse_custom_ids = False  # Chat taking no custom message ids from this account
+        self.requests: dict[str, str] = {}  # request id -> the message it made: the same id never makes a second one
         self.n = 0
         for space, name, external in ((SRC, "[S-F] Burson Automated Alerts V3", True), (MIR, "Burson mirror", False),
                                       (THIRD, "Burson third", False), (OUT, "Vendor room", True)):
@@ -93,13 +95,20 @@ class ChatWorld:
             if space in self.fail_posts_to:
                 return _Resp(500, {"error": {"message": "Chat is having trouble"}})
             custom = params.get("messageId", "")
+            if custom and self.refuse_custom_ids:
+                return _Resp(400, {"error": {"message": "Invalid value at 'message_id': custom message ids are not supported for this caller"}})
             if custom and any(m.get("clientAssignedMessageId") == custom for m in self.messages[space]):
                 return _Resp(409, {"error": {"message": "already exists"}})
+            again = self.requests.get(params.get("requestId", ""))
+            if again:
+                return _Resp(200, self._view(next(m for m in self.messages[space] if m["name"] == again)))
             thread = (json.get("thread") or {}).get("name", "")
             root = next((m for m in self.messages[space] if m["thread"]["name"] == thread), None)
             name = self.say(space, json["text"], sender={"name": "users/bot", "type": "HUMAN"}, under=root["name"] if root else "",
                             **({"clientAssignedMessageId": custom} if custom else {}))
             self.writes.append((space, json["text"]))
+            if params.get("requestId"):
+                self.requests[params["requestId"]] = name
             return _Resp(200, self._view(self.messages[space][-1]) | {"name": name})
         if method == "POST" and path.endswith("/reactions"):
             message, emoji = path.rsplit("/reactions", 1)[0], json["emoji"]["unicode"]

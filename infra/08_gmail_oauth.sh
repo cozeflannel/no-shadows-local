@@ -6,6 +6,9 @@
 # chat.messages.reactions.create, chat.spaces.readonly, chat.memberships.readonly. Its token is kept in Secret Manager
 # under its own name. The same client and the same redirect URI below serve both sign-ins.
 #
+# The QA chatbot is not a Chat app. No app is set up for it in the Cloud console: it needs the Google Chat API turned
+# on (01_enable_apis.sh) and a sign-in client from the same Google Cloud project the sheet-based bot runs in.
+#
 # Each Incident Manager connects their own Gmail once (scopes: gmail.compose + gmail.metadata) so the agent can
 # create Social Alert drafts in their mailbox (From: the Brand Social send-as alias) and see when they're sent.
 # The Triage Agent account connects too (scope: gmail.send) if the outbox doorbell is "email".
@@ -20,8 +23,6 @@
 #        <Console URL from 07_console.sh>/api/gmail/callback
 #        http://localhost:8000/api/gmail/callback          (local development, optional)
 #   4. Download the JSON, then run:  infra/08_gmail_oauth.sh path/to/client_secret.json
-#   5. APIs & Services -> Google Chat API -> Configuration: fill App name, Avatar URL and Description, save.
-#      Reading Chat as a signed-in account works without this page; posting and adding emojis do not.
 #
 # Idempotent: re-running adds a new secret version (the Console always reads "latest").
 set -euo pipefail
@@ -29,7 +30,7 @@ source "$(dirname "$0")/_lib.sh"
 
 CLIENT_JSON="${1:-}"
 if [[ -z "${CLIENT_JSON}" || ! -f "${CLIENT_JSON}" ]]; then
-  sed -n '2,24p' "$0"
+  sed -n '2,27p' "$0"
   echo
   echo "Usage: infra/08_gmail_oauth.sh path/to/client_secret.json" >&2
   exit 1

@@ -3,6 +3,10 @@
 The Chat REST API is called with the sign-in of the account in Settings (the agent's account): no Chat app and no
 webhooks. The account signs in once from Integrations, Google Chat; its token is kept in the token vault under its
 own name, apart from any Gmail token. The permissions asked for are the ones the sheet-based bot's script lists.
+
+Nothing here depends on a Chat app being set up. Chat may take no custom message ids from such a caller, so the bot
+keeps its own record of what it posted (OWN) and knows its posts by that, as the sheet-based bot does (noteBotWrite_,
+botPostId_): what a post is never depends on Chat.
 """
 
 from __future__ import annotations
@@ -32,6 +36,11 @@ SCOPE_WORDS: dict[str, str] = {
 SCOPES: tuple[str, ...] = tuple(SCOPE_WORDS)
 IDENTITY_SCOPES: tuple[str, ...] = ("openid", _SCOPE + "userinfo.email")
 TRIES = 3
+OWN = "chat_own"  # what the bot's account posted itself: {message, id (the id it was meant to have), at}
+# Chat's answer to a sign-in made in a Google Cloud project it takes no calls from, in the words a person reads.
+WRONG_PROJECT = ("Chat takes no calls from the Google Cloud project this sign-in was made in. Make the sign-in client in "
+                 "the project the sheet-based bot runs in, where Chat already takes calls made as a person, and sign in "
+                 "again. The QA chatbot is not a Chat app and needs none set up.")
 LOOK_BACK = timedelta(hours=24)  # how far back the latest message is looked for when Chat refuses to order them
 _SPACE_ID = re.compile(r"/(?:room|space|chat|stream)/([A-Za-z0-9_-]{8,})")
 
@@ -172,6 +181,8 @@ class ChatClient:
         self.session = session
         self.refuse = refuse      # refuse(space, approved) -> why this write is not allowed, or ""
         self.approved = False     # True only while a person's Send is being posted (mirror.decide)
+        self.posted: Any = None   # posted(message, id): keeps the id a post was meant to have when Chat gave it none
+        self.own_id: Any = None   # own_id(message) -> that id, or "" for a message the bot did not post
 
     def _call(self, method: str, path: str, params: dict[str, Any] | None = None, body: Any = None) -> tuple[int, dict[str, Any], str]:
         last: Any = None
@@ -185,7 +196,10 @@ class ChatClient:
             data = last.json()
         except ValueError:
             data = {}
-        return last.status_code, data, str((data.get("error") or {}).get("message") or last.text or "no reason given")[:300]
+        why = str((data.get("error") or {}).get("message") or last.text or "no reason given")[:300]
+        if last.status_code == 404 and "chat app not found" in why.lower():
+            why = WRONG_PROJECT
+        return last.status_code, data, why
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         status, body, why = self._call("GET", path, params)
@@ -209,6 +223,10 @@ class ChatClient:
             if not body.get("nextPageToken") or len(out) >= 5000:
                 break
             params = {**params, "pageToken": body["nextPageToken"]}
+        if self.own_id:  # a post of the bot's that Chat gave no custom id gets the id the bot meant it to have
+            for m in out:
+                if not m["client_id"] and m["sender_type"] != "BOT":
+                    m["client_id"] = self.own_id(m["name"]) or ""
         return sorted((m for m in out if m["create_time"]), key=lambda m: (m["create_time"], m["name"]))
 
     def post_message(self, space: str, text: str, *, thread: str = "", key: str = "", id_prefix: str = OWN_PREFIX) -> dict[str, Any]:
@@ -222,11 +240,11 @@ class ChatClient:
         if thread:
             body["thread"] = {"name": thread}
             params["messageReplyOption"] = "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
-        custom = ""
+        custom, meant = "", id_prefix + "nokey"  # meant: the id this post is to be known by, whether or not Chat takes it
         if key:
             digest = hashlib.sha256(f"{space}|{key}".encode()).hexdigest()
             params["requestId"] = f"{digest[:8]}-{digest[8:12]}-4{digest[13:16]}-a{digest[17:20]}-{digest[20:32]}"
-            custom = params["messageId"] = id_prefix + digest[:40]
+            custom = meant = params["messageId"] = id_prefix + digest[:40]
         status, data, why = self._call("POST", path, params, body)
         if status == 409 and custom:  # posted on an earlier try: use that message
             return message_view(self._get(f"{space}/messages/{custom}"))
@@ -235,7 +253,12 @@ class ChatClient:
             status, data, why = self._call("POST", path, params, body)
         if status >= 300:
             raise ChatError(status, why)
-        return message_view(data)
+        view = message_view(data)
+        if not view["client_id"]:  # Chat gave it no custom id: the bot keeps the one it meant, and knows the post by it
+            view["client_id"] = meant
+            if self.posted and view["name"]:
+                self.posted(view["name"], meant)
+        return view
 
     def react(self, message: str, emoji: str) -> None:
         """Adds an emoji as the bot's account. Already there counts as done (Chat.gs chatReact_)."""
@@ -288,4 +311,12 @@ def client_for(ctx: "AgentContext") -> ChatClient:
 
     client = ChatClient(session_for(ctx))
     client.refuse = lambda space, approved=False: mirror.refusal(ctx, space, client, approved=approved)
+    client.posted = lambda message, meant: ctx.store.put_doc(OWN, _own_key(message), {"message": message, "id": meant, "at": ctx.now().isoformat()})
+    client.own_id = lambda message: str((ctx.store.get_doc(OWN, _own_key(message)) or {}).get("id") or "")
     return client
+
+
+def _own_key(message: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(message.encode()).hexdigest()[:32]

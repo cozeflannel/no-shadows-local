@@ -573,7 +573,10 @@ def _check_chat(ctx: AgentContext) -> list[dict[str, Any]]:
             info = client.get_space(name)
             latest = client.latest_message(name, now)
         except chatapi.ChatError as exc:
-            message = f"Add {bot} to this space, then check again. Chat said: {exc}" if exc.status in (403, 404) else f"Chat said: {exc}"
+            if chatapi.WRONG_PROJECT in str(exc):  # the sign-in's project, not this space: adding the account would not help
+                message = chatapi.WRONG_PROJECT
+            else:
+                message = f"Add {bot} to this space, then check again. Chat said: {exc}" if exc.status in (403, 404) else f"Chat said: {exc}"
             out.append({"label": f"{s.display_name} space", "ok": False, "message": message})
             continue
         when = f"Latest message {int((now - latest['create_time']).total_seconds() / 60)} min ago." if latest else "No message in it yet."
