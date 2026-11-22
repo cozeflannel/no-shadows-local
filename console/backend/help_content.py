@@ -138,6 +138,15 @@ TOPICS: list[dict[str, Any]] = [
                 "Our data next to Brandwatch: what our own tables hold beside Brandwatch's count, hour by hour, how the query was converted, and the posts found.",
                 "Posts read: the posts Gemini read. Open a card to read the post without leaving the Console.",
                 "Concern level: a Brandwatch query's count ranked against past issues at the same hours in. It needs enough past issues to compare."]},
+            {"heading": "Search the web", "steps": [
+                "Open a temp check and click the On the web tab. It shows while the switch Search the web in a temp check is ON.",
+                "Type what you need to know about the issue, or leave the box empty to ask what people are saying.",
+                "Click Search the web. Gemini searches Google and answers in a few sentences. Each number opens the page that sentence came from.",
+                "Google's own search buttons under the answer open the searches it ran."],
+             "items": [
+                "The answer is shown to you only and is gone when you reload the page. Google's terms allow a searched answer to be shown only to the person who asked, and not to be stored.",
+                "It is not kept with the temp check, is in none of its numbers and is not in the write-up.",
+                "Google bills each search. Which search is used, the sites looked at first and the sites left out are under Settings, Temp check."]},
             {"heading": "Act on it", "steps": ["Mark as used, or Dismiss.", "Refresh (send as an update) reports what is new since the last one.",
                                               "Keep refreshed for a day refreshes it every hour. Stop refreshing ends it."]},
             {"heading": "From Chat", "text": "Type `temp check` in an alert's thread, or follow it with a Brandwatch query's name or a Boolean."},

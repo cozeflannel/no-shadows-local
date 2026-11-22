@@ -6,6 +6,7 @@ import { useApi } from "../api/hooks";
 import { fmtDateTime, fmtNum } from "../lib/format";
 import { SafeHtml } from "./SafeHtml";
 import { ConvertReport, type ConvertResult, type FormInfo } from "./TempCheckForm";
+import { TempCheckWeb } from "./TempCheckWeb";
 import { Alert, Badge, Button, KV, Modal, Tabs } from "./ui";
 
 export interface TcPost {
@@ -280,11 +281,11 @@ function Note({ children }: { children: ReactNode }) {
   return <p className="text-sm text-zinc-500 dark:text-zinc-400">{children}</p>;
 }
 
-export function TempCheckResult({ c, tables, canAct, busy, onRefresh, onKeep, toast }: {
-  c: TcCheck; tables: FormInfo["tables"]; canAct: boolean; busy: string; onRefresh: () => void; onKeep: (action: "keep_refreshed" | "stop_refresh") => void;
+export function TempCheckResult({ c, tables, canAct, web, busy, onRefresh, onKeep, toast }: {
+  c: TcCheck; tables: FormInfo["tables"]; canAct: boolean; web: boolean; busy: string; onRefresh: () => void; onKeep: (action: "keep_refreshed" | "stop_refresh") => void;
   toast: (text: string, tone?: "error") => void;
 }) {
-  const [tab, setTab] = useState<"writeup" | "numbers" | "own" | "posts">("writeup");
+  const [tab, setTab] = useState<"writeup" | "numbers" | "own" | "posts" | "web">("writeup");
   const svg = useRef<SVGSVGElement>(null);
   const ownPosts = useApi<{ kept: number; posts: TcPost[] }>(tab === "own" && (c.own.kept ?? 0) > 0 ? `/temp-checks/${c.check_id}/own-posts` : null);
   const own = c.basis === "own";
@@ -348,7 +349,8 @@ export function TempCheckResult({ c, tables, canAct, busy, onRefresh, onKeep, to
 
   return (
     <div className="space-y-4">
-      <Tabs value={tab} onChange={setTab} tabs={[{ key: "writeup", label: "Write-up" }, { key: "numbers", label: "Numbers" }, { key: "own", label: "Our data next to Brandwatch" }, { key: "posts", label: "Posts read", count: c.read_posts.length }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ key: "writeup", label: "Write-up" }, { key: "numbers", label: "Numbers" }, { key: "own", label: "Our data next to Brandwatch" }, { key: "posts", label: "Posts read", count: c.read_posts.length },
+        ...(web ? [{ key: "web" as const, label: "On the web" }] : [])]} />
 
       {tab === "writeup" && (
         <div className="space-y-3">
@@ -482,6 +484,8 @@ export function TempCheckResult({ c, tables, canAct, busy, onRefresh, onKeep, to
           {ownPosts.data ? <PostGrid posts={ownPosts.data.posts} /> : (c.own.kept ?? 0) > 0 ? <Note>Loading the posts…</Note> : <Note>No posts were kept with this temp check.</Note>}
         </div>
       ))}
+
+      {tab === "web" && web && <TempCheckWeb checkId={c.check_id} issue={c.issue} canAct={canAct} />}
 
       {tab === "posts" && (
         <div className="space-y-3">

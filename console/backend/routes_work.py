@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
-from triage_agent import audit, bwquery, campaigns_admin, chat_agent, chatlog, golden, knowledge, tempcheck, tools, watches, workforce
+from triage_agent import audit, bwquery, campaigns_admin, chat_agent, chatlog, golden, knowledge, tempcheck, tools, watches, webfind, workforce
 from triage_agent.config import switch_off
 from triage_agent.context import ROSTER_IM, AgentContext
 
@@ -184,7 +184,7 @@ def temp_checks(case_id: str | None = None, limit: int = Query(100, ge=1, le=500
     auto = ctx.store.get_kv("tc:auto") or {}
     return {
         "checks": [_check_brief(c) for c in checks],
-        "enabled": ctx.flag("temp_checks"), "auto_enabled": ctx.flag("auto_temp_checks"),
+        "enabled": ctx.flag("temp_checks"), "auto_enabled": ctx.flag("auto_temp_checks"), "web_enabled": ctx.flag(webfind.SWITCH),
         "setup": {"brandwatch": bool(cfg.brandwatch_project_id and cfg.brandwatch_token_secret),
                   "sources": [{"key": s.key, "label": s.label or s.key, "enabled": s.enabled, "freshness": s.freshness} for s in cfg.sources],
                   "lookback_hours": cfg.lookback_hours},
@@ -296,6 +296,31 @@ def temp_check_action(check_id: str, body: TempActionBody, ctx: AgentContext = D
     except KeyError as exc:
         raise _missing("temp check") from exc
     return {"ok": True, "check": check.model_dump(mode="json")}
+
+
+class WebBody(BaseModel):
+    need: str = Field("", max_length=500)  # what the analyst needs to know; blank = what people are saying about the issue
+
+
+@router.post("/temp-checks/{check_id}/web")
+def temp_check_web(check_id: str, body: WebBody, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_analyst)) -> dict[str, Any]:
+    """Search the web for what the analyst needs to know about this temp check's issue. The answer goes to the analyst
+    who asked and nowhere else: nothing found is kept, and the record says only who asked and what for."""
+    check = tempcheck.get(ctx, check_id)
+    if check is None:
+        raise _missing("temp check")
+    asked = {"target_type": "temp_check", "target_id": check.check_id, "case_id": check.case_id}
+    try:
+        found = webfind.find(ctx, check, body.need)
+    except webfind.Off as exc:
+        raise HTTPException(409, {"error": str(exc), "code": "switched_off"}) from exc
+    except webfind.Unavailable as exc:
+        audit.record(ctx, actor=user.email, action="temp_check.web", surface="console", status="error", summary=str(exc)[:300],
+                     detail={"need": " ".join(body.need.split())}, **asked)
+        raise HTTPException(503, {"error": str(exc), "code": "web_search_failed"}) from exc
+    audit.record(ctx, actor=user.email, action="temp_check.web", surface="console", summary="Searched the web for a temp check's issue",
+                 detail={"need": found["need"], "search": found["search"]}, **asked)
+    return found
 
 
 # -- workforce -----------------------------------------------------------------------------------------------------------

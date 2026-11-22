@@ -863,6 +863,7 @@ class FeatureFlags(ConfigModel):
     console_chat_agent: bool = Field(False, title="Let the chat agent act", description="ON: the assistant on the Chat agent page can do things for you (review an alert, start an email, run a temp check) after you confirm. OFF: it only answers questions.")
     temp_checks: bool = Field(False, title="Temp checks", description="ON: temp checks can be run from the Console and from Chat. OFF: nobody can run one.")
     auto_temp_checks: bool = Field(False, title="Start temp checks on its own", description="ON: the agent drafts a temp check when an issue meets the conditions under Settings, Temp check. OFF: only when a person asks.")
+    temp_check_web: bool = Field(False, title="Search the web in a temp check", description="ON: on a temp check, an analyst can have Gemini search Google for what they need to know about that issue. What it finds is shown to that analyst only, is not kept, and is in none of the numbers. Google bills each search. OFF: nobody can.")
     workforce_forecasting: bool = Field(False, title="Forecast alert volume", description="ON: the agent forecasts alert volume on a schedule and suggests staffing changes for a lead to accept. OFF: a lead can still run a forecast by hand.")
     forecast_gap_alerts: bool = Field(False, title="Warn when volume beats the forecast", description="ON: the leads get a direct message when alerts come in faster than forecast by more than the set margin. OFF: no message.")
     campaigns: bool = Field(False, title="Change campaigns here", description="ON: campaigns can be changed and ended from the Console. OFF: they can only be viewed. Campaigns are always started in Chat.")
@@ -1083,6 +1084,9 @@ class TempCheckConfig(ConfigModel):
         ConcernBand(label="LOW", top_pct=100, action="No action")], description="Concern levels, highest first.")
     relevance_posts: int = Field(40, ge=5, le=100, description="Posts Gemini reads to check a drafted query.")
     relevance_min_share: float = Field(0.5, gt=0, le=1, description="Share of the posts read that must be about the issue for a count to be given.")
+    web_search: Literal["google", "enterprise"] = Field("google", description="Which search Gemini uses when an analyst searches the web from a temp check: google = Grounding with Google Search (the whole index; Google says it logs these searches for up to 30 days), enterprise = Web Grounding for Enterprise (a smaller index; Google says it logs nothing).")
+    web_sites: list[str] = Field(default_factory=lambda: ["x.com", "reddit.com", "linkedin.com"], description="Sites Gemini is told to look at first in a web search. None = it is not pointed anywhere first.")
+    web_exclude_sites: list[str] = Field(default_factory=list, description="Sites a web search leaves out.")
     docs_folder_id: str = Field("", description="Drive folder temp check documents are kept in. Blank = no document is made.")
     post_to_space: str = Field("", description="Space key temp check results are posted to. Blank = Console only.")
 

@@ -51,6 +51,7 @@ PURPOSES: dict[str, str] = {
     "temp_check.writeup": "Write the temp check summary and themes",
     "temp_check.query": "Draft a search query for an issue",
     "temp_check.relevance": "Judge which posts are about the issue",
+    "temp_check.web": "Search the web for what an analyst needs to know about a temp check's issue",
     "workforce.explain": "Explain a staffing recommendation",
 }
 
@@ -257,6 +258,20 @@ class ManagedLLM:
                 self._record(purpose, model, label, int((time.monotonic() - t0) * 1000), prompt, system, 0, error=str(exc))
                 raise
         self._record(purpose, model, label, int((time.monotonic() - t0) * 1000), prompt, system, len(out or ""))
+        return out
+
+    def search_web(self, *, model: str, system: str, prompt: str, search: str = "google", exclude_sites: list[str] | None = None,
+                   temperature: float = 1.0, purpose: str = "") -> Any:
+        model, system, temperature, label = self._resolve(purpose, model, system, temperature)
+        t0 = time.monotonic()
+        with telemetry.span("llm.search_web", purpose=purpose, model=model, prompt_version=label):
+            try:
+                out = self.inner.search_web(model=model, system=system, prompt=prompt, search=search, exclude_sites=exclude_sites,
+                                            temperature=temperature, purpose=purpose)
+            except Exception as exc:
+                self._record(purpose, model, label, int((time.monotonic() - t0) * 1000), prompt, system, 0, error=str(exc))
+                raise
+        self._record(purpose, model, label, int((time.monotonic() - t0) * 1000), prompt, system, len(out.text or ""))
         return out
 
 

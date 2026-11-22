@@ -16,7 +16,7 @@ const TempCheckResult = lazy(() => import("../components/TempCheckResult").then(
 interface Brief { own_posts: number; own_from: string | null; standing: boolean; check_id: string; issue: string; status: string; total: number; concern_level: string; basis: string; trigger: string; via: string; requested_by: string; case_id: string | null; created_at: string; update_of: string | null; title: string; error: string; actions: { actor: string; action: string; at: string; note: string }[] }
 type Check = Brief & TcCheck & { reasons: string[]; doc_url: string; steps: { at: string; text: string }[] };
 interface ListResponse {
-  checks: Brief[]; enabled: boolean; auto_enabled: boolean;
+  checks: Brief[]; enabled: boolean; auto_enabled: boolean; web_enabled: boolean;
   setup: { brandwatch: boolean; sources: { key: string; label: string; enabled: boolean }[]; lookback_hours: number };
   form: FormInfo;
   auto: { started_today: number; daily_limit: number };
@@ -25,7 +25,7 @@ interface ListResponse {
 const STATUS_TONE: Record<string, "emerald" | "rose" | "amber" | "blue" | "zinc"> = { complete: "emerald", failed: "rose", query_not_confirmed: "amber", running: "blue", empty: "zinc" };
 const LEVEL_TONE: Record<string, "rose" | "amber" | "emerald" | "zinc"> = { HIGH: "rose", "MODERATELY HIGH": "rose", MODERATE: "amber", "MODERATELY LOW": "emerald", LOW: "emerald" };
 
-function CheckView({ id, canAct, tables }: { id: string; canAct: boolean; tables: FormInfo["tables"] }) {
+function CheckView({ id, canAct, web, tables }: { id: string; canAct: boolean; web: boolean; tables: FormInfo["tables"] }) {
   const { toast } = useApp();
   const navigate = useNavigate();
   const { data, error, loading, reload, setData } = useApi<{ check: Check; related: Brief[] }>(`/temp-checks/${id}`);
@@ -83,7 +83,7 @@ function CheckView({ id, canAct, tables }: { id: string; canAct: boolean; tables
       {c.status === "running" && (c.steps.length
         ? <ol className="space-y-1 text-sm text-zinc-600 dark:text-zinc-400">{c.steps.map((st, i) => <li key={i} className={i === c.steps.length - 1 ? "text-blue-600 dark:text-blue-300" : ""}>{st.text}</li>)}</ol>
         : <Spinner label="Starting…" />)}
-      {counted && <Suspense fallback={<Spinner />}><TempCheckResult c={c} tables={tables} canAct={canAct} busy={busy} onRefresh={refresh} onKeep={act} toast={toast} /></Suspense>}
+      {counted && <Suspense fallback={<Spinner />}><TempCheckResult c={c} tables={tables} canAct={canAct} web={web} busy={busy} onRefresh={refresh} onKeep={act} toast={toast} /></Suspense>}
       {!counted && c.query.boolean && <Card title={c.query.drafted ? "Query (drafted by the agent)" : "Query"} subtitle={c.query.draft_why}><pre className="scroll-thin overflow-auto whitespace-pre-wrap break-words font-mono text-xs">{c.query.boolean}</pre></Card>}
       {(c.actions.length > 0 || data.related.length > 1) && (
         <Card title="History">
@@ -146,7 +146,7 @@ export default function TempCheckPage() {
           </Card>
         </div>
         <div className="min-w-0">
-          {checkId ? <CheckView key={checkId} id={checkId} canAct={canAct} tables={list.data?.form.tables ?? []} /> : (
+          {checkId ? <CheckView key={checkId} id={checkId} canAct={canAct} web={!!list.data?.web_enabled} tables={list.data?.form.tables ?? []} /> : (
             <Card><EmptyState icon={<Thermometer className="size-8" />} title="No temp check open">Run one, or open a past one.</EmptyState></Card>
           )}
         </div>

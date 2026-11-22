@@ -21,6 +21,36 @@ class LLMError(RuntimeError):
     pass
 
 
+class WebSource(BaseModel):
+    """One page a searched answer rests on, as Google gave it. `uri` is Google's own link to the page."""
+
+    title: str = ""
+    domain: str = ""
+    uri: str = ""
+
+
+class WebCite(BaseModel):
+    """The answer's characters from `start` up to `end` rest on these sources (positions in `WebFound.sources`)."""
+
+    start: int = 0
+    end: int
+    sources: list[int] = []
+
+
+class WebFound(BaseModel):
+    """A searched answer: Gemini's words, the searches Google ran, the pages found, which words rest on which page,
+    and Google's search suggestions as the HTML Google gave (shown unchanged wherever the answer is shown)."""
+
+    text: str = ""
+    queries: list[str] = []
+    sources: list[WebSource] = []
+    cites: list[WebCite] = []
+    suggestions: str = ""
+
+
+WEB_SEARCHES = ("google", "enterprise")  # Grounding with Google Search | Web Grounding for Enterprise
+
+
 class LLMClient(Protocol):
     def generate_json(
         self,
@@ -43,6 +73,18 @@ class LLMClient(Protocol):
         purpose: str = "",
     ) -> str: ...
 
+    def search_web(
+        self,
+        *,
+        model: str,
+        system: str,
+        prompt: str,
+        search: str = "google",
+        exclude_sites: list[str] | None = None,
+        temperature: float = 1.0,
+        purpose: str = "",
+    ) -> WebFound: ...
+
 
 RETRYABLE_CODES = {429, 500, 502, 503, 504}
 RETRYABLE_MARKERS = ("429", "500", "502", "503", "504", "RESOURCE_EXHAUSTED", "UNAVAILABLE", "DEADLINE_EXCEEDED")
@@ -56,13 +98,13 @@ class VertexGemini:
     """
 
     def __init__(self, project: str | None = None, location: str | None = None, max_retries: int = 3,
-                 timeout_s: float = 90.0):
+                 timeout_s: float = 90.0, client: Any = None):
         from google import genai  # lazy import
         from google.genai import types
 
         self._types = types
         self.location = os.environ.get("TRIAGE_LLM_LOCATION") or location or "global"
-        self.client = genai.Client(
+        self.client = client or genai.Client(
             vertexai=True,
             project=project or os.environ.get("TRIAGE_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT") or None,
             location=self.location,
@@ -129,6 +171,21 @@ class VertexGemini:
         resp = self._call(model, prompt, config)
         return (resp.text or "").strip()
 
+    def search_web(self, *, model, system, prompt, search="google", exclude_sites=None, temperature=1.0, purpose=""):
+        """Gemini answering from a web search it runs itself: Grounding with Google Search, or Web Grounding for
+        Enterprise. The answer is read as words and sources; nothing is asked for as a form."""
+        types = self._types
+        if search not in WEB_SEARCHES:
+            raise LLMError(f"Web search is google or enterprise, not {search!r}")
+        leave_out = [s for s in (exclude_sites or []) if s] or None
+        tool = (types.Tool(google_search=types.GoogleSearch(exclude_domains=leave_out)) if search == "google"
+                else types.Tool(enterprise_web_search=types.EnterpriseWebSearch(exclude_domains=leave_out)))
+        config = types.GenerateContentConfig(system_instruction=system, temperature=temperature, tools=[tool])
+        found = _web_found(self._call(model, prompt, config))
+        if not found.text.strip():
+            raise LLMError(f"Empty Gemini response for {purpose or 'a web search'} (blocked or no candidates)")
+        return found
+
     def embed(self, *, texts: list[str], model: str, dimensions: int | None = None, location: str | None = None) -> list[list[float]]:
         """Embeddings for retrieval (model from Settings → Knowledge). Batches of 50."""
         types = self._types
@@ -147,6 +204,45 @@ class VertexGemini:
                 raise LLMError(f"Embedding call failed ({model}): {exc}") from exc
             out.extend([list(e.values) for e in resp.embeddings])
         return out
+
+
+def _web_found(resp: Any) -> WebFound:
+    """A searched answer out of the SDK's response. The API says where a citation ends in bytes of one part of the
+    answer; here it is a character position in the whole answer. Gemini's thinking aloud is not part of the answer."""
+    candidates = getattr(resp, "candidates", None) or []
+    if not candidates:
+        return WebFound()
+    parts = getattr(getattr(candidates[0], "content", None), "parts", None) or []
+    text, starts = "", {}  # part number -> (where its words start in the answer, its words)
+    for i, part in enumerate(parts):
+        words = getattr(part, "text", None)
+        if not words or getattr(part, "thought", None):
+            continue
+        starts[i] = (len(text), words)
+        text += words
+    meta = getattr(candidates[0], "grounding_metadata", None)
+    if meta is None:
+        return WebFound(text=text)
+    sources, place = [], {}  # place: the API's chunk number -> its position among the sources kept
+    for i, chunk in enumerate(getattr(meta, "grounding_chunks", None) or []):
+        page = getattr(chunk, "web", None) or getattr(chunk, "retrieved_context", None)  # as the sheet-based bot reads them
+        if page is None or not getattr(page, "uri", None):
+            continue
+        place[i] = len(sources)
+        sources.append(WebSource(title=getattr(page, "title", None) or "", domain=getattr(page, "domain", None) or "", uri=page.uri))
+    cites = []
+    for support in getattr(meta, "grounding_supports", None) or []:
+        seg = getattr(support, "segment", None)
+        where = starts.get((getattr(seg, "part_index", None) or 0) if seg is not None else -1)
+        named = [place[i] for i in (getattr(support, "grounding_chunk_indices", None) or []) if i in place]
+        if where is None or not named or getattr(seg, "end_index", None) is None:
+            continue
+        raw = where[1].encode("utf-8")
+        chars = lambda n: len(raw[: max(0, n)].decode("utf-8", errors="ignore"))  # noqa: E731 - bytes into the part -> characters
+        cites.append(WebCite(start=where[0] + chars(seg.start_index or 0), end=where[0] + chars(seg.end_index), sources=named))
+    entry = getattr(meta, "search_entry_point", None)
+    return WebFound(text=text, queries=[q for q in (getattr(meta, "web_search_queries", None) or []) if q], sources=sources, cites=cites,
+                    suggestions=(getattr(entry, "rendered_content", None) or "") if entry is not None else "")
 
 
 Handler = Callable[[dict[str, Any]], Any]
@@ -192,6 +288,15 @@ class FakeLLM:
         call = {"kind": "text", "model": model, "system": system, "prompt": prompt, "purpose": purpose}
         self.calls.append(call)
         return str(self._resolve(call, self.default_text))
+
+    def search_web(self, *, model, system, prompt, search="google", exclude_sites=None, temperature=1.0, purpose=""):
+        call = {"kind": "web", "model": model, "system": system, "prompt": prompt, "purpose": purpose, "search": search,
+                "exclude_sites": list(exclude_sites or []), "temperature": temperature}
+        self.calls.append(call)
+        value = self._resolve(call, None)
+        if value is None:
+            raise LLMError(f"FakeLLM has no web search answer for purpose={purpose!r}")
+        return value if isinstance(value, WebFound) else WebFound.model_validate(value)
 
 
 def get_llm(location: str | None = None, project: str | None = None) -> LLMClient:
