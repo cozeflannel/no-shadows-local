@@ -81,8 +81,13 @@ class Tables:
 
     def __init__(self, posts: list[dict[str, Any]] | None = None, counts: list[dict[str, Any]] | None = None):
         self.posts, self.counts, self.asked = posts or [], counts or [], []
+        self.x_rows: list[dict[str, Any]] = []
+        self.x_asked: list[tuple[str, dict[str, Any]]] = []
 
     def query(self, sql: str, params: dict[str, Any] | None = None, **kw: Any) -> list[dict[str, Any]]:
+        if "UNNEST(@ids)" in sql:  # X posts looked up by their ids
+            self.x_asked.append((sql, dict(params or {})))
+            return self.x_rows
         self.asked.append((sql, dict(params or {})))
         return self.counts if "GROUP BY 1, 2, 3" in sql else self.posts
 
@@ -544,3 +549,70 @@ def test_a_check_kept_refreshed_is_refreshed_on_the_hour_while_automatic_checks_
     assert tempcheck.auto_run(ctx)["refreshed"] == 0, "it stops when the day is over"
     ctx.config.platform.flags.auto_temp_checks = True
     assert tempcheck.auto_run(ctx)["refreshed"] == 0 and tempcheck.auto_run(ctx)["refreshed"] == 0, "the count is reported with the switch ON too"
+
+
+# -- the posts read, as the temp check app picks them -------------------------------------------------------------------------
+def x_mention(post_id: str, eng: float, negative: bool = False) -> dict[str, Any]:
+    """An X post as Brandwatch gives it: no words, no author, no link."""
+    return {"pageType": "twitter", "guid": post_id, "engagementScore": eng, "sentiment": "negative" if negative else "neutral", "date": "2026-10-12T10:00:00.000+0000"}
+
+
+SERVED, IN_ROWS, NOWHERE = "1845000000000000001", "1845000000000000002", "1845000000000000003"
+
+
+@pytest.fixture
+def reading(ctx, setup, monkeypatch, hour):
+    """A Brandwatch query whose top posts are three X posts and two Reddit threads; X serves one X post, our rows hold another."""
+    bw, tables = setup(hours={3: 150})
+    bw.mentions = [x_mention(SERVED, 900), x_mention(IN_ROWS, 800), x_mention(NOWHERE, 700), reddit(1, hour), reddit(2, hour)]
+    tables.x_rows = [{"id": IN_ROWS, "author": "@rowsauthor", "text": "kept in our rows: gmail outage", "url": f"https://x.com/rowsauthor/status/{IN_ROWS}", "eng": 800.0}]
+    real = bw.get
+
+    def get(url: str, headers: dict[str, str] | None = None, timeout: float | None = None):
+        if "cdn.syndication.twimg.com" in url:
+            if f"id={SERVED}&" in url:
+                return Answer({"id_str": SERVED, "text": "gmail is down &amp; out", "user": {"screen_name": "served"}, "favorite_count": 40, "conversation_count": 2})
+            return Answer({}, 404)
+        return real(url, headers, timeout)
+    monkeypatch.setattr("requests.get", get)
+    return bw, tables
+
+
+def test_brandwatchs_x_posts_get_their_words_from_x_and_our_rows_fill_the_gaps(ctx, reading):
+    check = run(ctx, query_ref=str(QUERY["id"]))
+    assert check.status == "complete", check.error
+    by_key = {p["id"] or p["key"]: p for p in check.read_posts}
+    assert by_key[SERVED]["key"] == f"x:{SERVED}", "an X post has the same key whether Brandwatch or our own tables gave it"
+    assert by_key[SERVED]["text"] == "gmail is down & out" and by_key[SERVED]["text_from"] == "X embed data"
+    assert (by_key[SERVED]["author"], by_key[SERVED]["likes"], by_key[SERVED]["replies"]) == ("served", 40, 2)
+    assert by_key[SERVED]["url"] == f"https://x.com/served/status/{SERVED}"
+    assert by_key[IN_ROWS]["text"] == "kept in our rows: gmail outage" and by_key[IN_ROWS]["text_from"] == "our own rows"
+    assert NOWHERE not in by_key, "a post with no words anywhere is not read"
+    assert check.coverage == {"ranked": 10, "x": 3, "from_embed": 1, "in_rows": 1, "from_rows_only": 1, "no_words": 1}
+    assert "Looking up the words of 3 X posts (X's embed data, and our own rows)" in [s["text"] for s in check.steps]
+
+
+def test_the_posts_are_ranked_by_what_is_known_of_their_engagement(ctx, reading):
+    check = run(ctx, query_ref=str(QUERY["id"]))
+    order = [p["key"] for p in check.posts]
+    # our rows' post keeps Brandwatch's 800; the Reddit threads have 499 and 498; X's own counters (40 likes + 2 replies) rank the served one last
+    assert order == [f"x:{IN_ROWS}", "reddit.com/r/gmail/comments/1", "reddit.com/r/gmail/comments/2", f"x:{SERVED}"]
+    assert [p["key"] for p in check.read_posts] == order, "what Gemini reads starts with the write-up's posts"
+    assert not [p for p in check.read_posts if p.get("table")], "with Brandwatch's numbers the posts read are Brandwatch's: our own stay on their own side"
+    assert "served on X" in check.writeup_text and "(42 Engagements)" in check.writeup_text
+
+
+def test_the_write_up_lists_as_many_posts_as_the_setting_and_gemini_reads_up_to_its_own(ctx, reading):
+    cfg = ctx.config.platform.temp_check
+    cfg.writeup_posts, cfg.gemini_posts = 2, 3
+    check = run(ctx, query_ref=str(QUERY["id"]))
+    assert len(check.posts) == 2 and len(check.read_posts) == 3
+    assert check.writeup_text.count("  • ") == 2 and re.search(r"\(3 posts read\)", " ".join(s["text"] for s in check.steps))
+
+
+def test_with_our_own_tables_as_the_basis_the_posts_read_are_our_own(ctx, setup, hour):
+    setup(queries=[])
+    check = run(ctx, issue="Alleged Gmail Outage", boolean="gmail AND outage")
+    assert check.basis == "own" and [p["key"] for p in check.read_posts] == [f"x:{1000 + i}" for i in range(3)]
+    assert check.read_posts[0]["x"] and check.read_posts[0]["id"] == "1000" and check.read_posts[0]["text_from"] == "Sonar"
+    assert check.coverage == {} and check.chart["unit"] == "Posts" and check.chart["points"], "the chart's hours are kept with the check"

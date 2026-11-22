@@ -14,7 +14,8 @@ import { fmtCompact, fmtDateTime, fmtNum, fmtRelative, fmtTime } from "../lib/fo
 interface Brief { own_posts: number; own_from: string | null; standing: boolean; check_id: string; issue: string; status: string; total: number; concern_level: string; basis: string; trigger: string; via: string; requested_by: string; case_id: string | null; created_at: string; update_of: string | null; title: string; error: string; actions: { actor: string; action: string; at: string; note: string }[] }
 interface Check extends Brief {
   hours: { at: string; n: number }[]; start: { at?: string; why?: string }; velocity: { peak: { at: string; n: number }; last: { at: string; n: number }; pct: number } | null;
-  sentiment: Record<string, number>; sources: { label: string; n: number }[]; posts: { source: string; author: string; text: string; url: string; eng: number | null; negative: boolean; at: string | null }[];
+  sentiment: Record<string, number>; sources: { label: string; n: number }[];
+  read_posts: { source: string; author: string; text: string; url: string; eng: number | null; negative: boolean; at: string | null }[];
   level: { label?: string; why?: string; n?: number }; writeup_text: string; writeup_html: string; notes: string[]; reasons: string[];
   query: { name?: string; boolean?: string; drafted?: boolean; draft_why?: string; relevance?: { about: number; other: number } }; window_from: string | null; window_to: string | null;
   doc_url: string; steps: { at: string; text: string }[]; keep_refreshed_until: string | null;
@@ -122,10 +123,10 @@ function CheckView({ id, canAct }: { id: string; canAct: boolean }) {
             </Card>
           </div>
         </div>
-        <Card title="Posts" padded={false}>
+        <Card title="Posts read" padded={false}>
           <div className="overflow-x-auto">
             <table className="w-full"><thead><tr><th className={TH}>Post</th><th className={TH}>Where</th><th className={TH}>Engagement</th><th className={TH}>Posted</th></tr></thead>
-              <tbody>{c.posts.map((p, i) => (
+              <tbody>{c.read_posts.map((p, i) => (
                 <tr key={i} className={TR}>
                   <td className={cx(TD, "max-w-xl")}><a href={p.url} target="_blank" rel="noreferrer" className="line-clamp-2 text-blue-600 hover:underline dark:text-blue-200">{p.text || p.url}</a><span className="text-xs text-zinc-500">{p.author}{p.negative ? ", negative" : ""}</span></td>
                   <td className={TD}>{p.source}</td><td className={cx(TD, "tabular-nums")}>{fmtCompact(p.eng)}</td><td className={TD}>{p.at ? fmtRelative(p.at) : ""}</td>

@@ -26,7 +26,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
@@ -152,7 +152,10 @@ class TempCheck(BaseModel):
     sources: list[dict[str, Any]] = Field(default_factory=list)
     eng_sources: list[dict[str, Any]] = Field(default_factory=list)
     mention_types: list[dict[str, Any]] = Field(default_factory=list)
-    posts: list[dict[str, Any]] = Field(default_factory=list)
+    posts: list[dict[str, Any]] = Field(default_factory=list)  # the write-up's highest-engaging posts
+    read_posts: list[dict[str, Any]] = Field(default_factory=list)  # the posts Gemini read, in order (a [phrase](#N) names one)
+    coverage: dict[str, Any] = Field(default_factory=dict)  # where the words of Brandwatch's X posts came from
+    chart: dict[str, Any] = Field(default_factory=dict)  # {title, unit, points: [{label, n}]}: the full hours counted
     tables: list[dict[str, Any]] = Field(default_factory=list)  # what each of our tables found
     own_total: int | None = None
     gem: dict[str, Any] = Field(default_factory=dict)
@@ -193,19 +196,27 @@ def pct(p: int, n: float) -> str:
     return "<1%" if not p and n > 0 else f"{p}%"
 
 
+def _round(x: float) -> int:
+    """Rounded half up, as the app's numbers are."""
+    return math.floor(x + 0.5)
+
+
 def num(n: Any) -> str:
-    return f"{round(float(n or 0)):,}"
+    """6030 -> "6,030"."""
+    return f"{_round(float(n or 0)):,}"
 
 
 def compact(n: Any) -> str:
-    n = float(n or 0)
-    if abs(n) >= 1_000_000:
-        return f"{n / 1_000_000:.1f}".rstrip("0").rstrip(".") + "M"
-    if abs(n) >= 10_000:
-        return f"{n / 1000:.0f}K"
-    if abs(n) >= 1000:
-        return f"{n / 1000:.1f}".rstrip("0").rstrip(".") + "K"
-    return str(round(n))
+    """18368 -> "18.4K", 1137140 -> "1.1M", 944 -> "944"."""
+    v = float(n or 0)
+
+    def cut(x: float, unit: str) -> str:
+        return re.sub(r"\.0$", "", f"{_round(x * 10) / 10:.1f}") + unit
+    if v >= 1e6 or _round(v / 100) >= 10000:
+        return cut(v / 1e6, "M")
+    if v >= 1e3:
+        return cut(v / 1e3, "K")
+    return str(_round(v))
 
 
 class _Clock:
@@ -219,7 +230,9 @@ class _Clock:
         return dt.astimezone(self.tz)
 
     def abbr(self, dt: datetime) -> str:
-        return self.local(dt).tzname() or "UTC"
+        """The zone as the team writes it: PT, MT, CT, ET the year round (not PST or PDT); any other zone by its own name."""
+        name = self.local(dt).tzname() or "UTC"
+        return re.sub(r"^([PMCE])[SD]T$", r"\1T", name)
 
     def clock(self, dt: datetime) -> str:
         d = self.local(dt)
@@ -236,6 +249,11 @@ class _Clock:
     def hour_label(self, dt: datetime) -> str:
         d = self.local(dt)
         return f"{d.hour % 12 or 12}{'am' if d.hour < 12 else 'pm'}"
+
+    def chart_tick(self, dt: datetime) -> str:
+        """An hour's label on the volume chart: "(10/20) 6AM"."""
+        d = self.local(dt)
+        return f"({d.month}/{d.day}) {d.hour % 12 or 12}{'AM' if d.hour < 12 else 'PM'}"
 
 
 def start_of(hours: list[dict[str, Any]], *, spike: int, look: datetime, alert_at: datetime | None = None,
@@ -579,29 +597,69 @@ def parse_mention_types(body: dict[str, Any]) -> list[dict[str, Any]]:
     return _ranked(by)
 
 
+def mention_author(m: dict[str, Any]) -> str:
+    """A post's author from Brandwatch's mention fields or its link, never the platform's own domain."""
+    own = {str(m.get(k) or "").strip().lower().removeprefix("www.") for k in ("domain", "unifiedSourceName")} - {""}
+    for field in (m.get("author"), m.get("fullname"), m.get("threadAuthor")):
+        hit = _clean_handle(field)
+        if hit and hit.lower().removeprefix("www.") not in own:
+            return hit
+    url = str(m.get("url") or m.get("originalUrl") or "")
+    ig = re.match(r"https?://(?:www\.|m\.)?instagram\.com/([A-Za-z0-9_.]+)/(?:p|reels?|tv)/", url, re.I)
+    if ig and not re.fullmatch(r"p|reels?|tv|stories|explore", ig.group(1), re.I):
+        return ig.group(1)
+    bsky = re.match(r"https?://(?:www\.)?bsky\.app/profile/([^/?#]+)", url, re.I)
+    if bsky and not bsky.group(1).lower().startswith("did:"):
+        return unquote(bsky.group(1))
+    handle = re.match(r"https?://(?:www\.)?(?:tiktok\.com|threads\.(?:net|com)|youtube\.com)/@([^/?#]+)", url, re.I)
+    return unquote(handle.group(1)) if handle else ""
+
+
 def parse_mentions(body: dict[str, Any]) -> list[dict[str, Any]]:
+    """A Brandwatch mentions answer as posts, in Brandwatch's order (the most engagement first). An X post comes
+    without its words, author or link (`x`), with X's post id (`id`) to look them up by."""
     out = []
     for m in (body or {}).get("results") or []:
         if not m:
             continue
         is_x = str(m.get("pageType") or "") == "twitter"
+        post_id = re.sub(r"\D", "", str(m.get("guid") or "")) if is_x else ""
         title, snippet = str(m.get("title") or "").strip(), str(m.get("snippet") or m.get("fullText") or "").strip()
         text = f"{title}: {snippet}" if title and snippet and not snippet.startswith(title) else (title or snippet)
-        url = str(m.get("url") or m.get("originalUrl") or "")
+        url = "" if is_x else str(m.get("url") or m.get("originalUrl") or "")
         eng = m.get("engagementScore")
         posted = _bw_time(m.get("date"))
-        out.append({"key": post_key(url) or str(m.get("guid") or m.get("resourceId") or ""), "x": is_x,
+        out.append({"key": (f"x:{post_id}" if post_id else post_key(url)) or str(m.get("guid") or m.get("resourceId") or ""), "x": is_x, "id": post_id,
                     "source": SOURCES.get(str(m.get("pageType")), str(m.get("pageTypeName") or m.get("pageType") or "Web")),
-                    "author": _clean_handle(m.get("author") or m.get("fullname") or ""), "text": "" if is_x else text,
-                    "url": url, "eng": None if eng is None else float(eng or 0),
+                    "author": mention_author(m), "text": "" if is_x else text, "url": url, "eng": None if eng is None else float(eng or 0),
                     "negative": str(m.get("sentiment") or "") == "negative", "at": posted.isoformat() if posted else None})
     return out
 
 
+def post_with_text(p: dict[str, Any], x_posts: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    """A post with its words. An X post's come from `x_posts` ({id: {author, text, url, likes, replies, from}}): X's
+    public embed data, or our own rows when X won't serve it. None for a post with no words."""
+    if not p.get("x"):
+        return p if p.get("text") else None
+    found = x_posts.get(p.get("id") or "")
+    if not found or not found.get("text"):
+        return None
+    out = {**p, "author": _clean_handle(found.get("author")) or p.get("author") or "", "text": found["text"], "url": found.get("url") or "",
+           "text_from": found.get("from") or ""}
+    if found.get("likes") is not None:
+        out["likes"], out["replies"] = int(found.get("likes") or 0), int(found.get("replies") or 0)
+    return out
+
+
+PLATFORM_DOMAINS = {"instagram.com", "facebook.com", "fb.com", "x.com", "twitter.com", "t.co", "reddit.com", "youtube.com", "youtu.be",
+                    "tiktok.com", "threads.net", "threads.com", "linkedin.com", "bsky.app", "tumblr.com"}
+
+
 def _clean_handle(raw: Any) -> str:
+    """An author handle or display name, without its @, rejecting a bare platform domain ("instagram.com") and "unknown"."""
     s = str(raw or "").strip().lstrip("@").strip()
     low = s.lower().removeprefix("www.")
-    if not s or low == "unknown" or re.fullmatch(r"[\w-]+\.(?:com|net|app|be|co)", low):
+    if not s or low == "unknown" or low in PLATFORM_DOMAINS:
         return ""
     return s
 
@@ -730,7 +788,8 @@ def search_own(ctx: "AgentContext", plan: dict[str, Any], start: datetime, end: 
         for r in rows:
             key = (f"{src.key}:{r.get('one')}" if src.dedupe_by == "id" else post_key(r.get("url") or "")) or f"{src.key}:{uuid.uuid4().hex}"
             platform = str(r.get("platform") or "").lower()
-            post = {"key": key, "table": src.key, "source": SOURCES.get(platform, str(r.get("platform") or "Web").title()), "platform": platform,
+            post = {"key": key, "table": src.key, "table_label": src.label or src.key,
+                    "source": SOURCES.get(platform, str(r.get("platform") or "Web").title()), "platform": platform,
                     "author": _clean_handle(r.get("author")), "text": str(r.get("text") or "").strip(), "url": r.get("url") or "",
                     "eng": r.get("eng"), "negative": str(r.get("sentiment") or "") == "negative", "sentiment": str(r.get("sentiment") or ""),
                     "at": r.get("posted"), "followers": r.get("followers"), "language": str(r.get("language") or "")}
@@ -759,6 +818,52 @@ def search_own(ctx: "AgentContext", plan: dict[str, Any], start: datetime, end: 
     return {"posts": posts, "tables": tables, "hours": hour_list, "sentiment": sentiment,
             "sources": _ranked(platforms), "eng_sources": _ranked(eng_platforms),
             "total": sum(h["n"] for h in hour_list), "error": ""}
+
+
+def find_x_posts(ctx: "AgentContext", ids: list[str], start: datetime, end: datetime) -> dict[str, dict[str, Any]]:
+    """X posts our own tables hold, by X's post id: {id: {author, text, url, eng, from}}. For the X posts X's embed data
+    won't serve. Each table that has a link column is asked once. Never raises."""
+    from . import bq_admin
+
+    want = list(dict.fromkeys(i for i in (str(x) for x in ids) if re.fullmatch(r"\d{5,25}", i)))
+    out: dict[str, dict[str, Any]] = {}
+    if not want:
+        return out
+    try:
+        gw = bq_admin.get_gateway(ctx)
+    except Exception:  # noqa: BLE001
+        return out
+    for src in own_sources(ctx):
+        if not (src.url_column and src.time_column and src.text_columns):
+            continue
+        try:
+            table = bq_admin.check_table_id(src.table)
+            t, url = _ident(src.time_column, "time column"), f"CAST({_ident(src.url_column, 'url column')} AS STRING)"
+            text = " , ' ', ".join(f"IFNULL(CAST({_ident(c, 'text column')} AS STRING), '')" for c in src.text_columns)
+            author = f"CAST({_ident(src.author_column, 'author column')} AS STRING)" if src.author_column else "CAST(NULL AS STRING)"
+            eng = f"SAFE_CAST(({src.engagement_expr}) AS FLOAT64)" if src.engagement_expr.strip() else "CAST(NULL AS FLOAT64)"
+            sql = (f"SELECT REGEXP_EXTRACT({url}, r'/status/(\\d+)') AS id, ANY_VALUE({author}) AS author, ANY_VALUE(CONCAT({text})) AS text,\n"
+                   f"  ANY_VALUE({url}) AS url, MAX({eng}) AS eng\nFROM `{table}`\n"
+                   f"WHERE {t} >= @t_from AND {t} < TIMESTAMP_ADD(@t_to, INTERVAL 24 HOUR)\n"
+                   f"  AND REGEXP_EXTRACT({url}, r'/status/(\\d+)') IN UNNEST(@ids)\nGROUP BY 1")
+            rows = gw.query(sql, {"t_from": start, "t_to": end, "ids": want}, location=src.location or None, max_rows=500)
+        except Exception:  # noqa: BLE001 - one table failing leaves the others
+            continue
+        for r in rows:
+            if r.get("id") and str(r.get("text") or "").strip() and str(r["id"]) not in out:
+                out[str(r["id"])] = {"author": r.get("author") or "", "text": str(r["text"]).strip(), "url": r.get("url") or "", "eng": r.get("eng"),
+                                     "from": "our own rows"}
+    return out
+
+
+def as_writeup_post(p: dict[str, Any]) -> dict[str, Any]:
+    """A post from our own tables as the write-up and Gemini read it."""
+    is_x = p.get("platform") == "x"
+    found = re.search(r"/status/(\d+)", str(p.get("url") or "")) if is_x else None
+    return {"key": p["key"], "x": is_x, "id": found.group(1) if found else "", "source": p.get("source") or "Web",
+            "author": _clean_handle(p.get("author")), "text": p.get("text") or "", "url": p.get("url") or "", "eng": p.get("eng"),
+            "negative": bool(p.get("negative")), "text_from": p.get("table_label") or "",
+            "at": p["at"].isoformat() if isinstance(p.get("at"), datetime) else p.get("at")}
 
 
 def numbers_of(posts: list[dict[str, Any]], start: datetime, end: datetime) -> dict[str, Any]:
@@ -988,76 +1093,118 @@ def check_relevance(ctx: "AgentContext", issue: str, posts: list[dict[str, Any]]
     return {"read": len(sample), "about": len(about), "share": round(len(about) / len(sample), 3)}
 
 
+CHART_MARK = "<!--tc-chart-->"  # where the hourly chart goes in the write-up's HTML (the page draws it there)
+POST_SOURCES = {"Instagram": "IG"}  # a source as the template's post lines name it
+_LINK = "color:#1155cc"
+
+
+def post_eng_val(p: dict[str, Any]) -> float:
+    """Engagement for ranking the top posts: an X post's likes and replies when known, else its engagement; -1 when unknown."""
+    if p.get("x") and (p.get("likes") is not None or p.get("replies") is not None):
+        return float(p.get("likes") or 0) + float(p.get("replies") or 0)
+    return -1 if p.get("eng") is None else float(p["eng"] or 0)
+
+
 def _eng_text(p: dict[str, Any]) -> str:
-    if p.get("eng") is None:
-        return "no engagement data"
-    n = p["eng"]
-    return f"{compact(n)} {'engagement' if round(n) == 1 else 'engagements'}"
+    """A post's engagement in words, for Gemini: X's likes and replies when known, else its engagements."""
+    def n(v: Any, one: str, many: str) -> str:
+        return f"{compact(v)} {one if float(v or 0) == 1 else many}"
+    if p.get("x") and p.get("likes") is not None:
+        return f"{n(p['likes'], 'like', 'likes')}, {n(p.get('replies'), 'reply', 'replies')}"
+    return "no engagement data" if p.get("eng") is None else n(p["eng"], "engagement", "engagements")
 
 
-def _prompt(clock: _Clock, d: dict[str, Any], posts: list[dict[str, Any]]) -> str:
+def _velocity_text(clock: _Clock, v: dict[str, Any] | None, now: datetime) -> str:
+    """Velocity with its numbers, for Gemini."""
+    if not v:
+        return "Velocity: too early to tell (its first full hour isn't over)."
+    peak_at, last_at = _as_time(v["peak"]["at"], now), _as_time(v["last"]["at"], now)
+    if v["last"]["n"] >= v["peak"]["n"]:
+        return f"Velocity is at its peak ({num(v['last']['n'])} mentions in the last full hour, {clock.clock(last_at)} {clock.abbr(now)})."
+    return (f"Velocity is {v['pct']}% since the peak at {clock.when(peak_at, now)} ({num(v['peak']['n'])} mentions that hour; "
+            f"{num(v['last']['n'])} in the last full hour).")
+
+
+def _as_time(value: Any, fallback: datetime) -> datetime:
+    return value if isinstance(value, datetime) else (_bw_time(value) or fallback)
+
+
+def prompt_for(ctx: "AgentContext", check: TempCheck, update: dict[str, Any] | None = None) -> str:
+    """What Gemini is asked: the issue, its numbers, and the numbered posts (for grounded [phrase](#N) links)."""
+    clock = _Clock(ctx)
+    now = check.window_to or ctx.now()
+    start = _as_time(check.start.get("at"), now)
+    posts = check.read_posts or check.posts
     sent = ["negative", "neutral", "positive"]
-    ps = pcts([float(d["sentiment"].get(k, 0)) for k in sent])
-    src = pcts([x["n"] for x in d["sources"][:5]])
-    unit = "matching posts in our own data (reposts and replies are not in it)" if d["basis"] == "own" else "mentions"
+    ps = pcts([float(check.sentiment.get(k, 0)) for k in sent])
+    src = pcts([x["n"] for x in check.sources])
+    unit = "matching posts in our own data (reposts and replies are not in it)" if check.basis == "own" else "mentions"
     lines = [
-        f"Issue: {d['issue']}" + (f" (Brandwatch query \"{d['query_name']}\")" if d.get("query_name") else ""),
-        f"Counted from {clock.when(d['start'], d['now'])} to {clock.when(d['now'], d['now'])}: {num(d['total'])} {unit}"
+        f"Issue: {check.issue}" + (f" (Brandwatch query \"{check.query['name']}\")" if check.query.get("name") else ""),
+        f"Counted from {clock.when(start, now)} to {clock.when(now, now)}: {num(check.total)} {unit}"
         + ("; sentiment " + ", ".join(f"{ps[i]}% {k}" for i, k in enumerate(sent)) if any(ps) else "")
-        + "; sources " + (", ".join(f"{x['label']} {src[i]}%" for i, x in enumerate(d["sources"][:5])) or "none") + ".",
-        _velocity_text(clock, d["velocity"], d["now"]),
+        + "; sources " + (", ".join(f"{x['label']} {src[i]}%" for i, x in enumerate(check.sources[:5])) or "none") + ".",
+        _velocity_text(clock, check.velocity, now),
     ]
-    if d.get("update"):
-        lines.append(f"This is an update: the last one was at {clock.when(d['update']['at'], d['now'])}, with {num(d['update']['total'])} then.")
+    if update:
+        lines.append(f"This is an update: the last one was at {clock.when(update['at'], now)}, with {num(update['total'])} then.")
     lines += ["", 'Posts (the most engagement first; "negative" is the sentiment score they came with):']
     for i, p in enumerate(posts):
         lines.append(f"{i + 1}. [{p['source']}] {p.get('author') or 'unknown'} ({_eng_text(p)}{', negative' if p.get('negative') else ''}): "
-                     + re.sub(r"\s+", " ", str(p["text"]))[:GEMINI_POST_CHARS])
+                     + _truncate(re.sub(r"\s+", " ", str(p["text"])), GEMINI_POST_CHARS))
     lines += [
         "", "Return JSON:",
-        "- summary: one or two sentences (at most 60 words) on where the conversation is now: what most posts say and where it is "
-        "heading. No numbers: the write-up already gives the counts, the peak and the velocity.",
+        "- summary: one or two sentences (at most 60 words) on where the conversation is now: what most posts say and where it is heading. "
+        "No numbers: the write-up already gives the counts, the peak and the velocity.",
         '- negativity_drivers: two to three sentences (at most 85 words) on what drives the negative posts; "No clear negativity '
         'drivers in the posts read." when there are none.',
         "- themes: two to three sentences (at most 85 words) on the other themes (questions, technical discussion, jokes, defenses "
         "of Google, official responses, press coverage).",
-        "- Inline post links: when attributing a specific reaction or claim to one of the numbered posts, weave 1 to 3 short inline "
-        f"references using [short phrase](#N) where N is the post's number above (1..{len(posts)}). Never invent URLs or cite "
-        f"numbers outside 1..{len(posts)}.",
+        "- Inline post links: when attributing a specific reaction, claim, or outlet/public-figure post in negativity_drivers or themes "
+        "(and optionally summary) to one of the numbered posts above, weave 1 to 3 short inline references using [short phrase](#N) "
+        f"where N is the post's number above (1..{len(posts)}), e.g. \"users criticized [the incident response](#3)\" or "
+        f"\"[SkyNews](#2) reported the outage\". Never invent URLs or cite numbers outside 1..{len(posts)}.",
     ]
     return "\n".join(lines)
 
 
-def _velocity_text(clock: _Clock, v: dict[str, Any] | None, now: datetime) -> str:
-    if not v:
-        return "Velocity: too early to tell (its first full hour isn't over)."
-    if v["last"]["n"] >= v["peak"]["n"]:
-        return f"Velocity is at its peak ({num(v['last']['n'])} mentions in the last full hour, {clock.clock(v['last']['at'])} {clock.abbr(now)})."
-    return (f"Velocity is {v['pct']}% since the peak at {clock.when(v['peak']['at'], now)} ({num(v['peak']['n'])} mentions that hour; "
-            f"{num(v['last']['n'])} in the last full hour).")
-
-
 # -- the write-up --------------------------------------------------------------------------------------------------------------
 def _esc(s: Any) -> str:
-    return html_mod.escape(str(s or ""), quote=True)
+    text = "" if s is None else str(s)
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;")
 
 
 def _rich(raw: str, posts: list[dict[str, Any]]) -> tuple[str, str]:
-    """Gemini's [phrase](#N) references as links to the posts they name: (html, text)."""
-    def to_html(m: re.Match[str]) -> str:
+    """Gemini's prose with grounded [phrase](#N) post references as (html, text): `phrase` links to post N's link in html
+    when that is an http(s) link (else it stays plain), and the marker is dropped in text."""
+    pattern = re.compile(r"\[([^\[\]\r\n]{1,80})\]\(#(?:post-?)?(\d+)\)", re.I)
+    html, text, last = "", "", 0
+    for m in pattern.finditer(raw or ""):
+        before = raw[last:m.start()]
+        html += _esc(before)
+        text += before
         n = int(m.group(2))
-        url = posts[n - 1].get("url") if 1 <= n <= len(posts) else ""
-        phrase = _esc(m.group(1))
-        return f'<a href="{_esc(url)}" target="_blank" rel="noopener">{phrase}</a>' if url and re.match(r"https?://", url) else phrase
-
-    pattern = re.compile(r"\[([^\]]{1,80})\]\(#(\d{1,3})\)")
-    parts, last = [], 0
-    for m in pattern.finditer(raw):
-        parts.append(_esc(raw[last:m.start()]))
-        parts.append(to_html(m))
+        item = posts[n - 1] if 1 <= n <= len(posts) else None
+        url = str(item.get("url") or "") if item else ""
+        url = url if re.fullmatch(r"https?://\S+", url, re.I) else ""
+        html += f'<a href="{_esc(url)}" target="_blank" rel="noopener" style="{_LINK}">{_esc(m.group(1))}</a>' if url else _esc(m.group(1))
+        text += m.group(1)
         last = m.end()
-    parts.append(_esc(raw[last:]))
-    return "".join(parts), pattern.sub(lambda m: m.group(1), raw)
+    return html + _esc((raw or "")[last:]), text + (raw or "")[last:]
+
+
+def writeup_post(p: dict[str, Any]) -> tuple[str, str]:
+    """A highest-engaging post as the template writes it (author on source, its words in quotes, its engagements): (html, text)."""
+    src = POST_SOURCES.get(p.get("source") or "", p.get("source") or "")
+    who = _clean_handle(p.get("author"))
+    source = f"{who} on {src}" if who else f"Post on {src}"
+    n = post_eng_val(p)
+    eng = "Engagements not available" if n < 0 else f"{compact(n)} Engagements"
+    body = _truncate(re.sub(r"\s+", " ", str(p.get("text") or "")).strip(), POST_CHARS)
+    url = str(p.get("url") or "")
+    label = (f'<a href="{_esc(url)}" target="_blank" rel="noopener" style="color:#202124;font-weight:bold;text-decoration:underline">{_esc(source)}</a>'
+             if re.match(r"https?://", url, re.I) else f"<b>{_esc(source)}</b>")
+    return f'{label}: "{_esc(body)}" ({eng})', f'{source}: "{body}" ({eng})' + (f" <{url}>" if url else "")
 
 
 def _sentiment_text(s: dict[str, int]) -> str:
@@ -1188,37 +1335,73 @@ def _level_sentence(level: dict[str, Any]) -> tuple[str, str]:
     return f"Volume is currently {level['label']} ({rank}).", f"Volume is currently <b>{_esc(level['label'])}</b> ({_esc(rank)})."
 
 
+def _source_line(check: TempCheck) -> tuple[str, str]:
+    """The write-up's "BW source" as (text, html): the link to the issue's query in Brandwatch; for an issue with no
+    query of its own that Brandwatch still counted, the standing queries it was counted in; else our own data."""
+    if check.query.get("url"):
+        url = check.query["url"]
+        return f"Link <{url}>", f'<a href="{_esc(url)}" target="_blank" rel="noopener" style="{_LINK}"><b>Link</b></a>'
+    text = ("Brandwatch's standing Google queries, searched for this issue (it has no query of its own yet)" if check.standing
+            else "our own data (no Brandwatch query yet)")
+    return text, _esc(text)
+
+
+def _lead(clock: _Clock, check: TempCheck, now: datetime, update: dict[str, Any] | None) -> tuple[str, str]:
+    """The TL;DR's first sentence as (text, html), the counts bold in html. A count from our own tables says so."""
+    own = check.basis == "own"
+    unit = "matching posts in our own data" if own else "total mentions"
+    if update:
+        on = "" if clock.day(update["at"]) == clock.day(now) else f" on {clock.day(update['at'])}"
+        total = compact(check.total) if check.total >= 10000 else num(check.total)
+        parts = [(f"Since the last update at {clock.hour_label(update['at'])} {clock.abbr(now)}{on}, there have been ", False),
+                 (f"{num(max(0, check.total - int(update['total'])))} new {'posts' if own else 'mentions'}", True), (" (", False),
+                 (f"{total} {unit}", True), (f") regarding {check.issue}.", False)]
+    elif check.start.get("why") == "since":
+        parts = [(f"Since {clock.when(_as_time(check.start.get('at'), now), now)} there have been ", False), (f"{num(check.total)} {unit}", True),
+                 (f" regarding {check.issue}.", False)]
+    else:
+        parts = [("There have been ", False), (f"{num(check.total)} {unit}", True), (f" regarding {check.issue}.", False)]
+    return "".join(t for t, _ in parts), "".join(f"<b>{_esc(t)}</b>" if bold else _esc(t) for t, bold in parts)
+
+
+def chart_of(ctx: "AgentContext", check: TempCheck) -> dict[str, Any]:
+    """The chart's points: the full hours counted (the hour still running left off), with the title the team gives it."""
+    clock = _Clock(ctx)
+    now = check.window_to or ctx.now()
+    start = _as_time(check.start.get("at"), now)
+    hours = [(at, h["n"]) for h in check.hours if (at := _as_time(h["at"], now)) >= start]
+    full = [x for x in hours if x[0] < floor_hour(now)]
+    if len(full) < 2:
+        full = hours
+    return {"title": f"({clock.day(now)}) {check.issue} {clock.hour_label(now)} {clock.abbr(now)}",
+            "unit": "Posts" if check.basis == "own" else "Mentions", "points": [{"label": clock.chart_tick(at), "n": n} for at, n in full]}
+
+
 def write_up(ctx: "AgentContext", check: TempCheck, *, update: dict[str, Any] | None = None) -> None:
-    """Fill the check's title and write-up in the team's template (text and HTML)."""
+    """Fill the check's title and write-up in the team's template (text and HTML), word for word as the temp check app
+    writes it (tempcheck-app/lib/tempcheck.js writeup). The HTML carries CHART_MARK where the hourly chart goes."""
     cfg = ctx.config.platform.temp_check
     clock = _Clock(ctx)
     now, own = check.window_to or ctx.now(), check.basis == "own"
-    start = _bw_time(check.start.get("at")) or now
+    start = _as_time(check.start.get("at"), now)
     tz = clock.abbr(now)
     check.title = f"({clock.day(now)}) {check.issue} ({clock.hour_label(now)} {tz})"
-    source = (f"Link <{check.query['url']}>" if check.query.get("url") else
-              ("Brandwatch's standing Google queries, searched for this issue (it has no query of its own yet)" if check.standing
-               else ("Brandwatch" if not own else "our own data (no Brandwatch query yet)")))
-    source_html = (f'<a href="{_esc(check.query["url"])}" target="_blank" rel="noopener"><b>Link</b></a>'
-                   if check.query.get("url") else _esc(source))
-    if check.total <= 0:
+    src_text, src_html = _source_line(check)
+    div = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#202124">'
+
+    def para(body: str, last: bool = False) -> str:
+        return f'<p style="margin:0 0 {4 if last else 14}px">{body}</p>'
+
+    if check.total <= 0:  # nothing counted: the title, the source and one sentence saying so, not the template filled with zeros
         what = "No posts in our own data matched" if own else "Brandwatch counted no mentions"
         line = f"{what} regarding {check.issue} between {clock.when(start, now)} and {clock.when(now, now)}."
-        check.writeup_text = "\n".join([check.title, f"BW source: {source}", "", f"TL;DR: {line}"])
-        check.writeup_html = f"<div><p><b>{_esc(check.title)}</b><br><b>BW source:</b> {source_html}</p><p><b>TL;DR:</b> {_esc(line)}</p></div>"
+        check.writeup_text = "\n".join([check.title, f"BW source: {src_text}", "", f"TL;DR: {line}"])
+        check.writeup_html = div + para(f"<b>{_esc(check.title)}</b><br><b>BW source:</b> {src_html}") + para(f"<b>TL;DR:</b> {_esc(line)}") + "</div>"
         return
-    unit = "matching posts in our own data" if own else "total mentions"
-    if update:
-        new = max(0, check.total - int(update["total"]))
-        total = compact(check.total) if check.total >= 10000 else num(check.total)
-        on = "" if clock.day(update["at"]) == clock.day(now) else f" on {clock.day(update['at'])}"
-        lead_text = (f"Since the last update at {clock.hour_label(update['at'])} {tz}{on}, there have been {num(new)} new "
-                     f"{'posts' if own else 'mentions'} ({total} {unit}) regarding {check.issue}.")
-        lead_html = (f"Since the last update at {clock.hour_label(update['at'])} {tz}{on}, there have been <b>{num(new)} new "
-                     f"{'posts' if own else 'mentions'}</b> (<b>{total} {unit}</b>) regarding {_esc(check.issue)}.")
-    else:
-        lead_text = f"There have been {num(check.total)} {unit} regarding {check.issue}."
-        lead_html = f"There have been <b>{num(check.total)} {unit}</b> regarding {_esc(check.issue)}."
+    g = check.gem
+    link_posts = check.read_posts or check.posts
+    sum_html, sum_text = _rich(g["summary"], link_posts) if g.get("summary") else ("", "")
+    lead_text, lead_html = _lead(clock, check, now, update)
     level_text, level_html = _level_sentence(check.level)
     v = check.velocity
     per = "posts/hr" if own else "mentions/hr"
@@ -1227,39 +1410,29 @@ def write_up(ctx: "AgentContext", check: TempCheck, *, update: dict[str, Any] | 
     elif v["last"]["n"] >= v["peak"]["n"]:
         vel = f"Velocity is at its peak ({num(v['last']['n'])} {per})."
     else:
-        peak_at = _bw_time(v["peak"]["at"]) or now
+        peak_at = _as_time(v["peak"]["at"], now)
         day = "today" if clock.day(peak_at) == clock.day(now) else f"on {clock.day(peak_at)}"
         vel = f"Velocity is {v['pct']}% since the peak at {clock.clock(peak_at)} {tz} {day}."
-    link_posts = check.posts
-    g = check.gem
-    sum_html, sum_text = _rich(g["summary"], link_posts) if g.get("summary") else ("", "")
-    unwritten = f"Not written ({g.get('why') or 'Gemini gave no answer'})."
+    tldr_text = " ".join(x for x in (lead_text, level_text, vel, sum_text) if x)
+    tldr_html = " ".join(x for x in (lead_html, level_html, _esc(vel), sum_html) if x)
+    unwritten = f"Not written ({g.get('why') or 'Gemini gave no answer'})."  # a line Gemini did not write says so, with the reason
     drv_html, drv_text = _rich(g["drivers"], link_posts) if g.get("drivers") else (_esc(unwritten), unwritten)
     thm_html, thm_text = _rich(g["themes"], link_posts) if g.get("themes") else (_esc(unwritten), unwritten)
+    listed = [writeup_post(p) for p in check.posts[: cfg.writeup_posts]] or [("None with words to show.", "None with words to show.")]
     sentiment = _sentiment_text(check.sentiment)
     mentions_vol = _ranked_text("Posts are highest on" if own else "Mentions are highest on", check.sources)
     types = ("not available from our own data (it holds original posts, not reposts or replies)." if own and not check.mention_types
              else _types_text(check.mention_types))
     eng_vol = _ranked_text("Engagement (likes, comments, shares) is highest on", check.eng_sources)
-    listed = []
-    for p in [p for p in check.posts if p.get("text")][: cfg.writeup_posts]:
-        who = f"{p['author']} on {p['source']}" if p.get("author") else f"Post on {p['source']}"
-        words = re.sub(r"\s+", " ", p["text"])[:POST_CHARS]
-        text = f"{who}: “{words}” ({_eng_text(p)})"
-        link = f' <a href="{_esc(p["url"])}" target="_blank" rel="noopener">link</a>' if re.match(r"https?://", p.get("url") or "") else ""
-        listed.append((f"{_esc(who)}: “{_esc(words)}” ({_esc(_eng_text(p))}){link}", text + (f" {p['url']}" if p.get("url") else "")))
-    if not listed:
-        listed.append(("None with words to show.", "None with words to show."))
-    tldr_text = " ".join(x for x in (lead_text, level_text, vel, sum_text) if x)
-    tldr_html = " ".join(x for x in (lead_html, level_html, _esc(vel), sum_html) if x)
+    items = "".join(f'<li style="margin:0 0 4px">{h}</li>' for h, _ in listed)
     check.writeup_html = (
-        f"<div><p><b>{_esc(check.title)}</b><br><b>BW source:</b> {source_html}</p><p><b>TL;DR:</b> {tldr_html}</p>"
-        f"<p><b>Sentiment:</b> {_esc(sentiment)}</p><p><b>Negativity Drivers:</b> {drv_html}</p><p><b>Themes:</b> {thm_html}</p>"
-        f"<p><b>Mentions Volume:</b> {_esc(mentions_vol)}</p><p><b>Mention Types:</b> {_esc(types)}</p>"
-        f"<p><b>Engagement Volume:</b> {_esc(eng_vol)}</p><p><b>Highest Engaging Posts:</b></p>"
-        f"<ul>{''.join(f'<li>{h}</li>' for h, _ in listed)}</ul></div>")
+        div + para(f"<b>{_esc(check.title)}</b><br><b>BW source:</b> {src_html}") + para(f"<b>TL;DR:</b> {tldr_html}") + CHART_MARK
+        + para(f"<b>Sentiment:</b> {_esc(sentiment)}") + para(f"<b>Negativity Drivers:</b> {drv_html}") + para(f"<b>Themes:</b> {thm_html}")
+        + para(f"<b>Mentions Volume:</b> {_esc(mentions_vol)}") + para(f"<b>Mention Types:</b> {_esc(types)}")
+        + para(f"<b>Engagement Volume:</b> {_esc(eng_vol)}") + para("<b>Highest Engaging Posts:</b>", last=True)
+        + f'<ul style="margin:0 0 14px 0;padding-left:28px">{items}</ul></div>')
     check.writeup_text = "\n".join([
-        check.title, f"BW source: {source}", "", f"TL;DR: {tldr_text}", "", f"Sentiment: {sentiment}", "",
+        check.title, f"BW source: {src_text}", "", f"TL;DR: {tldr_text}", "", f"Sentiment: {sentiment}", "",
         f"Negativity Drivers: {drv_text}", "", f"Themes: {thm_text}", "", f"Mentions Volume: {mentions_vol}", "",
         f"Mention Types: {types}", "", f"Engagement Volume: {eng_vol}", "", "Highest Engaging Posts:",
         *[f"  • {t}" for _, t in listed]])
@@ -1376,6 +1549,43 @@ NOT_RANKED = {
 }
 
 
+def _reading(ctx: "AgentContext", bw: Brandwatch, ids: list[Any], search: str, start: datetime, now: datetime, say: Any) -> dict[str, Any]:
+    """What stands behind Brandwatch's count from `start`: its breakdowns, the write-up's posts, the posts Gemini reads
+    and where the words of its X posts came from (tempcheck-app/lib/service.js bwReading). X's words are filled in from
+    X's embed data, else our own rows."""
+    from . import xposts
+
+    cfg = ctx.config.platform.temp_check
+    say("Reading sentiment, sources, mention types and the top posts from Brandwatch")
+    b = bw.breakdowns(ids, start, now, search, cfg.top_posts, cfg.top_negative_posts)
+    every = [*b["top"], *b["neg"]]
+    x_ids = list(dict.fromkeys(p["id"] for p in every if p.get("x") and p.get("id")))[: cfg.x_lookup_max]
+    embed: dict[str, dict[str, Any]] = {}
+    rows: dict[str, dict[str, Any]] = {}
+    if x_ids:
+        say(f"Looking up the words of {len(x_ids)} X posts (X's embed data, and our own rows)")
+        embed = xposts.lookup(x_ids, cfg.x_embed_url) if cfg.x_embed_url else {}
+        rows = find_x_posts(ctx, x_ids, start, now)
+    x_posts = {**rows, **embed}  # X's own data wins (it has likes and replies); our rows fill the gaps
+    seen: set[str] = set()
+    with_text = []
+    for p in every:
+        full = post_with_text(p, x_posts)
+        if full and full["key"] not in seen:
+            seen.add(full["key"])
+            with_text.append(full)
+    order: dict[str, int] = {}
+    for i, p in enumerate(b["top"]):
+        order.setdefault(p["key"], i)
+    ranked = sorted((p for p in with_text if p["key"] in order), key=lambda p: (-post_eng_val(p), order[p["key"]]))
+    posts = ranked[: cfg.writeup_posts]
+    shown = {p["key"] for p in posts}
+    read = (posts + [p for p in with_text if p["key"] not in shown])[: cfg.gemini_posts]
+    coverage = {"ranked": len(every), "x": len(x_ids), "from_embed": sum(1 for i in x_ids if i in embed), "in_rows": sum(1 for i in x_ids if i in rows),
+                "from_rows_only": sum(1 for i in x_ids if i in rows and i not in embed), "no_words": sum(1 for i in x_ids if i not in x_posts)}
+    return {**b, "posts": posts, "read": read, "coverage": coverage}
+
+
 def _build(ctx: "AgentContext", check: TempCheck, req: TempCheckRequest, previous: TempCheck | None, issue_text: str,
            alert_at: datetime | None) -> None:
     """One temp check, in the temp check app's order (tempcheck-app/lib/service.js run): the query, the Boolean,
@@ -1466,7 +1676,6 @@ def _build(ctx: "AgentContext", check: TempCheck, req: TempCheckRequest, previou
 
     # Brandwatch's side
     side: dict[str, Any] | None = None
-    top, neg = cfg.top_posts, cfg.top_negative_posts
     if query and bw:
         earlier = previous if (previous and _kind(previous) == "query" and previous.window_from) else None
         created = _bw_time(query.get("created"))
@@ -1481,8 +1690,7 @@ def _build(ctx: "AgentContext", check: TempCheck, req: TempCheckRequest, previou
                 st = {"at": look, "why": str(earlier.start.get("why") or "spike")}
             else:
                 st = start_of(hours, spike=cfg.spike_mentions, look=look, alert_at=fired, created=created)
-            say("Reading sentiment, sources, mention types and the top posts from Brandwatch")
-            side = {"hours": hours, "start": st, **bw.breakdowns([query["id"]], st["at"], now, "", top, neg)}
+            side = {"hours": hours, "start": st, **_reading(ctx, bw, [query["id"]], "", st["at"], now, say)}
             check.basis, check.standing = "brandwatch", False
             check.query["url"] = bw.dashboard_url(query)
         except BrandwatchUnavailable as exc:
@@ -1499,9 +1707,7 @@ def _build(ctx: "AgentContext", check: TempCheck, req: TempCheckRequest, previou
                 hours = bw.hourly(ids, look, now, boolean)
                 detail["total"] = sum(h["n"] for h in hours)
                 if detail["total"]:
-                    say("Reading sentiment, sources, mention types and the top posts from Brandwatch")
-                    side = {"hours": hours, "start": {"at": look, "why": "since" if since else "look"},
-                            **bw.breakdowns(ids, look, now, boolean, top, neg)}
+                    side = {"hours": hours, "start": {"at": look, "why": "since" if since else "look"}, **_reading(ctx, bw, ids, boolean, look, now, say)}
                     check.basis, check.standing = "brandwatch", True
                 else:
                     detail["skipped"] = "Brandwatch's standing Google queries hold no mention that matches this query in that stretch."
@@ -1560,8 +1766,10 @@ def _build(ctx: "AgentContext", check: TempCheck, req: TempCheckRequest, previou
     if side is None:
         if not own.get("hours"):
             raise ValueError("Neither Brandwatch nor our own tables could be searched: " + " ".join(check.notes or ["nothing is set up."]))
+        ours = [as_writeup_post(p) for p in own["posts"] if p.get("text")]
         side = {"hours": own["hours"], "start": {"at": own_from, "why": "since" if since else "look"}, "sentiment": own["sentiment"],
-                "sources": own["sources"], "eng_sources": own["eng_sources"], "mention_types": [], "top": [], "neg": []}
+                "sources": own["sources"], "eng_sources": own["eng_sources"], "mention_types": [], "posts": ours[: cfg.writeup_posts],
+                "read": ours[: cfg.gemini_posts], "coverage": {}}
         check.basis, check.standing = "own", False
         check.notes.append("Built from our own tables: Brandwatch has nothing for this issue or could not be asked.")
 
@@ -1569,33 +1777,15 @@ def _build(ctx: "AgentContext", check: TempCheck, req: TempCheckRequest, previou
     counted = [h for h in side["hours"] if h["at"] >= st["at"]]
     check.window_from = st["at"]
     check.start = {"at": st["at"].isoformat(), "why": st["why"], "look": look.isoformat()}
-    check.hours = [{"at": h["at"].isoformat(), "n": h["n"]} for h in side["hours"]]
+    check.hours = [{"at": h["at"].isoformat(), "n": h["n"]} for h in counted]
     check.total = sum(h["n"] for h in counted)
-    v = velocity_of(side["hours"], st["at"], now)
+    v = velocity_of(counted, st["at"], now)
     check.velocity = ({"peak": {"at": v["peak"]["at"].isoformat(), "n": v["peak"]["n"]},
                        "last": {"at": v["last"]["at"].isoformat(), "n": v["last"]["n"]}, "pct": v["pct"]} if v else None)
     check.sentiment = {k: int(n) for k, n in (side["sentiment"] or {}).items() if k in ("negative", "neutral", "positive")}
     check.sources, check.eng_sources, check.mention_types = side["sources"], side["eng_sources"], side["mention_types"]
-
-    # the posts read: Brandwatch's most-engaged (X posts take their words from our own tables), then our own
-    own_by_key = {p["key"]: p for p in own["posts"]}
-    posts: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for p in [*side["top"], *side["neg"]]:
-        if not p.get("text") and p.get("key") in own_by_key:
-            p = {**p, "text": own_by_key[p["key"]]["text"], "author": p.get("author") or own_by_key[p["key"]].get("author", ""),
-                 "url": p.get("url") or own_by_key[p["key"]].get("url", "")}
-        if p.get("text") and p["key"] not in seen:
-            seen.add(p["key"])
-            posts.append(p)
-    for p in own["posts"]:
-        if len(posts) >= top + neg:
-            break
-        if p.get("text") and p["key"] not in seen:
-            seen.add(p["key"])
-            posts.append(p)
-    posts.sort(key=lambda p: -(p["eng"] if p.get("eng") is not None else -1))
-    check.posts = [{**p, "at": (p["at"].isoformat() if isinstance(p.get("at"), datetime) else p.get("at"))} for p in posts]
+    check.posts, check.read_posts, check.coverage = side["posts"], side["read"], side["coverage"]
+    check.chart = chart_of(ctx, check)
 
     kind = _kind(check)
     if check.total <= 0:
@@ -1608,23 +1798,18 @@ def _build(ctx: "AgentContext", check: TempCheck, req: TempCheckRequest, previou
     update = None
     if previous and previous.window_to and since is None and _kind(previous) == kind:
         update = {"at": previous.window_to, "total": previous.total}
-    clock = _Clock(ctx)
-    read = check.posts[: cfg.top_posts]
     if not req.writeup:
         check.gem = {"why": "the write-up lines were not asked for"}
-    elif read:
-        say(f"Asking Gemini for the summary, negativity drivers and themes ({len(read)} posts read)")
+    elif check.read_posts:
+        say(f"Asking Gemini for the summary, negativity drivers and themes ({len(check.read_posts)} posts read)")
+        asked = prompt_for(ctx, check, update=update)
         try:
-            lines = ctx.llm.generate_json(
-                model=_model(ctx), system=SYSTEM, schema=_Lines, temperature=0.2, purpose="temp_check.writeup",
-                prompt=_prompt(clock, {"issue": check.issue, "query_name": check.query.get("name"), "basis": check.basis,
-                                       "start": st["at"], "now": now, "total": check.total, "sentiment": check.sentiment,
-                                       "sources": check.sources, "velocity": v, "update": update}, read))
+            lines = ctx.llm.generate_json(model=_model(ctx), system=SYSTEM, schema=_Lines, temperature=0.2, purpose="temp_check.writeup", prompt=asked)
             check.gem = {"summary": lines.summary.strip(), "drivers": lines.negativity_drivers.strip(), "themes": lines.themes.strip()}
         except Exception as exc:  # noqa: BLE001 - the numbers still stand; the write-up says the lines are not written
             check.gem = {"why": f"Gemini could not be reached: {exc}"[:200]}
     else:
-        check.gem = {"why": "no posts with words were found to read"}
+        check.gem = {"why": "no posts with words to read"}
 
     # The concern level: only for a Brandwatch query's count from the issue's own start
     if kind == "query" and st["why"] != "since":
