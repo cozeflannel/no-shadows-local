@@ -875,6 +875,7 @@ class FeatureFlags(ConfigModel):
     early_detection: bool = Field(False, title="Early Detection", description="ON: the post tables are read in BigQuery every few minutes, posts on one theme are grouped into a story, and a story that reaches the bar is raised. OFF: nothing is read.")
     early_fast_triage: bool = Field(False, title="Score early stories with Gemini Decisions", description="ON: Gemini Decisions scores each story first; plain noise is held back, the most severe are written up first, and a small story that scores high is raised as an early signal. OFF: every story goes straight to its write-up.")
     early_cards: bool = Field(False, title="Post early stories in Chat", description="ON: each written-up story is posted in the second space on the Routing page. OFF: stories show in the Console only.")
+    story_reads: bool = Field(False, title="Gemini reads each story", description="ON: Gemini names each story's topic, gives it a neutral name, writes a short summary and labels each post negative, neutral or positive; the Stories page counts the labels. OFF: stories show no topic, summary or sentiment.")
     alert_popups: bool = Field(False, title="Alert pop-ups", description="ON: people in the Console get a pop-up when an alert comes in; each person can mute their own. OFF: no pop-ups.")
 
 
@@ -1089,6 +1090,15 @@ class StoriesConfig(ConfigModel):
     active_hours: int = Field(6, ge=1, le=168, description="A story with an alert in the last this many hours shows as growing.")
     map_hours: int = Field(72, ge=1, le=24 * 30, description="Hours the story map shows when it opens.")
     size_by: Literal["engagement", "alerts"] = Field("engagement", description="What a circle's size stands for.")
+    read_model: str = Field("", description="Model that reads a story. Blank = the drafting model.")
+    read_posts: int = Field(40, ge=1, le=200, description="Posts of one story Gemini reads, the most engaged first.")
+    read_post_chars: int = Field(500, ge=50, le=4000, description="Characters of each post Gemini reads.")
+    reads_per_run: int = Field(5, ge=0, le=100, description="Stories Gemini reads in one run, the biggest unread first.")
+    reread_minutes: int = Field(30, ge=1, le=24 * 60, description="A story that grew is read again only after this many minutes.")
+    topics_offered: int = Field(30, ge=0, le=200, description="Topics already in use that Gemini is shown, so one subject keeps one name.")
+    negative_share: float = Field(0.5, gt=0, le=1, description="A story is negative (red) when at least this share of its rated posts is negative.")
+    positive_share: float = Field(0.5, gt=0, le=1, description="A story is positive when at least this share of its rated posts is positive.")
+    min_rated_share: float = Field(0.25, ge=0, le=1, description="A story or group gets a sentiment only when at least this share of its posts is rated.")
 
 
 class NotificationsConfig(ConfigModel):

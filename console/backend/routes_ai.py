@@ -76,7 +76,7 @@ def overview(ctx: AgentContext) -> list[dict[str, Any]]:
          "does": "Writes everything a person reads: the Console chat agent's answers, the QA chatbot's replies in Chat, alert write-ups and each early story's headline and call.",
          "state": "ready", "facts": [_fact("Alert reviews", cfg.models.triage), _fact("Chat agent", p.chat_agent.model or cfg.models.converse),
                                      _fact("Calls in the last 24 hours", len(usage))],
-         "switches": [_switch(ctx, "console_chat_agent"), _switch(ctx, "knowledge_rag")],
+         "switches": [_switch(ctx, "console_chat_agent"), _switch(ctx, "knowledge_rag"), _switch(ctx, "story_reads")],
          "settings": [{"label": "Console chat agent", "to": "/settings/chat_agent"}, {"label": "Models", "to": "/settings/models"}]},
         {"key": "decisions", "name": "Gemini Decisions", "role": "Decides",
          "does": "Answers set questions with probabilities and writes no text: which class an alert is, and whether an early story is about the company, a risk, first-hand, or routine chatter.",

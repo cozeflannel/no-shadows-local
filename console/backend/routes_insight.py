@@ -12,7 +12,8 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, ValidationError
 
-from triage_agent import audit, chatlog, pubsub, safety, stories
+from triage_agent import audit, chatlog, pubsub, safety, stories, storyread
+from triage_agent.config import switch_off
 from triage_agent.context import ROSTER_IM, AgentContext
 from triage_agent.events import EventType as E
 from triage_agent.events import PlatformEvent as P
@@ -21,7 +22,7 @@ from triage_agent.models import Person
 from triage_agent.platform_jobs import TICK_KEY
 
 from . import gmail_oauth
-from .auth import BOOTSTRAP_ADMIN_ENV, User, get_ctx, require_admin, require_lead, require_viewer
+from .auth import BOOTSTRAP_ADMIN_ENV, User, get_ctx, require_admin, require_analyst, require_lead, require_viewer
 from .live import feed_card
 from .routes_cases import get_parity
 from .routes_metrics import env_filter, window
@@ -44,6 +45,28 @@ def _refresh(ctx: AgentContext) -> None:
         log.exception("stories could not be refreshed")
 
 
+def _story_card(ctx: AgentContext, story: stories.Story, read: dict[str, Any] | None, since: datetime | None = None) -> dict[str, Any]:
+    """A story as the map shows it, with what Gemini's read adds: topic, name, the counted labels and each alert's label."""
+    card = {**stories.summary(ctx, story, since=since), **storyread.card(ctx, story, read)}
+    labels = (read or {}).get("labels") or {}
+    for point in card["points"]:
+        point["m"] = labels.get(point["id"], "")
+    return card
+
+
+def _facet(cards: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
+    """The values of `key` the stories carry, with how many stories and alerts each has: the choices to filter by."""
+    seen: dict[str, dict[str, Any]] = {}
+    for c in cards:
+        value = str(c.get(key) or "")
+        if not value:
+            continue
+        row = seen.setdefault(value, {"value": value, "stories": 0, "alerts": 0})
+        row["stories"] += 1
+        row["alerts"] += c["alerts"]
+    return sorted(seen.values(), key=lambda r: (-r["alerts"], r["value"]))
+
+
 @router.get("/stories")
 def get_stories(
     hours: int | None = Query(None, ge=1, le=24 * 30),
@@ -55,30 +78,63 @@ def get_stories(
     _refresh(ctx)
     span = hours or cfg.map_hours
     since = ctx.now() - timedelta(hours=span)
-    cards = [stories.summary(ctx, s, since=since) for s in stories.list_stories(ctx, since, env=env_filter(ctx, env))]
+    reads = storyread.reads_since(ctx, ctx.now() - timedelta(days=cfg.keep_days))
+    cards = [_story_card(ctx, s, reads.get(s.story_id), since) for s in stories.list_stories(ctx, since, env=env_filter(ctx, env))]
     cards.sort(key=lambda c: (-c["size"], -c["alerts"]))
     return {"stories": cards, "hours": span, "since": since, "as_of": ctx.now(), "size_by": cfg.size_by, "active_hours": cfg.active_hours,
-            "by_meaning": bool(ctx.config.platform.knowledge.embedding_model),
+            "by_meaning": bool(ctx.config.platform.knowledge.embedding_model), "reads_on": ctx.flag("story_reads"),
+            "negative_share": cfg.negative_share, "positive_share": cfg.positive_share, "min_rated_share": cfg.min_rated_share,
+            "facets": {"products": _facet(cards, "product"), "topics": _facet(cards, "topic"), "tones": _facet(cards, "tone")},
             "totals": {"stories": len(cards), "alerts": sum(c["alerts"] for c in cards), "engagement": sum(c["engagement"] for c in cards),
                        "growing": sum(1 for c in cards if c["status"] != "quiet"), "needs": sum(c["needs"] for c in cards)}}
 
 
 @router.get("/stories/{story_id}")
 def get_story(story_id: str, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> dict[str, Any]:
+    _refresh(ctx)  # an alert that just came in is on its story before the story is shown
     story = stories.get(ctx, story_id)
     if story is None:
         raise HTTPException(404, {"error": f"No story {story_id}", "code": "not_found"})
     members = sorted(story.members, key=lambda m: (m.at, m.case_id), reverse=True)[:STORY_ALERTS]
+    read = storyread.get(ctx, story_id)
+    labels = (read or {}).get("labels") or {}
     alerts, chat = [], []
     for m in members:
         case = ctx.store.get_case(m.case_id)
         if case is None:
             continue
-        alerts.append({**feed_card(ctx, case), "at": m.at, "how": m.how, "sim": m.sim, "also": m.also})
+        alerts.append({**feed_card(ctx, case), "at": m.at, "how": m.how, "sim": m.sim, "also": m.also,
+                       "sentiment": labels.get(m.case_id, ""), "post_text": stories.post_text(case)})
         if len(chat) < STORY_CHAT:
             chat.extend(x.model_dump(mode="json") for x in chatlog.search(ctx, case_id=m.case_id, limit=20))
     chat.sort(key=lambda x: str(x.get("ts")), reverse=True)
-    return {"story": stories.summary(ctx, story), "alerts": alerts, "chat": chat[:STORY_CHAT], "shown": len(alerts), "total": len(story.members)}
+    return {"story": _story_card(ctx, story, read), "read": _read_view(story, read), "alerts": alerts, "chat": chat[:STORY_CHAT],
+            "shown": len(alerts), "total": len(story.members), "reads_on": ctx.flag("story_reads")}
+
+
+def _read_view(story: stories.Story, read: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not read:
+        return None
+    return {"topic": read.get("topic") or "", "name": read.get("name") or "", "summary": read.get("summary") or "", "at": read.get("at"),
+            "read": int(read.get("read") or 0), "members": int(read.get("members") or 0), "model": read.get("model") or "",
+            "stale": int(read.get("members") or 0) != len(story.members)}
+
+
+@router.post("/stories/{story_id}/read")
+def read_story(story_id: str, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_analyst)) -> dict[str, Any]:
+    """Have Gemini read one story now: its topic, a neutral name, a short summary and a label for each post."""
+    if not ctx.flag("story_reads"):
+        raise HTTPException(400, {"error": switch_off("Reading stories", "story_reads"), "code": "switched_off"})
+    story = stories.get(ctx, story_id)
+    if story is None:
+        raise HTTPException(404, {"error": f"No story {story_id}", "code": "not_found"})
+    try:
+        read = storyread.read(ctx, story)
+    except Exception as exc:  # noqa: BLE001 - Gemini could not be asked
+        raise HTTPException(503, {"error": f"Gemini could not read this story: {str(exc)[:200]}", "code": "read_failed"}) from exc
+    audit.record(ctx, actor=user.email, action="story.read", surface="console", target_type="story", target_id=story_id,
+                 summary=f"Had Gemini read story {story_id}", detail={"topic": read["topic"], "posts": read["read"]})
+    return {"read": _read_view(story, read), "story": _story_card(ctx, story, read)}
 
 
 # -- the app, Burson and the IMs, side by side -------------------------------------------------------------------------------------

@@ -25,7 +25,7 @@ TICK_KEY = "tick:last"  # when the once-a-minute tick last ran, and which of its
 
 def run_job(ctx: "AgentContext", name: str) -> dict[str, Any]:
     """One scheduled job by name."""
-    from . import early, mirror, retention, stories, tempcheck, workforce
+    from . import early, mirror, retention, stories, storyread, tempcheck, workforce
 
     if name in JOB_OPS:
         op, payload = JOB_OPS[name]
@@ -40,7 +40,7 @@ def run_job(ctx: "AgentContext", name: str) -> dict[str, Any]:
     if name == "maintenance":
         results = {n: run_job(ctx, n) for n in ("knowledge", "watches", "temp-checks", "forecast")}
         try:
-            results["stories"] = {"ok": True, "placed": stories.refresh(ctx)}
+            results["stories"] = {"ok": True, "placed": stories.refresh(ctx), "reads": storyread.run(ctx)}  # Gemini reads the stories that are due
         except Exception as exc:  # noqa: BLE001 - one part failing never stops the others
             results["stories"] = {"ok": False, "error": str(exc)[:300]}
         results["routing"] = mirror.run(ctx)  # the QA chatbot's copy of the source space (Routing page)

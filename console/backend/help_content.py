@@ -227,19 +227,31 @@ TOPICS: list[dict[str, Any]] = [
     },
     {
         "id": "stories", "page": "Stories", "title": "Stories", "audience": "everyone",
-        "summary": "Alerts on the same story, grouped. Each circle is a story; it grows as alerts and engagement come in.",
+        "summary": "Alerts on the same story, grouped, with Gemini's read of each. See them by story, product, topic or sentiment.",
         "sections": [
             {"heading": "Read the map", "items": [
                 "One circle per story. Its size is its engagement (or its number of alerts: Settings → Stories → Size by).",
+                "Red: at least half of the story's rated posts are negative. Grey: neutral. Green: positive. A dashed grey ring: not rated yet.",
                 "Inner circles are the smaller stories in it: the alerts under one issue name.",
-                "Blue: growing (two or more alerts, one recent). Purple: new. Grey: quiet.",
+                "Color by Activity shows blue for growing, purple for new and grey for quiet instead.",
                 "A gradient ring: an alert in the story needs action."]},
+            {"heading": "Change the view", "steps": [
+                "View by Product or Topic: one circle per product or topic. Its inner circles are its posts by sentiment.",
+                "View by Sentiment: one circle each for negative, neutral, positive and not rated. Its inner circles are the stories in it.",
+                "Click a circle to list its stories. Show only these stories filters the map to that product, topic or sentiment.",
+                "Use the Product, Topic and Sentiment filters, or type an issue name under Find a story."]},
+            {"heading": "Gemini's read", "items": [
+                "With the switch Gemini reads each story ON, Gemini gives every story a topic, a neutral name and a short summary, and labels each post negative, neutral or positive.",
+                "The page counts the labels. No count or share comes from Gemini.",
+                "The biggest unread stories are read first, a few on every run. A story that grows is read again.",
+                "Read now on a story reads it straight away.",
+                "The shares that make a story negative or positive, and how many posts are read, are in Settings → Stories."]},
             {"heading": "Watch a story grow", "steps": ["Click Play growth, or drag the time slider.", "Circles grow in place from the start of the window to now.",
                                                          "Use Window to look further back, up to 30 days."]},
-            {"heading": "Drill into a story", "steps": [
+            {"heading": "Open a story", "steps": [
                 "Click a circle, or a row in List.",
-                "The panel shows the running total, the smaller stories, every alert, and the Chat messages linked to them.",
-                "Click a smaller story to see only its alerts.",
+                "The panel shows Gemini's read, the posts by sentiment, the running total, the smaller stories, every post with its words, and the Chat messages linked to them.",
+                "Click a smaller story to see only its posts.",
                 "Open alert goes to the alert in the Review Feed. Open post goes to the post."]},
             {"heading": "How alerts are grouped", "items": [
                 "Same story: the alerts mean the same, by the similarity in Settings → Stories. Set an embedding model under Integrations → Gemini to match by meaning.",

@@ -159,6 +159,12 @@ def _fields(case: Case) -> dict[str, Any]:
     return fields
 
 
+def post_text(case: Case) -> str:
+    """The alert's post in its own words (Burson's summary when the post's words did not come with it)."""
+    fields = _fields(case)
+    return str(fields.get("post_content") or fields.get("summary") or "").strip()
+
+
 def _int(value: Any) -> int:
     try:
         return max(0, int(float(str(value).replace(",", "").strip())))

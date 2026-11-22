@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from . import audit, chatlog, early, mirror, stories, tempcheck
+from . import audit, chatlog, early, mirror, stories, storyread, tempcheck
 from .events import HOT_COLLECTION, TeeEventLogger
 
 if TYPE_CHECKING:
@@ -31,6 +31,7 @@ def run(ctx: "AgentContext", force: bool = False) -> dict[str, Any]:
         (audit.COLLECTION, "ts", now - timedelta(days=cfg.telemetry.audit_retention_days)),
         (chatlog.COLLECTION, "ts", now - timedelta(days=cfg.telemetry.chat_retention_days)),
         (stories.VECTORS, "last_at", now - timedelta(days=cfg.stories.keep_days)),  # a story that is over is never matched again
+        (storyread.READS, "at", now - timedelta(days=cfg.stories.keep_days)),  # Gemini's read of a story that is over
         (mirror.COPIES, "at", now - timedelta(days=cfg.routing.keep_days)),  # the record of what was copied between spaces
         (mirror.QUEUE, "at", now - timedelta(days=cfg.routing.keep_days)),
         (early.SIGNALS, "raised", now - timedelta(days=cfg.early.keep_days)),  # raised early stories
