@@ -343,7 +343,10 @@ class Brandwatch:
     def get(self, path: str) -> dict[str, Any]:
         import requests
 
-        resp = requests.get(f"{self.base}{path}", headers={"Authorization": f"Bearer {self.token}"}, timeout=45)
+        try:
+            resp = requests.get(f"{self.base}{path}", headers={"Authorization": f"Bearer {self.token}"}, timeout=45)
+        except requests.RequestException as exc:  # no answer at all: the network, a proxy or a timeout
+            raise BrandwatchUnavailable(f"Brandwatch could not be reached: {str(exc)[:200].replace(self.token, '[token]')}") from exc
         if resp.status_code == 401:
             raise BrandwatchUnavailable("Brandwatch refused the token (401): replace it under Settings → Secrets.", 401)
         if resp.status_code == 429:

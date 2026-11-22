@@ -466,6 +466,21 @@ def test_the_query_box_lists_the_event_queries_that_have_every_word_newest_first
     assert client.get("/api/temp-checks/queries", params={"q": "nothing here"}, headers=iap(VIEWER)).json()["queries"] == []
 
 
+def test_when_brandwatch_cannot_be_reached_the_query_box_says_so(ctx, setup, client, monkeypatch):
+    import requests
+
+    setup(queries=several(ctx))
+
+    def unreachable(url, **kw):
+        raise requests.ConnectionError("HTTPSConnectionPool(host='api.brandwatch.com', port=443): Max retries exceeded (Bearer token-value)")
+
+    monkeypatch.setattr("requests.get", unreachable)
+    got = client.get("/api/temp-checks/queries", headers=iap(VIEWER))
+    assert got.status_code == 200 and got.json()["queries"] == []
+    assert got.json()["error"].startswith("Brandwatch could not be reached: ") and "token-value" not in got.json()["error"]
+    assert client.get("/api/temp-checks/queries/2004162033", headers=iap(VIEWER)).status_code == 503
+
+
 def test_a_picked_query_shows_its_boolean(ctx, setup, client):
     setup(queries=several(ctx))
     one = client.get("/api/temp-checks/queries/2004162033", headers=iap(VIEWER)).json()
