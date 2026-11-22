@@ -83,6 +83,12 @@ class PartBody(BaseModel):
 
 @router.put("/platform/{part}")
 def platform_put(part: str, body: PartBody, request: Request, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_admin)) -> dict[str, Any]:
+    return save_part(part, body, request, ctx, user)
+
+
+def save_part(part: str, body: PartBody, request: Request, ctx: AgentContext, user: User, *, label: str = "", action: str = "") -> dict[str, Any]:
+    """Saves one part of the platform settings and puts the change on the record. A page with its own save (Routing)
+    passes its own name and audit action."""
     part = _part(part)
     if body.base_version and body.base_version != ctx.config_version:
         raise HTTPException(409, {"error": "The settings changed since you loaded them. Reload and apply your edit again.",
@@ -104,18 +110,19 @@ def platform_put(part: str, body: PartBody, request: Request, ctx: AgentContext 
         for err in errors:
             if err["loc"] and err["loc"][0] == part:
                 err["loc"] = err["loc"][1:]
-        raise HTTPException(422, {"error": f"Invalid {PART_INFO.get(part, (part, ''))[0]} settings", "code": "validation_error", "errors": errors}) from exc
+        raise HTTPException(422, {"error": f"Invalid {label or PART_INFO.get(part, (part, ''))[0]} settings", "code": "validation_error", "errors": errors}) from exc
     unknown = unknown_keys(body.value, candidate.model_dump(mode="json")["platform"][part], [])
     if unknown:
         raise HTTPException(422, {"error": f"Unknown setting(s): {', '.join('.'.join(p) for p in unknown[:5])}", "code": "validation_error",
                                   "errors": [{"loc": p, "msg": "Unknown setting", "type": "unknown_key"} for p in unknown]})
-    note = (body.note or "").strip() or f"{PART_INFO.get(part, (part, ''))[0]} updated in the Console"
+    label = label or PART_INFO.get(part, (part, ''))[0]
+    note = (body.note or "").strip() or f"{label} updated in the Console"
     saved = _save(request, ctx, user, "platform", overrides, note, reset=False)
     after = saved["value"][part]
     changed = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
     fresh = request.app.state.console.ctx
-    audit.record(fresh, actor=user.email, action=f"settings.{part}", surface="console", target_type="setting", target_id=part,
-                 summary=f"Changed {PART_INFO.get(part, (part, ''))[0]}: {', '.join(changed) or 'no change'}",
+    audit.record(fresh, actor=user.email, action=action or f"settings.{part}", surface="console", target_type="setting", target_id=part,
+                 summary=f"Changed {label}: {', '.join(changed) or 'no change'}",
                  detail={"changed": {k: {"before": before.get(k), "after": after.get(k)} for k in changed[:30]}})
     return {"ok": True, "part": part, "value": after, "config_version": saved["config_version"], "changed": changed}
 

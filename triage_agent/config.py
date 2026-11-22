@@ -1138,6 +1138,22 @@ class GcpConfig(ConfigModel):
     console_url: str = Field("", description="Public URL of the Console, used in links the agent posts.")
 
 
+class RoutingConfig(ConfigModel):
+    """Which Chat space the QA chatbot reads, where it copies it, and whether it may write back (the Routing page)."""
+
+    bot_on: bool = Field(False, description="ON: the QA chatbot reads the source space every minute and copies it. OFF: it reads and writes nothing in Chat.")
+    source: str = Field("", description="The space the messages come from: Burson's space, or any other. A link or an id.")
+    mirror: str = Field("", description="Second space: gets a copy of every message from the source, in the same order. A link or an id. Blank = no copy.")
+    third: str = Field("", description="Third space: gets a copy of every message that reached the second space. A link or an id. Blank = none.")
+    copy_everything: bool = Field(False, description="ON: replies, people's messages and emojis are copied too. OFF: only alerts are copied.")
+    ask_before_source: bool = Field(False, description="ON: each message for the source space waits for a person to press Send or Skip. OFF: it is posted straight away.")
+    start_minutes: int = Field(15, ge=0, le=1440, description="When a space is set or changed, copying starts this many minutes back.")
+    max_per_run: int = Field(25, ge=1, le=200, description="The most messages copied in one minute. The rest follow on the next.")
+    max_tries: int = Field(5, ge=1, le=50, description="A message that fails this many times in a row is given up on, with the reason shown.")
+    emoji_hours: int = Field(24, ge=1, le=72, description="Emojis are copied on messages up to this many hours old.")
+    keep_days: int = Field(30, ge=1, le=365, description="How long the record of what was copied is kept.")
+
+
 class PlatformConfig(ConfigModel):
     access: AccessConfig = Field(default_factory=AccessConfig)
     flags: FeatureFlags = Field(default_factory=FeatureFlags)
@@ -1154,6 +1170,7 @@ class PlatformConfig(ConfigModel):
     stories: StoriesConfig = Field(default_factory=StoriesConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
+    routing: RoutingConfig = Field(default_factory=RoutingConfig)
     campaigns: CampaignsConfig = Field(default_factory=CampaignsConfig)
 
     def flag(self, name: str) -> bool:

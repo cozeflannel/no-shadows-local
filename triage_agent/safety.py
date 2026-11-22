@@ -167,12 +167,20 @@ def guard_outputs(ctx: "AgentContext", outputs: ChatOutputs, *, op: str = "", ac
     external = set(safety.external_spaces)
     for target, text in list(outputs.target_texts().items()):
         reason, hits = "", []
+        from . import mirror
+
+        source = mirror.is_source_target(ctx, target)  # the Routing page's source space: written only when it is open
         if target not in allowed_targets:
             reason = "target_not_allowed"
+        elif source and not mirror.mode(ctx)["live"]:
+            reason = "safety_valve" if safety.testing else "routing"
         elif target in external:
             result = leak_guard(cfg, text, allow_emails=_external_roster_emails(ctx), external_key=target)
             if not result.ok:
                 reason, hits = "leak_guard", result.hits
+        if not reason and source and cfg.platform.routing.ask_before_source:
+            queued = mirror.send(ctx, text, origin=op, case_id=outputs.case_id, actor=actor)
+            reason = "waits_for_send" if queued["status"] == "waiting" else "routing"
         if reason:
             if out is outputs:
                 out = outputs.model_copy(deep=True)
@@ -184,6 +192,8 @@ def guard_outputs(ctx: "AgentContext", outputs: ChatOutputs, *, op: str = "", ac
         out.dm_text, out.dm_recipients = "", []
         held.append({"target": "dm", "check": "target_not_allowed", "hits": [], "chars": len(outputs.dm_text)})
     for h in held:
+        if h["check"] == "waits_for_send":
+            continue  # not blocked: it waits on the Routing page for a person's Send (recorded there)
         try:
             ctx.emit(PlatformEvent.SAFETY_BLOCKED, actor=actor, case_id=outputs.case_id or None,
                      escalation_id=outputs.escalation_id or None, payload={"op": op, **h})

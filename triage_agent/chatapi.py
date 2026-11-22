@@ -40,6 +40,10 @@ class NotSignedIn(RuntimeError):
     """The QA chatbot has not signed in to Chat, or its sign-in was withdrawn."""
 
 
+class Refused(RuntimeError):
+    """A write the routing rules do not allow (Routing page). Nothing was sent to Chat."""
+
+
 class ChatError(RuntimeError):
     def __init__(self, status: int, message: str):
         super().__init__(f"{status}: {message}")
@@ -112,25 +116,139 @@ def session_for(ctx: "AgentContext") -> Any:
     return AuthorizedSession(creds)
 
 
-class ChatClient:
-    def __init__(self, session: Any):
-        self.session = session
+OWN_PREFIX = "client-bqa-"      # the QA chatbot's own work
+MIRROR_PREFIX = "client-zmir-"   # its exact copy of an alert
+RELAY_PREFIX = "client-zrly-"    # its copy of a person's message or reply
+SOURCE_PREFIX = "client-zrlo-"   # what it posts in the source space
+OWN_ID = re.compile(r"^client-(?:bqa|zmir|zrly|zrlo|scmp|zwat|zeda)-")  # ids only the bot's own posts carry
+_CARD_KEYS = ("title", "subtitle", "text", "topLabel", "bottomLabel", "content")
+MARKUP = "MARKUP_SYNTAX_CHAT"
 
-    def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+
+def _when(value: Any) -> datetime:
+    return datetime.fromisoformat(re.sub(r"(\.\d{6})\d+", r"\1", str(value)).replace("Z", "+00:00"))
+
+
+def _card_text(m: dict[str, Any]) -> str:
+    out: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+        elif isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(value, str):
+                    if key in _CARD_KEYS and value.strip():
+                        out.append(value)
+                else:
+                    walk(value)
+
+    walk(m.get("cardsV2") or [])
+    walk(m.get("cards") or [])
+    text = "\n".join(re.sub(r"<[^>]+>", "", re.sub(r"<br\s*/?>", "\n", t, flags=re.I)) for t in out)
+    for a, b in (("&nbsp;", " "), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"'), ("&#39;", "'"), ("&amp;", "&")):
+        text = text.replace(a, b)
+    return text.strip()
+
+
+def message_view(m: dict[str, Any]) -> dict[str, Any]:
+    """One Chat message in the shape the rest of the code reads (Chat.gs normalizeMessage_)."""
+    sender = m.get("sender") or {}
+    return {
+        "name": m.get("name") or "", "text": m.get("text") or m.get("formattedText") or m.get("fallbackText") or "",
+        "card_text": _card_text(m), "create_time": _when(m["createTime"]) if m.get("createTime") else None,
+        "sender": sender.get("name") or "", "sender_display": sender.get("displayName") or "", "sender_type": sender.get("type") or "",
+        "thread": (m.get("thread") or {}).get("name") or "", "reply": bool(m.get("threadReply")),
+        "client_id": m.get("clientAssignedMessageId") or "",
+        "emojis": [{"emoji": s["emoji"]["unicode"], "count": int(s.get("reactionCount") or 0)}
+                   for s in m.get("emojiReactionSummaries") or [] if (s.get("emoji") or {}).get("unicode")],
+        "files": [a.get("contentName") or "" for a in m.get("attachment") or [] if a.get("contentName")],
+    }
+
+
+class ChatClient:
+    def __init__(self, session: Any, refuse: Any = None):
+        self.session = session
+        self.refuse = refuse      # refuse(space, approved) -> why this write is not allowed, or ""
+        self.approved = False     # True only while a person's Send is being posted (mirror.decide)
+
+    def _call(self, method: str, path: str, params: dict[str, Any] | None = None, body: Any = None) -> tuple[int, dict[str, Any], str]:
         last: Any = None
         for attempt in range(1, TRIES + 1):
-            last = self.session.request("GET", API + path, params=params or None, timeout=30)
+            last = self.session.request(method, API + path, params=params or None, json=body, timeout=30)
             if last.status_code != 429 and last.status_code < 500:
                 break
             if attempt < TRIES:
                 time.sleep(1.5 ** attempt)
         try:
-            body = last.json()
+            data = last.json()
         except ValueError:
-            body = {}
-        if last.status_code >= 300:
-            raise ChatError(last.status_code, str((body.get("error") or {}).get("message") or last.text or "no reason given")[:300])
+            data = {}
+        return last.status_code, data, str((data.get("error") or {}).get("message") or last.text or "no reason given")[:300]
+
+    def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        status, body, why = self._call("GET", path, params)
+        if status >= 300:
+            raise ChatError(status, why)
         return body
+
+    def _may_write(self, path: str) -> None:
+        space = "/".join(path.split("/")[:2])
+        why = self.refuse(space, self.approved) if self.refuse else ""
+        if why:
+            raise Refused(why)
+
+    def list_messages(self, space: str, since: datetime) -> list[dict[str, Any]]:
+        """Every message posted in a space after `since`, oldest first."""
+        out: list[dict[str, Any]] = []
+        params: dict[str, Any] = {"pageSize": 1000, "filter": f'create_time > "{since.isoformat()}"'}
+        while True:
+            body = self._get(f"{space}/messages", params)
+            out += [message_view(m) for m in body.get("messages") or []]
+            if not body.get("nextPageToken") or len(out) >= 5000:
+                break
+            params = {**params, "pageToken": body["nextPageToken"]}
+        return sorted((m for m in out if m["create_time"]), key=lambda m: (m["create_time"], m["name"]))
+
+    def post_message(self, space: str, text: str, *, thread: str = "", key: str = "", id_prefix: str = OWN_PREFIX) -> dict[str, Any]:
+        """Posts once: the same `key` in the same space gives back the message already posted (Chat.gs chatPostMessage_)."""
+        import hashlib
+
+        path = f"{space}/messages"
+        self._may_write(path)
+        body: dict[str, Any] = {"text": text, "markupSyntax": MARKUP}
+        params: dict[str, Any] = {}
+        if thread:
+            body["thread"] = {"name": thread}
+            params["messageReplyOption"] = "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
+        custom = ""
+        if key:
+            digest = hashlib.sha256(f"{space}|{key}".encode()).hexdigest()
+            params["requestId"] = f"{digest[:8]}-{digest[8:12]}-4{digest[13:16]}-a{digest[17:20]}-{digest[20:32]}"
+            custom = params["messageId"] = id_prefix + digest[:40]
+        status, data, why = self._call("POST", path, params, body)
+        if status == 409 and custom:  # posted on an earlier try: use that message
+            return message_view(self._get(f"{space}/messages/{custom}"))
+        if status == 400 and custom and re.search(r"message_?id", why, re.I):  # custom ids refused: the request id still dedupes
+            params.pop("messageId")
+            status, data, why = self._call("POST", path, params, body)
+        if status >= 300:
+            raise ChatError(status, why)
+        return message_view(data)
+
+    def react(self, message: str, emoji: str) -> None:
+        """Adds an emoji as the bot's account. Already there counts as done (Chat.gs chatReact_)."""
+        self._may_write(message)
+        bare = emoji.replace("\ufe0f", "")
+        status, why = 0, ""
+        for form in ([emoji, bare] if bare != emoji else [emoji, emoji + "\ufe0f"]):
+            status, _, why = self._call("POST", f"{message}/reactions", None, {"emoji": {"unicode": form}})
+            if status < 300 or status == 409:
+                return
+            if status != 400:
+                break
+        raise ChatError(status, why)
 
     def get_space(self, space: str) -> dict[str, Any]:
         body = self._get(space)
@@ -155,4 +273,9 @@ class ChatClient:
 
 
 def client_for(ctx: "AgentContext") -> ChatClient:
-    return ChatClient(session_for(ctx))
+    """The Chat client every write goes through: the Routing page's rules are checked before each one."""
+    from . import mirror
+
+    client = ChatClient(session_for(ctx))
+    client.refuse = lambda space, approved=False: mirror.refusal(ctx, space, client, approved=approved)
+    return client
