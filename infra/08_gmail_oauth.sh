@@ -19,6 +19,8 @@
 #        <Console URL from 07_console.sh>/api/gmail/callback
 #        http://localhost:8000/api/gmail/callback          (local development, optional)
 #   4. Download the JSON, then run:  infra/08_gmail_oauth.sh path/to/client_secret.json
+#   5. APIs & Services -> Google Chat API -> Configuration: fill App name, Avatar URL and Description, save.
+#      Reading Chat as a signed-in account works without this page; posting and adding emojis do not.
 #
 # Idempotent: re-running adds a new secret version (the Console always reads "latest").
 set -euo pipefail
@@ -26,7 +28,7 @@ source "$(dirname "$0")/_lib.sh"
 
 CLIENT_JSON="${1:-}"
 if [[ -z "${CLIENT_JSON}" || ! -f "${CLIENT_JSON}" ]]; then
-  sed -n '2,17p' "$0"
+  sed -n '2,23p' "$0"
   echo
   echo "Usage: infra/08_gmail_oauth.sh path/to/client_secret.json" >&2
   exit 1

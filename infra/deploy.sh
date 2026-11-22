@@ -95,7 +95,8 @@ Done. Console: ${URL}
 You (${ACCOUNT}) are its first admin. Open it: the Dashboard lists each setup step that is left, with a link.
 
 Two things cannot be done from here:
-  1. Gmail connect needs an OAuth web client, which Google only creates in the Cloud console. The steps are at the top
-     of infra/08_gmail_oauth.sh; then run: infra/08_gmail_oauth.sh path/to/client_secret.json
+  1. Gmail connect and the QA chatbot's Chat sign-in need a Google sign-in client, which Google only creates in the
+     Cloud console. The steps are at the top of infra/08_gmail_oauth.sh; then run:
+     infra/08_gmail_oauth.sh path/to/client_secret.json
   2. The Studio flows are built in Chat as the agent's account: flows/FLOW_SETUP.md
 EOF
