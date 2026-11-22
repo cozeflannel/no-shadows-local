@@ -21,6 +21,7 @@ gcloud services enable --project="${PROJECT_ID}" \
   storage.googleapis.com \
   pubsub.googleapis.com \
   drive.googleapis.com \
+  chat.googleapis.com \
   telemetry.googleapis.com \
   cloudtrace.googleapis.com
 
