@@ -674,6 +674,12 @@ smaller stories, per-alert points and hourly running totals; `GET /api/stories/{
 Settings. A check's result is kept in kv `connection:test:<key>` with a fingerprint of the values and dropped when they change.
 `GET /api/meta` carries `notifications` for the pop-ups. The tick records kv `tick:last`.
 
+**Chat as the QA chatbot's account** (`chatapi.py`, `console/backend/chat_signin.py`): the Console calls the Chat REST API with the sign-in
+of the account in `agent.email`, as the sheet-based bot does (no Chat app, no webhooks). `GET /api/chat-signin`, `GET /api/chat-signin/connect`
+(admins; Google returns to `/api/gmail/callback`, shared with Gmail), `DELETE /api/chat-signin`. Scopes: the sheet-based bot's five `chat.*`
+scopes. A token is kept only for that account and only when every scope was granted, in the token vault under `chat:<email>`. The Google Chat
+check reads each space and its latest message with it.
+
 **Operations** (`platform_ops.py`): `record_assessment {case_id, agree, verdict?, fields?, note?, actor}`, `run_temp_check {issue?, boolean?,
 query_ref?, filters?, draft_query?, case_id?, hours?, update_of?, keep_refreshed_hours?, actor}`, `run_forecast {force?}`, `refresh_knowledge {}`,
 `run_watches {}`. From Chat an assessment needs an analyst or IM; a Console call was already checked against the person's role.

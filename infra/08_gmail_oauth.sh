@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# Gmail OAuth client for "Connect Gmail" in the Agent Console.
+# Google sign-in client for the Console: "Connect Gmail" for each person, and "Sign in as the QA chatbot" for Chat.
+#
+# The QA chatbot's account signs in once (Integrations -> Google Chat) so the Console can read and post in Chat as that
+# account, the way the sheet-based bot does. It asks for: chat.messages.readonly, chat.messages.create,
+# chat.messages.reactions.create, chat.spaces.readonly, chat.memberships.readonly. Its token is kept in Secret Manager
+# under its own name. The same client and the same redirect URI below serve both sign-ins.
 #
 # Each Incident Manager connects their own Gmail once (scopes: gmail.compose + gmail.metadata) so the agent can
 # create Social Alert drafts in their mailbox (From: the Brand Social send-as alias) and see when they're sent.
@@ -8,7 +13,8 @@
 #
 # OAuth web clients can't be created from the CLI, so:
 #   1. Cloud console -> Google Auth Platform -> Branding: app name "SLRR Triage Agent", audience **Internal**.
-#   2. Data access: add .../auth/gmail.compose, .../auth/gmail.metadata, .../auth/gmail.send.
+#   2. Data access: add .../auth/gmail.compose, .../auth/gmail.metadata, .../auth/gmail.send, and the five
+#      .../auth/chat.* permissions listed above.
 #   3. Clients -> Create client -> Web application. Authorized redirect URIs:
 #        <Console URL from 07_console.sh>/api/gmail/callback
 #        http://localhost:8000/api/gmail/callback          (local development, optional)

@@ -315,6 +315,10 @@ def gmail_callback(
     except (KeyError, ValueError):
         return _back_to_console("error", "Invalid sign-in state. Click Connect Gmail again.")
     ctx.store.put_kv(key, {"used": True, "email": user.email, "used_at": ctx.now().isoformat()})  # type: ignore[arg-type]
+    if saved.get("purpose") == "chat":  # the QA chatbot's sign-in to Chat shares this return address
+        from . import chat_signin
+
+        return chat_signin.finish(ctx, mod, saved, str(state), code, user)
     mailbox = saved.get("mailbox") or mailbox_kind(ctx, user.email)
     scopes = saved.get("scopes") or _scopes(mod, mailbox)
     try:

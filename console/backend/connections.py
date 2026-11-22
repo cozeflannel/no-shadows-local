@@ -20,7 +20,7 @@ from typing import Any, Callable
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, ValidationError
 
-from triage_agent import audit, bq_admin, chatlog, knowledge, pubsub, secret_admin
+from triage_agent import audit, bq_admin, chatapi, chatlog, knowledge, pubsub, secret_admin
 from triage_agent.config import switch_off, switch_title
 from triage_agent.context import AgentContext
 
@@ -76,9 +76,9 @@ def tools(ctx: AgentContext) -> list[Tool]:
         Tool("runtime", "Agent Runtime", "The deployed agent the Chat flows call.", True,
              (F("platform.gcp.agent_runtime_resource", "Agent Runtime", True, options="runtimes"),),
              ("Chat", "Scheduled work"), "Vertex AI User on the project."),
-        Tool("chat", "Google Chat", "The spaces the agent reads and posts to.", True,
-             (F("agent.email", "The agent's account", True, help="The account that owns the Chat flows."), *_spaces(ctx)),
-             ("Alerts in", "Posts out"), "The agent's account is a member of each space.", "/settings/spaces"),
+        Tool("chat", "Google Chat", "The spaces the QA chatbot reads and posts in.", True,
+             (F("agent.email", "The QA chatbot's account", True, help="The Google account the QA chatbot reads and posts as."), *_spaces(ctx)),
+             ("Alerts in", "Posts out"), "The QA chatbot's account is a member of each space.", "/settings/spaces"),
         Tool("bigquery", "BigQuery", "Keeps events and audit entries, and runs forecasts and watches.", True,
              (F("platform.bigquery.dataset", "Dataset", True, options="datasets", help="The agent's own dataset."),
               F("platform.bigquery.location", "Location"), F("platform.bigquery.project", "Project", help="Blank: the Cloud project.")),
@@ -193,6 +193,10 @@ def state_of(ctx: AgentContext, t: Tool, settings: dict[str, Any] | None = None)
                  {"label": "Sign-in", "value": "simulated (TRIAGE_GMAIL=fake)" if g["mode"] == "fake" else ("set up" if g["oauth_client"] else "not set up")}]
         if not usable:
             missing = ["A Google sign-in client for Gmail (set at deploy)"]
+    signin = t.key == "chat"
+    if signin:
+        signed = chatapi.signed_in(ctx)
+        facts = [{"label": "QA chatbot signed in to Chat", "value": f"Yes, as {ctx.config.agent.email}" if signed else "No"}]
     if missing:
         state = "incomplete" if t.required or any(f["set"] for f in needed) else "not_connected"
     elif test is None:
@@ -201,6 +205,8 @@ def state_of(ctx: AgentContext, t: Tool, settings: dict[str, Any] | None = None)
         state = "connected" if test["ok"] else "failing"
     steps = ([{"key": "values", "title": "Choose its values" if any(f["options"] for f in fields) else "Enter its values"}] if fields else
              [{"key": "people", "title": "Each person connects their own mailbox"}])
+    if signin:
+        steps.append({"key": "signin", "title": "Sign in as the QA chatbot"})
     if t.create:
         steps.append({"key": "create", "title": "Create what is missing"})
     steps.append({"key": "test", "title": "Check access"})
@@ -363,18 +369,34 @@ def _check_runtime(ctx: AgentContext) -> list[dict[str, Any]]:
 
 
 def _check_chat(ctx: AgentContext) -> list[dict[str, Any]]:
-    out = [{"label": "The agent's account", "ok": bool(ctx.config.agent.email), "message": ctx.config.agent.email or "not set"}]
+    bot = ctx.config.agent.email
+    out = [{"label": "The QA chatbot's account", "ok": bool(bot), "message": bot or "not set"}]
+    spaces = [s for s in ctx.config.spaces if s.space_id or s.url]
     now = ctx.now()
-    for s in ctx.config.spaces:
-        if not (s.space_id or s.url):
+    if not chatapi.signed_in(ctx):
+        out.append({"label": "Signed in to Chat", "ok": False, "message": "The QA chatbot is not signed in to Chat. Use Sign in as the QA chatbot, then check again."})
+        for s in spaces:  # what the Chat flows have handed over so far
+            seen = chatlog.search(ctx, space_key=s.key, limit=1)
+            if seen:
+                out.append({"label": f"{s.display_name} space", "ok": True, "message": f"Last message handed over {int((now - seen[0].ts).total_seconds() / 60)} min ago."})
+        return out
+    out.append({"label": "Signed in to Chat", "ok": True, "message": f"As {bot}."})
+    try:
+        client = chatapi.client_for(ctx)
+    except Exception as exc:  # noqa: BLE001 - the sign-in was withdrawn, or Google can't be reached
+        return [*out[:1], {"label": "Signed in to Chat", "ok": False, "message": str(exc)[:300]}]
+    for s in spaces:
+        name = chatapi.space_name(s.space_id, s.url)
+        try:
+            info = client.get_space(name)
+            latest = client.latest_message(name, now)
+        except chatapi.ChatError as exc:
+            message = f"Add {bot} to this space, then check again. Chat said: {exc}" if exc.status in (403, 404) else f"Chat said: {exc}"
+            out.append({"label": f"{s.display_name} space", "ok": False, "message": message})
             continue
-        seen = chatlog.search(ctx, space_key=s.key, limit=1)
-        if seen:
-            minutes = int((now - seen[0].ts).total_seconds() / 60)
-            out.append({"label": f"{s.display_name} space", "ok": True, "message": f"Last message {minutes} min ago."})
-        else:
-            out.append({"label": f"{s.display_name} space", "ok": s.key not in ("burson", "clean"),
-                        "message": "No message seen from this space yet. Post one there; the Chat flow should hand it to the agent."})
+        when = f"Latest message {int((now - latest['create_time']).total_seconds() / 60)} min ago." if latest else "No message in it yet."
+        who = "People outside Google can join this space." if info["external"] else "Only Google people can join."
+        out.append({"label": f"{s.display_name} space", "ok": True, "message": f"{when} {who}"})
     return out
 
 

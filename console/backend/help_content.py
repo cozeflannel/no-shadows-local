@@ -252,6 +252,12 @@ TOPICS: list[dict[str, Any]] = [
                 "Enter or choose its values and Save.",
                 "Click Create when the tile offers it (BigQuery tables, Pub/Sub topics).",
                 "Click Check now. Each line says what passed and what to fix."]},
+            {"heading": "Sign in as the QA chatbot", "steps": [
+                "Open Integrations, then Google Chat.",
+                "Enter the QA chatbot's account (the Google account it reads and posts as) and Save.",
+                "Click Sign in as the QA chatbot. At Google, choose that account and leave every box ticked.",
+                "Click Check now. Each space shows its latest message and whether people outside Google can join it.",
+                "A space that says Add the account to this space: add it in Chat, then check again."]},
             {"heading": "What a tile says", "items": [
                 "Connected: its values are set and the last check passed.",
                 "Set, not checked: its values are set. Run the check.",

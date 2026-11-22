@@ -27,7 +27,7 @@ The IM then reacts with the existing emoji legend and the agent does the work:
 - Distribution-list routing.
 - go/WD-Triage pre-fill, the T&S intake/outcome/bug-ID loop, and the protocols.
 
-There is **no Chat API configuration and no webhooks**. Chat I/O runs through Google Workspace Studio flows owned by a dedicated Triage Agent account. The agent and Gemini run on the **Gemini Enterprise Agent Platform** (Agent Runtime, formerly Vertex AI Agent Engine).
+There are **no webhooks and no Chat app**. Chat I/O runs through Google Workspace Studio flows owned by a dedicated Triage Agent account; the Console can also read Chat with that account's own sign-in (Integrations, Google Chat), the way the sheet-based bot does, which is the base for bringing that bot's routing over. The agent and Gemini run on the **Gemini Enterprise Agent Platform** (Agent Runtime, formerly Vertex AI Agent Engine).
 
 ## Burson: before → after
 

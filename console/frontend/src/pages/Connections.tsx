@@ -2,7 +2,7 @@ import {
   Bot, CircleCheck, CircleX, Cloud, Database, FolderOpen, KeyRound, Mail, Megaphone, MessagesSquare, Radar, Send, Sparkles, Table2,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { apiGet, apiSend } from "../api/client";
 import { useAction, useApi } from "../api/hooks";
@@ -59,6 +59,48 @@ function Step({ n, title, done, children }: { n: number; title: string; done: bo
       </h3>
       <div className="mt-4">{children}</div>
     </section>
+  );
+}
+
+interface SignIn { signed_in: boolean; email: string; client_ready: boolean; scopes: string[] }
+
+/** The QA chatbot signs in to Google Chat once, as its own account, so the Console can read and post there as it. */
+function BotSignIn({ n, admin, onChanged }: { n: number; admin: boolean; onChanged: () => void }) {
+  const { toast } = useApp();
+  const [query, setQuery] = useSearchParams();
+  const state = useApi<SignIn>("/chat-signin");
+  const start = useAction(() => apiGet<{ auth_url: string }>("/chat-signin/connect", { format: "json" }));
+  const out = useAction(() => apiSend<SignIn>("delete", "/chat-signin"));
+  const result = query.get("signin");
+  const reason = query.get("reason");
+  useEffect(() => {
+    if (result !== "connected") return;
+    toast("The QA chatbot is signed in to Chat", "success");
+    setQuery({}, { replace: true });
+    onChanged();
+  }, [result]);  // eslint-disable-line react-hooks/exhaustive-deps
+  const s = state.data;
+  return (
+    <Step n={n} title="Sign in as the QA chatbot" done={!!s?.signed_in}>
+      {result === "error" && <Alert tone="rose" className="mb-3" title="The sign-in did not finish">{reason}</Alert>}
+      {(start.error ?? out.error) && <Alert tone="rose" className="mb-3">{(start.error ?? out.error)?.message}</Alert>}
+      {!s ? <Spinner /> : s.signed_in ? (
+        <>
+          <p className="text-sm text-zinc-700 dark:text-zinc-300">Signed in as {s.email}. The Console reads and posts in Chat as this account.</p>
+          {admin && <Button className="mt-3" loading={out.loading} onClick={async () => { const r = await out.run(); if (r) { state.setData(r); onChanged(); } }}>Sign out</Button>}
+        </>
+      ) : (
+        <>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            {s.email ? `Google will ask you to choose an account: choose ${s.email}. It is asked to let the QA chatbot read messages, post, add emoji reactions, and see spaces and their members.`
+              : "Enter the QA chatbot's account above and save it first."}
+          </p>
+          {!s.client_ready && <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">No Google sign-in client is set up yet. Create one once: the steps are at the top of infra/08_gmail_oauth.sh.</p>}
+          {admin && <Button className="mt-3" variant="primary" loading={start.loading} disabled={!s.email || !s.client_ready}
+            onClick={async () => { const r = await start.run(); if (r) window.location.href = r.auth_url; }}>Sign in as the QA chatbot</Button>}
+        </>
+      )}
+    </Step>
   );
 }
 
@@ -123,6 +165,11 @@ function ToolFlow({ tool, admin, onChanged }: { tool: Tool; admin: boolean; onCh
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{tool.what} Used by: {tool.uses.join(", ")}.</p>
       {error && <Alert tone="rose">{error.message}</Alert>}
       {!admin && <Alert tone="blue">An admin connects and changes integrations. You can see their state here.</Alert>}
+      {tool.fields.length > 0 && tool.facts.length > 0 && (
+        <dl className="grid grid-cols-2 gap-4 text-sm">
+          {tool.facts.map((f) => <div key={f.label}><dt className="text-xs text-zinc-500 dark:text-zinc-400">{f.label}</dt><dd className="mt-0.5 text-zinc-900 dark:text-zinc-100">{f.value}</dd></div>)}
+        </dl>
+      )}
 
       {tool.fields.length > 0 ? (
         <Step n={++n} title={tool.steps[0]?.title ?? "Its values"} done={!tool.missing.length}>
@@ -153,6 +200,8 @@ function ToolFlow({ tool, admin, onChanged }: { tool: Tool; admin: boolean; onCh
           <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">{tool.access} <Link to="/admin" className="text-blue-700 hover:underline dark:text-blue-300">See who is connected</Link></p>
         </Step>
       )}
+
+      {tool.steps.some((x) => x.key === "signin") && <BotSignIn n={++n} admin={admin} onChanged={onChanged} />}
 
       {tool.create && (
         <Step n={++n} title="Create what is missing" done={!!created?.every((s) => s.ok)}>
