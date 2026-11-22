@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router";
 
 import { GmailButton } from "./components/GmailButton";
@@ -5,33 +6,35 @@ import { Layout } from "./components/Layout";
 import { Alert, Spinner } from "./components/ui";
 import { useApp } from "./context";
 import { LiveProvider } from "./lib/live";
-import ActivityPage from "./pages/Activity";
-import AdminPage from "./pages/Admin";
-import AiPage from "./pages/Ai";
-import AgentPage from "./pages/Agent";
-import CampaignsPage from "./pages/Campaigns";
-import CasesPage from "./pages/Cases";
-import ComparePage from "./pages/Compare";
-import ConnectionsPage from "./pages/Connections";
-import EarlyPage from "./pages/Early";
-import ChatSpacesPage from "./pages/ChatSpaces";
 import DashboardPage from "./pages/Dashboard";
-import EscalationsPage from "./pages/Escalations";
 import FeedPage from "./pages/Feed";
-import HelpPage from "./pages/Help";
-import KnowledgePage from "./pages/Knowledge";
-import LearningPage from "./pages/Learning";
-import OutboxPage from "./pages/Outbox";
-import OverviewPage from "./pages/Overview";
-import ParityPage from "./pages/Parity";
-import RostersPage from "./pages/Rosters";
-import SettingsPage from "./pages/Settings";
-import RoutingPage from "./pages/Routing";
-import StoriesPage from "./pages/Stories";
-import SuppressedPage from "./pages/Suppressed";
-import TempCheckPage from "./pages/TempCheck";
 import WelcomePage from "./pages/Welcome";
-import WorkforcePage from "./pages/Workforce";
+
+// Every page but the ones a person lands on is loaded when it is first opened, so the Console's first file stays small.
+const ActivityPage = lazy(() => import("./pages/Activity"));
+const AdminPage = lazy(() => import("./pages/Admin"));
+const AiPage = lazy(() => import("./pages/Ai"));
+const AgentPage = lazy(() => import("./pages/Agent"));
+const CampaignsPage = lazy(() => import("./pages/Campaigns"));
+const CasesPage = lazy(() => import("./pages/Cases"));
+const ComparePage = lazy(() => import("./pages/Compare"));
+const ConnectionsPage = lazy(() => import("./pages/Connections"));
+const EarlyPage = lazy(() => import("./pages/Early"));
+const ChatSpacesPage = lazy(() => import("./pages/ChatSpaces"));
+const EscalationsPage = lazy(() => import("./pages/Escalations"));
+const HelpPage = lazy(() => import("./pages/Help"));
+const KnowledgePage = lazy(() => import("./pages/Knowledge"));
+const LearningPage = lazy(() => import("./pages/Learning"));
+const OutboxPage = lazy(() => import("./pages/Outbox"));
+const OverviewPage = lazy(() => import("./pages/Overview"));
+const ParityPage = lazy(() => import("./pages/Parity"));
+const RostersPage = lazy(() => import("./pages/Rosters"));
+const SettingsPage = lazy(() => import("./pages/Settings"));
+const RoutingPage = lazy(() => import("./pages/Routing"));
+const StoriesPage = lazy(() => import("./pages/Stories"));
+const SuppressedPage = lazy(() => import("./pages/Suppressed"));
+const TempCheckPage = lazy(() => import("./pages/TempCheck"));
+const WorkforcePage = lazy(() => import("./pages/Workforce"));
 
 export default function App() {
   const { me, gmail, bootError } = useApp();
@@ -69,6 +72,7 @@ export default function App() {
       <Route path="*" element={
         <LiveProvider>
         <Layout>
+          <Suspense fallback={<Spinner />}>
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/feed" element={<FeedPage />} />
@@ -109,6 +113,7 @@ export default function App() {
             <Route path="/settings/:key" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          </Suspense>
         </Layout>
         </LiveProvider>
       } />
