@@ -124,19 +124,33 @@ def delete_watch(ctx: "AgentContext", actor: str, watch_id: str) -> bool:
 def look_sql(src: Any, watches: list[Watch], cfg: Any) -> tuple[str, dict[str, Any]]:
     """One look at one source: the new posts, each watch's question, the matches' scores and topics."""
     from .bq_admin import check_table_id
-    from .tempcheck import _ident
+    from .tempcheck import _ident, read_of
 
-    if not src.time_column or not src.text_columns or not src.url_column:
-        raise ValueError("The source needs a time column, a text column and a link column (Settings → Temp check → sources).")
-    table = check_table_id(src.table)
-    t = _ident(src.time_column, "time column")
-    text = " , ' ', ".join(f"IFNULL(CAST({_ident(c, 'text column')} AS STRING), '')" for c in src.text_columns)
-    platform = (f"LOWER(CAST({_ident(src.platform_column, 'platform column')} AS STRING))" if src.platform_column
-                else (f"'{src.platform_value.lower()}'" if re.fullmatch(r"[\w -]+", src.platform_value or "") else "''"))
-    followers = f"SAFE_CAST({_ident(src.followers_column, 'followers column')} AS INT64)" if src.followers_column else "CAST(NULL AS INT64)"
-    eng = f"SAFE_CAST(({src.engagement_expr}) AS FLOAT64)" if src.engagement_expr.strip() else "CAST(NULL AS FLOAT64)"
-    author = f"CAST({_ident(src.author_column, 'author column')} AS STRING)" if src.author_column else "CAST(NULL AS STRING)"
-    extra = f" AND ({src.filter_sql})" if src.filter_sql.strip() else ""
+    if src.read_sql.strip():  # a table with its own read: the rows that arrived since the last look, in the shape the read gives
+        new_posts = (
+            "new_posts AS (\n"
+            "  SELECT platform, author, IFNULL(text, '') AS txt, url AS post_url, posted, SAFE_CAST(followers AS INT64) AS followers,\n"
+            "    SAFE_CAST(eng AS FLOAT64) AS eng\n"
+            f"  FROM (\n    {read_of(src)}\n  )\n  WHERE seen >= @since AND seen < @until\n"
+            "  QUALIFY ROW_NUMBER() OVER (PARTITION BY one ORDER BY seen DESC) = 1\n),\n")
+    else:
+        if not src.time_column or not src.text_columns or not src.url_column:
+            raise ValueError("The source needs a time column, a text column and a link column (Settings → Temp check → sources).")
+        table = check_table_id(src.table)
+        t = _ident(src.time_column, "time column")
+        text = " , ' ', ".join(f"IFNULL(CAST({_ident(c, 'text column')} AS STRING), '')" for c in src.text_columns)
+        platform = (f"LOWER(CAST({_ident(src.platform_column, 'platform column')} AS STRING))" if src.platform_column
+                    else (f"'{src.platform_value.lower()}'" if re.fullmatch(r"[\w -]+", src.platform_value or "") else "''"))
+        followers = f"SAFE_CAST({_ident(src.followers_column, 'followers column')} AS INT64)" if src.followers_column else "CAST(NULL AS INT64)"
+        eng = f"SAFE_CAST(({src.engagement_expr}) AS FLOAT64)" if src.engagement_expr.strip() else "CAST(NULL AS FLOAT64)"
+        author = f"CAST({_ident(src.author_column, 'author column')} AS STRING)" if src.author_column else "CAST(NULL AS STRING)"
+        extra = f" AND ({src.filter_sql})" if src.filter_sql.strip() else ""
+        new_posts = (
+            "new_posts AS (\n"
+            f"  SELECT IF({platform} = 'twitter', 'x', {platform}) AS platform, {author} AS author, CONCAT({text}) AS txt,\n"
+            f"    CAST({_ident(src.url_column, 'url column')} AS STRING) AS post_url, {t} AS posted, {followers} AS followers, {eng} AS eng\n"
+            f"  FROM `{table}`\n  WHERE {t} >= @since AND {t} < @until{extra}\n"
+            f"  QUALIFY ROW_NUMBER() OVER (PARTITION BY CAST({_ident(src.url_column, 'url column')} AS STRING) ORDER BY {t} DESC) = 1\n),\n")
     params: dict[str, Any] = {"cap": cfg.watch_posts_per_look, "min_f": cfg.watch_min_followers, "min_e": cfg.watch_min_engagement,
                               "near": float(cfg.watch_near_miss)}
     structs = []
@@ -155,11 +169,7 @@ def look_sql(src: Any, watches: list[Watch], cfg: Any) -> tuple[str, dict[str, A
     classify = (f"AI.CLASSIFY(s.txt, [{', '.join(repr(t) for t in [*topics, 'Other'])}]{connection})" if topics else "CAST(NULL AS STRING)")
     sql = (
         f"WITH watches AS (\n  SELECT * FROM UNNEST([{', '.join(structs)}])\n),\n"
-        "new_posts AS (\n"
-        f"  SELECT IF({platform} = 'twitter', 'x', {platform}) AS platform, {author} AS author, CONCAT({text}) AS txt,\n"
-        f"    CAST({_ident(src.url_column, 'url column')} AS STRING) AS post_url, {t} AS posted, {followers} AS followers, {eng} AS eng\n"
-        f"  FROM `{table}`\n  WHERE {t} >= @since AND {t} < @until{extra}\n"
-        f"  QUALIFY ROW_NUMBER() OVER (PARTITION BY CAST({_ident(src.url_column, 'url column')} AS STRING) ORDER BY {t} DESC) = 1\n),\n"
+        + new_posts +
         "cand AS (\n  SELECT *, ROW_NUMBER() OVER (ORDER BY IFNULL(eng, 0) DESC, IFNULL(followers, 0) DESC) AS rk\n  FROM new_posts\n"
         "  WHERE post_url IS NOT NULL AND LENGTH(TRIM(txt)) > 0 AND posted >= @posted_since\n"
         "    AND (IFNULL(followers, 0) >= @min_f OR IFNULL(eng, 0) >= @min_e)\n),\n"
@@ -211,6 +221,8 @@ def run_due(ctx: "AgentContext", actor: str = "agent", force: bool = False) -> d
         try:
             sql, params = look_sql(src, watches, cfg)
             params.update({"since": since, "until": now, "posted_since": now - timedelta(hours=cfg.watch_posted_within_hours)})
+            if src.read_sql.strip():  # the stretch a table's own read covers
+                params.update({"t_from": since, "t_to": now})
             rows = gw.query(sql, params, location=src.location or None, max_rows=5000, labels={"app": "triage-agent", "job": "watch"})
             hits = [r for r in rows if r.get("kind") == "hit"]
             meta = next((r for r in rows if r.get("kind") == "src"), {})

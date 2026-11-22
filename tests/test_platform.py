@@ -504,15 +504,16 @@ def tc_source() -> TempCheckSource:
 def test_temp_check_from_our_own_tables_with_the_team_template(ctx, fake_llm, clock):
     flags(ctx, temp_checks=True)
     ctx.config.platform.temp_check.sources = [tc_source()]
+    ctx.config.platform.temp_check.row_limit = 2  # the table matches 640 posts and two are read back, so it is counted by its counting statement
     base = clock.now.replace(minute=0, second=0, microsecond=0)
     hr = lambda h: int((base - timedelta(hours=h)).timestamp() * 1000)  # noqa: E731
     counts = [{"platform": "x", "hr": hr(3), "sentiment": "negative", "n": 150, "eng": 9000},
               {"platform": "x", "hr": hr(2), "sentiment": "neutral", "n": 400, "eng": 5000},
               {"platform": "reddit", "hr": hr(1), "sentiment": "negative", "n": 90, "eng": 800}]
     posts = [{"platform": "x", "author": "@newsdesk", "text": "Gmail calendar phishing scam spreads fast", "url": "https://x.com/n/status/11",
-              "posted": base - timedelta(hours=2), "followers": 9000, "eng": 5200.0, "sentiment": "negative", "language": "en", "one": "u1", "matched": 2},
+              "posted": base - timedelta(hours=2), "followers": 9000, "eng": 5200.0, "sentiment": "negative", "language": "en", "one": "u1", "matched": 640},
              {"platform": "reddit", "author": "u/someone", "text": "PSA: calendar invite scam in gmail", "url": "https://www.reddit.com/r/gmail/comments/1",
-              "posted": base - timedelta(hours=1), "followers": None, "eng": 300.0, "sentiment": "neutral", "language": "en", "one": "u2", "matched": 2}]
+              "posted": base - timedelta(hours=1), "followers": None, "eng": 300.0, "sentiment": "neutral", "language": "en", "one": "u2", "matched": 640}]
     ctx.bq = Rows(posts, counts)
     ctx.bq._settings_key = ("", "", 0)
     fake_llm.on("temp_check.writeup", {"summary": "Most posts warn others about the scam.", "negativity_drivers": "People blame [slow blocking](#1).",
@@ -531,7 +532,7 @@ def test_temp_check_from_our_own_tables_with_the_team_template(ctx, fake_llm, cl
     assert 'href="https://x.com/n/status/11"' in check.writeup_html and "Highest Engaging Posts:" in text
     assert check.concern_level == "" and "past issue" in check.level["why"], "no level is claimed without enough past issues"
     sql, params = ctx.bq.asked[0]
-    assert "FROM `p.d.sonar_raw`" in sql and params["lim"] == 3000 and "REGEXP_CONTAINS(text_l, @q0)" in sql
+    assert "FROM `p.d.sonar_raw`" in sql and params["lim"] == 2 and "REGEXP_CONTAINS(text_l, @q0)" in sql
     assert ctx.events.query(types=[P.TEMP_CHECK_COMPLETED]) and tempcheck.record_action(ctx, check.check_id, IM, "used").actions[0]["actor"] == IM
 
 
@@ -1085,7 +1086,7 @@ def test_a_finished_temp_check_is_kept_as_a_document_when_a_folder_is_set(ctx, f
     cfg = ctx.config.platform.temp_check
     cfg.sources = [tc_source()]
     base = clock.now.replace(minute=0, second=0, microsecond=0)
-    posts = [{"platform": "x", "author": "@n", "text": "Gmail scam spreads", "url": "https://x.com/n/status/11", "posted": base, "followers": 1,
+    posts = [{"platform": "x", "author": "@n", "text": "Gmail scam spreads", "url": "https://x.com/n/status/11", "posted": base - timedelta(hours=1), "followers": 1,
               "eng": 5.0, "sentiment": "negative", "language": "en", "one": "u1", "matched": 1}]
     ctx.bq = Rows(posts, [{"platform": "x", "hr": int((base - timedelta(hours=1)).timestamp() * 1000), "sentiment": "negative", "n": 120, "eng": 9}])
     ctx.bq._settings_key = ("", "", 0)

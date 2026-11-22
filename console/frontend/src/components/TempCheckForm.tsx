@@ -7,7 +7,7 @@ import { Badge, Button, Card, cx, Field, Input, Segmented, Select, Textarea, Tog
 
 /** What the form needs to know from Settings: the tables that can be searched and the numbers its labels name. */
 export interface FormInfo {
-  tables: { key: string; label: string; freshness: string }[]; platforms: string[];
+  tables: { key: string; label: string; freshness: string; what: string }[]; platforms: string[];
   spike_mentions: number; no_query_hours: number; since_max_days: number; event_query_prefix: string;
 }
 export interface PastCheck { check_id: string; issue: string; created_at: string; own_posts: number; own_from: string | null }
@@ -328,7 +328,7 @@ export function TempCheckForm({ info, past, canAct, enabled, brandwatch, caseId,
               {allTables.length ? (
                 <div className="flex flex-wrap gap-x-4 gap-y-2">
                   {allTables.map((t) => (
-                    <span key={t.key} title={t.freshness || undefined}>
+                    <span key={t.key} title={t.what || t.freshness || undefined}>
                       <Toggle checked={ticked.includes(t.key)} disabled={locked} label={t.label}
                         onChange={(on) => setTables(on ? [...ticked, t.key] : ticked.filter((k) => k !== t.key))} />
                     </span>

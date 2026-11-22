@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .models import Roster, Severity
 
@@ -990,9 +990,13 @@ class TempCheckSource(ConfigModel):
 
     key: str = Field(..., description="A short name for this table, with no spaces.")
     label: str = Field("", description="The name people see for this table.")
+    what: str = Field("", description="What this table holds, in a sentence. Shown where the tables are picked.")
     table: str = Field("", description="project.dataset.table")
     location: str = Field("", description="BigQuery location of the table. Blank = the agent's own.")
     enabled: bool = Field(True, description="OFF: temp checks skip this table.")
+    read_sql: str = Field("", description="How the table is read, for a table the columns below can't describe: one SELECT that gives each post as platform, author, text, url, posted, followers, eng, sentiment, language, shares, replies, seen (when the row arrived) and one (what makes a row one post). Write {table} where the table's name goes; @t_from and @t_to are the stretch being searched. Blank = the columns below are used.")
+    has: list[Literal["text", "author", "url", "platform", "followers", "language"]] = Field(default_factory=list, description="With a read above: which of text, author, url, platform, followers and language it fills. A part of a query that needs one the table lacks is left out for that table.")
+    x_lookup: bool = Field(True, description="ON: X posts that came without their words are looked up in this table.")
     text_columns: list[str] = Field(default_factory=list, description="Columns searched for the query's words.")
     url_column: str = Field("", description="The column that holds the post's link.")
     id_column: str = Field("", description="Row id, for tables where many rows share one link (comments).")
@@ -1008,6 +1012,19 @@ class TempCheckSource(ConfigModel):
     dedupe_by: Literal["url", "id"] = Field("url", description="How the same post is recognised when it appears twice: by its link or by its id.")
     freshness: str = Field("", description="How fresh the table is, shown beside its results.")
 
+    @model_validator(mode="after")
+    def _read_is_one_select(self) -> "TempCheckSource":
+        read = self.read_sql.strip()
+        if not read:
+            return self
+        if not read.lower().startswith("select") or ";" in read:
+            raise ValueError("The read must be one statement that starts with SELECT.")
+        if "{table}" not in read:
+            raise ValueError("Write {table} in the read where the table's name goes.")
+        if "text" not in self.has:
+            raise ValueError("Say what the read fills: at least text.")
+        return self
+
 
 class ConcernBand(ConfigModel):
     label: str = Field(..., description="The name of this level of concern (for example Low, Elevated, High).")
@@ -1022,7 +1039,9 @@ class TempCheckConfig(ConfigModel):
     brandwatch_project_id: str = Field("", description="Brandwatch project the queries live in.")
     brandwatch_token_secret: str = Field("", description="Name of the secret (Settings → Secrets) holding the Brandwatch token.")
     event_query_prefix: str = Field("", description="Name prefix of the event queries offered in the picker and used for the concern level.")
-    landscape_query_ids: list[str] = Field(default_factory=list, description="Standing queries searched when the issue has no query of its own yet.")
+    standing_query_name: str = Field("", description="Standing queries are found by name: the active Brandwatch queries whose name starts with this are searched when the issue has no query of its own yet. Blank = only the ids below.")
+    standing_query_skip: str = Field("", description="A standing query whose name has this word is left out. Blank = none is.")
+    landscape_query_ids: list[str] = Field(default_factory=list, description="Standing queries named by id, searched as well as the ones found by name.")
     sources: list[TempCheckSource] = Field(default_factory=list, description="The tables searched for posts.")
     model: str = Field("", description="Model that writes the write-up. Blank = the drafting model.")
     timezone: str = Field("", description="Timezone the write-up's times are given in. Blank = the display timezone.")

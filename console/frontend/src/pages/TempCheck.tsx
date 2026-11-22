@@ -17,7 +17,7 @@ interface Brief { own_posts: number; own_from: string | null; standing: boolean;
 type Check = Brief & TcCheck & { reasons: string[]; doc_url: string; steps: { at: string; text: string }[] };
 interface ListResponse {
   checks: Brief[]; enabled: boolean; auto_enabled: boolean;
-  setup: { brandwatch: boolean; sources: { key: string; label: string; enabled: boolean }[]; standing_queries: number; lookback_hours: number };
+  setup: { brandwatch: boolean; sources: { key: string; label: string; enabled: boolean }[]; lookback_hours: number };
   form: FormInfo;
   auto: { started_today: number; daily_limit: number };
 }

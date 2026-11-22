@@ -214,6 +214,23 @@ def test_a_count_from_the_standing_queries_is_not_ranked(ctx, setup, hour):
                                   "which are ranked by their own queries' counts.")
 
 
+def test_standing_queries_are_found_by_name_the_way_the_app_finds_them(ctx, setup, hour):
+    listed = [{"id": 507, "name": "[V2] MAIN G Landscape (EN) X", "state": "active"}, {"id": 503, "name": "[v2] main g landscape (ES)", "state": "active"},
+              {"id": 504, "name": "[V2] MAIN G Landscape (EN) benchmark", "state": "active"}, {"id": 505, "name": "[V2] MAIN G Landscape (FR)", "state": "deactivated"},
+              {"id": 506, "name": "Old [V2] MAIN G Landscape (EN)", "state": "active"}, {**QUERY, "id": 2004162099, "name": "[G EVENT] NOV26 Something Else"}]
+    bw, _ = setup(queries=listed, hours={2: 40, 1: 10})
+    cfg = ctx.config.platform.temp_check
+    cfg.standing_query_name, cfg.standing_query_skip, cfg.landscape_query_ids = "[V2] MAIN G Landscape (", "benchmark", ["501", "503"]
+    assert tempcheck.standing_ids(ctx, tempcheck.Brandwatch(ctx)) == ["501", "503", "507"], "ids named in Settings, then the ones found by name, oldest first"
+    check = run(ctx, issue="Alleged Gmail Outage", boolean="gmail AND outage")
+    asked = bw.calls("/volume/queries/hours")[0]
+    assert asked["queryId"] == ["501", "503", "507"], "active, named from its first letter, not a benchmark: the others are left out"
+    assert check.basis == "brandwatch" and check.standing and check.standing_detail["queries"] == 3 and check.total == 50
+    cfg.standing_query_name, cfg.landscape_query_ids = "", []
+    none = run(ctx, issue="Alleged Gmail Outage", boolean="gmail AND outage")
+    assert none.basis == "own" and "No standing Brandwatch queries" in none.standing_detail["skipped"], "with no name and no ids, Brandwatch is not asked"
+
+
 # -- Our own data -----------------------------------------------------------------------------------------------------------
 def test_with_a_query_our_tables_are_searched_from_the_start_brandwatch_found(ctx, setup, hour):
     _, tables = setup(hours={6: 120, 2: 30})
@@ -388,12 +405,12 @@ def test_the_broad_draft_is_put_together_from_geminis_two_lists_by_fixed_rules(c
 
 
 class Twice(Tables):
-    """A table that finds nothing the first time it is searched and the posts the second time."""
+    """A table where nothing matches the drafted query (it asks for "meltdown") and the posts match the subject alone."""
 
     def query(self, sql: str, params: dict[str, Any] | None = None, **kw: Any) -> list[dict[str, Any]]:
         self.asked.append((sql, dict(params or {})))
-        first = len(self.asked) <= 2
-        return [] if first else (self.counts if "GROUP BY 1, 2, 3" in sql else self.posts)
+        drafted = any("meltdown" in str(v) for v in (params or {}).values())
+        return [] if drafted else (self.counts if "GROUP BY 1, 2, 3" in sql else self.posts)
 
 
 def test_a_drafted_query_that_finds_nothing_is_tried_once_more_with_the_subject_alone(ctx, setup, fake_llm, hour):
@@ -496,7 +513,8 @@ def test_a_run_from_the_form_can_be_followed_by_its_key_and_ends_in_the_list(ctx
     listed = client.get("/api/temp-checks", headers=iap(VIEWER)).json()
     row = listed["checks"][0]
     assert row["title"] == check["title"] and row["basis"] == "brandwatch" and row["own_posts"] == 3 and row["own_from"] == check["own"]["from"]
-    assert listed["form"]["tables"] == [{"key": "sonar", "label": "Sonar", "freshness": ""}] and listed["form"]["spike_mentions"] == 100
+    assert listed["form"]["tables"] == [{"key": "sonar", "label": "Sonar", "freshness": "", "what": ""}] and listed["form"]["spike_mentions"] == 100
+    assert "standing_queries" not in listed["setup"], "the count of typed ids said nothing once standing queries are found by name"
     assert listed["form"]["no_query_hours"] == 24 and "Reddit" in listed["form"]["platforms"] and listed["form"]["event_query_prefix"] == "[G EVENT]"
 
 

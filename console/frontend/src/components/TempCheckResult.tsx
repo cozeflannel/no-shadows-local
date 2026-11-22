@@ -26,8 +26,9 @@ export interface TcCheck {
     widened?: { from: string; why: string }; relevance?: { about: number; read: number } };
   standing_detail: { queries?: number; skipped?: string };
   own: { boolean?: string; origin?: string; from?: string; to?: string; total?: number | null; hours?: { at: string; n: number }[]; sources?: Ranked[]; eng_sources?: Ranked[];
-    error?: string; kept?: number; reused?: { kept: number; since: number; gathered_at: string; note: string } };
-  tables: { key: string; label: string; matched?: number; scan_gb?: number; skipped?: string; error?: string; freshness?: string }[];
+    error?: string; kept?: number; complete?: boolean; spread?: { counted: number; reposts: number; replies: number };
+    reused?: { kept: number; since: number; gathered_at: string; note: string } };
+  tables: { key: string; label: string; matched?: number; read?: number; scan_gb?: number; newest?: string | null; skipped?: string; error?: string; freshness?: string }[];
   own_total: number | null; keep_refreshed_until: string | null;
 }
 
@@ -298,6 +299,7 @@ export function TempCheckResult({ c, tables, canAct, busy, onRefresh, onKeep, to
   const [before, after] = c.writeup_html.split("<!--tc-chart-->");
   const types = Object.fromEntries(c.mention_types.map((t) => [t.label, t.n]));
   const ownTotal = c.own.total ?? 0;
+  const sp = c.own.spread ?? { counted: 0, reposts: 0, replies: 0 };
   // What the run noted, less what a line below already says in the app's words
   const notes = c.notes.filter((n) => !/^(No concern level:|Built from our own tables:)/.test(n) && n !== c.standing_detail.skipped);
 
@@ -424,7 +426,8 @@ export function TempCheckResult({ c, tables, canAct, busy, onRefresh, onKeep, to
         <div className="space-y-4">
           <Tiles items={[
             bw ? { label: c.standing ? "Brandwatch counted, in its standing Google queries" : "Brandwatch counted", value: <span style={{ color: BW }}>{fmtNum(c.total)}</span>, hint: "mentions" } : null,
-            { label: "Our own tables hold", value: <span style={{ color: OURS }}>{fmtNum(ownTotal)}</span>, hint: "posts and comments, each counted once" },
+            { label: "Our own tables hold", value: <span style={{ color: OURS }}>{fmtNum(ownTotal)}</span>,
+              hint: c.own.complete === false ? "posts and comments (one that is in two tables is counted in each)" : "posts and comments, each counted once" },
             bw && c.total ? { label: "Our posts for every 100 Brandwatch mentions", value: per100(c.total), hint: "not a share: the two are different sets" } : null,
             bw && types["original posts"] ? { label: "Our posts for every 100 of Brandwatch's original posts", value: per100(types["original posts"]), hint: "the fairer comparison: our tables hold no reposts" } : null,
           ]} />
@@ -458,10 +461,13 @@ export function TempCheckResult({ c, tables, canAct, busy, onRefresh, onKeep, to
           <KV cols={1} items={[
             ...(bw ? [["Brandwatch: mentions", fmtNum(c.total)], ["Brandwatch: original posts", fmtNum(types["original posts"] ?? 0)], ["Brandwatch: comments and replies", fmtNum(types.comments ?? 0)], ["Brandwatch: reposts", fmtNum(types.reposts ?? 0)]] as [ReactNode, ReactNode][] : []),
             ["Our tables: posts and comments", fmtNum(ownTotal)],
-            ...c.tables.map((t) => [t.label, t.skipped ? `skipped: ${t.skipped}` : t.error ? `failed: ${t.error}` : `${fmtNum(t.matched ?? 0)} matched${t.scan_gb !== undefined ? `, ${t.scan_gb} GB scanned` : ""}${t.freshness ? `, ${t.freshness}` : ""}`] as [ReactNode, ReactNode]),
+            ...c.tables.map((t) => [t.label, t.skipped ? `skipped: ${t.skipped}` : t.error ? `failed: ${t.error}`
+              : `${fmtNum(t.matched ?? 0)} matched${t.read !== undefined && t.read < (t.matched ?? 0) ? `, ${fmtNum(t.read)} read` : ""}${t.scan_gb !== undefined ? `, ${t.scan_gb} GB scanned` : ""}${t.newest ? `, its newest from ${fmtDateTime(t.newest)}` : ""}`] as [ReactNode, ReactNode]),
             ["Our posts by source", ranked(c.own.sources, ownTotal)],
+            ["What those posts' own counters say", sp.counted ? `${fmtNum(sp.reposts)} reposts and ${fmtNum(sp.replies)} replies, on the ${fmtNum(sp.counted)} posts that came with counters` : "no counters came with them"],
           ]} />
-          {bw && <Note>Our tables hold posts, not the reposts of and replies to them, so set our count beside Brandwatch's original posts, not its total. The two are not the same set of posts: each side has some the other lacks.</Note>}
+          {bw && <Note>Our tables hold posts, not the reposts of and replies to them, so set our count beside Brandwatch's original posts, not its total. The two are not the same set of posts: each side has some the other lacks.
+            The counters line is the platforms' own totals for the posts we hold (every repost of them, whether or not it matches the query). It is not Brandwatch's repost or comment count and should not be set against it.</Note>}
           {c.own.reused && <Note>Reused {fmtNum(c.own.reused.kept)} posts gathered at {fmtDateTime(c.own.reused.gathered_at)}; searched afresh only for what came after ({fmtNum(c.own.reused.since)} found). {c.own.reused.note}</Note>}
           {c.query.drafted && <Note>The query was drafted from the alert: Gemini named what it is about and the words people use about it, and the app joined them. {c.query.draft_why}</Note>}
           {c.query.widened && <Warn>{c.query.widened.why} The drafted query was: {c.query.widened.from}</Warn>}

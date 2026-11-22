@@ -103,12 +103,24 @@ def ingest_sql(src: Any, cfg: Any, home: str = "") -> str:
     source is in the same BigQuery location) the rows are written there in the same job and posts already held are
     left out; otherwise the rows come back to be written by the caller."""
     from .bq_admin import check_table_id
-    from .tempcheck import _ident
+    from .tempcheck import _ident, read_of
 
-    if not src.time_column or not src.text_columns or not src.url_column:
-        raise ValueError("The source needs a time column, a text column and a link column (Settings, Temp check, sources).")
     if not _NAME.match(cfg.embedding_endpoint):
         raise ValueError("The embedding model name has characters that are not allowed.")
+    held = (f"  LEFT JOIN `{check_table_id(home)}` h ON h.post_id = n.post_id AND h.seen >= @keep_since\n  WHERE h.post_id IS NULL AND " if home else "  WHERE ")
+    if src.read_sql.strip():  # a table with its own read: the rows that arrived since the last read, in the shape the read gives
+        gates = ["seen >= @since AND seen < @until", "posted >= @posted_since", "LOWER(IFNULL(sentiment, '')) != 'positive'"]
+        if "language" in src.has:
+            gates.append("LOWER(IFNULL(language, 'en')) LIKE 'en%'")
+        new_posts = (
+            "WITH new_posts AS (\n"
+            "  SELECT TO_HEX(MD5(one)) AS post_id, platform, author, TRIM(REGEXP_REPLACE(IFNULL(text, ''), r'\\s+', ' ')) AS txt, url, posted,\n"
+            "    SAFE_CAST(followers AS INT64) AS followers, SAFE_CAST(eng AS FLOAT64) AS engagement\n"
+            f"  FROM (\n    {read_of(src)}\n  )\n  WHERE {' AND '.join(gates)}\n"
+            "  QUALIFY ROW_NUMBER() OVER (PARTITION BY one ORDER BY seen DESC) = 1\n),\n")
+        return _ingest_statement(new_posts, held, cfg, home)
+    if not src.time_column or not src.text_columns or not src.url_column:
+        raise ValueError("The source needs a time column, a text column and a link column (Settings, Temp check, sources).")
     t = _ident(src.time_column, "time column")
     url = f"CAST({_ident(src.url_column, 'url column')} AS STRING)"
     key = f"CAST({_ident(src.id_column, 'id column')} AS STRING)" if src.dedupe_by == "id" and src.id_column else url
@@ -125,13 +137,21 @@ def ingest_sql(src: Any, cfg: Any, home: str = "") -> str:
         gates.append(f"LOWER(IFNULL(CAST({_ident(src.sentiment_column, 'sentiment column')} AS STRING), '')) != 'positive'")
     if src.filter_sql.strip():
         gates.append(f"({src.filter_sql})")
-    held = (f"  LEFT JOIN `{check_table_id(home)}` h ON h.post_id = n.post_id AND h.seen >= @keep_since\n  WHERE h.post_id IS NULL AND " if home else "  WHERE ")
-    select = (
+    new_posts = (
         "WITH new_posts AS (\n"
         f"  SELECT TO_HEX(MD5({key})) AS post_id, IF({platform} = 'twitter', 'x', {platform}) AS platform, {author} AS author,\n"
         f"    TRIM(REGEXP_REPLACE(CONCAT({text}), r'\\s+', ' ')) AS txt, {url} AS url, {t} AS posted, {followers} AS followers, {eng} AS engagement\n"
         f"  FROM `{check_table_id(src.table)}`\n  WHERE {' AND '.join(gates)}\n"
-        f"  QUALIFY ROW_NUMBER() OVER (PARTITION BY {key} ORDER BY {t} DESC) = 1\n),\n"
+        f"  QUALIFY ROW_NUMBER() OVER (PARTITION BY {key} ORDER BY {t} DESC) = 1\n),\n")
+    return _ingest_statement(new_posts, held, cfg, home)
+
+
+def _ingest_statement(new_posts: str, held: str, cfg: Any, home: str) -> str:
+    """The rest of one table's read, after its new posts: the low-reach ones not held yet, each with its embedding."""
+    from .bq_admin import check_table_id
+
+    select = (
+        new_posts +
         "fresh AS (\n  SELECT n.* FROM new_posts n\n" + held +
         "n.url IS NOT NULL AND IFNULL(n.followers, 0) <= @max_followers AND IFNULL(n.engagement, 0) < @max_engagement\n"
         "    AND LENGTH(n.txt) >= @min_chars AND ARRAY_LENGTH(REGEXP_EXTRACT_ALL(LOWER(n.txt), r'[a-z0-9]+')) >= @min_words\n"
@@ -258,6 +278,8 @@ def plan(ctx: "AgentContext", now: datetime, cursors: dict[str, str] | None = No
                "skip_authors": [a.lower() for a in e.skip_authors] or [""], "cap": e.posts_per_check, "source": src.key, "now": now}
         if same:
             prm["keep_since"] = keep
+        if src.read_sql.strip():  # the stretch a table's own read covers
+            prm.update({"t_from": prm["since"], "t_to": now})
         out.append({"what": f"read {src.label or src.key}", "kind": "ingest" if same else "ingest_remote", "source": src.key, "location": location,
                     "sql": ingest_sql(src, e, t["early_posts"] if same else ""), "params": prm})
     base = {"now": now, "keep_since": keep}

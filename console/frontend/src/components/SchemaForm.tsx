@@ -70,7 +70,7 @@ function Node({ name, schema, root, value, onChange, path, errors, disabled }: {
       onChange={(e) => onChange(e.target.value === "" ? (nullable(schema) ? null : 0) : Number(e.target.value))} className="max-w-48" />;
   } else if (s.type === "string") {
     const text = String(value ?? "");
-    control = text.length > 90 || text.includes("\n") ? <Textarea rows={3} className="font-sans text-sm" value={text} disabled={disabled} onChange={(e) => onChange(e.target.value)} />
+    control = text.length > 90 || text.includes("\n") ? <Textarea rows={Math.min(14, Math.max(3, text.split("\n").length + 1))} className="font-sans text-sm" value={text} disabled={disabled} onChange={(e) => onChange(e.target.value)} />
       : <Input value={text} disabled={disabled} onChange={(e) => onChange(e.target.value === "" && nullable(schema) ? null : e.target.value)} />;
   } else if (s.type === "array") {
     const item = resolve(s.items, root);

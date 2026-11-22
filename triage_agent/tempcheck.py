@@ -26,7 +26,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
@@ -299,8 +299,16 @@ def post_key(url: str) -> str:
     if m:
         return f"yt:{m.group(1)}"
     parsed = urlparse(raw if "://" in raw else f"https://{raw}")
-    host = (parsed.hostname or "").lower().removeprefix("www.").removeprefix("m.")
-    return f"{host}{parsed.path.rstrip('/')}"
+    host = (parsed.hostname or "").lower()
+    for lead in ("www.", "mobile.", "m."):
+        host = host.removeprefix(lead)
+    path = parsed.path.rstrip("/")
+    if (host == "facebook.com" or host.endswith(".facebook.com")) and re.fullmatch(r"/(?:permalink|story|photo)\.php", path):
+        query = parse_qs(parsed.query)  # a Facebook permalink is one page for every post: the ids in its query tell them apart
+        ids = [f"{k}={query[k][0]}" for k in ("story_fbid", "fbid", "id") if query.get(k)]
+        if ids:
+            return f"facebook.com{path}?{'&'.join(ids)}"
+    return f"{host}{path}"
 
 
 # -- Brandwatch ----------------------------------------------------------------------------------------------------------
@@ -668,6 +676,23 @@ def _clean_handle(raw: Any) -> str:
 # -- the team's own tables -------------------------------------------------------------------------------------------------
 COLS = {"text": "text", "text_l": "text_l", "author_l": "author_l", "url_l": "url_l", "platform": "platform",
         "followers": "followers", "language": "language"}
+TEXT_CHARS = 2000
+GB = 1024 ** 3
+COUNT_ROWS = 5000  # rows a table's counting statement may give back (platform by hour by sentiment)
+EMPTY_POST = {"text": "", "author": "", "url": "", "platform": "", "followers": None, "language": ""}
+
+
+def app_setup() -> dict[str, Any]:
+    """The temp check app's setup, kept as data in config/temp_check_app.yaml: {brandwatch: {setting: value},
+    tables: [TempCheckSource]}. Nothing uses it by itself: Find and fill (Integrations) writes it into the settings that
+    are still empty."""
+    import yaml
+
+    from .config import CONFIG_DIR, TempCheckSource
+
+    raw = yaml.safe_load((CONFIG_DIR / "temp_check_app.yaml").read_text()) or {}
+    return {"brandwatch": {str(k): str(v) for k, v in (raw.get("brandwatch") or {}).items()},
+            "tables": [TempCheckSource.model_validate(t) for t in raw.get("tables") or []]}
 
 
 def _ident(value: str, what: str) -> str:
@@ -677,6 +702,9 @@ def _ident(value: str, what: str) -> str:
 
 
 def source_has(src: Any) -> set[str]:
+    """Which parts of a post the table fills: what its read says, or what its columns give."""
+    if src.read_sql.strip():
+        return set(src.has)
     has = set()
     if src.text_columns:
         has.add("text")
@@ -693,47 +721,75 @@ def source_has(src: Any) -> set[str]:
     return has
 
 
-def source_sql(src: Any, plan: dict[str, Any], start: datetime, end: datetime, limit: int) -> dict[str, Any]:
-    """The SQL that finds `plan`'s posts in one table: {posts, counts, params, removed} or {skip}."""
+def read_of(src: Any) -> str:
+    """One table's read: a SELECT that gives each post as platform, author, text, url, posted, followers, eng,
+    sentiment, language, shares, replies, seen (when the row arrived) and one (what makes a row one post), for the
+    stretch @t_from to @t_to. The table's own read when it has one (Settings, Temp check, sources), else built from
+    its columns."""
     from .bq_admin import check_table_id
 
-    if not src.time_column or not src.text_columns:
-        return {"skip": "The table needs a time column and at least one text column (Settings → Temp check → sources)."}
-    pruned, removed = bwquery.prune(plan, source_has(src))
-    if pruned is None:
-        return {"skip": "Nothing in the query can be asked of this table."}
-    if bwquery.evaluate(pruned, {"text": "", "author": "", "url": "", "platform": "", "followers": None, "language": ""}):
-        return {"skip": "Without the parts this table has no column for, the query would match every post in it."}
     table = check_table_id(src.table)
+    if src.read_sql.strip():
+        return src.read_sql.strip().replace("{table}", table)
+    if not src.time_column or not src.text_columns:
+        raise ValueError("The table needs a time column and at least one text column (Settings → Temp check → sources).")
     t = _ident(src.time_column, "time column")
     text = " , ' ', ".join(f"IFNULL(CAST({_ident(c, 'text column')} AS STRING), '')" for c in src.text_columns)
     platform = (f"LOWER(CAST({_ident(src.platform_column, 'platform column')} AS STRING))" if src.platform_column
                 else (f"'{src.platform_value.lower()}'" if re.fullmatch(r"[\w -]+", src.platform_value or "") else "CAST(NULL AS STRING)"))
     url = f"CAST({_ident(src.url_column, 'url column')} AS STRING)" if src.url_column else "CAST(NULL AS STRING)"
     one = f"CAST({_ident(src.id_column, 'id column')} AS STRING)" if (src.dedupe_by == "id" and src.id_column) else url
-    select = [
-        f"IF({platform} = 'twitter', 'x', {platform}) AS platform",
-        (f"CAST({_ident(src.author_column, 'author column')} AS STRING)" if src.author_column else "CAST(NULL AS STRING)") + " AS author",
-        f"CONCAT({text}) AS text", f"{url} AS url", f"{t} AS posted",
-        (f"SAFE_CAST({_ident(src.followers_column, 'followers column')} AS INT64)" if src.followers_column else "CAST(NULL AS INT64)") + " AS followers",
-        (f"SAFE_CAST(({src.engagement_expr}) AS FLOAT64)" if src.engagement_expr.strip() else "CAST(NULL AS FLOAT64)") + " AS eng",
-        (f"LOWER(CAST({_ident(src.sentiment_column, 'sentiment column')} AS STRING))" if src.sentiment_column else "CAST(NULL AS STRING)") + " AS sentiment",
-        (f"LOWER(CAST({_ident(src.language_column, 'language column')} AS STRING))" if src.language_column else "CAST(NULL AS STRING)") + " AS language",
-        f"{one} AS one",
-    ]
+    author = f"CAST({_ident(src.author_column, 'author column')} AS STRING)" if src.author_column else "CAST(NULL AS STRING)"
+    followers = f"SAFE_CAST({_ident(src.followers_column, 'followers column')} AS INT64)" if src.followers_column else "CAST(NULL AS INT64)"
+    eng = f"SAFE_CAST(({src.engagement_expr}) AS FLOAT64)" if src.engagement_expr.strip() else "CAST(NULL AS FLOAT64)"
+    sentiment = f"LOWER(CAST({_ident(src.sentiment_column, 'sentiment column')} AS STRING))" if src.sentiment_column else "CAST(NULL AS STRING)"
+    language = f"LOWER(CAST({_ident(src.language_column, 'language column')} AS STRING))" if src.language_column else "CAST(NULL AS STRING)"
+    extra = f" AND ({src.filter_sql})" if src.filter_sql.strip() else ""
+    return (f"SELECT IF({platform} = 'twitter', 'x', {platform}) AS platform, {author} AS author, CONCAT({text}) AS text, {url} AS url,\n"
+            f"      {t} AS posted, {followers} AS followers, {eng} AS eng, {sentiment} AS sentiment, {language} AS language,\n"
+            f"      CAST(NULL AS INT64) AS shares, CAST(NULL AS INT64) AS replies, {t} AS seen, IFNULL({one}, GENERATE_UUID()) AS one\n"
+            f"    FROM `{table}`\n    WHERE {t} >= @t_from AND {t} < @t_to{extra}")
+
+
+def source_sql(src: Any, plan: dict[str, Any], start: datetime, end: datetime, limit: int) -> dict[str, Any]:
+    """The statements that find `plan`'s posts in one table, as the temp check app builds them (owndata.js sqlFor):
+    {posts, counts, params, removed, location} or {skip}."""
+    if not src.read_sql.strip() and (not src.time_column or not src.text_columns):
+        return {"skip": "The table needs a time column and at least one text column (Settings → Temp check → sources)."}
+    pruned, removed = bwquery.prune(plan, source_has(src))
+    if pruned is None:
+        return {"skip": "Nothing in the query can be asked of this table."}
+    if bwquery.evaluate(pruned, dict(EMPTY_POST)):
+        return {"skip": "Without the parts this table has no column for, the query would match every post in it."}
     params: dict[str, Any] = {"t_from": start, "t_to": end, "lim": limit}
     where = bwquery.to_sql(pruned, COLS, params)
-    extra = f" AND ({src.filter_sql})" if src.filter_sql.strip() else ""
-    head = (f"WITH base AS (\n  SELECT {', '.join(select)}\n  FROM `{table}`\n  WHERE {t} >= @t_from AND {t} < @t_to{extra}\n),\n"
-            "typed AS (\n  SELECT *, LOWER(IFNULL(text, '')) AS text_l, LOWER(IFNULL(author, '')) AS author_l, LOWER(IFNULL(url, '')) AS url_l FROM base\n),\n"
-            f"hits AS (\n  SELECT * FROM typed\n  WHERE {where}\n  QUALIFY ROW_NUMBER() OVER (PARTITION BY IFNULL(one, GENERATE_UUID()) ORDER BY posted DESC) = 1\n)\n")
+    head = (f"WITH base AS (\n    {read_of(src)}\n),\n"
+            "typed AS (\n  SELECT *, LOWER(IFNULL(text, '')) AS text_l, LOWER(IFNULL(author, '')) AS author_l, LOWER(IFNULL(url, '')) AS url_l\n"
+            f"  FROM base WHERE posted >= @t_from AND posted < @t_to\n),\nhits AS (\n  SELECT * FROM typed\n  WHERE {where}\n"
+            "  QUALIFY ROW_NUMBER() OVER (PARTITION BY one ORDER BY seen DESC) = 1\n)\n")
     return {
-        "posts": head + "SELECT platform, author, SUBSTR(text, 1, 2000) AS text, url, posted, followers, eng, sentiment, language, one,\n"
-                        "  COUNT(*) OVER () AS matched\nFROM hits\nORDER BY IFNULL(eng, -1) DESC, posted DESC\nLIMIT @lim",
+        "posts": head + f"SELECT platform, author, SUBSTR(text, 1, {TEXT_CHARS}) AS text, url, posted, followers, eng, sentiment, language,\n"
+                        "  shares, replies, one, COUNT(*) OVER () AS matched, MAX(posted) OVER () AS newest\nFROM hits\n"
+                        "ORDER BY IFNULL(eng, -1) DESC, posted DESC\nLIMIT @lim",
         "counts": head + "SELECT platform, UNIX_MILLIS(TIMESTAMP_TRUNC(posted, HOUR)) AS hr, IFNULL(sentiment, '') AS sentiment,\n"
-                         "  COUNT(*) AS n, SUM(IFNULL(eng, 0)) AS eng\nFROM hits\nGROUP BY 1, 2, 3",
+                         "  COUNT(*) AS n, SUM(IFNULL(eng, 0)) AS eng, SUM(IFNULL(shares, 0)) AS shares, SUM(IFNULL(replies, 0)) AS replies,\n"
+                         "  COUNTIF(shares IS NOT NULL) AS counted\nFROM hits\nGROUP BY 1, 2, 3",
         "params": params, "removed": removed, "location": src.location,
     }
+
+
+def standing_ids(ctx: "AgentContext", bw: "Brandwatch") -> list[str]:
+    """The standing queries searched when an issue has no query of its own: the ids named in Settings, then the active
+    queries found by name the way the temp check app finds them (their name starts with the words in Settings, Temp
+    check, and does not have the left-out word), oldest first."""
+    cfg = ctx.config.platform.temp_check
+    ids = [str(i).strip() for i in cfg.landscape_query_ids if str(i).strip()]
+    start, skip = cfg.standing_query_name.strip().lower(), cfg.standing_query_skip.strip().lower()
+    if start:
+        named = [q for q in bw.queries() if q.get("state") == "active" and str(q.get("name") or "").lower().startswith(start)
+                 and not (skip and skip in str(q.get("name") or "").lower())]
+        ids += [str(q["id"]) for q in sorted(named, key=lambda q: int(q["id"]))]
+    return list(dict.fromkeys(ids))
 
 
 def own_sources(ctx: "AgentContext", only: list[str] | None = None) -> list[Any]:
@@ -743,9 +799,41 @@ def own_sources(ctx: "AgentContext", only: list[str] | None = None) -> list[Any]
     return picked or sources
 
 
+def _platform_label(platform: str) -> str:
+    return SOURCES.get(platform) or (platform[:1].upper() + platform[1:] if platform else "Web")
+
+
+def _number(value: Any) -> Any:
+    return None if value is None else (int(value) if float(value).is_integer() else float(value))
+
+
+def _shape(row: dict[str, Any], src: Any) -> dict[str, Any]:
+    """One row a table gave back, as the post the rest of the temp check reads."""
+    platform = str(row.get("platform") or "").lower()
+    sentiment = str(row.get("sentiment") or "")
+    return {"table": src.key, "table_label": src.label or src.key, "platform": platform, "source": _platform_label(platform),
+            "author": _clean_handle(row.get("author")), "text": str(row.get("text") or "").strip(), "url": str(row.get("url") or ""),
+            "at": row.get("posted"), "followers": _number(row.get("followers")), "eng": _number(row.get("eng")),
+            "shares": _number(row.get("shares")), "replies": _number(row.get("replies")), "sentiment": sentiment,
+            "negative": sentiment == "negative", "language": str(row.get("language") or ""), "one": str(row.get("one") or "")}
+
+
+def row_key(post: dict[str, Any], by_id: bool) -> str:
+    """What makes a row one post: its link (post_key), or for a table whose rows share links (comments, each under the
+    post it answers) the row's own id. A row with neither is itself by its table, time and first words."""
+    if by_id and post["one"]:
+        return f"{post['table']}:{post['one']}"
+    return post_key(post["url"]) or f"{post['table']}:{post['at']}:{post['text'][:40]}"
+
+
 def search_own(ctx: "AgentContext", plan: dict[str, Any], start: datetime, end: datetime, only: list[str] | None = None) -> dict[str, Any]:
-    """Run the plan on every enabled table (or the ones named in `only`): {posts (deduplicated, most engagement first),
-    tables, hours, sentiment, sources}."""
+    """The plan's posts between `start` and `end` in our own tables (every one that is ON, or the ones named in `only`),
+    searched the way the temp check app searches them (owndata.js search): every search is estimated first, and a table
+    whose search would scan more than the cap is skipped with the reason. Returns {posts (one per post, the most
+    engagement first), tables, complete, total, hours, sources, eng_sources, sentiment, spread, error}.
+
+    `complete` says every match was read, so each post is counted once. When a table has more matches than were read,
+    its numbers come from its counting statement, and a post that is in two tables is then counted in each."""
     from . import bq_admin
 
     cfg = ctx.config.platform.temp_check
@@ -756,74 +844,64 @@ def search_own(ctx: "AgentContext", plan: dict[str, Any], start: datetime, end: 
         gw = bq_admin.get_gateway(ctx)
     except Exception as exc:  # noqa: BLE001
         return {"posts": [], "tables": [], "error": str(exc)}
-    by_key: dict[str, dict[str, Any]] = {}
+    order = {s.key: n for n, s in enumerate(cfg.sources)}
+    by_id = {s.key: s.dedupe_by == "id" for s in sources}
     tables: list[dict[str, Any]] = []
-    hours: dict[int, int] = {}
-    sentiment: dict[str, int] = {}
-    platforms: dict[str, float] = {}
-    eng_platforms: dict[str, float] = {}
+    rows: list[dict[str, Any]] = []
+    tallies: list[tuple[str, list[dict[str, Any]]]] = []
     for src in sources:
-        info: dict[str, Any] = {"key": src.key, "label": src.label or src.key, "freshness": src.freshness}
+        info: dict[str, Any] = {"key": src.key, "label": src.label or src.key, "freshness": src.freshness, "matched": 0}
+        tables.append(info)
         try:
             built = source_sql(src, plan, start, end, cfg.row_limit)
             if built.get("skip"):
-                info.update({"skipped": built["skip"], "matched": 0})
-                tables.append(info)
+                info["skipped"] = built["skip"]
                 continue
-            if cfg.max_scan_gb:
-                scan = gw.dry_run(built["posts"], built["params"], location=built["location"] or None)
-                info["scan_gb"] = round(scan / 1e9, 3)
-                if scan > cfg.max_scan_gb * 1e9:
-                    info.update({"skipped": f"The search would scan {info['scan_gb']} GB, over the {cfg.max_scan_gb} GB cap.", "matched": 0})
-                    tables.append(info)
-                    continue
-            rows = gw.query(built["posts"], built["params"], location=built["location"] or None, max_rows=cfg.row_limit)
-            counts = gw.query(built["counts"], built["params"], location=built["location"] or None, max_rows=20000)
+            location = built["location"] or None
+            scan = int(gw.dry_run(built["posts"], built["params"], location=location))
+            info.update({"bytes": scan, "scan_gb": round(scan / GB, 3)})
+            if cfg.max_scan_gb and scan > cfg.max_scan_gb * GB:
+                info["skipped"] = f"It would scan {scan / GB:.1f} GB, over the {cfg.max_scan_gb:g} GB cap. Use a shorter window."
+                continue
+            got = gw.query(built["posts"], built["params"], location=location, max_rows=cfg.row_limit)
+            matched = (int(got[0].get("matched") or 0) or len(got)) if got else 0
+            newest = got[0].get("newest") if got else None
+            info.update({"matched": matched, "read": len(got), "left_out": built["removed"],
+                         "newest": newest.isoformat() if isinstance(newest, datetime) else newest})
+            rows += [_shape(r, src) for r in got]
+            if matched > len(got):
+                more = int(gw.dry_run(built["counts"], built["params"], location=location))
+                tallies.append((src.key, gw.query(built["counts"], built["params"], location=location, max_rows=COUNT_ROWS)))
+                info.update({"bytes": scan + more, "scan_gb": round((scan + more) / GB, 3)})
         except Exception as exc:  # noqa: BLE001 - one table failing doesn't fail the others
             info.update({"error": str(exc)[:300], "matched": 0})
-            tables.append(info)
+    # One per post: the copy with the most engagement known; on a tie, the tables in their order in Settings
+    rows.sort(key=lambda r: (-(r["eng"] if r["eng"] is not None else -1), order.get(r["table"], len(order))))
+    by_key: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        key = row_key(r, by_id[r["table"]])
+        had = by_key.get(key)
+        if had is None:
+            by_key[key] = {"key": key, "also": [], **r}
             continue
-        info.update({"matched": int(rows[0]["matched"]) if rows else 0, "left_out": built["removed"]})
-        tables.append(info)
-        fresh = 0
-        for r in rows:
-            key = (f"{src.key}:{r.get('one')}" if src.dedupe_by == "id" else post_key(r.get("url") or "")) or f"{src.key}:{uuid.uuid4().hex}"
-            platform = str(r.get("platform") or "").lower()
-            post = {"key": key, "table": src.key, "table_label": src.label or src.key,
-                    "source": SOURCES.get(platform, str(r.get("platform") or "Web").title()), "platform": platform,
-                    "author": _clean_handle(r.get("author")), "text": str(r.get("text") or "").strip(), "url": r.get("url") or "",
-                    "eng": r.get("eng"), "negative": str(r.get("sentiment") or "") == "negative", "sentiment": str(r.get("sentiment") or ""),
-                    "at": r.get("posted"), "followers": r.get("followers"), "language": str(r.get("language") or "")}
-            held = by_key.get(key)
-            if held is None:
-                fresh += 1
-            if held is None or (post["eng"] or -1) > (held["eng"] or -1):
-                by_key[key] = post
-        info["new_posts"] = fresh
-        share = (fresh / len(rows)) if rows else 0  # counts of a table are scaled by the share of its posts not already seen
-        for c in counts:
-            n = int(round(float(c.get("n") or 0) * (share if rows else 1)))
-            if not n:
-                continue
-            hours[int(c["hr"])] = hours.get(int(c["hr"]), 0) + n
-            if c.get("sentiment"):
-                sentiment[c["sentiment"]] = sentiment.get(c["sentiment"], 0) + n
-            label = SOURCES.get(str(c.get("platform") or "").lower(), str(c.get("platform") or "Web").title())
-            platforms[label] = platforms.get(label, 0) + n
-            eng_platforms[label] = eng_platforms.get(label, 0) + float(c.get("eng") or 0) * (share if rows else 1)
-    posts = sorted(by_key.values(), key=lambda p: (-(p["eng"] if p["eng"] is not None else -1), str(p.get("at") or "")))
-    hour_list, at = [], floor_hour(start)
-    while at < end:
-        hour_list.append({"at": at, "n": hours.get(int(at.timestamp() * 1000), 0)})
-        at += HOUR
-    return {"posts": posts, "tables": tables, "hours": hour_list, "sentiment": sentiment,
-            "sources": _ranked(platforms), "eng_sources": _ranked(eng_platforms),
-            "total": sum(h["n"] for h in hour_list), "error": ""}
+        if had["table"] != r["table"] and r["table"] not in had["also"]:
+            had["also"].append(r["table"])
+        if not had["sentiment"] and r["sentiment"]:
+            had["sentiment"], had["negative"] = r["sentiment"], r["negative"]
+        if had["followers"] is None and r["followers"] is not None:
+            had["followers"] = r["followers"]
+        if had["shares"] is None and r["shares"] is not None:
+            had["shares"], had["replies"] = r["shares"], r["replies"]
+    posts = list(by_key.values())
+    complete = not tallies
+    numbers = numbers_of(posts, start, end) if complete else numbers_of_tallies(tallies, posts, start, end)
+    return {"posts": posts, "tables": tables, "complete": complete, **numbers, "error": ""}
 
 
 def find_x_posts(ctx: "AgentContext", ids: list[str], start: datetime, end: datetime) -> dict[str, dict[str, Any]]:
     """X posts our own tables hold, by X's post id: {id: {author, text, url, eng, from}}. For the X posts X's embed data
-    won't serve. Each table that has a link column is asked once. Never raises."""
+    won't serve. Each table marked for it (Settings, Temp check, sources: X posts are looked up here) is asked once.
+    Never raises."""
     from . import bq_admin
 
     want = list(dict.fromkeys(i for i in (str(x) for x in ids) if re.fullmatch(r"\d{5,25}", i)))
@@ -835,18 +913,25 @@ def find_x_posts(ctx: "AgentContext", ids: list[str], start: datetime, end: date
     except Exception:  # noqa: BLE001
         return out
     for src in own_sources(ctx):
-        if not (src.url_column and src.time_column and src.text_columns):
+        if not src.x_lookup or "url" not in source_has(src) or "text" not in source_has(src):
             continue
         try:
-            table = bq_admin.check_table_id(src.table)
-            t, url = _ident(src.time_column, "time column"), f"CAST({_ident(src.url_column, 'url column')} AS STRING)"
-            text = " , ' ', ".join(f"IFNULL(CAST({_ident(c, 'text column')} AS STRING), '')" for c in src.text_columns)
-            author = f"CAST({_ident(src.author_column, 'author column')} AS STRING)" if src.author_column else "CAST(NULL AS STRING)"
-            eng = f"SAFE_CAST(({src.engagement_expr}) AS FLOAT64)" if src.engagement_expr.strip() else "CAST(NULL AS FLOAT64)"
-            sql = (f"SELECT REGEXP_EXTRACT({url}, r'/status/(\\d+)') AS id, ANY_VALUE({author}) AS author, ANY_VALUE(CONCAT({text})) AS text,\n"
-                   f"  ANY_VALUE({url}) AS url, MAX({eng}) AS eng\nFROM `{table}`\n"
-                   f"WHERE {t} >= @t_from AND {t} < TIMESTAMP_ADD(@t_to, INTERVAL 24 HOUR)\n"
-                   f"  AND REGEXP_EXTRACT({url}, r'/status/(\\d+)') IN UNNEST(@ids)\nGROUP BY 1")
+            if src.read_sql.strip():
+                sql = ("SELECT REGEXP_EXTRACT(url, r'/status/(\\d+)') AS id, ANY_VALUE(author) AS author, ANY_VALUE(text) AS text,\n"
+                       f"  ANY_VALUE(url) AS url, MAX(eng) AS eng\nFROM (\n    {read_of(src)}\n)\n"
+                       "WHERE platform = 'x' AND REGEXP_EXTRACT(url, r'/status/(\\d+)') IN UNNEST(@ids)\nGROUP BY 1")
+            else:
+                if not src.time_column:
+                    continue
+                table = bq_admin.check_table_id(src.table)
+                t, url = _ident(src.time_column, "time column"), f"CAST({_ident(src.url_column, 'url column')} AS STRING)"
+                text = " , ' ', ".join(f"IFNULL(CAST({_ident(c, 'text column')} AS STRING), '')" for c in src.text_columns)
+                author = f"CAST({_ident(src.author_column, 'author column')} AS STRING)" if src.author_column else "CAST(NULL AS STRING)"
+                eng = f"SAFE_CAST(({src.engagement_expr}) AS FLOAT64)" if src.engagement_expr.strip() else "CAST(NULL AS FLOAT64)"
+                sql = (f"SELECT REGEXP_EXTRACT({url}, r'/status/(\\d+)') AS id, ANY_VALUE({author}) AS author, ANY_VALUE(CONCAT({text})) AS text,\n"
+                       f"  ANY_VALUE({url}) AS url, MAX({eng}) AS eng\nFROM `{table}`\n"
+                       f"WHERE {t} >= @t_from AND {t} < TIMESTAMP_ADD(@t_to, INTERVAL 24 HOUR)\n"
+                       f"  AND REGEXP_EXTRACT({url}, r'/status/(\\d+)') IN UNNEST(@ids)\nGROUP BY 1")
             rows = gw.query(sql, {"t_from": start, "t_to": end, "ids": want}, location=src.location or None, max_rows=500)
         except Exception:  # noqa: BLE001 - one table failing leaves the others
             continue
@@ -867,28 +952,80 @@ def as_writeup_post(p: dict[str, Any]) -> dict[str, Any]:
             "at": p["at"].isoformat() if isinstance(p.get("at"), datetime) else p.get("at")}
 
 
+SENTIMENTS = ("positive", "neutral", "negative")
+
+
 def numbers_of(posts: list[dict[str, Any]], start: datetime, end: datetime) -> dict[str, Any]:
-    """The counts of posts held in memory, between `start` and `end`: {total, hours, sentiment, sources, eng_sources}."""
+    """The numbers of posts held in memory (each one post) between `start` and `end`: {total, hours, sentiment, sources,
+    eng_sources, spread}. `spread` is what the posts' own counters say about the conversation around them: {counted
+    (posts that came with a repost count), reposts, replies}."""
     hours: dict[datetime, int] = {}
     sentiment: dict[str, int] = {}
     platforms: dict[str, float] = {}
     eng: dict[str, float] = {}
+    spread = {"counted": 0, "reposts": 0, "replies": 0}
     for p in posts:
         at = p["at"] if isinstance(p.get("at"), datetime) else _bw_time(p.get("at"))
         if at is None or not (start <= at < end):
             continue
         hours[floor_hour(at)] = hours.get(floor_hour(at), 0) + 1
-        if p.get("sentiment"):
+        if p.get("sentiment") in SENTIMENTS:
             sentiment[p["sentiment"]] = sentiment.get(p["sentiment"], 0) + 1
         label = p.get("source") or "Web"
         platforms[label] = platforms.get(label, 0) + 1
         eng[label] = eng.get(label, 0) + float(p.get("eng") or 0)
+        if p.get("shares") is not None:
+            spread["counted"] += 1
+            spread["reposts"] += int(p.get("shares") or 0)
+            spread["replies"] += int(p.get("replies") or 0)
     hour_list, at = [], floor_hour(start)
     while at < end:
         hour_list.append({"at": at, "n": hours.get(at, 0)})
         at += HOUR
     return {"hours": hour_list, "sentiment": sentiment, "sources": _ranked(platforms), "eng_sources": _ranked(eng),
-            "total": sum(h["n"] for h in hour_list)}
+            "total": sum(h["n"] for h in hour_list), "spread": spread}
+
+
+def numbers_of_tallies(tallies: list[tuple[str, list[dict[str, Any]]]], posts: list[dict[str, Any]], start: datetime, end: datetime) -> dict[str, Any]:
+    """The same numbers when a table had more matches than were read: that table from its counting statement, the other
+    tables from their posts."""
+    hours: dict[datetime, int] = {}
+    sentiment: dict[str, int] = {}
+    platforms: dict[str, float] = {}
+    eng: dict[str, float] = {}
+    spread = {"counted": 0, "reposts": 0, "replies": 0}
+    counted = {key for key, _rows in tallies}
+    for _key, rows in tallies:
+        for r in rows:
+            platform = str(r.get("platform") or "")
+            label = SOURCES.get(platform) or platform or "Web"
+            n = int(r.get("n") or 0)
+            at = datetime.fromtimestamp(int(r["hr"]) / 1000, tz=timezone.utc)
+            hours[at] = hours.get(at, 0) + n
+            platforms[label] = platforms.get(label, 0) + n
+            eng[label] = eng.get(label, 0) + float(r.get("eng") or 0)
+            if r.get("sentiment") in SENTIMENTS:
+                sentiment[r["sentiment"]] = sentiment.get(r["sentiment"], 0) + n
+            spread["counted"] += int(r.get("counted") or 0)
+            spread["reposts"] += int(r.get("shares") or 0)
+            spread["replies"] += int(r.get("replies") or 0)
+    rest = numbers_of([p for p in posts if p.get("table") not in counted], start, end)
+    for h in rest["hours"]:
+        hours[h["at"]] = hours.get(h["at"], 0) + h["n"]
+    for x in rest["sources"]:
+        platforms[x["label"]] = platforms.get(x["label"], 0) + x["n"]
+    for x in rest["eng_sources"]:
+        eng[x["label"]] = eng.get(x["label"], 0) + x["n"]
+    for k, n in rest["sentiment"].items():
+        sentiment[k] = sentiment.get(k, 0) + n
+    for k in spread:
+        spread[k] += rest["spread"][k]
+    hour_list, at = [], floor_hour(start)
+    while at < end:
+        hour_list.append({"at": at, "n": hours.get(at, 0)})
+        at += HOUR
+    return {"hours": hour_list, "sentiment": sentiment, "sources": _ranked(platforms), "eng_sources": _ranked(eng),
+            "total": sum(h["n"] for h in hour_list), "spread": spread}
 
 
 def keep_posts(ctx: "AgentContext", check_id: str, posts: list[dict[str, Any]]) -> int:
@@ -938,7 +1075,8 @@ def gather_own(ctx: "AgentContext", plan: dict[str, Any], start: datetime, end: 
     for p in [*old, *fresh["posts"]]:
         by_key.setdefault(p["key"], p)
     posts = sorted(by_key.values(), key=lambda p: -(p["eng"] if p.get("eng") is not None else -1))
-    return {"posts": posts, "tables": fresh["tables"], **numbers_of(posts, start, end), "error": "",
+    return {"posts": posts, "tables": fresh["tables"], "complete": bool(fresh.get("complete", True)) and reuse.own.get("complete") is not False,
+            **numbers_of(posts, start, end), "error": "",
             "reused": {"id": reuse.check_id, "gathered_at": kept_to.isoformat(), "kept": len(old), "since": len(fresh["posts"]),
                        "note": "Posts up to then are the ones the earlier search found. If this query is wider than that one, search afresh."}}
 
@@ -1700,7 +1838,12 @@ def _build(ctx: "AgentContext", check: TempCheck, req: TempCheckRequest, previou
         before = previous if (previous and not previous.query.get("id") and previous.window_from) else None
         look = floor_hour(since or (before.window_from if before else None)
                           or (fired or now) - timedelta(hours=req.hours or cfg.no_query_hours))
-        ids = list(cfg.landscape_query_ids)
+        ids: list[str] = []
+        if bw and boolean:
+            try:
+                ids = standing_ids(ctx, bw)
+            except BrandwatchUnavailable as exc:
+                check.notes.append(f"Brandwatch could not be asked: {exc}")
         if bw and boolean and ids:
             detail: dict[str, Any] = {"queries": len(ids), "search": boolean, "total": 0}
             try:
@@ -1749,6 +1892,7 @@ def _build(ctx: "AgentContext", check: TempCheck, req: TempCheckRequest, previou
                      "hours": [{"at": h["at"].isoformat(), "n": h["n"]} for h in own.get("hours") or []],
                      "sources": own.get("sources") or [], "eng_sources": own.get("eng_sources") or [],
                      "sentiment": own.get("sentiment") or {}, "error": own.get("error") or "",
+                     "complete": bool(own.get("complete", True)), "spread": own.get("spread") or {"counted": 0, "reposts": 0, "replies": 0},
                      "kept": keep_posts(ctx, check.check_id, own.get("posts") or [])}
         if own.get("reused"):
             check.own["reused"] = own["reused"]
@@ -1986,6 +2130,13 @@ def create_document(folder_id: str, title: str, html: str) -> str:
     return made.get("webViewLink") or f"https://docs.google.com/document/d/{made['id']}/edit"
 
 
+def rereadable(src: Any) -> bool:
+    """A table a post's engagement can be read from again: it is ON and gives both the link and the engagement."""
+    if not src.enabled:
+        return False
+    return "url" in src.has if src.read_sql.strip() else bool(src.url_column and src.engagement_expr)
+
+
 def post_engagement(ctx: "AgentContext", url: str, since: datetime) -> float | None:
     """A post's engagement in our own tables now: the largest value across the tables that hold the post."""
     from . import bq_admin
@@ -2002,13 +2153,18 @@ def post_engagement(ctx: "AgentContext", url: str, since: datetime) -> float | N
     gw = bq_admin.get_gateway(ctx)
     best: float | None = None
     for src in ctx.config.platform.temp_check.sources:
-        if not (src.enabled and src.url_column and src.engagement_expr):
+        if not rereadable(src):
             continue
-        recent = f" AND {src.time_column} >= @since" if src.time_column else ""
-        sql = (f"SELECT MAX({src.engagement_expr}) AS post_eng FROM `{bq_admin.check_table_id(src.table)}`\n"
-               f"WHERE REGEXP_CONTAINS(LOWER(CAST({src.url_column} AS STRING)), @pat){recent}")
+        params: dict[str, Any] = {"pat": pat, "since": since}
         try:
-            rows = gw.query(sql, {"pat": pat, "since": since}, location=src.location or None)
+            if src.read_sql.strip():
+                sql = f"SELECT MAX(eng) AS post_eng FROM (\n    {read_of(src)}\n)\nWHERE REGEXP_CONTAINS(LOWER(url), @pat) AND posted >= @since"
+                params.update({"t_from": since, "t_to": ctx.now()})
+            else:
+                recent = f" AND {src.time_column} >= @since" if src.time_column else ""
+                sql = (f"SELECT MAX({src.engagement_expr}) AS post_eng FROM `{bq_admin.check_table_id(src.table)}`\n"
+                       f"WHERE REGEXP_CONTAINS(LOWER(CAST({src.url_column} AS STRING)), @pat){recent}")
+            rows = gw.query(sql, params, location=src.location or None)
         except Exception as exc:  # noqa: BLE001 - one table failing must not stop the others
             log.warning("could not read the post again in %s: %s", src.key, exc)
             continue
@@ -2023,7 +2179,7 @@ def recheck_posts(ctx: "AgentContext", now: datetime) -> list[tuple[dict[str, An
     post found climbing whose issue has not just had a temp check."""
     cfg = ctx.config.platform.temp_check
     minutes = sorted(set(cfg.momentum_recheck_minutes))
-    if not minutes or not any(s.enabled and s.url_column and s.engagement_expr for s in cfg.sources):
+    if not minutes or not any(rereadable(s) for s in cfg.sources):
         return []
     horizon = timedelta(minutes=minutes[-1]) + timedelta(hours=cfg.momentum_within_hours)
     found = []
