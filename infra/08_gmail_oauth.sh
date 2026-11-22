@@ -15,7 +15,8 @@
 #   1. Cloud console -> Google Auth Platform -> Branding: app name "SLRR Triage Agent", audience **Internal**.
 #   2. Data access: add .../auth/gmail.compose, .../auth/gmail.metadata, .../auth/gmail.send, and the five
 #      .../auth/chat.* permissions listed above.
-#   3. Clients -> Create client -> Web application. Authorized redirect URIs:
+#   3. Clients: open a Web application client the project already has, or Create client -> Web application.
+#      (Not a Desktop client, and not the one IAP uses.) Authorized redirect URIs:
 #        <Console URL from 07_console.sh>/api/gmail/callback
 #        http://localhost:8000/api/gmail/callback          (local development, optional)
 #   4. Download the JSON, then run:  infra/08_gmail_oauth.sh path/to/client_secret.json
@@ -28,7 +29,7 @@ source "$(dirname "$0")/_lib.sh"
 
 CLIENT_JSON="${1:-}"
 if [[ -z "${CLIENT_JSON}" || ! -f "${CLIENT_JSON}" ]]; then
-  sed -n '2,23p' "$0"
+  sed -n '2,24p' "$0"
   echo
   echo "Usage: infra/08_gmail_oauth.sh path/to/client_secret.json" >&2
   exit 1
