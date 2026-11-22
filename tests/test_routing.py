@@ -35,6 +35,7 @@ class ChatWorld:
 
     def __init__(self, ctx):
         self.ctx, self.spaces, self.messages, self.reactions = ctx, {}, {}, {}
+        self.dms: dict[str, str] = {}  # a person's address -> the direct message space the bot's account has with them
         self.writes: list[tuple[str, str]] = []
         self.fail_posts_to: set[str] = set()
         self.n = 0
@@ -42,6 +43,11 @@ class ChatWorld:
                                       (THIRD, "Burson third", False), (OUT, "Vendor room", True)):
             self.spaces[space] = {"name": space, "displayName": name, "externalUserAllowed": external, "spaceType": "SPACE"}
             self.messages[space] = []
+
+    def add_space(self, space: str, name: str, external: bool = False, kind: str = "SPACE") -> str:
+        self.spaces[space] = {"name": space, "displayName": name, "externalUserAllowed": external, "spaceType": kind}
+        self.messages[space] = []
+        return space
 
     def say(self, space: str, text: str, sender: dict = ZAP, under: str = "", **extra: Any) -> str:
         self.n += 1
@@ -68,6 +74,9 @@ class ChatWorld:
 
     def request(self, method: str, url: str, params: dict[str, Any] | None = None, json: Any = None, timeout: int = 0):
         path, params = url.split("/v1/")[1], dict(params or {})
+        if method == "GET" and path == "spaces:findDirectMessage":
+            found = self.dms.get(str(params.get("name", "")).removeprefix("users/"))
+            return _Resp(200, self.spaces[found]) if found else _Resp(404, {"error": {"message": "Direct message not found"}})
         space = "/".join(path.split("/")[:2])
         if space not in self.spaces:
             return _Resp(403, {"error": {"message": "The caller does not have permission"}})

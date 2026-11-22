@@ -7,7 +7,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from triage_agent import chatreview, mirror
+from triage_agent import chatdelivery, chatreview, mirror
 from triage_agent.context import AgentContext
 
 from .auth import User, get_ctx, require_admin, require_analyst, require_viewer
@@ -18,7 +18,8 @@ SPACES = ("source", "mirror", "third")
 
 
 def _status(ctx: AgentContext, user: User) -> dict[str, Any]:
-    return {**mirror.status(ctx), "review": chatreview.status(ctx), "can_edit": user.has("admin"), "can_act": user.has("analyst")}
+    return {**mirror.status(ctx), "review": chatreview.status(ctx), "delivery": chatdelivery.status(ctx), "can_edit": user.has("admin"),
+            "can_act": user.has("analyst")}
 
 
 @router.get("/routing")
@@ -67,6 +68,16 @@ def routing_decide(item_id: str, body: DecideBody, ctx: AgentContext = Depends(g
     except (mirror.chatapi.ChatError, mirror.chatapi.NotSignedIn) as exc:
         raise HTTPException(502, {"error": f"Chat did not take the message: {exc}", "code": "chat_failed"}) from exc
     return {"id": doc["id"], "status": doc["status"], "message": doc.get("message", "")}
+
+
+@router.post("/routing/delivery/{outbox_id}/retry")
+def routing_retry(outbox_id: str, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_analyst)) -> dict[str, Any]:
+    """Try again on a queued post that was given up: the next minute's pass posts it."""
+    try:
+        doc = chatdelivery.retry(ctx, outbox_id, user.email)
+    except KeyError as exc:
+        raise HTTPException(404, {"error": "That post is not waiting to be tried again.", "code": "not_found"}) from exc
+    return {"id": doc["id"], "status": doc["status"]}
 
 
 class PersonBody(BaseModel):

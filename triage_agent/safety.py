@@ -157,6 +157,24 @@ def _external_roster_emails(ctx: "AgentContext") -> list[str]:
         return []
 
 
+def target_block(ctx: "AgentContext", target: str, text: str) -> tuple[str, list[str]]:
+    """Why a message for `target` may not be posted as things stand ("" when it may), and the leak terms found.
+    Asked when an operation hands over its outputs, and again when a queued post is about to be posted."""
+    from . import mirror
+
+    cfg = ctx.config
+    safety = cfg.platform.safety
+    if target not in {t.strip().lower() for t in safety.allowed_post_targets}:
+        return "target_not_allowed", []
+    if mirror.is_source_target(ctx, target) and not mirror.mode(ctx)["live"]:  # the Routing page's source space: written only when it is open
+        return ("safety_valve" if safety.testing else "routing"), []
+    if target in set(safety.external_spaces):
+        result = leak_guard(cfg, text, allow_emails=_external_roster_emails(ctx), external_key=target)
+        if not result.ok:
+            return "leak_guard", result.hits
+    return "", []
+
+
 def guard_outputs(ctx: "AgentContext", outputs: ChatOutputs, *, op: str = "", actor: str = "agent") -> tuple[ChatOutputs, list[dict[str, Any]]]:
     """Hold back any output that fails a guard. Returns (safe outputs, what was held and why)."""
     cfg = ctx.config
@@ -164,20 +182,11 @@ def guard_outputs(ctx: "AgentContext", outputs: ChatOutputs, *, op: str = "", ac
     held: list[dict[str, Any]] = []
     out = outputs
     allowed_targets = {t.strip().lower() for t in safety.allowed_post_targets}
-    external = set(safety.external_spaces)
     for target, text in list(outputs.target_texts().items()):
-        reason, hits = "", []
         from . import mirror
 
-        source = mirror.is_source_target(ctx, target)  # the Routing page's source space: written only when it is open
-        if target not in allowed_targets:
-            reason = "target_not_allowed"
-        elif source and not mirror.mode(ctx)["live"]:
-            reason = "safety_valve" if safety.testing else "routing"
-        elif target in external:
-            result = leak_guard(cfg, text, allow_emails=_external_roster_emails(ctx), external_key=target)
-            if not result.ok:
-                reason, hits = "leak_guard", result.hits
+        reason, hits = target_block(ctx, target, text)
+        source = mirror.is_source_target(ctx, target)
         if not reason and source and cfg.platform.routing.ask_before_source:
             queued = mirror.send(ctx, text, origin=op, case_id=outputs.case_id, actor=actor)
             reason = "waits_for_send" if queued["status"] == "waiting" else "routing"

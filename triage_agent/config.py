@@ -877,6 +877,7 @@ class FeatureFlags(ConfigModel):
     early_cards: bool = Field(False, title="Post early stories in Chat", description="ON: each written-up story is posted in the second space on the Routing page. OFF: stories show in the Console only.")
     story_reads: bool = Field(False, title="Gemini reads each story", description="ON: Gemini names each story's topic, gives it a neutral name, writes a short summary and labels each post negative, neutral or positive; the Stories page counts the labels. OFF: stories show no topic, summary or sentiment.")
     chat_review: bool = Field(False, title="Review alerts read from Chat", description="ON: every minute the QA chatbot reads the source space on the Routing page and reviews each new alert there, with no Chat flow in between. What the review wants posted is queued. OFF: alerts are reviewed only when a Chat flow hands them over.")
+    chat_delivery: bool = Field(False, title="Post queued messages in Chat", description="ON: every minute the QA chatbot posts what is queued, in its space or in each person's direct message, through its own Chat sign-in, with no Chat flow in between. Each post passes the Routing page's rules and the leak guard again first. OFF: queued posts wait for a Chat flow.")
     alert_popups: bool = Field(False, title="Alert pop-ups", description="ON: people in the Console get a pop-up when an alert comes in; each person can mute their own. OFF: no pop-ups.")
 
 

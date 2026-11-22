@@ -339,9 +339,18 @@ TOPICS: list[dict[str, Any]] = [
             {"heading": "Reviewing alerts read from Chat", "items": [
                 "Turn on Review alerts read from Chat under Settings, Switches. With the QA chatbot ON and a source space set, each new message there is read within a minute and reviewed, with no Chat flow in between.",
                 "The Reviewed list shows each message, what the review made of it, its case, and how many posts it queued. A person's message is set aside as not an alert. The QA chatbot's own posts are never read.",
-                "Nothing is posted from here: what the review wants posted waits in the outbox.",
+                "What the review wants posted is queued. It is posted when Post queued messages in Chat is ON (the next section); otherwise it waits for a Chat flow.",
                 "A message whose review fails is tried again each minute and given up after five tries. Its row says why. It does not hold the messages behind it.",
                 "Reading starts from the last 15 minutes when the switch goes ON or the source space changes."]},
+            {"heading": "Posting queued messages in Chat", "items": [
+                "Turn on Post queued messages in Chat under Settings, Switches. With the QA chatbot ON, each queued message is posted within a minute, once, as the QA chatbot's account, with no Chat flow in between.",
+                "The Posted list shows each one: where it went and whether it was posted, held, or is being tried again.",
+                "Held means a rule said no and it is not posted, now or later: the source space is not open, the message names something internal, the target is not allowed, or the space is open to people outside Google and is not the source space.",
+                "With Ask before each post to the source ON, a message for the source space moves to Waiting for Send.",
+                "A direct message goes to each person in the direct message they already have with the QA chatbot. A person with none yet messages it once in Chat. While Testing is ON, only the testing recipients get direct messages.",
+                "A message Chat does not take is tried again each minute and given up after five tries. Its row says why and has Try again.",
+                "Messages queued more than 15 minutes before the switch went ON are not posted late.",
+                "The handover doc is not a Chat message: it still needs a Chat flow."]},
             {"heading": "Names", "text": "Chat gives the QA chatbot each person's id and no name. Under People seen in the source space, type the name once and mark Burson or Google. Their copied messages then read Name (Burson): text."},
             {"heading": "A copy space is refused when", "items": [
                 "It is the source space.", "People outside Google can join it.", "The second and third space are the same space.",

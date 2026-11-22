@@ -104,7 +104,8 @@ class Store(Protocol):
 
     # outbox (posts delivered by the Studio Outbox flow)
     def add_outbox(self, item: OutboxItem) -> None: ...
-    def list_outbox(self, undelivered_only: bool = True, limit: int = 200) -> list[OutboxItem]: ...
+    # Oldest first. `since`: only items queued at or after that time.
+    def list_outbox(self, undelivered_only: bool = True, limit: int = 200, since: datetime | None = None) -> list[OutboxItem]: ...
     def mark_outbox_delivered(self, outbox_ids: list[str], delivered_by: str = "") -> None: ...
     # Atomically take undelivered items (oldest first) and mark them delivered.
     # per_target: max items per target, e.g. {"clean": 1, "team": 10}; targets not listed use `default_limit`.
@@ -387,10 +388,12 @@ class SqliteStore:
     def add_outbox(self, item):
         self._put("outbox", item.outbox_id, item.model_dump(mode="json"))
 
-    def list_outbox(self, undelivered_only=True, limit=200):
+    def list_outbox(self, undelivered_only=True, limit=200, since=None):
         items = [OutboxItem.model_validate(d) for d in self._list("outbox", limit=100000)]
         if undelivered_only:
             items = [i for i in items if i.delivered_at is None]
+        if since is not None:
+            items = [i for i in items if i.created_at >= since]
         return sorted(items, key=lambda i: i.created_at)[:limit]
 
     def mark_outbox_delivered(self, outbox_ids, delivered_by=""):
@@ -674,10 +677,12 @@ class FirestoreStore:
     def add_outbox(self, item):
         self._doc("outbox", item.outbox_id).set(self._dump(item))
 
-    def list_outbox(self, undelivered_only=True, limit=200):
+    def list_outbox(self, undelivered_only=True, limit=200, since=None):
         q = self.db.collection("outbox")
         if undelivered_only:
             q = q.where("delivered_at", "==", None)
+        if since is not None:
+            q = q.where("created_at", ">=", utc_isoformat(since))  # created_at is stored as UTC text, so the bound must be UTC text too
         q = q.order_by("created_at").limit(limit)
         return [OutboxItem.model_validate(d.to_dict()) for d in q.stream()]
 

@@ -250,6 +250,16 @@ class ChatClient:
                 break
         raise ChatError(status, why)
 
+    def find_dm(self, email: str) -> str:
+        """The direct message space the bot's account already has with a person, or "" when there is none
+        (Chat.gs chatFindDm_). An address works as the person's name for a signed-in account."""
+        status, body, why = self._call("GET", "spaces:findDirectMessage", {"name": f"users/{email}"})
+        if status == 404:
+            return ""
+        if status >= 300:
+            raise ChatError(status, why)
+        return str(body.get("name") or "")
+
     def get_space(self, space: str) -> dict[str, Any]:
         body = self._get(space)
         return {"name": body.get("name") or space, "display_name": body.get("displayName") or "", "external": bool(body.get("externalUserAllowed")),

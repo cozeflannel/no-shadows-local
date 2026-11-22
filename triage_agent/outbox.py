@@ -20,9 +20,9 @@ run_followups re-rings for items that are still undelivered after a while.
 
 import logging
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Protocol, get_args
 
-from .models import ChatOutputs, OutboxItem
+from .models import ChatOutputs, OutboxItem, OutboxTarget
 
 if TYPE_CHECKING:  # pragma: no cover
     from .config import AgentConfig
@@ -128,10 +128,12 @@ def outputs_from_items(items: list[OutboxItem]) -> ChatOutputs:
 
 
 def drain(ctx: "AgentContext", claimed_by: str = "drain_outbox") -> tuple[ChatOutputs, dict]:
+    from . import chatdelivery
+
     cfg = ctx.config.outbox
-    items = ctx.store.claim_outbox(
-        {"clean": cfg.clean_items_per_drain}, cfg.max_items_per_target, claimed_by, max_chars=MAX_CHARS
-    )
+    per_target = {"clean": cfg.clean_items_per_drain}
+    per_target.update({t: 0 for t in get_args(OutboxTarget) if chatdelivery.takes(ctx, t)})  # posted by the minute run, not by a flow
+    items = ctx.store.claim_outbox(per_target, cfg.max_items_per_target, claimed_by, max_chars=MAX_CHARS)
     remaining = len(ctx.store.list_outbox(undelivered_only=True, limit=1000))
     if items:
         from . import chatlog
@@ -145,10 +147,12 @@ def drain(ctx: "AgentContext", claimed_by: str = "drain_outbox") -> tuple[ChatOu
 
 def rering_stale(ctx: "AgentContext", older_than_min: int = 3, max_rings: int = 20) -> int:
     """Re-ring the doorbell for items still undelivered after `older_than_min` (lost rings)."""
+    from . import chatdelivery
+
     if ctx.doorbell is None:
         return 0
     cutoff = ctx.now() - timedelta(minutes=older_than_min)
-    stale = [i for i in ctx.store.list_outbox(undelivered_only=True, limit=500) if i.created_at <= cutoff]
+    stale = [i for i in ctx.store.list_outbox(undelivered_only=True, limit=500) if i.created_at <= cutoff and not chatdelivery.takes(ctx, i.target)]
     rung = 0
     for item in stale[:max_rings]:
         try:

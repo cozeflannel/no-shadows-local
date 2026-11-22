@@ -21,14 +21,27 @@ interface Review {
   on: boolean; why: string; switch: boolean; rows: ReviewRow[];
   last_run: { ok: boolean; at: string; error: string; reviewed: number; ignored: number; failed: number } | null;
 }
+interface PostRow {
+  id: string; at: string; target: string; to: string; text: string; status: "sent" | "held" | "waits_for_send" | "failed" | "gave_up" | "waiting";
+  why: string; tries: number; case_id: string; message: string;
+}
+interface Delivery {
+  on: boolean; why: string; switch: boolean; rows: PostRow[];
+  last_run: { ok: boolean; at: string; error: string; sent: number; held: number; failed: number } | null;
+}
 interface Routing {
   value: Values; safety_valve: boolean; mode: { live: boolean; why: string };
   spaces: Record<SpaceKey, SpaceInfo | null>; problems: Record<SpaceKey, string>;
   signed_in: boolean; bot: string;
   last_run: { ok: boolean; at: string; error: string; copied: { mirror: number; third: number }; emojis: number } | null;
   queue: { id: string; text: string; origin: string; case_id: string; at: string }[];
-  copies: Copy[]; people: Person[]; review: Review; can_edit: boolean; can_act: boolean;
+  copies: Copy[]; people: Person[]; review: Review; delivery: Delivery; can_edit: boolean; can_act: boolean;
 }
+
+const POSTED: Record<PostRow["status"], { label: string; tone: "emerald" | "blue" | "amber" | "rose" | "zinc" }> = {
+  sent: { label: "Posted", tone: "emerald" }, held: { label: "Held", tone: "amber" }, waits_for_send: { label: "Waiting for Send", tone: "blue" },
+  failed: { label: "Trying again", tone: "amber" }, gave_up: { label: "Given up", tone: "rose" }, waiting: { label: "Next minute", tone: "zinc" },
+};
 
 const SPACES: { key: SpaceKey; title: string; says: string }[] = [
   { key: "source", title: "Source space", says: "Where the messages come from: Burson's space, or any other." },
@@ -88,7 +101,7 @@ function ReviewCard({ review }: { review: Review }) {
   const last = review.last_run;
   const ran = last ? `Last read ${new Date(last.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}: ${last.ok ? `${last.reviewed} reviewed, ${last.ignored} set aside${last.failed ? `, ${last.failed} failed` : ""}` : last.error}` : "";
   return (
-    <Card className="mb-4" padded={false} title="Reviewed" subtitle="Each new message the QA chatbot read in the source space, and what the review made of it. What the review wants posted is queued, not posted from here.">
+    <Card className="mb-4" padded={false} title="Reviewed" subtitle="Each new message the QA chatbot read in the source space, and what the review made of it. What the review wants posted is queued.">
       {!review.on && (
         <p className="px-5 pb-4 text-sm text-zinc-600 dark:text-zinc-400">
           Not running: {review.why}.{!review.switch && <> An admin can turn it on under <Link className="font-medium text-blue-700 hover:underline dark:text-blue-300" to="/settings/flags">Settings, Switches</Link>.</>}
@@ -117,6 +130,52 @@ function ReviewCard({ review }: { review: Review }) {
                     {r.queued > 0 && <span>{r.queued}</span>}
                     {r.held.length > 0 && <span className="block text-xs text-amber-600 dark:text-amber-400">held: {r.held.map((h) => `${h.target} (${h.check.replace(/_/g, " ")})`).join(", ")}</span>}
                   </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** What the QA chatbot posted from the queue through its Chat sign-in, held, or could not post. */
+function DeliveryCard({ delivery, canAct, onChanged }: { delivery: Delivery; canAct: boolean; onChanged: () => void }) {
+  const { toast } = useApp();
+  const again = useAction((id: string) => apiSend("post", `/routing/delivery/${id}/retry`));
+  const last = delivery.last_run;
+  const ran = last ? `Last pass ${new Date(last.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}: ${last.ok ? `${last.sent} posted, ${last.held} held${last.failed ? `, ${last.failed} failed` : ""}` : last.error}` : "";
+  return (
+    <Card className="mb-4" padded={false} title="Posted" subtitle="Each queued message the QA chatbot posted in Chat, held, or could not post.">
+      {again.error && <Alert tone="rose" className="mx-5 mb-3">{again.error.message}</Alert>}
+      {!delivery.on && (
+        <p className="px-5 pb-4 text-sm text-zinc-600 dark:text-zinc-400">
+          Not running: {delivery.why}.{!delivery.switch && <> Queued messages wait for a Chat flow. An admin can turn it on under <Link className="font-medium text-blue-700 hover:underline dark:text-blue-300" to="/settings/flags">Settings, Switches</Link>.</>}
+        </p>
+      )}
+      {delivery.on && ran && <p className={cx("px-5 pb-3 text-xs", last?.ok ? "text-zinc-500" : "text-rose-600 dark:text-rose-400")}>{ran}</p>}
+      {delivery.rows.length === 0 ? (delivery.on && <EmptyState title="Nothing posted yet">A queued message shows here within a minute.</EmptyState>) : (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead><tr><th className={TH}>Queued</th><th className={TH}>To</th><th className={TH}>Message</th><th className={TH}>Result</th><th className={TH}>Case</th></tr></thead>
+            <tbody>
+              {delivery.rows.map((r) => (
+                <tr key={r.id} className={TR}>
+                  <td className={TD}><TimeCell value={r.at} /></td>
+                  <td className={TD}>{r.to || r.target}</td>
+                  <td className={cx(TD, "max-w-xl")}>
+                    <span className="line-clamp-2 whitespace-pre-wrap">{r.text}</span>
+                    {r.why && <span className={cx("mt-1 block", r.status === "gave_up" ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400")}>{r.why}</span>}
+                  </td>
+                  <td className={TD}>
+                    <Badge tone={POSTED[r.status].tone}>{POSTED[r.status].label}</Badge>
+                    {canAct && r.status === "gave_up" && (
+                      <Button size="sm" className="mt-2 block" loading={again.loading}
+                        onClick={async () => { if (await again.run(r.id)) { toast("It is posted on the next minute's pass", "success"); onChanged(); } }}>Try again</Button>
+                    )}
+                  </td>
+                  <td className={TD}>{r.case_id ? <Link className="text-blue-700 hover:underline dark:text-blue-300" to={`/feed/${r.case_id}`}>{r.case_id}</Link> : ""}</td>
                 </tr>
               ))}
             </tbody>
@@ -222,6 +281,7 @@ export default function RoutingPage() {
       )}
 
       <ReviewCard review={data.review} />
+      <DeliveryCard delivery={data.delivery} canAct={data.can_act} onChanged={reload} />
 
       <Card className="mb-4" padded={false} title="Copied" subtitle="The last 100 messages taken from the source space.">
         {data.copies.length === 0 ? <EmptyState title="Nothing copied yet">Messages show here once the QA chatbot is ON and a second space is set.</EmptyState> : (
