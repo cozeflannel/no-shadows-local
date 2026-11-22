@@ -3,7 +3,6 @@ import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type Re
 
 import type { ApiError } from "../api/client";
 import { STATUS_LABEL, STATUS_TONE, TONE_CLASSES, VERDICT_TONE, type Tone } from "../lib/labels";
-import { switchName } from "../lib/switches";
 
 export function cx(...classes: (string | false | null | undefined)[]): string {
   return classes.filter(Boolean).join(" ");
@@ -17,36 +16,36 @@ export function Card({ title, subtitle, actions, children, className, bodyClassN
   title?: ReactNode; subtitle?: ReactNode; actions?: ReactNode; children?: ReactNode; className?: string; bodyClassName?: string; padded?: boolean;
 }) {
   return (
-    <section className={cx("rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900", className)}>
+    <section className={cx("rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-[#0c0c0f]", className)}>
       {(title || actions) && (
         <header className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-100 px-5 py-3.5 dark:border-zinc-800/80">
           <div className="min-w-0">
             {title && <h2 className="text-sm font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">{title}</h2>}
             {subtitle && <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{subtitle}</p>}
           </div>
-          {actions && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div>}
+          {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
         </header>
       )}
-      <div className={cx(padded ? "p-5" : "overflow-x-auto", bodyClassName)}>{children}</div>
+      <div className={cx(padded && "p-5", bodyClassName)}>{children}</div>
     </section>
   );
 }
 
 export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
   return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+    <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 className="text-[1.75rem] font-medium leading-tight tracking-tight text-zinc-950 dark:text-zinc-50">{title}</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-zinc-950 dark:text-zinc-50">{title}</h1>
         {description && <p className="mt-1 max-w-3xl text-sm text-zinc-500 dark:text-zinc-400">{description}</p>}
       </div>
-      {actions && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }
 
 export function Badge({ tone = "zinc", children, title, className }: { tone?: Tone; children: ReactNode; title?: string; className?: string }) {
   return (
-    <span title={title} className={cx("inline-flex max-w-full items-center gap-1 truncate rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset", TONE_CLASSES[tone], className)}>
+    <span title={title} className={cx("inline-flex max-w-full items-center gap-1 truncate rounded-md px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset", TONE_CLASSES[tone], className)}>
       {children}
     </span>
   );
@@ -71,11 +70,11 @@ export function Mono({ children, className }: { children: ReactNode; className?:
 
 type Variant = "primary" | "secondary" | "danger" | "ghost" | "success";
 const VARIANTS: Record<Variant, string> = {
-  primary: "bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-200 dark:text-blue-900 dark:hover:bg-blue-100",
-  success: "bg-emerald-600 text-white hover:bg-emerald-700",
-  danger: "bg-rose-600 text-white hover:bg-rose-700",
-  secondary: "border border-zinc-300 bg-transparent text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800",
-  ghost: "text-blue-600 hover:bg-blue-50 dark:text-blue-200 dark:hover:bg-zinc-800",
+  primary: "bg-blue-600 text-white hover:bg-blue-700 shadow-sm dark:bg-blue-600 dark:hover:bg-blue-500",
+  success: "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm",
+  danger: "bg-rose-600 text-white hover:bg-rose-700 shadow-sm",
+  secondary: "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800",
+  ghost: "text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/60",
 };
 
 export function Button({ variant = "secondary", size = "md", loading = false, icon, children, className, disabled, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -87,8 +86,8 @@ export function Button({ variant = "secondary", size = "md", loading = false, ic
       {...props}
       disabled={disabled || loading}
       className={cx(
-        "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-full font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 disabled:cursor-not-allowed disabled:opacity-50",
-        size === "sm" ? "px-3 py-1 text-xs" : "px-4 py-2 text-sm",
+        "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 disabled:cursor-not-allowed disabled:opacity-50",
+        size === "sm" ? "px-2.5 py-1 text-xs" : "px-3.5 py-2 text-sm",
         VARIANTS[variant],
         className,
       )}
@@ -99,7 +98,7 @@ export function Button({ variant = "secondary", size = "md", loading = false, ic
   );
 }
 
-const INPUT = "w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100";
+const INPUT = "w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-950 shadow-sm transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-800 dark:bg-[#09090b] dark:text-zinc-100";
 
 export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={cx(INPUT, className)} />;
@@ -134,7 +133,7 @@ export function Toggle({ checked, onChange, label, disabled }: { checked: boolea
 
 export function Segmented<T extends string | number>({ options, value, onChange, label }: { options: { value: T; label: ReactNode }[]; value: T; onChange: (v: T) => void; label?: string }) {
   return (
-    <div role="group" aria-label={label} className="scroll-thin inline-flex max-w-full overflow-x-auto rounded-full bg-zinc-100 p-1 dark:bg-zinc-900 dark:ring-1 dark:ring-zinc-800">
+    <div role="group" aria-label={label} className="inline-flex rounded-lg bg-zinc-100 p-1 dark:bg-[#0c0c0f] dark:ring-1 dark:ring-zinc-800">
       {options.map((o) => (
         <button
           key={String(o.value)}
@@ -248,12 +247,12 @@ function useEscape(open: boolean, onClose: () => void) {
   }, [open, onClose]);
 }
 
-export function Modal({ open, title, onClose, children, footer, wide = false }: { open: boolean; title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean | "xl" }) {
+export function Modal({ open, title, onClose, children, footer, wide = false }: { open: boolean; title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
   useEscape(open, onClose);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 p-4 backdrop-blur-sm" onMouseDown={onClose}>
-      <div role="dialog" aria-modal="true" className={cx("max-h-[90vh] w-full overflow-y-auto rounded-xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-800 dark:bg-zinc-900", wide === "xl" ? "max-w-5xl" : wide ? "max-w-2xl" : "max-w-md")} onMouseDown={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" className={cx("max-h-[90vh] w-full overflow-y-auto rounded-xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-800 dark:bg-[#0c0c0f]", wide ? "max-w-2xl" : "max-w-md")} onMouseDown={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between gap-4">
           <h3 className="text-base font-semibold text-zinc-950 dark:text-zinc-50">{title}</h3>
           <button type="button" aria-label="Close" onClick={onClose} className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800"><X className="size-4" /></button>
@@ -274,11 +273,11 @@ export function Drawer({ open, onClose, title, children, actions }: { open: bool
         role="dialog"
         aria-modal="true"
         className={cx(
-          "absolute inset-y-0 right-0 flex w-full max-w-3xl flex-col border-l border-zinc-200 bg-zinc-50 shadow-2xl transition-transform duration-300 dark:border-zinc-800 dark:bg-zinc-950",
+          "absolute inset-y-0 right-0 flex w-full max-w-3xl flex-col border-l border-zinc-200 bg-zinc-50 shadow-2xl transition-transform duration-300 dark:border-zinc-800 dark:bg-[#09090b]",
           open ? "translate-x-0" : "translate-x-full",
         )}
       >
-        <header className="flex items-start justify-between gap-3 border-b border-zinc-200 bg-white px-5 py-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <header className="flex items-start justify-between gap-3 border-b border-zinc-200 bg-white px-5 py-4 dark:border-zinc-800 dark:bg-[#0c0c0f]">
           <div className="min-w-0 flex-1">{title}</div>
           <div className="flex shrink-0 items-center gap-2">
             {actions}
@@ -343,55 +342,6 @@ export function CodeBlock({ value, className }: { value: unknown; className?: st
   );
 }
 
-export const TH = "sticky top-0 z-10 bg-zinc-50 px-3 py-2.5 text-left text-xs font-medium text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400";
+export const TH = "sticky top-0 z-10 bg-zinc-50 px-3 py-2.5 text-left text-xs font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400";
 export const TD = "px-3 py-2.5 align-top text-sm text-zinc-800 dark:text-zinc-200";
 export const TR = "border-b border-zinc-100 transition-colors last:border-0 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-800/40";
-
-
-// ---------------------------------------------------------------------------
-// Console additions
-// ---------------------------------------------------------------------------
-
-/** One number with its label; `delta` compares with the period before (positive = more). */
-export function Stat({ label, value, hint, delta, tone, glow = false, onClick }: {
-  label: ReactNode; value: ReactNode; hint?: ReactNode; delta?: number | null; tone?: "rose" | "amber" | "emerald"; glow?: boolean; onClick?: () => void;
-}) {
-  const toneClass = tone === "rose" ? "text-rose-600 dark:text-rose-300" : tone === "amber" ? "text-amber-600 dark:text-amber-300" : tone === "emerald" ? "text-emerald-600 dark:text-emerald-300" : "text-zinc-950 dark:text-zinc-50";
-  const body = (
-    <>
-      <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{label}</p>
-      <p className={cx("mt-1 text-3xl font-medium tabular-nums tracking-tight", toneClass)}>{value}</p>
-      <p className="mt-1 min-h-4 truncate text-xs text-zinc-500 dark:text-zinc-400">
-        {delta !== undefined && delta !== null && delta !== 0 && <span className="mr-1 tabular-nums">{delta > 0 ? "+" : ""}{delta}</span>}
-        {hint}
-      </p>
-    </>
-  );
-  const cls = cx("block w-full rounded-2xl border border-zinc-200 bg-white p-4 text-left dark:border-zinc-800 dark:bg-zinc-900", glow && "glow border-transparent dark:border-transparent");
-  return onClick ? <button type="button" onClick={onClick} className={cx(cls, "transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/70")}>{body}</button> : <div className={cls}>{body}</div>;
-}
-
-/** A switch (not a checkbox): for settings that turn something on or off. */
-export function Switch({ checked, onChange, disabled, label }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; label: string }) {
-  return (
-    <button type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} onClick={() => onChange(!checked)}
-      className={cx("relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-        checked ? "bg-blue-600 dark:bg-blue-200" : "bg-zinc-300 dark:bg-zinc-700")}>
-      <span className={cx("inline-block size-4 rounded-full transition-transform", checked ? "translate-x-6 bg-white dark:bg-blue-900" : "translate-x-1 bg-white dark:bg-zinc-300")} />
-    </button>
-  );
-}
-
-/** A switched-off feature, said once, with where to turn it on. */
-export function OffNotice({ what, flag, children }: { what: string; flag: string; children?: ReactNode }) {
-  return (
-    <Alert tone="amber" title={`${what} is switched off`} className="mb-4">
-      {children} An admin can turn on <a className="font-medium underline" href="/settings/flags">{switchName(flag)}</a> under Settings, Switches.
-    </Alert>
-  );
-}
-
-export function Dot({ tone = "zinc", pulse = false }: { tone?: "zinc" | "emerald" | "amber" | "rose" | "blue"; pulse?: boolean }) {
-  const c = { zinc: "bg-zinc-400", emerald: "bg-emerald-500", amber: "bg-amber-500", rose: "bg-rose-500", blue: "bg-blue-400" }[tone];
-  return <span className={cx("inline-block size-2 shrink-0 rounded-full", c, pulse && "animate-pulse")} aria-hidden />;
-}

@@ -42,29 +42,22 @@ is non-zero. The seeder writes through the Store and EventLogger only (it doesn'
 
 ## Pages
 
-Dark theme by default, light theme from the header. Every page has a Help link that opens its own topic.
-
-| Page | What it does |
+| Page | What it shows / does |
 |---|---|
-| Welcome (`/welcome`) | Landing and sign-in. Shown by itself when the session has no identity or no role. |
-| Dashboard (`/`) | Counts that need a person now (review queue, to acknowledge, SLA at risk, deliveries, who is on shift), KPI cards and the activity chart for Hour, Today, 24 h, 7 days, 30 days or a custom range, the live event stream with an action on each alert, and the setup steps still open. |
-| Review feed (`/feed`) | Every alert as a card: what it needs, verdict, confidence, class. The detail shows the alert, per-field confidence, corrections (revert), cited knowledge, the review decision, every legend action, "Was the agent right?" and the Chat thread. "Triage an alert" puts pasted text through triage. |
-| Stories (`/stories`) | Alerts on the same story as one circle, sized by engagement or alerts, with the smaller stories inside it. Play growth or drag the time slider; List has every story. A story opens its running total, smaller stories, alerts (why each is there, the post, the alert in the Review feed) and linked Chat messages. |
-| Chat spaces (`/chat`) | Each space's messages in and out, held and queued posts, and the conversations by thread or case. |
-| Chat agent (`/agent`) | Ask the agent or have it act with the same tools as Chat. Actions wait for a confirmation. Sessions are kept per person. |
-| Temp check (`/temp-check`) | Run one from a Boolean (converted as typed), a saved Brandwatch query or a drafted query. Result: count, concern level, velocity, sentiment, write-up, posts, history, the Google Doc when a folder is set. |
-| Workforce (`/workforce`) | Now (staff, load, utilization, today against the forecast, gap alerts), Schedule (coverage grid, link to Rosters), History (by day, heatmap, short hours), Forecast (run, recommendations to Accept, Edit or Dismiss, runs), Reports (coverage, utilization, MAPE, gaps, CSV). |
-| Knowledge (`/knowledge`) | Documents (text, web page, Drive file), class mapping, a search that shows what the agent would read, the golden set with its export. |
-| Campaigns & watches (`/campaigns`) | Campaigns with change requests and End now; watches (create, edit, run), found posts with ratings, the scorecard. |
-| Compare (`/compare`) | Burson, the app and the IMs for a period next to the period before: Burson's alerts as the app found them, the app's own detection against Burson's, IM agreement with the app, and speed. |
-| Integrations (`/connections`) | A tile per tool with its state. Find and fill writes what the running service can see (project, region, its own address, the one Agent Runtime, the dataset holding the agent's tables). A tile opens its values (chosen from what the project has where it can list them), Create for BigQuery tables and Pub/Sub topics, and a live check that names the grant to run when access is denied. |
-| Sign in as the QA chatbot (Integrations, Google Chat) | The QA chatbot's own account signs in to Google Chat once. The Console then reads Chat as that account: the check shows each space's latest message, whether people outside Google can join, and which spaces the account still has to be added to. |
-| Admin (`/admin`) | People (add once: role and IM roster place from one record; remove), System (integrations, scheduled work, the agent, delivery, safety, BigQuery, switches), Changes (settings, integrations and people in the last 7 days, who was active). Leads read; admins change. |
-| Alert pop-ups (every page) | A pop-up when an alert comes in, from the shared live stream. Switch `alert_popups`, rules in Settings, Notifications. Each person turns them, a sound and browser notifications on or off from the bell. |
-| Settings (`/settings`, `/settings/:key`) | Opens on the four things to fill in (Integrations, People, Switches, Safety). Advanced holds the rest: platform parts as forms built from their schema (switches, access, project, safety, delivery, BigQuery, forecasting, chat agent, classification, knowledge retrieval, temp check, campaigns & watches, costs, telemetry), the agent's sections (spaces, analysts, shifts, distribution, actions, taxonomy and the rest), and tools: secrets, AI instructions, audit log, change history. BigQuery, Delivery, Safety, Costs and Project carry their own panel under the form. |
-| Help (`/help/:topic`) | Searchable help by page. |
-| Cases, Emails & T&S, Rosters | As before: case list and drawer, drafts and T&S forms, IM and Burson rosters. |
-| More: Suppressed, In-house parity, Outbox, Event log, Breakdowns | As before. Breakdowns is the former Overview page. |
+| Overview | Headline cards (first-pass yield, Burson bounce rate, auto-fix rate, SLA met, time saved, parity recall) and KPI cards by group, for a 24 h / 7 / 14 / 30-day window with the change vs the previous window; daily activity chart; top QA rule failures and operation errors; failures by Burson on-call |
+| Activity | Live event feed (filters: type or prefix, case, escalation, actor; auto-refresh) |
+| Cases | Searchable, filterable list; drawer with fields, attempts, corrections, issues, the timeline, escalations / email versions / T&S, links to the counterpart and related cases. Analysts can revert an applied correction or close the case |
+| Review queue | Alerts held for IM review (oldest first, waiting time): forward (optionally overriding fields), bounce or suppress with a reason |
+| Suppressed | Suppressed alerts with reasons (agent vs IM review) |
+| Parity | Path B recall / precision / full agreement, disagreements by field with examples, Burson-only / in-house-only / pending lists |
+| Escalations | Social Alert drafts and T&S forms: status, versions, recipients, bodies (open-only toggle; search by id, IM, bug or WD issue) |
+| Rosters | Tabs *IM shifts* (`slrr_im`) and *Burson on-call* (`burson`): week schedule with coverage gaps, people, overrides (add / remove), roster editor (admins) |
+| Settings | Structured forms (thresholds, corrections, Burson feedback, outbox, handover, metrics, models), table editors (distribution products and groups, emoji actions legend), a validated JSON editor for every other section, per-section reset, change history |
+| Learning | Config-change proposals (with a validity preview) and knowledge facts: approve / reject |
+| Outbox | Queued chat posts, delivery status and stale items |
+
+The header shows who's on call now on both rosters, the Gmail button, the signed-in user and role,
+and a dark/light toggle. The sidebar shows badges for the review queue, learning and the outbox.
 
 ## API
 
@@ -135,29 +128,6 @@ account, which has no other Console access. It also returns `needs_reconnect` / 
 when the stored token predates a scope change (e.g. the read scope switched to `readonly`); the
 header then shows *Reconnect Gmail*.
 
-### Platform routes
-
-| Route | Purpose |
-|---|---|
-| `GET /dashboard?range=hour\|today\|24h\|7d\|30d\|custom&from&to` | KPIs, previous period, series, counts that need a person |
-| `GET /live/feed`, `GET /live/stream` | Recent events; server-sent events (`events`, `now`, `problem`) |
-| `GET /feed`, `GET /feed/{case}`, `POST /feed/{case}/action`, `POST /feed/{case}/assessment`, `POST /intake` | Review feed, legend action, IM assessment, triage pasted text |
-| `GET /chat/activity`, `GET /chat/spaces` | Chat tracking |
-| `/agent/sessions…` | Chat agent sessions, messages, confirm |
-| `/temp-checks…` | List, run, convert a Boolean, saved queries, record what was done with one |
-| `/workforce/…` | actuals, historicals, intraday, coverage, forecast (+run), recommendations (+decide), report (+CSV) |
-| `/knowledge…`, `/golden…` | Documents, refresh, search; golden set and export |
-| `/campaigns…`, `/watches…` | Campaign change requests; watches, run, rate |
-| `GET/PUT /platform/{part}` | One part of the platform settings with its JSON schema |
-| `/secrets…`, `/bigquery/…`, `/delivery…`, `/prompts…` | Secret versions (write-only), datasets/tables/views, topics and dead letters, AI instructions |
-| `GET /safety`, `GET /audit`, `GET /audit.csv`, `GET /costs`, `GET /setup`, `GET /help`, `GET /agent-runtime` | Runtime checks, audit log, costs, setup steps, help, the deployed agent's health |
-
-Every call that changes something is written to the audit log with the signed-in person.
-
-The worker (`console.backend.worker:app`) is a separate service: `POST /pubsub/outbound`, `POST /pubsub/dead-letter`,
-`POST /jobs/{followups|inhouse|knowledge|forecast|watches|temp-checks|maintenance}`. It accepts only a Google identity
-token of the service account in `TRIAGE_SCHEDULER_SA` or in Settings, Delivery.
-
 ## Configuration (environment)
 
 | Variable | Purpose |
@@ -174,8 +144,6 @@ token of the service account in `TRIAGE_SCHEDULER_SA` or in Settings, Delivery.
 | `TRIAGE_CONSOLE_BASE_URL` | Public URL used for the OAuth redirect (`<url>/api/gmail/callback`) |
 | `TRIAGE_TOKEN_VAULT` | `local` (default) or `secretmanager` |
 | `TRIAGE_CONSOLE_DIST` | Built frontend directory (default `console/frontend/dist`) |
-| `TRIAGE_BOOTSTRAP_ADMIN` | The deployer's address: admin until an admin is named in Settings |
-| `TRIAGE_SCHEDULER_SA` | Worker only: the service account allowed to call it |
 | `VITE_API_TARGET` | Dev server only: where `/api` is proxied (default `http://127.0.0.1:8000`) |
 
 ## Deploy (Cloud Run + IAP)
@@ -186,8 +154,7 @@ Cloud Build and deploys with IAP on the service, `TRIAGE_BACKEND=gcp`, `TRIAGE_I
 `TRIAGE_OAUTH_CLIENT` and `TRIAGE_CONSOLE_BASE_URL`. Grant `roles/iap.httpsResourceAccessor` to the
 people who should reach the Console; roles inside it come from `config.analysts` and the `slrr_im`
 roster. Add `<url>/api/gmail/callback` as an authorized redirect URI of the OAuth client. Don't set
-`TRIAGE_DEV_USER` in production. `infra/09_worker.sh` deploys the worker from the same image.
-`infra/deploy.sh` runs every step.
+`TRIAGE_DEV_USER` in production.
 
 `package-lock.json` uses public `registry.npmjs.org` URLs and lists the native bindings for every
 platform, so `npm ci` works in Cloud Build. Behind a registry mirror, npm's default
@@ -196,10 +163,8 @@ platform, so `npm ci` works in Cloud Build. Behind a registry mirror, npm's defa
 ## Tests
 
 ```bash
-TRIAGE_LLM=fake .venv/bin/python -m pytest -q tests/test_console_api.py tests/test_platform.py
+TRIAGE_LLM=fake .venv/bin/python -m pytest -q tests/test_console_api.py
 ```
-
-`tests/test_platform.py` runs the platform through the real pipeline and the real API on the local store.
 
 The tests seed a temporary SQLite DB once per module with `seed_demo` (each test gets a copy) and
 cover auth and roles, KPIs and charts, cases and activity, the review queue (stubbed and real
@@ -218,10 +183,6 @@ identity-scope aliases, and reconnect after a read-scope change.
 | `backend/ops.py` | Runs agent operations with outbox delivery and maps their errors |
 | `backend/routes_*.py` | Metrics, cases (activity, review, parity, escalations, outbox), rosters, settings, learning |
 | `backend/gmail_oauth.py` | Gmail OAuth for IMs and the agent account |
-| `backend/live.py` | Dashboard, live stream, Review feed, intake |
-| `backend/routes_work.py` | Chat tracking, chat agent, temp checks, workforce, knowledge, golden set, campaigns, watches |
-| `backend/routes_admin.py` | Platform settings, secrets, BigQuery, delivery, AI instructions, safety, audit, costs, setup, agent health |
-| `backend/audit_mw.py` · `help_content.py` · `worker.py` | Audit of every changing call; help topics; the worker service |
 | `backend/serializers.py` | Case / escalation / event JSON, event descriptions |
 | `../tests/_console_fixtures/seed_demo.py`, `demo_*.py` | Demo data generator (kept with the tests) |
 | `frontend/src/pages/` | One component per page |

@@ -64,8 +64,6 @@ The Outbox flow calls `drain_outbox`, which atomically claims:
 | `TRIAGE_CHAT_APP_AUDIENCE` | (none) | Console: enables `POST /api/chat-webhook` (experimental Chat-app endpoint). Project number or endpoint URL that Google Chat's bearer token is issued for; unset = 404 |
 | `TRIAGE_STEALTH_BURSON` | (none) | `1/true/yes` forces stealth mode (no `burson_text`; see §3 delivery rules) regardless of `burson_feedback.silent_in_burson_space` |
 | `TRIAGE_CONSOLE_BASE_URL` / `TRIAGE_CONSOLE_DIST` | (none) | Console: Gmail OAuth redirect base; built frontend directory |
-| `TRIAGE_BOOTSTRAP_ADMIN` | (none) | Console: this address is admin until an admin is named in Settings |
-| `TRIAGE_SCHEDULER_SA` | (none) | Worker: the service account whose identity token may call it |
 
 ## 3. Operations API
 
@@ -653,63 +651,6 @@ Response schemas are pydantic models next to the code that uses them.
 - Chat app (experimental; pending the Phase 0 decision on Studio flows vs. a Chat app):
   - `POST /api/chat-webhook`: Google Chat app HTTP endpoint. MESSAGE → `triage_message` (if `parser.detect` says alert) else `converse`; REACTION → `record_reaction`.
   - Enabled only with `TRIAGE_CHAT_APP_AUDIENCE`; requires the bearer token Google Chat issues (`chat@system.gserviceaccount.com`, verified against that audience); a message with no sender email is rejected (400). Otherwise 404 / 401.
-
-## 17a. Platform (Console-managed)
-
-**Settings.** `AgentConfig.platform` (`PlatformConfig`): `flags`, `access`, `gcp`, `safety`, `pubsub`, `bigquery`, `forecasting`, `chat_agent`,
-`classification`, `knowledge`, `temp_check`, `campaigns`, `costs`, `telemetry`. No YAML holds them; defaults are in the models, values in the
-store's overrides, edited per part through `GET/PUT /api/platform/{part}`. Every flag defaults to `False`. Agent Runtime, jobs, worker and
-Console re-read overrides within 5 seconds.
-
-**Stories** (`stories.py`, settings `platform.stories`): alerts are placed on stories by the Chat bot's same-story rules (story text,
-identifier clash, `same_story_similarity`, `gray_similarity` with the same tag and product, word likeness without vectors, `keep_days`).
-Collections `stories`, `story_members` (case id to story), `story_vectors` (removed past `keep_days`). `stories.refresh` runs on
-`GET /api/stories` and in the once-a-minute tick. `GET /api/stories?hours=` returns each story's size, status (`new`, `growing`, `quiet`),
-smaller stories, per-alert points and hourly running totals; `GET /api/stories/{id}` adds its alerts and Chat messages.
-
-**Compare, Admin, Integrations:** `GET /api/compare?days=` (four sections of `{key, label, value, unit, note, previous}`),
-`GET /api/admin/overview` (leads), `PUT|DELETE /api/admin/people/{email}` (admins; audit `people.save`, `people.remove`),
-`GET /api/connections`, `PUT|DELETE /api/connections/{key}`, `POST /api/connections/{key}/test`, `GET /api/connections/{key}/options?field=`,
-`POST /api/connections/autofill` (admins; audit `connection.*`). A connection writes only its own fields, through the same overrides as
-Settings. A check's result is kept in kv `connection:test:<key>` with a fingerprint of the values and dropped when they change.
-`GET /api/meta` carries `notifications` for the pop-ups. The tick records kv `tick:last`.
-
-**Chat as the QA chatbot's account** (`chatapi.py`, `console/backend/chat_signin.py`): the Console calls the Chat REST API with the sign-in
-of the account in `agent.email`, as the sheet-based bot does (no Chat app, no webhooks). `GET /api/chat-signin`, `GET /api/chat-signin/connect`
-(admins; Google returns to `/api/gmail/callback`, shared with Gmail), `DELETE /api/chat-signin`. Scopes: the sheet-based bot's five `chat.*`
-scopes. A token is kept only for that account and only when every scope was granted, in the token vault under `chat:<email>`. The Google Chat
-check reads each space and its latest message with it.
-
-**Operations** (`platform_ops.py`): `record_assessment {case_id, agree, verdict?, fields?, note?, actor}`, `run_temp_check {issue?, boolean?,
-query_ref?, filters?, draft_query?, case_id?, hours?, update_of?, keep_refreshed_hours?, actor}`, `run_forecast {force?}`, `refresh_knowledge {}`,
-`run_watches {}`. From Chat an assessment needs an analyst or IM; a Console call was already checked against the person's role.
-
-**Triage additions** (flags): `classification_layer` runs purpose `triage.classify` first and picks the knowledge the assessment reads;
-`knowledge_rag` adds passages to `triage.assess` and to answers. The result's `extra` carries `classification`, `field_confidence`, `citations`,
-`knowledge_read`. Both off: prompts and results are unchanged.
-
-**Every operation** records inbound and outbound Chat activity, an audit entry, and passes its outputs through `safety.guard_outputs`
-(allow-listed targets, leak guard for external spaces). Held outputs are returned in `data.held_outputs` and emitted as `safety.blocked`.
-
-**Delivery.** With `pubsub_delivery` on, queued posts are published as `OutboundAction {action_id, kind, idempotency_key, payload}`; the worker
-delivers each once (`done:<key>`), fails the push to make Pub/Sub retry, and records dead letters for replay or discard. Synchronous outputs
-returned to a Studio flow and Gmail drafts are not queued.
-
-**Events** (`events.PlatformEvent`): `audit.recorded`, `chat.inbound|outbound`, `triage.classified`, `assessment.recorded`, `golden.recorded`,
-`safety.blocked|checked`, `outbound.published|delivered|failed|dead_lettered|replayed`, `llm.usage`, `prompt.published`, `agent_chat.turn|tool`,
-`temp_check.started|completed|failed|actioned`, `forecast.run|failed`, `workforce.recommendation_created|recommendation_decided|gap_alert|shift_updated`,
-`knowledge.doc_saved|doc_removed|indexed`, `watch.saved|detected`, `campaign.saved`, `bigquery.changed`, `secret.changed`.
-
-**State** (generic documents, `Store.put_doc/get_doc/list_docs/create_doc/delete_doc/delete_docs_before`): `audit`, `chat_activity`, `events_hot`,
-`outbound`, `dead_letters`, `prompt_versions`, `prompt_defaults`, `knowledge_docs|chunks|text`, `golden`, `agent_sessions`, `temp_checks`, `tc_curves`, `tc_issues`,
-`wf_forecasts`, `wf_recommendations`, `watches`, `watch_detections`, `watch_sources`. Equality filters need no composite index.
-
-**LLM purposes added:** `triage.classify`, `console.chat_agent`, `temp_check.query`, `temp_check.relevance`, `temp_check.writeup`. Each purpose's
-instructions, model and temperature can be published as a version in the Console (`prompts.py`); `{{default}}` stands for the built-in text.
-
-**Forecast SQL.** Primary: `AI.FORECAST((series), data_col => 'y', timestamp_col => 'ts', horizon => N, confidence_level => X)` (TimesFM).
-Fallback: `CREATE OR REPLACE MODEL … OPTIONS(model_type = 'ARIMA_PLUS', …)` then `ML.EXPLAIN_FORECAST`. Staff needed in an hour:
-`ceil(volume × minutes_per_alert / (60 × target_utilization))`, at least `min_staff`.
 
 ## 18. Module layout (agent core)
 

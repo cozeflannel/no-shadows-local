@@ -205,19 +205,6 @@ def grounding(ctx: "AgentContext", question: str, *, external: bool = False) -> 
     if cfg.knowledge.docs and not external:
         sections.append("[Docs]\n" + "\n".join(f"- {k}: {v}" for k, v in cfg.knowledge.docs.items()))
         sources.append("docs")
-    if cfg.platform.flag("knowledge_rag"):
-        from .. import knowledge as knowledge_mod
-
-        try:
-            passages = knowledge_mod.retrieve(ctx, question, external=external, include_cases=not external,
-                                              top_k=cfg.platform.chat_agent.retrieval_top_k or None, budget_chars=12000)
-        except Exception as exc:  # noqa: BLE001 - answer from the other sources
-            log.warning("knowledge retrieval failed: %s", exc)
-            passages = []
-        if passages:
-            sections.append("[Knowledge] (the team's documents; guidance outranks documents; cite the label in brackets)\n"
-                            + knowledge_mod.render_passages(passages, max_chars=12000))
-            sources.extend(dict.fromkeys(p.ref for p in passages))
     for ident in [*case_ids_in(question, cfg), *escalation_ids_in(question, cfg)][:3]:
         status = case_status_text(ctx, ident)
         if status:

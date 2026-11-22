@@ -29,7 +29,6 @@ from .provisioning import (
 )
 from .registry import (
     ensure_registry_spreadsheet,
-    apply_console_requests,
     load_registry_settings,
     run_orphan_sweep,
     sync_registry,
@@ -117,15 +116,6 @@ def handle_tick() -> dict[str, Any]:
             gemini=rt.gemini,
             settings=settings,
         )
-        console_res = apply_console_requests(
-            cfg=rt.cfg,
-            store=rt.store,
-            bw=rt.bw,
-            workspace=rt.workspace,
-            bq=rt.bq,
-            gemini=rt.gemini,
-            settings=settings,
-        )
         reg_res = sync_registry(
             cfg=rt.cfg,
             store=rt.store,
@@ -137,7 +127,6 @@ def handle_tick() -> dict[str, Any]:
         )
         summary: dict[str, Any] = {
             "status": "ok",
-            "console_requests": console_res,
             "threads": threads_res,
             "spaces": spaces_res,
             "ingest": ingest_res,

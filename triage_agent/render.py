@@ -236,7 +236,7 @@ def needs_burson(ctx: "AgentContext", case: Case, result: TriageResult, oncall_e
         found = f" (found: {truncate(issue.found, 80)})" if issue.found else ""
         fix = f" → {issue.fix}" if issue.fix else ""
         lines.append(f"{n}. {label(issue.field) if issue.field else 'Alert'}: {problem}{found}{fix}")
-    lines.append("Everything else is in order. Re-run the Zap with the fix; the rerun is matched to this alert.")
+    lines.append("Everything else is handled by the agent. Re-run the Zap with the fix; the rerun is matched automatically.")
     return finalize("\n".join(lines))
 
 
@@ -248,7 +248,7 @@ def review_dm(ctx: "AgentContext", case: Case, result: TriageResult) -> str:
         lines.append("Why: " + "; ".join(truncate(r, 160) for r in result.review_reasons[:4]))
     proposed = result.proposed_corrections
     if proposed:
-        lines.append("Proposed: " + " · ".join(correction_text(c) + (f" [{c.confidence:.0%} likely right]" if c.confidence is not None else "") for c in proposed[:4]))
+        lines.append("Proposed: " + " · ".join(f"{correction_text(c)} [{c.confidence:.2f}]" for c in proposed[:4]))
     example = f" {proposed[0].field}={fmt_value(proposed[0].new)}" if proposed else ""
     lines.append(
         f"Reply: `forward {cid}` · `forward {cid}{example}` · `bounce {cid}: reason` · `suppress {cid}: reason` "

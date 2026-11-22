@@ -19,7 +19,6 @@ export interface Me {
   timezone: string;
   agent: { display_name: string; email: string; message_prefix: string };
   dev_mode: boolean;
-  flags: Record<string, boolean>;
 }
 
 export interface KpiDefinition { key: string; label: string; description: string; group: string }
@@ -49,8 +48,6 @@ export interface Meta {
   operations: string[];
   rosters: { name: string; label: string; description: string }[];
   kpi_count: number;
-  switch_names: Record<string, string>;
-  notifications: { enabled: boolean; event_types: string[]; sources: string[]; seconds: number; max_on_screen: number };
 }
 
 export interface Window { days: number; since: string; until: string; env?: string | null }
@@ -131,8 +128,7 @@ export interface CaseSummary {
   issue_name: string | null;
   issue_status: string | null;
   verdict: string | null;
-  review_probability: number | null;
-  burson: BursonScore | null;
+  confidence: number | null;
   attempts: number;
   corrections: number;
   proposed: number;
@@ -168,11 +164,8 @@ export interface CaseSummary {
   missing?: boolean;
 }
 
-/** Of the fields Burson filled in, how many were right (counted from the checks, not rated by a model). */
-export interface BursonScore { filled: number; right: number; wrong: string[]; in_question: string[]; pct: number | null }
-/** confidence: Gemini Decisions' probability that the fix is right; null for a rule's fix and when it was not asked. */
-export interface Correction { field: string; old: Json; new: Json; reason: string; confidence: number | null; source: string; applied: boolean; reverted_by: string | null }
-export interface Issue { field: string | null; rule: string; severity: "blocking" | "warning"; found: string | null; expected: string | null; fix: string | null; source: string; confidence: number | null }
+export interface Correction { field: string; old: Json; new: Json; reason: string; confidence: number; source: string; applied: boolean; reverted_by: string | null }
+export interface Issue { field: string | null; rule: string; severity: "blocking" | "warning"; found: string | null; expected: string | null; fix: string | null; source: string; confidence: number }
 export interface RecipientPlan { to: string[]; cc: string[]; groups: string[]; reasons: Record<string, string>; missing: string[]; notes: string[] }
 
 export interface Assessment {
@@ -217,8 +210,7 @@ export interface Assessment {
 
 export interface TriageResult {
   verdict: string;
-  review_probability: number | null;
-  burson: BursonScore | null;
+  confidence: number;
   issues: Issue[];
   corrections: Correction[];
   assessment: Assessment | null;
@@ -427,12 +419,11 @@ export interface OutboxItem {
 }
 export interface OutboxResponse { items: OutboxItem[]; count: number; undelivered: number; stale: number; doorbell: string }
 
-export interface SettingsSection { key: string; label: string; description: string; group: string; kind: "structured" | "table" | "json"; overridden: boolean }
+export interface SettingsSection { key: string; label: string; description: string; kind: "structured" | "table" | "json"; overridden: boolean }
 export interface SettingsResponse {
   config: Record<string, Json>;
   overrides: Record<string, Json>;
   sections: SettingsSection[];
-  groups: { key: string; title: string }[];
   config_version: string;
   version: string;
   env: string;

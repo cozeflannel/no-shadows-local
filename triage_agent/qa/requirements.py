@@ -160,7 +160,7 @@ def evaluate(
     warnings: list[Issue] = []
     review: list[str] = []
 
-    def derive(name: str, new: Any, reason: str) -> None:
+    def derive(name: str, new: Any, reason: str, confidence: float = 1.0) -> None:
         """Set a derived field. Only overriding a value Burson provided counts as a correction."""
         if name in pinned:  # an IM reverted this fix: keep their value
             fields[name] = pinned[name]
@@ -171,7 +171,8 @@ def evaluate(
         if config.alert_template.field(name) is None or current in (None, "", []):
             fields[name] = new
             return
-        corrections.append(Correction(field=name, old=current, new=new, reason=reason, source=IssueSource.RULE))
+        corrections.append(Correction(field=name, old=current, new=new, reason=reason,
+                                      confidence=confidence, source=IssueSource.RULE))
         fields[name] = new
 
     product = str(fields.get("product") or "") or None
@@ -316,11 +317,11 @@ def evaluate(
     if related:
         status = "ONGOING"
         if stated in NEW_STATUSES or not stated:
-            derive("issue_status", ONGOING_FIELD_VALUE, f"alerted within {col.novelty_days} days ({related.case_id})")
+            derive("issue_status", ONGOING_FIELD_VALUE, f"alerted within {col.novelty_days} days ({related.case_id})", 0.95)
     elif history_complete or stated in NEW_STATUSES or not stated:
         status = "NEW"
         if stated not in NEW_STATUSES:
-            derive("issue_status", NEW_FIELD_VALUE, f"no alert on this issue in the last {col.novelty_days} days")
+            derive("issue_status", NEW_FIELD_VALUE, f"no alert on this issue in the last {col.novelty_days} days", 0.9)
     else:
         status = "ONGOING"  # Burson says ongoing and our history can't disprove it yet
 

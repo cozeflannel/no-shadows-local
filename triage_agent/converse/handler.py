@@ -30,7 +30,7 @@ from . import teach
 log = logging.getLogger(__name__)
 
 # Commands that only make sense for Google staff (not the external agency in the Burson space).
-INTERNAL_ONLY = {"temp_check", "revise", "forward", "bounce", "suppress", "revert", "tns_submitted", "tns_withdraw", "bug", "handover",
+INTERNAL_ONLY = {"revise", "forward", "bounce", "suppress", "revert", "tns_submitted", "tns_withdraw", "bug", "handover",
                  "config_change", "decide", "action"}
 SPACE_KINDS = {"burson", "clean", "youtube", "doodle", "team", "crisis"}
 TZ_ABBR = {
@@ -417,7 +417,7 @@ def _oncall_set(turn: Turn, intent: intents_mod.Intent) -> Result:
     label = ROSTER_LABELS[name]
     person = person_for_sender(ctx.roster(name), turn.asker, turn.asker_name)
     if person is None:
-        return turn.reply(f"You're not in the {label} roster, so I can't put you on. An admin can add you to the roster."), {"roster": name}
+        return turn.reply(f"You're not in the {label} roster, so I can't put you on. An admin can add you in the Agent Console."), {"roster": name}
     until = parse_until(ctx, intent.args.get("until"))
     if until is None:
         return turn.reply("Until when? e.g. `I'm on until 6pm ET`."), {"roster": name}
@@ -431,7 +431,7 @@ def _oncall_handoff(turn: Turn, intent: intents_mod.Intent) -> Result:
     label = ROSTER_LABELS[name]
     roster = ctx.roster(name)
     if person_for_sender(roster, turn.asker, turn.asker_name) is None:
-        return turn.reply(f"You're not in the {label} roster, so you can't hand it off. An admin can change the roster."), {"roster": name}
+        return turn.reply(f"You're not in the {label} roster, so you can't hand it off. An admin can change it in the Agent Console."), {"roster": name}
     who = (intent.args.get("who") or "").strip()
     target = person_by_email(roster, who) if "@" in who else next(
         (p for p in roster.people if p.name.lower() == who.lower() or p.id.lower() == who.lower()
@@ -537,30 +537,7 @@ def _question(turn: Turn, intent: intents_mod.Intent) -> Result:
                                            "stakeholder": ans.stakeholder.id if ans.stakeholder else None}
 
 
-def _temp_check(turn: Turn, intent: intents_mod.Intent) -> Result:
-    """`temp check` in an alert's thread, or with a Brandwatch query (its name, id or link) or a Boolean after it."""
-    rest = str(intent.args.get("rest") or "").strip()
-    case_id = intent.case_id
-    if not case_id:
-        case = _case_for_thread(turn.ctx, turn.msg.thread_id)
-        case_id = case.case_id if case else None
-    for found in ([case_id] if case_id else []):
-        rest = rest.replace(found, "").strip()
-    payload: dict[str, Any] = {"case_id": case_id, "actor": turn.asker, "via": "chat", "silent": True}
-    if not rest:
-        if not case_id:
-            return turn.reply("Which issue? Type `temp check` in an alert's thread, or follow it with a Brandwatch query's "
-                              "name, id or link, or a Boolean."), {"intent": "temp_check"}
-        payload["draft_query"] = True
-    elif re.search(r"\b(?:AND|OR|NOT|NEAR/\d+)\b|[\"()]", rest):
-        payload.update({"boolean": rest, "issue": "" if case_id else rest[:80]})
-    else:
-        payload.update({"query_ref": rest, "issue": rest[:120]})
-    return dispatch_op(turn, "run_temp_check", payload)
-
-
 HANDLERS: dict[str, Callable[[Turn, intents_mod.Intent], Result]] = {
-    "temp_check": _temp_check,
     "revise": _revise, "forward": _review, "bounce": _review, "suppress": _review, "revert": _revert,
     "tns_submitted": _tns_submitted, "tns_withdraw": _tns_withdraw, "bug": _bug, "status": _status,
     "oncall_set": _oncall_set, "oncall_handoff": _oncall_handoff, "oncall_who": _oncall_who, "handover": _handover,
@@ -597,8 +574,8 @@ def converse(ctx: AgentContext, payload: dict[str, Any], rc: RequestContext):
         else:
             intent = intents_mod.classify(ctx, text)
             if turn.external and intent.name in INTERNAL_ONLY:
-                out, data = turn.reply("That command isn't available in this space." if turn.burson
-                                       else "That command isn't available to you."), {}
+                out, data = turn.reply("That command works in the SLRR triage space or in a DM with me." if turn.burson
+                                       else "That command is only available to the SLRR team."), {}
             else:
                 try:
                     out, data = HANDLERS.get(intent.name, _question)(turn, intent)

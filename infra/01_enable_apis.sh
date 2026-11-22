@@ -18,11 +18,6 @@ gcloud services enable --project="${PROJECT_ID}" \
   iam.googleapis.com \
   cloudresourcemanager.googleapis.com \
   logging.googleapis.com \
-  storage.googleapis.com \
-  pubsub.googleapis.com \
-  drive.googleapis.com \
-  chat.googleapis.com \
-  telemetry.googleapis.com \
-  cloudtrace.googleapis.com
+  storage.googleapis.com
 
 echo "APIs enabled for ${PROJECT_ID}"

@@ -18,7 +18,7 @@ export const TONE_CLASSES: Record<Tone, string> = {
   lime: "bg-lime-50 text-lime-800 ring-lime-200 dark:bg-lime-900/30 dark:text-lime-300 dark:ring-lime-800/60",
 };
 
-export const CHART_COLORS = ["#4285f4", "#34a853", "#fbbc04", "#ea4335", "#9b72cb", "#d96570", "#24c1e0", "#7cb342", "#fa903e", "#5c6bc0"];
+export const CHART_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16", "#f97316", "#6366f1"];
 
 export const STATUS_TONE: Record<string, Tone> = {
   VERIFIED: "emerald", FAILED: "rose", NEEDS_REVIEW: "amber", SUPPRESSED: "zinc", CLOSED: "slate", ABANDONED: "orange",

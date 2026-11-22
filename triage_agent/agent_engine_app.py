@@ -39,7 +39,6 @@ class TriageAgentApp:
 
         if self._ctx is None:
             self.set_up()
-        self._ctx.maybe_reload()  # settings are read live: a change saved in the Console applies to the next call
         response = handle({"op": op, "payload": payload or {}, "context": context or {}}, self._ctx)
         return response.model_dump(mode="json")
 

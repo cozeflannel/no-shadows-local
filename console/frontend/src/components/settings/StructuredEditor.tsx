@@ -12,8 +12,8 @@ type FieldDef =
 
 export const STRUCTURED_SCHEMAS: Record<string, FieldDef[]> = {
   thresholds: [
-    { key: "needs_review_below", label: "Hold for review when the chance the alert is ready is below", type: "number", min: 0, max: 1, step: 0.01, help: "Gemini Decisions gives the chance a person is needed. When the chance the alert is ready falls under this, it goes to the IM on shift. Needs the switch Gemini Decisions scores each alert." },
-    { key: "llm_block_min_confidence", label: "A problem Gemini raised holds the alert at this chance or higher", type: "number", min: 0, max: 1, step: 0.01, help: "Gemini Decisions gives the chance the problem is real. Below this it is a note and does not hold the alert. With no answer from Gemini Decisions, the problem holds the alert." },
+    { key: "needs_review_below", label: "Hold for review below confidence", type: "number", min: 0, max: 1, step: 0.01, help: "Overall confidence under this sends the alert to the IM on shift." },
+    { key: "llm_block_min_confidence", label: "Gemini blocking-finding confidence", type: "number", min: 0, max: 1, step: 0.01, help: "A blocking Gemini finding below this confidence goes to review instead of Burson." },
     { key: "llm_checks_enabled", label: "Run the Gemini assessment", type: "boolean" },
     { key: "url_check_enabled", label: "Check that post URLs are reachable", type: "boolean" },
     { key: "url_check_timeout_s", label: "URL check timeout (s)", type: "number", min: 0.5, max: 30, step: 0.5 },
@@ -22,8 +22,8 @@ export const STRUCTURED_SCHEMAS: Record<string, FieldDef[]> = {
     { key: "review_reminder_min", label: "Review reminder after (min)", type: "number", min: 1, step: 1, integer: true },
   ],
   corrections: [
-    { key: "mode", label: "Mode", type: "select", options: ["auto", "propose"], help: "auto: the rulebook's fixes are applied, and a fix Gemini proposes is applied when Gemini Decisions puts it at the bar below (IMs can revert). propose: always ask the IM." },
-    { key: "auto_apply_min_confidence", label: "Apply a fix Gemini proposes at this chance or higher", type: "number", min: 0, max: 1, step: 0.01, help: "The chance comes from Gemini Decisions. With no answer from it, the fix waits for a person." },
+    { key: "mode", label: "Mode", type: "select", options: ["auto", "propose"], help: "auto: apply high-confidence fixes (IMs can revert). propose: always ask the IM." },
+    { key: "auto_apply_min_confidence", label: "Auto-apply at confidence ≥", type: "number", min: 0, max: 1, step: 0.01 },
     { key: "never_auto_correct", label: "Never auto-correct these fields", type: "list", placeholder: "post_url", help: "Comma- or line-separated field names; these bounce to Burson instead." },
   ],
   burson_feedback: [
@@ -33,10 +33,10 @@ export const STRUCTURED_SCHEMAS: Record<string, FieldDef[]> = {
     { key: "post_digest_to_burson_space", label: "Post the digest in the Burson space", type: "boolean" },
   ],
   outbox: [
-    { key: "doorbell", label: "How Chat is told a post is waiting", type: "select", options: ["sheet", "email", "none"], help: "A row in a sheet, an email, or none (the Chat flow checks on its own schedule)." },
+    { key: "doorbell", label: "Doorbell", type: "select", options: ["sheet", "email", "none"], help: "How queued posts start the Studio Outbox flow." },
     { key: "sheet_id", label: "Agent Outbox Sheet id", type: "text", nullable: true, placeholder: "1AbC…" },
     { key: "sheet_tab", label: "Sheet tab", type: "text" },
-    { key: "email_subject", label: "Subject of the email that tells Chat", type: "text" },
+    { key: "email_subject", label: "Doorbell email subject", type: "text" },
     { key: "clean_items_per_drain", label: "Clean-space items per drain", type: "number", min: 1, max: 10, step: 1, integer: true, help: "Keep at 1 so each alert is its own message (reactions map to one case)." },
     { key: "max_items_per_target", label: "Max items per other target", type: "number", min: 1, max: 50, step: 1, integer: true },
   ],

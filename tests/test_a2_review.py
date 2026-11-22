@@ -328,7 +328,7 @@ def test_burson_space_recognised_when_space_is_an_id(ctx, clock, space):
     assert IM not in r.outputs["burson_text"] and "ESC-" not in r.outputs["burson_text"]
     blocked = handle({"op": "converse", "payload": {**flat, "message_text": f"forward {case.case_id}", "message_id": f"g-{space}"},
                       "context": {"flow": "converse"}}, ctx)
-    assert "isn't available in this space" in blocked.outputs["burson_text"] and blocked.outputs["has_reply"] == "no"
+    assert "works in the SLRR triage space" in blocked.outputs["burson_text"] and blocked.outputs["has_reply"] == "no"
 
 
 def test_agency_member_dm_gets_the_external_treatment(ctx, clock):
@@ -340,7 +340,7 @@ def test_agency_member_dm_gets_the_external_treatment(ctx, clock):
     assert status.outputs["has_reply"] == "yes" and IM not in status.outputs["reply_text"] and len(
         status.outputs["reply_text"].splitlines()) == 2
     closed = converse(ctx, f"❌ {case.case_id}", message_id="dm-2", **dm)
-    assert "isn't available to you" in closed.outputs["reply_text"]
+    assert "only available to the SLRR team" in closed.outputs["reply_text"]
     assert ctx.store.get_case(case.case_id).status.value == "VERIFIED" and not events(ctx, EventType.CASE_CLOSED)
 
 

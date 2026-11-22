@@ -22,6 +22,7 @@ PROMPT_VERSION = "assess-v1"
 class CheckResult(BaseModel):
     id: str
     ok: bool = True
+    confidence: float = 1.0
     finding: str = ""
     proposed_value: str | None = None  # lists: comma-separated; booleans: "Yes"/"No"
 
@@ -44,7 +45,6 @@ class Enrichment(BaseModel):
 class Assessment(BaseModel):
     checks: list[CheckResult] = Field(default_factory=list)
     enrichment: Enrichment = Field(default_factory=Enrichment)
-    citations: list[str] = Field(default_factory=list)  # labels of the knowledge passages relied on, e.g. "KD-4f2a"
 
 
 def _taxonomy(config: AgentConfig) -> str:
@@ -62,15 +62,7 @@ def _taxonomy(config: AgentConfig) -> str:
     )
 
 
-KNOWLEDGE_NOTE = (
-    "KNOWLEDGE: the team's own documents for this kind of alert. Guidance outranks documents; documents outrank the "
-    "rules in your instructions; exact tag, topic and product names still come from the taxonomy. Put the label of "
-    "every passage you relied on in `citations` (for example KD-4f2a or Case TRG-1042); leave it empty if none applied."
-)
-
-
-def build_prompts(config: AgentConfig, fields: dict[str, Any], extra: dict[str, Any] | None = None,
-                  knowledge: str = "", classification: str = "") -> tuple[str, str]:
+def build_prompts(config: AgentConfig, fields: dict[str, Any], extra: dict[str, Any] | None = None) -> tuple[str, str]:
     checks = [c for c in config.alert_template.llm_checks if c.enabled]
     check_lines = "\n".join(
         f"- id={c.id} fields={c.fields}" + (f" correctable_field={c.correctable_field}" if c.correctable_field else "")
@@ -84,7 +76,8 @@ def build_prompts(config: AgentConfig, fields: dict[str, Any], extra: dict[str, 
         f"{_taxonomy(config)}\n\n"
         "CHECKS (return one result per id, in order):\n"
         f"{check_lines}\n\n"
-        "For each check: ok=false only when the value is clearly wrong; when a correctable_field is wrong, give proposed_value using the exact taxonomy / "
+        "For each check: ok=false only when the value is clearly wrong; confidence is your probability (0-1) that "
+        "your judgment is right; when a correctable_field is wrong, give proposed_value using the exact taxonomy / "
         "product names (lists comma-separated, booleans Yes/No).\n"
         "ENRICHMENT: sundar_mention (Sundar Pichai mentioned); non_us_markets (countries/regions other than the US "
         "that the post is about or from); secondary_products (other Google products involved, distribution names); "
@@ -100,28 +93,23 @@ def build_prompts(config: AgentConfig, fields: dict[str, Any], extra: dict[str, 
     if extra:
         payload["_context"] = {k: v for k, v in extra.items() if k in ("language", "relevance_score", "transcript_snippet")}
     prompt = f"<alert>\n{json.dumps(payload, ensure_ascii=False, default=str)[:12000]}\n</alert>"
-    if classification:
-        prompt = f"CLASS: {classification}\n\n{prompt}"
-    if knowledge:
-        prompt = f"{KNOWLEDGE_NOTE}\n<knowledge>\n{knowledge}\n</knowledge>\n\n{prompt}"
     return system, prompt
 
 
-def assess(ctx: "AgentContext", fields: dict[str, Any], extra: dict[str, Any] | None = None, *,
-           knowledge: str = "", classification: str = "") -> Assessment | None:
-    """Run the Gemini assessment; None when disabled. Raises LLMError on model failure.
-
-    `knowledge` is the rendered passages the classification layer picked (empty = as before)."""
+def assess(ctx: "AgentContext", fields: dict[str, Any], extra: dict[str, Any] | None = None) -> Assessment | None:
+    """Run the Gemini assessment; None when disabled. Raises LLMError on model failure."""
     cfg = ctx.config
     if not cfg.thresholds.llm_checks_enabled:
         return None
-    system, prompt = build_prompts(cfg, fields, extra, knowledge=knowledge, classification=classification)
+    system, prompt = build_prompts(cfg, fields, extra)
     result = ctx.llm.generate_json(
         model=cfg.models.triage, system=system, prompt=prompt, schema=Assessment,
         temperature=cfg.models.temperature_triage, purpose="triage.assess",
     )
     known = {c.id for c in cfg.alert_template.llm_checks if c.enabled}
     result.checks = [c for c in result.checks if c.id in known]
+    for c in result.checks:
+        c.confidence = max(0.0, min(1.0, float(c.confidence)))
     return result
 
 

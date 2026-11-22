@@ -1,14 +1,14 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark light" />
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><defs><linearGradient id=%22g%22 x1=%220%22 y1=%220%22 x2=%221%22 y2=%221%22><stop offset=%220%22 stop-color=%22%234285f4%22/><stop offset=%22.5%22 stop-color=%22%239b72cb%22/><stop offset=%221%22 stop-color=%22%23d96570%22/></linearGradient></defs><path fill=%22url(%23g)%22 d=%22M16 2c1.1 7.6 6.4 12.9 14 14-7.6 1.1-12.9 6.4-14 14-1.1-7.6-6.4-12.9-14-14 7.6-1.1 12.9-6.4 14-14z%22/></svg>" />
-    <title>SLRR Triage Console</title>
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤖</text></svg>" />
+    <title>SLRR Triage Agent · Console</title>
     <script>
       try {
-        if (localStorage.getItem("console-theme") === "light") document.documentElement.classList.remove("dark");
+        if (localStorage.getItem("console-theme") === "dark") document.documentElement.classList.add("dark");
       } catch (e) {}
     </script>
   </head>

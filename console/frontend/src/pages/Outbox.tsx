@@ -17,13 +17,11 @@ export default function OutboxPage() {
 
   return (
     <div>
-      <PageHeader title="Waiting to post" description="Posts the agent has ready that Chat has not posted yet. They go out when the Chat flow next picks them up."
+      <PageHeader title="Outbox" description="Posts that don't come from a running Studio flow (jobs, Console decisions, email follow-ups). The doorbell starts the Outbox flow, which drains them."
         actions={<Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={reload}>Refresh</Button>} />
       {data && data.stale > 0 && (
         <Alert tone="amber" className="mb-4" title={`${data.stale} item${data.stale > 1 ? "s have" : " has"} waited more than 3 minutes`}>
-          {data.doorbell === "none"
-            ? "Chat is not told when a post is waiting, so each one waits for the Chat flow's own schedule. Choose how Chat is told under Integrations, Delivery."
-            : `Chat is told by ${data.doorbell} when a post is waiting, and told again for one that waits this long.`}
+          run_followups re-rings the doorbell for stale items. Doorbell mode: <span className="font-mono">{data.doorbell}</span>{data.doorbell === "none" ? " (no automatic delivery: configure Settings → Outbox)" : ""}.
         </Alert>
       )}
       <Card className="mb-4">

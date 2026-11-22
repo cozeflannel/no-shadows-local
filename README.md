@@ -27,7 +27,7 @@ The IM then reacts with the existing emoji legend and the agent does the work:
 - Distribution-list routing.
 - go/WD-Triage pre-fill, the T&S intake/outcome/bug-ID loop, and the protocols.
 
-There are **no webhooks and no Chat app**. The QA chatbot works in Chat as its own account, signed in, through the Chat API, the way the sheet-based bot does (Integrations, Google Chat): a Cloud Run worker reads the source space every minute on a Cloud Scheduler tick, reviews each new alert, and posts what is queued, through Pub/Sub when that is ON. Nothing in that path is Apps Script. Emoji actions, mentions and direct messages, the agent inbox and the handover doc can still be handed over by Google Workspace Studio flows (the Apps Script add-on in `studio-addon/`) until they move to the same sign-in. The agent and Gemini run on the **Gemini Enterprise Agent Platform** (Agent Runtime, formerly Vertex AI Agent Engine).
+There is **no Chat API configuration and no webhooks**. Chat I/O runs through Google Workspace Studio flows owned by a dedicated Triage Agent account. The agent and Gemini run on the **Gemini Enterprise Agent Platform** (Agent Runtime, formerly Vertex AI Agent Engine).
 
 ## Burson: before → after
 
@@ -69,10 +69,6 @@ flowchart LR
 | `evals/` | Golden set: agent decision vs. IM decision |
 | `scripts/simulate.py` | Local end-to-end simulation of the Studio flows |
 | `console/` | Agent Console (FastAPI + React) |
-| `triage_agent/{audit,chatlog,safety,pubsub,prompts,telemetry,retention}.py` | Platform: audit log, Chat tracking, outbound guards and runtime checks, Pub/Sub delivery, versioned AI instructions, logs and traces, retention |
-| `triage_agent/stories.py` · `console/backend/{routes_insight,connections}.py` | Stories (the Chat bot's same-story rules), the comparison page, Admin and people, Integrations |
-| `triage_agent/{knowledge,classify,golden,tools,chat_agent}.py` | Knowledge retrieval, classification layer, golden set, the shared tool surface, the in-Console chat agent |
-| `triage_agent/{tempcheck,bwquery,workforce,watches,campaigns_admin,bq_admin,secret_admin}.py` | Temp checks, Boolean conversion, workforce and forecasting, watches, campaign change requests, BigQuery and Secret Manager gateways |
 | `studio-addon/` · `flows/` · `analytics/` · `infra/` | Studio custom steps, flow setup + Phase 0 spike, BigQuery views, deployment |
 
 ## Quickstart (local, offline)
@@ -125,7 +121,6 @@ Use real Gemini with `--live` (needs `GOOGLE_CLOUD_PROJECT` and ADC):
 ## Configuration
 
 - Everything rule-like lives in `config/*.yaml` and can be overridden per section from the Console's Settings page. Every event records the config version.
-- Platform settings (switches, access, project, safety, delivery, BigQuery, forecasting, chat agent, classification, knowledge, temp check, campaigns, costs, telemetry) exist only in the Console. Every switch starts OFF. Secrets are kept in Secret Manager and named in settings.
 - Values marked `PLACEHOLDER` need real inputs:
   - the alert template labels (from real Burson samples);
   - space ids, IM shift roster, Burson roster;
@@ -136,8 +131,6 @@ Use real Gemini with `--live` (needs `GOOGLE_CLOUD_PROJECT` and ADC):
 - See `flows/PHASE0_SPIKE.md` for how to collect them.
 
 ## Deploy
-
-`infra/deploy.sh --project PROJECT_ID --region REGION` runs every step and fills the Console's settings with what it knows.
 
 Start with the Phase 0 spike ([`flows/PHASE0_SPIKE.md`](flows/PHASE0_SPIKE.md)), then follow:
 - [`infra/README.md`](infra/README.md): APIs, service accounts, Firestore, BigQuery, the Agent Runtime, jobs, Console + IAP, Gmail OAuth, and the cutover to production.

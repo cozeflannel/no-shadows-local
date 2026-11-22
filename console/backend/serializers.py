@@ -75,8 +75,7 @@ def case_summary(case: Case) -> dict[str, Any]:
         "issue_name": case.issue_name,
         "issue_status": a.issue_status if a else None,
         "verdict": result.verdict.value if result else None,
-        "review_probability": result.review_probability if result else None,  # Gemini Decisions; None = not asked
-        "burson": {k: v for k, v in (result.burson or {}).items() if k != "fields"} if result and result.burson else None,
+        "confidence": result.confidence if result else None,
         "attempts": len(case.attempts),
         "corrections": sum(1 for c in corrections if c.applied and not c.reverted_by),
         "proposed": sum(1 for c in corrections if not c.applied),
@@ -155,7 +154,7 @@ def describe_event(e: AgentEvent) -> str:  # noqa: C901 - one readable line per 
         return f"Held for IM review ({p.get('im_email') or 'IM on shift'}): {_short(reasons[0] if reasons else e.error_codes, 90)}"
     if t in ("correction.applied", "correction.proposed"):
         verb = "Corrected" if t == "correction.applied" else "Proposed"
-        conf = f" · {float(p['probability']):.0%} likely right" if p.get("probability") is not None else ""  # Gemini Decisions' (newer events only)
+        conf = f" · {float(p['confidence']):.2f}" if p.get("confidence") is not None else ""
         return f"{verb} {p.get('field')}: {_short(p.get('old'), 40)} → {_short(p.get('new'), 40)} ({p.get('source') or 'rule'}{conf})"
     if t == "correction.reverted":  # review.py: old = the corrected value, new = the restored original
         return f"{actor} reverted {p.get('field')}: {_short(p.get('old'), 40)} → {_short(p.get('new'), 40)}"

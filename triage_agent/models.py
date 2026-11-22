@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, computed_field, Field, model_validator
+from pydantic import BaseModel, Field, computed_field
 
 
 def utcnow() -> datetime:
@@ -92,7 +92,7 @@ class Issue(BaseModel):
     expected: str | None = None
     fix: str | None = None  # human instruction
     source: IssueSource = IssueSource.RULE
-    confidence: float | None = None  # Gemini Decisions' probability that a problem Gemini raised is real; None = not asked
+    confidence: float = 1.0
 
 
 class ParsedAlert(BaseModel):
@@ -114,9 +114,9 @@ class Correction(BaseModel):
     old: Any = None
     new: Any = None
     reason: str = ""
-    confidence: float | None = None  # Gemini Decisions' probability that a fix Gemini proposed is right; None for rule fixes and when not asked
+    confidence: float = 1.0
     source: IssueSource = IssueSource.RULE
-    applied: bool = True  # False => proposed only (no probability, or one below the auto-apply bar; an IM confirms)
+    applied: bool = True  # False => proposed only (below auto-apply threshold; IM confirms)
     reverted_by: str | None = None  # IM reverted it (Console / chat)
 
 
@@ -178,8 +178,7 @@ class AlertAssessment(BaseModel):
 
 class TriageResult(BaseModel):
     verdict: Verdict
-    review_probability: float | None = None  # Gemini Decisions: the chance a person needs to look at this alert; None = not asked
-    burson: dict[str, Any] | None = None  # of the fields Burson filled in, how many were right (qa/certainty.py burson_score)
+    confidence: float = 1.0
     issues: list[Issue] = Field(default_factory=list)  # blocking + warnings
     corrections: list[Correction] = Field(default_factory=list)
     assessment: AlertAssessment | None = None
@@ -192,16 +191,6 @@ class TriageResult(BaseModel):
     model: str | None = None
     rules_version: str | None = None
     latency_ms: int = 0
-
-    @model_validator(mode="after")
-    def _only_real_probabilities(self) -> "TriageResult":
-        """A probability is kept only when Gemini Decisions gave it (checks_run names it). Results stored before that
-        carried a model's own rating of itself: it is dropped when they are read, so it is never shown as a measurement."""
-        if "decisions" not in self.checks_run:
-            self.review_probability = None
-            for item in (*self.corrections, *self.issues):
-                item.confidence = None
-        return self
 
     @property
     def blocking(self) -> list[Issue]:

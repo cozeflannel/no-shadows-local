@@ -21,19 +21,14 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from triage_agent import __version__ as agent_version
-from triage_agent.config import switch_title
 from triage_agent.context import AgentContext
-from triage_agent.events import EventType, PlatformEvent
+from triage_agent.events import EventType
 from triage_agent.metrics import KPI_DEFINITIONS
 from triage_agent.models import CaseStatus
 from triage_agent.operations import registered_operations
 from triage_agent.render import FIELD_LABELS
 
-from . import (
-    chat_signin, connections, gmail_oauth, help_content, live, routes_admin, routes_ai, routes_cases, routes_insight, routes_learning, routes_metrics, routes_rosters, routes_routing,
-    routes_settings, routes_work,
-)
-from .audit_mw import audit_requests
+from . import gmail_oauth, routes_cases, routes_learning, routes_metrics, routes_rosters, routes_settings, chat_stream
 from .auth import User, current_user, get_ctx, require_viewer
 from .state import ConsoleState
 
@@ -60,7 +55,6 @@ def create_app(ctx: AgentContext | None = None, state: ConsoleState | None = Non
     app = FastAPI(title="SLRR Triage Agent Console", version=agent_version, docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
     app.state.console = state or ConsoleState(ctx=ctx)
     app.add_middleware(GZipMiddleware, minimum_size=2048)  # list endpoints return a few hundred KB of JSON
-    app.middleware("http")(audit_requests)  # every change made through the Console is recorded
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
@@ -91,7 +85,6 @@ def create_app(ctx: AgentContext | None = None, state: ConsoleState | None = Non
             "timezone": cfg.timezone,
             "agent": cfg.agent.model_dump(mode="json"),
             "dev_mode": user.via == "dev",
-            "flags": cfg.platform.flags.model_dump(),
         }
 
     @app.get("/api/meta", tags=["meta"])
@@ -107,13 +100,7 @@ def create_app(ctx: AgentContext | None = None, state: ConsoleState | None = Non
             "timezone": cfg.timezone,
             "case_id_prefix": cfg.case_id_prefix,
             "escalation_id_prefix": cfg.escalation_id_prefix,
-            "event_types": sorted([*EventType.all(), *PlatformEvent.all()]),
-            "flags": cfg.platform.flags.model_dump(),
-            "switch_names": {name: switch_title(name) for name in type(cfg.platform.flags).model_fields},
-            "notifications": {"enabled": cfg.platform.flags.alert_popups, "event_types": cfg.platform.notifications.popup_event_types,
-                              "sources": cfg.platform.notifications.popup_sources, "seconds": cfg.platform.notifications.popup_seconds,
-                              "max_on_screen": cfg.platform.notifications.max_on_screen},
-            "spaces": [{"key": s.key, "name": s.display_name, "configured": bool(s.space_id or s.url)} for s in cfg.spaces],
+            "event_types": EventType.all(),
             "statuses": [s.value for s in CaseStatus],
             "sources": ["burson_chat", "inhouse", "watchdog", "manual"],
             "tracks": ["URGENT", "HIGH_ENGAGEMENT"],
@@ -136,13 +123,7 @@ def create_app(ctx: AgentContext | None = None, state: ConsoleState | None = Non
             "kpi_count": len(KPI_DEFINITIONS),
         }
 
-    @app.get("/api/help", tags=["meta"])
-    def help_topics(user: User = Depends(require_viewer)) -> dict[str, Any]:
-        """Help pages: how to use each page and setting."""
-        return {"topics": help_content.topics()}
-
-    for module in (routes_metrics, routes_cases, routes_rosters, routes_admin, routes_settings, routes_learning, gmail_oauth, live,
-                   routes_work, routes_insight, connections, chat_signin, routes_routing, routes_ai):
+    for module in (routes_metrics, routes_cases, routes_rosters, routes_settings, routes_learning, gmail_oauth, chat_stream):
         app.include_router(module.router)
 
     # -- static frontend (SPA) -------------------------------------------------

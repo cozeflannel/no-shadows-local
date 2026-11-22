@@ -1,122 +1,80 @@
-import { lazy, Suspense } from "react";
+import { Bot, ShieldAlert } from "lucide-react";
 import { Navigate, Route, Routes } from "react-router";
 
 import { GmailButton } from "./components/GmailButton";
 import { Layout } from "./components/Layout";
 import { Alert, Spinner } from "./components/ui";
 import { useApp } from "./context";
-import { LiveProvider } from "./lib/live";
-import DashboardPage from "./pages/Dashboard";
-import FeedPage from "./pages/Feed";
-import WelcomePage from "./pages/Welcome";
-
-// Every page but the ones a person lands on is loaded when it is first opened, so the Console's first file stays small.
-const ActivityPage = lazy(() => import("./pages/Activity"));
-const AdminPage = lazy(() => import("./pages/Admin"));
-const AiPage = lazy(() => import("./pages/Ai"));
-const AgentPage = lazy(() => import("./pages/Agent"));
-const CampaignsPage = lazy(() => import("./pages/Campaigns"));
-const CasesPage = lazy(() => import("./pages/Cases"));
-const ComparePage = lazy(() => import("./pages/Compare"));
-const ConnectionsPage = lazy(() => import("./pages/Connections"));
-const EarlyPage = lazy(() => import("./pages/Early"));
-const ChatSpacesPage = lazy(() => import("./pages/ChatSpaces"));
-const EscalationsPage = lazy(() => import("./pages/Escalations"));
-const HelpPage = lazy(() => import("./pages/Help"));
-const KnowledgePage = lazy(() => import("./pages/Knowledge"));
-const LearningPage = lazy(() => import("./pages/Learning"));
-const OutboxPage = lazy(() => import("./pages/Outbox"));
-const OverviewPage = lazy(() => import("./pages/Overview"));
-const ParityPage = lazy(() => import("./pages/Parity"));
-const RostersPage = lazy(() => import("./pages/Rosters"));
-const SettingsPage = lazy(() => import("./pages/Settings"));
-const RoutingPage = lazy(() => import("./pages/Routing"));
-const StoriesPage = lazy(() => import("./pages/Stories"));
-const SuppressedPage = lazy(() => import("./pages/Suppressed"));
-const TempCheckPage = lazy(() => import("./pages/TempCheck"));
-const WorkforcePage = lazy(() => import("./pages/Workforce"));
+import ActivityPage from "./pages/Activity";
+import CasesPage from "./pages/Cases";
+import EscalationsPage from "./pages/Escalations";
+import LearningPage from "./pages/Learning";
+import OutboxPage from "./pages/Outbox";
+import OverviewPage from "./pages/Overview";
+import ParityPage from "./pages/Parity";
+import ReviewQueuePage from "./pages/ReviewQueue";
+import RostersPage from "./pages/Rosters";
+import SettingsPage from "./pages/Settings";
+import SuppressedPage from "./pages/Suppressed";
+import TestChannelPage from "./pages/TestChannel";
+import ChatPage from "./pages/Chat";
 
 export default function App() {
   const { me, gmail, bootError } = useApp();
 
   if (bootError && !me) {
-    if (bootError.status === 401) return <WelcomePage state="signed-out" />;
     return (
-      <WelcomePage state="no-access">
-        <Alert tone="rose" title="The Console API can't be reached">{bootError.message}</Alert>
-      </WelcomePage>
+      <div className="mx-auto max-w-xl p-10">
+        <Alert tone="rose" title={bootError.status === 401 ? "Not signed in" : "The Console API isn't reachable"}>
+          {bootError.message}
+        </Alert>
+      </div>
     );
   }
-  if (!me) return <Spinner label="Loading" />;
+  if (!me) return <Spinner label="Loading the Agent Console…" />;
   if (!me.can_view && gmail?.mailbox === "agent") {
     return (
-      <WelcomePage state="no-access">
-        <Alert tone="blue" title="This is the agent's own account">
-          {me.email} only connects its mailbox here, once, so the email doorbell can send. The rest of the Console is for analysts and Incident Managers.
-          <div className="mt-3"><GmailButton /></div>
-        </Alert>
-      </WelcomePage>
+      <div className="mx-auto flex max-w-xl flex-col items-center gap-3 p-10 text-center">
+        <Bot className="size-10 text-zinc-400" />
+        <h1 className="text-lg font-semibold">Triage Agent account</h1>
+        <p className="text-sm text-zinc-500">
+          {me.email} is the agent's own account. Connect its mailbox once so the email doorbell can send (gmail.send only);
+          the rest of the Console is for analysts and Incident Managers.
+        </p>
+        <GmailButton />
+      </div>
     );
   }
   if (!me.can_view) {
     return (
-      <WelcomePage state="no-access">
-        <Alert tone="amber" title="No access yet">{me.email} is not an analyst, an Incident Manager or in a viewer domain. Ask an admin to add you under Settings, Analysts & roles.</Alert>
-      </WelcomePage>
+      <div className="mx-auto flex max-w-xl flex-col items-center gap-3 p-10 text-center">
+        <ShieldAlert className="size-10 text-zinc-400" />
+        <h1 className="text-lg font-semibold">No access</h1>
+        <p className="text-sm text-zinc-500">{me.email} isn't an SLRR analyst, Incident Manager or Google user. Ask an admin to add you in Settings → Analysts & roles.</p>
+      </div>
     );
   }
 
   return (
-    <Routes>
-      <Route path="/welcome" element={<WelcomePage />} />
-      <Route path="*" element={
-        <LiveProvider>
-        <Layout>
-          <Suspense fallback={<Spinner />}>
-          <Routes>
-            <Route path="/" element={<DashboardPage />} />
-            <Route path="/feed" element={<FeedPage />} />
-            <Route path="/feed/:caseId" element={<FeedPage />} />
-            <Route path="/review" element={<Navigate to="/feed?view=review" replace />} />
-            <Route path="/stories" element={<StoriesPage />} />
-            <Route path="/stories/:storyId" element={<StoriesPage />} />
-            <Route path="/compare" element={<ComparePage />} />
-            <Route path="/early" element={<EarlyPage />} />
-            <Route path="/routing" element={<RoutingPage />} />
-            <Route path="/ai" element={<AiPage />} />
-            <Route path="/connections" element={<ConnectionsPage />} />
-            <Route path="/connections/:toolKey" element={<ConnectionsPage />} />
-            <Route path="/admin" element={<AdminPage />} />
-            <Route path="/admin/:tab" element={<AdminPage />} />
-            <Route path="/chat" element={<ChatSpacesPage />} />
-            <Route path="/agent" element={<AgentPage />} />
-            <Route path="/agent/:sessionId" element={<AgentPage />} />
-            <Route path="/temp-check" element={<TempCheckPage />} />
-            <Route path="/temp-check/:checkId" element={<TempCheckPage />} />
-            <Route path="/workforce" element={<WorkforcePage />} />
-            <Route path="/rosters" element={<RostersPage />} />
-            <Route path="/knowledge" element={<KnowledgePage />} />
-            <Route path="/learning" element={<LearningPage />} />
-            <Route path="/campaigns" element={<CampaignsPage />} />
-            <Route path="/cases" element={<CasesPage />} />
-            <Route path="/cases/:caseId" element={<CasesPage />} />
-            <Route path="/escalations" element={<EscalationsPage />} />
-            <Route path="/suppressed" element={<SuppressedPage />} />
-            <Route path="/parity" element={<ParityPage />} />
-            <Route path="/outbox" element={<OutboxPage />} />
-            <Route path="/activity" element={<ActivityPage />} />
-            <Route path="/breakdowns" element={<OverviewPage />} />
-            <Route path="/overview" element={<Navigate to="/" replace />} />
-            <Route path="/help" element={<HelpPage />} />
-            <Route path="/help/:topic" element={<HelpPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/settings/:key" element={<SettingsPage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-          </Suspense>
-        </Layout>
-        </LiveProvider>
-      } />
-    </Routes>
+    <Layout>
+      <Routes>
+        <Route path="/" element={<OverviewPage />} />
+        <Route path="/overview" element={<Navigate to="/" replace />} />
+        <Route path="/test" element={<TestChannelPage />} />
+        <Route path="/activity" element={<ActivityPage />} />
+        <Route path="/cases" element={<CasesPage />} />
+        <Route path="/cases/:caseId" element={<CasesPage />} />
+        <Route path="/review" element={<ReviewQueuePage />} />
+        <Route path="/suppressed" element={<SuppressedPage />} />
+        <Route path="/parity" element={<ParityPage />} />
+        <Route path="/escalations" element={<EscalationsPage />} />
+        <Route path="/rosters" element={<RostersPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/learning" element={<LearningPage />} />
+        <Route path="/outbox" element={<OutboxPage />} />
+        <Route path="/chat" element={<ChatPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </Layout>
   );
 }

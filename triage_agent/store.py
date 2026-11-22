@@ -104,8 +104,7 @@ class Store(Protocol):
 
     # outbox (posts delivered by the Studio Outbox flow)
     def add_outbox(self, item: OutboxItem) -> None: ...
-    # Oldest first. `since`: only items queued at or after that time.
-    def list_outbox(self, undelivered_only: bool = True, limit: int = 200, since: datetime | None = None) -> list[OutboxItem]: ...
+    def list_outbox(self, undelivered_only: bool = True, limit: int = 200) -> list[OutboxItem]: ...
     def mark_outbox_delivered(self, outbox_ids: list[str], delivered_by: str = "") -> None: ...
     # Atomically take undelivered items (oldest first) and mark them delivered.
     # per_target: max items per target, e.g. {"clean": 1, "team": 10}; targets not listed use `default_limit`.
@@ -113,16 +112,6 @@ class Store(Protocol):
     def claim_outbox(
         self, per_target: dict[str, int], default_limit: int, claimed_by: str, max_chars: int = 3500
     ) -> list[OutboxItem]: ...
-
-    # generic documents (audit log, chat activity, knowledge, sessions, workforce, ...). `where` is an equality
-    # filter on top-level keys; results are newest first by the time the document was last written.
-    def put_doc(self, collection: str, doc_id: str, data: dict) -> None: ...
-    def get_doc(self, collection: str, doc_id: str) -> dict | None: ...
-    def delete_doc(self, collection: str, doc_id: str) -> None: ...
-    def list_docs(self, collection: str, *, where: dict[str, Any] | None = None, since: datetime | None = None,
-                  limit: int = 200) -> list[dict]: ...
-    def create_doc(self, collection: str, doc_id: str, data: dict) -> bool: ...  # False = it already exists
-    def delete_docs_before(self, collection: str, field: str, before: datetime, limit: int = 2000) -> int: ...  # by the row's own time
 
 
 def _claim_plan(
@@ -388,12 +377,10 @@ class SqliteStore:
     def add_outbox(self, item):
         self._put("outbox", item.outbox_id, item.model_dump(mode="json"))
 
-    def list_outbox(self, undelivered_only=True, limit=200, since=None):
+    def list_outbox(self, undelivered_only=True, limit=200):
         items = [OutboxItem.model_validate(d) for d in self._list("outbox", limit=100000)]
         if undelivered_only:
             items = [i for i in items if i.delivered_at is None]
-        if since is not None:
-            items = [i for i in items if i.created_at >= since]
         return sorted(items, key=lambda i: i.created_at)[:limit]
 
     def mark_outbox_delivered(self, outbox_ids, delivered_by=""):
@@ -416,65 +403,6 @@ class SqliteStore:
         for i in chosen:
             i.delivered_at, i.delivered_by = now, claimed_by
         return chosen
-
-
-    # -- generic documents ---------------------------------------------------------
-    def put_doc(self, collection, doc_id, data):
-        self._put(f"x:{collection}", doc_id, data)
-
-    def get_doc(self, collection, doc_id):
-        return self._get(f"x:{collection}", doc_id)
-
-    def delete_doc(self, collection, doc_id):
-        with self._lock:
-            con = self._conn()
-            con.execute("DELETE FROM docs WHERE collection = ? AND id = ?", (f"x:{collection}", doc_id))
-            con.commit()
-
-    def create_doc(self, collection, doc_id, data):
-        with self._lock:
-            con = self._conn()
-            cur = con.execute(
-                "INSERT OR IGNORE INTO docs (collection, id, data, updated_at) VALUES (?, ?, ?, ?)",
-                (f"x:{collection}", doc_id, json.dumps(data, default=str), utcnow().isoformat()),
-            )
-            con.commit()
-            return cur.rowcount == 1
-
-    def delete_docs_before(self, collection, field, before, limit=2000):
-        if not field.replace("_", "").isalnum():
-            raise ValueError(f"invalid field: {field}")
-        with self._lock:
-            con = self._conn()
-            cur = con.execute(
-                f"DELETE FROM docs WHERE collection = ? AND id IN (SELECT id FROM docs WHERE collection = ? "
-                f"AND json_extract(data, '$.{field}') < ? LIMIT ?)",
-                (f"x:{collection}", f"x:{collection}", utc_isoformat(before), int(limit)),
-            )
-            con.commit()
-            return cur.rowcount
-
-    def list_docs(self, collection, *, where=None, since=None, limit=200):
-        sql, args = "SELECT data FROM docs WHERE collection = ?", [f"x:{collection}"]
-        for key, value in (where or {}).items():
-            if not key.replace("_", "").isalnum():
-                raise ValueError(f"invalid filter key: {key}")
-            if isinstance(value, bool):
-                sql += f" AND json_extract(data, '$.{key}') = ?"
-                args.append(1 if value else 0)
-            elif value is None:
-                sql += f" AND json_extract(data, '$.{key}') IS NULL"
-            else:
-                sql += f" AND json_extract(data, '$.{key}') = ?"
-                args.append(value)
-        if since is not None:
-            sql += " AND updated_at >= ?"
-            args.append(utc_isoformat(since))
-        sql += " ORDER BY updated_at DESC LIMIT ?"
-        args.append(int(limit))
-        with self._lock:
-            rows = self._conn().execute(sql, args).fetchall()
-        return [json.loads(r[0]) for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -677,12 +605,10 @@ class FirestoreStore:
     def add_outbox(self, item):
         self._doc("outbox", item.outbox_id).set(self._dump(item))
 
-    def list_outbox(self, undelivered_only=True, limit=200, since=None):
+    def list_outbox(self, undelivered_only=True, limit=200):
         q = self.db.collection("outbox")
         if undelivered_only:
             q = q.where("delivered_at", "==", None)
-        if since is not None:
-            q = q.where("created_at", ">=", utc_isoformat(since))  # created_at is stored as UTC text, so the bound must be UTC text too
         q = q.order_by("created_at").limit(limit)
         return [OutboxItem.model_validate(d.to_dict()) for d in q.stream()]
 
@@ -709,66 +635,6 @@ class FirestoreStore:
             return chosen
 
         return _claim(transaction)
-
-    # generic documents: one Firestore collection each, with the write time in `_updated_at`
-    def put_doc(self, collection, doc_id, data):
-        self._doc(collection, doc_id).set({**json.loads(json.dumps(data, default=str)), "_updated_at": utcnow().isoformat()})
-
-    def get_doc(self, collection, doc_id):
-        snap = self._doc(collection, doc_id).get()
-        if not snap.exists:
-            return None
-        data = snap.to_dict() or {}
-        data.pop("_updated_at", None)
-        return data
-
-    def delete_doc(self, collection, doc_id):
-        self._doc(collection, doc_id).delete()
-
-    def create_doc(self, collection, doc_id, data):
-        try:
-            self._doc(collection, doc_id).create({**json.loads(json.dumps(data, default=str)), "_updated_at": utcnow().isoformat()})
-            return True
-        except Exception as exc:  # noqa: BLE001 - AlreadyExists (409) means another writer got there first
-            if type(exc).__name__ in ("AlreadyExists", "Conflict"):
-                return False
-            raise
-
-    def delete_docs_before(self, collection, field, before, limit=2000):
-        removed = 0
-        batch = self.db.batch()
-        for snap in self.db.collection(collection).where(field, "<", utc_isoformat(before)).limit(int(limit)).stream():
-            batch.delete(snap.reference)
-            removed += 1
-            if removed % 400 == 0:  # a batch holds at most 500 writes
-                batch.commit()
-                batch = self.db.batch()
-        if removed % 400:
-            batch.commit()
-        return removed
-
-    def list_docs(self, collection, *, where=None, since=None, limit=200):
-        col = self.db.collection(collection)
-        if where:
-            # Equality filters only, sorted here: no composite index is needed for any collection.
-            q = col
-            for key, value in where.items():
-                q = q.where(key, "==", value)
-            rows = [d.to_dict() or {} for d in q.limit(max(int(limit) * 5, 500)).stream()]
-            if since is not None:
-                floor = utc_isoformat(since)
-                rows = [r for r in rows if str(r.get("_updated_at", "")) >= floor]
-            rows.sort(key=lambda r: str(r.get("_updated_at", "")), reverse=True)
-            rows = rows[: int(limit)]
-        else:
-            q = col
-            if since is not None:
-                q = q.where("_updated_at", ">=", utc_isoformat(since))
-            q = q.order_by("_updated_at", direction=self._fs.Query.DESCENDING).limit(int(limit))
-            rows = [d.to_dict() or {} for d in q.stream()]
-        for r in rows:
-            r.pop("_updated_at", None)
-        return rows
 
 
 def get_store() -> Store:

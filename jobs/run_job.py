@@ -4,11 +4,6 @@
   python -m jobs.run_job inhouse       # every 1-5 minutes: Path B ingestion
   python -m jobs.run_job handover      # on demand
   python -m jobs.run_job digest        # on demand (forces today's Burson digest)
-  python -m jobs.run_job knowledge     # re-read linked knowledge docs that are due
-  python -m jobs.run_job forecast      # the volume forecast and staffing recommendations, then gap alerts
-  python -m jobs.run_job watches       # one look for every watch source that is due
-  python -m jobs.run_job temp-checks   # automatic temp checks
-  python -m jobs.run_job maintenance   # the four above in one run
 
 Output is queued in the outbox (deliver="outbox"); the doorbell starts the
 Studio Outbox flow that posts it.
@@ -27,8 +22,7 @@ OPS = {
     "inhouse": ("ingest_inhouse", {}),
     "handover": ("generate_handover", {}),
 }
-PLATFORM_JOBS = ("knowledge", "forecast", "watches", "temp-checks", "maintenance")  # triage_agent.platform_jobs.run_job
-JOBS = sorted([*OPS, "digest", *PLATFORM_JOBS])  # digest is not an operation: it calls burson_digest(force=True), see main()
+JOBS = sorted([*OPS, "digest"])  # digest is not an operation: it calls burson_digest(force=True), see main()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -43,12 +37,6 @@ def main(argv: list[str] | None = None) -> int:
         queued = burson_digest(ctx, force=True)  # 0 when burson_feedback.post_digest_to_burson_space is off
         print(json.dumps({"ok": True, "job": "digest", "queued": queued}))
         return 0
-    if args.job in PLATFORM_JOBS:
-        from triage_agent.platform_jobs import run_job
-
-        result = run_job(ctx, args.job)
-        print(json.dumps(result, default=str))
-        return 0 if result.get("ok", True) else 1
     op, payload = OPS[args.job]
     resp = handle({"op": op, "payload": payload, "context": {"deliver": "outbox", "flow": "job", "invoked_by": f"job:{args.job}"}}, ctx)
     # run_followups keeps going when a step raises and lists those steps: the job must not look green.

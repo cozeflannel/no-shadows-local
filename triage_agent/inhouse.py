@@ -231,18 +231,14 @@ def _row_timestamp(row: dict[str, Any]) -> Any:
     return None
 
 
-def view_location_setting(outbox_view: str) -> str:
-    """Which of the two location settings the view is read with: `sonar_location` for a view in Sonar's dataset or the
-    central1 staging one, `location` for any other."""
-    return "sonar_location" if "bsip-s-bsip-gg-26-2cf3.google_bg" in outbox_view or "slrr_staging_central1" in outbox_view else "location"
-
-
 def fetch_rows(ctx: AgentContext) -> list[dict[str, Any]]:
     from google.cloud import bigquery  # lazy: only the job needs BigQuery
 
     cfg = ctx.config.inhouse
     project = getattr(cfg, "project", None) or "brand-social-central-data"
-    location = getattr(cfg, view_location_setting(cfg.outbox_view))
+    location = cfg.location
+    if "bsip-s-bsip-gg-26-2cf3.google_bg" in cfg.outbox_view or "slrr_staging_central1" in cfg.outbox_view:
+        location = getattr(cfg, "sonar_location", "us-central1")
     client = bigquery.Client(project=project, location=location)
 
     if cfg.outbox_view.endswith(".sonar_raw"):

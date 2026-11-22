@@ -65,7 +65,7 @@ def fake_llm_for(case: dict[str, Any]) -> FakeLLM:
     overrides = case.get("llm") or {}
 
     def respond(call):
-        return {"checks": [{"id": c, "ok": True, **overrides.get(c, {})} for c in CHECK_IDS],
+        return {"checks": [{"id": c, "ok": True, "confidence": 0.95, **overrides.get(c, {})} for c in CHECK_IDS],
                 "enrichment": overrides.get("enrichment", {})}
 
     return FakeLLM().on("triage.assess", respond)
@@ -91,28 +91,9 @@ def seed_history(ctx: AgentContext, history: list[dict[str, Any]]) -> None:
 
 
 def evaluate_case(case: dict[str, Any], n: int, live: bool) -> dict[str, Any]:
-    from triage_agent.qa import certainty
-
-    judge = certainty.judge
-    try:
-        return _evaluate(case, n, live)
-    finally:
-        certainty.judge = judge  # a case that states Gemini Decisions' probabilities sets them for itself only
-
-
-def _evaluate(case: dict[str, Any], n: int, live: bool) -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as tmp:
         ctx = build_ctx(Path(tmp), get_llm() if live else fake_llm_for(case))
         seed_history(ctx, case.get("history"))
-        chance = case.get("decisions")  # Gemini Decisions' probability for each question (offline: as the case states them)
-        if chance is not None:
-            ctx.config.platform.flags.decisions_review = True
-            if not live:
-                from triage_agent.qa import certainty
-
-                certainty.judge = lambda ctx_, fields, proposals, complaints: {  # type: ignore[assignment]
-                    **{p["key"]: float(chance.get(p["key"], 0.0)) for p in proposals},
-                    **{c["key"]: float(chance.get(c["key"], 0.0)) for c in complaints}, certainty.REVIEW: float(chance.get("review", 0.0))}
         text = render_alert(ctx.config, case["fields"], n)
         msg = ChatMessage(message_id=f"eval-{n}", text=text, sender=ChatUser(name="Zapier", type="BOT"),
                           space_id="spaces/AAQAaa_0I9g", create_time=NOW)
