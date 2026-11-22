@@ -37,6 +37,7 @@ SWITCH = "chat_delivery"
 BY = "chat_delivery"  # who an outbox item was delivered by
 CLOSED = ("sent", "held", "waits_for_send")
 READ = 500  # queued posts looked at in one pass
+CLAIM_S = 120  # how long one post stays in hand before another worker may take it (a worker that died mid-post)
 
 
 class _Stop(RuntimeError):
@@ -224,6 +225,47 @@ def _post(ctx: "AgentContext", client: Any, item: "OutboxItem", doc: dict[str, A
         _to_space(ctx, client, item, doc, out, quiet)
 
 
+def claim(ctx: "AgentContext", outbox_id: str) -> bool:
+    """Take one queued post in hand. False when the minute run or a Pub/Sub push already has it: it is posted once."""
+    take = getattr(ctx.store, "claim_idempotent", None)
+    return True if take is None else bool(take(f"chatpost:{outbox_id}", ttl_s=CLAIM_S))
+
+
+def release(ctx: "AgentContext", outbox_id: str) -> None:
+    give = getattr(ctx.store, "release_idempotent", None)
+    if give is not None:
+        give(f"chatpost:{outbox_id}")
+
+
+def post_now(ctx: "AgentContext", item: "OutboxItem") -> str:
+    """One queued post, as soon as its Pub/Sub push arrives (pubsub._run). Returns what came of it. Raises when it was
+    not posted and should be pushed again: Pub/Sub tries again and sets it aside after the last try, and the minute
+    run posts whatever is still queued."""
+    why = why_off(ctx)
+    if why:
+        return f"waits for the minute run: {why}"
+    if item.created_at < ctx.now() - mirror.MAX_GAP:
+        return "too old to post"
+    doc = ctx.store.get_doc(ROWS, item.outbox_id) or _row(item)
+    if doc["status"] == "gave_up":
+        return "given up: Try again on the Routing page"
+    if not claim(ctx, item.outbox_id):
+        return "in hand elsewhere"
+    out: dict[str, Any] = {"sent": 0, "held": 0, "failed": 0}
+    try:
+        try:
+            _post(ctx, chatapi.client_for(ctx), item, doc, out, set())
+        except _Stop:  # Chat could not be reached: the row says why
+            pass
+        finally:
+            ctx.store.put_doc(ROWS, doc["id"], doc)
+    finally:
+        release(ctx, item.outbox_id)
+    if doc["status"] in CLOSED:
+        return doc["status"]
+    raise RuntimeError(doc["why"] or "the post did not go out")
+
+
 def _post_all(ctx: "AgentContext", out: dict[str, Any]) -> None:
     r = ctx.config.platform.routing
     now = ctx.now()
@@ -243,11 +285,16 @@ def _post_all(ctx: "AgentContext", out: dict[str, Any]) -> None:
     client = chatapi.client_for(ctx)
     quiet: set[str] = set()  # spaces Chat did not answer for in this pass ("dm" for direct messages)
     for item in items[: r.max_per_run]:
-        doc = ctx.store.get_doc(ROWS, item.outbox_id) or _row(item)
+        if not claim(ctx, item.outbox_id):
+            continue  # a Pub/Sub push is posting it right now
         try:
-            _post(ctx, client, item, doc, out, quiet)
+            doc = ctx.store.get_doc(ROWS, item.outbox_id) or _row(item)
+            try:
+                _post(ctx, client, item, doc, out, quiet)
+            finally:
+                ctx.store.put_doc(ROWS, doc["id"], doc)
         finally:
-            ctx.store.put_doc(ROWS, doc["id"], doc)
+            release(ctx, item.outbox_id)
 
 
 def run(ctx: "AgentContext") -> dict[str, Any]:

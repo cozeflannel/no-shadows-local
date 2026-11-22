@@ -124,10 +124,12 @@ class AgentContext:
                 direct: bool = False) -> OutboxItem:
         """Queue a post, then have it delivered.
 
-        With "Post queued messages in Chat" ON the minute run posts it through the QA chatbot's Chat sign-in, and
-        no flow is rung (the handover doc stays a flow's work). Otherwise, with Pub/Sub delivery ON the item is
-        published (retries, dead letters); without it, or when the publish fails, the doorbell is rung directly
-        (best effort; run_followups re-rings). `direct` skips Pub/Sub: used by the delivery worker itself."""
+        With "Post queued messages in Chat" ON it is posted through the QA chatbot's Chat sign-in and no flow is
+        rung (the handover doc stays a flow's work): with Pub/Sub delivery ON it is published and posted when the
+        push arrives (retries, dead letters); without it, or when the publish fails, the minute run posts it.
+        With that switch OFF: with Pub/Sub delivery ON the item is published; without it, or when the publish
+        fails, the doorbell is rung directly (best effort; run_followups re-rings). `direct` skips Pub/Sub: used
+        by the delivery worker itself."""
         item = OutboxItem(
             outbox_id=f"OBX-{uuid.uuid4().hex[:12]}",
             target=target,  # type: ignore[arg-type]
@@ -144,6 +146,15 @@ class AgentContext:
 
         chatlog.record_queued(self, item)
         if chatdelivery.takes(self, item.target):
+            if not direct and pubsub.enabled(self):
+                try:
+                    pubsub.publish_outbox_item(self, item)
+                except Exception as exc:  # noqa: BLE001 - it stays queued and the minute run posts it
+                    log.warning("publish failed for %s, left to the minute run: %s", item.outbox_id, exc)
+                    try:
+                        self.emit(EventType.ERROR, payload={"op": "publish", "error": str(exc), "outbox_id": item.outbox_id})
+                    except Exception:  # noqa: BLE001
+                        pass
             return item
         if not direct and pubsub.enabled(self):
             try:

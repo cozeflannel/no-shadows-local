@@ -353,6 +353,7 @@ TOPICS: list[dict[str, Any]] = [
                 "Reading starts from the last 15 minutes when the switch goes ON or the source space changes."]},
             {"heading": "Posting queued messages in Chat", "items": [
                 "Turn on Post queued messages in Chat under Settings, Switches. With the QA chatbot ON, each queued message is posted within a minute, once, as the QA chatbot's account, with no Chat flow in between.",
+                "With Retry posts that fail ON too, each message goes through Google Pub/Sub and is posted as soon as it is queued. Pub/Sub tries a failed one again and sets it aside after the last try (Settings, Delivery); the minute run still posts whatever is left.",
                 "The Posted list shows each one: where it went and whether it was posted, held, or is being tried again.",
                 "Held means a rule said no and it is not posted, now or later: the source space is not open, the message names something internal, the target is not allowed, or the space is open to people outside Google and is not the source space.",
                 "With Ask before each post to the source ON, a message for the source space moves to Waiting for Send.",

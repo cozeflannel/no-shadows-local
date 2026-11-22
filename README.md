@@ -27,7 +27,7 @@ The IM then reacts with the existing emoji legend and the agent does the work:
 - Distribution-list routing.
 - go/WD-Triage pre-fill, the T&S intake/outcome/bug-ID loop, and the protocols.
 
-There are **no webhooks and no Chat app**. Chat I/O runs through Google Workspace Studio flows owned by a dedicated Triage Agent account; the Console can also read Chat with that account's own sign-in (Integrations, Google Chat), the way the sheet-based bot does, which is the base for bringing that bot's routing over. The agent and Gemini run on the **Gemini Enterprise Agent Platform** (Agent Runtime, formerly Vertex AI Agent Engine).
+There are **no webhooks and no Chat app**. The QA chatbot works in Chat as its own account, signed in, through the Chat API, the way the sheet-based bot does (Integrations, Google Chat): a Cloud Run worker reads the source space every minute on a Cloud Scheduler tick, reviews each new alert, and posts what is queued, through Pub/Sub when that is ON. Nothing in that path is Apps Script. Emoji actions, mentions and direct messages, the agent inbox and the handover doc can still be handed over by Google Workspace Studio flows (the Apps Script add-on in `studio-addon/`) until they move to the same sign-in. The agent and Gemini run on the **Gemini Enterprise Agent Platform** (Agent Runtime, formerly Vertex AI Agent Engine).
 
 ## Burson: before → after
 

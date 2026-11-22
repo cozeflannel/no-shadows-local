@@ -1,7 +1,8 @@
 # Deploying the SLRR Triage Agent
 
-Everything runs in one Google Cloud project. Chat I/O goes through Workspace Studio flows owned by the dedicated
-Triage Agent Workspace account (**no Chat API configuration and no webhooks**).
+Everything runs in one Google Cloud project. The QA chatbot reaches Chat as its own signed-in account through the
+Chat API (**no Chat app, no Chat API configuration and no webhooks**), from the Cloud Run worker; Workspace Studio
+flows are the older hand-over and are only needed for what has not moved to that sign-in yet.
 
 ```mermaid
 flowchart LR

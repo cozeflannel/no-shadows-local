@@ -3,7 +3,8 @@
 Flow (switch `platform.flags.pubsub_delivery` ON and an outbound topic set):
 
     ctx.enqueue()  ->  publish OutboundAction to the outbound topic
-    Pub/Sub push   ->  worker /pubsub/outbound  ->  deliver()  (claims the idempotency key; rings the doorbell)
+    Pub/Sub push   ->  worker /pubsub/outbound  ->  deliver()  (claims the idempotency key; posts through the QA
+                       chatbot's Chat sign-in when "Post queued messages in Chat" is ON, else rings the doorbell)
     N failures     ->  Pub/Sub moves it to the dead-letter topic
     Pub/Sub push   ->  worker /pubsub/dead-letter  ->  record_dead_letter()  (shown in the Console; replay / discard)
 
@@ -189,6 +190,10 @@ def _run(ctx: "AgentContext", action: OutboundAction) -> str:
         items = [i for i in ctx.store.list_outbox(undelivered_only=True, limit=1000) if i.outbox_id == outbox_id]
         if not items:
             return "already delivered"
+        from . import chatdelivery
+
+        if chatdelivery.takes(ctx, items[0].target):  # posted right here through the QA chatbot's Chat sign-in: no flow is rung
+            return chatdelivery.post_now(ctx, items[0])
         if ctx.doorbell is None:
             raise RuntimeError("no doorbell is configured: Settings → Outbox")
         ctx.doorbell.ring(items[0])
