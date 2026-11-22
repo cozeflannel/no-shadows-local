@@ -25,7 +25,7 @@ TICK_KEY = "tick:last"  # when the once-a-minute tick last ran, and which of its
 
 def run_job(ctx: "AgentContext", name: str) -> dict[str, Any]:
     """One scheduled job by name."""
-    from . import early, mirror, retention, stories, storyread, tempcheck, workforce
+    from . import chatreview, early, mirror, retention, stories, storyread, tempcheck, workforce
 
     if name in JOB_OPS:
         op, payload = JOB_OPS[name]
@@ -44,6 +44,7 @@ def run_job(ctx: "AgentContext", name: str) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 - one part failing never stops the others
             results["stories"] = {"ok": False, "error": str(exc)[:300]}
         results["routing"] = mirror.run(ctx)  # the QA chatbot's copy of the source space (Routing page)
+        results["chat_review"] = chatreview.run(ctx)  # ...and its review of each new alert there, when that switch is ON
         read = early.check(ctx)  # Early Detection: BigQuery reads and groups the posts when a read is due...
         results["early"] = {**early.drain(ctx), "read": read, "ok": read.get("ok", True)}  # ...and Gemini writes up what was raised
         failed = sorted(n for n, r in results.items() if not r.get("ok", True))

@@ -13,13 +13,21 @@ interface SpaceInfo { space: string; name: string; external: boolean; error: str
 interface Values { bot_on: boolean; source: string; mirror: string; third: string; copy_everything: boolean; ask_before_source: boolean }
 interface Copy { at: string; what: string; who: string; text: string; status: string; why: string; mirror: string; third: string; third_why: string }
 interface Person { user: string; name: string; org: "" | "Burson" | "Google"; first_seen: string; seen_in: string; example: string }
+interface ReviewRow {
+  at: string; message: string; text: string; status: "reviewed" | "ignored" | "waiting" | "gave_up"; why: string; tries: number;
+  case_id: string; verdict: string; summary: string; queued: number; held: { target: string; check: string }[];
+}
+interface Review {
+  on: boolean; why: string; switch: boolean; rows: ReviewRow[];
+  last_run: { ok: boolean; at: string; error: string; reviewed: number; ignored: number; failed: number } | null;
+}
 interface Routing {
   value: Values; safety_valve: boolean; mode: { live: boolean; why: string };
   spaces: Record<SpaceKey, SpaceInfo | null>; problems: Record<SpaceKey, string>;
   signed_in: boolean; bot: string;
   last_run: { ok: boolean; at: string; error: string; copied: { mirror: number; third: number }; emojis: number } | null;
   queue: { id: string; text: string; origin: string; case_id: string; at: string }[];
-  copies: Copy[]; people: Person[]; can_edit: boolean; can_act: boolean;
+  copies: Copy[]; people: Person[]; review: Review; can_edit: boolean; can_act: boolean;
 }
 
 const SPACES: { key: SpaceKey; title: string; says: string }[] = [
@@ -70,6 +78,52 @@ function PersonRow({ person, canEdit, onSaved }: { person: Person; canEdit: bool
       <td className={cx(TD, "max-w-xs truncate text-zinc-500")} title={person.example}>{person.example}</td>
       <td className={TD}>{canEdit && <Button size="sm" disabled={!changed} loading={save.loading} onClick={async () => { if (await save.run()) onSaved(); }}>Save</Button>}</td>
     </tr>
+  );
+}
+
+const VERDICT_TONE: Record<string, "emerald" | "blue" | "amber" | "rose" | "zinc"> = { PASS: "emerald", CORRECTED: "blue", NEEDS_REVIEW: "amber", FAIL: "rose", SUPPRESSED: "zinc" };
+
+/** What the QA chatbot read in the source space and what the review made of each message. */
+function ReviewCard({ review }: { review: Review }) {
+  const last = review.last_run;
+  const ran = last ? `Last read ${new Date(last.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}: ${last.ok ? `${last.reviewed} reviewed, ${last.ignored} set aside${last.failed ? `, ${last.failed} failed` : ""}` : last.error}` : "";
+  return (
+    <Card className="mb-4" padded={false} title="Reviewed" subtitle="Each new message the QA chatbot read in the source space, and what the review made of it. What the review wants posted is queued, not posted from here.">
+      {!review.on && (
+        <p className="px-5 pb-4 text-sm text-zinc-600 dark:text-zinc-400">
+          Not running: {review.why}.{!review.switch && <> An admin can turn it on under <Link className="font-medium text-blue-700 hover:underline dark:text-blue-300" to="/settings/flags">Settings, Switches</Link>.</>}
+        </p>
+      )}
+      {review.on && ran && <p className={cx("px-5 pb-3 text-xs", last?.ok ? "text-zinc-500" : "text-rose-600 dark:text-rose-400")}>{ran}</p>}
+      {review.rows.length === 0 ? (review.on && <EmptyState title="Nothing read yet">New messages in the source space show here within a minute.</EmptyState>) : (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead><tr><th className={TH}>When</th><th className={TH}>Message</th><th className={TH}>Result</th><th className={TH}>Case</th><th className={TH}>Queued to post</th></tr></thead>
+            <tbody>
+              {review.rows.map((r) => (
+                <tr key={r.message} className={TR}>
+                  <td className={TD}><TimeCell value={r.at} /></td>
+                  <td className={cx(TD, "max-w-xl")}>
+                    <span className="line-clamp-2 whitespace-pre-wrap">{r.text}</span>
+                    {r.status === "gave_up" && <span className="mt-1 block text-rose-600 dark:text-rose-400">Given up after {r.tries} tries: {r.why}</span>}
+                    {r.status === "waiting" && <span className="mt-1 block text-amber-600 dark:text-amber-400">Trying again: {r.why}</span>}
+                  </td>
+                  <td className={TD}>
+                    {r.status === "reviewed" ? <Badge tone={VERDICT_TONE[r.verdict] ?? "zinc"}>{r.verdict.replace(/_/g, " ").toLowerCase() || "reviewed"}</Badge>
+                      : r.status === "ignored" ? <span className="text-zinc-500">{r.summary || "set aside"}</span> : null}
+                  </td>
+                  <td className={TD}>{r.case_id ? <Link className="text-blue-700 hover:underline dark:text-blue-300" to={`/feed/${r.case_id}`}>{r.case_id}</Link> : ""}</td>
+                  <td className={TD}>
+                    {r.queued > 0 && <span>{r.queued}</span>}
+                    {r.held.length > 0 && <span className="block text-xs text-amber-600 dark:text-amber-400">held: {r.held.map((h) => `${h.target} (${h.check.replace(/_/g, " ")})`).join(", ")}</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -166,6 +220,8 @@ export default function RoutingPage() {
           )}
         </Card>
       )}
+
+      <ReviewCard review={data.review} />
 
       <Card className="mb-4" padded={false} title="Copied" subtitle="The last 100 messages taken from the source space.">
         {data.copies.length === 0 ? <EmptyState title="Nothing copied yet">Messages show here once the QA chatbot is ON and a second space is set.</EmptyState> : (

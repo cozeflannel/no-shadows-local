@@ -331,6 +331,12 @@ TOPICS: list[dict[str, Any]] = [
                 "With Copy replies and emojis too ON: replies under the matching message, people's messages, and each emoji once.",
                 "Never copied: the QA chatbot's own posts, another app's replies in a thread, edits, deletions and removed emojis.",
                 "A message that fails holds the ones behind it, so nothing arrives out of order. After five tries it is given up on and its row says why."]},
+            {"heading": "Reviewing alerts read from Chat", "items": [
+                "Turn on Review alerts read from Chat under Settings, Switches. With the QA chatbot ON and a source space set, each new message there is read within a minute and reviewed, with no Chat flow in between.",
+                "The Reviewed list shows each message, what the review made of it, its case, and how many posts it queued. A person's message is set aside as not an alert. The QA chatbot's own posts are never read.",
+                "Nothing is posted from here: what the review wants posted waits in the outbox.",
+                "A message whose review fails is tried again each minute and given up after five tries. Its row says why. It does not hold the messages behind it.",
+                "Reading starts from the last 15 minutes when the switch goes ON or the source space changes."]},
             {"heading": "Names", "text": "Chat gives the QA chatbot each person's id and no name. Under People seen in the source space, type the name once and mark Burson or Google. Their copied messages then read Name (Burson): text."},
             {"heading": "A copy space is refused when", "items": [
                 "It is the source space.", "People outside Google can join it.", "The second and third space are the same space.",
