@@ -33,6 +33,11 @@ def outside_the_query(sql: str) -> str:
     return re.sub(r"\s+", " ", WHERE.sub(r"\1<the query>\2", sql)).strip()
 
 
+def whole(sql: str) -> str:
+    """A whole statement, the query's condition included, without differences in spacing."""
+    return re.sub(r"\s+", " ", sql).strip()
+
+
 def tables() -> dict[str, TempCheckSource]:
     return {t.key: t for t in tempcheck.app_setup()["tables"]}
 
@@ -57,8 +62,9 @@ def test_each_table_is_searched_with_the_statements_the_app_builds(text: str):
             assert mine.get("skip") == theirs["skip"], f"{key}: {text}"
             continue
         assert not mine.get("skip"), f"{key} is searched for: {text}"
-        assert outside_the_query(mine["posts"]) == outside_the_query(theirs["posts"]), f"{key} posts: {text}"
-        assert outside_the_query(mine["counts"]) == outside_the_query(theirs["counts"]), f"{key} counts: {text}"
+        assert whole(mine["posts"]) == whole(theirs["posts"]), f"{key} posts: {text}"
+        assert whole(mine["counts"]) == whole(theirs["counts"]), f"{key} counts: {text}"
+        assert mine["removed"] == theirs["removed"], f"{key} left out: {text}"
         assert mine["location"] == theirs["location"] and mine["params"]["lim"] == theirs["lim"]
         assert mine["params"]["t_from"] == START and mine["params"]["t_to"] == END
 

@@ -456,14 +456,18 @@ def test_chat_agent_cancel_changes_nothing_and_a_viewer_gets_no_action_tools(ctx
 # -- the Boolean converter ----------------------------------------------------------------------------------------------------
 def test_boolean_converts_by_fixed_rules_and_reports_what_it_left_out():
     c = bwquery.convert('("calendar invite" OR gmail) AND (scam* OR phishing) NOT site:reddit.com <<<note>>> engagingWith:google')
-    assert c.ok and c.report["converted"] == 5 and "engagingWith" in c.report["left_out"][0] and "wider" in c.report["left_out"][0]
+    notes = {n["clause"]: n for n in c.report["notes"]}
+    assert c.ok and c.report["summary"] == {"terms": 3, "phrases": 1, "near": 0, "caseSensitive": 0, "wildcards": 1}
+    assert (notes["engagingWith:google"]["status"], notes["engagingWith:google"]["effect"]) == ("left out", "wider")
+    assert notes["site:reddit.com"]["status"] == "converted"
     post = {"text": "New Gmail phishing scams hit calendar users", "url": "https://x.com/a/status/1", "platform": "x"}
     assert bwquery.evaluate(c.plan, post)
-    assert not bwquery.evaluate(c.plan, {**post, "url": "https://www.reddit.com/r/x"})
+    assert not bwquery.evaluate(c.plan, {**post, "platform": "reddit"}), "a social network is matched by its name, as the temp check app does"
     assert not bwquery.evaluate(c.plan, {**post, "text": "gmail is fine"})
     params: dict[str, Any] = {}
     sql = bwquery.to_sql(c.plan, tempcheck.COLS, params)
-    assert sql.count("REGEXP_CONTAINS") == 5 and "NOT IFNULL(" in sql and len(params) == 6 and "@q0" in sql
+    assert sql.count("REGEXP_CONTAINS") == 4 and sql.endswith("AND (NOT IFNULL(platform IN UNNEST(@q4), FALSE)))")
+    assert list(params) == ["q0", "q1", "q2", "q3", "q4"] and params["q4"] == ["reddit"]
 
 
 def test_boolean_near_case_followers_and_bad_queries():
@@ -476,8 +480,8 @@ def test_boolean_near_case_followers_and_bad_queries():
     assert not bwquery.convert("NOT spam").ok and not bwquery.convert("   ").ok
     pruned, removed = bwquery.prune(c.plan, {"text"})
     assert removed == ["author", "followers"] and pruned is not None
-    assert bwquery.from_filters({"all": "gmail", "any": "scam, phishing attack", "none": "giveaway", "sites": "x.com"}) == \
-        '(gmail AND (scam OR "phishing attack") AND site:(x.com)) NOT (giveaway)'
+    assert bwquery.from_filters({"all": "gmail", "any": "scam, phishing attack", "none": "giveaway", "platforms": ["X"]}) == \
+        'gmail AND (scam OR "phishing attack") AND site:twitter.com NOT giveaway'
 
 
 # -- temp checks ----------------------------------------------------------------------------------------------------------------
@@ -532,7 +536,7 @@ def test_temp_check_from_our_own_tables_with_the_team_template(ctx, fake_llm, cl
     assert 'href="https://x.com/n/status/11"' in check.writeup_html and "Highest Engaging Posts:" in text
     assert check.concern_level == "" and "past issue" in check.level["why"], "no level is claimed without enough past issues"
     sql, params = ctx.bq.asked[0]
-    assert "FROM `p.d.sonar_raw`" in sql and params["lim"] == 2 and "REGEXP_CONTAINS(text_l, @q0)" in sql
+    assert "FROM `p.d.sonar_raw`" in sql and params["lim"] == 2 and "REGEXP_CONTAINS(text_l, @q3)" in sql, "named after the three the statement holds"
     assert ctx.events.query(types=[P.TEMP_CHECK_COMPLETED]) and tempcheck.record_action(ctx, check.check_id, IM, "used").actions[0]["actor"] == IM
 
 

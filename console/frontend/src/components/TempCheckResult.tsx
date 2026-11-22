@@ -344,7 +344,7 @@ export function TempCheckResult({ c, tables, canAct, busy, onRefresh, onKeep, to
     (c.own.hours ?? []).forEach((h) => { const row = by.get(h.at) ?? { at: h.at, bw: 0, ours: null }; row.ours = h.n; by.set(h.at, row); });
     return [...by.values()].sort((a, b) => a.at.localeCompare(b.at)).map((r) => ({ ...r, label: hourTick(r.at) }));
   })();
-  const report: ConvertResult = { boolean: c.own.boolean ?? "", origin: c.own.origin ?? "", ok: !c.own.error, error: c.own.error ?? "", plan: "", report: c.query.report ?? null };
+  const report: ConvertResult = { boolean: c.own.boolean ?? "", origin: c.own.origin ?? "", ok: !c.own.error, error: c.own.error ?? "", report: c.query.report ?? null };
 
   return (
     <div className="space-y-4">

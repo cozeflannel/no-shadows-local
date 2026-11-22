@@ -1102,10 +1102,9 @@ def preview(ctx: "AgentContext", *, query_ref: str = "", boolean: str = "", filt
     text, origin = ((typed, "typed") if typed else (form, "filters") if form
                     else (str(query["boolean"]), "query") if query and query.get("boolean") else ("", ""))
     if not text:
-        return {"boolean": "", "origin": "", "ok": False, "error": "There is no query to convert yet.", "report": None, "plan": ""}
+        return {"boolean": "", "origin": "", "ok": False, "error": "There is no query to convert yet.", "report": None}
     conv = bwquery.convert(text)
-    out: dict[str, Any] = {"boolean": text, "origin": origin, "ok": conv.ok, "error": conv.error, "report": conv.report,
-                           "plan": bwquery.show(conv.plan) if conv.plan else ""}
+    out: dict[str, Any] = {"boolean": text, "origin": origin, "ok": conv.ok, "error": conv.error, "report": conv.report}
     if not (conv.ok and conv.plan and estimate):
         return out
     chosen = _aware(since) if since else None

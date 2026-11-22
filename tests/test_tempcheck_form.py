@@ -263,7 +263,7 @@ def test_a_typed_boolean_searches_our_tables_while_brandwatch_keeps_the_querys_o
     bw, tables = setup(hours={3: 150})
     check = run(ctx, query_ref=str(QUERY["id"]), boolean='"locked out"')
     assert "search" not in bw.calls("/volume/queries/hours")[0], "Brandwatch counts the query itself"
-    assert "locked" in str(tables.searched("p.d.sonar_raw")[0]["q0"]) and check.query["origin"] == "typed"
+    assert "locked" in str(tables.searched("p.d.sonar_raw")[0]["q3"]) and check.query["origin"] == "typed"
     assert check.query["boolean"] == '"locked out"' and check.query["query_boolean"] == "gmail AND outage"
 
 
@@ -273,9 +273,9 @@ def test_the_filter_form_is_written_as_a_query(ctx, setup):
                                                             "authors": "@gmail", "min_followers": 1000})
     assert check.status == "complete", check.error
     assert check.query["origin"] == "filters" and check.query["boolean"] == (
-        "(gmail AND (outage OR down) AND site:(twitter.com OR reddit.com) AND author:(gmail) AND authorFollowers:[1000 TO *]) NOT (giveaway)")
+        "gmail AND (outage OR down) AND site:(twitter.com OR reddit.com) AND author:gmail AND authorFollowers:[1000 TO *] NOT giveaway")
     asked = tables.searched("p.d.sonar_raw")[0]
-    assert {"x", "reddit"} <= {v for v in asked.values() if isinstance(v, str)}, "the platforms picked are asked of the table's platform column"
+    assert ["x", "reddit"] in list(asked.values()), "the platforms picked are asked of the table's platform column, as one list"
 
 
 # -- Gemini's lines ---------------------------------------------------------------------------------------------------------
@@ -344,10 +344,10 @@ def test_the_conversion_report_counts_what_was_read_and_says_which_way_each_gap_
     from triage_agent import bwquery
 
     c = bwquery.convert('gmail AND "locked out" AND {Gmail} AND outag* AND (down NEAR/3 again) AND title:(broken) AND country:us')
-    assert c.ok and c.report["summary"] == {"terms": 6, "phrases": 1, "near": 1, "wildcards": 1, "case_sensitive": 1}
+    assert c.ok and c.report["summary"] == {"terms": 6, "phrases": 1, "near": 1, "caseSensitive": 1, "wildcards": 1}
     notes = {n["status"]: n for n in c.report["notes"]}
-    assert notes["approximated"]["note"].startswith("title:") and notes["approximated"]["effect"] == "wider"
-    assert notes["left out"]["note"].startswith("country:") and notes["left out"]["effect"] == "wider"
+    assert notes["approximated"]["clause"] == "title:broken" and notes["approximated"]["effect"] == "wider"
+    assert notes["left out"]["clause"] == "country:us" and notes["left out"]["effect"] == "wider"
     narrower = bwquery.convert("gmail AND (outage OR country:us)").report["notes"]
     assert [n["effect"] for n in narrower] == ["narrower"]
 
@@ -508,7 +508,7 @@ def test_showing_how_a_query_converts_says_where_it_came_from_what_it_would_scan
     typed = client.post("/api/temp-checks/convert", json={"query": str(QUERY["id"]), "boolean": '"locked out"'}, headers=iap(VIEWER)).json()
     assert typed["origin"] == "typed" and "estimate" not in typed
     form = client.post("/api/temp-checks/convert", json={"filters": {"all": "gmail", "platforms": ["Reddit"]}}, headers=iap(VIEWER)).json()
-    assert form["origin"] == "filters" and form["boolean"] == "gmail AND site:(reddit.com)"
+    assert form["origin"] == "filters" and form["boolean"] == "gmail AND site:reddit.com" and "plan" not in form
     none = client.post("/api/temp-checks/convert", json={}, headers=iap(VIEWER)).json()
     assert not none["ok"] and none["error"] == "There is no query to convert yet."
 

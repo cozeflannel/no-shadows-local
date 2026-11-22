@@ -11,10 +11,11 @@ export interface FormInfo {
   spike_mentions: number; no_query_hours: number; since_max_days: number; event_query_prefix: string;
 }
 export interface PastCheck { check_id: string; issue: string; created_at: string; own_posts: number; own_from: string | null }
+/** What the converter made of a query, as the temp check app reports it. A temp check kept from before the converter matched the app's has `case_sensitive` and notes with no clause. */
 export interface ConvertResult {
-  boolean: string; origin: string; ok: boolean; error: string; plan: string;
-  report: { summary?: { terms: number; phrases: number; near: number; wildcards: number; case_sensitive: number };
-    notes?: { status: string; note: string; effect: string }[]; warnings?: string[] } | null;
+  boolean: string; origin: string; ok: boolean; error: string;
+  report: { summary?: { terms: number; phrases: number; near: number; wildcards: number; caseSensitive?: number; case_sensitive?: number };
+    notes?: { status: string; clause?: string; note: string; effect: string }[]; warnings?: string[] } | null;
   estimate?: Record<string, { bytes?: number; skip?: string }>; window?: { from: string; to: string }; sql?: { table: string; sql: string }[];
 }
 interface QueryRow { id: number; name: string; created: string | null; state: string }
@@ -55,10 +56,11 @@ function Radio({ name, checked, onChange, disabled, children }: { name: string; 
 /** How a query converts to a search of our tables: what was read, what was approximated or left out, what it scans, the SQL. */
 export function ConvertReport({ r, tables }: { r: ConvertResult; tables: FormInfo["tables"] }) {
   const s = r.report?.summary;
+  const cased = s?.caseSensitive ?? s?.case_sensitive ?? 0;
   const label = (key: string) => tables.find((t) => t.key === key)?.label ?? key;
   if (!r.report) return <p className="text-sm text-rose-600 dark:text-rose-400">{r.error || "Nothing to convert."}</p>;
   const parts = s ? [plural(s.terms, "word", "words"), plural(s.phrases, "phrase", "phrases"), s.near ? plural(s.near, "NEAR condition", "NEAR conditions") : "",
-    s.wildcards ? `${fmtNum(s.wildcards)} with wildcards` : "", s.case_sensitive ? `${fmtNum(s.case_sensitive)} case-sensitive` : ""].filter(Boolean) : [];
+    s.wildcards ? `${fmtNum(s.wildcards)} with wildcards` : "", cased ? `${fmtNum(cased)} case-sensitive` : ""].filter(Boolean) : [];
   return (
     <div className="space-y-2.5 text-sm text-zinc-700 dark:text-zinc-300">
       {r.error && <p className="text-rose-600 dark:text-rose-400">{r.error}</p>}
@@ -68,8 +70,13 @@ export function ConvertReport({ r, tables }: { r: ConvertResult; tables: FormInf
         <ul className="space-y-2">
           {r.report.notes.map((n, i) => (
             <li key={i} className="flex items-start gap-2">
-              <Badge tone={n.status === "approximated" ? "amber" : "rose"} className="shrink-0">{n.status}{n.effect ? `: ${n.effect}` : ""}</Badge>
-              <span className="min-w-0 text-xs text-zinc-500 dark:text-zinc-400">{n.note}</span>
+              <Badge tone={n.status === "converted" ? "emerald" : n.status === "approximated" ? "amber" : "rose"} className="shrink-0">
+                {n.status}{n.effect && n.effect !== "nothing left" ? `: ${n.effect}` : ""}
+              </Badge>
+              <span className="min-w-0">
+                {n.clause && <code className="break-all font-mono text-xs text-zinc-800 dark:text-zinc-200">{n.clause}</code>}
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400">{n.note}</span>
+              </span>
             </li>
           ))}
         </ul>
