@@ -1,4 +1,4 @@
-"""Console API for administration: platform settings, feature flags, secrets, BigQuery, delivery (Pub/Sub),
+"""Console API for administration: platform settings, switches, secrets, BigQuery, delivery (Pub/Sub),
 AI instructions, safety checks, the audit log, costs and the setup checklist."""
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from triage_agent import audit, bq_admin, prompts, pubsub, safety, secret_admin
-from triage_agent.config import PlatformConfig
+from triage_agent.config import PlatformConfig, switch_off
 from triage_agent.context import AgentContext
 from triage_agent.events import EventType as E
 from triage_agent.events import PlatformEvent as P
@@ -25,23 +25,24 @@ from .routes_settings import _NOTHING, _save, _validate, default_config, format_
 
 router = APIRouter(prefix="/api", tags=["admin"])
 
-PART_INFO: dict[str, tuple[str, str]] = {
-    "flags": ("Feature flags", "What the agent and the Console may do on their own. Every switch starts OFF."),
-    "access": ("Access", "Who may open the Console."),
-    "gcp": ("Project", "The project, region and names the services use."),
-    "safety": ("Safety", "Leak guard, Testing recipients, allow-lists."),
-    "pubsub": ("Delivery", "Outbound actions through Pub/Sub: topics, retries, dead letters."),
-    "bigquery": ("BigQuery", "The connection and where each kind of row lives."),
-    "forecasting": ("Forecasting", "The volume forecast and the staffing math."),
-    "chat_agent": ("Chat agent", "The in-Console chat agent."),
-    "classification": ("Classification", "The classes an alert can fall in and the knowledge each one reads."),
-    "knowledge": ("Knowledge retrieval", "How documents are stored and retrieved."),
-    "temp_check": ("Temp check", "Brandwatch, the post tables and the automatic occasions."),
-    "campaigns": ("Campaigns & watches", "The campaigns database and the watches' limits."),
-    "costs": ("Costs", "Model prices and the billing export."),
-    "telemetry": ("Telemetry", "Logging, tracing and retention."),
-    "stories": ("Stories", "How alerts are grouped into stories and what the story map shows."),
-    "notifications": ("Notifications", "Pop-ups in the Console when an alert comes in."),
+# Each Settings page: its name, what it is for in one sentence, and the group it is listed under (routes_settings.GROUPS).
+PART_INFO: dict[str, tuple[str, str, str]] = {
+    "flags": ("Switches", "What the agent may do on its own. Every switch starts OFF.", "day"),
+    "safety": ("Safety and Testing", "While Testing is ON every email goes only to your test addresses. Also where the agent may post and who it may email.", "day"),
+    "notifications": ("Alert pop-ups", "Which alerts pop up in the Console, and for how long.", "day"),
+    "stories": ("Stories", "How alerts are grouped into stories and what the story map shows.", "decide"),
+    "classification": ("Alert classes", "The kinds of alert the agent sorts each one into, and the documents each kind reads.", "decide"),
+    "knowledge": ("How documents are read", "How the agent splits, searches and refreshes the documents on the Knowledge page.", "decide"),
+    "temp_check": ("Temp check", "Where temp checks read posts from, and when the agent runs one on its own.", "decide"),
+    "forecasting": ("Staffing forecast", "How alert volume is forecast and turned into the people needed each hour.", "decide"),
+    "campaigns": ("Campaigns and watches", "Where campaigns are kept, and how often and how widely watches look.", "decide"),
+    "chat_agent": ("Console chat agent", "The assistant on the Chat agent page.", "decide"),
+    "access": ("Who can open the Console", "The sign-in domains that may read the Console.", "people"),
+    "gcp": ("Google Cloud project", "The project and region the Console runs in.", "tech"),
+    "pubsub": ("Delivery", "How the agent's posts go out, how often a failed one is tried again, and when it stops trying.", "tech"),
+    "bigquery": ("BigQuery", "Where events and reports are kept.", "tech"),
+    "costs": ("Costs", "The prices used to estimate what the agent spends.", "tech"),
+    "telemetry": ("Logs and record keeping", "How much is logged and how long records are kept.", "tech"),
 }
 
 
@@ -59,7 +60,7 @@ def _part(name: str) -> str:
 @router.get("/platform")
 def platform_index(ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> dict[str, Any]:
     overrides = (ctx.store.get_config_overrides() or {}).get("platform") or {}
-    return {"parts": [{"key": k, "label": PART_INFO.get(k, (k.title(), ""))[0], "description": PART_INFO.get(k, ("", ""))[1],
+    return {"parts": [{"key": k, "label": PART_INFO[k][0], "description": PART_INFO[k][1], "group": PART_INFO[k][2],
                        "overridden": k in overrides} for k in PART_INFO if k in PlatformConfig.model_fields],
             "config_version": ctx.config_version, "can_edit": user.has("admin")}
 
@@ -69,7 +70,7 @@ def platform_get(part: str, ctx: AgentContext = Depends(get_ctx), user: User = D
     part = _part(part)
     model = PlatformConfig.model_fields[part].annotation
     _, defaults = default_config()
-    return {"part": part, "label": PART_INFO.get(part, (part, ""))[0], "description": PART_INFO.get(part, ("", ""))[1],
+    return {"part": part, "label": PART_INFO[part][0], "description": PART_INFO[part][1],
             "value": ctx.config.platform.model_dump(mode="json")[part], "default": defaults["platform"][part],
             "schema": model.model_json_schema(), "config_version": ctx.config_version, "can_edit": user.has("admin")}
 
@@ -172,7 +173,7 @@ class StateBody(BaseModel):
 
 def _secrets(ctx: AgentContext, write: bool = False) -> Any:
     if write and not ctx.flag("secret_admin"):
-        raise HTTPException(403, {"error": "Changing secrets from the Console is switched off (Feature flags → secret_admin).", "code": "rejected"})
+        raise HTTPException(403, {"error": switch_off("Adding secrets from the Console", "secret_admin"), "code": "rejected"})
     try:
         return secret_admin.get_gateway(ctx)
     except Exception as exc:  # noqa: BLE001
@@ -325,7 +326,7 @@ def bq_create_dataset(body: DatasetBody, ctx: AgentContext = Depends(get_ctx), u
     gw = _bq(ctx)
     try:
         if not ctx.flag("bigquery_admin"):
-            raise bq_admin.NotAllowed("Changing BigQuery from the Console is switched off (Feature flags → bigquery_admin).")
+            raise bq_admin.NotAllowed("Changing BigQuery from the Console is switched off (Switches → bigquery_admin).")
         out = gw.create_dataset(body.dataset, body.location or ctx.config.platform.bigquery.location, body.description)
     except Exception as exc:  # noqa: BLE001
         raise _reject(exc, 422) from exc

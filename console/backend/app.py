@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from triage_agent import __version__ as agent_version
+from triage_agent.config import switch_title
 from triage_agent.context import AgentContext
 from triage_agent.events import EventType, PlatformEvent
 from triage_agent.metrics import KPI_DEFINITIONS
@@ -108,6 +109,7 @@ def create_app(ctx: AgentContext | None = None, state: ConsoleState | None = Non
             "escalation_id_prefix": cfg.escalation_id_prefix,
             "event_types": sorted([*EventType.all(), *PlatformEvent.all()]),
             "flags": cfg.platform.flags.model_dump(),
+            "switch_names": {name: switch_title(name) for name in type(cfg.platform.flags).model_fields},
             "notifications": {"enabled": cfg.platform.flags.alert_popups, "event_types": cfg.platform.notifications.popup_event_types,
                               "sources": cfg.platform.notifications.popup_sources, "seconds": cfg.platform.notifications.popup_seconds,
                               "max_on_screen": cfg.platform.notifications.max_on_screen},

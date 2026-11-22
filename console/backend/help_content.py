@@ -75,7 +75,7 @@ TOPICS: list[dict[str, Any]] = [
             {"heading": "Assess the agent", "steps": [
                 "Open the alert and go to Was the agent right?",
                 "Click Right. Or pick the correct verdict or write a note, then click Wrong.",
-                "Your assessment is kept as a golden example."]},
+                "Your assessment is kept as a checked example of the right answer."]},
             {"heading": "Add an alert by hand", "steps": ["Click Triage an alert.", "Paste the alert's text.", "It is triaged like any other and gets a case."]},
         ],
     },
@@ -89,10 +89,10 @@ TOPICS: list[dict[str, Any]] = [
                 "Filter by direction (received or posted), or search the text."]},
             {"heading": "Statuses", "items": [
                 "Received: a message, reaction or email the agent was handed.",
-                "Returned: a post the agent handed back to the Studio flow to post.",
-                "Queued: waiting in the outbox for the Outbox flow.", "Delivered: handed to the Outbox flow.",
+                "Returned: a post the agent handed back to Chat to post.",
+                "Queued: waiting to post.", "Delivered: handed to Chat.",
                 "Held: stopped by a safety check. See Settings → Safety."]},
-            {"heading": "Limits", "text": "The agent has no Chat API. It sees what the Studio flows hand it: alerts in the alert space, reactions on its posts, mentions and direct messages. Other messages in a space are not tracked."},
+            {"heading": "Limits", "text": "The agent sees only what Chat hands it: alerts in the alert space, reactions on its posts, mentions and direct messages. Other messages in a space are not tracked."},
         ],
     },
     {
@@ -104,7 +104,7 @@ TOPICS: list[dict[str, Any]] = [
             {"heading": "Have it act", "steps": [
                 "Ask for the action in plain words: \"forward TRG-1042 with product Gemini App\", \"draft the email for TRG-1042\", \"run a temp check on the Gmail outage\".",
                 "An action waits for you: Do it runs it, Cancel stops it.",
-                "Actions need the analyst role and the chat agent's action switch (Feature flags → console_chat_agent)."]},
+                "Actions need the analyst role and the chat agent's action switch (Settings, Switches: Let the chat agent act)."]},
             {"heading": "What it can do", "items": [
                 "Find and explain alerts; show the review queue.", "Triage a pasted alert.", "Review decisions, reverts, closing.",
                 "Every reaction action: acknowledge, email draft, T&S form, teams, crisis chat.",
@@ -162,7 +162,7 @@ TOPICS: list[dict[str, Any]] = [
     },
     {
         "id": "knowledge", "page": "Knowledge", "title": "Knowledge", "audience": "leads",
-        "summary": "The documents the agent reads, the classification mapping and the golden set.",
+        "summary": "The documents the agent reads, which kind of alert reads which document, and the checked examples.",
         "sections": [
             {"heading": "Add a document", "steps": [
                 "Click Add a document.", "Choose Text (paste it), Web page (a public link) or Drive (a Docs, Sheets or Slides link).",
@@ -173,7 +173,7 @@ TOPICS: list[dict[str, Any]] = [
                 "Open Classes.", "Each class lists the documents it reads.",
                 "Tie a document to a class on the document itself (Classes), or give the class tags under Settings → Classification."]},
             {"heading": "Try retrieval", "steps": ["Open Try a search.", "Type a question or paste an alert.", "The passages the agent would read are listed with their scores."]},
-            {"heading": "Golden set", "items": ["Every alert an IM confirmed or corrected is kept as a labelled example.", "Export downloads them in the eval harness's format."]},
+            {"heading": "Checked examples", "items": ["Every alert an IM confirmed or corrected is kept as an example of the right answer.", "Export downloads them as a file used to test the agent."]},
             {"heading": "Learning", "text": "Facts taught in Chat and proposed configuration changes wait under Proposed rules and facts."},
         ],
     },
@@ -200,7 +200,7 @@ TOPICS: list[dict[str, Any]] = [
         "sections": [
             {"heading": "Find a case", "steps": ["Open Cases.", "Search or filter by status, source, track or tag.", "Click a row for the fields, corrections, timeline and Chat activity."]},
             {"heading": "Emails & T&S", "text": "Emails & T&S lists every draft and form with its versions and recipients."},
-            {"heading": "Parity", "text": "Parity compares in-house alerts with Burson's for the same post."},
+            {"heading": "Our alerts vs Burson's", "text": "The alerts found from the team's own tables, next to Burson's alert for the same post."},
         ],
     },
     {
@@ -247,7 +247,7 @@ TOPICS: list[dict[str, Any]] = [
         "sections": [
             {"heading": "Set everything up", "steps": [
                 "Open Integrations.",
-                "Click Find and fill. It writes the project, region, this Console's address, the Agent Runtime and the dataset when it can see them.",
+                "Click Find and fill. It writes the project, region, this Console's address, the deployed agent and the dataset when it can see them.",
                 "Open each tile under Needed for the agent to work that still says Needs values.",
                 "Enter or choose its values and Save.",
                 "Click Create when the tile offers it (BigQuery tables, Pub/Sub topics).",
@@ -274,7 +274,7 @@ TOPICS: list[dict[str, Any]] = [
                                                      "The last admin cannot be removed."]},
             {"heading": "System", "items": [
                 "Integrations: how many needed tools are set.", "Scheduled work: when the once-a-minute run last ran, and any part that failed.",
-                "The agent, Delivery, Safety, BigQuery, Feature flags: their state, with a link to each.", "A card with a gradient edge needs attention."]},
+                "The agent, Delivery, Safety, BigQuery, Switches: their state, with a link to each.", "A card with a gradient edge needs attention."]},
             {"heading": "Changes", "text": "Every change to settings, integrations and people in the last 7 days, and who has been active."},
         ],
     },
@@ -286,24 +286,24 @@ TOPICS: list[dict[str, Any]] = [
                 "Open Integrations and click Find and fill. It writes what the project already has.",
                 "Connect what is left under Needed for the agent to work.",
                 "Add people under Admin → People.",
-                "Turn on the features you want under Settings → Feature flags.",
+                "Turn on the features you want under Settings → Switches.",
                 "Nothing else is required."]},
             {"heading": "Change a setting", "steps": ["Open Settings, then Advanced, and pick a section. Find a setting filters the list.", "Edit the fields.",
                                                       "Save. A note is optional and is kept in the history.", "Reset returns a section to its defaults."]},
             {"heading": "Sections", "items": [
-                "Platform: feature flags, access, project, safety, delivery, BigQuery, forecasting, chat agent, classification, knowledge retrieval, temp check, campaigns & watches, costs, telemetry, stories, notifications.",
+                "Platform: switches, access, project, safety, delivery, BigQuery, forecasting, chat agent, classification, knowledge retrieval, temp check, campaigns & watches, costs, telemetry, stories, notifications.",
                 "Agent: spaces, analysts & roles, shifts, distribution and recipients, actions, taxonomy and the rest. Rosters opens the Rosters page.",
                 "Tools: secrets & credentials, AI instructions, audit log, change history.",
                 "The values that connect a tool (project, dataset, topics, spaces) are set under Integrations and show here too.",
-                "Feature flags: what the agent may do. All start OFF."]},
+                "Switches: what the agent may do. All start OFF."]},
             {"heading": "History", "text": "Every change is listed with who made it and what changed, under Change history and in the audit log."},
         ],
     },
     {
-        "id": "feature-flags", "page": "Settings", "title": "Feature flags", "audience": "admins",
+        "id": "feature-flags", "page": "Settings", "title": "Switches", "audience": "admins",
         "summary": "Switches for what the agent and the Console may do. Every switch starts OFF.",
         "sections": [
-            {"heading": "Turn a switch on", "steps": ["Open Settings → Feature flags.", "Read what the switch does.", "Turn it on and Save."]},
+            {"heading": "Turn a switch on", "steps": ["Open Settings → Switches.", "Read what the switch does.", "Turn it on and Save."]},
             {"heading": "Before turning on", "items": [
                 "Knowledge retrieval and the classification layer: add documents first.",
                 "Pub/Sub delivery: set the topics under Delivery and click Create what is missing.",
@@ -316,7 +316,7 @@ TOPICS: list[dict[str, Any]] = [
         "id": "secrets", "page": "Settings", "title": "Secrets & credentials", "audience": "admins",
         "summary": "Add and rotate secrets. Values are never shown.",
         "sections": [
-            {"heading": "Add a secret", "steps": ["Turn on Feature flags → secret_admin.", "Open Settings → Secrets.", "Click New secret, give the name and the value, Save.",
+            {"heading": "Add a secret", "steps": ["Turn on Settings, Switches: Add secrets from here.", "Open Settings → Secrets.", "Click New secret, give the name and the value, Save.",
                                                   "Enter the secret's name in the setting that uses it (for example Temp check → Brandwatch token secret)."]},
             {"heading": "Rotate", "steps": ["Open the secret.", "Click New value and enter it.", "Disable the old version once the new one works."]},
             {"heading": "Gmail", "text": "IMs connect their own Gmail from the top bar. Their tokens are kept as secrets and are listed here by a hashed name."},
@@ -327,20 +327,20 @@ TOPICS: list[dict[str, Any]] = [
         "summary": "Connect, create the agent's tables, and manage datasets, tables and views.",
         "sections": [
             {"heading": "Connect", "steps": ["Open Settings → BigQuery.", "Enter the project, location and the agent's dataset. Save.", "The banner shows whether it connected and the identity queries run as."]},
-            {"heading": "Create the agent's tables", "steps": ["Turn on Feature flags → bigquery_admin.", "Click Create and map.", "The events, forecasts and golden tables are created and mapped."]},
+            {"heading": "Create the agent's tables", "steps": ["Turn on Settings, Switches: Change BigQuery from here.", "Click Create and map.", "The tables for events, forecasts and checked examples are created."]},
             {"heading": "Map tables", "text": "Mapping says which table holds what. Events is required for long dashboard ranges and the forecast."},
             {"heading": "Edit schemas and views", "steps": ["Open a dataset, then a table.", "Add columns or edit descriptions and Save. Existing columns can't change type.", "For a view, edit the SQL and Save. A view that doesn't compile is refused."]},
             {"heading": "Limits", "text": "The Console only changes datasets listed under Datasets the Console may change, and the agent's own dataset."},
         ],
     },
     {
-        "id": "delivery", "page": "Settings", "title": "Delivery and dead letters", "audience": "admins",
+        "id": "delivery", "page": "Settings", "title": "Delivery and posts that fail", "audience": "admins",
         "summary": "How posts reach Chat, retries, and what to do when a delivery fails.",
         "sections": [
-            {"heading": "How it works", "text": "The agent queues a post, publishes an action to Pub/Sub, and the worker rings the doorbell that starts the Studio Outbox flow. A delivery that keeps failing goes to the dead-letter topic."},
+            {"heading": "How it works", "text": "The agent gets a post ready, Chat is told one is waiting, and the Chat flow posts it. With the switch Retry posts that fail ON, a post that fails is tried again, and set aside after the last try so a person can look at it."},
             {"heading": "Set up", "steps": ["Open Settings → Delivery.", "Enter the topic and subscription names, the worker URL and the push service account. Save.",
-                                            "Click Create what is missing.", "Turn on Feature flags → pubsub_delivery."]},
-            {"heading": "Dead letters", "steps": ["Open Settings → Delivery → Dead letters.", "Read the error.", "Fix the cause, then Replay. Discard closes it with a reason."]},
+                                            "Click Create what is missing.", "Turn on Settings, Switches: Retry posts that fail."]},
+            {"heading": "A post that could not be delivered", "steps": ["Open Settings → Delivery.", "Read the error under Posts that could not be delivered.", "Fix the cause, then Replay. Discard closes it with a reason."]},
         ],
     },
     {

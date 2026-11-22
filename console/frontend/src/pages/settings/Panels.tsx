@@ -28,7 +28,7 @@ export function RuntimePanel() {
   if (!r.data) return null;
   const d = r.data;
   return (
-    <Card title="The deployed agent" subtitle="The Agent Runtime the Studio flows call. It reads these settings live." actions={<Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={r.reload}>Ask again</Button>}>
+    <Card title="The deployed agent" subtitle="The agent that Chat calls. It uses these settings as soon as they are saved." actions={<Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={r.reload}>Ask again</Button>}>
       {!d.resource ? <Alert tone="amber" title="No Agent Runtime is named">Run infra/deploy.sh, or paste the resource name above and save.</Alert>
         : !d.reachable ? <Alert tone="rose" title="The agent did not answer">{d.error}</Alert>
           : d.same_settings ? <Alert tone="emerald" title="Answering, on the same settings as the Console">Environment {d.env}, settings version {d.agent_config_version}.</Alert>
@@ -246,7 +246,7 @@ export function DeliveryPanel() {
   };
   return (
     <div className="space-y-5">
-      {!x.status.enabled && <OffNotice what="Delivery through Pub/Sub" flag="pubsub_delivery">Posts are handed to Chat by the {x.outbox_doorbell} doorbell directly.</OffNotice>}
+      {!x.status.enabled && <OffNotice what="Trying again when a post fails" flag="pubsub_delivery">Each post waits for the Chat flow to pick it up.</OffNotice>}
       {x.status.error && <Alert tone="rose" title="Pub/Sub could not be read">{x.status.error}</Alert>}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Stat label="Gave up" value={x.dead_letters.length} hint="waiting for a decision" tone={x.dead_letters.length ? "rose" : undefined} glow={x.dead_letters.length > 0} />
@@ -263,7 +263,7 @@ export function DeliveryPanel() {
         )}
         {steps && <ul className="mt-4 space-y-1 border-t border-zinc-100 pt-3 text-sm dark:border-zinc-800">{steps.map((s2) => <li key={s2.step} className={s2.ok ? "text-zinc-600 dark:text-zinc-300" : "text-rose-500"}>{s2.step}: {s2.detail}</li>)}</ul>}
       </Card>
-      <Card padded={false} title="Dead letters" subtitle="Deliveries that failed every attempt. Replay one after fixing the cause, or discard it.">
+      <Card padded={false} title="Posts that could not be delivered" subtitle="Every try failed. Fix the cause and click Replay, or Discard it.">
         {x.dead_letters.length === 0 ? <p className="px-5 py-6 text-sm text-zinc-500">None.</p> : (
           <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">{x.dead_letters.map((dl) => (
             <li key={dl.action.action_id} className="flex flex-wrap items-center gap-3 px-5 py-3">

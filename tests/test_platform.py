@@ -851,7 +851,7 @@ def test_every_console_change_is_audited_with_who_made_it(ctx, client):
 def test_settings_parts_are_saved_validated_and_applied_live(ctx, client):
     got = client.get("/api/platform/flags", headers=iap(ADMIN)).json()
     assert got["value"]["temp_checks"] is False and "Every switch starts OFF" in got["description"]
-    assert got["schema"]["properties"]["temp_checks"]["description"].startswith("Temp checks can be run")
+    assert got["schema"]["properties"]["temp_checks"]["description"].startswith("ON: temp checks can be run")
     value = {**got["value"], "temp_checks": True}
     saved = client.put("/api/platform/flags", json={"value": value, "base_version": got["config_version"]}, headers=iap(ADMIN))
     assert saved.status_code == 200 and saved.json()["changed"] == ["temp_checks"]

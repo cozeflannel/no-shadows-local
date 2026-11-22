@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
+from .config import switch_off
 from .events import PlatformEvent
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -88,7 +89,7 @@ def save_watch(ctx: "AgentContext", actor: str, data: dict[str, Any]) -> Watch:
     from . import audit
 
     if not ctx.flag("watches"):
-        raise PermissionError("Watches are switched off (Feature flags → watches).")
+        raise PermissionError(switch_off("Changing watches", "watches"))
     existing = ctx.store.get_doc(WATCHES, str(data.get("watch_id") or ""))
     watch = Watch.model_validate({**(existing or {}), **data, "watch_id": (existing or {}).get("watch_id") or f"W-{uuid.uuid4().hex[:8]}",
                                   "created_by": (existing or {}).get("created_by") or actor, "updated_by": actor, "updated_at": ctx.now()})

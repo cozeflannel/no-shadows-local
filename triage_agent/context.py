@@ -75,7 +75,7 @@ class AgentContext:
         return False
 
     def flag(self, name: str) -> bool:
-        """A Console switch (Settings → Feature flags). Unknown names are OFF."""
+        """A Console switch (Settings → Switches). Unknown names are OFF."""
         return self.config.platform.flag(name)
 
     def audit(self, **fields: Any) -> Any:

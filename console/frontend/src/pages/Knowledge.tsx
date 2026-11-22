@@ -173,7 +173,7 @@ export default function KnowledgePage() {
         {tab === "classes" && (
           <Card padded={false} title="Classes and what each one reads" subtitle={k.data.classes_from_settings ? undefined : "No classes are set, so the exposure tag categories are used."}
             actions={<Link to="/settings/classification" className="text-sm font-medium text-blue-600 dark:text-blue-200">Edit classes</Link>}>
-            {!k.data.switches.classification_layer && <Alert tone="amber" className="m-5 mb-0" title="The classification layer is switched off">Alerts are assessed without a class until it is turned on in Feature flags (classification_layer).</Alert>}
+            {!k.data.switches.classification_layer && <Alert tone="amber" className="m-5 mb-0" title="The classification layer is switched off">Alerts are assessed without a class until it is turned on in Switches (classification_layer).</Alert>}
             <table className="w-full"><thead><tr><th className={TH}>Class</th><th className={TH}>Reads by tag</th><th className={TH}>Documents</th></tr></thead>
               <tbody>{k.data.classes.map((c) => (
                 <tr key={c.name} className={TR}><td className={TD}><span className="font-medium">{c.name}</span><span className="block text-xs text-zinc-500">{c.description}</span></td>

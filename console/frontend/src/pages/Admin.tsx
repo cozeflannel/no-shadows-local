@@ -155,8 +155,8 @@ export default function AdminPage() {
                 <p>Model {s.agent.model} · {s.agent.env} · settings {s.agent.config_version.slice(0, 12)}</p>
               </StatusCard>
               <StatusCard title="Delivery" ok={s.delivery.dead_letters === 0} to="/settings/pubsub" link="Open Delivery">
-                <p>{s.delivery.pubsub ? "Through Pub/Sub, with retries." : `Doorbell: ${s.delivery.doorbell}.`}</p>
-                <p>{s.delivery.waiting} waiting to post{s.delivery.waiting ? `, the oldest for ${Math.round(s.delivery.oldest_waiting_min)} min` : ""} · {s.delivery.dead_letters} gave up.</p>
+                <p>{s.delivery.pubsub ? "Posts that fail are tried again." : s.delivery.doorbell === "none" ? "Posts wait for the Chat flow to pick them up." : `Chat is told by ${s.delivery.doorbell} when a post is waiting.`}</p>
+                <p>{s.delivery.waiting} waiting to post{s.delivery.waiting ? `, the oldest for ${Math.round(s.delivery.oldest_waiting_min)} min` : ""} · {s.delivery.dead_letters} could not be delivered.</p>
               </StatusCard>
               <StatusCard title="Safety" ok={s.safety.passed} to="/settings/safety" link="Open Safety">
                 <p>{s.safety.checks - s.safety.failed.length} of {s.safety.checks} checks pass. Testing is {s.safety.testing ? "ON: emails go to the testing recipients only" : "OFF: emails go to real recipients"}.</p>
@@ -165,7 +165,7 @@ export default function AdminPage() {
               <StatusCard title="BigQuery" ok={s.bigquery.dataset ? s.bigquery.connected : null} to="/connections/bigquery" link="Open BigQuery">
                 <p>{s.bigquery.dataset ? `Dataset ${s.bigquery.dataset}.` : "No dataset is connected: events stay in the fast store."}</p>
               </StatusCard>
-              <StatusCard title="Feature flags" ok={null} to="/settings/flags" link="Open Feature flags">
+              <StatusCard title="Switches" ok={null} to="/settings/flags" link="Open Switches">
                 <p>{s.switches_on.length} of {s.switches} on.</p>
                 <p>{s.switches_on.length ? s.switches_on.map((f) => f.replace(/_/g, " ")).join(", ") : "Every switch starts OFF."}</p>
               </StatusCard>

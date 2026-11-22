@@ -13,6 +13,8 @@ import re
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
+from .config import switch_off
+
 if TYPE_CHECKING:  # pragma: no cover
     from .context import AgentContext
 
@@ -299,7 +301,7 @@ def require_admin(ctx: "AgentContext", full_id: str) -> None:
     """Refuse a change unless the switch is ON and the object's dataset is on the allow-list."""
     cfg = ctx.config.platform
     if not cfg.flags.bigquery_admin:
-        raise NotAllowed("Changing BigQuery from the Console is switched off (Feature flags → bigquery_admin).")
+        raise NotAllowed(switch_off("Changing BigQuery from the Console", "bigquery_admin"))
     parts = full_id.strip("`").split(".")
     dataset = ".".join(parts[:2]) if len(parts) >= 2 else full_id
     allowed = {d.strip().strip("`") for d in cfg.bigquery.admin_allowed_datasets if d.strip()}

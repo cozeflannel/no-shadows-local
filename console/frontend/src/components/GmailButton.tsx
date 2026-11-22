@@ -40,7 +40,7 @@ export function GmailButton() {
     setBusy(true);
     try {
       await apiSend("delete", "/gmail");
-      toast(isAgent ? "Agent mailbox disconnected. The email doorbell is paused." : "Gmail disconnected. Auto-drafts are paused for you.", "info");
+      toast(isAgent ? "The agent's mailbox is disconnected. Chat is no longer told by email when a post is waiting." : "Gmail disconnected. Auto-drafts are paused for you.", "info");
       refreshGmail();
       setOpen(false);
     } catch (err) {
@@ -73,7 +73,7 @@ export function GmailButton() {
         >
           <MailCheck className="size-3.5" /> {label}
         </button>
-        <Modal open={open} onClose={() => setOpen(false)} title={isAgent ? "Agent mailbox (email doorbell)" : "Gmail connection"}
+        <Modal open={open} onClose={() => setOpen(false)} title={isAgent ? "The agent's mailbox" : "Gmail connection"}
           footer={<>
             <Button onClick={() => setOpen(false)}>Close</Button>
             {gmail.mode !== "fake" && <Button variant="danger" loading={busy} onClick={disconnect}>Disconnect</Button>}
@@ -83,7 +83,7 @@ export function GmailButton() {
           <p className="mt-2 text-sm text-zinc-500">Account: <span className="font-mono">{gmail.email}</span> · mode <span className="font-mono">{gmail.mode}</span></p>
           <p className="mt-2 text-xs text-zinc-500">
             {isAgent
-              ? "The agent only sends doorbell emails from this account; it can't read the mailbox."
+              ? "From this account the agent only sends the email that tells Chat a post is waiting. It can't read the mailbox."
               : "The agent only creates drafts and checks whether they were sent. You always send."}
             {gmail.scopes?.length ? ` Permissions: ${gmail.scopes.map((s) => GMAIL_SCOPE_LABEL[s] ?? s).join("; ")}.` : ""}
           </p>
@@ -99,7 +99,7 @@ export function GmailButton() {
   return (
     <Tooltip content={hint}>
       <Button size="sm" variant="primary" icon={<Mail className="size-3.5" />} onClick={connect} disabled={!allowed}>
-        {isAgent ? "Connect agent mailbox (doorbell)" : "Connect Gmail"}
+        {isAgent ? "Connect the agent's mailbox" : "Connect Gmail"}
       </Button>
     </Tooltip>
   );

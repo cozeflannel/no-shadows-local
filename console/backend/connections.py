@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, ValidationError
 
 from triage_agent import audit, bq_admin, chatlog, knowledge, pubsub, secret_admin
+from triage_agent.config import switch_off, switch_title
 from triage_agent.context import AgentContext
 
 from . import gmail_oauth
@@ -84,13 +85,13 @@ def tools(ctx: AgentContext) -> list[Tool]:
              ("Event log", "Workforce forecast", "Watches", "Costs"), "BigQuery Data Editor on the dataset and BigQuery Job User on the project.",
              "/settings/bigquery", "/api/bigquery/provision"),
         Tool("delivery", "Delivery", "How the agent's posts and emails go out, with retries.", False,
-             (F("outbox.doorbell", "Doorbell", True, choices=("none", "sheet", "email"), help="How Chat is told a post is waiting."),
+             (F("outbox.doorbell", "How Chat is told a post is waiting", True, choices=("none", "sheet", "email"), help="A row in a sheet, an email, or none."),
               F("platform.pubsub.outbound_topic", "Outbound topic", options="topics"),
               F("platform.pubsub.dead_letter_topic", "Dead-letter topic", options="topics"),
               F("platform.pubsub.outbound_subscription", "Outbound subscription", options="subscriptions"),
               F("platform.pubsub.dead_letter_subscription", "Dead-letter subscription", options="subscriptions"),
               F("platform.pubsub.worker_url", "Worker address"), F("platform.pubsub.push_service_account", "Account that calls the worker")),
-             ("Posts to Chat", "Retries and dead letters"), "Pub/Sub Editor on the project.", "/settings/pubsub", "/api/delivery/provision"),
+             ("Posts to Chat", "Trying again when a post fails"), "Pub/Sub Editor on the project.", "/settings/pubsub", "/api/delivery/provision"),
         Tool("secrets", "Secret Manager", "Holds tokens. Settings keep a secret's name, never its value.", False,
              (F("platform.gcp.secret_prefix", "Name prefix", help="Only secrets whose name starts with this are shown."),),
              ("Brandwatch token",), "Secret Manager Admin on the project.", "/settings/secrets"),
@@ -431,7 +432,7 @@ def _check_inhouse(ctx: AgentContext) -> list[dict[str, Any]]:
 
 def _check_delivery(ctx: AgentContext) -> list[dict[str, Any]]:
     ps = ctx.config.platform.pubsub
-    out = [{"label": "Doorbell", "ok": ctx.config.outbox.doorbell != "none", "message": ctx.config.outbox.doorbell}]
+    out = [{"label": "How Chat is told a post is waiting", "ok": ctx.config.outbox.doorbell != "none", "message": ctx.config.outbox.doorbell}]
     if not ps.outbound_topic:
         return out + [{"label": "Pub/Sub", "ok": True, "message": "No topic is named: posts go out through the doorbell alone."}]
 
@@ -446,7 +447,7 @@ def _check_delivery(ctx: AgentContext) -> list[dict[str, Any]]:
     except Exception as exc:  # noqa: BLE001
         out.append({"label": "Pub/Sub", "ok": False, "message": str(exc)[:400]})
     out.append({"label": "Switch", "ok": ctx.config.platform.flags.pubsub_delivery,
-                "message": "pubsub_delivery is ON." if ctx.config.platform.flags.pubsub_delivery else "pubsub_delivery is OFF: turn it on under Settings → Feature flags."})
+                "message": f'"{switch_title("pubsub_delivery")}" is ON.' if ctx.config.platform.flags.pubsub_delivery else switch_off("Retrying through Pub/Sub", "pubsub_delivery")})
     return out
 
 

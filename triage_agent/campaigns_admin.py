@@ -16,6 +16,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from .config import switch_off
 from .events import PlatformEvent
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -86,7 +87,7 @@ def request_change(ctx: "AgentContext", *, campaign_id: str, changes: dict[str, 
     from . import audit
 
     if not ctx.flag("campaigns"):
-        raise PermissionError("Changing campaigns from the Console is switched off (Feature flags → campaigns).")
+        raise PermissionError(switch_off("Changing campaigns from the Console", "campaigns"))
     docs = _Docs(ctx)
     campaign = docs.get(CAMPAIGNS, campaign_id)
     if campaign is None:

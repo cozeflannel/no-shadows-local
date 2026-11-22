@@ -11,6 +11,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from triage_agent import bwquery, campaigns_admin, chat_agent, chatlog, golden, knowledge, tempcheck, tools, watches, workforce
+from triage_agent.config import switch_off
 from triage_agent.context import ROSTER_IM, AgentContext
 
 from .auth import User, get_ctx, require_admin, require_analyst, require_lead, require_viewer
@@ -487,7 +488,7 @@ def watches_delete(watch_id: str, ctx: AgentContext = Depends(get_ctx), user: Us
 @router.post("/watches/run")
 def watches_run(ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_lead)) -> dict[str, Any]:
     if not ctx.flag("watches"):
-        raise HTTPException(403, {"error": "Watches are switched off (Feature flags → watches).", "code": "rejected"})
+        raise HTTPException(403, {"error": switch_off("Changing watches", "watches"), "code": "rejected"})
     ctx.audit(actor=user.email, action="watch.run", surface="console", target_type="watch", summary="Ran a look by hand")
     return watches.run_due(ctx, actor=user.email, force=True)
 

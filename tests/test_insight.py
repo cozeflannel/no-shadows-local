@@ -314,3 +314,49 @@ def test_on_the_cloud_find_and_fill_picks_the_one_runtime_and_the_dataset_that_h
     checked = client.post("/api/connections/bigquery/test", headers=iap(ADMIN)).json()
     assert checked["test"]["ok"] is True and checked["connection"]["state"] == "connected"
     assert [d["message"] for d in checked["test"]["details"]][-1] == "seen-project.slrr_triage.agent_events: 12 rows."
+
+
+# -- plain words: every Settings page and every switch explains itself ---------------------------------------------------------------
+def test_every_settings_page_has_a_plain_name_an_explanation_and_a_group(ctx, client):
+    parts = client.get("/api/platform", headers=iap(ADMIN)).json()["parts"]
+    got = client.get("/api/settings", headers=iap(ADMIN)).json()
+    groups = {g["key"] for g in got["groups"]}
+    for page in [*parts, *got["sections"]]:
+        assert page["label"] and page["description"].endswith("."), f"{page['key']} has no explanation"
+        assert page["group"] in groups, f"{page['key']} is not under a heading"
+        assert "_" not in page["label"] and page["label"][0].isupper(), f"{page['key']} is named by its internal key"
+
+
+def test_every_switch_has_a_plain_name_and_says_what_on_and_off_mean(ctx, client):
+    from triage_agent.config import FeatureFlags, switch_off
+
+    for name, field in FeatureFlags.model_fields.items():
+        assert field.title and "_" not in field.title, f"{name} has no plain name"
+        assert field.description.startswith("ON: ") and " OFF: " in field.description, f"{name} does not say what ON and OFF mean"
+    names = client.get("/api/meta", headers=iap(IM)).json()["switch_names"]
+    assert names["knowledge_rag"] == "Read the Knowledge documents" and set(names) == set(FeatureFlags.model_fields)
+    assert switch_off("Temp checks", "temp_checks") == 'Temp checks is switched off. An admin can turn on "Temp checks" under Settings, Switches.'
+    refused = client.post("/api/temp-checks", json={"issue": "x"}, headers=iap(IM))
+    assert "_" not in refused.json()["error"] and "Settings, Switches" in refused.json()["error"]
+
+
+def test_no_setting_on_a_settings_page_is_left_unexplained():
+    import typing
+
+    from pydantic import BaseModel
+
+    from triage_agent.config import PlatformConfig
+
+    missing: list[str] = []
+
+    def walk(model, prefix, seen=()):
+        for name, field in model.model_fields.items():
+            nested = [b for a in (field.annotation, *typing.get_args(field.annotation)) for b in (a, *typing.get_args(a))
+                      if isinstance(b, type) and issubclass(b, BaseModel) and b not in seen]
+            if not nested and not field.description:
+                missing.append(f"{prefix}.{name}")
+            for sub in nested[:1]:
+                walk(sub, f"{prefix}.{name}", (*seen, model))
+
+    walk(PlatformConfig, "platform")
+    assert missing == []

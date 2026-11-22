@@ -109,8 +109,8 @@ export function Layout({ children }: { children: ReactNode }) {
   ];
   const extra: NavItem[] = [
     { to: "/suppressed", label: "Suppressed", icon: <Gauge className={icon} /> },
-    { to: "/parity", label: "In-house parity", icon: <Gauge className={icon} /> },
-    { to: "/outbox", label: "Outbox", icon: <Gauge className={icon} />, count: counts.outbox },
+    { to: "/parity", label: "Our alerts vs Burson's", icon: <Gauge className={icon} /> },
+    { to: "/outbox", label: "Waiting to post", icon: <Gauge className={icon} />, count: counts.outbox },
     { to: "/activity", label: "Event log", icon: <Gauge className={icon} /> },
   ];
   const extraActive = extra.some((e) => location.pathname.startsWith(e.to));

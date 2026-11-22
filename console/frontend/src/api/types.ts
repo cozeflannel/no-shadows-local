@@ -49,6 +49,7 @@ export interface Meta {
   operations: string[];
   rosters: { name: string; label: string; description: string }[];
   kpi_count: number;
+  switch_names: Record<string, string>;
   notifications: { enabled: boolean; event_types: string[]; sources: string[]; seconds: number; max_on_screen: number };
 }
 
@@ -421,11 +422,12 @@ export interface OutboxItem {
 }
 export interface OutboxResponse { items: OutboxItem[]; count: number; undelivered: number; stale: number; doorbell: string }
 
-export interface SettingsSection { key: string; label: string; description: string; kind: "structured" | "table" | "json"; overridden: boolean }
+export interface SettingsSection { key: string; label: string; description: string; group: string; kind: "structured" | "table" | "json"; overridden: boolean }
 export interface SettingsResponse {
   config: Record<string, Json>;
   overrides: Record<string, Json>;
   sections: SettingsSection[];
+  groups: { key: string; title: string }[];
   config_version: string;
   version: string;
   env: string;

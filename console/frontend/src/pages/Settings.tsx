@@ -11,14 +11,14 @@ import { useApp } from "../context";
 import { ConfigSection, HistoryList } from "./settings/ConfigSection";
 import { AuditPanel, BigQueryPanel, CostsPanel, DeliveryPanel, PromptsPanel, RuntimePanel, SafetyPanel, SecretsPanel } from "./settings/Panels";
 
-interface PartList { parts: { key: string; label: string; description: string; overridden: boolean }[]; config_version: string; can_edit: boolean }
+interface PartList { parts: { key: string; label: string; description: string; group: string; overridden: boolean }[]; config_version: string; can_edit: boolean }
 interface PartDetail { part: string; label: string; description: string; value: Record<string, unknown>; default: Record<string, unknown>; schema: Schema; config_version: string; can_edit: boolean }
 
 const TOOLS = [
-  { key: "secrets", label: "Secrets & credentials", admin: true },
-  { key: "prompts", label: "AI instructions", admin: false },
-  { key: "audit", label: "Audit log", admin: false },
-  { key: "history", label: "Change history", admin: false },
+  { key: "secrets", label: "Secrets (API tokens)", admin: true },
+  { key: "prompts", label: "What Gemini is told", admin: false },
+  { key: "audit", label: "Who did what", admin: false },
+  { key: "history", label: "Changes to settings", admin: false },
 ];
 /** The parts whose main values connect a tool: those are set under Integrations. */
 const PART_TOOL: Record<string, string> = { gcp: "gcp", bigquery: "bigquery", pubsub: "delivery", temp_check: "brandwatch", campaigns: "campaigns" };
@@ -107,15 +107,15 @@ function SettingsHome({ tools, admin }: Glance) {
   const s = admin?.status;
   return (
     <div className="max-w-3xl">
-      <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">Four things to fill in. Every other setting has a working default and sits under Advanced.</p>
+      <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">Four things to fill in. Everything else already has a value that works; change one under More settings only when you need to.</p>
       <div className="flex flex-col gap-3">
         <StartCard n={1} title="Integrations" done={!!t && t.ready === t.required} to="/connections" action="Open Integrations"
           state={t ? `${t.ready} of ${t.required} needed tools are set${t.failing ? `, ${t.failing} failing a check` : ""}. Find and fill writes what the project already has.` : "The tools the agent is connected to."} />
         <StartCard n={2} title="People" done={!!admin && admin.people.length > 1} to="/admin" action="Open People"
           state={admin ? `${admin.people.length} ${admin.people.length === 1 ? "person has" : "people have"} a role. Add a person once: their role and roster place come from that record.` : "Who can work alerts and who can change settings."} />
-        <StartCard n={3} title="Feature flags" done={!!s && s.switches_on.length > 0} to="/settings/flags" action="Open Feature flags"
+        <StartCard n={3} title="Switches" done={!!s && s.switches_on.length > 0} to="/settings/flags" action="Open Switches"
           state={s ? `${s.switches_on.length} of ${s.switches} on. Every feature starts OFF.` : "What the agent may do on its own."} />
-        <StartCard n={4} title="Safety" done={!!s && s.safety.passed} to="/settings/safety" action="Open Safety"
+        <StartCard n={4} title="Safety and Testing" done={!!s && s.safety.passed} to="/settings/safety" action="Open Safety and Testing"
           state={s ? `Testing is ${s.safety.testing ? "ON: emails go only to the testing recipients" : "OFF: emails go to real recipients"}.` : "Testing recipients, allow-lists and the leak guard."} />
       </div>
     </div>
@@ -140,10 +140,14 @@ export default function SettingsPage() {
   const start = ["flags", "safety"];
   const needle = find.trim().toLowerCase();
   const match = (label: string) => !needle || label.toLowerCase().includes(needle);
+  const pages = [
+    ...(parts.data?.parts ?? []).filter((p) => !start.includes(p.key)).map((p) => ({ group: p.group, to: `/settings/${p.key}`, label: p.label, marked: p.overridden })),
+    ...sections.map((x) => ({ group: x.group, to: sectionPath(x.key), label: x.label, marked: x.overridden })),
+    { group: "day", to: "/rosters", label: "Rosters", marked: false },
+  ].filter((i) => match(i.label));
   const groups: { title: string; items: { to: string; label: string; marked?: boolean }[] }[] = [
-    { title: "Platform", items: (parts.data?.parts ?? []).filter((p) => !start.includes(p.key) && match(p.label)).map((p) => ({ to: `/settings/${p.key}`, label: p.label, marked: p.overridden })) },
-    { title: "Agent", items: [...sections.filter((s) => match(s.label)).map((s) => ({ to: sectionPath(s.key), label: s.label, marked: s.overridden })), ...(match("Rosters") ? [{ to: "/rosters", label: "Rosters" }] : [])] },
-    { title: "Tools", items: TOOLS.filter((t) => (!t.admin || me?.is_admin) && match(t.label)).map((t) => ({ to: `/settings/${t.key}`, label: t.label })) },
+    ...(config.data?.groups ?? []).map((g) => ({ title: g.title, items: pages.filter((i) => i.group === g.key).sort((x, y) => x.label.localeCompare(y.label)) })),
+    { title: "Records and tools", items: TOOLS.filter((t) => (!t.admin || me?.is_admin) && match(t.label)).map((t) => ({ to: `/settings/${t.key}`, label: t.label })) },
   ];
   const advanced = open || !!needle || (!!key && !start.includes(key));
 
@@ -165,9 +169,9 @@ export default function SettingsPage() {
         <Select className="lg:hidden" aria-label="Setting" value={key ? `/settings/${key}` : "/settings"} onChange={(e) => navigate(e.target.value)}>
           <optgroup label="Start here">
             <option value="/settings">What to fill in</option><option value="/connections">Integrations</option><option value="/admin">People</option>
-            <option value="/settings/flags">Feature flags</option><option value="/settings/safety">Safety</option>
+            <option value="/settings/flags">Switches</option><option value="/settings/safety">Safety and Testing</option>
           </optgroup>
-          {groups.map((g) => <optgroup key={g.title} label={`Advanced: ${g.title}`}>{g.items.map((i) => <option key={i.to} value={i.to}>{i.label}</option>)}</optgroup>)}
+          {groups.map((g) => g.items.length > 0 && <optgroup key={g.title} label={g.title}>{g.items.map((i) => <option key={i.to} value={i.to}>{i.label}</option>)}</optgroup>)}
         </Select>
         <nav aria-label="Settings" className="scroll-thin hidden h-fit space-y-4 lg:sticky lg:top-16 lg:block lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
           <div className="space-y-0.5">
@@ -175,12 +179,12 @@ export default function SettingsPage() {
             <NavLink to="/settings" end className={({ isActive }) => cx("flex rounded-full px-3 py-1.5 text-sm", isActive ? "bg-blue-100 font-medium text-blue-800 dark:bg-blue-200/15 dark:text-blue-200" : "text-zinc-700 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800")}>What to fill in</NavLink>
             <NavItem to="/connections" label="Integrations" />
             <NavItem to="/admin" label="People" />
-            <NavItem to="/settings/flags" label="Feature flags" marked={parts.data?.parts.find((p) => p.key === "flags")?.overridden} />
-            <NavItem to="/settings/safety" label="Safety" marked={parts.data?.parts.find((p) => p.key === "safety")?.overridden} />
+            <NavItem to="/settings/flags" label="Switches" marked={parts.data?.parts.find((p) => p.key === "flags")?.overridden} />
+            <NavItem to="/settings/safety" label="Safety and Testing" marked={parts.data?.parts.find((p) => p.key === "safety")?.overridden} />
           </div>
           <div>
             <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={advanced} className="flex w-full items-center justify-between rounded-full px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800">
-              Advanced<span className="text-xs text-zinc-500">{advanced ? "Hide" : "Show"}</span>
+              More settings<span className="text-xs text-zinc-500">{advanced ? "Hide" : "Show"}</span>
             </button>
             {advanced && (
               <div className="mt-2 space-y-4">

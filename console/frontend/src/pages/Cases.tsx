@@ -134,7 +134,7 @@ export default function CasesPage() {
                         {c.track ? <Badge tone={c.track === "URGENT" ? "rose" : "amber"}>{TRACK_LABEL[c.track] ?? c.track}</Badge> : <span className="text-xs text-zinc-400">—</span>}
                         {c.priority && <span className="ml-1 font-mono text-xs text-zinc-500">{c.priority}</span>}
                       </td>
-                      <td className={cx(TD, "whitespace-nowrap text-xs")}>{SOURCE_LABEL[c.source] ?? c.source}{c.counterpart_case_id && <span className="ml-1 text-teal-600" title={`Parity counterpart ${c.counterpart_case_id}`}>⇄</span>}</td>
+                      <td className={cx(TD, "whitespace-nowrap text-xs")}>{SOURCE_LABEL[c.source] ?? c.source}{c.counterpart_case_id && <span className="ml-1 text-teal-600" title={`The same post was also alerted as ${c.counterpart_case_id}`}>⇄</span>}</td>
                       <td className={cx(TD, "text-right font-mono text-xs")}>{fmtCompact(c.engagement_total)}{c.is_kof && <span className="ml-1" title="KOF">⭐</span>}</td>
                       <td className={TD}><SlaCell c={c} /></td>
                       <td className={cx(TD, "whitespace-nowrap text-xs")}>

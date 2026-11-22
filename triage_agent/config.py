@@ -852,22 +852,36 @@ class AccessConfig(ConfigModel):
 
 
 class FeatureFlags(ConfigModel):
-    """What the agent and the Console may do on their own. Every switch starts OFF."""
+    """What the agent and the Console may do on their own. Every switch starts OFF.
 
-    classification_layer: bool = Field(False, description="Classify each alert first; the class picks the knowledge the assessment reads.")
-    knowledge_rag: bool = Field(False, description="Give the assessment and answers the matching knowledge passages, and cite them.")
-    pubsub_delivery: bool = Field(False, description="Send outbound actions through Pub/Sub (retries, dead letters) instead of ringing the doorbell directly.")
-    console_chat_agent: bool = Field(False, description="The in-Console chat agent may run actions (review, escalate, temp checks). OFF: it only reads and answers.")
-    temp_checks: bool = Field(False, description="Temp checks can be run from the Console and from Chat.")
-    auto_temp_checks: bool = Field(False, description="Start a temp check draft on the occasions set under Temp check settings.")
-    workforce_forecasting: bool = Field(False, description="Run the volume forecast in BigQuery on the schedule and write staffing recommendations for approval.")
-    forecast_gap_alerts: bool = Field(False, description="DM the leads when live volume runs over the forecast by more than the gap threshold.")
-    campaigns: bool = Field(False, description="Campaigns can be changed and ended from the Console (they are started in Chat).")
-    watches: bool = Field(False, description="Watches can be created, changed and run.")
-    golden_set_capture: bool = Field(False, description="Record every correction, review decision and IM assessment as a golden example.")
-    bigquery_admin: bool = Field(False, description="Admins may create and change datasets, tables and views from the Console.")
-    secret_admin: bool = Field(False, description="Admins may add secrets and secret versions from the Console.")
-    alert_popups: bool = Field(False, description="People in the Console get a pop-up when an alert comes in.")
+    Each switch has a plain name (its title) and says what ON and OFF mean; messages name a switch by that title.
+    """
+
+    classification_layer: bool = Field(False, title="Sort alerts into classes", description="ON: the agent first decides what kind of alert it is, then reads only the documents kept for that kind. OFF: it reads any document that matches.")
+    knowledge_rag: bool = Field(False, title="Read the Knowledge documents", description="ON: the agent reads the matching parts of your Knowledge documents when it checks an alert or answers a question, and names the documents it used. OFF: it works from its built-in rules only.")
+    pubsub_delivery: bool = Field(False, title="Retry posts that fail", description="ON: the agent's posts go out through Google Pub/Sub, which tries again when one fails and sets it aside after the last try. OFF: each post waits for the Chat flow to pick it up.")
+    console_chat_agent: bool = Field(False, title="Let the chat agent act", description="ON: the assistant on the Chat agent page can do things for you (review an alert, start an email, run a temp check) after you confirm. OFF: it only answers questions.")
+    temp_checks: bool = Field(False, title="Temp checks", description="ON: temp checks can be run from the Console and from Chat. OFF: nobody can run one.")
+    auto_temp_checks: bool = Field(False, title="Start temp checks on its own", description="ON: the agent drafts a temp check when an issue meets the conditions under Settings, Temp check. OFF: only when a person asks.")
+    workforce_forecasting: bool = Field(False, title="Forecast alert volume", description="ON: the agent forecasts alert volume on a schedule and suggests staffing changes for a lead to accept. OFF: a lead can still run a forecast by hand.")
+    forecast_gap_alerts: bool = Field(False, title="Warn when volume beats the forecast", description="ON: the leads get a direct message when alerts come in faster than forecast by more than the set margin. OFF: no message.")
+    campaigns: bool = Field(False, title="Change campaigns here", description="ON: campaigns can be changed and ended from the Console. OFF: they can only be viewed. Campaigns are always started in Chat.")
+    watches: bool = Field(False, title="Watches", description="ON: watches can be created, changed and run. OFF: they can only be viewed.")
+    golden_set_capture: bool = Field(False, title="Keep checked examples", description="ON: every fix, review decision and IM assessment is kept as an example of the right answer, used later to test the agent. OFF: only assessments an IM records are kept.")
+    bigquery_admin: bool = Field(False, title="Change BigQuery from here", description="ON: admins can create and change datasets, tables and views from the Console. OFF: the Console only reads them.")
+    secret_admin: bool = Field(False, title="Add secrets from here", description="ON: admins can add secrets (API tokens) from the Console. OFF: secrets are added in Google Cloud.")
+    alert_popups: bool = Field(False, title="Alert pop-ups", description="ON: people in the Console get a pop-up when an alert comes in; each person can mute their own. OFF: no pop-ups.")
+
+
+def switch_title(name: str) -> str:
+    """A switch's plain name, as Settings shows it."""
+    field = FeatureFlags.model_fields.get(name)
+    return (field.title if field and field.title else name.replace("_", " ").capitalize())
+
+
+def switch_off(what: str, name: str) -> str:
+    """The sentence a person reads when a switch is OFF: what is off, and the switch to turn on."""
+    return f'{what} is switched off. An admin can turn on "{switch_title(name)}" under Settings, Switches.'
 
 
 class PubSubConfig(ConfigModel):
@@ -924,7 +938,7 @@ class ChatAgentConfig(ConfigModel):
     """The in-Console chat agent."""
 
     model: str = Field("", description="Model for the chat agent. Blank = the converse model.")
-    temperature: float = Field(0.2, ge=0, le=2)
+    temperature: float = Field(0.2, ge=0, le=2, description="How freely the assistant words its answers. 0 = the same answer every time.")
     max_steps: int = Field(8, ge=1, le=30, description="Tool calls allowed in one turn.")
     history_turns: int = Field(20, ge=0, le=200, description="Earlier turns sent with each message.")
     retrieval_top_k: int = Field(6, ge=0, le=30, description="Knowledge passages retrieved for a question.")
@@ -932,8 +946,8 @@ class ChatAgentConfig(ConfigModel):
 
 
 class ClassDef(ConfigModel):
-    name: str
-    description: str = ""
+    name: str = Field(..., description="The name of this kind of alert, as people will see it.")
+    description: str = Field("", description="What makes an alert this kind, in a sentence. The agent sorts by it.")
     knowledge_tags: list[str] = Field(default_factory=list, description="Knowledge docs with any of these tags are read for this class.")
     knowledge_docs: list[str] = Field(default_factory=list, description="Knowledge doc ids always read for this class.")
 
@@ -953,45 +967,45 @@ class KnowledgeRagConfig(ConfigModel):
     embedding_model: str = Field("", description="Embedding model for retrieval. Blank = keyword retrieval only.")
     embedding_location: str = Field("", description="Location for the embedding model. Blank = the model location.")
     embedding_dimensions: int = Field(0, ge=0, description="Output size to ask for. 0 = the model's own.")
-    chunk_chars: int = Field(1200, ge=200, le=8000)
-    chunk_overlap: int = Field(150, ge=0, le=2000)
-    top_k: int = Field(6, ge=1, le=30)
+    chunk_chars: int = Field(1200, ge=200, le=8000, description="A document is split into passages of about this many characters.")
+    chunk_overlap: int = Field(150, ge=0, le=2000, description="Characters each passage shares with the one before it, so a sentence is not cut in two.")
+    top_k: int = Field(6, ge=1, le=30, description="How many passages the agent reads for one alert or question.")
     min_score: float = Field(0.12, ge=0, le=1, description="Passages scoring lower are left out.")
     max_doc_chars: int = Field(1000000, ge=1000, description="Characters kept of one document.")
     refresh_minutes: int = Field(15, ge=5, description="How often linked documents are checked for changes.")
     web_refresh_hours: int = Field(6, ge=1, description="How often web pages are read again.")
     past_cases_days: int = Field(30, ge=0, description="Past cases searched as context. 0 = none.")
-    past_cases_top_k: int = Field(3, ge=0, le=20)
+    past_cases_top_k: int = Field(3, ge=0, le=20, description="How many similar earlier alerts the agent reads. 0 = none.")
 
 
 class TempCheckSource(ConfigModel):
     """One table of posts a temp check searches."""
 
-    key: str
-    label: str = ""
+    key: str = Field(..., description="A short name for this table, with no spaces.")
+    label: str = Field("", description="The name people see for this table.")
     table: str = Field("", description="project.dataset.table")
     location: str = Field("", description="BigQuery location of the table. Blank = the agent's own.")
-    enabled: bool = True
+    enabled: bool = Field(True, description="OFF: temp checks skip this table.")
     text_columns: list[str] = Field(default_factory=list, description="Columns searched for the query's words.")
-    url_column: str = ""
+    url_column: str = Field("", description="The column that holds the post's link.")
     id_column: str = Field("", description="Row id, for tables where many rows share one link (comments).")
-    author_column: str = ""
+    author_column: str = Field("", description="The column that holds who posted it.")
     time_column: str = Field("", description="When the post was made (TIMESTAMP).")
-    platform_column: str = ""
+    platform_column: str = Field("", description="The column that holds the platform (X, Reddit, YouTube).")
     platform_value: str = Field("", description="Platform name for a table that holds one platform only.")
-    followers_column: str = ""
-    language_column: str = ""
+    followers_column: str = Field("", description="The column that holds the author's follower count.")
+    language_column: str = Field("", description="The column that holds the post's language.")
     engagement_expr: str = Field("", description="SQL expression for a post's engagement.")
-    sentiment_column: str = ""
+    sentiment_column: str = Field("", description="The column that holds the post's sentiment.")
     filter_sql: str = Field("", description="Extra WHERE condition, for example to leave out the company's own posts.")
-    dedupe_by: Literal["url", "id"] = "url"
+    dedupe_by: Literal["url", "id"] = Field("url", description="How the same post is recognised when it appears twice: by its link or by its id.")
     freshness: str = Field("", description="How fresh the table is, shown beside its results.")
 
 
 class ConcernBand(ConfigModel):
-    label: str
+    label: str = Field(..., description="The name of this level of concern (for example Low, Elevated, High).")
     top_pct: int = Field(..., ge=1, le=100, description="The issue is above all but this percent of past issues, or fewer.")
-    action: str = ""
+    action: str = Field("", description="What the team does at this level. Shown in the write-up.")
 
 
 class TempCheckConfig(ConfigModel):
@@ -1017,10 +1031,10 @@ class TempCheckConfig(ConfigModel):
     high_min_alerts: int = Field(100, ge=1, description="Recent alerts needed before that share is used.")
     high_floor: int = Field(20000, ge=0, description="Engagements that count as high-engaging until enough alerts are known.")
     multiple_alerts_count: int = Field(3, ge=2, description="This many different posts alerted on one issue starts one.")
-    multiple_alerts_hours: int = Field(24, ge=1)
+    multiple_alerts_hours: int = Field(24, ge=1, description="The hours within which that many alerts on one issue start a temp check.")
     momentum_recheck_minutes: list[int] = Field(default_factory=lambda: [30, 90], description="When an alert's post is read again for momentum.")
     momentum_growth: float = Field(0.5, gt=0, description="Growth between two readings that starts one (0.5 = up by half).")
-    momentum_within_hours: int = Field(6, ge=1)
+    momentum_within_hours: int = Field(6, ge=1, description="A post must grow that much within this many hours to count as gaining momentum.")
     momentum_min: int = Field(500, ge=0, description="Engagements the later reading needs.")
     refresh_min_minutes: int = Field(60, ge=5, description="Shortest time between refreshes of one temp check.")
     benchmark_min_issues: int = Field(20, ge=1, description="Past issues needed before a concern level is given.")
@@ -1036,14 +1050,14 @@ class TempCheckConfig(ConfigModel):
 
 
 class ModelPrice(ConfigModel):
-    input_per_million: float = Field(0, ge=0)
-    output_per_million: float = Field(0, ge=0)
+    input_per_million: float = Field(0, ge=0, description="Price for a million tokens the model reads.")
+    output_per_million: float = Field(0, ge=0, description="Price for a million tokens the model writes.")
 
 
 class CostConfig(ConfigModel):
     """Cost views. Prices are entered here; nothing is assumed."""
 
-    currency: str = Field("USD")
+    currency: str = Field("USD", description="The currency costs are shown in.")
     model_prices: dict[str, ModelPrice] = Field(default_factory=dict, description="Price per million tokens for each model name.")
     billing_export_table: str = Field("", description="BigQuery billing export table for the service cost view.")
     monthly_budget: float = Field(0, ge=0, description="Shown as the budget line. 0 = none.")
@@ -1065,7 +1079,7 @@ class StoriesConfig(ConfigModel):
 
 
 class NotificationsConfig(ConfigModel):
-    """Pop-ups in the Console (switch: Feature flags, alert_popups)."""
+    """Pop-ups in the Console (switch: Alert pop-ups)."""
 
     popup_event_types: list[str] = Field(default_factory=lambda: ["alert.received"], description="Events that raise a pop-up.")
     popup_sources: list[str] = Field(default_factory=lambda: ["burson_chat"], description="Alert sources that raise a pop-up. Blank = every source.")
@@ -1074,9 +1088,9 @@ class NotificationsConfig(ConfigModel):
 
 
 class TelemetryConfig(ConfigModel):
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field("INFO", description="How much the services write to their logs. INFO is the usual choice; DEBUG writes the most.")
     tracing: bool = Field(False, description="Export traces to Cloud Trace.")
-    trace_sample_rate: float = Field(0.1, ge=0, le=1)
+    trace_sample_rate: float = Field(0.1, ge=0, le=1, description="The share of requests traced when tracing is ON. 0.1 = one in ten.")
     audit_retention_days: int = Field(400, ge=1, description="Days audit entries are kept in the fast store.")
     chat_retention_days: int = Field(90, ge=1, description="Days Chat activity is kept in the fast store.")
     tick_late_minutes: int = Field(5, ge=1, le=1440, description="Admin shows the scheduled work as late after this many minutes without a run.")

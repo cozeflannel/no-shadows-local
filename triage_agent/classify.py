@@ -2,7 +2,7 @@
 
 One small Gemini call (purpose triage.classify) puts the alert in a class before the structured assessment runs.
 The class decides which knowledge the assessment reads (Settings → Knowledge → classification mapping). Switch:
-Settings → Feature flags → classification_layer; OFF, or on a model failure, triage runs exactly as before.
+Settings → Switches → classification_layer; OFF, or on a model failure, triage runs exactly as before.
 """
 
 from __future__ import annotations

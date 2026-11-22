@@ -9,7 +9,7 @@ revert, a 👎, an assessment entered in the Console), so it is always the case'
     label         unlabeled | confirmed (IM agreed) | corrected (IM changed or overrode something)
 
 export_yaml() writes the labelled records in the shape evals/golden/*.yaml uses, so they can be dropped into the
-eval harness. Switch: Settings → Feature flags → golden_set_capture.
+eval harness. Switch: Settings → Switches → golden_set_capture.
 """
 
 from __future__ import annotations

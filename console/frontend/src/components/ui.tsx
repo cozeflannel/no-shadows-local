@@ -3,6 +3,7 @@ import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type Re
 
 import type { ApiError } from "../api/client";
 import { STATUS_LABEL, STATUS_TONE, TONE_CLASSES, VERDICT_TONE, type Tone } from "../lib/labels";
+import { switchName } from "../lib/switches";
 
 export function cx(...classes: (string | false | null | undefined)[]): string {
   return classes.filter(Boolean).join(" ");
@@ -385,7 +386,7 @@ export function Switch({ checked, onChange, disabled, label }: { checked: boolea
 export function OffNotice({ what, flag, children }: { what: string; flag: string; children?: ReactNode }) {
   return (
     <Alert tone="amber" title={`${what} is switched off`} className="mb-4">
-      {children} Turn it on in <a className="font-medium underline" href={`/settings/flags`}>Settings, Feature flags</a> ({flag}).
+      {children} An admin can turn on <a className="font-medium underline" href="/settings/flags">{switchName(flag)}</a> under Settings, Switches.
     </Alert>
   );
 }

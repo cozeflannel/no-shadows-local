@@ -125,7 +125,7 @@ Use real Gemini with `--live` (needs `GOOGLE_CLOUD_PROJECT` and ADC):
 ## Configuration
 
 - Everything rule-like lives in `config/*.yaml` and can be overridden per section from the Console's Settings page. Every event records the config version.
-- Platform settings (feature flags, access, project, safety, delivery, BigQuery, forecasting, chat agent, classification, knowledge, temp check, campaigns, costs, telemetry) exist only in the Console. Every switch starts OFF. Secrets are kept in Secret Manager and named in settings.
+- Platform settings (switches, access, project, safety, delivery, BigQuery, forecasting, chat agent, classification, knowledge, temp check, campaigns, costs, telemetry) exist only in the Console. Every switch starts OFF. Secrets are kept in Secret Manager and named in settings.
 - Values marked `PLACEHOLDER` need real inputs:
   - the alert template labels (from real Burson samples);
   - space ids, IM shift roster, Burson roster;

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .config import switch_off
 from .context import AgentContext
 from .models import ChatOutputs, RequestContext
 from .operations import UserFacingError, operation
@@ -58,7 +59,7 @@ def run_temp_check(ctx: AgentContext, payload: dict[str, Any], rc: RequestContex
 
     actor = _actor(payload, rc)
     if not ctx.flag("temp_checks"):
-        raise UserFacingError("Temp checks are switched off. An admin can turn them on under Feature flags.")
+        raise UserFacingError(switch_off("Temp checks", "temp_checks"))
     check = tempcheck.run(ctx, tempcheck.TempCheckRequest.model_validate({**payload, "requested_by": actor,
                                                                           "via": payload.get("via") or (rc.flow or "console")}))
     text = tempcheck.chat_summary(ctx, check)

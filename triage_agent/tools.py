@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Callable
 
+from .config import switch_off
 from .events import PlatformEvent
 from .models import CaseStatus
 
@@ -96,9 +97,9 @@ def run(ctx: "AgentContext", name: str, args: dict[str, Any], caller: Caller) ->
     if not caller.has(t.min_role):
         denied = f"{name} needs the {t.min_role} role (you are {caller.role})."
     elif t.flag and not ctx.flag(t.flag):
-        denied = f"{name} is switched off (Feature flags → {t.flag})."
+        denied = switch_off(name, t.flag)
     elif t.mutating and caller.surface == "chat_agent" and not ctx.flag("console_chat_agent"):
-        denied = "The chat agent may only read and answer: actions are switched off (Feature flags → console_chat_agent)."
+        denied = "The chat agent may only read and answer. " + switch_off("Acting for you", "console_chat_agent")
     if denied:
         audit.record(ctx, actor=caller.email, action=f"tool.{name}", surface=caller.surface, target_type="tool", target_id=name,  # type: ignore[arg-type]
                      summary=denied, status="denied", detail={"args": args})

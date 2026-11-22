@@ -33,10 +33,10 @@ export const STRUCTURED_SCHEMAS: Record<string, FieldDef[]> = {
     { key: "post_digest_to_burson_space", label: "Post the digest in the Burson space", type: "boolean" },
   ],
   outbox: [
-    { key: "doorbell", label: "Doorbell", type: "select", options: ["sheet", "email", "none"], help: "How queued posts start the Studio Outbox flow." },
+    { key: "doorbell", label: "How Chat is told a post is waiting", type: "select", options: ["sheet", "email", "none"], help: "A row in a sheet, an email, or none (the Chat flow checks on its own schedule)." },
     { key: "sheet_id", label: "Agent Outbox Sheet id", type: "text", nullable: true, placeholder: "1AbC…" },
     { key: "sheet_tab", label: "Sheet tab", type: "text" },
-    { key: "email_subject", label: "Doorbell email subject", type: "text" },
+    { key: "email_subject", label: "Subject of the email that tells Chat", type: "text" },
     { key: "clean_items_per_drain", label: "Clean-space items per drain", type: "number", min: 1, max: 10, step: 1, integer: true, help: "Keep at 1 so each alert is its own message (reactions map to one case)." },
     { key: "max_items_per_target", label: "Max items per other target", type: "number", min: 1, max: 50, step: 1, integer: true },
   ],
