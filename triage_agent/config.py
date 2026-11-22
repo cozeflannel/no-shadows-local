@@ -977,6 +977,7 @@ class KnowledgeRagConfig(ConfigModel):
     top_k: int = Field(6, ge=1, le=30, description="How many passages the agent reads for one alert or question.")
     min_score: float = Field(0.12, ge=0, le=1, description="Passages scoring lower are left out.")
     max_doc_chars: int = Field(1000000, ge=1000, description="Characters kept of one document.")
+    max_upload_mb: int = Field(20, ge=1, le=100, description="The largest file that can be uploaded as a document, in megabytes.")
     refresh_minutes: int = Field(15, ge=5, description="How often linked documents are checked for changes.")
     web_refresh_hours: int = Field(6, ge=1, description="How often web pages are read again.")
     past_cases_days: int = Field(30, ge=0, description="Past cases searched as context. 0 = none.")

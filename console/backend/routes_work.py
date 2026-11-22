@@ -6,8 +6,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import PlainTextResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
 from triage_agent import bwquery, campaigns_admin, chat_agent, chatlog, golden, knowledge, tempcheck, tools, watches, workforce
@@ -326,6 +326,7 @@ class DocBody(BaseModel):
     source_type: Literal["text", "url", "drive"] = "text"
     link: str = Field("", max_length=2000)
     text: str | None = Field(None, max_length=1_000_000)
+    html: str | None = Field(None, max_length=4_000_000)  # the document as the editor holds it (cleaned before it is kept)
     covers: str = Field("", max_length=1000)
     kind: Literal["document", "guidance"] = "document"
     tags: list[str] = Field(default_factory=list)
@@ -362,15 +363,72 @@ def knowledge_get(doc_id: str, ctx: AgentContext = Depends(get_ctx), user: User 
     doc = knowledge.get_doc(ctx, doc_id)
     if doc is None:
         raise _missing("knowledge doc")
-    return {"doc": doc.model_dump(mode="json"), "text": knowledge.get_text(ctx, doc_id)}
+    return {"doc": doc.model_dump(mode="json"), "text": knowledge.get_text(ctx, doc_id), "html": knowledge.get_html(ctx, doc_id),
+            "editable": doc.source_type == "text"}  # a linked document is edited where it lives
+
+
+@router.post("/knowledge/upload")
+async def knowledge_upload(request: Request, filename: str = Query(..., min_length=1, max_length=300), covers: str = Query("", max_length=1000),
+                           kind: Literal["document", "guidance"] = "document", ctx: AgentContext = Depends(get_ctx),
+                           user: User = Depends(require_lead)) -> dict[str, Any]:
+    """A file becomes a document: Word (.docx), PDF, a web page, Markdown or plain text. The file is the request body."""
+    from triage_agent import docfiles
+
+    limit = ctx.config.platform.knowledge.max_upload_mb
+    data = await request.body()
+    if len(data) > limit * 1024 * 1024:
+        raise HTTPException(413, {"error": f"The file is larger than {limit} MB.", "code": "too_large"})
+    try:
+        title, content = docfiles.from_upload(filename, data)
+    except ValueError as exc:
+        raise HTTPException(422, {"error": str(exc), "code": "validation_error"}) from exc
+    doc = knowledge.save_doc(ctx, actor=user.email, title=title, source_type="text", html=content, covers=covers, kind=kind,
+                             file_name=filename.rsplit("/", 1)[-1])
+    return {"ok": True, "doc": doc.model_dump(mode="json")}
+
+
+def _export_one(ctx: AgentContext, doc: Any, fmt: str) -> tuple[bytes, str, str]:
+    from triage_agent import docfiles
+
+    return docfiles.export(doc.title, knowledge.get_html(ctx, doc.doc_id), fmt)
+
+
+@router.get("/knowledge/{doc_id}/export")
+def knowledge_export(doc_id: str, format: str = "docx", ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> Response:
+    """One document as Word (docx), a web page (html) or plain text (txt)."""
+    doc = knowledge.get_doc(ctx, doc_id)
+    if doc is None:
+        raise _missing("knowledge doc")
+    try:
+        data, media, name = _export_one(ctx, doc, format)
+    except ValueError as exc:
+        raise HTTPException(422, {"error": str(exc), "code": "validation_error"}) from exc
+    ctx.audit(actor=user.email, action="knowledge.export", surface="console", target_type="knowledge", target_id=doc_id,
+              summary=f"Exported knowledge doc “{doc.title}” as {format}")
+    return Response(data, media_type=media, headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/knowledge-export")
+def knowledge_export_all(format: str = "docx", ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> Response:
+    """Every document in one .zip, each as Word (docx), a web page (html) or plain text (txt)."""
+    from triage_agent import docfiles
+
+    docs = knowledge.list_docs(ctx)
+    try:
+        files = [(name, data) for data, _, name in (_export_one(ctx, d, format) for d in docs)]
+    except ValueError as exc:
+        raise HTTPException(422, {"error": str(exc), "code": "validation_error"}) from exc
+    ctx.audit(actor=user.email, action="knowledge.export_all", surface="console", target_type="knowledge",
+              summary=f"Exported the Knowledge base ({len(files)} documents) as {format}")
+    return Response(docfiles.zip_of(files), media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="knowledge-base.zip"'})
 
 
 @router.post("/knowledge")
 def knowledge_save(body: DocBody, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_lead)) -> dict[str, Any]:
     if body.source_type != "text" and not body.link.strip():
         raise HTTPException(422, {"error": "Paste the document's link.", "code": "validation_error"})
-    if body.source_type == "text" and body.doc_id is None and not (body.text or "").strip():
-        raise HTTPException(422, {"error": "Paste the document's text.", "code": "validation_error"})
+    if body.source_type == "text" and body.doc_id is None and not (body.text or "").strip() and not (body.html or "").strip():
+        raise HTTPException(422, {"error": "Write the document, or upload a file.", "code": "validation_error"})
     doc = knowledge.save_doc(ctx, actor=user.email, **body.model_dump())
     return {"ok": True, "doc": doc.model_dump(mode="json")}
 

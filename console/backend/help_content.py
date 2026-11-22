@@ -167,10 +167,22 @@ TOPICS: list[dict[str, Any]] = [
         "id": "knowledge", "page": "Knowledge", "title": "Knowledge", "audience": "leads",
         "summary": "The documents the agent reads, which kind of alert reads which document, and the checked examples.",
         "sections": [
-            {"heading": "Add a document", "steps": [
-                "Click Add a document.", "Choose Text (paste it), Web page (a public link) or Drive (a Docs, Sheets or Slides link).",
-                "Say what it covers. Add tags.", "Mark Guidance if it should outrank other documents.",
-                "Tick May be quoted in the Burson space only if it may be used in answers there.", "Save. Status shows Ready, or what to fix."]},
+            {"heading": "Upload a document", "steps": [
+                "Click Upload and choose one or more files: Word (.docx), PDF, a web page (.html), Markdown (.md) or text (.txt).",
+                "Each file becomes a document with its headings, lists, links and tables kept. Status shows ready, or what to fix.",
+                "Click its title to say what it covers, add tags, or mark it Guidance."]},
+            {"heading": "Write or edit a document", "steps": [
+                "Click Write one for a new document, or click a document's title to open it.",
+                "Edit it on the page as in a word processor: the bar sets the text style, bold, italic, underline, links, lists, quotes and tables.",
+                "Save. The agent reads the new version at once and the version number goes up.",
+                "A linked web page or Drive file is edited where it lives; click Fetch to read it again."]},
+            {"heading": "Link a document", "steps": [
+                "Click Link one.", "Choose Web page (a public link) or Drive (a Docs, Sheets or Slides link) and paste the link.",
+                "Say what it covers. Add tags.", "Tick May be quoted in the Burson space only if it may be used in answers there.", "Save."]},
+            {"heading": "Export", "items": [
+                "One document: choose Word, Web page or Text under Download on its row.",
+                "Every document: choose a format under Export all. They come as one .zip file.",
+                "Each export is on the record."]},
             {"heading": "Drive documents", "text": "Share the file with the agent's service account (Viewer). PDFs and Office files can't be read: save them as Google Docs first."},
             {"heading": "Map classes to documents", "steps": [
                 "Open Classes.", "Each class lists the documents it reads.",

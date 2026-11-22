@@ -37,6 +37,7 @@ log = logging.getLogger(__name__)
 DOCS = "knowledge_docs"
 CHUNKS = "knowledge_chunks"
 TEXT = "knowledge_text"
+RICH = "knowledge_html"  # the formatted form of a document made or edited in the editor, or uploaded as a file
 STAMP_KEY = "knowledge:stamp"
 TEXT_PART_CHARS = 200_000
 SourceType = Literal["text", "url", "drive"]
@@ -68,6 +69,8 @@ class KnowledgeDoc(BaseModel):
     fetched_at: datetime | None = None
     updated_at: datetime | None = None
     updated_by: str = ""
+    rich: bool = False  # it keeps formatting (headings, lists, tables): uploaded as a file or written in the editor
+    file_name: str = ""  # the file it was uploaded from
 
 
 class Passage(BaseModel):
@@ -285,6 +288,17 @@ def get_text(ctx: "AgentContext", doc_id: str) -> str:
     return "".join(p.get("text", "") for p in parts)
 
 
+def get_html(ctx: "AgentContext", doc_id: str) -> str:
+    """The document as the editor shows it: its kept formatting, or its plain text as paragraphs."""
+    from . import docfiles
+
+    parts = ctx.store.list_docs(RICH, where={"doc_id": doc_id}, limit=200)
+    if parts:
+        parts.sort(key=lambda p: p.get("part", 0))
+        return "".join(p.get("html", "") for p in parts)
+    return docfiles.from_text(get_text(ctx, doc_id))
+
+
 def _replace_parts(ctx: "AgentContext", collection: str, doc_id: str, rows: list[dict[str, Any]], key: str) -> None:
     old = ctx.store.list_docs(collection, where={"doc_id": doc_id}, limit=5000)
     keep = set()
@@ -385,8 +399,11 @@ def refresh_doc(ctx: "AgentContext", doc: KnowledgeDoc, actor: str = "agent") ->
 
 def save_doc(ctx: "AgentContext", *, actor: str, doc_id: str | None = None, title: str, source_type: SourceType = "text",
              link: str = "", text: str | None = None, covers: str = "", kind: str = "document", tags: list[str] | None = None,
-             classes: list[str] | None = None, external_ok: bool = False, enabled: bool = True) -> KnowledgeDoc:
-    from . import audit
+             classes: list[str] | None = None, external_ok: bool = False, enabled: bool = True, html: str | None = None,
+             file_name: str | None = None) -> KnowledgeDoc:
+    """Adds or updates a document. `html` is its formatted content from the editor or an uploaded file: it is cleaned,
+    kept for the editor and exports, and its text is what the agent reads."""
+    from . import audit, docfiles
 
     existing = get_doc(ctx, doc_id) if doc_id else None
     doc = existing or KnowledgeDoc(doc_id=f"KD-{uuid.uuid4().hex[:8]}", title=title)
@@ -397,6 +414,16 @@ def save_doc(ctx: "AgentContext", *, actor: str, doc_id: str | None = None, titl
     doc.classes = sorted({c.strip() for c in (classes or []) if c.strip()})
     doc.external_ok, doc.enabled = bool(external_ok), bool(enabled)
     doc.updated_at, doc.updated_by = ctx.now(), actor
+    if file_name is not None:
+        doc.file_name = file_name[:200]
+    if source_type == "text" and html is not None:
+        clean = docfiles.clean_html(html)[: ctx.config.platform.knowledge.max_doc_chars]
+        _replace_parts(ctx, RICH, doc.doc_id, [{"doc_id": doc.doc_id, "part": i, "html": clean[o:o + TEXT_PART_CHARS]}
+                                               for i, o in enumerate(range(0, len(clean), TEXT_PART_CHARS))], "part")
+        doc.rich, text = True, docfiles.to_text(clean)
+    elif source_type == "text" and text is not None:
+        _replace_parts(ctx, RICH, doc.doc_id, [], "part")  # replaced by plain text: the formatted form goes
+        doc.rich = False
     ctx.store.put_doc(DOCS, doc.doc_id, doc.model_dump(mode="json"))
     if source_type == "text":
         if text is not None:
@@ -419,6 +446,7 @@ def delete_doc(ctx: "AgentContext", doc_id: str, actor: str) -> bool:
     if doc is None:
         return False
     _replace_parts(ctx, TEXT, doc_id, [], "part")
+    _replace_parts(ctx, RICH, doc_id, [], "part")
     _replace_parts(ctx, CHUNKS, doc_id, [], "n")
     ctx.store.delete_doc(DOCS, doc_id)
     _bump(ctx)

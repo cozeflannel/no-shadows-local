@@ -1,12 +1,15 @@
-import { BookOpen, Download, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { BookOpen, Download, Link2, PenLine, RefreshCw, Search, Trash2, Upload } from "lucide-react";
+import { lazy, Suspense, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
-import { apiGet, apiSend, type ApiError } from "../api/client";
+import { apiGet, apiSend, http, toApiError, type ApiError } from "../api/client";
 import { useApi } from "../api/hooks";
-import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, Field, Input, Modal, OffNotice, PageHeader, Select, Spinner, Stat, Tabs, TD, TH, TR, Textarea, Toggle } from "../components/ui";
+import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, Field, Input, Modal, OffNotice, PageHeader, Select, Spinner, Stat, Tabs, TD, TH, TR, Toggle } from "../components/ui";
 import { useApp } from "../context";
 import { fmtDateTime, fmtNum, fmtRelative } from "../lib/format";
+
+// The editor is loaded when a document is opened, so the rest of the Console stays light.
+const DocEditor = lazy(() => import("../components/DocEditor").then((m) => ({ default: m.DocEditor })));
 
 type Tab = "docs" | "classes" | "search" | "golden";
 interface Doc { doc_id: string; title: string; source_type: "text" | "url" | "drive"; link: string; covers: string; kind: "document" | "guidance"; tags: string[]; classes: string[]; external_ok: boolean; enabled: boolean; status: string; status_detail: string; chars: number; chunks: number; embedded: boolean; version: number; fetched_at: string | null; updated_at: string | null; updated_by: string }
@@ -15,7 +18,10 @@ interface KnowledgeList { docs: Doc[]; classes: ClassRow[]; classes_from_setting
 interface Passage { ref: string; doc_id: string; title: string; link: string; kind: string; text: string; score: number }
 interface Golden { stats: { total: number; by_label: Record<string, number>; labelled: number; agreement_rate: number | null; assessments: { agree: number; disagree: number }; most_corrected_fields: [string, number][] }; records: { case_id: string; label: string; agent: { verdict?: string }; expected: { verdict?: string }; updated_at: string; assessments: unknown[] }[]; capture_on: boolean }
 
-const EMPTY = { doc_id: "", title: "", source_type: "text" as Doc["source_type"], link: "", text: "", covers: "", kind: "document" as Doc["kind"], tags: "", classes: [] as string[], external_ok: false, enabled: true };
+const FORMATS: { value: "docx" | "html" | "txt"; label: string }[] = [{ value: "docx", label: "Word" }, { value: "html", label: "Web page" }, { value: "txt", label: "Text" }];
+const UPLOADS = ".docx,.pdf,.html,.htm,.md,.txt";
+const hasWords = (html: string) => html.replace(/<[^>]+>/g, "").trim().length > 0;
+const EMPTY = { doc_id: "", title: "", source_type: "text" as Doc["source_type"], link: "", html: "", editable: true, covers: "", kind: "document" as Doc["kind"], tags: "", classes: [] as string[], external_ok: false, enabled: true };
 const STATUS_TONE: Record<string, "emerald" | "rose" | "amber" | "zinc"> = { ready: "emerald", failed: "rose", empty: "amber", pending: "zinc" };
 
 function DocsTab({ data, reload }: { data: KnowledgeList; reload: () => void }) {
@@ -26,15 +32,15 @@ function DocsTab({ data, reload }: { data: KnowledgeList; reload: () => void }) 
   const edit = async (d: Doc) => {
     setError(null);
     try {
-      const full = await apiGet<{ doc: Doc; text: string }>(`/knowledge/${d.doc_id}`);
-      setForm({ doc_id: d.doc_id, title: d.title, source_type: d.source_type, link: d.link, text: d.source_type === "text" ? full.text : "", covers: d.covers, kind: d.kind, tags: d.tags.join(", "), classes: d.classes, external_ok: d.external_ok, enabled: d.enabled });
+      const full = await apiGet<{ doc: Doc; text: string; html: string; editable: boolean }>(`/knowledge/${d.doc_id}`);
+      setForm({ doc_id: d.doc_id, title: d.title, source_type: d.source_type, link: d.link, html: full.html, editable: full.editable, covers: d.covers, kind: d.kind, tags: d.tags.join(", "), classes: d.classes, external_ok: d.external_ok, enabled: d.enabled });
     } catch (err) { toast((err as ApiError).message, "error"); }
   };
   const save = async () => {
     if (!form) return;
     setBusy("save"); setError(null);
     try {
-      await apiSend("post", "/knowledge", { ...form, doc_id: form.doc_id || undefined, text: form.source_type === "text" ? form.text : undefined, tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean) });
+      await apiSend("post", "/knowledge", { ...form, editable: undefined, doc_id: form.doc_id || undefined, html: form.source_type === "text" ? form.html : undefined, tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean) });
       toast("Saved and indexed"); setForm(null); reload();
     } catch (err) { setError(err as ApiError); } finally { setBusy(""); }
   };
@@ -42,11 +48,36 @@ function DocsTab({ data, reload }: { data: KnowledgeList; reload: () => void }) 
     setBusy(key);
     try { await fn(); toast(done); reload(); } catch (err) { toast((err as ApiError).message, "error"); } finally { setBusy(""); }
   };
+  const picker = useRef<HTMLInputElement>(null);
+  const upload = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setBusy("upload");
+    let added = 0;
+    for (const file of Array.from(files)) {
+      try {
+        await http.post("/knowledge/upload", file, { params: { filename: file.name }, headers: { "Content-Type": "application/octet-stream" } });
+        added += 1;
+      } catch (err) { toast(`${file.name}: ${toApiError(err).message}`, "error"); }
+    }
+    if (picker.current) picker.current.value = "";
+    setBusy("");
+    if (added) { toast(added === 1 ? "Uploaded and indexed" : `${added} documents uploaded and indexed`); reload(); }
+  };
   return (
     <>
       <Card padded={false} title="Documents" subtitle="What the agent reads before it assesses an alert or answers a question. Guidance outranks documents."
-        actions={<Button variant="primary" icon={<Plus className="size-4" />} disabled={!data.can_edit} onClick={() => { setError(null); setForm(EMPTY); }}>Add a document</Button>}>
-        {data.docs.length === 0 ? <EmptyState icon={<BookOpen className="size-8" />} title="No documents yet">Paste text, or link a web page or a Drive file.</EmptyState> : (
+        actions={<div className="flex flex-wrap items-center justify-end gap-2">
+          <input ref={picker} type="file" multiple accept={UPLOADS} className="sr-only" aria-label="Upload documents" onChange={(e) => void upload(e.target.files)} />
+          <Button variant="primary" icon={<Upload className="size-4" />} disabled={!data.can_edit} loading={busy === "upload"} onClick={() => picker.current?.click()}>Upload</Button>
+          <Button icon={<PenLine className="size-4" />} disabled={!data.can_edit} onClick={() => { setError(null); setForm(EMPTY); }}>Write one</Button>
+          <Button icon={<Link2 className="size-4" />} disabled={!data.can_edit} onClick={() => { setError(null); setForm({ ...EMPTY, source_type: "url" }); }}>Link one</Button>
+          {data.docs.length > 0 && (
+            <Select aria-label="Export every document" className="w-36" value="" onChange={(e) => { if (e.target.value) window.location.assign(`/api/knowledge-export?format=${e.target.value}`); }}>
+              <option value="">Export all</option>{FORMATS.map((f) => <option key={f.value} value={f.value}>As {f.label}</option>)}
+            </Select>
+          )}
+        </div>}>
+        {data.docs.length === 0 ? <EmptyState icon={<BookOpen className="size-8" />} title="No documents yet">Upload a Word file, a PDF, a web page, Markdown or text. Or write one here, or link a web page or a Drive file.</EmptyState> : (
           <div className="overflow-x-auto">
             <table className="w-full"><thead><tr><th className={TH}>Document</th><th className={TH}>Classes</th><th className={TH}>Size</th><th className={TH}>Status</th><th className={TH}>Updated</th><th className={TH} /></tr></thead>
               <tbody>{data.docs.map((d) => (
@@ -60,6 +91,10 @@ function DocsTab({ data, reload }: { data: KnowledgeList; reload: () => void }) 
                   <td className={TD}><Badge tone={STATUS_TONE[d.status] ?? "zinc"}>{d.status}</Badge>{d.status_detail && <span className="block max-w-56 truncate text-xs text-zinc-500" title={d.status_detail}>{d.status_detail}</span>}</td>
                   <td className={TD}>{fmtRelative(d.updated_at)}<span className="block text-xs text-zinc-500">{d.updated_by} v{d.version}</span></td>
                   <td className={cx(TD, "whitespace-nowrap text-right")}>
+                    <Select aria-label={`Download ${d.title}`} className="mr-1 inline-block w-32 align-middle" value=""
+                      onChange={(e) => { if (e.target.value) window.location.assign(`/api/knowledge/${d.doc_id}/export?format=${e.target.value}`); }}>
+                      <option value="">Download</option>{FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                    </Select>
                     {d.source_type !== "text" && <Button size="sm" variant="ghost" icon={<RefreshCw className="size-3.5" />} disabled={!data.can_edit} loading={busy === `r-${d.doc_id}`} onClick={() => act(`r-${d.doc_id}`, () => apiSend("post", `/knowledge/${d.doc_id}/refresh`), "Fetched again")}>Fetch</Button>}
                     <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} disabled={!data.can_edit} loading={busy === `d-${d.doc_id}`}
                       onClick={() => { if (window.confirm(`Remove "${d.title}"? The agent stops reading it at once.`)) void act(`d-${d.doc_id}`, () => apiSend("delete", `/knowledge/${d.doc_id}`), "Removed"); }}>Remove</Button>
@@ -69,16 +104,16 @@ function DocsTab({ data, reload }: { data: KnowledgeList; reload: () => void }) 
         )}
       </Card>
       <Modal open={!!form} wide title={form?.doc_id ? "Edit document" : "Add a document"} onClose={() => setForm(null)}
-        footer={<><Button onClick={() => setForm(null)}>Cancel</Button><Button variant="primary" loading={busy === "save"} disabled={!form?.title.trim() || (form.source_type === "text" ? !form.text.trim() : !form.link.trim())} onClick={save}>Save and index</Button></>}>
+        footer={<><Button onClick={() => setForm(null)}>Cancel</Button><Button variant="primary" loading={busy === "save"} disabled={!form?.title.trim() || (form.source_type === "text" ? !hasWords(form.html) : !form.link.trim())} onClick={save}>Save and index</Button></>}>
         {form && (
           <div className="space-y-3">
             <ErrorState error={error} />
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_10rem_10rem]">
               <Field label="Title"><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
-              <Field label="Source"><Select value={form.source_type} onChange={(e) => setForm({ ...form, source_type: e.target.value as Doc["source_type"] })}><option value="text">Pasted text</option><option value="url">Web page</option><option value="drive">Drive file</option></Select></Field>
+              <Field label="Source"><Select value={form.source_type} onChange={(e) => setForm({ ...form, source_type: e.target.value as Doc["source_type"] })}><option value="text">Written here</option><option value="url">Web page</option><option value="drive">Drive file</option></Select></Field>
               <Field label="Kind"><Select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as Doc["kind"] })}><option value="document">Document</option><option value="guidance">Guidance</option></Select></Field>
             </div>
-            {form.source_type === "text" ? <Field label="Text"><Textarea rows={12} className="font-sans text-sm" value={form.text} onChange={(e) => setForm({ ...form, text: e.target.value })} /></Field>
+            {form.source_type === "text" ? <Suspense fallback={<Spinner label="Opening the editor…" />}><DocEditor key={form.doc_id || "new"} html={form.html} onChange={(html) => setForm((f) => (f ? { ...f, html } : f))} /></Suspense>
               : <Field label={form.source_type === "url" ? "Link to the page" : "Link to the Doc, Sheet or Slides file"} hint={form.source_type === "drive" ? "Share the file with the agent's account first." : undefined}><Input value={form.link} onChange={(e) => setForm({ ...form, link: e.target.value })} /></Field>}
             <Field label="What it covers" hint="One line the agent sees next to the title."><Input value={form.covers} onChange={(e) => setForm({ ...form, covers: e.target.value })} /></Field>
             <Field label="Classes that read it" hint="None ticked: every class reads it.">
