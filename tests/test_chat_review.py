@@ -136,3 +136,15 @@ def test_chat_being_unreachable_is_reported_and_the_next_minute_tries_again(on, 
     assert got["ok"] is False and "Chat could not be reached" in got["error"] and cases(on) == []
     world.request = real
     assert tick(on, world)["reviewed"] == 1, "the alert is still there the next minute"
+
+
+def test_a_live_alert_read_from_the_source_space_is_in_the_review_feed(on, world):
+    world.say(SRC, GOOD_ALERT)
+    assert tick(on, world)["reviewed"] == 1
+    [case] = cases(on)
+    everything = on.get("/api/feed", user=IM, view="all").json()["cards"]
+    card = next(c for c in everything if c["case_id"] == case.case_id)
+    assert card["verdict"] == case.latest.result.verdict.value and card["status"] == case.status.value
+    by_status = on.get("/api/feed", user=IM, view={"needs_review": "review", "verified": "verified", "suppressed": "suppressed"}.get(case.status.value, "all")).json()["cards"]
+    assert case.case_id in {c["case_id"] for c in by_status}, "it is listed under its own status too"
+    assert on.get(f"/api/feed/{case.case_id}", user=IM).json()["alert_text"].startswith("🚨 Burson Automated Alert"), "with the alert as Burson sent it"
