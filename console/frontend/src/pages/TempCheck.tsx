@@ -1,4 +1,4 @@
-import { ArrowLeft, Copy, RefreshCw, Thermometer } from "lucide-react";
+import { Copy, RefreshCw, Thermometer } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts";
@@ -6,24 +6,25 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as ChartTool
 import { apiSend, type ApiError } from "../api/client";
 import { useApi } from "../api/hooks";
 import { SafeHtml } from "../components/SafeHtml";
-import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, Field, Input, OffNotice, PageHeader, Segmented, Select, Spinner, Stat, TD, TH, TR, Textarea } from "../components/ui";
+import { TempCheckForm, type FormInfo } from "../components/TempCheckForm";
+import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, OffNotice, PageHeader, Spinner, Stat, TD, TH, TR } from "../components/ui";
 import { useApp } from "../context";
 import { fmtCompact, fmtDateTime, fmtNum, fmtRelative, fmtTime } from "../lib/format";
 
-interface Brief { check_id: string; issue: string; status: string; total: number; concern_level: string; basis: string; trigger: string; via: string; requested_by: string; case_id: string | null; created_at: string; update_of: string | null; title: string; error: string; actions: { actor: string; action: string; at: string; note: string }[] }
+interface Brief { own_posts: number; own_from: string | null; standing: boolean; check_id: string; issue: string; status: string; total: number; concern_level: string; basis: string; trigger: string; via: string; requested_by: string; case_id: string | null; created_at: string; update_of: string | null; title: string; error: string; actions: { actor: string; action: string; at: string; note: string }[] }
 interface Check extends Brief {
   hours: { at: string; n: number }[]; start: { at?: string; why?: string }; velocity: { peak: { at: string; n: number }; last: { at: string; n: number }; pct: number } | null;
   sentiment: Record<string, number>; sources: { label: string; n: number }[]; posts: { source: string; author: string; text: string; url: string; eng: number | null; negative: boolean; at: string | null }[];
   level: { label?: string; why?: string; n?: number }; writeup_text: string; writeup_html: string; notes: string[]; reasons: string[];
   query: { name?: string; boolean?: string; drafted?: boolean; draft_why?: string; relevance?: { about: number; other: number } }; window_from: string | null; window_to: string | null;
-  doc_url: string;
+  doc_url: string; steps: { at: string; text: string }[]; keep_refreshed_until: string | null;
 }
 interface ListResponse {
   checks: Brief[]; enabled: boolean; auto_enabled: boolean;
   setup: { brandwatch: boolean; sources: { key: string; label: string; enabled: boolean }[]; standing_queries: number; lookback_hours: number };
+  form: FormInfo;
   auto: { started_today: number; daily_limit: number };
 }
-interface Conversion { ok: boolean; error: string; plan: string; report: { converted?: number; left_out?: string[] } }
 
 const STATUS_TONE: Record<string, "emerald" | "rose" | "amber" | "blue" | "zinc"> = { complete: "emerald", failed: "rose", query_not_confirmed: "amber", running: "blue", empty: "zinc" };
 const LEVEL_TONE: Record<string, "rose" | "amber" | "emerald" | "zinc"> = { HIGH: "rose", "MODERATELY HIGH": "rose", MODERATE: "amber", "MODERATELY LOW": "emerald", LOW: "emerald" };
@@ -59,9 +60,9 @@ function CheckView({ id, canAct }: { id: string; canAct: boolean }) {
     } catch (err) { toast((err as ApiError).message, "error"); } finally { setBusy(""); }
   };
   const sentTotal = Object.values(c.sentiment).reduce((a, b) => a + b, 0);
+  const keeping = !!c.keep_refreshed_until && new Date(c.keep_refreshed_until).getTime() > Date.now();
   return (
     <div className="space-y-4">
-      <Link to="/temp-check" className="inline-flex items-center gap-1 text-sm text-blue-600 dark:text-blue-200"><ArrowLeft className="size-4" />All temp checks</Link>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-[1.75rem] font-medium leading-tight tracking-tight">{c.issue || c.title}</h1>
@@ -74,7 +75,11 @@ function CheckView({ id, canAct }: { id: string; canAct: boolean }) {
         <div className="flex flex-wrap gap-2">
           {c.doc_url && <a href={c.doc_url} target="_blank" rel="noreferrer" className="inline-flex items-center rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">Open the document</a>}
           <Button icon={<Copy className="size-4" />} disabled={!c.writeup_text} onClick={() => { void navigator.clipboard.writeText(c.writeup_text); toast("Copied"); }}>Copy write-up</Button>
-          <Button icon={<RefreshCw className="size-4" />} disabled={!canAct} loading={busy === "refresh"} onClick={refresh}>Run again</Button>
+          <Button icon={<RefreshCw className="size-4" />} disabled={!canAct} loading={busy === "refresh"} onClick={refresh}>Refresh (send as an update)</Button>
+          {keeping
+            ? <Button disabled={!canAct} loading={busy === "stop_refresh"} onClick={() => act("stop_refresh")} title={`Refreshed every hour until ${fmtDateTime(c.keep_refreshed_until)}`}>Stop refreshing</Button>
+            : <Button disabled={!canAct || c.status === "running"} loading={busy === "keep_refreshed"} onClick={() => act("keep_refreshed")}
+                title="A refresh every hour for the next day, whether or not automatic temp checks are on">Keep refreshed for a day</Button>}
           <Button variant="primary" disabled={!canAct || c.status !== "complete"} loading={busy === "used"} onClick={() => act("used")}>Mark as used</Button>
           <Button disabled={!canAct} loading={busy === "dismissed"} onClick={() => act("dismissed")}>Dismiss</Button>
         </div>
@@ -84,7 +89,9 @@ function CheckView({ id, canAct }: { id: string; canAct: boolean }) {
         {c.query.relevance ? `${c.query.relevance.about} of the sampled posts were about this issue, ${c.query.relevance.other} were not. ` : ""}Edit the Boolean below and run it again.
       </Alert>}
       {c.notes.map((n) => <Alert key={n} tone="blue">{n}</Alert>)}
-      {c.status === "running" && <Spinner label="Counting posts…" />}
+      {c.status === "running" && (c.steps.length
+        ? <ol className="space-y-1 text-sm text-zinc-600 dark:text-zinc-400">{c.steps.map((st, i) => <li key={i} className={i === c.steps.length - 1 ? "text-blue-600 dark:text-blue-300" : ""}>{st.text}</li>)}</ol>
+        : <Spinner label="Starting…" />)}
       {(c.status === "complete" || c.status === "empty") && <>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <Stat label="Matching posts" value={fmtCompact(c.total)} hint={c.start.at ? `since ${fmtDateTime(c.start.at)}` : ""} />
@@ -139,44 +146,21 @@ function CheckView({ id, canAct }: { id: string; canAct: boolean }) {
   );
 }
 
+/** One past temp check as a line: when, what was counted, its level, and how it came about. */
+function pastLine(c: Brief): string {
+  const counted = c.status === "complete" || c.status === "empty" ? `${fmtNum(c.total)} ${c.basis === "own" ? "posts (our data)" : "mentions"}` : "";
+  return [fmtDateTime(c.created_at), counted, c.concern_level, c.trigger === "alert" ? "from an alert" : "", c.update_of ? "update" : ""].filter(Boolean).join(" · ");
+}
+
 export default function TempCheckPage() {
-  const { me, toast } = useApp();
+  const { me } = useApp();
   const { checkId } = useParams();
   const navigate = useNavigate();
   const [search] = useSearchParams();
   const list = useApi<ListResponse>("/temp-checks", undefined, 30_000);
-  const [mode, setMode] = useState<"boolean" | "saved" | "draft">("boolean");
-  const [issue, setIssue] = useState(search.get("issue") ?? "");
-  const [boolean, setBoolean] = useState("");
-  const [queryRef, setQueryRef] = useState("");
-  const [hours, setHours] = useState("");
-  const [keep, setKeep] = useState("");
-  const [conv, setConv] = useState<Conversion | null>(null);
-  const [running, setRunning] = useState(false);
-  const queries = useApi<{ queries: { id: number | string; name: string }[]; error: string }>(mode === "saved" && list.data?.setup.brandwatch ? "/temp-checks/queries" : null);
-  const caseId = search.get("case") ?? undefined;
   const canAct = !!me?.can_act;
-
-  useEffect(() => {
-    if (mode !== "boolean" || !boolean.trim()) { setConv(null); return; }
-    const t = window.setTimeout(() => { apiSend<Conversion>("post", "/temp-checks/convert", { boolean }).then(setConv).catch(() => setConv(null)); }, 500);
-    return () => window.clearTimeout(t);
-  }, [boolean, mode]);
-
-  if (checkId) return <CheckView key={checkId} id={checkId} canAct={canAct} />;
-
-  const run = async () => {
-    setRunning(true);
-    try {
-      const res = await apiSend<{ check_id?: string; check?: Brief; data?: { user_error?: string } }>("post", "/temp-checks", {
-        issue, case_id: caseId, hours: hours ? Number(hours) : undefined, keep_refreshed_hours: keep ? Number(keep) : 0,
-        boolean: mode === "boolean" ? boolean : "", query_ref: mode === "saved" ? queryRef : "", draft_query: mode === "draft" });
-      const id = res.check?.check_id ?? res.check_id;
-      if (id) navigate(`/temp-check/${id}`); else toast(res.data?.user_error ?? "The temp check did not start.", "error");
-    } catch (err) { toast((err as ApiError).message, "error"); } finally { setRunning(false); }
-  };
   const s = list.data?.setup;
-  const ready = mode === "boolean" ? !!boolean.trim() && conv?.ok !== false : mode === "saved" ? !!queryRef : !!issue.trim();
+  const checks = list.data?.checks ?? [];
   return (
     <div>
       <PageHeader title="Temp check" />
@@ -185,50 +169,36 @@ export default function TempCheckPage() {
       {s && !s.brandwatch && s.sources.filter((x) => x.enabled).length === 0 && (
         <Alert tone="amber" className="mb-4" title="Nothing to count from yet">Add the Brandwatch project and token, or a table of posts, in <Link className="font-medium underline" to="/settings/temp_check">Settings, Temp check</Link>.</Alert>
       )}
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-5">
-        <Card className="h-fit xl:col-span-2" title="Run one">
-          <div className="space-y-4">
-            <Field label="Issue"><Input value={issue} onChange={(e) => setIssue(e.target.value)} placeholder="Gmail calendar invite scam" disabled={!canAct} /></Field>
-            <Segmented label="Query" value={mode} onChange={setMode} options={[{ value: "boolean", label: "Boolean" }, { value: "saved", label: "Saved query" }, { value: "draft", label: "Draft it for me" }]} />
-            {mode === "boolean" && <>
-              <Field label="Brandwatch Boolean" error={conv && !conv.ok ? conv.error : null}>
-                <Textarea rows={6} value={boolean} onChange={(e) => setBoolean(e.target.value)} disabled={!canAct} placeholder={'("calendar invite" OR gmail) AND (scam* OR phishing)'} />
-              </Field>
-              {conv?.ok && <p className="text-xs text-zinc-500">{conv.report.converted} terms understood.{conv.report.left_out?.length ? ` Left out: ${conv.report.left_out.join("; ")}` : ""}</p>}
-            </>}
-            {mode === "saved" && (
-              <Field label="Saved Brandwatch query" error={queries.data?.error || (s && !s.brandwatch ? "Brandwatch is not set up." : null)}>
-                <Select value={queryRef} onChange={(e) => setQueryRef(e.target.value)} disabled={!canAct}><option value="">Choose a query</option>{(queries.data?.queries ?? []).map((q) => <option key={q.id} value={String(q.id)}>{q.name}</option>)}</Select>
-              </Field>
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(340px,420px)_minmax(0,1fr)]">
+        <div className={cx("min-w-0 space-y-5", checkId && "order-last lg:order-none")}>
+          <TempCheckForm info={list.data?.form} past={checks} canAct={canAct} enabled={!!list.data?.enabled} brandwatch={!!s?.brandwatch}
+            caseId={search.get("case") ?? undefined} initialIssue={search.get("issue") ?? undefined}
+            onDone={(id) => { list.reload(); navigate(`/temp-check/${id}`); }} />
+          <Card padded={false} title="Past temp checks"
+            subtitle={list.data ? (list.data.auto_enabled ? `Automatic: ${list.data.auto.started_today} of ${list.data.auto.daily_limit} started today` : "Nothing starts by itself: automatic temp checks are OFF") : undefined}>
+            {list.loading && !list.data ? <Spinner /> : !checks.length ? <p className="px-5 pb-5 text-sm text-zinc-500">None yet.</p> : (
+              <ul className="scroll-thin max-h-[28rem] divide-y divide-zinc-100 overflow-y-auto dark:divide-zinc-800">
+                {checks.map((c) => (
+                  <li key={c.check_id}>
+                    <Link to={`/temp-check/${c.check_id}`} aria-current={c.check_id === checkId ? "page" : undefined}
+                      className={cx("block px-5 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/40", c.check_id === checkId && "bg-blue-50 dark:bg-blue-500/10")}>
+                      <span className="flex items-start justify-between gap-2">
+                        <span className="min-w-0 text-sm font-medium text-zinc-900 dark:text-zinc-100">{c.title || c.issue || c.check_id}</span>
+                        {c.status !== "complete" && <Badge tone={STATUS_TONE[c.status] ?? "zinc"} className="shrink-0">{c.status === "empty" ? "nothing matched" : c.status.replace(/_/g, " ")}</Badge>}
+                      </span>
+                      <span className="mt-0.5 block text-xs text-zinc-500">{pastLine(c)}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
             )}
-            {mode === "draft" && <p className="text-sm text-zinc-500">The agent writes a query from the issue{caseId ? ` and ${caseId}` : ""}, checks a sample of what it finds, and gives no count if the sample is mostly other posts.</p>}
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Look back (hours)" hint={s ? `Empty: ${s.lookback_hours} hours.` : undefined}><Input type="number" min={1} max={720} value={hours} onChange={(e) => setHours(e.target.value)} disabled={!canAct} /></Field>
-              <Field label="Keep refreshed (hours)" hint="Empty: run once."><Input type="number" min={0} max={72} value={keep} onChange={(e) => setKeep(e.target.value)} disabled={!canAct} /></Field>
-            </div>
-            <Button variant="primary" icon={<Thermometer className="size-4" />} disabled={!canAct || !ready || !list.data?.enabled} loading={running} onClick={run}>Run temp check</Button>
-          </div>
-        </Card>
-        <Card className="xl:col-span-3" padded={false} title="Recent"
-          subtitle={list.data ? (list.data.auto_enabled ? `Automatic runs: ${list.data.auto.started_today} of ${list.data.auto.daily_limit} today` : "Automatic runs are switched off") : undefined}>
-          {list.loading && !list.data ? <Spinner /> : !list.data?.checks.length ? <EmptyState icon={<Thermometer className="size-8" />} title="No temp checks yet">Run one here, or say "temp check" to the agent in Chat.</EmptyState> : (
-            <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
-              {list.data.checks.map((c) => (
-                <li key={c.check_id}>
-                  <Link to={`/temp-check/${c.check_id}`} className="flex items-center gap-3 px-5 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{c.issue || c.title || c.check_id}</span>
-                      <span className="text-xs text-zinc-500">{fmtRelative(c.created_at)} by {c.requested_by}{c.trigger && c.trigger !== "manual" ? `, ${c.trigger}` : ""}{c.case_id ? `, ${c.case_id}` : ""}</span>
-                    </span>
-                    <span className="text-sm tabular-nums text-zinc-600 dark:text-zinc-300">{c.status === "complete" ? fmtCompact(c.total) : ""}</span>
-                    {c.concern_level && <Badge tone={LEVEL_TONE[c.concern_level] ?? "zinc"}>{c.concern_level}</Badge>}
-                    <Badge tone={STATUS_TONE[c.status] ?? "zinc"}>{c.status.replace(/_/g, " ")}</Badge>
-                  </Link>
-                </li>
-              ))}
-            </ul>
+          </Card>
+        </div>
+        <div className="min-w-0">
+          {checkId ? <CheckView key={checkId} id={checkId} canAct={canAct} /> : (
+            <Card><EmptyState icon={<Thermometer className="size-8" />} title="No temp check open">Run one, or open a past one.</EmptyState></Card>
           )}
-        </Card>
+        </div>
       </div>
     </div>
   );

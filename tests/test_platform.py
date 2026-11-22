@@ -521,7 +521,8 @@ def test_temp_check_from_our_own_tables_with_the_team_template(ctx, fake_llm, cl
                                                     "actor": IM}, "context": {"deliver": "outbox", "invoked_by": IM, "flow": "console"}}, ctx)
     assert r.ok, r.error
     check = tempcheck.get(ctx, r.data["check_id"])
-    assert check.status == "complete" and check.basis == "own" and check.total == 640 and check.start["why"] == "spike"
+    assert check.status == "complete" and check.basis == "own" and check.total == 640
+    assert check.start["why"] == "look", "with no Brandwatch query the day before the alert (or before now) is counted, as in the temp check app"
     assert check.velocity["peak"]["n"] == 400 and check.velocity["pct"] == -78
     text = check.writeup_text
     assert "TL;DR: There have been 640 matching posts in our own data regarding Gmail calendar scam." in text

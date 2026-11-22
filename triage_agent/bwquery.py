@@ -308,8 +308,40 @@ def _near_sides(node: dict[str, Any]) -> list[str] | None:
 
 # -- the plan --------------------------------------------------------------------------------------------------------
 class _Report:
+    """What became of a query: how much was read, and each part that was approximated or left out (and which way the
+    result leans because of it)."""
+
     def __init__(self) -> None:
-        self.exact, self.approximated, self.left_out, self.warnings = 0, [], [], []
+        self.exact = 0
+        self.warnings: list[str] = []
+        self.notes: list[dict[str, str]] = []  # {status: 'approximated' | 'left out', note, effect: 'wider' | 'narrower' | ''}
+        self.summary = {"terms": 0, "phrases": 0, "near": 0, "wildcards": 0, "case_sensitive": 0}
+
+    def approx(self, note: str, effect: str = "") -> None:
+        self.notes.append({"status": "approximated", "note": note, "effect": effect})
+
+    def left(self, note: str) -> None:
+        self.notes.append({"status": "left out", "note": note, "effect": ""})
+
+    def of(self, status: str) -> list[dict[str, str]]:
+        return [n for n in self.notes if n["status"] == status]
+
+    def count(self, node: dict[str, Any]) -> None:
+        """Count the words and phrases under `node` (a word, a phrase, or a NEAR or OR of them)."""
+        t = node.get("t")
+        if t == "term":
+            self.summary["terms"] += 1
+            self.summary["wildcards"] += 1 if re.search(r"[*?]", str(node.get("text") or "")) else 0
+            self.summary["case_sensitive"] += 1 if node.get("cs") else 0
+        elif t == "phrase":
+            self.summary["phrases"] += 1
+            self.summary["case_sensitive"] += 1 if node.get("cs") else 0
+        elif t == "near":
+            self.count(node["a"])
+            self.count(node["b"])
+        elif t in ("and", "or"):
+            for kid in node["kids"]:
+                self.count(kid)
 
 
 def _plan(node: dict[str, Any], r: _Report) -> dict[str, Any] | None:
@@ -317,6 +349,7 @@ def _plan(node: dict[str, Any], r: _Report) -> dict[str, Any] | None:
     if t in ("term", "phrase") and not node.get("slop"):
         body, edge = _text_body(node)  # type: ignore[misc]
         r.exact += 1
+        r.count(node)
         return {"t": "rx", "src": _bounded(body, edge), "cs": bool(node.get("cs"))}
     if t == "phrase":  # "two words"~n: the words within n of each other, either order
         words = node["words"]
@@ -328,17 +361,19 @@ def _plan(node: dict[str, Any], r: _Report) -> dict[str, Any] | None:
     if t == "near":
         a, b = _near_sides(node["a"]), _near_sides(node["b"])
         if a is None or b is None:
-            r.approximated.append("A NEAR between bracketed clauses was read as AND (both must be in the post, at any distance).")
+            r.approx("A NEAR between bracketed clauses was read as AND (both must be in the post, at any distance).", "wider")
             kids = [k for k in (_plan(node["a"], r), _plan(node["b"], r)) if k]
             return {"t": "and", "kids": kids} if len(kids) == 2 else (kids[0] if kids else None)
         gap = f"(?:{NW}+{W}+){{0,{node['n']}}}{NW}+"
         ga, gb = "(?:" + "|".join(a) + ")", "(?:" + "|".join(b) + ")"
         src = f"{B0}{ga}{gap}{gb}{B1}" if node["ordered"] else f"{B0}(?:{ga}{gap}{gb}|{gb}{gap}{ga}){B1}"
         if len(src) > MAX_RX_CHARS:
-            r.approximated.append("A NEAR with very many alternatives was read as AND.")
+            r.approx("A NEAR with very many alternatives was read as AND.", "wider")
             kids = [k for k in (_plan(node["a"], r), _plan(node["b"], r)) if k]
             return {"t": "and", "kids": kids} if len(kids) == 2 else (kids[0] if kids else None)
         r.exact += 1
+        r.summary["near"] += 1
+        r.count(node)
         return {"t": "rx", "src": src, "cs": _has_case(node)}
     if t == "not":
         kid = _plan(node["kid"], r)
@@ -346,11 +381,13 @@ def _plan(node: dict[str, Any], r: _Report) -> dict[str, Any] | None:
     if t in ("and", "or"):
         kids = []
         for k in node["kids"]:
-            before = len(r.left_out)
+            before = len(r.of("left out"))
             planned = _plan(k, r)
             if planned is None:
-                if len(r.left_out) > before:
-                    r.left_out[-1] += " It was in an OR: the result is narrower." if t == "or" else " It was in an AND: the result is wider."
+                left = r.of("left out")
+                if len(left) > before:
+                    left[-1]["effect"] = "narrower" if t == "or" else "wider"
+                    left[-1]["note"] += " It was in an OR: the result is narrower." if t == "or" else " It was in an AND: the result is wider."
                 continue
             kids.append(planned)
         if not kids:
@@ -391,21 +428,21 @@ def _any(kids: list[dict[str, Any]]) -> dict[str, Any] | None:
 def _field_plan(node: dict[str, Any], r: _Report) -> dict[str, Any] | None:
     name, shown = node["name"], node.get("as", node["name"])
     if name in NOT_IN_OUR_DATA:
-        r.left_out.append(f"{shown}: picks out reposts of and replies to particular posts, which our tables do not hold.")
+        r.left(f"{shown}: picks out reposts of and replies to particular posts, which our tables do not hold.")
         return None
     if name in NO_COLUMN:
-        r.left_out.append(f"{shown}: our tables have no column for it.")
+        r.left(f"{shown}: our tables have no column for it.")
         return None
     if name in TEXT_FIELDS:
         if node.get("value") is None:
             return None
         if name == "title":
-            r.approximated.append("title: was searched in the post's words (our tables keep one text for a post).")
+            r.approx("title: was searched in the post's words (our tables keep one text for a post).", "wider")
         return _plan(node["value"], r)
     if name == "authorfollowers":
         m = re.fullmatch(r"\s*(\d+|\*)\s+TO\s+(\d+|\*)\s*", node.get("range") or "", re.IGNORECASE)
         if not m:
-            r.left_out.append("authorFollowers: needs a range like [1000 TO 50000].")
+            r.left("authorFollowers: needs a range like [1000 TO 50000].")
             return None
         r.exact += 1
         return {"t": "followers", "min": None if m.group(1) == "*" else int(m.group(1)),
@@ -413,9 +450,9 @@ def _field_plan(node: dict[str, Any], r: _Report) -> dict[str, Any] | None:
     vals = _values(node.get("value"))
     if not vals:
         if name not in KNOWN:
-            r.left_out.append(f"{shown}: is not an operator this search knows.")
+            r.left(f"{shown}: is not an operator this search knows.")
         else:
-            r.left_out.append(f"{shown}: takes a word, a phrase or a bracketed OR of them.")
+            r.left(f"{shown}: takes a word, a phrase or a bracketed OR of them.")
         return None
     r.exact += 1
     if name == "site":
@@ -428,7 +465,7 @@ def _field_plan(node: dict[str, Any], r: _Report) -> dict[str, Any] | None:
         return _any(kids)
     if name in ("url", "links", "link"):
         if name != "url":
-            r.approximated.append("links: was searched in the post's own link (links inside a post are not kept apart).")
+            r.approx("links: was searched in the post's own link (links inside a post are not kept apart).")
         return _any([{"t": "url", "src": _literal(re.sub(r"^https?://(?:www\.)?", "", v))} for v in vals])
     if name == "guid":
         return _any([{"t": "url", "src": _literal(v.split("_")[-1])} for v in vals])
@@ -442,7 +479,7 @@ def _field_plan(node: dict[str, Any], r: _Report) -> dict[str, Any] | None:
         return _any([{"t": "rx", "src": f"(?:^|[^\\p{{L}}\\p{{N}}_#])#{_literal(v.lstrip('#'))}{B1}", "cs": False} for v in vals])
     if name == "at_mentions":
         return _any([{"t": "rx", "src": f"(?:^|[^\\p{{L}}\\p{{N}}_@])@{_literal(v.lstrip('@'))}{B1}", "cs": False} for v in vals])
-    r.left_out.append(f"{shown}: is not an operator this search knows.")
+    r.left(f"{shown}: is not an operator this search knows.")
     return None
 
 
@@ -459,7 +496,8 @@ def convert(text: str) -> Conversion:
     if tree is None:
         return Conversion(ok=False, error="Nothing in the query could be read.", report={"warnings": r.warnings})
     plan = _plan(tree, r)
-    report = {"converted": r.exact, "approximated": r.approximated, "left_out": r.left_out, "warnings": r.warnings}
+    report = {"converted": r.exact, "approximated": [n["note"] for n in r.of("approximated")], "left_out": [n["note"] for n in r.of("left out")],
+              "warnings": r.warnings, "summary": r.summary, "notes": r.notes}
     if plan is None:
         return Conversion(ok=False, error="Nothing in the query can be asked of our tables.", report=report)
     if evaluate(plan, {"text": "", "author": "", "url": "", "platform": "", "followers": None, "language": ""}):
@@ -579,16 +617,25 @@ def _quoted(term: str) -> str:
 
 
 def from_filters(f: dict[str, Any]) -> str:
-    """The filter form as a Boolean query: all of / any of / none of, sites, authors, language, hashtags."""
+    """The filter form as a Boolean query: all of / any of / none of, platforms (or sites), accounts, a least number
+    of followers, language, hashtags. "" when nothing was filled in."""
     parts: list[str] = []
     all_of, any_of, none_of = _list(f.get("all")), _list(f.get("any")), _list(f.get("none"))
     parts += [_quoted(t) for t in all_of]
     if any_of:
         parts.append("(" + " OR ".join(_quoted(t) for t in any_of) + ")")
-    for key, op in (("sites", "site"), ("authors", "author"), ("languages", "language"), ("hashtags", "hashtags")):
-        vals = _list(f.get(key))
+    sites = _list(f.get("sites")) + [PLATFORM_SITE[p.lower()] for p in _list(f.get("platforms")) if p.lower() in PLATFORM_SITE]
+    lists = {"site": sites, "author": [a.lstrip("@") for a in _list(f.get("authors"))], "language": _list(f.get("languages")),
+             "hashtags": _list(f.get("hashtags"))}
+    for op, vals in lists.items():
         if vals:
-            parts.append(f"{op}:(" + " OR ".join(_quoted(v) for v in vals) + ")")
+            parts.append(f"{op}:(" + " OR ".join(_quoted(v) for v in dict.fromkeys(vals)) + ")")
+    try:
+        followers = round(float(f.get("min_followers") or 0))
+    except (TypeError, ValueError):
+        followers = 0
+    if followers > 0:
+        parts.append(f"authorFollowers:[{followers} TO *]")
     query = " AND ".join(parts)
     if none_of:
         query = (f"({query}) " if query else "") + "NOT (" + " OR ".join(_quoted(t) for t in none_of) + ")"

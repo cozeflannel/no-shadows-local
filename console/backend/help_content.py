@@ -120,17 +120,24 @@ TOPICS: list[dict[str, Any]] = [
         "id": "temp-check", "page": "Temp check", "title": "Temp check", "audience": "IMs",
         "summary": "Run, read and act on temp checks.",
         "sections": [
-            {"heading": "Run one", "steps": [
-                "Name the issue under Run one.",
-                "Choose Boolean, Saved query or Draft it for me.",
-                "With a Boolean, the page shows how many terms it understood and what it left out as you type.",
-                "Click Run temp check. The result opens when it is ready."]},
+            {"heading": "From a Brandwatch query", "steps": [
+                "Type a few words of the query's name and pick it from the list. A pasted Brandwatch link or id works too.",
+                "Leave Count from on the issue's start, or choose a time.",
+                "Click Run temp check. Each step shows as it happens, and the result opens when it is done."]},
+            {"heading": "No query yet", "steps": [
+                "Click No query yet and name the issue. Paste the alert post if you have it.",
+                "Click Draft a broad query (Gemini) and read the query it fills in. Change it, type your own, or use Filters.",
+                "Click Run temp check. With no query typed, a broad one is drafted for you."]},
+            {"heading": "Our own data", "items": [
+                "Tick the tables to search.",
+                "Show how the query converts lists what was read, what was approximated or left out, what each table would scan, and the SQL. Nothing runs.",
+                "Reuse posts gathered earlier searches only the time since that temp check."]},
             {"heading": "Read the result", "items": [
                 "Write-up: the team's template. Copy it as text.", "Numbers: posts an hour, velocity since the peak, share negative, where the posts are.",
                 "Posts: the posts read, most engagement first.",
-                "Concern level: the issue ranked against past issues at the same hours in. It needs enough past issues to compare."]},
-            {"heading": "Act on it", "steps": ["Mark as used, or Dismiss.", "Run again makes an update that reports what is new since the last one.",
-                                              "Keep refreshed (hours), set when you run it, repeats the check until that time passes."]},
+                "Concern level: a Brandwatch query's count ranked against past issues at the same hours in. It needs enough past issues to compare."]},
+            {"heading": "Act on it", "steps": ["Mark as used, or Dismiss.", "Refresh (send as an update) reports what is new since the last one.",
+                                              "Keep refreshed for a day refreshes it every hour. Stop refreshing ends it."]},
             {"heading": "From Chat", "text": "Type `temp check` in an alert's thread, or follow it with a Brandwatch query's name or a Boolean."},
             {"heading": "Automatic", "text": "With the auto switch on, an alert starts a draft when it is high-engaging, when it is the third post on an issue in a day, or when its post is climbing. The numbers are under Settings → Temp check."},
         ],

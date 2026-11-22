@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
-from triage_agent import bwquery, campaigns_admin, chat_agent, chatlog, golden, knowledge, tempcheck, tools, watches, workforce
+from triage_agent import audit, bwquery, campaigns_admin, chat_agent, chatlog, golden, knowledge, tempcheck, tools, watches, workforce
 from triage_agent.config import switch_off
 from triage_agent.context import ROSTER_IM, AgentContext
 
@@ -138,15 +138,33 @@ class TempCheckBody(BaseModel):
     hours: int | None = Field(None, ge=1, le=720)
     update_of: str | None = None
     keep_refreshed_hours: int = Field(0, ge=0, le=72)
+    broad_draft: bool = False  # "No query yet" with no Boolean typed: Gemini drafts a broad one
+    since: datetime | None = None  # "Count from: a time I choose"
+    alert_at: datetime | None = None
+    alert_text: str = Field("", max_length=6000)
+    own_on: bool | None = None
+    own_sources: list[str] = Field(default_factory=list, max_length=20)
+    reuse: str = Field("", max_length=40)
+    writeup: bool = True
+    run_key: str = Field("", max_length=64)
+    from_alert: bool = False  # started for an alert that has no Brandwatch query yet
 
 
 class ConvertBody(BaseModel):
+    query: str = Field("", max_length=500)
     boolean: str = Field("", max_length=6000)
     filters: dict[str, Any] | None = None
+    sources: list[str] = Field(default_factory=list, max_length=20)
+    since: datetime | None = None
+    estimate: bool = False
+
+
+class SuggestBody(BaseModel):
+    text: str = Field("", max_length=6000)
 
 
 class TempActionBody(BaseModel):
-    action: Literal["used", "sent", "dismissed", "noted"]
+    action: Literal["used", "sent", "dismissed", "noted", "keep_refreshed", "stop_refresh"]
     note: str = Field("", max_length=500)
 
 
@@ -154,7 +172,8 @@ def _check_brief(c: tempcheck.TempCheck) -> dict[str, Any]:
     return {"check_id": c.check_id, "issue": c.issue, "status": c.status, "total": c.total, "concern_level": c.concern_level,
             "basis": c.basis, "trigger": c.trigger, "via": c.via, "requested_by": c.requested_by, "case_id": c.case_id,
             "created_at": c.created_at, "completed_at": c.completed_at, "update_of": c.update_of, "title": c.title,
-            "actions": c.actions, "error": c.error, "keep_refreshed_until": c.keep_refreshed_until}
+            "actions": c.actions, "error": c.error, "keep_refreshed_until": c.keep_refreshed_until, "standing": c.standing,
+            "own_posts": int(c.own.get("kept") or 0), "own_from": c.own.get("from")}
 
 
 @router.get("/temp-checks")
@@ -169,38 +188,84 @@ def temp_checks(case_id: str | None = None, limit: int = Query(100, ge=1, le=500
         "setup": {"brandwatch": bool(cfg.brandwatch_project_id and cfg.brandwatch_token_secret),
                   "sources": [{"key": s.key, "label": s.label or s.key, "enabled": s.enabled, "freshness": s.freshness} for s in cfg.sources],
                   "standing_queries": len(cfg.landscape_query_ids), "lookback_hours": cfg.lookback_hours},
+        "form": {"tables": [{"key": s.key, "label": s.label or s.key, "freshness": s.freshness} for s in tempcheck.own_sources(ctx)],
+                 "platforms": [tempcheck.SOURCES.get(p, p.title()) for p in bwquery.PLATFORM_SITE],
+                 "spike_mentions": cfg.spike_mentions, "no_query_hours": cfg.no_query_hours, "since_max_days": cfg.since_max_days,
+                 "event_query_prefix": cfg.event_query_prefix},
         "auto": {"started_today": auto.get("started", 0) if auto.get("day") == ctx.now().date().isoformat() else 0,
                  "daily_limit": cfg.daily_limit, "log": (ctx.store.get_kv("tc:auto_log") or {}).get("rows", [])[:50]},
     }
 
 
 @router.get("/temp-checks/queries")
-def temp_check_queries(ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> dict[str, Any]:
-    """The event queries offered in the picker (Brandwatch's own list, by the configured name prefix)."""
-    prefix = ctx.config.platform.temp_check.event_query_prefix.lower()
+def temp_check_queries(q: str = Query("", max_length=200), limit: int = Query(40, ge=1, le=200),
+                       ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> dict[str, Any]:
+    """The event queries offered in the picker: the newest whose name has every word typed."""
     try:
-        queries = tempcheck.Brandwatch(ctx).queries()
+        return {"queries": tempcheck.find_queries(ctx, q, limit), "error": ""}
     except tempcheck.BrandwatchUnavailable as exc:
         return {"queries": [], "error": str(exc)}
-    rows = [q for q in queries if not prefix or q["name"].lower().lstrip().startswith(prefix)]
-    rows.sort(key=lambda q: str(q.get("created") or ""), reverse=True)
-    return {"queries": [{"id": q["id"], "name": q["name"], "created": q.get("created")} for q in rows[:200]], "error": ""}
+
+
+@router.get("/temp-checks/queries/{query_id}")
+def temp_check_query(query_id: int, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> dict[str, Any]:
+    """One Brandwatch query with its Boolean, shown when it is picked."""
+    try:
+        query = tempcheck.Brandwatch(ctx).query(query_id)
+    except tempcheck.BrandwatchUnavailable as exc:
+        raise HTTPException(503, {"error": str(exc), "code": "brandwatch_unavailable"}) from exc
+    if query is None:
+        raise _missing("Brandwatch query")
+    return query
+
+
+@router.post("/temp-checks/suggest")
+def temp_check_suggest(body: SuggestBody, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_analyst)) -> dict[str, Any]:
+    """A broad first-draft Boolean for an issue with no Brandwatch query yet: the analyst checks it before running."""
+    try:
+        draft = tempcheck.suggest_query(ctx, body.text)
+    except tempcheck.Refused as exc:
+        raise _bad(exc) from exc
+    except Exception as exc:  # noqa: BLE001 - Gemini could not be asked
+        raise HTTPException(503, {"error": f"Gemini could not draft a query: {str(exc)[:200]}", "code": "draft_failed"}) from exc
+    audit.record(ctx, actor=user.email, action="temp_check.suggest", surface="console", target_type="temp_check", target_id="draft",
+                 summary="Drafted a broad query for a temp check", detail={"boolean": draft["boolean"]})
+    return {"boolean": draft["boolean"], "wide": draft["wide"], "why": draft["why"]}
 
 
 @router.post("/temp-checks/convert")
 def temp_check_convert(body: ConvertBody, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> dict[str, Any]:
-    """How a Boolean converts to a search of our tables: what was converted, approximated and left out."""
-    text = body.boolean.strip() or (bwquery.from_filters(body.filters) if body.filters else "")
-    conv = bwquery.convert(text)
-    return {"boolean": text, "ok": conv.ok, "error": conv.error, "report": conv.report, "plan": bwquery.show(conv.plan) if conv.plan else ""}
+    """How a Boolean converts to a search of our tables: what was converted, approximated and left out, and (when
+    asked) what each table would scan and the SQL. Nothing runs."""
+    return tempcheck.preview(ctx, query_ref=body.query, boolean=body.boolean, filters=body.filters, sources=body.sources,
+                             since=body.since, estimate=body.estimate)
+
+
+@router.get("/temp-checks/run/{run_key}")
+def temp_check_progress(run_key: str, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> dict[str, Any]:
+    """What a run started from this page has done so far, by the key the page gave it."""
+    check = tempcheck.by_run_key(ctx, run_key[:64])
+    if check is None:
+        return {"check_id": "", "status": "starting", "steps": [], "error": "", "started_at": None}
+    return {"check_id": check.check_id, "status": check.status, "steps": check.steps, "error": check.error, "started_at": check.created_at}
 
 
 @router.post("/temp-checks")
 def temp_check_run(body: TempCheckBody, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_analyst)) -> dict[str, Any]:
     if not any([body.issue.strip(), body.query_ref.strip(), body.boolean.strip(), body.filters, body.case_id, body.update_of]):
-        raise HTTPException(422, {"error": "Name the issue, or give a case, a Brandwatch query or a Boolean.", "code": "validation_error"})
-    result = run_op(ctx, "run_temp_check", {**body.model_dump(), "case_id": body.case_id.upper() if body.case_id else None,
-                                            "actor": user.email, "via": "console"}, user)
+        raise HTTPException(422, {"error": "Pick a Brandwatch query, or name the issue.", "code": "validation_error"})
+    ref = body.query_ref.strip()
+    if ref and not tempcheck.query_id(ref):  # named by words: when they fit several queries, or none, the close ones are offered and nothing runs
+        try:
+            found = tempcheck.match_query(tempcheck.Brandwatch(ctx), ref)
+        except tempcheck.BrandwatchUnavailable:
+            found = {"query": None}
+        if "query" not in found:
+            pick = lambda rows: [{"id": q["id"], "name": q["name"], "created": q.get("created"), "state": q.get("state")} for q in rows or []]  # noqa: E731
+            return {"needs": {"choices": pick(found.get("choices")), "near": pick(found.get("near")), "missing": found.get("missing") or 0}}
+    payload = body.model_dump(exclude={"from_alert"})
+    result = run_op(ctx, "run_temp_check", {**payload, "case_id": body.case_id.upper() if body.case_id else None, "actor": user.email,
+                                            "via": "console", **({"trigger": "alert"} if body.from_alert else {})}, user)
     check = tempcheck.get(ctx, result["data"].get("check_id", ""))
     return {**result, "check": check.model_dump(mode="json") if check else None}
 
