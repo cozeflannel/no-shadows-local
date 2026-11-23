@@ -715,6 +715,8 @@ class FirestoreStore:
         self._doc(collection, doc_id).set({**json.loads(json.dumps(data, default=str)), "_updated_at": utcnow().isoformat()})
 
     def get_doc(self, collection, doc_id):
+        if not doc_id or "/" in str(doc_id):
+            return None
         snap = self._doc(collection, doc_id).get()
         if not snap.exists:
             return None

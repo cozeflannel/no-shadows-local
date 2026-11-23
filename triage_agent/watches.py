@@ -147,8 +147,9 @@ def save_watch(ctx: "AgentContext", actor: str, data: dict[str, Any]) -> Watch:
     """Adds or changes a signal. Allowed whatever the Watches switch says: the switch only decides whether the Console looks."""
     from . import audit
 
-    existing = ctx.store.get_doc(WATCHES, str(data.get("watch_id") or ""))
-    watch = Watch.model_validate({**(existing or {}), **data, "watch_id": (existing or {}).get("watch_id") or f"W-{uuid.uuid4().hex[:8]}",
+    wid = str(data.get("watch_id") or "").strip()
+    existing = ctx.store.get_doc(WATCHES, wid) if wid else None
+    watch = Watch.model_validate({**(existing or {}), **data, "watch_id": (existing or {}).get("watch_id") or wid or f"W-{uuid.uuid4().hex[:8]}",
                                   "created_by": (existing or {}).get("created_by") or actor, "updated_by": actor, "updated_at": ctx.now()})
     watch.name, watch.question = watch.name.strip(), watch.question.strip()
     if not watch.name or not watch.question:
