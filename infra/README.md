@@ -116,6 +116,8 @@ settings that name the connection and the salt. Then, in the Console:
 
 Run on its own, `11_own_alerts.sh` leaves two things: redeploy the Agent Runtime (`05`; until then the worker reviews, and each alert's
 record says so), and fill the connection and the salt's secret (`10_seed_settings.py`, or Settings, Agent alerts).
+On a first run Google takes a minute or so to finish making the new connection's account; the script waits and asks again, for up to two
+minutes, before it gives that account Vertex AI User.
 
 No script changes Vertex AI's settings for the project (its cache, its data retention). They stay as the project has them, and the app
 works within them.
