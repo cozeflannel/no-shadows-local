@@ -173,6 +173,9 @@ def message_view(m: dict[str, Any]) -> dict[str, Any]:
         "emojis": [{"emoji": s["emoji"]["unicode"], "count": int(s.get("reactionCount") or 0)}
                    for s in m.get("emojiReactionSummaries") or [] if (s.get("emoji") or {}).get("unicode")],
         "files": [a.get("contentName") or "" for a in m.get("attachment") or [] if a.get("contentName")],
+        # who the message mentions, and where in its text Chat says each mention sits (no length: Chat did not say)
+        "mentions": [{"user": ((a.get("userMention") or {}).get("user") or {}).get("name") or "", "start": int(a.get("startIndex") or 0),
+                      "length": int(a.get("length") or 0)} for a in m.get("annotations") or [] if a.get("type") == "USER_MENTION"],
     }
 
 
@@ -282,6 +285,16 @@ class ChatClient:
         if status >= 300:
             raise ChatError(status, why)
         return str(body.get("name") or "")
+
+    def member_user(self, space: str, email: str) -> str:
+        """The Chat user id of the member of `space` with this address, or "" when they are not one. Chat gives a
+        signed-in account a person's id and nothing else, so this is how an id is matched to a person."""
+        status, body, why = self._call("GET", f"{space}/members/{email}")
+        if status in (400, 403, 404):
+            return ""
+        if status >= 300:
+            raise ChatError(status, why)
+        return str((body.get("member") or {}).get("name") or "")
 
     def get_space(self, space: str) -> dict[str, Any]:
         body = self._get(space)

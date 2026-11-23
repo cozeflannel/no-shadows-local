@@ -36,6 +36,8 @@ class ChatWorld:
     def __init__(self, ctx):
         self.ctx, self.spaces, self.messages, self.reactions = ctx, {}, {}, {}
         self.dms: dict[str, str] = {}  # a person's address -> the direct message space the bot's account has with them
+        self.asked: list[str] = []  # every request, as "GET spaces/X/messages"
+        self.members: dict[tuple[str, str], str] = {}  # (space, a person's address) -> their Chat user id, where they are a member
         self.writes: list[tuple[str, str]] = []
         self.fail_posts_to: set[str] = set()
         self.refuse_custom_ids = False  # Chat taking no custom message ids from this account
@@ -76,12 +78,17 @@ class ChatWorld:
 
     def request(self, method: str, url: str, params: dict[str, Any] | None = None, json: Any = None, timeout: int = 0):
         path, params = url.split("/v1/")[1], dict(params or {})
+        self.asked.append(f"{method} {path}")
         if method == "GET" and path == "spaces:findDirectMessage":
             found = self.dms.get(str(params.get("name", "")).removeprefix("users/"))
             return _Resp(200, self.spaces[found]) if found else _Resp(404, {"error": {"message": "Direct message not found"}})
         space = "/".join(path.split("/")[:2])
         if space not in self.spaces:
             return _Resp(403, {"error": {"message": "The caller does not have permission"}})
+        if method == "GET" and path.startswith(f"{space}/members/"):
+            user = self.members.get((space, path.split("/members/", 1)[1]))
+            return (_Resp(200, {"name": f"{space}/members/{user.split('/')[-1]}", "member": {"name": user, "type": "HUMAN"}}) if user
+                    else _Resp(404, {"error": {"message": "Membership not found"}}))
         if method == "GET" and path == space:
             return _Resp(200, self.spaces[space])
         if method == "GET" and path.endswith("/messages"):

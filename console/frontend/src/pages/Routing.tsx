@@ -23,6 +23,14 @@ interface Review {
   on: boolean; why: string; switch: boolean; rows: ReviewRow[];
   last_run: { ok: boolean; at: string; error: string; reviewed: number; ignored: number; failed: number } | null;
 }
+interface AnswerRow {
+  at: string; message: string; space: string; text: string; asker: string; reply: string; why: string; tries: number;
+  status: "answered" | "queued" | "held" | "ignored" | "failed" | "gave_up" | "waiting";
+}
+interface Answers {
+  on: boolean; why: string; switch: boolean; spaces: string[]; choices: { key: string; name: string; picked: boolean }[]; rows: AnswerRow[];
+  last_run: { ok: boolean; at: string; error: string; answered: number; queued: number; held: number; ignored: number; failed: number } | null;
+}
 interface PostRow {
   id: string; at: string; target: string; to: string; text: string; status: "sent" | "held" | "waits_for_send" | "failed" | "gave_up" | "waiting";
   why: string; tries: number; case_id: string; message: string;
@@ -37,8 +45,14 @@ interface Routing {
   signed_in: boolean; bot: string;
   last_run: { ok: boolean; at: string; error: string; copied: { mirror: number; third: number }; emojis: number } | null;
   queue: { id: string; text: string; origin: string; case_id: string; at: string }[];
-  copies: Copy[]; replies: OwnReply[]; people: Person[]; review: Review; delivery: Delivery; can_edit: boolean; can_act: boolean;
+  copies: Copy[]; replies: OwnReply[]; people: Person[]; review: Review; answers: Answers; delivery: Delivery; can_edit: boolean; can_act: boolean;
 }
+
+const ANSWERED: Record<AnswerRow["status"], { label: string; tone: "emerald" | "blue" | "amber" | "rose" | "zinc" }> = {
+  answered: { label: "Answered", tone: "emerald" }, queued: { label: "Queued", tone: "blue" }, held: { label: "Held", tone: "amber" },
+  ignored: { label: "Nothing to say", tone: "zinc" }, failed: { label: "Trying again", tone: "amber" }, gave_up: { label: "Given up", tone: "rose" },
+  waiting: { label: "Next minute", tone: "zinc" },
+};
 
 const POSTED: Record<PostRow["status"], { label: string; tone: "emerald" | "blue" | "amber" | "rose" | "zinc" }> = {
   sent: { label: "Posted", tone: "emerald" }, held: { label: "Held", tone: "amber" }, waits_for_send: { label: "Waiting for Send", tone: "blue" },
@@ -131,6 +145,70 @@ function ReviewCard({ review }: { review: Review }) {
                   <td className={TD}>
                     {r.queued > 0 && <span>{r.queued}</span>}
                     {r.held.length > 0 && <span className="block text-xs text-amber-600 dark:text-amber-400">held: {r.held.map((h) => `${h.target} (${h.check.replace(/_/g, " ")})`).join(", ")}</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** Each message that mentioned the QA chatbot, what it replied, and the spaces it reads for mentions. */
+function AnswersCard({ answers, canEdit, onChanged }: { answers: Answers; canEdit: boolean; onChanged: () => void }) {
+  const { toast } = useApp();
+  const pick = useAction((keys: string[]) => apiSend<Routing>("put", "/routing", { value: { answer_spaces: keys } }));
+  const last = answers.last_run;
+  const counts = last ? `${last.answered} answered, ${last.queued} queued, ${last.held} held${last.failed ? `, ${last.failed} failed` : ""}` : "";
+  const ran = last ? `Last read ${new Date(last.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}: ${counts}${last.ok ? "" : `. Not read: ${last.error}`}` : "";
+  const onPick = async (key: string, on: boolean) => {
+    const keys = answers.choices.filter((c) => (c.key === key ? on : c.picked)).map((c) => c.key);
+    if (await pick.run(keys)) { toast("Spaces saved", "success"); onChanged(); }
+  };
+  return (
+    <Card className="mb-4" padded={false} title="Answered" subtitle="Each message that mentions the QA chatbot, and what it replied in that message's thread.">
+      {pick.error && <Alert tone="rose" className="mx-5 mb-3">{pick.error.message}</Alert>}
+      {!answers.on && (
+        <p className="px-5 pb-4 text-sm text-zinc-600 dark:text-zinc-400">
+          Not running: {answers.why}.{!answers.switch && <> Mentions wait for a Chat flow. An admin can turn it on under <Link className="font-medium text-blue-700 hover:underline dark:text-blue-300" to="/settings/flags">Settings, Switches</Link>.</>}
+        </p>
+      )}
+      {answers.on && ran && <p className={cx("px-5 pb-3 text-xs", last?.ok ? "text-zinc-500" : "text-rose-600 dark:text-rose-400")}>{ran}</p>}
+      <div className="px-5 pb-4 text-sm">
+        <p className="text-zinc-600 dark:text-zinc-400">Read for mentions: {answers.spaces.length ? answers.spaces.join(", ") : "no space is set"}.</p>
+        {answers.choices.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-x-5 gap-y-2">
+            <span className="text-zinc-600 dark:text-zinc-400">Also read:</span>
+            {answers.choices.map((c) => (
+              <label key={c.key} className="inline-flex items-center gap-2">
+                <input type="checkbox" className="size-4 rounded accent-blue-600" checked={c.picked} disabled={!canEdit || pick.loading}
+                  onChange={(e) => onPick(c.key, e.target.checked)} />
+                {c.name}
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+      {answers.rows.length === 0 ? (answers.on && <EmptyState title="No mentions yet">A message that mentions the QA chatbot shows here within a minute.</EmptyState>) : (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead><tr><th className={TH}>When</th><th className={TH}>Space</th><th className={TH}>Message</th><th className={TH}>Result</th><th className={TH}>Reply</th></tr></thead>
+            <tbody>
+              {answers.rows.map((r) => (
+                <tr key={r.message} className={TR}>
+                  <td className={TD}><TimeCell value={r.at} /></td>
+                  <td className={TD}>{r.space}</td>
+                  <td className={cx(TD, "max-w-md")}>
+                    <span className="line-clamp-2 whitespace-pre-wrap">{r.text}</span>
+                    <span className="mt-1 block text-xs text-zinc-500">{r.asker || "Someone not on the rosters"}</span>
+                  </td>
+                  <td className={TD}><Badge tone={ANSWERED[r.status].tone}>{ANSWERED[r.status].label}</Badge></td>
+                  <td className={cx(TD, "max-w-xl")}>
+                    {r.reply && <span className="line-clamp-3 whitespace-pre-wrap">{r.reply}</span>}
+                    {r.why && <span className={cx("block", r.reply && "mt-1", r.status === "gave_up" ? "text-rose-600 dark:text-rose-400" : "text-zinc-500")}>
+                      {r.status === "gave_up" ? `After ${r.tries} tries: ` : ""}{r.why}</span>}
                   </td>
                 </tr>
               ))}
@@ -283,6 +361,7 @@ export default function RoutingPage() {
       )}
 
       <ReviewCard review={data.review} />
+      <AnswersCard answers={data.answers} canEdit={canEdit} onChanged={reload} />
       <DeliveryCard delivery={data.delivery} canAct={data.can_act} onChanged={reload} />
 
       {data.replies.length > 0 && (

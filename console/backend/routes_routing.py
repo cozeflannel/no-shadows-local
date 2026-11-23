@@ -7,7 +7,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from triage_agent import chatdelivery, chatreview, mirror
+from triage_agent import chatanswers, chatdelivery, chatreview, mirror
 from triage_agent.context import AgentContext
 
 from .auth import User, get_ctx, require_admin, require_analyst, require_viewer
@@ -18,7 +18,7 @@ SPACES = ("source", "mirror", "third")
 
 
 def _status(ctx: AgentContext, user: User) -> dict[str, Any]:
-    return {**mirror.status(ctx), "review": chatreview.status(ctx), "delivery": chatdelivery.status(ctx), "can_edit": user.has("admin"),
+    return {**mirror.status(ctx), "review": chatreview.status(ctx), "answers": chatanswers.status(ctx), "delivery": chatdelivery.status(ctx), "can_edit": user.has("admin"),
             "can_act": user.has("analyst")}
 
 
@@ -43,6 +43,11 @@ def routing_put(body: RoutingBody, request: Request, ctx: AgentContext = Depends
             value[key] = mirror.space_ref(str(value.get(key) or ""))
         except ValueError as exc:
             raise HTTPException(422, {"error": str(exc), "code": "validation_error", "field": key}) from exc
+    for key in value.get("answer_spaces") or []:
+        ref = ctx.config.space(str(key))
+        if not ref or not mirror.chatapi.space_name(ref.space_id, ref.url):
+            why = f"{key} is not one of the agent's spaces." if not ref else f"{ref.display_name} has no link or id under Integrations, Google Chat."
+            raise HTTPException(422, {"error": why, "code": "validation_error", "field": "answer_spaces"})
     save_part("routing", PartBody(value=value), request, ctx, user, label="Routing", action="routing.save")
     if valve is not None and bool(valve) != ctx.config.platform.safety.testing:
         fresh = request.app.state.console.ctx

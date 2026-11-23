@@ -878,6 +878,7 @@ class FeatureFlags(ConfigModel):
     early_cards: bool = Field(False, title="Post early stories in Chat", description="ON: each written-up story is posted in the second space on the Routing page. OFF: stories show in the Console only.")
     story_reads: bool = Field(False, title="Gemini reads each story", description="ON: Gemini names each story's topic, gives it a neutral name, writes a short summary and labels each post negative, neutral or positive; the Stories page counts the labels. OFF: stories show no topic, summary or sentiment.")
     chat_review: bool = Field(False, title="Review alerts read from Chat", description="ON: every minute the QA chatbot reads the source space on the Routing page and reviews each new alert there, with no Chat flow in between. What the review wants posted is queued. OFF: alerts are reviewed only when a Chat flow hands them over.")
+    chat_answers: bool = Field(False, title="Answer mentions in Chat", description="ON: every minute the QA chatbot reads the spaces it works in and answers each message that mentions it, in that message's thread, through its own Chat sign-in, with no Chat flow in between. A reply for the source space follows the Routing page's rules. OFF: mentions are answered only when a Chat flow hands them over.")
     chat_delivery: bool = Field(False, title="Post queued messages in Chat", description="ON: the QA chatbot posts what is queued, in its space or in each person's direct message, through its own Chat sign-in, with no Chat flow in between: every minute, or as soon as it is queued when Retry posts that fail is ON too. Each post passes the Routing page's rules and the leak guard again first. OFF: queued posts wait for a Chat flow.")
     alert_popups: bool = Field(False, title="Alert pop-ups", description="ON: people in the Console get a pop-up when an alert comes in; each person can mute their own. OFF: no pop-ups.")
     own_alerts: bool = Field(False, title="Agent alerts", description="ON: every few minutes the sources under Settings, Agent alerts are read. Personal details are taken out of each post before it is kept, each post is checked against the rules, like posts are grouped into stories in BigQuery, and what passes is reviewed. OFF: nothing is read and nothing is reviewed.")
@@ -1205,6 +1206,7 @@ class RoutingConfig(ConfigModel):
     max_tries: int = Field(5, ge=1, le=50, description="A message that fails this many times in a row is given up on, with the reason shown.")
     emoji_hours: int = Field(24, ge=1, le=72, description="Emojis are copied on messages up to this many hours old.")
     keep_days: int = Field(30, ge=1, le=365, description="How long the record of what was copied is kept.")
+    answer_spaces: list[str] = Field(default_factory=list, description="More spaces where a mention of the QA chatbot is answered, picked from the agent's spaces under Integrations, Google Chat. The source, second and third spaces are always read. Empty = only those three.")
 
 
 class DecisionsConfig(ConfigModel):
