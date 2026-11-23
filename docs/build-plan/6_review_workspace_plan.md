@@ -106,7 +106,7 @@ Verified when: an analyst can work an alert from start to close without opening 
 | 2.5 | Write to the alert's thread from the record: tag people, post | S | `tests/test_review_post.py` | 1.2 |
 | 2.6 | The chat panel inside Review: Gemini and the alert's thread side by side (D4); a finished temp check shown inside the panel, small, not on another page | M | `tests/test_review_chat_panel.py` plus a browser check | 2.1, 2.5 |
 | 2.7 | New alerts and the bot's work appear without a reload | S | `tests/test_review_live.py` | 2.1 |
-| 2.8 | Cases out of the menu; its links open Review (D8) | S | frontend type-check and a browser check | 2.1 |
+| 2.8 | Cases out of the menu (done 23 Nov: the page stays, reached from an alert's Full case link). Its links open Review once the record carries all a case shows (D8) | S | frontend type-check and a browser check | 2.1 |
 
 ### Phase 3: working as yourself, shifts, the handover
 
