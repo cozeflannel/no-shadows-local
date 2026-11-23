@@ -214,6 +214,13 @@ TOPICS: list[dict[str, Any]] = [
                 "Every document: choose a format under Export all. They come as one .zip file.",
                 "Each export is on the record."]},
             {"heading": "Drive documents", "text": "Share the file with the agent's service account (Viewer). PDFs and Office files can't be read: save them as Google Docs first."},
+            {"heading": "Bring over the sheet's documents (admins)", "steps": [
+                "Click Bring over from the sheet. The Console reads the sheet's Resources tab and lists what would happen to each document: New, Update, Already here or Left out, with the reason.",
+                "Check the list. Documents marked Burson may see it can be quoted in the Burson space, as on the sheet.",
+                "Click Bring over. Each document comes with the text the chat bot already read, so the agent can use it at once.",
+                "Each one keeps its Drive link. Once the Console's account can open the file it reads it from Drive itself; until then the sheet's copy is used and the status says so.",
+                "Run it again any time: documents already here are updated, never doubled, and nothing made in the Console is removed.",
+                "If the sheet can't be read, the message names the account to share the sheet with (Viewer is enough)."]},
             {"heading": "Map classes to documents", "steps": [
                 "Open Classes.", "Each class lists the documents it reads.",
                 "Tie a document to a class on the document itself (Classes), or give the class tags under Settings → Classification."]},
@@ -223,20 +230,31 @@ TOPICS: list[dict[str, Any]] = [
         ],
     },
     {
-        "id": "campaigns", "page": "Campaigns & Watches", "title": "Campaigns & Watches", "audience": "leads",
-        "summary": "Brandwatch alert campaigns and early-warning watches.",
+        "id": "campaigns", "page": "Campaigns & Watches", "title": "Campaigns & signals", "audience": "leads",
+        "summary": "Brandwatch alert campaigns, and signals (watches): yes/no questions Gemini asks of every new post, as on the sheet's Watches tab.",
         "sections": [
             {"heading": "Campaigns", "items": [
                 "Each campaign shows its status, query, alert, space, threshold, cap and today's counts.",
                 "Change a campaign: click Change, fill in only what should change, Request change. The campaigns service applies it within a minute and writes the result back.",
                 "End now closes the campaign."]},
-            {"heading": "Add a watch", "steps": [
-                "Open Watches and click New watch.", "Name it.", "Write what to look for as a yes/no question.",
-                "Write how to score impact from 1 to 10.", "List topics. Set the bar (the score that flags).", "Save, then turn it On."]},
-            {"heading": "Read detections", "items": [
-                "At the bar: flagged. Near miss: within the near-miss range, kept so you can tune the bar.",
-                "Rate each one Useful or Noise.", "Lead shows how long before the alert the watch saw the post."]},
-            {"heading": "Scorecard", "text": "For each day: alerts that came in, how many a watch caught, how many it caught first, and the median lead."},
+            {"heading": "Add a signal", "steps": [
+                "Open Signals (watches) and click New signal.",
+                "Start from: a blank signal with the sheet's standard scoring and topics, one of the sheet's templates, or a copy of a signal you have.",
+                "Name it, and write what to look for as a yes/no question.",
+                "Check how to score impact from 1 to 10, the topics, the flag score and the networks (empty: every network).",
+                "Add it. It starts off: turn it on with its switch when you are ready."]},
+            {"heading": "On, off and the limit", "items": [
+                "Each signal has its own on/off switch. At most the number shown can be on at once, because each one is a question Gemini asks of every new post.",
+                "The Watches switch (Settings, Switches) only decides whether the Console looks at new posts at all. Signals can be added, changed, turned on or off and deleted while it is off.",
+                "Each signal says in plain words what is happening: off, on but not checked (and why), or checked with its last 24 hours."]},
+            {"heading": "Bring over the sheet's signals", "steps": [
+                "Click Bring over the sheet's signals. Each row of the sheet's Watches tab is listed with what would happen to it.",
+                "Every one comes over off, even if it is on in the sheet: the list shows which ones are on there.",
+                "Running it again updates signals of the same name and never changes whether they are on."]},
+            {"heading": "Read found posts", "items": [
+                "At or over the flag score: flagged. A little below: a near miss, kept so you can tune the flag score.",
+                "Rate each one Useful or Noise.", "Ahead shows how long before the alert the signal saw the post."]},
+            {"heading": "Scorecard", "text": "For each day: alerts that came in, how many a signal caught, how many it caught first, and the median head start."},
         ],
     },
     {

@@ -1,9 +1,10 @@
-import { BookOpen, Download, Link2, PenLine, RefreshCw, Search, Trash2, Upload } from "lucide-react";
+import { BookOpen, Download, FileSpreadsheet, Link2, PenLine, RefreshCw, Search, Trash2, Upload } from "lucide-react";
 import { lazy, Suspense, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import { apiGet, apiSend, http, toApiError, type ApiError } from "../api/client";
 import { useApi } from "../api/hooks";
+import { KnowledgeImportModal } from "../components/SheetImport";
 import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, Field, Input, Modal, OffNotice, PageHeader, Select, Spinner, Stat, Tabs, TD, TH, TR, Toggle } from "../components/ui";
 import { useApp } from "../context";
 import { fmtDateTime, fmtNum, fmtRelative } from "../lib/format";
@@ -12,9 +13,9 @@ import { fmtDateTime, fmtNum, fmtRelative } from "../lib/format";
 const DocEditor = lazy(() => import("../components/DocEditor").then((m) => ({ default: m.DocEditor })));
 
 type Tab = "docs" | "classes" | "search" | "golden";
-interface Doc { doc_id: string; title: string; source_type: "text" | "url" | "drive"; link: string; covers: string; kind: "document" | "guidance"; tags: string[]; classes: string[]; external_ok: boolean; enabled: boolean; status: string; status_detail: string; chars: number; chunks: number; embedded: boolean; version: number; fetched_at: string | null; updated_at: string | null; updated_by: string }
+interface Doc { doc_id: string; title: string; source_type: "text" | "url" | "drive"; link: string; covers: string; kind: "document" | "guidance"; tags: string[]; classes: string[]; external_ok: boolean; enabled: boolean; status: string; status_detail: string; chars: number; chunks: number; embedded: boolean; version: number; fetched_at: string | null; updated_at: string | null; updated_by: string; imported_from?: string; text_from?: string }
 interface ClassRow { name: string; description: string; knowledge_tags: string[]; docs: string[] }
-interface KnowledgeList { docs: Doc[]; classes: ClassRow[]; classes_from_settings: boolean; switches: { knowledge_rag: boolean; classification_layer: boolean }; retrieval: { embedding_model: string; top_k: number }; can_edit: boolean }
+interface KnowledgeList { docs: Doc[]; classes: ClassRow[]; classes_from_settings: boolean; switches: { knowledge_rag: boolean; classification_layer: boolean }; retrieval: { embedding_model: string; top_k: number }; can_edit: boolean; can_import?: boolean }
 interface Passage { ref: string; doc_id: string; title: string; link: string; kind: string; text: string; score: number }
 interface Golden { stats: { total: number; by_label: Record<string, number>; labelled: number; agreement_rate: number | null; assessments: { agree: number; disagree: number }; most_corrected_fields: [string, number][] }; records: { case_id: string; label: string; agent: { verdict?: string }; expected: { verdict?: string }; updated_at: string; assessments: unknown[] }[]; capture_on: boolean }
 
@@ -22,13 +23,16 @@ const FORMATS: { value: "docx" | "html" | "txt"; label: string }[] = [{ value: "
 const UPLOADS = ".docx,.pdf,.html,.htm,.md,.txt";
 const hasWords = (html: string) => html.replace(/<[^>]+>/g, "").trim().length > 0;
 const EMPTY = { doc_id: "", title: "", source_type: "text" as Doc["source_type"], link: "", html: "", editable: true, covers: "", kind: "document" as Doc["kind"], tags: "", classes: [] as string[], external_ok: false, enabled: true };
-const STATUS_TONE: Record<string, "emerald" | "rose" | "amber" | "zinc"> = { ready: "emerald", failed: "rose", empty: "amber", pending: "zinc" };
+// A document's status in plain words: ready to be read by the agent, not read yet, or failing (its detail says why)
+const STATUS: Record<string, { label: string; tone: "emerald" | "rose" | "zinc" }> = { ready: { label: "Ready", tone: "emerald" }, pending: { label: "Not read yet", tone: "zinc" }, error: { label: "Can't be read", tone: "rose" } };
+const SOURCE_LABEL: Record<Doc["source_type"], string> = { text: "written here", url: "web page", drive: "Drive file" };
 
 function DocsTab({ data, reload }: { data: KnowledgeList; reload: () => void }) {
   const { toast } = useApp();
   const [form, setForm] = useState<typeof EMPTY | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState<ApiError | null>(null);
+  const [importing, setImporting] = useState(false);
   const edit = async (d: Doc) => {
     setError(null);
     try {
@@ -68,6 +72,7 @@ function DocsTab({ data, reload }: { data: KnowledgeList; reload: () => void }) 
       <Card padded={false} title="Documents" subtitle="What the agent reads before it assesses an alert or answers a question. Guidance outranks documents."
         actions={<div className="flex flex-wrap items-center justify-end gap-2">
           <input ref={picker} type="file" multiple accept={UPLOADS} className="sr-only" aria-label="Upload documents" onChange={(e) => void upload(e.target.files)} />
+          {data.can_import && <Button icon={<FileSpreadsheet className="size-4" />} onClick={() => setImporting(true)}>Bring over from the sheet</Button>}
           <Button variant="primary" icon={<Upload className="size-4" />} disabled={!data.can_edit} loading={busy === "upload"} onClick={() => picker.current?.click()}>Upload</Button>
           <Button icon={<PenLine className="size-4" />} disabled={!data.can_edit} onClick={() => { setError(null); setForm(EMPTY); }}>Write one</Button>
           <Button icon={<Link2 className="size-4" />} disabled={!data.can_edit} onClick={() => { setError(null); setForm({ ...EMPTY, source_type: "url" }); }}>Link one</Button>
@@ -77,18 +82,18 @@ function DocsTab({ data, reload }: { data: KnowledgeList; reload: () => void }) 
             </Select>
           )}
         </div>}>
-        {data.docs.length === 0 ? <EmptyState icon={<BookOpen className="size-8" />} title="No documents yet">Upload a Word file, a PDF, a web page, Markdown or text. Or write one here, or link a web page or a Drive file.</EmptyState> : (
+        {data.docs.length === 0 ? <EmptyState icon={<BookOpen className="size-8" />} title="No documents yet">{data.can_import ? "Bring over the sheet's documents, or upload" : "Upload"} a Word file, a PDF, a web page, Markdown or text. Or write one here, or link a web page or a Drive file.</EmptyState> : (
           <div className="overflow-x-auto">
             <table className="w-full"><thead><tr><th className={TH}>Document</th><th className={TH}>Classes</th><th className={TH}>Size</th><th className={TH}>Status</th><th className={TH}>Updated</th><th className={TH} /></tr></thead>
               <tbody>{data.docs.map((d) => (
                 <tr key={d.doc_id} className={cx(TR, !d.enabled && "opacity-60")}>
                   <td className={TD}>
                     <button type="button" className="text-left font-medium text-blue-600 hover:underline dark:text-blue-200" onClick={() => edit(d)}>{d.title}</button>
-                    <span className="block text-xs text-zinc-500">{d.doc_id} {d.kind === "guidance" ? "guidance" : d.source_type}{d.external_ok ? ", may be quoted to Burson" : ""}{!d.enabled ? ", off" : ""}</span>
+                    <span className="block text-xs text-zinc-500">{d.doc_id} {d.kind === "guidance" ? "guidance" : SOURCE_LABEL[d.source_type] ?? d.source_type}{d.imported_from === "sheet" ? ", from the sheet" : d.imported_from === "folder" ? ", from a file" : ""}{d.external_ok ? ", may be quoted to Burson" : ""}{!d.enabled ? ", off" : ""}</span>
                   </td>
                   <td className={TD}>{d.classes.length ? d.classes.join(", ") : <span className="text-zinc-500">all</span>}</td>
                   <td className={cx(TD, "tabular-nums")}>{fmtNum(d.chars)} chars, {d.chunks} parts{d.embedded ? ", embedded" : ""}</td>
-                  <td className={TD}><Badge tone={STATUS_TONE[d.status] ?? "zinc"}>{d.status}</Badge>{d.status_detail && <span className="block max-w-56 truncate text-xs text-zinc-500" title={d.status_detail}>{d.status_detail}</span>}</td>
+                  <td className={TD}><Badge tone={STATUS[d.status]?.tone ?? "zinc"}>{STATUS[d.status]?.label ?? d.status}</Badge>{d.status_detail && <span className="block max-w-56 truncate text-xs text-zinc-500" title={d.status_detail}>{d.status_detail}</span>}</td>
                   <td className={TD}>{fmtRelative(d.updated_at)}<span className="block text-xs text-zinc-500">{d.updated_by} v{d.version}</span></td>
                   <td className={cx(TD, "whitespace-nowrap text-right")}>
                     <Select aria-label={`Download ${d.title}`} className="mr-1 inline-block w-32 align-middle" value=""
@@ -103,6 +108,7 @@ function DocsTab({ data, reload }: { data: KnowledgeList; reload: () => void }) 
           </div>
         )}
       </Card>
+      {data.can_import && <KnowledgeImportModal open={importing} onClose={() => setImporting(false)} onDone={reload} />}
       <Modal open={!!form} wide title={form?.doc_id ? "Edit document" : "Add a document"} onClose={() => setForm(null)}
         footer={<><Button onClick={() => setForm(null)}>Cancel</Button><Button variant="primary" loading={busy === "save"} disabled={!form?.title.trim() || (form.source_type === "text" ? !hasWords(form.html) : !form.link.trim())} onClick={save}>Save and index</Button></>}>
         {form && (
@@ -184,7 +190,7 @@ function GoldenTab() {
           <table className="w-full"><thead><tr><th className={TH}>Case</th><th className={TH}>Label</th><th className={TH}>Agent said</th><th className={TH}>Should be</th><th className={TH}>Updated</th></tr></thead>
             <tbody>{g.data.records.map((r) => (
               <tr key={r.case_id} className={TR}><td className={TD}><Link className="text-blue-600 dark:text-blue-200" to={`/feed/${r.case_id}`}>{r.case_id}</Link></td>
-                <td className={TD}><Badge tone={r.label === "confirmed" ? "emerald" : r.label === "corrected" ? "amber" : "zinc"}>{r.label}</Badge></td>
+                <td className={TD}><Badge tone={r.label === "confirmed" ? "emerald" : r.label === "corrected" ? "blue" : "zinc"}>{r.label}</Badge></td>
                 <td className={TD}>{r.agent.verdict ?? ""}</td><td className={TD}>{r.expected.verdict ?? ""}</td><td className={TD}>{fmtDateTime(r.updated_at)}</td></tr>))}</tbody></table>
         )}
       </Card>
@@ -208,7 +214,7 @@ export default function KnowledgePage() {
         {tab === "classes" && (
           <Card padded={false} title="Classes and what each one reads" subtitle={k.data.classes_from_settings ? undefined : "No classes are set, so the exposure tag categories are used."}
             actions={<Link to="/settings/classification" className="text-sm font-medium text-blue-600 dark:text-blue-200">Edit classes</Link>}>
-            {!k.data.switches.classification_layer && <Alert tone="amber" className="m-5 mb-0" title="The classification layer is switched off">Alerts are assessed without a class until it is turned on in Switches (classification_layer).</Alert>}
+            {!k.data.switches.classification_layer && <Alert tone="blue" className="m-5 mb-0" title="The classification layer is switched off">Alerts are assessed without a class until an admin turns it on under Settings, Switches.</Alert>}
             <table className="w-full"><thead><tr><th className={TH}>Class</th><th className={TH}>Reads by tag</th><th className={TH}>Documents</th></tr></thead>
               <tbody>{k.data.classes.map((c) => (
                 <tr key={c.name} className={TR}><td className={TD}><span className="font-medium">{c.name}</span><span className="block text-xs text-zinc-500">{c.description}</span></td>

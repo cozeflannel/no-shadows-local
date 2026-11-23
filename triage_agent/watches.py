@@ -8,6 +8,12 @@ a watch's bar, and near misses, are kept as detections with a rating column for 
 against the alerts that came in. Nothing is posted unless a target is set; nothing is written to BigQuery.
 
 Each source runs on its own: one that fails is noted and the others carry on.
+
+On the page a watch is called a signal, as on the sheet's Watches tab. Signals can be added, changed, turned on or off
+and deleted whatever the Watches switch says: the switch only decides whether the Console looks at new posts at all
+(run_due runs only while it is ON). A new signal starts OFF and only a person turns one on, at most
+watch_max_enabled at once. The sheet's defaults (rubric, topics, bar) and its two starting templates are below;
+watches_import.py brings the sheet's own rows over, all OFF.
 """
 
 from __future__ import annotations
@@ -21,7 +27,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from .config import switch_off
 from .events import PlatformEvent
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -34,6 +39,46 @@ DETECTIONS = "watch_detections"
 SOURCES_STATE = "watch_sources"
 ENGLISH_RULE = "Rule: Return TRUE only if the post text itself is in English (return FALSE for non-English posts)."
 
+# The sheet's own defaults (apps-script-chat-bot/ProactiveWatch.gs PW_DEFAULT_RUBRIC_, PW_DEFAULT_TOPICS_,
+# PW_DEFAULT_BAR_): a new signal starts from them, as a new row on the Watches tab did.
+SHEET_DEFAULT_RUBRIC = (
+    "Score from 1 to 10 how likely this post is to become a brand-safety issue for Google in the next 6 hours: 10 = "
+    "journalists, officials, campaigns or very large accounts are about to amplify it; 7 = a credible, serious claim with "
+    "growing reach; 4 = a niche complaint; 1 = harmless or not really about Google. Weigh the author's reach, how serious "
+    "and credible the claim is, and whether it is a new issue.")
+SHEET_DEFAULT_TOPICS = ["AI answers and Gemini", "Privacy and security", "Scams and fraud", "Product failure or outage",
+                        "Legal and regulation", "Bias or censorship claims", "Executives and workplace", "Elections and civics"]
+SHEET_DEFAULT_BAR = 7.0
+# The two signals the sheet's Watches tab started with (PW_WATCH_SEEDS_), offered under "Start from"
+SHEET_TEMPLATES: list[dict[str, Any]] = [
+    {"key": "midterms", "name": "Midterms 2026 × Google",
+     "question": ("Does this post connect Google or its products, services or executives (Search, AI Overviews, Gemini, "
+                  "YouTube, Android, Chrome, Maps, Waymo, Google ads, Sundar Pichai) to the 2026 US midterm elections, voting, "
+                  "candidates or election officials, for example election information or results Google shows, political ads, "
+                  "claims of bias, censorship or election interference, election misinformation spreading on Google's "
+                  "platforms, or election-day failures, in a way that could hurt Google's reputation or call for a response? "
+                  "Answer no for posts about the elections that don't involve Google."),
+     "rubric": ("Score from 1 to 10 how likely this post is to become a brand-safety issue for Google about the 2026 midterms "
+                "in the next 6 hours: 10 = officials, journalists, campaigns or very large accounts are about to amplify it, or "
+                "it alleges Google interfered with the election; 7 = a credible claim with growing reach; 4 = a niche "
+                "complaint; 1 = harmless or not really about Google. Weigh the author's reach, how serious and credible the "
+                "claim is, and whether it is a new issue."),
+     "topics": ["Election info and results", "Political ads", "Bias or censorship claims", "Election misinformation",
+                "Candidates and officials", "Voting-day failures"],
+     "flag_at_score": SHEET_DEFAULT_BAR, "networks": []},
+    {"key": "brand_safety", "name": "Google brand safety (all)",
+     "question": ("Does this post involve Google or its products, services or executives in a way that could hurt Google's "
+                  "reputation or call for a communications response, for example a serious product failure, a dangerous or "
+                  "offensive AI answer, a privacy or security claim, a scam using Google's name, a legal or regulatory issue, a "
+                  "boycott or a claim of bias? Answer no for jokes, ordinary praise, tips, how-to posts and passing mentions."),
+     "rubric": SHEET_DEFAULT_RUBRIC, "topics": list(SHEET_DEFAULT_TOPICS), "flag_at_score": SHEET_DEFAULT_BAR, "networks": []},
+]
+# A network as people write it -> the name the post tables use (X posts are "x"; the sheet's pwPlatform_)
+NETWORKS = {"x": "x", "twitter": "x", "xtwitter": "x", "twitterx": "x", "ig": "instagram", "insta": "instagram",
+            "instagram": "instagram", "tiktok": "tiktok", "yt": "youtube", "youtube": "youtube", "reddit": "reddit",
+            "bsky": "bluesky", "bluesky": "bluesky", "fb": "facebook", "facebook": "facebook", "threads": "threads",
+            "linkedin": "linkedin"}
+
 
 class Watch(BaseModel):
     watch_id: str
@@ -45,6 +90,8 @@ class Watch(BaseModel):
     flag_at_score: float | None = None  # blank = the default bar
     networks: list[str] = Field(default_factory=list)  # blank = all
     status: str = ""  # written by the agent
+    imported_from: str = ""  # "sheet": brought over from the sheet's Watches tab (watches_import.py)
+    sheet_on: bool = False  # it was ON on the sheet when it was brought over (it comes over OFF)
     created_by: str = ""
     updated_by: str = ""
     updated_at: datetime | None = None
@@ -79,17 +126,27 @@ def clean_topic(value: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"['\"\\`]", "", str(value or ""))).strip()[:60]
 
 
+def network_key(value: str) -> str:
+    """A network as people write it ("X", "Twitter", "IG") as the post tables name it ("x", "instagram")."""
+    v = re.sub(r"[^a-z]", "", str(value or "").lower())
+    return NETWORKS.get(v, v)
+
+
 def list_watches(ctx: "AgentContext") -> list[Watch]:
     out = [Watch.model_validate(r) for r in ctx.store.list_docs(WATCHES, limit=200)]
     out.sort(key=lambda w: w.name.lower())
     return out
 
 
+def _limit_error(limit: int) -> ValueError:
+    return ValueError(f"At most {limit} signal{'s' if limit != 1 else ''} can be on at once: each one is a question Gemini "
+                      "asks of every new post. Turn one off first.")
+
+
 def save_watch(ctx: "AgentContext", actor: str, data: dict[str, Any]) -> Watch:
+    """Adds or changes a signal. Allowed whatever the Watches switch says: the switch only decides whether the Console looks."""
     from . import audit
 
-    if not ctx.flag("watches"):
-        raise PermissionError(switch_off("Changing watches", "watches"))
     existing = ctx.store.get_doc(WATCHES, str(data.get("watch_id") or ""))
     watch = Watch.model_validate({**(existing or {}), **data, "watch_id": (existing or {}).get("watch_id") or f"W-{uuid.uuid4().hex[:8]}",
                                   "created_by": (existing or {}).get("created_by") or actor, "updated_by": actor, "updated_at": ctx.now()})
@@ -97,16 +154,55 @@ def save_watch(ctx: "AgentContext", actor: str, data: dict[str, Any]) -> Watch:
     if not watch.name or not watch.question:
         raise ValueError("A watch needs a name and a yes/no question.")
     watch.topics = [t for t in dict.fromkeys(clean_topic(t) for t in watch.topics) if t][:20]
-    watch.networks = [n.strip().lower() for n in watch.networks if n.strip()]
+    watch.networks = [n for n in dict.fromkeys(network_key(n) for n in watch.networks) if n]
     limit = ctx.config.platform.campaigns.watch_max_enabled
     others_on = [w for w in list_watches(ctx) if w.enabled and w.watch_id != watch.watch_id]
     if watch.enabled and len(others_on) >= limit:
-        raise ValueError(f"At most {limit} watches can be ON at once. Turn one OFF first.")
+        raise _limit_error(limit)
     ctx.store.put_doc(WATCHES, watch.watch_id, watch.model_dump(mode="json"))
     ctx.emit(PlatformEvent.WATCH_SAVED, actor=actor, payload={"watch_id": watch.watch_id, "name": watch.name, "enabled": watch.enabled})
     audit.record(ctx, actor=actor, action="watch.save", surface="console", target_type="watch", target_id=watch.watch_id,
                  summary=f"{'Updated' if existing else 'Added'} watch “{watch.name}” ({'ON' if watch.enabled else 'OFF'})")
     return watch
+
+
+def set_enabled(ctx: "AgentContext", actor: str, watch_id: str, enabled: bool) -> Watch:
+    """Turns one signal on or off (KeyError when there is no such signal; ValueError past the limit of signals on)."""
+    from . import audit
+
+    row = ctx.store.get_doc(WATCHES, watch_id)
+    if row is None:
+        raise KeyError(watch_id)
+    watch = Watch.model_validate(row)
+    limit = ctx.config.platform.campaigns.watch_max_enabled
+    if enabled and not watch.enabled and sum(1 for w in list_watches(ctx) if w.enabled and w.watch_id != watch_id) >= limit:
+        raise _limit_error(limit)
+    watch.enabled, watch.updated_by, watch.updated_at = bool(enabled), actor, ctx.now()
+    ctx.store.put_doc(WATCHES, watch.watch_id, watch.model_dump(mode="json"))
+    ctx.emit(PlatformEvent.WATCH_SAVED, actor=actor, payload={"watch_id": watch.watch_id, "name": watch.name, "enabled": watch.enabled})
+    audit.record(ctx, actor=actor, action="watch.switch", surface="console", target_type="watch", target_id=watch.watch_id,
+                 summary=f"Turned signal “{watch.name}” {'ON' if watch.enabled else 'OFF'}")
+    return watch
+
+
+def checked_ids(ctx: "AgentContext") -> set[str]:
+    """The signals a look asks about: those ON, the first watch_max_enabled of them by name (as run_due takes them)."""
+    return {w.watch_id for w in [w for w in list_watches(ctx) if w.enabled][: ctx.config.platform.campaigns.watch_max_enabled]}
+
+
+def plain_status(watch: Watch, *, switch_on: bool, sources_set: bool, checked: bool, limit: int, flagged: int = 0,
+                 near: int = 0) -> str:
+    """What is happening with one signal, in plain words, for the page."""
+    if not watch.enabled:
+        return "Off: not checked." + (" It was ON on the sheet: turn it on here when you are ready." if watch.sheet_on else "")
+    if not switch_on:
+        return "On, but nothing is checked yet: the Watches switch is off (an admin turns it on under Settings, Switches)."
+    if not checked:
+        return f"On, but not checked: only {limit} signal{'s are' if limit != 1 else ' is'} checked at once."
+    if not sources_set:
+        return "On, but not checked: no table of posts is chosen (Settings, Campaigns & watches)."
+    last = f" Last look: {watch.status.lstrip('⚠ ').strip().rstrip('.')}." if watch.status else " Waiting for its first look."
+    return f"Checked. Last 24 hours: {flagged} flagged, {near} near miss{'es' if near != 1 else ''}.{last}"
 
 
 def delete_watch(ctx: "AgentContext", actor: str, watch_id: str) -> bool:

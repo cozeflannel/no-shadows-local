@@ -729,10 +729,8 @@ def test_intraday_gap_alert_and_forecast_accuracy(ctx, clock):
 
 
 # -- watches ---------------------------------------------------------------------------------------------------------------------
-def test_a_watch_needs_its_switch_starts_off_and_is_limited(ctx):
-    with pytest.raises(PermissionError):
-        watches.save_watch(ctx, LEAD, {"name": "AI answers", "question": "Is this about a harmful AI answer?"})
-    flags(ctx, watches=True)
+def test_a_watch_starts_off_is_kept_whatever_the_switch_says_and_is_limited(ctx):
+    assert ctx.flag("watches") is False, "the switch only decides whether the Console looks: signals are kept while it is OFF"
     w = watches.save_watch(ctx, LEAD, {"name": "AI answers", "question": "Is this about a harmful AI answer?", "topics": ["AI 'answers'", "Privacy"]})
     assert w.enabled is False and w.topics == ["AI answers", "Privacy"]
     ctx.config.platform.campaigns.watch_max_enabled = 1
