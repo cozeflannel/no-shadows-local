@@ -115,6 +115,20 @@ Verified when: an analyst can work an alert from start to close without opening 
 | 3.2 | Start shift and End shift. Workforce shows who is on now and each shift's real start and end | S | `tests/test_shifts.py` | none |
 | 3.3 | The handover, at End shift: alert statuses, what is outstanding, temp checks done and under way, alerts to watch and process updates are gathered from the shift's own records; Gemini writes the note; the analyst reads, adds to it and confirms; the next person sees it at Start shift (D3) | M | `tests/test_handover.py` | 3.2, 2.2 |
 
+The handover today, from the owner's photos of the doc (23 Nov). It is rewritten at each shift start, four times a day:
+
+| Section today | Its source today | In the Console (3.3) |
+|---|---|---|
+| Incident Managers: outgoing, incoming and on deck, each with their shift hours | The SLRR Alerts Coverage calendar | The same calendar, read by the QA chatbot's account. Beside it, who pressed Start shift and End shift, and when |
+| Active Monitoring: the 5 most recent temp checks, each with a Status & Next Action note kept by hand | The Brand Safety Temp Checks doc | The Console's temp checks, newest first. Each has a Status & next action note an analyst edits; the note stays while the temp check is in the five |
+| Initiatives to Watch, past 7 days: date, from, what to watch, link | The 24/7 SL team chat | That space, read by the bot's sign-in. Gemini picks the messages and writes each line; each line links to its Chat message |
+| Ongoing Issues: the top 5 by number of alerts, past 48 hours, with product | Not stated | Counted in Python from the Console's own alerts, by issue name |
+| Recent Process Updates, past 7 days: date, from, update, link | The 24/7 SL team chat | As Initiatives to Watch |
+| Pinned Live Links, Instagram and Facebook only, past 48 hours | The Live Link Announcements space | That space, read by the bot's sign-in. The links are matched by their address, in Python |
+| The analyst's close-of-shift note | Typed by the analyst | Gathered from what the analyst did in the Console that shift (alerts worked and their status, what is outstanding, temp checks done and under way). Gemini writes the note; the analyst reads it, adds to it and confirms |
+
+Which messages count, the look-back days, the number of rows, the two spaces and the calendar are settings.
+
 ### Phase 4: Settings cut down
 
 | Step | What | Size | Check | Blocked by |
@@ -124,7 +138,7 @@ Verified when: an analyst can work an alert from start to close without opening 
 
 ## Not yet specified
 
-- 3.3: what counts as a "process update" and where today's automation finds it. Needs the handover doc's link and one filled-in handover from the owner.
+- 3.3: the calendar needs Google Calendar's read permission added to the QA chatbot's sign-in, and the calendar shared with that account. Whether temp checks done outside the Console (the Brand Safety Temp Checks doc) are listed too: until the team runs them in the Console, Active Monitoring shows only the Console's own. Where today's Ongoing Issues count comes from is not stated in the doc.
 - 1.5: which typed requests the sheet-based bot understands. Read from `TempCheck.gs` and `Voice.gs` when the step is picked up.
 - 2.5: whether people outside the roster can be tagged.
 - 3.1: whether Chat accepts a post made with a person's own sign-in from this project's sign-in client. It is the same call the bot's sign-in makes; step 1.0 proves that one.
