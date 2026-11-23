@@ -12,6 +12,8 @@ type SpaceKey = "source" | "mirror" | "third";
 interface SpaceInfo { space: string; name: string; external: boolean; error: string }
 interface Values { bot_on: boolean; source: string; mirror: string; third: string; copy_everything: boolean; ask_before_source: boolean }
 interface Copy { at: string; what: string; who: string; text: string; status: string; why: string; mirror: string; third: string; third_why: string }
+/** A reply the bot may not write in the closed source space, shown under the alert's copy in the second and third spaces. */
+interface OwnReply { at: string; text: string; status: "waiting" | "posted" | "gave_up"; why: string; case_id: string; mirror: string; third: string }
 interface Person { user: string; name: string; org: "" | "Burson" | "Google"; first_seen: string; seen_in: string; example: string }
 interface ReviewRow {
   at: string; message: string; text: string; status: "reviewed" | "ignored" | "waiting" | "gave_up"; why: string; tries: number;
@@ -35,7 +37,7 @@ interface Routing {
   signed_in: boolean; bot: string;
   last_run: { ok: boolean; at: string; error: string; copied: { mirror: number; third: number }; emojis: number } | null;
   queue: { id: string; text: string; origin: string; case_id: string; at: string }[];
-  copies: Copy[]; people: Person[]; review: Review; delivery: Delivery; can_edit: boolean; can_act: boolean;
+  copies: Copy[]; replies: OwnReply[]; people: Person[]; review: Review; delivery: Delivery; can_edit: boolean; can_act: boolean;
 }
 
 const POSTED: Record<PostRow["status"], { label: string; tone: "emerald" | "blue" | "amber" | "rose" | "zinc" }> = {
@@ -282,6 +284,30 @@ export default function RoutingPage() {
 
       <ReviewCard review={data.review} />
       <DeliveryCard delivery={data.delivery} canAct={data.can_act} onChanged={reload} />
+
+      {data.replies.length > 0 && (
+        <Card className="mb-4" padded={false} title="The bot's replies to the source space" subtitle="The source space is closed, so each reply is shown under its alert's copy in the second space. Nothing here was written in the source space.">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead><tr><th className={TH}>When</th><th className={TH}>Reply</th><th className={TH}>Second</th><th className={TH}>Third</th></tr></thead>
+              <tbody>
+                {data.replies.map((r) => (
+                  <tr key={r.at + r.text} className={TR}>
+                    <td className={TD}><TimeCell value={r.at} /></td>
+                    <td className={cx(TD, "max-w-xl")}>
+                      <span className="line-clamp-2 whitespace-pre-wrap">{r.text}</span>
+                      {r.status === "gave_up" && <span className="mt-1 block text-rose-600 dark:text-rose-400">Given up: {r.why}</span>}
+                      {r.status === "waiting" && <span className="mt-1 block text-amber-600 dark:text-amber-400">{r.why ? `Trying again: ${r.why}` : "Waiting for its alert to be copied"}</span>}
+                    </td>
+                    <td className={TD}>{r.mirror ? <CircleCheck aria-label="Posted" className="size-4 text-emerald-600" /> : <CircleX aria-label="Not posted" className="size-4 text-zinc-400" />}</td>
+                    <td className={TD}>{r.third ? <CircleCheck aria-label="Posted" className="size-4 text-emerald-600" /> : <CircleX aria-label="Not posted" className="size-4 text-zinc-400" />}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
 
       <Card className="mb-4" padded={false} title="Copied" subtitle="The last 100 messages taken from the source space.">
         {data.copies.length === 0 ? <EmptyState title="Nothing copied yet">Messages show here once the QA chatbot is ON and a second space is set.</EmptyState> : (

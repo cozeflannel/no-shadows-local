@@ -674,6 +674,14 @@ smaller stories, per-alert points and hourly running totals; `GET /api/stories/{
 Settings. A check's result is kept in kv `connection:test:<key>` with a fingerprint of the values and dropped when they change.
 `GET /api/meta` carries `notifications` for the pop-ups. The tick records kv `tick:last`.
 
+**The bot's replies and threads** (plan 6, step 1.2): a queued post may carry `thread` (`OutboxItem.thread`), the Chat thread it answers.
+When an operation was handed a message from the Routing page's source space, its post for that space carries the message's thread, and
+`chatdelivery` and `mirror.send` post into it. While the source space is closed (the Safety valve, or a second space set) such a post is held
+as before and never queued; with a second space set, `safety.guard_outputs` also hands it to `mirror.reply_in_copies`, and the minute run
+posts it under the alert's copy in the second and third spaces (docs `relay_own`, audit `routing.reply_copied`, `GET /api/routing` `replies`,
+the held entry's `copied_to`). A reply that names something internal is not shown there. One whose alert was never copied is given up after
+a day and never posted on its own.
+
 **A table waiting for access** (`bq_admin.no_access`): BigQuery's answer `Access Denied: Table|Dataset ...` means the table's owners have
 not let the runtime account read it yet. It is waiting, not failing. On Integrations its check line carries `waiting: true` and `grant`, the
 tool's `ok` and state leave waiting lines out, and `grants` holds one statement a dataset, each led by a `--` comment naming the tables it

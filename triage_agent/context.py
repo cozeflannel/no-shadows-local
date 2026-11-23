@@ -121,8 +121,8 @@ class AgentContext:
     # -- outbox ----------------------------------------------------------------
     def enqueue(self, target: str, text: str, *, recipients: list[str] | None = None,
                 case_id: str | None = None, escalation_id: str | None = None, source: str = "agent",
-                direct: bool = False) -> OutboxItem:
-        """Queue a post, then have it delivered.
+                direct: bool = False, thread: str | None = None) -> OutboxItem:
+        """Queue a post, then have it delivered. `thread`: the Chat thread it answers, in the space it goes to.
 
         With "Post queued messages in Chat" ON it is posted through the QA chatbot's Chat sign-in and no flow is
         rung (the handover doc stays a flow's work): with Pub/Sub delivery ON it is published and posted when the
@@ -135,6 +135,7 @@ class AgentContext:
             target=target,  # type: ignore[arg-type]
             text=text,
             recipients=recipients or [],
+            thread=thread or None,
             case_id=case_id,
             escalation_id=escalation_id,
             source=source,

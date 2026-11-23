@@ -28,6 +28,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from .context import AgentContext
 
 COPIES, THREADS, PEOPLE, QUEUE = "relay", "relay_threads", "relay_people", "relay_queue"
+OWN_REPLIES = "relay_own"  # what the bot would have written in the closed source space, shown in the copy spaces instead
 STATE, LAST = "routing:state", "routing:last"
 SPACE_TTL = timedelta(minutes=10)   # how long a space's name and who-can-join answer is kept
 OVERLAP = timedelta(minutes=5)      # messages are read again this far back; none is copied twice
@@ -189,6 +190,51 @@ def send(ctx: "AgentContext", text: str, *, thread: str = "", origin: str = "", 
     audit.record(ctx, actor=actor, action="routing.post", surface="agent", target_type="message", target_id=posted["name"],
                  summary="Posted in the source space", case_id=case_id or None)
     return {"status": "sent", "message": posted["name"]}
+
+
+def reply_in_copies(ctx: "AgentContext", text: str, *, thread: str = "", origin: str = "", case_id: str = "") -> dict[str, Any] | None:
+    """A reply the bot may not write in the source space, kept for the copy spaces: with a second space set, the minute
+    run posts it there and on to the third, under the copy of the message it answers. None when there is no second
+    space. Nothing here, and nothing that posts it, writes in the source space."""
+    r = ctx.config.platform.routing
+    if not r.bot_on or not r.mirror.strip() or not text.strip():
+        return None
+    item_id = uuid.uuid4().hex[:16]
+    doc = {"id": item_id, "text": text[:MAX_CHARS], "source_thread": thread, "origin": origin, "case_id": case_id, "status": "waiting", "why": "",
+           "tries": 0, "at": ctx.now().isoformat(), "n": time.time_ns(), "mirror": "", "third": ""}
+    ctx.store.put_doc(OWN_REPLIES, item_id, doc)
+    return doc
+
+
+def _own_replies(ctx: "AgentContext", client: Any, sp: dict[str, Any], third_ok: bool, out: dict[str, Any]) -> None:
+    """Post the waiting replies in the second space, then the third, oldest first. One whose alert has not been copied
+    yet waits for it; after a day it is given up, never posted on its own."""
+    spaces_ = [("mirror", sp["mirror"]["space"])] + ([("third", sp["third"]["space"])] if third_ok else [])
+    limit, now = ctx.config.platform.routing.max_tries, ctx.now()
+    for doc in sorted(ctx.store.list_docs(OWN_REPLIES, where={"status": "waiting"}, limit=200), key=lambda d: (d["at"], d.get("n", 0))):
+        try:
+            for side, space in spaces_:
+                if doc[side]:
+                    continue
+                under = _thread(ctx, doc["source_thread"], side) if doc["source_thread"] else ""
+                if doc["source_thread"] and not under:
+                    if datetime.fromisoformat(doc["at"]) <= now - MAX_GAP:
+                        doc.update(status="gave_up", why="The message it answers never reached the second space.")
+                    break
+                doc[side] = client.post_message(space, doc["text"], thread=under, key=f"own:{doc['id']}", id_prefix=chatapi.OWN_PREFIX)["name"]
+                if side == "mirror":
+                    out["replies"] += 1
+                    audit.record(ctx, actor="agent", action="routing.reply_copied", surface="agent", target_type="message", target_id=doc[side],
+                                 summary="Posted the bot's reply for the source space in the second space", case_id=doc.get("case_id") or None,
+                                 detail={"origin": doc.get("origin") or ""})
+            else:
+                doc.update(status="posted", why="")
+        except Exception as exc:  # noqa: BLE001 - kept on the row and tried again next minute
+            doc["tries"] += 1
+            doc["why"] = str(exc)[:300]
+            if doc["tries"] >= limit:
+                doc["status"] = "gave_up"
+        ctx.store.put_doc(OWN_REPLIES, doc["id"], doc)
 
 
 def queue(ctx: "AgentContext") -> list[dict[str, Any]]:
@@ -418,7 +464,7 @@ def _emojis(ctx: "AgentContext", client: Any, messages: list[dict[str, Any]], th
 def run(ctx: "AgentContext") -> dict[str, Any]:
     """One pass, once a minute: read the source, copy what is new to the second space and on to the third."""
     out: dict[str, Any] = {"ok": True, "off": not ctx.config.platform.routing.bot_on, "copied": {"mirror": 0, "third": 0}, "emojis": 0,
-                           "problems": {}, "error": ""}
+                           "replies": 0, "problems": {}, "error": ""}
     if out["off"]:
         return out
     try:
@@ -427,6 +473,7 @@ def run(ctx: "AgentContext") -> dict[str, Any]:
         out["problems"] = probs = problems(ctx, sp)
         if sp["source"] and sp["mirror"] and not probs["source"] and not probs["mirror"]:
             _copy(ctx, client, sp, bool(sp["third"]) and not probs["third"], out)
+            _own_replies(ctx, client, sp, bool(sp["third"]) and not probs["third"], out)  # after the copy, so each lands under its alert
     except Exception as exc:  # noqa: BLE001 - shown on the Routing page; the next minute tries again
         out.update(ok=False, error=str(exc)[:300])
     ctx.store.put_kv(LAST, {**out, "at": ctx.now().isoformat()})
@@ -443,6 +490,8 @@ def status(ctx: "AgentContext") -> dict[str, Any]:
         "safety_valve": ctx.config.platform.safety.testing, "mode": mode(ctx), "spaces": sp, "problems": problems(ctx, sp),
         "signed_in": chatapi.signed_in(ctx), "bot": ctx.config.agent.email, "last_run": ctx.store.get_kv(LAST),
         "queue": [{k: q.get(k, "") for k in ("id", "text", "origin", "case_id", "at")} for q in queue(ctx)],
+        "replies": [{k: d.get(k, "") for k in ("at", "text", "status", "why", "case_id", "mirror", "third")}
+                    for d in sorted(ctx.store.list_docs(OWN_REPLIES, limit=100), key=lambda d: (d["at"], d.get("n", 0)), reverse=True)],
         "copies": [{"at": d["at"], "what": d["what"], "who": d["who"], "text": d["text"], "status": d["status"], "why": d["why"],
                     "mirror": (d.get("mirror") or {}).get("name", ""), "third": (d.get("third") or {}).get("name", ""),
                     "third_why": d.get("third_why", "")} for d in copies],

@@ -34,6 +34,7 @@ Not proven: nothing the bot does through its Chat sign-in has run against live C
 | D7 | Settings clean-up | Settings a person does not need day to day move under one Advanced section. Nothing is deleted | The bot's rules still need them |
 | D8 | The Cases tab | Out of the menu. Its links open the same alert in Review | His words: "Remove or hide the cases tab" |
 | D9 | How Chat is read | By the bot's sign-in, every minute, as now. No Chat app, no webhooks, no Apps Script | Standing rule (22 Nov) |
+| D11 | Where the bot's reply to Burson shows while the source space is closed | Held for the source as before. With a second space set it is also posted under the alert's copy in the second and third spaces. A reply that names something internal is not shown | The owner's routing rule of 22 Nov: with the valve ON nothing is written to Burson and the other spaces are still written. The sheet-based bot shows its Burson replies in its Mirror space |
 | D10 | Order | The QA chatbot first, then Review, then identity, shifts and the handover, then Settings | His words: "prioritize the chatbot working and that streaming through the web app" |
 
 ## Phases and steps
@@ -155,8 +156,9 @@ Which messages count, the look-back days, the number of rows, the two spaces and
 | Step | Status |
 |---|---|
 | 1.0 Live proof | the owner's steps, given 23 Nov |
-| 1.1 Parity table | next |
-| 1.2 to 1.7 | not started |
+| 1.1 Parity table | first pass done and searched across the Console's code; each gap is read on both sides when its step is picked up |
+| 1.2 Replies in the alert's thread | built (`tests/test_chat_threads.py`); not proven live |
+| 1.3 to 1.7 | not started |
 | Phase 2 | not started |
 | Phase 3 | not started |
 | Phase 4 | not started |
