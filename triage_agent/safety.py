@@ -175,8 +175,30 @@ def target_block(ctx: "AgentContext", target: str, text: str) -> tuple[str, list
     return "", []
 
 
-def guard_outputs(ctx: "AgentContext", outputs: ChatOutputs, *, op: str = "", actor: str = "agent") -> tuple[ChatOutputs, list[dict[str, Any]]]:
-    """Hold back any output that fails a guard. Returns (safe outputs, what was held and why)."""
+def _shown_in_copies(ctx: "AgentContext", text: str, thread: str, op: str, case_id: str) -> dict[str, Any]:
+    """A reply held only because the source space is closed is shown in the second space, when one is set. One that
+    names something internal is not: it would not have gone to the source space either. When that cannot be told
+    (Chat did not answer), it is not shown."""
+    from . import mirror
+
+    r = ctx.config.platform.routing
+    if not r.bot_on or not r.mirror.strip():
+        return {}
+    try:
+        hits = mirror._leaks(ctx, text)
+    except Exception:  # noqa: BLE001 - not shown rather than shown wrongly
+        log.warning("could not check a held reply before showing it in the second space", exc_info=True)
+        return {}
+    if hits:
+        return {"hits": hits}
+    return {"copied_to": "the second space"} if mirror.reply_in_copies(ctx, text, thread=thread, origin=op, case_id=case_id) else {}
+
+
+def guard_outputs(ctx: "AgentContext", outputs: ChatOutputs, *, op: str = "", actor: str = "agent",
+                  thread: str = "") -> tuple[ChatOutputs, list[dict[str, Any]]]:
+    """Hold back any output that fails a guard. Returns (safe outputs, what was held and why).
+    `thread`: the thread, in the source space, of the message these outputs answer. A post held only because the
+    source space is closed is still shown in the second space, under that message's copy (mirror.reply_in_copies)."""
     cfg = ctx.config
     safety = cfg.platform.safety
     held: list[dict[str, Any]] = []
@@ -187,14 +209,17 @@ def guard_outputs(ctx: "AgentContext", outputs: ChatOutputs, *, op: str = "", ac
 
         reason, hits = target_block(ctx, target, text)
         source = mirror.is_source_target(ctx, target)
+        closed = source and reason in ("safety_valve", "routing")  # held for where it goes, not for what it says
         if not reason and source and cfg.platform.routing.ask_before_source:
-            queued = mirror.send(ctx, text, origin=op, case_id=outputs.case_id, actor=actor)
+            queued = mirror.send(ctx, text, thread=thread, origin=op, case_id=outputs.case_id, actor=actor)
             reason = "waits_for_send" if queued["status"] == "waiting" else "routing"
         if reason:
             if out is outputs:
                 out = outputs.model_copy(deep=True)
             out.set_target(target, "")
             held.append({"target": target, "check": reason, "hits": hits, "chars": len(text)})
+            if closed:
+                held[-1].update(_shown_in_copies(ctx, text, thread, op, outputs.case_id))
     if outputs.dm_text.strip() and outputs.dm_recipients and "dm" not in allowed_targets:
         if out is outputs:
             out = outputs.model_copy(deep=True)

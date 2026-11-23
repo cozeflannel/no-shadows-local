@@ -527,6 +527,7 @@ class OutboxItem(BaseModel):
     target: OutboxTarget
     text: str
     recipients: list[str] = Field(default_factory=list)  # dm only (emails)
+    thread: str | None = None  # the Chat thread this post answers, in the space it goes to (a reply to an alert there)
     case_id: str | None = None
     escalation_id: str | None = None
     source: str = "agent"  # op or subsystem that queued it

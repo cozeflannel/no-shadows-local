@@ -106,14 +106,18 @@ def _load_handlers() -> None:
 # ---------------------------------------------------------------------------
 
 
-def enqueue_outputs(ctx: AgentContext, outputs: ChatOutputs, source: str, targets: set[str] | None = None) -> list[str]:
-    """Queue chat outputs as OutboxItems (all targets, or only `targets`). reply_text is never queued."""
+def enqueue_outputs(ctx: AgentContext, outputs: ChatOutputs, source: str, targets: set[str] | None = None, thread: str = "") -> list[str]:
+    """Queue chat outputs as OutboxItems (all targets, or only `targets`). reply_text is never queued.
+    `thread`: the thread, in the source space, of the message these outputs answer; only a post for that space carries it."""
+    from . import mirror
+
     queued = []
     case_id = outputs.case_id or None
     esc_id = outputs.escalation_id or None
     for target, text in outputs.target_texts().items():
         if targets is None or target in targets:
-            queued.append(ctx.enqueue(target, text, case_id=case_id, escalation_id=esc_id, source=source).outbox_id)
+            answers = thread if thread and mirror.is_source_target(ctx, target) else None
+            queued.append(ctx.enqueue(target, text, case_id=case_id, escalation_id=esc_id, source=source, thread=answers).outbox_id)
     if outputs.dm_text.strip() and outputs.dm_recipients and (targets is None or "dm" in targets):
         queued.append(
             ctx.enqueue("dm", outputs.dm_text, recipients=outputs.dm_recipients, case_id=case_id,
@@ -152,16 +156,28 @@ def _stealth_burson(ctx: AgentContext, outputs: ChatOutputs) -> ChatOutputs:
     return out
 
 
+def _source_thread(ctx: AgentContext, req: OperationRequest) -> str:
+    """The thread of the Chat message an operation was handed, when that message is in the Routing page's source space."""
+    from . import mirror
+
+    message = req.payload.get("message")
+    if not isinstance(message, dict) or not message.get("thread_id") or not message.get("space_id"):
+        return ""
+    source = mirror.space_ref(ctx.config.platform.routing.source)
+    return str(message["thread_id"]) if source and mirror.space_ref(str(message["space_id"])) == source else ""
+
+
 def _finalize(ctx: AgentContext, req: OperationRequest, outputs: ChatOutputs, data: dict) -> tuple[ChatOutputs, dict]:
     rc = req.context
     outputs = _stealth_burson(ctx, outputs)
     from . import safety
 
-    outputs, held = safety.guard_outputs(ctx, outputs, op=req.op, actor=rc.invoked_by or "agent")
+    thread = _source_thread(ctx, req)
+    outputs, held = safety.guard_outputs(ctx, outputs, op=req.op, actor=rc.invoked_by or "agent", thread=thread)
     if held:
         data = {**data, "held_outputs": held}
     if rc.deliver == "outbox":
-        queued = enqueue_outputs(ctx, outputs, source=req.op)
+        queued = enqueue_outputs(ctx, outputs, source=req.op, thread=thread)
         data = {**data, "queued_outbox_ids": queued, "reply_text": outputs.reply_text}
         outputs = ChatOutputs(
             case_id=outputs.case_id, escalation_id=outputs.escalation_id, verdict=outputs.verdict, summary=outputs.summary

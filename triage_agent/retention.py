@@ -35,6 +35,7 @@ def run(ctx: "AgentContext", force: bool = False) -> dict[str, Any]:
         (storyread.READS, "at", now - timedelta(days=cfg.stories.keep_days)),  # Gemini's read of a story that is over
         (mirror.COPIES, "at", now - timedelta(days=cfg.routing.keep_days)),  # the record of what was copied between spaces
         (mirror.QUEUE, "at", now - timedelta(days=cfg.routing.keep_days)),
+        (mirror.OWN_REPLIES, "at", now - timedelta(days=cfg.routing.keep_days)),  # the bot's replies for the source space, shown in the copy spaces
         (chatreview.ROWS, "at", now - timedelta(days=cfg.routing.keep_days)),  # the record of what was read and reviewed from Chat
         (chatdelivery.ROWS, "at", now - timedelta(days=cfg.routing.keep_days)),  # ...and of what was posted there
         (chatapi.OWN, "at", now - timedelta(days=cfg.routing.keep_days)),  # ...and of which messages the bot's account posted itself

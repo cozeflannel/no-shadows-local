@@ -137,7 +137,7 @@ def _to_space(ctx: "AgentContext", client: Any, item: "OutboxItem", doc: dict[st
     text = _text(item)
     source = mirror.is_source_target(ctx, item.target)
     if source and ctx.config.platform.routing.ask_before_source:
-        asked = mirror.send(ctx, text, origin=item.source, case_id=item.case_id or "", actor="agent")
+        asked = mirror.send(ctx, text, thread=item.thread or "", origin=item.source, case_id=item.case_id or "", actor="agent")
         if asked["status"] == "waiting":
             _close(ctx, item, doc, "waits_for_send")
         else:
@@ -156,7 +156,8 @@ def _to_space(ctx: "AgentContext", client: Any, item: "OutboxItem", doc: dict[st
         out["held"] += 1
         return
     try:
-        posted = client.post_message(space, text, key=f"outbox:{item.outbox_id}", id_prefix=chatapi.SOURCE_PREFIX if source else chatapi.OWN_PREFIX)
+        posted = client.post_message(space, text, thread=item.thread or "", key=f"outbox:{item.outbox_id}",
+                                     id_prefix=chatapi.SOURCE_PREFIX if source else chatapi.OWN_PREFIX)
     except chatapi.Refused as exc:
         _close(ctx, item, doc, "held", _plain(str(exc), space), check="routing")
         out["held"] += 1
