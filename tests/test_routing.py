@@ -40,6 +40,7 @@ class ChatWorld:
         self.members: dict[tuple[str, str], str] = {}  # (space, a person's address) -> their Chat user id, where they are a member
         self.writes: list[tuple[str, str]] = []
         self.fail_posts_to: set[str] = set()
+        self.fail_lookups_in: set[str] = set()  # spaces where Chat fails when asked who a member is
         self.refuse_custom_ids = False  # Chat taking no custom message ids from this account
         self.requests: dict[str, str] = {}  # request id -> the message it made: the same id never makes a second one
         self.n = 0
@@ -85,6 +86,8 @@ class ChatWorld:
         space = "/".join(path.split("/")[:2])
         if space not in self.spaces:
             return _Resp(403, {"error": {"message": "The caller does not have permission"}})
+        if method == "GET" and path.startswith(f"{space}/members/") and space in self.fail_lookups_in:
+            return _Resp(500, {"error": {"message": "Chat is having trouble"}})
         if method == "GET" and path.startswith(f"{space}/members/"):
             user = self.members.get((space, path.split("/members/", 1)[1]))
             return (_Resp(200, {"name": f"{space}/members/{user.split('/')[-1]}", "member": {"name": user, "type": "HUMAN"}}) if user
