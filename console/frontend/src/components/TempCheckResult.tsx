@@ -33,15 +33,18 @@ export interface TcCheck {
   own_total: number | null; keep_refreshed_until: string | null;
 }
 
-const BW = "#4285f4";       // Brandwatch is blue and our own tables are orange throughout
+const BW = "#4285f4";       // Brandwatch is Google blue and our own tables are Gemini violet throughout
 const BW_SOFT = "#c6dafc";
 const BW_PEAK = "#174ea6";
-const OURS = "#f29900";
-const OURS_SOFT = "#fde3b0";
-const OURS_PEAK = "#b06000";
+const OURS = "#9b72cb";
+const OURS_SOFT = "#dfcdf2";
+const OURS_PEAK = "#6c469c";
 const TONES = { negative: "#d93025", neutral: "#9aa0a6", positive: "#188038" };
 const TYPES: Record<string, string> = { "original posts": BW, reposts: "#9aa0a6", comments: OURS };
-const PLATFORM: Record<string, string> = { X: "#5f6368", Reddit: "#ff4500", Bluesky: "#1185fe", Instagram: "#c13584", Facebook: "#1877f2", YouTube: "#ff0000", TikTok: "#00b3a7", Threads: "#5f6368", LinkedIn: "#0a66c2" };
+// Each platform in a Google or Gemini colour (not the platforms' own colours, which include orange).
+const PLATFORM: Record<string, string> = {
+  X: "#5f6368", Threads: "#80868b", Reddit: "#d96570", YouTube: "#ea4335", Bluesky: "#7cacf8", Facebook: "#0b57d0", LinkedIn: "#0842a0", Instagram: "#9b72cb", TikTok: "#34a853",
+};
 const OTHER = "#9aa0a6";
 const PRE = "scroll-thin mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-zinc-100 p-3 font-mono text-xs text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300";
 const WHY: Record<string, string> = { spike: "the first busy hour", alert: "when the alert fired", query: "when the query was made", since: "the time you chose" };
@@ -274,7 +277,7 @@ function Tiles({ items }: { items: ({ label: string; value: ReactNode; hint?: st
 }
 
 function Warn({ children }: { children: ReactNode }) {
-  return <p className="rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-400/10 dark:text-amber-200">{children}</p>;
+  return <p className="rounded-xl bg-violet-50 px-3 py-2 text-sm text-violet-900 dark:bg-violet-400/10 dark:text-violet-200">{children}</p>;
 }
 
 function Note({ children }: { children: ReactNode }) {
@@ -451,12 +454,12 @@ export function TempCheckResult({ c, tables, canAct, web, busy, onRefresh, onKee
           ) : ownTotal > 0 ? <HoursChart hours={c.own.hours ?? []} to={c.window_to} unit="posts in our tables" ours /> : null}
           <div className="grid gap-4 lg:grid-cols-2">
             {bw && c.total > 0 && (
-              <Bars title="The two counts, piece by piece" unit="" parts={false} sub="Our tables hold posts, not reposts, so set the orange bar beside the first blue one."
+              <Bars title="The two counts, piece by piece" unit="" parts={false} sub="Our tables hold posts, not reposts, so set the violet bar beside the first blue one."
                 rows={[{ label: "Brandwatch: original posts", n: types["original posts"] ?? 0, color: BW }, { label: "Brandwatch: comments and replies", n: types.comments ?? 0, color: "#7baaf7" },
                   { label: "Brandwatch: reposts", n: types.reposts ?? 0, color: BW_SOFT }, { label: "Our tables: posts and comments", n: ownTotal, color: OURS }]} />
             )}
             <Bars title="What each of our tables found" unit="matched" parts={false} sub="Before a post that is in two tables is counted once."
-              rows={c.tables.map((t, i) => ({ label: t.skipped || t.error ? `${t.label} (skipped)` : t.label, n: t.matched ?? 0, color: [OURS, "#f6b04d", "#e37400", "#fbd08a", OURS_PEAK][i % 5] }))} />
+              rows={c.tables.map((t, i) => ({ label: t.skipped || t.error ? `${t.label} (skipped)` : t.label, n: t.matched ?? 0, color: [OURS, "#b18fd9", "#8459b8", "#c9abe6", OURS_PEAK][i % 5] }))} />
           </div>
           {!bw && (c.own.sources ?? []).length > 0 && <Bars title="Our posts by source" unit="posts" rows={topWithOther(c.own.sources, 9).map((x) => ({ ...x, color: PLATFORM[x.label] ?? OTHER }))} />}
           <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">The same numbers as a table</h3>

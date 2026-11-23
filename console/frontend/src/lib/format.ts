@@ -45,6 +45,16 @@ export function fmtTime(value: string | null | undefined): string {
   return d ? formatter("t", { hour: "numeric", minute: "2-digit" }).format(d) : "—";
 }
 
+/** "Nov 21, 3:40 PM": a moment on a timeline. The year is added when it is not this year. */
+export function fmtMoment(value: string | number | Date | null | undefined): string {
+  const d = toDate(value);
+  if (!d) return "—";
+  const year = (x: Date) => formatter("y", { year: "numeric" }).format(x);
+  return year(d) === year(new Date())
+    ? formatter("moment", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(d)
+    : formatter("moment-y", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }).format(d);
+}
+
 /** "Mon, Oct 12" */
 export function fmtDay(value: string | Date): string {
   const d = toDate(value);
@@ -89,12 +99,18 @@ export function fmtNum(n: number | null | undefined): string {
 }
 
 export function fmtCompact(n: number | null | undefined): string {
-  if (n === null || n === undefined) return "—";
+  if (n === null || n === undefined || !Number.isFinite(n)) return "—";
   return Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(n);
 }
 
 export function fmtPct(x: number | null | undefined, digits = 0): string {
-  return x === null || x === undefined ? "—" : `${(x * 100).toFixed(digits)}%`;
+  return x === null || x === undefined || !Number.isFinite(x) ? "—" : `${(x * 100).toFixed(digits)}%`;
+}
+
+/** A probability from the API as a number from 0 to 1, or null when it is missing, not a number or out of range (never NaN). */
+export function probability(value: unknown): number | null {
+  const n = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : null;
 }
 
 export function fmtValue(v: unknown): string {

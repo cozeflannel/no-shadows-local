@@ -43,10 +43,10 @@ function UnmatchedTable({ rows, empty }: { rows: { case: CaseSummary; at?: strin
           {rows.map(({ case: c, at }) => (
             <tr key={c.case_id} className={TR}>
               <td className={cx(TD, "max-w-[24rem]")}><CaseCell c={c} /></td>
-              <td className={TD}>{c.track ? <Badge tone={c.track === "URGENT" ? "rose" : "amber"}>{TRACK_LABEL[c.track] ?? c.track}</Badge> : "—"}</td>
+              <td className={TD}>{c.track ? <Badge tone={c.track === "URGENT" ? "rose" : "blue"}>{TRACK_LABEL[c.track] ?? c.track}</Badge> : "—"}</td>
               <td className={cx(TD, "text-xs")}>{c.exposure_tag ?? "—"}</td>
               <td className={cx(TD, "text-xs")}><TimeCell value={c.received_at} /></td>
-              <td className={cx(TD, "text-xs")}>{at ? <TimeCell value={at} /> : "pending"}</td>
+              <td className={cx(TD, "text-xs")}>{at ? <TimeCell value={at} /> : "not yet"}</td>
             </tr>
           ))}
         </tbody>
@@ -75,48 +75,48 @@ export default function ParityPage() {
       {loading && !data ? <Spinner /> : data && (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <Stat label="Matched" value={data.summary.matched} help="Posts alerted by both Burson and the in-house pipeline." />
-            <Stat label="Burson only" value={data.summary.burson_only} help="Burson alerts the in-house pipeline missed." tone="text-rose-600 dark:text-rose-400" />
-            <Stat label="In-house only" value={data.summary.inhouse_only} help="In-house alerts Burson didn't send." tone="text-amber-600 dark:text-amber-400" />
-            <Stat label="Recall" value={fmtPct(data.summary.recall, 1)} help="Matched ÷ (matched + Burson only)." />
-            <Stat label="Precision" value={fmtPct(data.summary.precision, 1)} help="Matched ÷ (matched + in-house only)." />
-            <Stat label="Full agreement" value={fmtPct(data.summary.full_agreement, 1)} help="Matched pairs with no field disagreements." />
+            <Stat label="Found by both" value={data.summary.matched} help="Posts alerted by both Burson and our own detection." />
+            <Stat label="Only Burson found" value={data.summary.burson_only} help="Burson alerts our own detection missed." tone="text-rose-600 dark:text-rose-400" />
+            <Stat label="Only we found" value={data.summary.inhouse_only} help="Alerts from our own detection that Burson didn't send." tone="text-violet-600 dark:text-violet-300" />
+            <Stat label="Burson's we also found" value={fmtPct(data.summary.recall, 1)} help="Of Burson's alerts, the share our own detection also found: found by both ÷ (found by both + only Burson)." />
+            <Stat label="Ours Burson also sent" value={fmtPct(data.summary.precision, 1)} help="Of our alerts, the share Burson also sent: found by both ÷ (found by both + only we found)." />
+            <Stat label="Found by both, same fields" value={fmtPct(data.summary.full_agreement, 1)} help="Of the posts found by both, the share where every compared field was the same." />
           </div>
           <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
-            <Card title="Field disagreements" subtitle="Among matched pairs">
+            <Card title="Fields that differed" subtitle="Among the posts found by both">
               <BarList color={CHART_COLORS[4]} data={data.field_disagreements.map((f) => ({ label: label(f.field), value: f.count }))} valueLabel="Pairs" />
               <ul className="mt-3 space-y-1 text-xs text-zinc-500">
-                {data.field_disagreements.map((f) => <li key={f.field}>{label(f.field)}: {fmtPct(f.rate, 1)} of matched pairs</li>)}
+                {data.field_disagreements.map((f) => <li key={f.field}>{label(f.field)}: {fmtPct(f.rate, 1)} of the posts found by both</li>)}
               </ul>
             </Card>
             <Card className="xl:col-span-2" padded={false}>
               <div className="px-5 pt-4">
                 <Tabs<Tab> value={tab} onChange={setTab} tabs={[
-                  { key: "matched", label: "Matched", count: data.matched.length },
-                  { key: "burson_only", label: "Burson only", count: data.burson_only.length },
-                  { key: "inhouse_only", label: "In-house only", count: data.inhouse_only.length },
-                  { key: "pending", label: "In match window", count: data.pending.length },
+                  { key: "matched", label: "Found by both", count: data.matched.length },
+                  { key: "burson_only", label: "Only Burson found", count: data.burson_only.length },
+                  { key: "inhouse_only", label: "Only we found", count: data.inhouse_only.length },
+                  { key: "pending", label: "Still waiting for a match", count: data.pending.length },
                 ]} />
               </div>
               {tab === "matched" && (
                 <>
                   <label className="flex items-center gap-2 px-5 pb-2 text-sm text-zinc-600 dark:text-zinc-300">
-                    <input type="checkbox" className="accent-blue-600" checked={onlyDiffs} onChange={(e) => setOnlyDiffs(e.target.checked)} /> Only pairs with disagreements
+                    <input type="checkbox" className="accent-blue-600" checked={onlyDiffs} onChange={(e) => setOnlyDiffs(e.target.checked)} /> Only posts where a field differed
                   </label>
-                  {matched.length === 0 ? <EmptyState title="No matched pairs" /> : (
+                  {matched.length === 0 ? <EmptyState title="No post was found by both" /> : (
                     <div className="scroll-thin max-h-[60vh] overflow-auto">
                       <table className="w-full min-w-[820px]">
-                        <thead><tr><th className={TH}>Burson</th><th className={TH}>In-house</th><th className={TH}>Disagreements</th><th className={TH}>Matched</th></tr></thead>
+                        <thead><tr><th className={TH}>Burson's alert</th><th className={TH}>Our alert</th><th className={TH}>What differed</th><th className={TH}>Matched</th></tr></thead>
                         <tbody>
                           {matched.map((m) => (
                             <tr key={m.case_ids.join("-")} className={TR}>
                               <td className={cx(TD, "max-w-[16rem]")}><CaseCell c={m.burson} /></td>
                               <td className={cx(TD, "max-w-[16rem]")}><CaseCell c={m.inhouse} /></td>
                               <td className={TD}>
-                                {m.diffs.length === 0 ? <Badge tone="emerald">agree</Badge> : (
+                                {m.diffs.length === 0 ? <Badge tone="emerald">The same</Badge> : (
                                   <ul className="space-y-1 text-xs">
                                     {m.diffs.map((d) => (
-                                      <li key={d.field}><span className="font-medium">{label(d.field)}</span>: <span className="text-orange-700 dark:text-orange-400">{fmtValue(d.burson)}</span> vs <span className="text-teal-700 dark:text-teal-400">{fmtValue(d.inhouse)}</span></li>
+                                      <li key={d.field}><span className="font-medium">{label(d.field)}</span>: <span className="text-violet-700 dark:text-violet-300" title="Burson's">{fmtValue(d.burson)}</span> vs <span className="text-blue-700 dark:text-blue-300" title="Ours">{fmtValue(d.inhouse)}</span></li>
                                     ))}
                                   </ul>
                                 )}
@@ -132,7 +132,7 @@ export default function ParityPage() {
               )}
               {tab === "burson_only" && <UnmatchedTable rows={data.burson_only.map((r) => ({ case: r.case, at: r.reconciled_at }))} empty="Every Burson alert was also found by us" />}
               {tab === "inhouse_only" && <UnmatchedTable rows={data.inhouse_only.map((r) => ({ case: r.case, at: r.reconciled_at }))} empty="Nothing was found only by us" />}
-              {tab === "pending" && <UnmatchedTable rows={data.pending.map((c) => ({ case: c }))} empty={`Nothing inside the ${data.match_window_hours} h match window`} />}
+              {tab === "pending" && <UnmatchedTable rows={data.pending.map((c) => ({ case: c }))} empty={`Nothing is still inside the ${data.match_window_hours} hours a match can take`} />}
             </Card>
           </div>
         </>

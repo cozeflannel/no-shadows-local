@@ -54,7 +54,7 @@ export function GmailButton() {
     const missing = (gmail.missing_scopes ?? []).map((s) => GMAIL_SCOPE_LABEL[s] ?? s).join("; ");
     return (
       <Tooltip content={`${gmail.message}${missing ? ` Missing: ${missing}.` : ""}`}>
-        <Button size="sm" icon={<MailWarning className="size-3.5 text-amber-600" />} onClick={connect}>
+        <Button size="sm" icon={<MailWarning className="size-3.5 text-violet-600 dark:text-violet-300" />} onClick={connect}>
           {isAgent ? "Reconnect agent mailbox" : "Reconnect Gmail"}
         </Button>
       </Tooltip>

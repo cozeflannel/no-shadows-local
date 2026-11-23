@@ -8,6 +8,7 @@ import { TimeCell } from "../components/common";
 import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, Input, OffNotice, PageHeader, Spinner, Tabs } from "../components/ui";
 import { useApp } from "../context";
 import { fmtTime } from "../lib/format";
+import { humanize } from "../lib/labels";
 
 interface Post { url: string; platform: string; author: string; text: string; posted: string }
 interface Scores { about: number; risk: number; independent: number; noise: number; category: string; severity: number; level: number; confidence: number }
@@ -27,7 +28,7 @@ interface Early {
 type Tab = "new" | "queued" | "acted" | "held" | "dismissed";
 const IN_TAB: Record<Tab, string[]> = { new: ["new"], queued: ["queued", "failed"], acted: ["acknowledged", "escalated"], held: ["held"], dismissed: ["dismissed"] };
 const KIND: Record<Signal["kind"], string> = { story: "New story", update: "Update", early: "Early signal" };
-const SEVERITY_TONE: Record<string, "zinc" | "amber" | "rose" | "blue"> = { none: "zinc", low: "zinc", medium: "amber", high: "rose", critical: "rose" };
+const SEVERITY_TONE: Record<string, "zinc" | "violet" | "rose" | "blue"> = { none: "zinc", low: "zinc", medium: "violet", high: "rose", critical: "rose" };
 const SCORES: { key: "about" | "risk" | "independent" | "noise"; label: string }[] = [
   { key: "about", label: "About the company" }, { key: "risk", label: "A risk to the brand" },
   { key: "independent", label: "First-hand, separate accounts" }, { key: "noise", label: "Routine chatter" },
@@ -55,8 +56,8 @@ function Story({ signal, canAct, onDone }: { signal: Signal; canAct: boolean; on
     <Card>
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={signal.kind === "early" ? "blue" : "zinc"}>{KIND[signal.kind]}</Badge>
-        {r && <Badge tone={r.call === "escalate" ? "rose" : r.call === "monitor" ? "amber" : "zinc"}>{r.call === "escalate" ? "Escalate" : r.call === "monitor" ? "Monitor" : "Dismiss"}</Badge>}
-        {r && <Badge tone={SEVERITY_TONE[r.severity] ?? "zinc"}>{r.severity}</Badge>}
+        {r && <Badge tone={r.call === "escalate" ? "rose" : r.call === "monitor" ? "violet" : "zinc"}>{r.call === "escalate" ? "Escalate" : r.call === "monitor" ? "Monitor" : "Dismiss"}</Badge>}
+        {r && r.severity && <Badge tone={SEVERITY_TONE[r.severity] ?? "zinc"} title="How serious Gemini judged it">{humanize(r.severity)} severity</Badge>}
         {r?.exposure_tag && <Badge>{r.exposure_tag}</Badge>}
         <span className="ml-auto text-sm text-zinc-500"><TimeCell value={signal.raised} /></span>
       </div>
@@ -66,7 +67,7 @@ function Story({ signal, canAct, onDone }: { signal: Signal; canAct: boolean; on
       </p>
       {r?.story && <p className="mt-3 text-sm text-zinc-800 dark:text-zinc-200">{r.story}</p>}
       {r?.why && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{r.why}</p>}
-      {signal.held_why && <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">Held back: {signal.held_why}.</p>}
+      {signal.held_why && <p className="mt-2 text-sm text-violet-800 dark:text-violet-300">Held back: {signal.held_why}.</p>}
       {signal.status === "failed" && <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{signal.note}</p>}
       {r && r.next_steps.length > 0 && (
         <ul className="mt-3 list-disc pl-5 text-sm text-zinc-700 dark:text-zinc-300">{r.next_steps.map((s) => <li key={s}>{s}</li>)}</ul>
@@ -87,7 +88,7 @@ function Story({ signal, canAct, onDone }: { signal: Signal; canAct: boolean; on
         ))}
       </ul>
       {signal.items.length > 3 && <button type="button" className="mt-2 text-sm font-medium text-blue-700 dark:text-blue-400" onClick={() => setOpen(!open)}>{open ? "Show fewer posts" : `Show all ${signal.items.length} posts`}</button>}
-      {signal.by && <p className="mt-3 text-sm text-zinc-500">{signal.status} by {signal.by}{signal.note ? `: ${signal.note}` : ""}</p>}
+      {signal.by && <p className="mt-3 text-sm text-zinc-500">{humanize(signal.status)} by {signal.by}{signal.note ? `: ${signal.note}` : ""}</p>}
       {canAct && ["new", "acknowledged"].includes(signal.status) && (
         <div className="mt-4 border-t border-zinc-100 pt-4 dark:border-zinc-800">
           <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="A note for the record (optional)" aria-label="Note" />
@@ -133,11 +134,11 @@ export default function EarlyPage() {
         )} />
       {!data.state.on && <OffNotice what="Early Detection" flag="early_detection">Nothing is read while it is off.</OffNotice>}
       {data.state.on && data.state.named_sources.length === 0 && (
-        <Alert tone="amber" className="mb-4" title="No post table is named">Name the tables to read under <Link className="font-medium underline" to="/settings/early">Settings, Early Detection</Link>.</Alert>
+        <Alert tone="violet" className="mb-4" title="No table of posts is named">Name the tables to read under <Link className="font-medium underline" to="/settings/early">Settings, Early Detection</Link>.</Alert>
       )}
       {failing.map((s) => <Alert key={s.key} tone="rose" className="mb-4" title={`${s.label} could not be read`}>{s.error}</Alert>)}
       {waiting.map((s) => (
-        <Alert key={s.key} tone="amber" className="mb-4" title={`${s.label} is waiting for access`}>
+        <Alert key={s.key} tone="violet" className="mb-4" title={`${s.label} is waiting for access`}>
           It is skipped until its owners let the Console read it, and the other tables are read as usual. The statement to send them is under <Link className="font-medium underline" to="/connections/bigquery">Integrations, BigQuery</Link>.
         </Alert>
       ))}

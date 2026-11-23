@@ -9,6 +9,7 @@ import type { TcCheck } from "../components/TempCheckResult";
 import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, OffNotice, PageHeader, Spinner } from "../components/ui";
 import { useApp } from "../context";
 import { fmtDateTime, fmtNum } from "../lib/format";
+import { humanize } from "../lib/labels";
 
 // The result tabs carry the charts, so they load when a temp check is opened, not with the Console.
 const TempCheckResult = lazy(() => import("../components/TempCheckResult").then((m) => ({ default: m.TempCheckResult })));
@@ -22,8 +23,10 @@ interface ListResponse {
   auto: { started_today: number; daily_limit: number };
 }
 
-const STATUS_TONE: Record<string, "emerald" | "rose" | "amber" | "blue" | "zinc"> = { complete: "emerald", failed: "rose", query_not_confirmed: "amber", running: "blue", empty: "zinc" };
-const LEVEL_TONE: Record<string, "rose" | "amber" | "emerald" | "zinc"> = { HIGH: "rose", "MODERATELY HIGH": "rose", MODERATE: "amber", "MODERATELY LOW": "emerald", LOW: "emerald" };
+const STATUS_TONE: Record<string, "emerald" | "rose" | "violet" | "blue" | "zinc"> = { complete: "emerald", failed: "rose", query_not_confirmed: "violet", running: "blue", empty: "zinc" };
+const STATUS_LABEL: Record<string, string> = { complete: "Done", failed: "Failed", query_not_confirmed: "Query needs work", running: "Running", empty: "Nothing matched" };
+const LEVEL_TONE: Record<string, "rose" | "violet" | "emerald" | "zinc"> = { HIGH: "rose", "MODERATELY HIGH": "rose", MODERATE: "violet", "MODERATELY LOW": "emerald", LOW: "emerald" };
+const statusLabel = (s: string) => STATUS_LABEL[s] ?? humanize(s);
 
 function CheckView({ id, canAct, web, tables }: { id: string; canAct: boolean; web: boolean; tables: FormInfo["tables"] }) {
   const { toast } = useApp();
@@ -63,7 +66,7 @@ function CheckView({ id, canAct, web, tables }: { id: string; canAct: boolean; w
         <div className="min-w-0">
           <h1 className="text-[1.75rem] font-medium leading-tight tracking-tight">{c.issue || c.title}</h1>
           <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-            <Badge tone={STATUS_TONE[c.status] ?? "zinc"}>{c.status === "empty" ? "nothing matched" : c.status.replace(/_/g, " ")}</Badge>{c.check_id}<span>by {c.requested_by}</span>
+            <Badge tone={STATUS_TONE[c.status] ?? "zinc"}>{statusLabel(c.status)}</Badge>{c.check_id}<span>by {c.requested_by}</span>
             <span>{c.basis === "own" ? "from our own tables" : c.basis === "brandwatch" ? (c.standing ? "from Brandwatch's standing queries" : "from Brandwatch") : c.basis}</span>
             {c.concern_level && <Badge tone={LEVEL_TONE[c.concern_level.toUpperCase()] ?? "zinc"}>{c.concern_level}</Badge>}
             {c.case_id && <Link to={`/feed/${c.case_id}`} className="text-blue-600 dark:text-blue-200">{c.case_id}</Link>}
@@ -76,7 +79,7 @@ function CheckView({ id, canAct, web, tables }: { id: string; canAct: boolean; w
         </div>
       </div>
       {c.status === "failed" && <Alert tone="rose" title="This temp check failed">{c.error}</Alert>}
-      {c.status === "query_not_confirmed" && <Alert tone="amber" title="The drafted query mostly finds other posts, so no count is given">
+      {c.status === "query_not_confirmed" && <Alert tone="violet" title="The drafted query mostly finds other posts, so no count is given">
         {rel ? `${rel.about} of the ${rel.read} posts read were about this issue. ` : ""}Edit the query below and run it again.
       </Alert>}
       {!counted && c.notes.map((n) => <Alert key={n} tone="blue">{n}</Alert>)}
@@ -89,7 +92,7 @@ function CheckView({ id, canAct, web, tables }: { id: string; canAct: boolean; w
         <Card title="History">
           <ul className="space-y-1 text-xs text-zinc-500">
             {data.related.filter((r) => r.check_id !== c.check_id).map((r) => <li key={r.check_id}><Link className="text-blue-600 dark:text-blue-200" to={`/temp-check/${r.check_id}`}>{r.check_id}</Link> {fmtDateTime(r.created_at)}: {fmtNum(r.total)} {r.basis === "own" ? "posts" : "mentions"} {r.concern_level}</li>)}
-            {c.actions.map((a, i) => <li key={i}>{fmtDateTime(a.at)}: {a.action} by {a.actor}{a.note ? ` (${a.note})` : ""}</li>)}
+            {c.actions.map((a, i) => <li key={i}>{fmtDateTime(a.at)}: {humanize(a.action)} by {a.actor}{a.note ? ` (${a.note})` : ""}</li>)}
           </ul>
         </Card>
       )}
@@ -118,7 +121,7 @@ export default function TempCheckPage() {
       <ErrorState error={list.error} onRetry={list.reload} />
       {list.data && !list.data.enabled && <OffNotice what="Temp check" flag="temp_checks" />}
       {s && !s.brandwatch && s.sources.filter((x) => x.enabled).length === 0 && (
-        <Alert tone="amber" className="mb-4" title="Nothing to count from yet">Add the Brandwatch project and token, or a table of posts, in <Link className="font-medium underline" to="/settings/temp_check">Settings, Temp check</Link>.</Alert>
+        <Alert tone="violet" className="mb-4" title="Nothing to count from yet">Add the Brandwatch project and token, or a table of posts, in <Link className="font-medium underline" to="/settings/temp_check">Settings, Temp check</Link>.</Alert>
       )}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(340px,420px)_minmax(0,1fr)]">
         <div className={cx("min-w-0 space-y-5", checkId && "order-last lg:order-none")}>
@@ -135,7 +138,7 @@ export default function TempCheckPage() {
                       className={cx("block px-5 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/40", c.check_id === checkId && "bg-blue-50 dark:bg-blue-500/10")}>
                       <span className="flex items-start justify-between gap-2">
                         <span className="min-w-0 text-sm font-medium text-zinc-900 dark:text-zinc-100">{c.title || c.issue || c.check_id}</span>
-                        {c.status !== "complete" && <Badge tone={STATUS_TONE[c.status] ?? "zinc"} className="shrink-0">{c.status === "empty" ? "nothing matched" : c.status.replace(/_/g, " ")}</Badge>}
+                        {c.status !== "complete" && <Badge tone={STATUS_TONE[c.status] ?? "zinc"} className="shrink-0">{statusLabel(c.status)}</Badge>}
                       </span>
                       <span className="mt-0.5 block text-xs text-zinc-500">{pastLine(c)}</span>
                     </Link>

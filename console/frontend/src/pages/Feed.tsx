@@ -5,9 +5,10 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { apiSend, type ApiError } from "../api/client";
 import { useApi } from "../api/hooks";
 import type { ActionDef } from "../api/types";
-import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, Field, Input, Modal, PageHeader, Segmented, Select, Spinner, StatusBadge, Textarea, VerdictBadge } from "../components/ui";
+import { Alert, Badge, Button, Card, CaseBadges, cx, EmptyState, ErrorState, Field, Input, Modal, PageHeader, Segmented, Select, Spinner, Textarea } from "../components/ui";
 import { useApp } from "../context";
-import { fmtDateTime, fmtMinutes, fmtRelative, fmtValue } from "../lib/format";
+import { fmtDateTime, fmtMinutes, fmtRelative, fmtValue, probability } from "../lib/format";
+import { humanize, plainReason, suppressionLabel, TARGET_LABEL, verdictLabel } from "../lib/labels";
 import { useLive } from "../lib/live";
 
 type View = "action" | "review" | "verified" | "suppressed" | "closed" | "all";
@@ -17,13 +18,14 @@ interface Kept { kept: number; of: number; rate: number }
 interface FeedCard {
   case_id: string; status: string; alert_name: string | null; issue_name: string | null; product: string | null; exposure_tag: string | null;
   priority: string | null; platform: string | null; verdict: string | null; review_probability: number | null; burson: Burson | null; needs: string; waiting_min: number;
-  classification: { label: string; probability: number | null; rationale: string; trusted: boolean; decided_by: string } | null;
+  classification: { label: string; probability?: unknown; rationale: string; trusted: boolean; decided_by: string } | null;  // probability: older cases may lack it
   field_agreement: { days: number; assessments: number; fields: Record<string, Kept> };
   citations: { ref: string; title: string; link: string; kind: string; excerpt: string }[];
   proposed_actions: { code: string; label: string; kind: string }[];
   actions_taken: { code: string; actor: string; at: string; note: string | null; escalation_id: string | null }[];
   applied_corrections: Correction[]; proposed_corrections: Correction[];
   review_reasons: string[]; post_url: string | null; author: string | null; latest_received_at: string; acknowledged_at: string | null;
+  review_reasons_plain?: string[]; suppression_label?: string | null;  // the same two, in words (the server writes them)
   sla_due_at: string | null; ts_recommended: boolean; suppression_reason: string | null;
   normalized?: Record<string, unknown>;
   issue_list?: { field: string | null; rule: string; severity: string; found: unknown; expected: unknown; fix: string | null }[];
@@ -37,10 +39,24 @@ const VIEWS: { value: View; label: string }[] = [
   { value: "action", label: "Needs action" }, { value: "review", label: "Review" }, { value: "verified", label: "Verified" },
   { value: "suppressed", label: "Suppressed" }, { value: "closed", label: "Closed" }, { value: "all", label: "All" },
 ];
-const NEEDS: Record<string, { label: string; tone: "rose" | "amber" | "blue" }> = {
-  sla: { label: "SLA at risk", tone: "rose" }, review: { label: "Needs review", tone: "amber" },
-  acknowledge: { label: "To acknowledge", tone: "blue" }, source_fix: { label: "Waiting on source", tone: "amber" },
-};
+const SEVERITY: Record<string, { label: string; tone: "rose" | "violet" }> = { blocking: { label: "Must fix", tone: "rose" }, warning: { label: "Check", tone: "violet" } };
+
+/** Why the alert was held, as sentences. The server sends them in words; plainReason covers older data. */
+function heldReasons(c: FeedCard, label: (field: string) => string): string[] {
+  return c.review_reasons_plain?.length ? c.review_reasons_plain : c.review_reasons.map((r) => plainReason(r, label));
+}
+
+/** How the alert was classified, with Gemini Decisions' probability when there is a real one (never "NaN%"). */
+function ClassLine({ c }: { c: NonNullable<FeedCard["classification"]> }) {
+  const p = probability(c.probability);
+  return (
+    <p className="mb-3 text-sm text-zinc-700 dark:text-zinc-300">
+      <span className="font-medium text-zinc-900 dark:text-zinc-100">Class: {c.label || "none"}</span>
+      {p !== null && <span className="mx-2 text-zinc-500" title={`${c.decided_by || "Gemini Decisions"}' probability for this class`}>{Math.round(p * 100)}% sure</span>}
+      {" "}{c.rationale}
+    </p>
+  );
+}
 
 function useRun(onDone: (card: FeedCard | null) => void) {
   const { toast } = useApp();
@@ -62,21 +78,21 @@ function useRun(onDone: (card: FeedCard | null) => void) {
 }
 
 function CardRow({ card, selected, onOpen }: { card: FeedCard; selected: boolean; onOpen: () => void }) {
-  const need = NEEDS[card.needs];
   return (
     <button type="button" onClick={onOpen} aria-current={selected}
       className={cx("block w-full rounded-2xl border p-4 text-left transition-colors",
         selected ? "border-blue-400 bg-blue-50/60 dark:border-blue-300/60 dark:bg-blue-200/10" : "border-zinc-200 bg-white hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800/60",
         card.needs === "sla" && !selected && "glow border-transparent dark:border-transparent")}>
       <div className="flex flex-wrap items-center gap-1.5">
-        {need && <Badge tone={need.tone}>{need.label}</Badge>}
-        <VerdictBadge verdict={card.verdict} />
+        <CaseBadges status={card.status} verdict={card.verdict} need={card.needs} />
         {card.priority && <Badge tone="zinc">{card.priority}</Badge>}
         <span className="ml-auto text-xs tabular-nums text-zinc-500">{card.needs ? `waiting ${fmtMinutes(card.waiting_min)}` : fmtRelative(card.latest_received_at)}</span>
       </div>
-      <p className="mt-2 line-clamp-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">{card.alert_name || card.issue_name || card.case_id}</p>
+      <p className={cx("mt-2 line-clamp-2 text-sm font-medium", card.alert_name || card.issue_name ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-500 dark:text-zinc-400")}>
+        {card.alert_name || card.issue_name || "No alert name yet"}
+      </p>
       <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
-        <span>{card.case_id}</span>{card.product && <span>{card.product}</span>}{card.exposure_tag && <span className="truncate">{card.exposure_tag}</span>}
+        <span>{card.case_id}</span>{card.platform && <span>{card.platform}</span>}{card.product && <span>{card.product}</span>}{card.exposure_tag && <span className="truncate">{card.exposure_tag}</span>}
         {card.classification && <span>Class: {card.classification.label}</span>}
         <Numbers burson={card.burson} review={card.review_probability} />
       </p>
@@ -108,22 +124,20 @@ function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legen
 
   return (
     <div className="space-y-4">
-      <Card title={<span className="flex flex-wrap items-center gap-2">{c.case_id}<StatusBadge status={c.status} /><VerdictBadge verdict={c.verdict} /></span>}
+      <Card title={<span className="flex flex-wrap items-center gap-2">{c.case_id}<CaseBadges status={c.status} verdict={c.verdict} need={c.needs} /></span>}
         subtitle={c.alert_name || c.issue_name || undefined}
         actions={<>
           {c.post_url && <a href={c.post_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 dark:text-blue-200">Post<ExternalLink className="size-3" /></a>}
           <Link to={`/cases/${c.case_id}`} className="text-xs font-medium text-blue-600 dark:text-blue-200">Full case</Link>
         </>}>
         <p className="mb-3 flex flex-wrap gap-x-3 gap-y-1 text-sm text-zinc-700 dark:text-zinc-300"><Numbers burson={c.burson} review={c.review_probability} long /></p>
-        {c.classification && (
-          <p className="mb-3 text-sm text-zinc-700 dark:text-zinc-300">
-            <span className="font-medium text-zinc-900 dark:text-zinc-100">Class: {c.classification.label}</span>
-            {c.classification.probability !== null && <span className="mx-2 text-zinc-500">{Math.round(c.classification.probability * 100)}% (Gemini Decisions)</span>}
-            {" "}{c.classification.rationale}
-          </p>
+        {c.classification && <ClassLine c={c.classification} />}
+        {c.review_reasons.length > 0 && (
+          <Alert tone="violet" title="Why it was held for review" className="mb-3">
+            <ul className="list-disc space-y-0.5 pl-4">{heldReasons(c, label).map((r, i) => <li key={i}>{r}</li>)}</ul>
+          </Alert>
         )}
-        {c.review_reasons.length > 0 && <Alert tone="amber" title="Why it was held" className="mb-3"><ul className="list-disc pl-4">{c.review_reasons.map((r) => <li key={r}>{r}</li>)}</ul></Alert>}
-        {c.suppression_reason && <Alert tone="blue" title="Suppressed" className="mb-3">{c.suppression_reason}</Alert>}
+        {c.status === "SUPPRESSED" && <Alert tone="blue" title="Why it was not posted" className="mb-3">{c.suppression_label || suppressionLabel(c.suppression_reason)}</Alert>}
         <pre className="scroll-thin max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-zinc-100 p-3 font-sans text-sm leading-relaxed text-zinc-800 dark:bg-zinc-950 dark:text-zinc-200">{c.alert_text}</pre>
       </Card>
 
@@ -137,7 +151,7 @@ function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legen
                     onChange={(e) => setAccept((a) => ({ ...a, [p.field]: e.target.checked }))} aria-label={`Apply the proposed ${label(p.field)}`} />
                   <span className="min-w-0 flex-1">
                     <span className="font-medium text-zinc-900 dark:text-zinc-100">{label(p.field)}</span>: <span className="text-zinc-500 line-through">{fmtValue(p.old)}</span> to <span className="font-medium">{fmtValue(p.new)}</span>
-                    <span className="ml-2 text-xs text-zinc-500">{p.confidence !== null ? `${Math.round(p.confidence * 100)}% likely right (Gemini Decisions)` : "no probability: your call"}</span>
+                    <span className="ml-2 text-xs text-zinc-500">{probability(p.confidence) !== null ? `${Math.round((probability(p.confidence) ?? 0) * 100)}% likely right` : "no likelihood given: your call"}</span>
                     <span className="block text-xs text-zinc-500">{p.reason}</span>
                   </span>
                 </li>
@@ -164,7 +178,7 @@ function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legen
               onClick={() => run(a.code, "post", `/feed/${c.case_id}/action`, { action: a.code }, a.label)}>{a.label}</Button>
           ))}
         </div>
-        {c.ts_recommended && <p className="mt-3 text-xs text-amber-600 dark:text-amber-300">A Trust & Safety escalation is recommended for this alert.</p>}
+        {c.ts_recommended && <p className="mt-3 text-xs text-violet-700 dark:text-violet-300">A Trust & Safety escalation is recommended for this alert.</p>}
         {c.actions_taken.length > 0 && (
           <ul className="mt-4 space-y-1 border-t border-zinc-100 pt-3 text-xs text-zinc-500 dark:border-zinc-800">
             {c.actions_taken.map((a, i) => <li key={i}>{fmtDateTime(a.at)}: {legend.find((l) => l.code === a.code)?.label ?? a.code} by {a.actor}{a.note ? ` (${a.note})` : ""}</li>)}
@@ -182,7 +196,7 @@ function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legen
                 <td className="break-words px-2 py-2 align-top text-zinc-800 dark:text-zinc-200">{fmtValue(v)}</td>
                 <td className="w-40 px-5 py-2 text-right align-top text-xs text-zinc-500">
                   {c.burson?.wrong.includes(f) && <Badge tone="rose">Burson had it wrong</Badge>}
-                  {c.burson?.in_question.includes(f) && <Badge tone="amber">In question</Badge>}
+                  {c.burson?.in_question.includes(f) && <Badge tone="violet">In question</Badge>}
                   {c.field_agreement.fields[f] && <span className="block tabular-nums">kept {c.field_agreement.fields[f].kept} of {c.field_agreement.fields[f].of}</span>}
                 </td>
               </tr>
@@ -203,7 +217,9 @@ function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legen
               </li>
             ))}
             {c.issue_list?.map((i, n) => (
-              <li key={`i-${n}`} className="text-zinc-700 dark:text-zinc-300"><Badge tone={i.severity === "blocking" ? "rose" : "amber"}>{i.severity}</Badge> {i.field ? `${label(i.field)}: ` : ""}{i.fix || i.rule}</li>
+              <li key={`i-${n}`} className="text-zinc-700 dark:text-zinc-300">
+                <Badge tone={SEVERITY[i.severity]?.tone ?? "violet"}>{SEVERITY[i.severity]?.label ?? humanize(i.severity)}</Badge> {i.field ? `${label(i.field)}: ` : ""}{i.fix || humanize(i.rule)}
+              </li>
             ))}
           </ul>
         </Card>
@@ -214,7 +230,7 @@ function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legen
           <ul className="space-y-3 text-sm">
             {c.citations.map((k) => (
               <li key={k.ref}>
-                <p className="font-medium text-zinc-900 dark:text-zinc-100">{k.link ? <a className="text-blue-600 underline-offset-2 hover:underline dark:text-blue-200" href={k.link} target="_blank" rel="noreferrer">{k.title}</a> : k.title} <span className="text-xs font-normal text-zinc-500">{k.ref}</span></p>
+                <p className="font-medium text-zinc-900 dark:text-zinc-100" title={k.ref}>{k.link ? <a className="text-blue-600 underline-offset-2 hover:underline dark:text-blue-200" href={k.link} target="_blank" rel="noreferrer">{k.title}</a> : k.title}</p>
                 <p className="mt-0.5 text-xs text-zinc-500">{k.excerpt}</p>
               </li>
             ))}
@@ -224,12 +240,12 @@ function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legen
 
       <Card title="Was the agent right?" subtitle="Your answer is kept as an example the agent is checked against.">
         {c.golden?.assessments.map((a, i) => (
-          <p key={i} className="mb-2 text-xs text-zinc-500">{fmtDateTime(a.at)}: {a.actor} {a.agree ? "agreed" : `disagreed${a.verdict ? ` (should be ${a.verdict})` : ""}`}{a.note ? `: ${a.note}` : ""}</p>
+          <p key={i} className="mb-2 text-xs text-zinc-500">{fmtDateTime(a.at)}: {a.actor} {a.agree ? "agreed" : `disagreed${a.verdict ? ` (should be ${verdictLabel(a.verdict)})` : ""}`}{a.note ? `: ${a.note}` : ""}</p>
         ))}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_12rem]">
           <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="What was wrong, or a note" disabled={!canAct} aria-label="Note" />
           <Select value={verdict} onChange={(e) => setVerdict(e.target.value)} disabled={!canAct} aria-label="Correct verdict">
-            <option value="">Correct verdict (if wrong)</option>{verdicts.map((v) => <option key={v} value={v}>{v.replace("_", " ")}</option>)}
+            <option value="">What it should have been (if wrong)</option>{verdicts.map((v) => <option key={v} value={v}>{verdictLabel(v)}</option>)}
           </Select>
         </div>
         <div className="mt-3 flex gap-2">
@@ -244,7 +260,11 @@ function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legen
           <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
             {c.chat!.map((m) => (
               <li key={m.activity_id} className="px-5 py-3 text-sm">
-                <p className="flex flex-wrap items-center gap-2 text-xs text-zinc-500"><Badge tone={m.direction === "inbound" ? "blue" : "violet"}>{m.direction === "inbound" ? "in" : "out"}</Badge>{m.space_key}<span>{m.actor}</span><span>{fmtDateTime(m.ts)}</span>{m.status !== "returned" && m.status !== "received" && <Badge tone={m.status === "held" ? "rose" : "zinc"}>{m.status}</Badge>}</p>
+                <p className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                  <Badge tone={m.direction === "inbound" ? "blue" : "zinc"}>{m.direction === "inbound" ? "Received" : "Sent"}</Badge>
+                  {m.space_key && <span>{TARGET_LABEL[m.space_key] ?? humanize(m.space_key)}</span>}<span>{m.actor}</span><span>{fmtDateTime(m.ts)}</span>
+                  {m.status !== "returned" && m.status !== "received" && <Badge tone={m.status === "held" ? "rose" : "zinc"}>{humanize(m.status)}</Badge>}
+                </p>
                 <p className="mt-1 line-clamp-4 whitespace-pre-wrap break-words text-zinc-700 dark:text-zinc-300">{m.kind === "reaction" ? `Reaction ${m.emoji ?? ""}` : m.text}</p>
               </li>
             ))}
@@ -256,7 +276,8 @@ function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legen
 }
 
 /** The two real numbers for an alert: Burson's fields counted against the checks, and Gemini Decisions' chance it needs a person. */
-function Numbers({ burson, review, long = false }: { burson: Burson | null; review: number | null; long?: boolean }) {
+function Numbers({ burson, review: raw, long = false }: { burson: Burson | null; review: number | null; long?: boolean }) {
+  const review = probability(raw);
   return (
     <>
       {burson && burson.pct !== null && (
@@ -325,7 +346,7 @@ export default function FeedPage() {
           {caseId ? <>
             <button type="button" onClick={() => navigate(`/feed${search.toString() ? `?${search}` : ""}`)} className="mb-3 inline-flex items-center gap-1 text-sm text-blue-600 xl:hidden dark:text-blue-200"><ArrowLeft className="size-4" />Back to the feed</button>
             <Detail key={caseId} caseId={caseId} legend={list.data?.legend ?? []} verdicts={list.data?.verdicts ?? []} onChanged={changed} />
-          </> : <Card><EmptyState title="Pick an alert">Its classification, the measured numbers, citations and actions open here.</EmptyState></Card>}
+          </> : <Card><EmptyState title="Pick an alert">What the agent found, why, and what you can do about it open here.</EmptyState></Card>}
         </div>
       </div>
       <Modal open={intake} title="Triage an alert" onClose={() => setIntake(false)} wide

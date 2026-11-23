@@ -1,18 +1,20 @@
 import { CircleX, ExternalLink } from "lucide-react";
 import { useCallback, useState } from "react";
+import { Link } from "react-router";
 
 import { apiSend } from "../api/client";
 import { useApi } from "../api/hooks";
 import type { CaseDetail, CaseSummary, OpResult } from "../api/types";
 import { useApp } from "../context";
 import { fmtDateTime } from "../lib/format";
-import { SOURCE_LABEL } from "../lib/labels";
+import { humanize, SOURCE_LABEL } from "../lib/labels";
 import { AssessmentPanel, AttemptsList, CorrectionsTable, IssuesList, RoutingPlan } from "./CaseSections";
 import { CaseLink, EventRow } from "./common";
 import { EscalationView } from "./EscalationView";
-import { Alert, Badge, Button, Card, Drawer, ErrorState, Field, KV, Modal, Spinner, StatusBadge, Tabs, Textarea, VerdictBadge } from "./ui";
+import { Alert, Badge, Button, Card, CaseBadges, Details, Drawer, ErrorState, Field, KV, Modal, Spinner, StatusBadge, Tabs, Textarea } from "./ui";
 
 type Tab = "overview" | "attempts" | "escalations" | "timeline";
+const DECISION: Record<string, string> = { forward: "Sent on", bounce: "Sent back to Burson", suppress: "Suppressed" };
 
 function Linked({ label, c }: { label: string; c: CaseSummary | null }) {
   if (!c) return null;
@@ -20,7 +22,7 @@ function Linked({ label, c }: { label: string; c: CaseSummary | null }) {
 }
 
 export function CaseDrawer({ caseId, onClose, onChanged }: { caseId: string | null; onClose: () => void; onChanged?: () => void }) {
-  const { me, toast, refreshCounts } = useApp();
+  const { me, meta, toast, refreshCounts } = useApp();
   const { data, error, loading, reload } = useApi<CaseDetail>(caseId ? `/cases/${caseId}` : null);
   const [tab, setTab] = useState<Tab>("overview");
   const [busyField, setBusyField] = useState<string | null>(null);
@@ -76,9 +78,8 @@ export function CaseDrawer({ caseId, onClose, onChanged }: { caseId: string | nu
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-sm font-semibold">{c.case_id}</span>
-            <StatusBadge status={c.status} />
-            <VerdictBadge verdict={latest?.result.verdict} />
-            <Badge tone="slate">{SOURCE_LABEL[c.source] ?? c.source}</Badge>
+            <CaseBadges status={c.status} verdict={latest?.result.verdict} />
+            <Badge tone="zinc">{SOURCE_LABEL[c.source] ?? humanize(c.source)}</Badge>
           </div>
           <h2 className="mt-1 truncate text-base font-semibold text-zinc-950 dark:text-zinc-50" title={c.alert_name ?? ""}>{c.alert_name ?? "Alert"}</h2>
           <div className="mt-1 flex flex-wrap gap-3">
@@ -92,7 +93,7 @@ export function CaseDrawer({ caseId, onClose, onChanged }: { caseId: string | nu
         {s?.post_url && <a href={s.post_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950">View post <ExternalLink className="size-3" /></a>}
         {data?.can_close && (
           <Button size="sm" variant="danger" icon={<CircleX className="size-3.5" />} disabled={!canAct || data.operations.close_case === false}
-            title={!canAct ? "Needs an analyst / IM role" : data.operations.close_case === false ? "close_case isn't available yet" : "Close this case"}
+            title={!canAct ? "Needs an analyst or IM role" : data.operations.close_case === false ? "Closing a case isn't available yet" : "Close this case"}
             onClick={() => setCloseOpen(true)}>Close</Button>
         )}
       </>}
@@ -108,36 +109,47 @@ export function CaseDrawer({ caseId, onClose, onChanged }: { caseId: string | nu
           ]} />
           {tab === "overview" && (
             <div className="space-y-4">
-              {c.status === "NEEDS_REVIEW" && <Alert tone="amber" title="Waiting for the IM's decision">Decide in the Review queue (forward, bounce or suppress).</Alert>}
-              {c.status === "FAILED" && <Alert tone="rose" title="Waiting on Burson">Bounced to {c.current_oncall_email ?? "the Burson on-call"} for a corrected rerun.</Alert>}
+              {c.status === "NEEDS_REVIEW" && (
+                <Alert tone="violet" title="Waiting for an IM's decision">
+                  Decide in the <Link className="font-medium underline" to={`/feed/${c.case_id}`}>Review feed</Link>: send it on, send it back to Burson, or suppress it.
+                </Alert>
+              )}
+              {c.status === "FAILED" && <Alert tone="rose" title="Waiting on Burson">Sent back to {c.current_oncall_email ?? "the Burson on-call"} to fix and send again.</Alert>}
               <Card title="Summary">
                 <KV cols={3} items={[
                   ["Received", fmtDateTime(s.received_at)],
-                  ["Record key", <span className="break-all font-mono text-xs">{c.record_key ?? "—"}</span>],
-                  ["Source ref", c.source_ref ?? "—"],
-                  ["Posted to clean space", fmtDateTime(c.clean_posted_at)],
+                  ["Posted to the clean space", fmtDateTime(c.clean_posted_at)],
                   ["Acknowledged", fmtDateTime(c.acknowledged_at)],
                   ["SLA", c.sla_due_at ? `${fmtDateTime(c.sla_due_at)}${c.sla_met === true ? " · met" : c.sla_met === false ? " · missed" : ""}` : "No SLA"],
-                  ["On-call notices", c.oncall_notices.length ? c.oncall_notices.map((n) => `${n.kind} → ${n.to_email ?? "—"}`).join("; ") : "—"],
-                  ["Review", c.review ? `${c.review.decision} by ${c.review.decided_by}${c.review.reason ? `: ${c.review.reason}` : ""}` : "—"],
+                  ["On-call told", c.oncall_notices.length ? c.oncall_notices.map((n) => `${n.to_email ?? "—"} (${humanize(n.kind).toLowerCase()})`).join("; ") : "—"],
+                  ["IM decision", c.review ? `${DECISION[c.review.decision] ?? humanize(c.review.decision)} by ${c.review.decided_by}${c.review.reason ? `: ${c.review.reason}` : ""}` : "—"],
                   ["Closed", c.closed_reason ?? "—"],
                 ]} />
                 {c.actions.length > 0 && (
                   <div className="mt-4">
                     <p className="mb-1.5 text-xs font-medium text-zinc-500">IM actions</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {c.actions.map((x, i) => <Badge key={i} tone="teal" title={`${x.actor} · ${fmtDateTime(x.at)}${x.note ? ` · ${x.note}` : ""}`}>{x.emoji} {x.code}</Badge>)}
+                      {c.actions.map((x, i) => {
+                        const act = meta?.actions.find((d) => d.code === x.code);
+                        return <Badge key={i} tone="emerald" title={`${x.actor} · ${fmtDateTime(x.at)}${x.note ? ` · ${x.note}` : ""}`}>{x.emoji} {act?.label ?? humanize(x.code)}</Badge>;
+                      })}
                     </div>
                   </div>
                 )}
+                <Details summary="Record details" className="mt-4">
+                  <KV cols={2} items={[
+                    ["Record key", <span className="break-all font-mono text-xs">{c.record_key ?? "—"}</span>],
+                    ["Source reference", <span className="break-all font-mono text-xs">{c.source_ref ?? "—"}</span>],
+                  ]} />
+                </Details>
               </Card>
               {a && <Card title="Assessment"><AssessmentPanel a={a} /></Card>}
-              <Card title="Corrections" subtitle="Old → new on the latest attempt. Reverting restores the old value and re-runs the requirements.">
+              <Card title="Corrections" subtitle="What the agent changed on the latest version of the alert. Undo puts the old value back and checks the alert again.">
                 <CorrectionsTable corrections={latest?.result.corrections ?? []} canRevert={canAct && data!.operations.revert_correction !== false}
                   revertible={data!.revertible_fields} onRevert={revert} busyField={busyField} />
               </Card>
-              <Card title="Issues"><IssuesList issues={latest?.result.issues ?? []} /></Card>
-              <Card title="Routing plan" subtitle="Who the Social Alert draft goes to (distribution.yaml)"><RoutingPlan plan={a?.recipients ?? null} /></Card>
+              <Card title="Problems found"><IssuesList issues={latest?.result.issues ?? []} /></Card>
+              <Card title="Who the email goes to" subtitle="The groups the Social Alert email would be sent to, and why"><RoutingPlan plan={a?.recipients ?? null} /></Card>
             </div>
           )}
           {tab === "attempts" && <AttemptsList attempts={c.attempts} />}
@@ -157,7 +169,7 @@ export function CaseDrawer({ caseId, onClose, onChanged }: { caseId: string | nu
           <Button onClick={() => setCloseOpen(false)}>Cancel</Button>
           <Button variant="danger" loading={closing} disabled={!closeReason.trim()} onClick={close}>Close case</Button>
         </>}>
-        <Field label="Reason" hint="Recorded on the case and in case.closed (reason: manual).">
+        <Field label="Reason" hint="Kept on the case and in its timeline.">
           <Textarea rows={3} value={closeReason} onChange={(e) => setCloseReason(e.target.value)} placeholder="Actions done; no further follow-up needed" className="font-sans text-sm" />
         </Field>
       </Modal>

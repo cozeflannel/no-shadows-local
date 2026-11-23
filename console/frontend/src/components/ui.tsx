@@ -1,8 +1,9 @@
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleAlert, LoaderCircle, RefreshCw, X } from "lucide-react";
-import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { useEffect, useState, type ButtonHTMLAttributes, type CSSProperties, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { useLocation, useNavigate } from "react-router";
 
 import type { ApiError } from "../api/client";
-import { STATUS_LABEL, STATUS_TONE, TONE_CLASSES, VERDICT_TONE, type Tone } from "../lib/labels";
+import { humanize, NEED_LABEL, STATUS_TONE, statusLabel, TONE_CLASSES, VERDICT_TONE, verdictAddsInfo, verdictLabel, type Tone } from "../lib/labels";
 import { switchName } from "../lib/switches";
 
 export function cx(...classes: (string | false | null | undefined)[]): string {
@@ -32,14 +33,54 @@ export function Card({ title, subtitle, actions, children, className, bodyClassN
   );
 }
 
-export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
+const BACK_GLOW_MS = 600;
+let backPressedAt = 0;  // when '< back' was last pressed: the next page's '< back' carries the glow on from there
+
+/**
+ * '< back' above a page's title: the page before in the Console, or the Dashboard when the Console has no page before.
+ * Pressed, its edge lights up with the Gemini gradient for about 600 ms (index.css .back-link). The page it opens has its
+ * own '< back' in the same place, which picks the glow up where this one left it.
+ */
+export function BackButton() {
+  const navigate = useNavigate();
+  const [glow, setGlow] = useState(() => Math.max(0, BACK_GLOW_MS - (Date.now() - backPressedAt)));  // ms of glow left
+  const [pulse, setPulse] = useState(0);
+  useEffect(() => {
+    if (!glow) return;
+    const id = window.setTimeout(() => setGlow(0), glow);
+    return () => window.clearTimeout(id);
+  }, [glow, pulse]);
+  const back = () => {
+    backPressedAt = Date.now();
+    setGlow(BACK_GLOW_MS);
+    setPulse((n) => n + 1);
+    const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+    if (idx > 0) navigate(-1);
+    else navigate("/");
+  };
   return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 className="text-[1.75rem] font-medium leading-tight tracking-tight text-zinc-950 dark:text-zinc-50">{title}</h1>
-        {description && <p className="mt-1 max-w-3xl text-sm text-zinc-500 dark:text-zinc-400">{description}</p>}
+    <button type="button" onClick={back} aria-label="Go back" data-glow={glow ? "" : undefined}
+      style={{ "--back-delay": `${glow - BACK_GLOW_MS}ms` } as CSSProperties}
+      className="back-link -ml-1 mb-2 inline-flex items-center gap-0.5 rounded-full px-1 py-0.5 text-xs font-medium text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100">
+      <span key={`ring-${pulse}`} aria-hidden className="back-ring" />
+      <span key={`soft-${pulse}`} aria-hidden className="back-soft" />
+      <ChevronLeft className="size-3.5" aria-hidden />back
+    </button>
+  );
+}
+
+export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
+  const { pathname } = useLocation();
+  return (
+    <div className="mb-6">
+      {pathname !== "/" && <BackButton />}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-[1.75rem] font-medium leading-tight tracking-tight text-zinc-950 dark:text-zinc-50">{title}</h1>
+          {description && <p className="mt-1 max-w-3xl text-sm text-zinc-500 dark:text-zinc-400">{description}</p>}
+        </div>
+        {actions && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div>}
       </div>
-      {actions && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }
@@ -53,12 +94,36 @@ export function Badge({ tone = "zinc", children, title, className }: { tone?: To
 }
 
 export function StatusBadge({ status }: { status: string }) {
-  return <Badge tone={STATUS_TONE[status] ?? "zinc"}>{STATUS_LABEL[status] ?? status}</Badge>;
+  return <Badge tone={STATUS_TONE[status] ?? "zinc"} title="Where the case is now">{statusLabel(status)}</Badge>;
 }
 
 export function VerdictBadge({ verdict }: { verdict: string | null | undefined }) {
   if (!verdict) return <span className="text-zinc-400">—</span>;
-  return <Badge tone={VERDICT_TONE[verdict] ?? "zinc"}>{verdict.replace("_", " ")}</Badge>;
+  return <Badge tone={VERDICT_TONE[verdict] ?? "zinc"} title="What the agent's check found">{verdictLabel(verdict)}</Badge>;
+}
+
+/**
+ * A case as one badge (what it waits for, else its status), with the agent's verdict beside it only when the verdict says
+ * something more: "Needs review" is shown once, not next to "Held for review"; "To acknowledge" keeps "Corrected".
+ */
+export function CaseBadges({ status, verdict, need }: { status?: string | null; verdict?: string | null; need?: string | null }) {
+  const waiting = need ? NEED_LABEL[need] : undefined;
+  return (
+    <>
+      {waiting ? <Badge tone={waiting.tone}>{waiting.label}</Badge> : status ? <StatusBadge status={status} /> : null}
+      {verdictAddsInfo(verdict, status, need) && <VerdictBadge verdict={verdict} />}
+    </>
+  );
+}
+
+/** Detail most people don't need (codes, raw records), folded away under "Details". */
+export function Details({ summary = "Details", children, className }: { summary?: ReactNode; children: ReactNode; className?: string }) {
+  return (
+    <details className={className}>
+      <summary className="cursor-pointer select-none text-xs font-medium text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200">{summary}</summary>
+      <div className="mt-2">{children}</div>
+    </details>
+  );
 }
 
 export function Mono({ children, className }: { children: ReactNode; className?: string }) {
@@ -202,15 +267,19 @@ export function EmptyState({ icon, title, children }: { icon?: ReactNode; title:
   );
 }
 
-export function Alert({ tone = "blue", title, children, className }: { tone?: "blue" | "amber" | "rose" | "emerald"; title?: ReactNode; children?: ReactNode; className?: string }) {
-  const tones = {
-    blue: "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-800/40 dark:bg-blue-900/20 dark:text-blue-300",
-    amber: "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800/40 dark:bg-amber-900/20 dark:text-amber-300",
-    rose: "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-800/40 dark:bg-rose-900/20 dark:text-rose-300",
-    emerald: "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800/40 dark:bg-emerald-900/20 dark:text-emerald-300",
-  };
+const VIOLET_ALERT = "border-violet-200 bg-violet-50 text-violet-900 dark:border-violet-800/50 dark:bg-violet-900/20 dark:text-violet-200";
+const ALERT_TONES = {
+  blue: "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-800/40 dark:bg-blue-900/20 dark:text-blue-200",
+  violet: VIOLET_ALERT,
+  amber: VIOLET_ALERT,  // the old name for the warning tone: drawn Gemini violet
+  rose: "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-800/40 dark:bg-rose-900/20 dark:text-rose-200",
+  emerald: "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800/40 dark:bg-emerald-900/20 dark:text-emerald-200",
+};
+
+/** A notice. violet: needs a look (warnings); rose: something failed; blue: for information; emerald: all is well. */
+export function Alert({ tone = "blue", title, children, className }: { tone?: keyof typeof ALERT_TONES; title?: ReactNode; children?: ReactNode; className?: string }) {
   return (
-    <div className={cx("flex gap-3 rounded-lg border p-3 text-sm", tones[tone], className)} role={tone === "rose" ? "alert" : undefined}>
+    <div className={cx("flex gap-3 rounded-lg border p-3 text-sm", ALERT_TONES[tone], className)} role={tone === "rose" ? "alert" : undefined}>
       <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
       <div className="min-w-0">
         {title && <p className="font-medium">{title}</p>}
@@ -227,7 +296,10 @@ export function ErrorState({ error, onRetry }: { error: ApiError | null; onRetry
       <p>{error.message}</p>
       {error.errors.length > 0 && (
         <ul className="mt-1 list-disc pl-4 text-xs">
-          {error.errors.slice(0, 8).map((e, i) => <li key={i}><span className="font-mono">{e.loc.join(".") || "value"}</span>: {e.msg}</li>)}
+          {error.errors.slice(0, 8).map((e, i) => {
+            const field = [...e.loc].reverse().find((part) => typeof part === "string" && part !== "body" && part !== "value");
+            return <li key={i}>{field ? `${humanize(String(field))}: ` : ""}{e.msg}</li>;
+          })}
         </ul>
       )}
       {onRetry && <Button size="sm" className="mt-2" icon={<RefreshCw className="size-3.5" />} onClick={onRetry}>Retry</Button>}
@@ -353,10 +425,15 @@ export const TR = "border-b border-zinc-100 transition-colors last:border-0 hove
 // ---------------------------------------------------------------------------
 
 /** One number with its label; `delta` compares with the period before (positive = more). */
+const STAT_TONES = {
+  rose: "text-rose-600 dark:text-rose-300", violet: "text-violet-600 dark:text-violet-300", emerald: "text-emerald-600 dark:text-emerald-300",
+  blue: "text-blue-600 dark:text-blue-300", amber: "text-violet-600 dark:text-violet-300",  // amber: the old name for violet
+};
+
 export function Stat({ label, value, hint, delta, tone, glow = false, onClick }: {
-  label: ReactNode; value: ReactNode; hint?: ReactNode; delta?: number | null; tone?: "rose" | "amber" | "emerald"; glow?: boolean; onClick?: () => void;
+  label: ReactNode; value: ReactNode; hint?: ReactNode; delta?: number | null; tone?: keyof typeof STAT_TONES; glow?: boolean; onClick?: () => void;
 }) {
-  const toneClass = tone === "rose" ? "text-rose-600 dark:text-rose-300" : tone === "amber" ? "text-amber-600 dark:text-amber-300" : tone === "emerald" ? "text-emerald-600 dark:text-emerald-300" : "text-zinc-950 dark:text-zinc-50";
+  const toneClass = tone ? STAT_TONES[tone] : "text-zinc-950 dark:text-zinc-50";
   const body = (
     <>
       <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{label}</p>
@@ -385,13 +462,14 @@ export function Switch({ checked, onChange, disabled, label }: { checked: boolea
 /** A switched-off feature, said once, with where to turn it on. */
 export function OffNotice({ what, flag, children }: { what: string; flag: string; children?: ReactNode }) {
   return (
-    <Alert tone="amber" title={`${what} is switched off`} className="mb-4">
+    <Alert tone="violet" title={`${what} is switched off`} className="mb-4">
       {children} An admin can turn on <a className="font-medium underline" href="/settings/flags">{switchName(flag)}</a> under Settings, Switches.
     </Alert>
   );
 }
 
-export function Dot({ tone = "zinc", pulse = false }: { tone?: "zinc" | "emerald" | "amber" | "rose" | "blue"; pulse?: boolean }) {
-  const c = { zinc: "bg-zinc-400", emerald: "bg-emerald-500", amber: "bg-amber-500", rose: "bg-rose-500", blue: "bg-blue-400" }[tone];
+export function Dot({ tone = "zinc", pulse = false }: { tone?: "zinc" | "emerald" | "violet" | "amber" | "rose" | "blue"; pulse?: boolean }) {
+  // amber: the old name for violet
+  const c = { zinc: "bg-zinc-400", emerald: "bg-emerald-500", violet: "bg-violet-500", amber: "bg-violet-500", rose: "bg-rose-500", blue: "bg-blue-400" }[tone];
   return <span className={cx("inline-block size-2 shrink-0 rounded-full", c, pulse && "animate-pulse")} aria-hidden />;
 }

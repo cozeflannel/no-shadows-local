@@ -9,15 +9,16 @@ import { CHART_COLORS } from "../lib/labels";
 function useChartTheme() {
   const { theme } = useApp();
   const dark = theme === "dark";
+  // The Gemini neutrals (index.css zinc scale), so charts sit on the same greys as the page
   return {
-    grid: dark ? "#27272a" : "#f4f4f5",
-    axis: dark ? "#a1a1aa" : "#71717a",
+    grid: dark ? "#333537" : "#e9eef6",
+    axis: dark ? "#9aa0a6" : "#5f6368",
     tooltip: {
-      backgroundColor: dark ? "rgba(24, 24, 27, 0.96)" : "rgba(255, 255, 255, 0.97)",
-      border: `1px solid ${dark ? "#3f3f46" : "#e4e4e7"}`,
+      backgroundColor: dark ? "rgba(30, 31, 32, 0.97)" : "rgba(255, 255, 255, 0.97)",
+      border: `1px solid ${dark ? "#444746" : "#dde3ea"}`,
       borderRadius: 8,
       fontSize: 12,
-      color: dark ? "#fafafa" : "#0f172a",
+      color: dark ? "#e3e3e3" : "#1f1f1f",
       boxShadow: "0 4px 12px rgb(0 0 0 / 0.08)",
     },
   };

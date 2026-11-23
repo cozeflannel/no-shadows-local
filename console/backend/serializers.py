@@ -2,12 +2,35 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from triage_agent.models import AgentEvent, Case, Escalation
+from triage_agent.render import FIELD_LABELS
 from triage_agent.store import escalation_is_open
 
 SOURCE_LABELS = {"burson_chat": "Burson chat", "inhouse": "in-house (Path B)", "watchdog": "Watchdog email", "manual": "manual"}
+
+# Why an alert was not posted, in words (the codes come from the Collection Requirements). The Console's
+# lib/labels.ts SUPPRESSION_LABEL says the same.
+SUPPRESSION_LABELS = {
+    "below_threshold": "Under 2K engagements, with no urgent reason",
+    "ongoing_no_kof": "Ongoing issue with no KOF",
+    "youtube_no_action": "YouTube post under 2K engagements: no action",
+    "EXCLUDED_SPAM": "Spam",
+    "EXCLUDED_BENCHMARK": "A benchmark comparison",
+    "EXCLUDED_AI_COMPARISON": "A comparison of AI products",
+    "EXCLUDED_GOOGLE_AS_VERB": "\"Google\" used as a verb",
+    "EXCLUDED_DRIVE_LINK": "A Google Drive link",
+    "im_review": "An IM suppressed it after review",
+    "unspecified": "No reason recorded",
+}
+
+# The shapes triage writes its review reasons in (triage_agent/qa/pipeline.py): read here, said in words.
+_WOULD_SUPPRESS = re.compile(r"^would be suppressed \((?P<code>[^)]*)\) but the deciding fields need review\.?$", re.I)
+_PROPOSED = re.compile(r"^(?P<field>[a-z][a-z0-9_]*): proposed \"(?P<new>.*)\"(?: \((?P<pct>\d+)% likely right\))? [—-] (?P<why>.*)$", re.S)
+_FIELD_SAYS = re.compile(r"^(?P<field>[a-z][a-z0-9_]*): (?P<says>.+)$", re.S)
+_CODE = re.compile(r"^[a-z0-9_]+$")
 
 
 def _dur(seconds: Any) -> str:
@@ -45,6 +68,64 @@ def _n(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+# ---------------------------------------------------------------------------
+# Plain words: codes and field keys as a person reads them
+# ---------------------------------------------------------------------------
+
+
+def words(code: Any) -> str:
+    """'EXCLUDED_GOOGLE_AS_VERB' or 'unknown_exposure_tag' as words ('Google as verb', 'Unknown exposure tag')."""
+    text = re.sub(r"^EXCLUDED_", "", str(code or "")).replace(".", " ").replace("_", " ").strip().lower()
+    return text[:1].upper() + text[1:] if text else str(code or "")
+
+
+def field_label(key: str) -> str:
+    """An alert field's name as the alert template writes it ('exposure_tag' -> 'Exposure Tag')."""
+    return FIELD_LABELS.get(key) or words(key)
+
+
+def suppression_label(code: Any) -> str:
+    """Why an alert was not posted, in words. A blank code reads 'No reason recorded'."""
+    key = str(code or "").strip()
+    if not key or key == "None":
+        key = "unspecified"
+    return SUPPRESSION_LABELS.get(key) or words(key)
+
+
+def _sentence(text: str) -> str:
+    text = text.strip()
+    return text if not text or text[-1] in ".!?…" else f"{text}."
+
+
+def plain_reason(reason: Any) -> str:
+    """One reason an alert was held for review, as a sentence: field labels for field keys, words for codes.
+
+    'alert_name: Add the Alert Name.' -> 'Alert Name: Add the Alert Name.'
+    'would be suppressed (below_threshold) but the deciding fields need review' -> 'Normally it would not be posted (under 2K
+    engagements, with no urgent reason), but the fields that decide that need a person to check them.'
+    Anything already in words is kept as it is.
+    """
+    text = str(reason or "").strip()
+    if not text:
+        return ""
+    m = _WOULD_SUPPRESS.match(text)
+    if m:
+        why = suppression_label(m["code"])
+        return f"Normally it would not be posted ({why[:1].lower() + why[1:]}), but the fields that decide that need a person to check them."
+    m = _PROPOSED.match(text)
+    if m:
+        likely = f" ({m['pct']}% likely right)" if m["pct"] else ""
+        why = _sentence(m["why"]) if m["why"].strip() else ""
+        why = why[:1].upper() + why[1:]
+        return f"{field_label(m['field'])}: the agent suggests \u201c{m['new']}\u201d{likely}. {why}".strip()
+    m = _FIELD_SAYS.match(text)
+    if m and (m["field"] == "alert" or m["field"] in FIELD_LABELS or "_" in m["field"]):
+        says = m["says"].strip()
+        says = words(says) if _CODE.match(says) else says
+        return _sentence(says if m["field"] == "alert" else f"{field_label(m['field'])}: {says}")
+    return _sentence(text)
 
 
 # ---------------------------------------------------------------------------
@@ -89,8 +170,10 @@ def case_summary(case: Case) -> dict[str, Any]:
         "is_kof": a.is_kof if a else False,
         "alert_action": a.alert_action if a else None,
         "suppression_reason": a.suppression_reason if a else None,
+        "suppression_label": suppression_label(a.suppression_reason) if a and a.suppression_reason else None,  # the reason in words
         "reason_codes": a.reason_codes if a else [],
         "review_reasons": result.review_reasons if result else [],
+        "review_reasons_plain": [plain_reason(r) for r in (result.review_reasons if result else [])],  # the same, as sentences
         "post_url": f.get("post_url"),
         "author": f.get("author"),
         "received_at": first.received_at if first else case.created_at,

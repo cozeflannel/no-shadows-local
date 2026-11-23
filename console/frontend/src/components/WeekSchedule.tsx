@@ -7,7 +7,7 @@ const HOURS = [0, 3, 6, 9, 12, 15, 18, 21, 24];
 
 export function personColor(people: { id: string }[], id: string | null): string {
   const i = people.findIndex((p) => p.id === id);
-  return i < 0 ? "#a1a1aa" : CHART_COLORS[i % CHART_COLORS.length];
+  return i < 0 ? "#9aa0a6" : CHART_COLORS[i % CHART_COLORS.length];
 }
 
 /** 7-day timeline: one row per day (display timezone), colored blocks per person, gaps hatched. */
@@ -42,7 +42,7 @@ export function WeekSchedule({ schedule }: { schedule: ScheduleView }) {
                         style={{
                           left: `${left}%`, width: `${Math.max(width, 0.4)}%`,
                           background: b.gap
-                            ? "repeating-linear-gradient(45deg, rgb(244 63 94 / 0.85), rgb(244 63 94 / 0.85) 6px, rgb(251 113 133 / 0.55) 6px, rgb(251 113 133 / 0.55) 12px)"
+                            ? "repeating-linear-gradient(45deg, rgb(217 101 112 / 0.85), rgb(217 101 112 / 0.85) 6px, rgb(238 156 163 / 0.55) 6px, rgb(238 156 163 / 0.55) 12px)"
                             : personColor(schedule.people, b.person_id),
                         }}>
                         {width > 7 && <span className="truncate">{b.gap ? `Gap · ${b.name ?? "nobody"} (${b.source})` : `${b.name}${b.source === "override" ? " ★" : ""}`}</span>}
