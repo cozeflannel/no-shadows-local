@@ -712,6 +712,36 @@ check reads each space and its latest message with it.
 query_ref?, filters?, draft_query?, case_id?, hours?, update_of?, keep_refreshed_hours?, actor}`, `run_forecast {force?}`, `refresh_knowledge {}`,
 `run_watches {}`. From Chat an assessment needs an analyst or IM; a Console call was already checked against the person's role.
 
+**Knowledge** (`knowledge.py`, `knowledge_import.py`, `sheet_read.py`; page Knowledge). `GET /api/knowledge` (`can_edit` leads,
+`can_import` admins), `GET /api/knowledge/{id}`, `POST /api/knowledge/search`; `POST /api/knowledge`, `POST /api/knowledge/upload`,
+`DELETE /api/knowledge/{id}` and `POST /api/knowledge/{id}/refresh` (leads; reads it again whatever the stored copy says).
+`POST /api/knowledge/import-sheet {dry_run = true, budget_chars = 400000}` (admins) brings the sheet-based bot's documents over: the
+sheet (`SLRR_STORE_SHEET_ID`, else the live control sheet) is read read-only with the Console's own account (`spreadsheets.readonly`;
+`x-goog-user-project` only for a person's sign-in). Each Resources row (Name, Link, What it covers, Burson can see it?) becomes a
+document with the text of the freshest copy the sheet keeps (`Knowledge cache (bot)`, else the older `Knowledge` tab; Link · Part ·
+Text, part 0 JSON), `source_type` drive (url for any other link) and its link, `imported_from: "sheet"`, `import_key` (the link
+without its decorations), `text_from` (where the text came from). Answer `{dry_run, sheet {id, title, read_as}, counts {add, update,
+unchanged, skip}, items [{action, title, row, link, covers, external_ok, kind, source_type, chars, doc_id, reason, changes, copy}],
+notes, applied, remaining}`: the page calls again while `remaining` > 0. The same link again updates (never doubles); nothing in the
+Console is removed; a document a person made keeps its name, visibility, kind and text and only gets what it lacks. Guidance rows still
+in force become guidance documents (an expired one this import made is turned off); Learned precedents are not brought over (a note
+says why). A sheet that can't be read answers 502 `sheet_unreadable`, naming the account to share it with. A linked document that
+can't be read keeps a copy brought over in use (status ready, the detail says why) and is tried every 30 minutes; one the Console
+read itself clears `text_from`. Audit `knowledge.import`. `scripts/import_sheet_knowledge.py --dry-run | --apply [--folder PATH]
+[--file PATH] [--signals]` does the same from a computer (with `infra/.env` sourced, on the live store).
+
+**Signals** (watches; `watches.py`, `watches_import.py`; page Campaigns & watches, tab Signals). `GET /api/watches?days=` adds to each
+watch `plain_status`, `checked`, `flagged_24h`, `near_misses_24h`, and to the answer `can_import`, `defaults {rubric, topics,
+flag_at_score}` (the sheet's: `SHEET_DEFAULT_RUBRIC`, `SHEET_DEFAULT_TOPICS` unless Settings names topics, `watch_default_bar`) and
+`templates` (the sheet's two starting rows). `POST /api/watches` (save), `POST /api/watches/{id}/switch {enabled}`,
+`DELETE /api/watches/{id}`, `POST /api/watches/import-sheet {dry_run = true}` (all leads) work whatever the `watches` switch says: the
+switch only decides whether the Console looks (`run_watches`, `POST /api/watches/run`). At most `watch_max_enabled` signals are on at
+once (422 says so). Networks are kept as the post tables name them (`network_key`: X and Twitter are `x`). The import reads the
+sheet's Watches tab as the bot does (blank rubric or topics take the sheet's defaults, a bar outside 1-10 the default bar, each name
+once, a row without a question is left out), brings every new signal over OFF (`sheet_on` says it was ON there) and updates a
+signal of the same name without changing whether it is on. Answer `{dry_run, sheet, counts, items [{action, name, row, on_in_sheet,
+sheet_status, watch_id, enabled, reason, changes}], notes, applied, on_in_sheet}`. Audit `watch.save`, `watch.switch`, `watch.delete`.
+
 **Agent alerts** (`triage_agent/ownalerts/`, settings `platform.own_alerts`, flags `own_alerts` and `own_alerts_post`; plan and decisions in
 `docs/build-plan/5_own_alerts_plan.md`). Alerts the agent raises itself. In the code and the settings it is `own_alerts`.
 - **A run** (`cycle.run`, inside `ingest_inhouse` when no rows are handed in, every `interval_minutes`): the BigQuery objects are created or

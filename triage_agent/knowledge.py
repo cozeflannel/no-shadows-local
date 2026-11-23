@@ -8,6 +8,10 @@ Settings), and exact product, tag and topic names always come from the taxonomy.
 Sources: text pasted in the Console, a public web page, or a Drive file (Docs, Slides, Sheets, and text files).
 Retrieval is keyword scoring (BM25), blended with embedding similarity when an embedding model is set in
 Settings → Knowledge. Every passage handed to Gemini is named, so answers and assessments can cite it.
+
+Documents brought over from the sheet-based bot (knowledge_import.py) arrive with the text the bot had already read
+(import_doc), so nothing waits on Drive. They keep their Drive link: the refresh reads them from there once the
+Console's account can open the file, and until then the copy brought over stays in use (text_from says so).
 """
 
 from __future__ import annotations
@@ -71,6 +75,9 @@ class KnowledgeDoc(BaseModel):
     updated_by: str = ""
     rich: bool = False  # it keeps formatting (headings, lists, tables): uploaded as a file or written in the editor
     file_name: str = ""  # the file it was uploaded from
+    imported_from: str = ""  # "sheet": brought over from the sheet-based bot (knowledge_import.py); "folder": from files
+    import_key: str = ""  # what it is the same as there (a link, a guidance row, a file), so bringing it over again updates it
+    text_from: str = ""  # where the text in hand came from when the Console did not read it itself (the sheet's copy)
 
 
 class Passage(BaseModel):
@@ -229,7 +236,9 @@ def fetch_drive(link: str, max_chars: int) -> tuple[str, str]:
         meta = drive.files().get(fileId=file_id, fields="id,name,mimeType,modifiedTime", supportsAllDrives=True).execute()
     except HttpError as exc:
         if exc.resp.status in (403, 404):
-            raise FetchError("The agent's account can't open this file: share it with that account (Viewer is enough).") from exc
+            email = str(getattr(creds, "service_account_email", "") or "")
+            who = email if "@" in email else "the Console's account"
+            raise FetchError(f"The Console can't open this file as {who}: share it with {who} (Viewer is enough).") from exc
         raise FetchError(f"Drive answered {exc.resp.status}.") from exc
     mime = meta.get("mimeType", "")
     try:
@@ -368,8 +377,20 @@ def index_doc(ctx: "AgentContext", doc: KnowledgeDoc, text: str, actor: str) -> 
     return doc
 
 
-def refresh_doc(ctx: "AgentContext", doc: KnowledgeDoc, actor: str = "agent") -> KnowledgeDoc:
-    """Read a linked document again and re-index it when its text changed."""
+def _unread(ctx: "AgentContext", doc: KnowledgeDoc, why: str) -> KnowledgeDoc:
+    """A linked document that could not be read now. One brought over with its text (text_from) keeps that copy in use,
+    and its status says why the Console can't read it itself yet; any other one is marked as failing."""
+    if doc.text_from and doc.chars and doc.content_hash:
+        doc.status, doc.status_detail = "ready", f"Using {doc.text_from}. {why}"[:400]
+    else:
+        doc.status, doc.status_detail = "error", why[:300]
+    doc.fetched_at = ctx.now()
+    ctx.store.put_doc(DOCS, doc.doc_id, doc.model_dump(mode="json"))
+    return doc
+
+
+def refresh_doc(ctx: "AgentContext", doc: KnowledgeDoc, actor: str = "agent", force: bool = False) -> KnowledgeDoc:
+    """Read a linked document again and re-index it when its text changed (`force`: whatever the stored copy says)."""
     cfg = ctx.config.platform.knowledge
     if doc.source_type == "text":
         return doc
@@ -379,15 +400,12 @@ def refresh_doc(ctx: "AgentContext", doc: KnowledgeDoc, actor: str = "agent") ->
         else:
             text, label = fetch_drive(doc.link, cfg.max_doc_chars)
     except FetchError as exc:
-        doc.status, doc.status_detail, doc.fetched_at = "error", str(exc), ctx.now()
-        ctx.store.put_doc(DOCS, doc.doc_id, doc.model_dump(mode="json"))
-        return doc
+        return _unread(ctx, doc, str(exc))
     except Exception as exc:  # noqa: BLE001 - tried again on the next refresh
-        doc.status, doc.status_detail, doc.fetched_at = "error", f"Could not be read: {exc}"[:300], ctx.now()
-        ctx.store.put_doc(DOCS, doc.doc_id, doc.model_dump(mode="json"))
-        return doc
+        return _unread(ctx, doc, f"Could not be read: {exc}")
     doc.status_detail = label
-    if hashlib.sha256(text[: cfg.max_doc_chars].encode("utf-8")).hexdigest() == doc.content_hash and doc.status == "ready":
+    doc.text_from = ""  # the Console reads it itself from now on
+    if not force and hashlib.sha256(text[: cfg.max_doc_chars].encode("utf-8")).hexdigest() == doc.content_hash and doc.status == "ready":
         doc.fetched_at = ctx.now()
         ctx.store.put_doc(DOCS, doc.doc_id, doc.model_dump(mode="json"))
         return doc
@@ -439,6 +457,62 @@ def save_doc(ctx: "AgentContext", *, actor: str, doc_id: str | None = None, titl
     return doc
 
 
+def import_doc(ctx: "AgentContext", *, actor: str, title: str, doc_id: str | None = None, source_type: SourceType = "drive",
+               link: str = "", covers: str = "", kind: str = "document", external_ok: bool = False, text: str | None = None,
+               html: str | None = None, file_name: str | None = None, imported_from: str | None = None, import_key: str = "",
+               text_from: str = "", note: str | None = None, enabled: bool | None = None, surface: str = "console") -> KnowledgeDoc:
+    """Adds or updates a document brought over from somewhere else (the sheet-based bot's Resources tab, or files in a
+    folder) with its text already in hand: nothing is fetched now.
+
+    `text` None keeps the text the document has; `html` is a file's formatted content (kept as an upload is). A linked
+    document keeps its link, so the refresh reads it from there once the Console's account can open it; until then the
+    copy brought over stays in use and `text_from` says where it came from. `note` is the status line it shows (None
+    keeps the one it has). `imported_from` and `enabled` None leave them as they are (a document a person made stays
+    theirs)."""
+    from . import audit, docfiles
+
+    cfg = ctx.config.platform.knowledge
+    existing = get_doc(ctx, doc_id) if doc_id else None
+    doc = existing or KnowledgeDoc(doc_id=f"KD-{uuid.uuid4().hex[:8]}", title=title)
+    doc.title, doc.source_type, doc.link, doc.covers = title.strip()[:200], source_type, link.strip(), covers.strip()[:1000]
+    doc.kind = kind if kind in ("document", "guidance") else "document"  # type: ignore[assignment]
+    doc.external_ok = bool(external_ok)
+    if imported_from is not None:
+        doc.imported_from = imported_from
+    if enabled is not None:
+        doc.enabled = bool(enabled)
+    if import_key:
+        doc.import_key = import_key
+    if file_name is not None:
+        doc.file_name = file_name[:200]
+    doc.updated_at, doc.updated_by = ctx.now(), actor
+    if html is not None:
+        clean = docfiles.clean_html(html)[: cfg.max_doc_chars]
+        _replace_parts(ctx, RICH, doc.doc_id, [{"doc_id": doc.doc_id, "part": i, "html": clean[o:o + TEXT_PART_CHARS]}
+                                               for i, o in enumerate(range(0, len(clean), TEXT_PART_CHARS))], "part")
+        doc.rich, text = True, docfiles.to_text(clean)
+    elif text is not None and doc.rich:
+        _replace_parts(ctx, RICH, doc.doc_id, [], "part")  # replaced by plain text: the formatted form goes
+        doc.rich = False
+    ctx.store.put_doc(DOCS, doc.doc_id, doc.model_dump(mode="json"))
+    if text is not None and text.strip():
+        doc = index_doc(ctx, doc, text, actor)
+        doc.text_from = text_from
+    elif existing is None:
+        doc.status = "pending"
+    if note is not None:
+        doc.status_detail = note[:400]
+    ctx.store.put_doc(DOCS, doc.doc_id, doc.model_dump(mode="json"))
+    _bump(ctx)
+    ctx.emit(PlatformEvent.KNOWLEDGE_DOC_SAVED, actor=actor, payload={"doc_id": doc.doc_id, "title": doc.title, "kind": doc.kind,
+                                                                     "new": existing is None, "imported_from": doc.imported_from})
+    where = {"sheet": "the sheet", "folder": "a file"}.get(doc.imported_from, "elsewhere")
+    audit.record(ctx, actor=actor, action="knowledge.import", surface=surface,  # type: ignore[arg-type]
+                 target_type="knowledge", target_id=doc.doc_id,
+                 summary=f"{'Brought over' if existing is None else 'Updated'} knowledge doc “{doc.title}” from {where} ({doc.status})")
+    return doc
+
+
 def delete_doc(ctx: "AgentContext", doc_id: str, actor: str) -> bool:
     from . import audit
 
@@ -465,7 +539,7 @@ def refresh_due(ctx: "AgentContext", force: bool = False) -> dict[str, int]:
     for doc in list_docs(ctx):
         if doc.source_type == "text" or not doc.enabled:
             continue
-        if doc.status == "error":
+        if doc.status == "error" or doc.text_from:  # failing, or still on a copy brought over: tried every 30 minutes
             wait = timedelta(minutes=30)
         elif doc.source_type == "url":
             wait = timedelta(hours=cfg.web_refresh_hours)

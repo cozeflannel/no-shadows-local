@@ -441,6 +441,11 @@ class SearchBody(BaseModel):
     external: bool = False
 
 
+class SheetImportBody(BaseModel):
+    dry_run: bool = True  # preview: what would be added, updated, left the same or left out, and why
+    budget_chars: int = Field(400_000, ge=10_000, le=5_000_000)  # text stored in one call; the page calls again for the rest
+
+
 @router.get("/knowledge")
 def knowledge_list(ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> dict[str, Any]:
     docs = knowledge.list_docs(ctx)
@@ -455,7 +460,20 @@ def knowledge_list(ctx: AgentContext = Depends(get_ctx), user: User = Depends(re
             "classes_from_settings": bool(cfg.classification.classes),
             "switches": {"knowledge_rag": cfg.flags.knowledge_rag, "classification_layer": cfg.flags.classification_layer},
             "retrieval": {"embedding_model": cfg.knowledge.embedding_model, "top_k": cfg.knowledge.top_k},
-            "can_edit": user.has("lead")}
+            "can_edit": user.has("lead"), "can_import": user.has("admin")}
+
+
+@router.post("/knowledge/import-sheet")
+def knowledge_import_sheet(body: SheetImportBody, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_admin)) -> dict[str, Any]:
+    """Bring the sheet-based bot's knowledge docs over (its Resources tab, with the text the bot already read). dry_run
+    previews; otherwise up to budget_chars of text is stored and `remaining` says how many are left for the next call.
+    The sheet is read with the Console's own account: when it can't, the error says what to share with whom."""
+    from triage_agent import knowledge_import, sheet_read
+
+    try:
+        return knowledge_import.run(ctx, actor=user.email, dry_run=body.dry_run, budget_chars=body.budget_chars)
+    except sheet_read.SheetUnreadable as exc:
+        raise HTTPException(502, {"error": str(exc), "code": "sheet_unreadable"}) from exc
 
 
 @router.get("/knowledge/{doc_id}")
@@ -545,8 +563,7 @@ def knowledge_refresh(doc_id: str, ctx: AgentContext = Depends(get_ctx), user: U
     doc = knowledge.get_doc(ctx, doc_id)
     if doc is None:
         raise _missing("knowledge doc")
-    doc.content_hash = ""  # read it again whatever the stored copy says
-    return {"ok": True, "doc": knowledge.refresh_doc(ctx, doc, user.email).model_dump(mode="json")}
+    return {"ok": True, "doc": knowledge.refresh_doc(ctx, doc, user.email, force=True).model_dump(mode="json")}  # whatever the stored copy says
 
 
 @router.post("/knowledge/search")
@@ -591,6 +608,14 @@ class RatingBody(BaseModel):
     rating: Literal["", "Useful", "Noise"]
 
 
+class SwitchBody(BaseModel):
+    enabled: bool
+
+
+class SignalImportBody(BaseModel):
+    dry_run: bool = True
+
+
 @router.get("/campaigns")
 def campaigns_list(ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> dict[str, Any]:
     try:
@@ -618,20 +643,60 @@ def campaigns_change(campaign_id: str, body: CampaignChangeBody, ctx: AgentConte
 @router.get("/watches")
 def watches_list(days: int = Query(7, ge=1, le=30), ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> dict[str, Any]:
     cfg = ctx.config.platform.campaigns
-    return {"watches": [w.model_dump(mode="json") for w in watches.list_watches(ctx)],
-            "detections": [d.model_dump(mode="json") for d in watches.list_detections(ctx, days=days, limit=300)],
+    detections = watches.list_detections(ctx, days=days, limit=300)
+    since = ctx.now() - timedelta(hours=24)
+    checked = watches.checked_ids(ctx)
+    rows = []
+    for w in watches.list_watches(ctx):
+        recent = [d for d in detections if d.watch_id == w.watch_id and d.seen_at >= since]
+        flagged = sum(1 for d in recent if d.at_bar)
+        rows.append({**w.model_dump(mode="json"), "checked": w.watch_id in checked and ctx.flag("watches") and bool(cfg.watch_sources),
+                     "flagged_24h": flagged, "near_misses_24h": len(recent) - flagged,
+                     "plain_status": watches.plain_status(w, switch_on=ctx.flag("watches"), sources_set=bool(cfg.watch_sources),
+                                                          checked=w.watch_id in checked, limit=cfg.watch_max_enabled,
+                                                          flagged=flagged, near=len(recent) - flagged)})
+    return {"watches": rows,
+            "detections": [d.model_dump(mode="json") for d in detections],
             "scorecard": watches.scorecard(ctx, days), "switch": ctx.flag("watches"), "can_edit": user.has("lead"),
+            "can_import": user.has("lead"),
             "settings": {"default_bar": cfg.watch_default_bar, "max_enabled": cfg.watch_max_enabled, "sources": cfg.watch_sources,
                          "post_target": cfg.watch_post_target, "default_topics": cfg.watch_default_topics,
-                         "interval_minutes": cfg.watch_interval_minutes}}
+                         "interval_minutes": cfg.watch_interval_minutes},
+            # what a new signal starts from: the sheet's defaults (topics from Settings when it names some) and its templates
+            "defaults": {"rubric": watches.SHEET_DEFAULT_RUBRIC, "topics": cfg.watch_default_topics or watches.SHEET_DEFAULT_TOPICS,
+                         "flag_at_score": cfg.watch_default_bar},
+            "templates": watches.SHEET_TEMPLATES}
 
 
 @router.post("/watches")
 def watches_save(body: WatchBody, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_lead)) -> dict[str, Any]:
+    """Adds or changes a signal, whatever the Watches switch says (the switch only decides whether the Console looks)."""
     try:
         return {"ok": True, "watch": watches.save_watch(ctx, user.email, body.model_dump()).model_dump(mode="json")}
-    except PermissionError as exc:
-        raise _bad(exc, 403) from exc
+    except ValueError as exc:
+        raise _bad(exc, 422) from exc
+
+
+@router.post("/watches/import-sheet")
+def watches_import_sheet(body: SignalImportBody, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_lead)) -> dict[str, Any]:
+    """Bring the sheet's signals (its Watches tab) over, all OFF; dry_run previews. The same name again updates its signal."""
+    from triage_agent import sheet_read, watches_import
+
+    try:
+        return watches_import.run(ctx, actor=user.email, dry_run=body.dry_run)
+    except sheet_read.SheetUnreadable as exc:
+        raise HTTPException(502, {"error": str(exc), "code": "sheet_unreadable"}) from exc
+    except ValueError as exc:
+        raise _bad(exc, 422) from exc
+
+
+@router.post("/watches/{watch_id}/switch")
+def watches_switch(watch_id: str, body: SwitchBody, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_lead)) -> dict[str, Any]:
+    """Turns one signal on or off (at most watch_max_enabled on at once), whatever the Watches switch says."""
+    try:
+        return {"ok": True, "watch": watches.set_enabled(ctx, user.email, watch_id, body.enabled).model_dump(mode="json")}
+    except KeyError as exc:
+        raise _missing("signal") from exc
     except ValueError as exc:
         raise _bad(exc, 422) from exc
 
@@ -639,14 +704,14 @@ def watches_save(body: WatchBody, ctx: AgentContext = Depends(get_ctx), user: Us
 @router.delete("/watches/{watch_id}")
 def watches_delete(watch_id: str, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_lead)) -> dict[str, Any]:
     if not watches.delete_watch(ctx, user.email, watch_id):
-        raise _missing("watch")
+        raise _missing("signal")
     return {"ok": True}
 
 
 @router.post("/watches/run")
 def watches_run(ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_lead)) -> dict[str, Any]:
     if not ctx.flag("watches"):
-        raise HTTPException(403, {"error": switch_off("Changing watches", "watches"), "code": "rejected"})
+        raise HTTPException(403, {"error": switch_off("Checking new posts against the signals", "watches"), "code": "rejected"})
     ctx.audit(actor=user.email, action="watch.run", surface="console", target_type="watch", summary="Ran a look by hand")
     return watches.run_due(ctx, actor=user.email, force=True)
 
