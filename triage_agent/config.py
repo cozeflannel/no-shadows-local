@@ -880,6 +880,8 @@ class FeatureFlags(ConfigModel):
     chat_review: bool = Field(False, title="Review alerts read from Chat", description="ON: every minute the QA chatbot reads the source space on the Routing page and reviews each new alert there, with no Chat flow in between. What the review wants posted is queued. OFF: alerts are reviewed only when a Chat flow hands them over.")
     chat_delivery: bool = Field(False, title="Post queued messages in Chat", description="ON: the QA chatbot posts what is queued, in its space or in each person's direct message, through its own Chat sign-in, with no Chat flow in between: every minute, or as soon as it is queued when Retry posts that fail is ON too. Each post passes the Routing page's rules and the leak guard again first. OFF: queued posts wait for a Chat flow.")
     alert_popups: bool = Field(False, title="Alert pop-ups", description="ON: people in the Console get a pop-up when an alert comes in; each person can mute their own. OFF: no pop-ups.")
+    own_alerts: bool = Field(False, title="Raise its own alerts", description="ON: every few minutes the sources under Settings, Own alerts are read. Personal details are taken out of each post before it is kept, each post is checked against the rules, like posts are grouped into stories in BigQuery, and what passes is reviewed. OFF: nothing is read and nothing is reviewed.")
+    own_alerts_post: bool = Field(False, title="Post own alerts in Chat", description="ON: each alert the review raises is posted in the space named under Settings, Own alerts. OFF: raised alerts show in the Console only.")
 
 
 def switch_title(name: str) -> str:
@@ -1262,6 +1264,88 @@ class EarlyConfig(ConfigModel):
     keep_days: int = Field(14, ge=1, le=365, description="How long raised stories are kept in the Console.")
 
 
+class OwnAlertsConfig(ConfigModel):
+    """Own alerts: the sources are read, personal details are taken out of each post, each post is checked against the
+    rules, like posts are grouped into stories in BigQuery, and what passes is reviewed and raised."""
+
+    # -- what is read ---------------------------------------------------------------------------------------------
+    sources: list[str] = Field(default_factory=list, description="Keys of the post tables read (Settings, Temp check, sources). Tick them on the Integrations page.")
+    brandwatch_queries: list[str] = Field(default_factory=list, description="Ids of the Brandwatch queries read through Brandwatch's API. Blank = none.")
+    other_alerts_space: str = Field("", description="The Chat space other tools post their alerts in. A link or an id. Blank = not read.")
+    other_alerts_mandatory: bool = Field(True, description="ON: every alert another tool posts in that space goes to review and is raised; the review sets its severity and path. OFF: those alerts are checked against the rules like any other post.")
+    interval_minutes: int = Field(2, ge=1, le=1440, description="How often the sources are read.")
+    first_read_minutes: int = Field(15, ge=1, le=1440, description="How far back a source's first read goes.")
+    max_read_minutes: int = Field(360, ge=5, le=10080, description="The most one read covers after a pause.")
+    lag_minutes: int = Field(2, ge=0, le=720, description="Each read goes this far back again, for posts that reach a source late. None is kept twice.")
+    posted_within_hours: int = Field(72, ge=1, le=720, description="Only posts made within this many hours are kept.")
+    posts_per_read: int = Field(500, ge=1, le=5000, description="The most new posts one source hands over in one read. The rest follow on the next.")
+    english_only: bool = Field(True, description="ON: posts a source marks as not English are left out.")
+
+    # -- personal details -----------------------------------------------------------------------------------------
+    snippet_chars: int = Field(500, ge=50, le=2000, description="The most characters of a post that are kept.")
+    dlp_info_types: list[str] = Field(default_factory=lambda: ["EMAIL_ADDRESS", "PHONE_NUMBER", "PERSON_NAME", "STREET_ADDRESS", "IP_ADDRESS",
+                                                               "CREDIT_CARD_NUMBER", "US_SOCIAL_SECURITY_NUMBER"],
+                                      description="The kinds of personal detail Google's Sensitive Data Protection takes out of each post, by its own names.")
+    dlp_location: str = Field("", description="Where Sensitive Data Protection is called. Blank = the region the service runs in.")
+    hash_salt_secret: str = Field("", description="Name of the secret that holds the salt an author's handle is hashed with. Nothing is read until it is set.")
+    keep_days: int = Field(30, ge=1, le=30, description="How long posts, stories and the vault of KOF names and links are kept. Never more than 30 days.")
+    decisions_keep_days: int = Field(90, ge=1, le=365, description="How long decisions and verdicts are kept. They hold no personal details.")
+
+    # -- the KOF list ---------------------------------------------------------------------------------------------
+    kof_sheet: str = Field("", description="Link to the Google Sheet that lists the KOFs. Share it with the service's account (Viewer). Blank = no author counts as a KOF.")
+    kof_refresh_minutes: int = Field(60, ge=1, le=1440, description="How often the KOF list is read again.")
+    kof_handle_columns: list[str] = Field(default_factory=list, description="The headers of the columns that hold handles or profile links. Blank = any cell of a row may name the handle.")
+    kof_name_column: str = Field("", description="The header of the column that holds a KOF's name. Blank = the first filled cell of the row.")
+
+    # -- the models BigQuery calls --------------------------------------------------------------------------------
+    ai_connection: str = Field("", description="BigQuery connection the models are called through (project.location.name).")
+    embedding_endpoint: str = Field("gemini-embedding-001", description="The Vertex AI model that turns each post into numbers, so like posts can be grouped.")
+    embedding_dimensions: int = Field(768, ge=128, le=3072, description="How many numbers each post is turned into.")
+    fast_endpoint: str = Field("gemini-4-hydrogen", description="The Gemini model BigQuery asks first: one post against a rule, and whether a story is worth a review.")
+    deep_model: str = Field("gemini-4-argon", description="The Gemini model that reviews what passed, before it is raised.")
+
+    # -- the first pass, in BigQuery ------------------------------------------------------------------------------
+    doc_guidelines: str = Field("Strictly enforce all Process Doc hard mandates without override.", description="What Gemini is told about the process document's rules.")
+    discovery_guidelines: str = Field("Surface coordinated velocity anomalies, executive safety threats, and novel brand safety risks.",
+                                      description="What Gemini is told to look for in a story no rule covers.")
+    single_min_score: float = Field(0.65, ge=0, le=1, description="A post checked against a rule goes to review at this risk score or above.")
+    story_min_score: float = Field(0.65, ge=0, le=1, description="A story goes to review at this rank or above.")
+    cos_threshold: float = Field(0.22, ge=0.01, le=1, description="A post joins a story when it is this close to it or closer (cosine distance; smaller is closer).")
+    min_vel_ratio: float = Field(1.5, ge=0, le=100, description="A story is looked at when its last 15 minutes run at this many times its hourly pace.")
+    min_story_posts: int = Field(3, ge=1, le=1000, description="...and it has at least this many posts in those 15 minutes.")
+    cooldown_minutes: int = Field(120, ge=1, le=10080, description="A story that was raised, or looked at and passed over, is not looked at again for this long.")
+    regrowth: float = Field(2.0, ge=1.1, le=100, description="...unless it has grown to this many times the posts it had when it was last looked at.")
+    story_snippets: int = Field(8, ge=1, le=50, description="How many of a story's posts Gemini is shown.")
+    story_active_hours: int = Field(24, ge=1, le=168, description="A story takes new posts for this many hours after its last one.")
+
+    # -- the review -----------------------------------------------------------------------------------------------
+    review_engine: Literal["agent_runtime", "worker"] = Field("agent_runtime", description="Where the review runs: on the Agent Runtime (the worker takes over when it cannot be reached), or always in the worker.")
+    reviews_per_minute: int = Field(25, ge=1, le=200, description="The most posts and stories reviewed each minute.")
+    precedents: int = Field(10, ge=0, le=50, description="How many earlier decisions with an analyst's verdict are shown to the reviewer, the most alike first.")
+    precedent_days: int = Field(60, ge=1, le=365, description="Only decisions this recent are shown.")
+    severities: list[str] = Field(default_factory=lambda: ["P0", "P1", "P2"], description="The severities the review may give, the most severe first.")
+    escalation_paths: list[str] = Field(default_factory=lambda: ["EXEC_SECURITY", "PR_COMMS", "LEGAL", "BRAND_SOCIAL"], description="Who an alert may be routed to.")
+    default_severity: str = Field("P1", description="The severity used when neither a rule nor the review gives one.")
+    default_path: str = Field("BRAND_SOCIAL", description="The path used when neither a rule nor the review gives one.")
+
+    # -- raising and following up ---------------------------------------------------------------------------------
+    post_target: str = Field("", description="Space key raised alerts are posted to. Blank = shown in the Console only.")
+    links_shown: int = Field(5, ge=1, le=20, description="How many of a story's posts are linked in its alert.")
+    surge_min_minutes: int = Field(30, ge=1, le=1440, description="Follow-up: a raised story is looked at again no sooner than this after its alert...")
+    surge_max_hours: int = Field(4, ge=1, le=72, description="...and no later than this.")
+    surge_min_posts: int = Field(25, ge=1, le=100000, description="Follow-up: it needs at least this many posts in its last 15 minutes...")
+    surge_ratio: float = Field(3.0, ge=1, le=100, description="...running at this many times its hourly pace.")
+    console_keep_days: int = Field(30, ge=1, le=30, description="How long raised alerts stay on the Own alerts page.")
+
+    @model_validator(mode="after")
+    def _fallbacks_are_allowed(self) -> "OwnAlertsConfig":
+        if self.default_severity not in self.severities:
+            raise ValueError("The fallback severity must be one of the severities.")
+        if self.default_path not in self.escalation_paths:
+            raise ValueError("The fallback path must be one of the escalation paths.")
+        return self
+
+
 class PlatformConfig(ConfigModel):
     access: AccessConfig = Field(default_factory=AccessConfig)
     flags: FeatureFlags = Field(default_factory=FeatureFlags)
@@ -1281,6 +1365,7 @@ class PlatformConfig(ConfigModel):
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     decisions: DecisionsConfig = Field(default_factory=DecisionsConfig)
     early: EarlyConfig = Field(default_factory=EarlyConfig)
+    own_alerts: OwnAlertsConfig = Field(default_factory=OwnAlertsConfig)
     campaigns: CampaignsConfig = Field(default_factory=CampaignsConfig)
 
     def flag(self, name: str) -> bool:
