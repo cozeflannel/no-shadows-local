@@ -309,7 +309,7 @@ def mark_delivered(ctx: AgentContext, alert_ids: list[str]) -> None:
 
 @operation("ingest_inhouse")
 def ingest_inhouse(ctx: AgentContext, payload: dict[str, Any], rc: RequestContext):
-    """The in-house job: Path B's alerts, then one run of own alerts when that switch is ON. A run handed its rows
+    """The in-house job: Path B's alerts, then one run of agent alerts when that switch is ON. A run handed its rows
     (a test feed) does Path B only."""
     outputs, data = _path_b(ctx, payload, rc)
     if payload.get("rows") is None:

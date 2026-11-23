@@ -1,4 +1,4 @@
-"""Own alerts: personal details are taken out of a post before it is kept. Patterns first, then Google's Sensitive
+"""Agent alerts: personal details are taken out of a post before it is kept. Patterns first, then Google's Sensitive
 Data Protection (Cloud DLP); when DLP cannot be reached nothing is handed back, so nothing is stored.
 
 DLP's HTTP call is replaced by a stand-in that records what it was sent (no network). The patterns, the batching, the

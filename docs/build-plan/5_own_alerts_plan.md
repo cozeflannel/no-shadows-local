@@ -1,11 +1,12 @@
-# Plan 5: own alerts from the nine sources
+# Plan 5: agent alerts from the nine sources
 
 The owner's "System architectural rebuild specification" (22 Nov 2026), built inside the Python app.
 The app reads nine sources, strips personal details from every post before it is stored, checks each post against
 editable rules, groups like posts into stories in BigQuery, reviews what passes on the Agent Runtime, raises it in
 Chat, and learns from the analysts' verdicts.
 
-In the Console it is called **Own alerts**. Its switch starts OFF.
+In the Console it is called **Agent alerts**: alerts the agent raises itself. ("Our own alerts" is already the name of the page for alerts
+taken from the team's own tables.) In the code it is `own_alerts`. Its switch starts OFF.
 
 ## Decision log
 
@@ -21,7 +22,7 @@ Where the specification's own text cannot run, or breaks one of its hard rules, 
 | D6 | Cards, `replaceCards` as the app, `users/app`, a Workspace Events stream | Alerts are posted as text by the QA chatbot's sign-in. Verdict links open the Console. The Other alerts space is read each run | All four need a configured Chat app, which the owner ruled out on 22 Nov. The sheet bot reads and posts the same way |
 | D7 | An external table over a KOF sheet with columns `platform, handle, kof_name, kof_tier` | The service account reads the sheet; an author is a KOF when a cell names the handle (the sheet bot's rule) | The sheet's real columns are not those four |
 | D8 | Per-user secrets named `slrr-triage-token-<user>` | The sign-in vault that exists is kept as it is | Hard rule 1 |
-| D9 | Thresholds, model names, topic names and space ids as constants or environment values | Every one is a setting under Settings, Own alerts, with the specification's value as its default | The owner's rule: nothing operational is hard-coded |
+| D9 | Thresholds, model names, topic names and space ids as constants or environment values | Every one is a setting under Settings, Agent alerts, with the specification's value as its default | The owner's rule: nothing operational is hard-coded |
 | D10 | Vector indexes on `posts` and `decisions` | None | Neither search reads those tables directly, and each compares a few thousand rows at most |
 | D11 | A remote model `gemini4_deep_reviewer` | Not created. The deep model is called by the Agent Runtime, and by the worker when the Agent Runtime cannot be reached | Nothing in the specification's own code calls that BigQuery model |
 | D12 | A scheduled query purges after 30 days | The app's daily retention run deletes the rows; every table also expires its partitions | Same result with nothing extra to set up |
@@ -31,6 +32,9 @@ Where the specification's own text cannot run, or breaks one of its hard rules, 
 | D16 | The follow-up job re-queues a surging story every minute, with a made-up score of 0.95 | A raised story is queued again once for each time it was raised, with no score, and only when it was measured in the last 15 minutes | Once a minute would send the same story to review 200 times; a stale count is not a surge |
 | D17 | The ten most recent verdicts are shown to every review | The ten decisions most like the item under review, among those with a verdict | A verdict on an unrelated post says nothing about this one |
 | D18 | The review handles 25 items a minute, however long each takes | A run stops starting reviews after its seconds (a setting); the rest wait a minute. One run at a time | Two slow runs would otherwise overlap and review the same items |
+| D19 | A button on the card records the verdict when its link is opened | The link opens the Agent alerts page, which records the verdict once for the analyst who is signed in and can be changed there | A link that changes something when fetched can be set off by a preview. The page asks the API as the person |
+| D20 | The seven tables are named in the procedure | Find and fill (Integrations) adds the two tables only agent alerts read and ticks the tables it reads. Each tick can be changed there | Which tables are read is a setting, like every other read |
+| D21 | The alert space is an environment value | The space is chosen from the agent's spaces under Settings, Agent alerts. The source space is not among the choices and is refused again when an alert is queued | Nothing the agent raises may reach the source space |
 
 Defects in the specification's SQL and code that are fixed here:
 - `last_alerted_at` is read (cool-down, follow-up) and never written. The review writes it.
@@ -77,7 +81,7 @@ Verified when: the page shows sources, alerts and rules from the real routes, ty
 | Step | What | Files | Blocked by |
 |---|---|---|---|
 | 3.1 | Routes | `console/backend/routes_own.py` | Phase 2 |
-| 3.2 | The Own alerts page, the Integrations tick, Settings, Help | `console/frontend/src/pages/OwnAlerts.tsx` and friends | 3.1 |
+| 3.2 | The Agent alerts page, the Integrations tick, Settings, Help | `console/frontend/src/pages/OwnAlerts.tsx` and friends | 3.1 |
 
 ### Phase 4: Google Cloud
 Verified when: `infra/deploy.sh` enables what is needed, grants the roles, creates the BigQuery connection and the salt secret, and seeds the settings.
@@ -105,5 +109,5 @@ Verified when: `infra/deploy.sh` enables what is needed, grants the roles, creat
 |---|---|
 | 1 The data in | built: settings, scrub, the KOF list, the BigQuery objects, the nine reads, the run in the in-house job. Left for 3.2: the Integrations tick and Find and fill |
 | 2 Review and raise | built: rules, the review, the alert, verdicts, the follow-up, the purge, the minute tick. A raised alert is not edited in Chat after its verdict (D6) |
-| 3 The Console | to do |
+| 3 The Console | built: the Agent alerts page (raised, passed over, sources, rules), verdicts from the page and from a Chat link, its Settings and Help pages, its tick on Integrations, Find and fill, its place on the AI page |
 | 4 Google Cloud | to do |

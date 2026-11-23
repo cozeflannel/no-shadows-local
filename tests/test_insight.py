@@ -262,7 +262,9 @@ def test_find_and_fill_brings_the_temp_check_apps_tables_and_brandwatch_values(c
     got = client.post("/api/connections/autofill", headers=iap(ADMIN)).json()
     filled = {f["path"]: f for f in got["filled"]}
     cfg = ctx.config.platform.temp_check
-    assert [s.key for s in cfg.sources] == ["alerts", "sonar", "brandwatch", "sprinklr", "tubular"] and cfg.sources[1].read_sql == app["tables"][1].read_sql
+    assert [s.key for s in cfg.sources] == ["alerts", "sonar", "brandwatch", "sprinklr", "tubular", "owned", "story"], \
+        "the five the temp check app searches, then the two only agent alerts read (tests/test_own_console.py)"
+    assert cfg.sources[1].read_sql == app["tables"][1].read_sql
     assert filled["platform.temp_check.sources"]["tool"] == "BigQuery"
     assert filled["platform.temp_check.sources"]["value"] == "Sundar all mentions, Sonar, Brandwatch stored mentions, Sprinklr comments, Tubular videos"
     assert (cfg.brandwatch_project_id, cfg.event_query_prefix, cfg.standing_query_name, cfg.standing_query_skip) == ("1998344909", "[G EVENT]", "[V2] MAIN G Landscape (", "benchmark")
@@ -341,12 +343,13 @@ def test_the_bigquery_card_lists_each_table_the_app_reads_once_with_what_reads_i
     client.post("/api/connections/autofill", headers=iap(ADMIN))
     rows = bigquery_card(client)["tables"]
     assert [r["name"] for r in rows] == ["Sundar all mentions", "Sonar", "Brandwatch stored mentions", "Sprinklr comments", "Tubular videos",
-                                         "Story selection view", "Alert log", "Billing export"]
+                                         "Sprinklr owned posts", "DSD story selection", "Alert log", "Billing export"]
     sonar = rows[1]
     assert sonar["table"] == "bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw" and sonar["location"] == "us-central1"
-    assert sonar["reads"] == ["Temp checks", "Find missing links"], "one row for the table three settings name"
-    assert sonar["post"] == {"key": "sonar", "temp_checks": True, "early": False, "watches": False}
-    assert rows[0]["reads"] == ["Temp checks"] and rows[6]["table"] == ctx.config.inhouse.alert_log_table and rows[6]["status"] is None
+    assert sonar["reads"] == ["Temp checks", "Agent alerts", "Find missing links"], "one row for the table three settings name"
+    assert sonar["post"] == {"key": "sonar", "temp_checks": True, "early": False, "watches": False, "own": True}
+    assert rows[6]["reads"] == ["Agent alerts", "Our own alerts"], "the story selection view is the DSD story table: one row, read by both"
+    assert rows[0]["reads"] == ["Temp checks", "Agent alerts"] and rows[7]["table"] == ctx.config.inhouse.alert_log_table and rows[7]["status"] is None
 
 
 def test_changing_a_table_on_the_bigquery_card_changes_it_in_every_setting_that_names_it(ctx, client, clock, own_secrets):
@@ -364,7 +367,7 @@ def test_changing_a_table_on_the_bigquery_card_changes_it_in_every_setting_that_
     cfg = ctx.config
     assert (cfg.inhouse.sonar_table, cfg.sonar_lookup.table, cfg.platform.temp_check.sources[1].table) == ("other-project.listening.sonar_events",) * 3
     row = saved.json()["connection"]["tables"][1]
-    assert row["table"] == "other-project.listening.sonar_events" and row["reads"] == ["Temp checks", "Find missing links"]
+    assert row["table"] == "other-project.listening.sonar_events" and row["reads"] == ["Temp checks", "Agent alerts", "Find missing links"]
     entry = client.get("/api/audit", params={"action": "connection.save"}, headers=iap(ADMIN)).json()["entries"][0]
     assert entry["target_id"] == "bigquery" and "inhouse.sonar_table" in entry["summary"] and "sonar_lookup.table" in entry["summary"]
 
@@ -382,9 +385,10 @@ def test_the_bigquery_card_chooses_what_reads_each_table_of_posts(ctx, client, o
     assert saved.status_code == 200
     plat = ctx.config.platform
     assert plat.early.sources == ["alerts", "tubular"] and plat.campaigns.watch_sources == ["alerts"]
-    assert [s.enabled for s in plat.temp_check.sources] == [True, True, True, True, False]
+    assert [s.enabled for s in plat.temp_check.sources] == [True, True, True, True, False, False, False]
     rows = {r["name"]: r for r in saved.json()["connection"]["tables"]}
-    assert rows["Sundar all mentions"]["reads"] == ["Temp checks", "Early Detection", "Watches"] and rows["Tubular videos"]["reads"] == ["Early Detection"]
+    assert rows["Sundar all mentions"]["reads"] == ["Temp checks", "Early Detection", "Watches", "Agent alerts"]
+    assert rows["Tubular videos"]["reads"] == ["Early Detection", "Agent alerts"], "a save that leaves agent alerts out leaves its tick as it was"
     client.put("/api/connections/bigquery/tables", json={"reads": [{"key": "alerts", "temp_checks": True, "early": False, "watches": True}]}, headers=iap(ADMIN))
     assert ctx.config.platform.early.sources == ["tubular"], "the other tables' choices stay"
     assert client.put("/api/connections/bigquery/tables", json={"reads": [{"key": "nope", "temp_checks": True, "early": False, "watches": False}]},
@@ -397,7 +401,8 @@ def test_the_bigquery_card_checks_every_table_and_names_each_grant_once(ctx, cli
     own_dataset(client, ctx)
     ctx.config.inhouse.enabled = ctx.config.sonar_lookup.enabled = True
     assert bigquery_card(client)["state"] == "ready"
-    client.put("/api/connections/bigquery/tables", json={"reads": [{"key": "sprinklr", "temp_checks": False, "early": False, "watches": False}]}, headers=iap(ADMIN))
+    client.put("/api/connections/bigquery/tables", json={"reads": [{"key": "sprinklr", "temp_checks": False, "early": False, "watches": False, "own": False}]},
+               headers=iap(ADMIN))
 
     monkeypatch.setattr(connections, "_on_cloud", lambda: True)  # the check runs as it does on Cloud Run
     ctx.bq = gw = ReadTables()
@@ -406,13 +411,14 @@ def test_the_bigquery_card_checks_every_table_and_names_each_grant_once(ctx, cli
     lines = {d["label"]: d for d in got["test"]["details"]}
     assert got["test"]["ok"] is False and got["connection"]["state"] == "failing"
     assert list(lines) == ["Queries", "Dataset", "Events table", "Sundar all mentions", "Sonar", "Brandwatch stored mentions", "Tubular videos",
-                           "Story selection view", "Alert log"], "a table nothing reads, and one that is not set, are not asked for"
+                           "Sprinklr owned posts", "DSD story selection", "Alert log"], "a table nothing reads, and one that is not set, are not asked for"
     assert lines["Sundar all mentions"]["ok"] is True and lines["Sundar all mentions"]["message"] == "Readable. A day's read scans 3.0 GB."
     grant = 'GRANT `roles/bigquery.dataViewer` ON SCHEMA `bsip-s-bsip-gg-26-2cf3`.`google_bg` TO "serviceAccount:agent@project.test"'
     assert lines["Sonar"]["ok"] is False and lines["Sonar"]["message"] == f"Access denied. The dataset's owners run: {grant}"
     assert got["test"]["grants"] == [grant + ";"], "one line for the dataset, though three settings read its table"
     assert lines["Tubular videos"]["ok"] is False and lines["Tubular videos"]["message"].startswith("BigQuery would not take this table's read: 400 Unrecognized name: video_title")
-    assert lines["Story selection view"]["message"] == "Readable." and lines["Alert log"]["ok"] is True
+    assert lines["DSD story selection"]["message"] == "Readable. A day's read scans 3.0 GB." and lines["Alert log"]["ok"] is True
+    assert lines["Sprinklr owned posts"]["ok"] is True, "the two tables only agent alerts read are checked with their own reads"
 
     assert lines["Brandwatch stored mentions"]["message"] == "Readable. A day's read scans 3.0 GB. Its location is now set to EU."
     assert ctx.config.platform.temp_check.sources[2].location == "EU", "a table's location is read from BigQuery, not typed"

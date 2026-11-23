@@ -1,4 +1,4 @@
-"""The sources own alerts read, and how each hands over what is new.
+"""The sources agent alerts read, and how each hands over what is new.
 
     table        a table of posts (Settings, Temp check, sources), read by its own read in its own BigQuery location
     brandwatch   a Brandwatch query, read through Brandwatch's API as Brandwatch adds mentions to it
@@ -44,8 +44,19 @@ class Source:
     by_link: bool = True  # a post is known by its link across sources (False: by its row id, for comments under one post)
 
 
+def app_tables() -> list[Any]:
+    """The two tables of posts only agent alerts read (Google's own posts, the DSD story pool), kept as data in
+    config/own_alerts.yaml. Nothing uses them by themselves: Find and fill (Integrations) adds them to the tables of posts."""
+    import yaml
+
+    from ..config import CONFIG_DIR, TempCheckSource
+
+    raw = yaml.safe_load((CONFIG_DIR / "own_alerts.yaml").read_text()) or {}
+    return [TempCheckSource.model_validate(t) for t in raw.get("tables") or []]
+
+
 def listing(ctx: "AgentContext") -> list[Source]:
-    """Every source set under Settings, Own alerts, in the order it is read."""
+    """Every source set under Settings, Agent alerts, in the order it is read."""
     from .. import mirror
 
     cfg = ctx.config.platform
@@ -188,7 +199,7 @@ def read_space(ctx: "AgentContext", source: Source, since: datetime) -> list[dic
     from .. import chatapi
 
     if not source.space:
-        raise ValueError("The Other alerts space set under Settings, Own alerts is not a Chat space (a link or an id).")
+        raise ValueError("The Other alerts space set under Settings, Agent alerts is not a Chat space (a link or an id).")
     rows = []
     for m in chatapi.client_for(ctx).list_messages(source.space, since):
         text = str(m.get("text") or m.get("card_text") or "").strip()

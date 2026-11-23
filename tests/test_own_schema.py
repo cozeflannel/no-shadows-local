@@ -1,4 +1,4 @@
-"""Own alerts' BigQuery objects: tables that expire, the pattern function, two remote models and the triage procedure.
+"""Agent alerts' BigQuery objects: tables that expire, the pattern function, two remote models and the triage procedure.
 
 BigQuery is replaced by a stand-in that records every statement (no network). The statements are the real ones;
 these checks read them, because nothing here can be run against BigQuery from a test.

@@ -1,9 +1,9 @@
-"""What own alerts keeps leaves after its days.
+"""What agent alerts keeps leaves after its days.
 
 Each table's partitions already expire on their own (schema). Once a day the same rows are deleted outright, so a
 row never outlives its days by waiting for its partition: posts, their links and KOF names, their engagement, the
 stories and the queue after the days posts are kept (30 at most); decisions and verdicts after their own days. This
-runs whether or not own alerts is switched ON: what was kept still has to leave.
+runs whether or not agent alerts is switched ON: what was kept still has to leave.
 """
 
 from __future__ import annotations

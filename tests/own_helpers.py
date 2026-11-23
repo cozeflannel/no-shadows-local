@@ -88,7 +88,7 @@ def row(n: int, text: str = "", *, author: str = "", url: str = "", platform: st
 
 
 def set_up(ctx, monkeypatch) -> tuple[BigQuery, Dlp]:
-    """Own alerts switched ON with two tables of posts (one in US, one in us-central1), a salt, a KOF list and DLP."""
+    """Agent alerts switched ON with two tables of posts (one in US, one in us-central1), a salt, a KOF list and DLP."""
     cfg = ctx.config.platform
     cfg.bigquery.dataset, cfg.bigquery.location = HOME, "US"
     cfg.temp_check.sources = [

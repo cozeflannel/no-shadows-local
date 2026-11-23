@@ -1,4 +1,4 @@
-"""Own alerts: no statement sent to BigQuery uses one of GoogleSQL's reserved words as a name.
+"""Agent alerts: no statement sent to BigQuery uses one of GoogleSQL's reserved words as a name.
 
 BigQuery refuses a statement whose alias, common table expression or parameter is a reserved word (ROWS, AT, FROM, TO).
 Nothing here can be run against BigQuery from a test, so every statement the code builds is read instead: the objects'

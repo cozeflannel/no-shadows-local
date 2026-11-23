@@ -267,7 +267,8 @@ def test_the_ai_page_shows_what_each_engine_is_for_and_whether_it_is_connected(a
         ("Gemini", "Talks with people"), ("Gemini Decisions", "Decides"), ("Vertex AI in BigQuery", "Reads the post tables"),
         ("Document search", "Grounds the answers")]
     assert engines["decisions"]["state"] == "not_connected" and engines["bigquery"]["state"] == "ready"
-    assert {s["name"]: s["on"] for s in engines["bigquery"]["switches"]} == {"early_detection": False, "watches": False, "early_cards": False}
+    assert {s["name"]: s["on"] for s in engines["bigquery"]["switches"]} == {"early_detection": False, "watches": False, "early_cards": False,
+                                                                             "own_alerts": False}
     api.ctx.config.platform.decisions.secret = "decisions-key"
     assert {e["key"]: e["state"] for e in api.get("/api/ai").json()["engines"]}["decisions"] == "ready"
 

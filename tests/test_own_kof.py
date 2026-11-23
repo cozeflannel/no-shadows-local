@@ -1,4 +1,4 @@
-"""Own alerts: the KOF list. An author is a KOF when a cell of the sheet names their handle, by the sheet-based bot's
+"""Agent alerts: the KOF list. An author is a KOF when a cell of the sheet names their handle, by the sheet-based bot's
 rule. The sheet's read is replaced by a stand-in (no network); the rule, the index and the cache are the real code."""
 
 from __future__ import annotations

@@ -39,6 +39,7 @@ PART_INFO: dict[str, tuple[str, str, str]] = {
     "chat_agent": ("Console chat agent", "The assistant on the Chat agent page.", "decide"),
     "decisions": ("Gemini Decisions", "The decision maker: the key it uses, how often it may be asked, and the bars its answers are held to.", "decide"),
     "early": ("Early Detection", "Which post tables are read, how like posts are grouped into stories, and when a story is raised.", "decide"),
+    "own_alerts": ("Agent alerts", "Alerts the agent raises itself: what it reads, how personal details are taken out, and how a post or story is reviewed and raised.", "decide"),
     "access": ("Who can open the Console", "The sign-in domains that may read the Console.", "people"),
     "gcp": ("Google Cloud project", "The project and region the Console runs in.", "tech"),
     "pubsub": ("Delivery", "How the agent's posts go out, how often a failed one is tried again, and when it stops trying.", "tech"),

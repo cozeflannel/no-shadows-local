@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..events import PlatformEvent
 from ..models import SPACE_TARGETS
-from . import POST_SWITCH, schema
+from . import POST_SWITCH, SNIPPET_BREAK, schema
 
 if TYPE_CHECKING:
     from ..context import AgentContext
@@ -78,13 +78,15 @@ def text_of(doc: dict[str, Any], prefix: str, console_url: str) -> str:
     """The alert's words: severity and path, why it was looked at, the cleaned evidence, the reason, the author, the
     links, and the two verdict links when the Console's address is known."""
     story = doc.get("item_type") == "STORY"
-    lines = [" ".join(x for x in (prefix, f"*Own alert* · {doc['severity']} · {doc['path']}") if x), _mode(doc)]
+    lines = [" ".join(x for x in (prefix, f"*Agent alert* · {doc['severity']} · {doc['path']}") if x), _mode(doc)]
     if story and doc.get("velocity"):
         lines.append(doc["velocity"])
-    lines += [doc.get("evidence") or "", f"*Why*: {doc.get('rationale') or ''}", _author(doc, story)]
+    evidence = str(doc.get("evidence") or "")
+    lines += [f"• {part}" for part in evidence.split(SNIPPET_BREAK) if part.strip()] if story else [evidence]
+    lines += [f"*Why*: {doc.get('rationale') or ''}", _author(doc, story)]
     links = doc.get("links") or []
-    if story:
-        lines += [f"• <{url}|post {n + 1}>" for n, url in enumerate(links)]
+    if story and links:
+        lines.append(" · ".join(f"<{url}|post {n + 1}>" for n, url in enumerate(links)))
     elif links:
         lines.append(f"<{links[0]}|Open the post>")
     if console_url:
@@ -102,7 +104,7 @@ def post(ctx: "AgentContext", doc: dict[str, Any]) -> bool:
     if not cfg.flag(POST_SWITCH) or not target:
         return False
     if target == "burson" or mirror.is_source_target(ctx, target):
-        doc["note"] = "Not posted: own alerts are never posted in the source space. Choose another space under Settings, Own alerts."
+        doc["note"] = "Not posted: agent alerts are never posted in the source space. Choose another space under Settings, Agent alerts."
         return False
     if target not in SPACE_TARGETS or ctx.config.space(target) is None:
         doc["note"] = f"Not posted: {target} is not one of the agent's spaces (Integrations, Google Chat)."

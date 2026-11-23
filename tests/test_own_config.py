@@ -1,5 +1,5 @@
-"""Own alerts: its switches start OFF, its settings carry the specification's numbers and no operational value,
-and the two tables only own alerts read are kept as data."""
+"""Agent alerts: its switches start OFF, its settings carry the specification's numbers and no operational value,
+and the two tables only agent alerts read are kept as data."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import yaml
 from pydantic import ValidationError
 
 from triage_agent.config import FeatureFlags, OwnAlertsConfig, TempCheckSource, switch_title
+from triage_agent.models import SPACE_TARGETS
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,8 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_both_switches_start_off_and_have_plain_names(ctx):
     flags = ctx.config.platform.flags
     assert flags.own_alerts is False and flags.own_alerts_post is False
-    assert switch_title("own_alerts") == "Raise its own alerts"
-    assert switch_title("own_alerts_post") == "Post own alerts in Chat"
+    assert switch_title("own_alerts") == "Agent alerts"
+    assert switch_title("own_alerts_post") == "Post agent alerts in Chat"
     for name in ("own_alerts", "own_alerts_post"):
         said = FeatureFlags.model_fields[name].description
         assert said.startswith("ON: ") and " OFF: " in said
@@ -48,6 +49,27 @@ def test_the_specifications_numbers_are_the_defaults():
 def test_a_review_run_has_a_time_limit_and_the_agent_runtime_a_timeout():
     own = OwnAlertsConfig()
     assert (own.review_seconds, own.runtime_timeout_seconds) == (45, 60)
+
+
+def test_the_space_alerts_are_posted_in_is_one_of_the_agents_spaces_and_never_the_source_space():
+    assert OwnAlertsConfig(post_target="team").post_target == "team" and OwnAlertsConfig().post_target == ""
+    for refused in ("burson", "dm", "somewhere"):
+        with pytest.raises(ValidationError):
+            OwnAlertsConfig(post_target=refused)
+    choices = OwnAlertsConfig.model_json_schema()["properties"]["post_target"]["enum"]
+    assert choices == ["", "clean", "youtube", "doodle", "team", "crisis"], "the Settings page offers these, so no name is typed"
+    assert choices == ["", *(t for t in SPACE_TARGETS if t != "burson")], "every space the agent posts in but the source space"
+
+
+def test_settings_a_person_would_not_know_by_their_key_carry_a_plain_name():
+    named = {key: field.get("title") for key, field in OwnAlertsConfig.model_json_schema()["properties"].items()}
+    assert named["cos_threshold"] == "How alike posts in a story must be" and named["min_vel_ratio"] == "Pace a story must reach"
+    assert named["hash_salt_secret"] == "Secret that holds the salt" and named["post_target"] == "Space alerts are posted in"
+    assert named["fast_endpoint"] == "Fast model in BigQuery" and named["deep_model"] == "Review model"
+    for key, title in named.items():
+        shown = title if title and title.lower().replace(" ", "_") != key else key.replace("_", " ")
+        for word in ("cos ", "vel ", "regrowth", "neighbours", "endpoint", "snippet", "lag ", "precedent", "surge", "guidelines", "catch up"):
+            assert word not in shown.lower() + " ", f"{key} is shown as '{shown}'"
 
 
 def test_posts_and_the_vault_are_never_kept_past_thirty_days():

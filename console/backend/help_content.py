@@ -395,6 +395,45 @@ TOPICS: list[dict[str, Any]] = [
         ],
     },
     {
+        "id": "agent-alerts", "page": "Agent alerts", "title": "Agent alerts", "audience": "everyone",
+        "summary": "Alerts the agent raises itself from the sources it reads, reviewed before anyone is told.",
+        "sections": [
+            {"heading": "Work an alert", "steps": [
+                "Open Agent alerts. Raised holds what the review raised, newest first.",
+                "Read the severity, who it goes to, the evidence and the reason. Open the post from its link.",
+                "Press Confirm when the alert was right, False positive when it was not. A verdict can be changed.",
+                "In Chat, the Confirm and False positive links on an alert open this page and record the verdict."]},
+            {"heading": "How an alert is made", "items": [
+                "Every few minutes each source hands over its new posts: the tables ticked for Agent alerts on Integrations, the Brandwatch queries, and the Other alerts space.",
+                "Personal details are taken out of each post before it is kept: handles, emails, phone numbers and links by pattern, then names by Google's Sensitive Data Protection. Nothing is kept while that check cannot be reached.",
+                "A post's link and, for a KOF, the name shown are kept apart in a vault no model reads. They are put back on the alert after the review.",
+                "Each post is checked against the rules. A mandatory rule sends it straight to review. Any other rule has Gemini read the post first.",
+                "Posts no rule covers are grouped into stories in BigQuery. Gemini reads a story that is growing fast enough.",
+                "The review decides: raise or pass over, a severity, and who it goes to. It cannot overrule a mandatory rule.",
+                "A raised story that keeps growing is reviewed once more.",
+                "Posts, links and names are deleted after 30 days at most.",
+                "Our own alerts is a different page: it takes alerts the team already chose from the team's own tables."]},
+            {"heading": "Rules", "steps": [
+                "Open Agent alerts, Rules, and press Add a rule. Leads and admins can.",
+                "Name the rule and say where it is in the process document.",
+                "Choose Mandatory (a matching post is always raised) or Candidate (Gemini reads the post first).",
+                "Give it at least one condition: words, a KOF author, followers, engagements, a source or a platform.",
+                "Set a severity and who it goes to, or leave both for the review.",
+                "Save. The rule applies from the next run."]},
+            {"heading": "The tabs", "items": [
+                "Raised: the alerts, with each verdict.", "Passed over: what the review turned down, and why.",
+                "Sources: each source, when it was last read, and how many posts were kept.",
+                "Rules: what each new post is checked against."]},
+            {"heading": "Turn it on", "steps": [
+                "Open Integrations and press Find and fill. It adds the two tables only Agent alerts read, and ticks the tables it reads.",
+                "Open Settings, Agent alerts. Enter the BigQuery connection, the secret that holds the salt and the KOF sheet. Add the Brandwatch queries and the Other alerts space if you use them.",
+                "Open Settings, Switches and turn on Change BigQuery from here. Then open Agent alerts and press Create the tables.",
+                "Open Agent alerts, Rules, and add your rules.",
+                "Open Settings, Switches and turn on Agent alerts.",
+                "To post in Chat: choose the space under Settings, Agent alerts, then turn on Post agent alerts in Chat. An alert is never posted in the source space."]},
+        ],
+    },
+    {
         "id": "ai", "page": "AI", "title": "AI: three engines, one job each", "audience": "admins",
         "summary": "What each AI engine does here, whether it is connected, and a live check of each.",
         "sections": [

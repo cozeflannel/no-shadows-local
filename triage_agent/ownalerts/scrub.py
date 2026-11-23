@@ -104,7 +104,7 @@ def clean_all(ctx: "AgentContext", texts: list[Any]) -> list[str]:
     nothing handed back, when the check could not run on every one of them."""
     own = ctx.config.platform.own_alerts
     if not own.dlp_info_types:
-        raise Unavailable("No kinds of personal detail are set (Settings, Own alerts): nothing is kept without that check.")
+        raise Unavailable("No kinds of personal detail are set (Settings, Agent alerts): nothing is kept without that check.")
     out = [patterns(t, own.snippet_chars) for t in texts]
     todo = [i for i, t in enumerate(out) if t]
     if not todo:

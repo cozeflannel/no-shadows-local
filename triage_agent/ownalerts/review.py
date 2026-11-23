@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from ..events import PlatformEvent
 from ..models import ChatOutputs, RequestContext
 from ..operations import operation
-from . import SWITCH, feedback, raise_, schema
+from . import SNIPPET_BREAK, SWITCH, feedback, raise_, schema
 
 if TYPE_CHECKING:
     from ..context import AgentContext
@@ -37,6 +37,7 @@ DECISIONS = "own_decisions"  # the Console's record of each decision
 STATE = "own:review"         # {last, error, result}
 LOCK = "own:review:run"
 WRITE_SECONDS = 120          # the time BigQuery's writes are given after the last review, before another run may start
+LISTED = 500                 # the most decisions the Console lists at once
 CONTEXT = {"flow": "job", "invoked_by": "job:own_alerts", "deliver": "outbox"}
 FIELDS = ("decision_id", "decided_at", "queue_id", "target_id", "item_type", "trigger_path", "escalate", "severity", "escalation_path",
           "decision_rationale", "sanitized_evidence", "velocity_summary", "agent_engine_session")
@@ -98,7 +99,7 @@ def judge(ctx: "AgentContext", item: dict[str, Any], precedents: list[str]) -> V
 def review_own_candidate(ctx: "AgentContext", payload: dict[str, Any], rc: RequestContext):
     """One candidate's review. payload: {item, precedents}. Answers data.verdict."""
     verdict = judge(ctx, dict(payload.get("item") or {}), [str(p) for p in payload.get("precedents") or []])
-    return ChatOutputs(summary=f"own alerts review: {'raise' if verdict.escalate else 'pass over'}"), {"verdict": verdict.model_dump()}
+    return ChatOutputs(summary=f"agent alerts review: {'raise' if verdict.escalate else 'pass over'}"), {"verdict": verdict.model_dump()}
 
 
 def ask(ctx: "AgentContext", item: dict[str, Any], precedents: list[str]) -> tuple[Verdict, str, str]:
@@ -136,7 +137,7 @@ def _pending(ctx: "AgentContext", gw: Any) -> list[dict[str, Any]]:
         "SELECT rq.queue_id, rq.queued_at, rq.item_type, rq.target_id, rq.trigger_path, rq.matched_rule_id, rq.stage1_rank_score, rq.stage1_rationale,\n"
         "  r.rule_name, r.process_doc_section, r.forced_severity, r.forced_escalation_path,\n"
         "  IF(rq.item_type = 'STORY',\n"
-        f"     (SELECT STRING_AGG(x.sanitized_snippet, ' || ' ORDER BY x.ingested_at DESC LIMIT {own.story_snippets}) FROM `{p}` x\n"
+        f"     (SELECT STRING_AGG(x.sanitized_snippet, '{SNIPPET_BREAK}' ORDER BY x.ingested_at DESC LIMIT {own.story_snippets}) FROM `{p}` x\n"
         "      WHERE x.story_id = rq.target_id AND x.ingested_at >= @since),\n"
         "     pp.sanitized_snippet) AS evidence,\n"
         "  s.post_count_15m, s.post_count_1h, s.unique_authors_15m, s.velocity_ratio_15m, s.story_summary,\n"
@@ -417,7 +418,7 @@ def run(ctx: "AgentContext") -> dict[str, Any]:
         done = _decide(ctx, gw, _pending(ctx, gw), out, errors)
         if done:
             _finish(ctx, gw, done, out, errors)
-    except Exception as exc:  # noqa: BLE001 - shown on the Own alerts page; the next minute tries again
+    except Exception as exc:  # noqa: BLE001 - shown on the Agent alerts page; the next minute tries again
         errors.append(str(exc)[:400])
     finally:
         ctx.store.release_idempotent(LOCK)
@@ -428,7 +429,9 @@ def run(ctx: "AgentContext") -> dict[str, Any]:
 
 
 def list_decisions(ctx: "AgentContext", days: int = 7, status: str = "") -> list[dict[str, Any]]:
-    rows = ctx.store.list_docs(DECISIONS, where={"status": status} if status else None, since=ctx.now() - timedelta(days=days), limit=500)
+    """The decisions of the last days, the newest first, by when each was decided (a later verdict does not move one)."""
+    floor = (ctx.now() - timedelta(days=days)).isoformat()
+    rows = [d for d in ctx.store.list_docs(DECISIONS, where={"status": status} if status else None, limit=LISTED) if str(d.get("at") or "") >= floor]
     rows.sort(key=lambda d: d.get("at") or "", reverse=True)
     return rows
 

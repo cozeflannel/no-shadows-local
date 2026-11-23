@@ -1,4 +1,4 @@
-"""Own alerts: the review. What BigQuery queued is reviewed on the Agent Runtime (or by the worker when it cannot be
+"""Agent alerts: the review. What BigQuery queued is reviewed on the Agent Runtime (or by the worker when it cannot be
 reached), a mandatory rule cannot be overruled, each decision is kept once, a raised alert is queued for Chat with its
 link from the vault, and an analyst's verdict is kept.
 
@@ -406,7 +406,7 @@ def test_a_raised_alert_is_queued_for_chat_with_the_name_and_link_from_the_vault
     (doc,) = docs(ctx)
     assert post.target == "team" and post.source == "own_alerts" and doc["outbox_id"] == post.outbox_id and out["posted"] == 1
     assert post.text == "\n".join([
-        f"{ctx.config.agent.message_prefix} *Own alert* · P0 · LEGAL",
+        f"{ctx.config.agent.message_prefix} *Agent alert* · P0 · LEGAL",
         "*Mandatory rule*: Recall or safety notice (4.2 Product safety)",
         "Pixel battery swelling again, [PERSON_NAME] says",
         "*Why*: A safety fault reported by several owners.",
@@ -430,8 +430,9 @@ def test_a_storys_alert_lists_its_posts_and_says_how_fast_it_grew(ctx, posting):
     lines = post.text.split("\n")
     assert lines[1] == "*Found by review*: no rule covers it"
     assert lines[2] == "12 posts in 15 minutes, 3.2 times its hourly pace, 9 accounts, 15 in the last hour"
+    assert lines[3:5] == ["• Pixel battery swelling again, [PERSON_NAME] says", "• second report"], "each post's words on a line of their own"
     assert "*Authors*: none on the KOF list (details removed)" in lines, "a name kept beside a post that is not a KOF's is never shown"
-    assert "• <https://x.com/a/status/1|post 1>" in lines and "• <https://www.reddit.com/r/pixel/comments/zz/|post 2>" in lines
+    assert "<https://x.com/a/status/1|post 1> · <https://www.reddit.com/r/pixel/comments/zz/|post 2>" in lines
     assert docs(ctx)[0]["links"] == ["https://x.com/a/status/1", "https://www.reddit.com/r/pixel/comments/zz/"], "the newest, up to the number shown"
     assert "post 3" not in post.text and docs(ctx)[0]["kof"] == ""
 
@@ -477,13 +478,13 @@ def test_the_alerts_words_are_built_from_the_decision_alone():
            "item_type": "SINGLE_POST", "velocity": "Gemini read it against the rule Outage words", "evidence": "Search is down", "rationale": "Many reports.",
            "kof": "", "links": []}
     assert raise_.text_of(doc, prefix="", console_url="").split("\n") == [
-        "*Own alert* · P2 · BRAND_SOCIAL", "*Rule*: Outage words", "Search is down", "*Why*: Many reports.",
+        "*Agent alert* · P2 · BRAND_SOCIAL", "*Rule*: Outage words", "Search is down", "*Why*: Many reports.",
         "*Author*: not on the KOF list (details removed)"]
     story = {**doc, "item_type": "STORY", "trigger": "FOLLOWUP_SURGE", "rule": "", "velocity": "40 posts in 15 minutes", "kof": "Jane Doe (@jdoe)",
              "links": ["https://x.com/a/status/1"]}
     assert raise_.text_of(story, prefix="[QA]", console_url="").split("\n") == [
-        "[QA] *Own alert* · P2 · BRAND_SOCIAL", "*Follow-up*: a story already raised is growing again", "40 posts in 15 minutes", "Search is down",
-        "*Why*: Many reports.", "*KOF in the story*: Jane Doe (@jdoe)", "• <https://x.com/a/status/1|post 1>"]
+        "[QA] *Agent alert* · P2 · BRAND_SOCIAL", "*Follow-up*: a story already raised is growing again", "40 posts in 15 minutes", "• Search is down",
+        "*Why*: Many reports.", "*KOF in the story*: Jane Doe (@jdoe)", "<https://x.com/a/status/1|post 1>"]
     other = {**doc, "trigger": "MET_IN_CODE", "rule": "", "section": ""}
     assert raise_.text_of(other, prefix="", console_url="").split("\n")[1] == "*Raised by another tool*: posted in the Other alerts space"
 

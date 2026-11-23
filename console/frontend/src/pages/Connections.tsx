@@ -12,7 +12,7 @@ interface FieldRow { path: string; label: string; required: boolean; help: strin
 interface Detail { label: string; ok: boolean; message: string; row?: string }
 interface Test { ok: boolean; message: string; details: Detail[]; grants: string[]; at: string; by: string }
 type State = "connected" | "ready" | "incomplete" | "not_connected" | "failing";
-interface Reads { key: string; temp_checks: boolean; early: boolean; watches: boolean }
+interface Reads { key: string; temp_checks: boolean; early: boolean; watches: boolean; own: boolean }
 /** A table the app reads. One row even when several settings name it. */
 interface TableRow {
   id: string; name: string; what: string; table: string; set: boolean; location: string; post: Reads | null; reads: string[];
@@ -35,7 +35,7 @@ const ICON: Record<string, ReactNode> = {
   gcp: <Cloud />, gemini: <Sparkles />, runtime: <Bot />, chat: <MessagesSquare />, bigquery: <Database />, delivery: <Send />, secrets: <KeyRound />,
   gmail: <Mail />, drive: <FolderOpen />, brandwatch: <Radar />, campaigns: <Megaphone />,
 };
-const POST_READS: [keyof Omit<Reads, "key">, string][] = [["temp_checks", "Temp checks"], ["early", "Early Detection"], ["watches", "Watches"]];
+const POST_READS: [keyof Omit<Reads, "key">, string][] = [["temp_checks", "Temp checks"], ["early", "Early Detection"], ["watches", "Watches"], ["own", "Agent alerts"]];
 
 function stateOf(t: Tool): { label: string; tone: "emerald" | "blue" | "amber" | "zinc" | "rose" } {
   if (t.state === "connected") return { label: "Connected", tone: "emerald" };

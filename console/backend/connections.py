@@ -67,8 +67,9 @@ class Tool:
 TABLES_PATH = "platform.temp_check.sources"
 EARLY_PATH = "platform.early.sources"
 WATCH_PATH = "platform.campaigns.watch_sources"
+OWN_PATH = "platform.own_alerts.sources"
 # What decides which tables BigQuery's check asks for, and where: a check is forgotten when one of these changes.
-TABLE_SETTINGS = (TABLES_PATH, EARLY_PATH, WATCH_PATH, "inhouse.enabled", "inhouse.mark_delivered", "inhouse.outbox_view", "inhouse.alert_log_table",
+TABLE_SETTINGS = (TABLES_PATH, EARLY_PATH, WATCH_PATH, OWN_PATH, "inhouse.enabled", "inhouse.mark_delivered", "inhouse.outbox_view", "inhouse.alert_log_table",
                   "inhouse.location", "inhouse.sonar_location", "sonar_lookup.enabled", "sonar_lookup.table", "sonar_lookup.slrr_table",
                   "sonar_lookup.alert_log_table", "sonar_lookup.location", "platform.costs.billing_export_table")
 
@@ -99,7 +100,7 @@ def tools(ctx: AgentContext) -> list[Tool]:
              (F("platform.bigquery.dataset", "Dataset", True, options="datasets", help="The app's own dataset. What it creates goes here."),
               F("platform.bigquery.location", "Location", help="For a new dataset. Read from BigQuery once the dataset exists."),
               F("platform.bigquery.project", "Project", help="Blank: the Cloud project.")),
-             ("Event log", "Temp checks", "Early Detection", "Watches", "Our own alerts", "Find missing links", "Workforce forecast", "Costs"),
+             ("Event log", "Temp checks", "Early Detection", "Watches", "Agent alerts", "Our own alerts", "Find missing links", "Workforce forecast", "Costs"),
              "BigQuery Data Editor on its own dataset, BigQuery Job User on the project, and BigQuery Data Viewer on each dataset it reads.",
              "/settings/bigquery", "/api/bigquery/provision", watch=TABLE_SETTINGS),
         Tool("delivery", "Delivery", "How the agent's posts and emails go out, with retries.", False,
@@ -240,7 +241,8 @@ def _reads(settings: dict[str, Any], row: Row) -> list[str]:
         if slot.post:
             t = read(settings, f"{TABLES_PATH}.{slot.post}") or {}
             out += [name for name, on in (("Temp checks", t.get("enabled")), ("Early Detection", slot.post in (read(settings, EARLY_PATH) or [])),
-                                          ("Watches", slot.post in (read(settings, WATCH_PATH) or []))) if on]
+                                          ("Watches", slot.post in (read(settings, WATCH_PATH) or [])),
+                                          ("Agent alerts", slot.post in (read(settings, OWN_PATH) or []))) if on]
         elif slot.use and slot.on:
             out.append(slot.use)
     return list(dict.fromkeys(out))
@@ -259,7 +261,7 @@ def table_list(settings: dict[str, Any], test: dict[str, Any] | None) -> list[di
         if first.post:
             t = read(settings, f"{TABLES_PATH}.{first.post}") or {}
             post = {"key": first.post, "temp_checks": bool(t.get("enabled")), "early": first.post in (read(settings, EARLY_PATH) or []),
-                    "watches": first.post in (read(settings, WATCH_PATH) or [])}
+                    "watches": first.post in (read(settings, WATCH_PATH) or []), "own": first.post in (read(settings, OWN_PATH) or [])}
         was = checked.get(row.id)
         out.append({"id": row.id, "name": first.name, "what": first.what, "table": row.table, "set": bool(row.table), "location": _row_location(settings, row),
                     "post": post, "reads": _reads(settings, row), "status": {"ok": was["ok"], "message": was["message"]} if was else None})
@@ -408,6 +410,7 @@ class ReadsChange(BaseModel):
     temp_checks: bool
     early: bool
     watches: bool
+    own: bool | None = None  # agent alerts; left out: its tables stay as they are
 
 
 class TablesBody(BaseModel):
@@ -439,12 +442,14 @@ def put_tables(body: TablesBody, request: Request, ctx: AgentContext = Depends(g
                 raise _refuse(str(exc)) from exc
         changes.update({slot.path: table for slot in row.slots})
     posts = {t["key"] for t in read(before, TABLES_PATH) or []}
-    lists = {EARLY_PATH: list(read(before, EARLY_PATH) or []), WATCH_PATH: list(read(before, WATCH_PATH) or [])}
+    lists = {path: list(read(before, path) or []) for path in (EARLY_PATH, WATCH_PATH, OWN_PATH)}
     for choice in body.reads:
         if choice.key not in posts:
             raise _refuse(f"There is no table of posts '{choice.key}'")
         changes[f"{TABLES_PATH}.{choice.key}.enabled"] = choice.temp_checks
-        for path, on in ((EARLY_PATH, choice.early), (WATCH_PATH, choice.watches)):
+        for path, on in ((EARLY_PATH, choice.early), (WATCH_PATH, choice.watches), (OWN_PATH, choice.own)):
+            if on is None:
+                continue
             if on and choice.key not in lists[path]:
                 lists[path].append(choice.key)
             elif not on:
@@ -878,6 +883,30 @@ def _offer_app_setup(ctx: AgentContext, settings: dict[str, Any], found: dict[st
     if app["tables"] and not read(settings, TABLES_PATH):
         settings["platform"]["temp_check"]["sources"] = [t.model_dump(mode="json") for t in app["tables"]]
         found[TABLES_PATH] = ", ".join(t.label or t.key for t in app["tables"])  # the tables' names: what a person reads, in the answer and the audit log
+    _offer_own_tables(settings, found, {t.key: t.table for t in app["tables"]})
+
+
+def _offer_own_tables(settings: dict[str, Any], found: dict[str, Any], app_tables: dict[str, str]) -> None:
+    """Agent alerts' tables, while it has none: the temp check app's tables that are set, and the two only it reads
+    (config/own_alerts.yaml), which are added to the tables of posts with temp checks OFF. Tables a person set up
+    themselves are left alone: nothing is added beside them."""
+    from triage_agent.ownalerts import sources as own_sources
+
+    if read(settings, OWN_PATH):
+        return
+    listed = settings["platform"]["temp_check"]["sources"]
+    held = {t["key"]: t for t in listed}
+    theirs = [key for key, table in app_tables.items() if key in held and held[key].get("table") == table]
+    if not theirs:
+        return
+    for table in own_sources.app_tables():
+        if table.key not in held and table.table not in {t.get("table") for t in listed}:
+            listed.append(table.model_dump(mode="json"))
+            held[table.key] = listed[-1]
+    ticked = theirs + [t.key for t in own_sources.app_tables() if t.key in held]
+    settings["platform"]["own_alerts"]["sources"] = ticked
+    found[OWN_PATH] = ", ".join(held[key].get("label") or key for key in ticked)
+    found.setdefault(TABLES_PATH, ", ".join(t.get("label") or t["key"] for t in listed))
 
 
 @router.post("/connections/autofill")
@@ -946,5 +975,6 @@ def autofill(request: Request, ctx: AgentContext = Depends(get_ctx), user: User 
     after = catalog(fresh)
     labels = {f.path: (t.name, f.label) for t in tools(fresh) for f in t.fields}
     labels[TABLES_PATH] = ("BigQuery", "Tables of posts")
+    labels[OWN_PATH] = ("BigQuery", "Tables agent alerts read")
     return {"filled": [{"path": p, "value": v, "tool": labels.get(p, ("", ""))[0], "label": labels.get(p, ("", p))[1]} for p, v in sorted(found.items())],
             "notes": notes, **after}

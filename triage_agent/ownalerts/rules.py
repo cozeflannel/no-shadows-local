@@ -1,4 +1,4 @@
-"""The rules own alerts checks each new post against.
+"""The rules agent alerts checks each new post against.
 
 A rule is mandatory (a post that meets it goes straight to review, and the review cannot turn it down) or a candidate
 (Gemini reads the post against the rule first). Rules are kept in the store, which the Console reads, and copied to
@@ -83,12 +83,12 @@ def _checked(ctx: "AgentContext", data: dict[str, Any]) -> dict[str, Any]:
     known = {s.system for s in sources.listing(ctx)}
     for source in out["target_sources"]:
         if source not in known:
-            raise ValueError(f"Own alerts reads no source called {source}. The sources it reads: {', '.join(sorted(known)) or 'none yet'}.")
+            raise ValueError(f"Agent alerts reads no source called {source}. The sources it reads: {', '.join(sorted(known)) or 'none yet'}.")
     severity, path = str(data.get("forced_severity") or "").strip(), str(data.get("forced_escalation_path") or "").strip()
     if severity and severity not in own.severities:
-        raise ValueError(f"The severity a rule sets must be one of the severities under Settings, Own alerts ({', '.join(own.severities)}), or blank.")
+        raise ValueError(f"The severity a rule sets must be one of the severities under Settings, Agent alerts ({', '.join(own.severities)}), or blank.")
     if path and path not in own.escalation_paths:
-        raise ValueError(f"The path a rule sets must be one of the escalation paths under Settings, Own alerts ({', '.join(own.escalation_paths)}), or blank.")
+        raise ValueError(f"The path a rule sets must be one of the escalation paths under Settings, Agent alerts ({', '.join(own.escalation_paths)}), or blank.")
     out.update(forced_severity=severity, forced_escalation_path=path)
     narrows = (out["required_keywords_any"] or out["required_keywords_all"] or out["require_kof"] or out["min_followers"] or out["min_engagements"]
                or out["target_sources"] or out["platforms"])
@@ -138,6 +138,9 @@ def save(ctx: "AgentContext", actor: str, data: dict[str, Any]) -> Rule:
     rule_id = str(data.get("rule_id") or "").strip()
     if rule_id and ctx.store.get_doc(RULES, rule_id) is None:
         raise ValueError("That rule is no longer there.")
+    same = next((r for r in list_rules(ctx) if r.rule_name.lower() == fields["rule_name"].lower() and r.rule_id != rule_id), None)
+    if same is not None:  # an alert names its rule: two rules with one name could not be told apart
+        raise ValueError(f"Another rule is already called {same.rule_name}.")
     rule = Rule(rule_id=rule_id or f"rule-{uuid.uuid4().hex[:12]}", updated_by=actor, updated_at=ctx.now(), **fields)
     ctx.store.put_doc(RULES, rule.rule_id, rule.model_dump(mode="json"))
     try:

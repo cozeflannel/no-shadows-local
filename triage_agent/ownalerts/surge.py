@@ -2,7 +2,7 @@
 
 The follow-ups job checks every run. A story is queued again when, some time after it was raised (not straight away,
 and not long after), it is still gathering posts fast: at least the posts in 15 minutes and the pace set under
-Settings, Own alerts. It is queued once for each time it was raised; when the review raises it again the clock starts
+Settings, Agent alerts. It is queued once for each time it was raised; when the review raises it again the clock starts
 over. The review then decides, with what was said the first time in front of it.
 """
 

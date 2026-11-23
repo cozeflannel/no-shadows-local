@@ -1,9 +1,9 @@
-# Own alerts' setup, kept as data: the two tables of posts only own alerts read, each read by its real columns
+# Agent alerts' setup, kept as data: the two tables of posts only agent alerts read, each read by its real columns
 # (the sheet-based bot's Watch reads them the same way: apps-script-chat-bot/ProactiveWatch.gs, PW_SOURCE_SQL_).
 #
 # Nothing here is used by itself. "Find and fill" on the Console's Integrations page adds these to the tables of posts
 # (Settings, Temp check, sources) when they are not there yet, with temp checks OFF for both, and ticks every table of
-# posts for own alerts while none is ticked. From then on the settings are what counts.
+# posts for agent alerts while none is ticked. From then on the settings are what counts.
 
 tables:
   - key: owned

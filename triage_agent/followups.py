@@ -420,7 +420,7 @@ def run_followups(ctx: AgentContext, payload: dict[str, Any], rc: RequestContext
     step("digest", burson_digest)
     step("handover", post_due_handovers)
     step("parity", parity_reconcile)
-    step("own_alerts", own_surge.run)  # a raised own alert that is growing again is reviewed once more
+    step("own_alerts", own_surge.run)  # a raised agent alert that is growing again is reviewed once more
     step("rering", rering_stale)
     summary = "followups: " + ", ".join(f"{k}={v}" for k, v in report.items())
     if failed:  # the operation still answers ok (every step ran); jobs/run_job.py exits non-zero on this

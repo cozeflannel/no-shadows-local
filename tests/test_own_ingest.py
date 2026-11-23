@@ -1,4 +1,4 @@
-"""Own alerts: each source hands over what is new, personal details are taken out, and the posts are staged.
+"""Agent alerts: each source hands over what is new, personal details are taken out, and the posts are staged.
 
 BigQuery, Cloud DLP, the KOF sheet, Brandwatch and Chat are replaced by stand-ins (tests/own_helpers.py; no network).
 The statements, their parameters, the cursors, the hashing, the KOF match and what is written are the real code.

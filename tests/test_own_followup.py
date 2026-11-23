@@ -1,4 +1,4 @@
-"""Own alerts after an alert is raised: a raised story that is growing again is reviewed once more, what is past its
+"""Agent alerts after an alert is raised: a raised story that is growing again is reviewed once more, what is past its
 days is deleted, and the worker's minute tick runs the review. Stand-ins: tests/own_helpers.py (no network)."""
 
 from __future__ import annotations

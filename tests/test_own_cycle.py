@@ -1,4 +1,4 @@
-"""Own alerts: one run. The objects are brought up to date, every source is read and staged, and BigQuery's procedure
+"""Agent alerts: one run. The objects are brought up to date, every source is read and staged, and BigQuery's procedure
 checks, groups and queues what was staged. Stand-ins: tests/own_helpers.py (no network)."""
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ def test_with_the_bigquery_switch_off_and_no_objects_yet_nothing_is_read(ctx, wo
     ctx.config.platform.flags.bigquery_admin = False
     out = cycle.run(ctx)
     assert out["ok"] is False and gw.ran == []
-    assert out["error"] == ('Own alerts\' tables in BigQuery are not created yet, or a setting changed what they hold. An admin can turn on '
+    assert out["error"] == ('Agent alerts\' tables in BigQuery are not created yet, or a setting changed what they hold. An admin can turn on '
                             '"Change BigQuery from here" under Settings, Switches; the next run creates them.')
 
 
@@ -141,7 +141,7 @@ def test_the_in_house_job_runs_own_alerts_and_fails_when_it_fails(ctx, world):
     gw, _ = world
     gw.source_rows[SONAR] = [row(1)]
     out = run_job(ctx, "inhouse")
-    assert out["ok"] is True and out["data"]["own_alerts"]["staged"] == 1 and "own alerts: 1 read, 1 kept" in out["summary"]
+    assert out["ok"] is True and out["data"]["own_alerts"]["staged"] == 1 and "agent alerts: 1 read, 1 kept" in out["summary"]
     gw.fail = "CALL "
     ctx.store.put_kv(cycle.STATE, {})
     out = run_job(ctx, "inhouse")

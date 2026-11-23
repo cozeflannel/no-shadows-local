@@ -1,8 +1,8 @@
-"""One run of own alerts: the objects in BigQuery are brought up to date, every source is read and staged, and
+"""One run of agent alerts: the objects in BigQuery are brought up to date, every source is read and staged, and
 BigQuery's procedure checks each new post against the rules, asks Gemini about the ones a rule leaves open, groups the
 rest into stories and queues what should be reviewed.
 
-The in-house job calls `run` every time it runs; a run happens when one is due (Settings, Own alerts). One run at a
+The in-house job calls `run` every time it runs; a run happens when one is due (Settings, Agent alerts). One run at a
 time: a second one that starts while the first is going does nothing.
 """
 
@@ -23,24 +23,24 @@ STATE = "own:state"  # {last, cursors: {source: {...}}, sources: {source: {...}}
 LOCK = "own:cycle"
 LOCK_S = 600
 COUNTS = ("staged", "new_posts", "hard", "single_asked", "single_queued", "embedded", "stories_asked", "stories_queued")
-NOT_CREATED = ("Own alerts' tables in BigQuery are not created yet, or a setting changed what they hold. An admin can turn on "
+NOT_CREATED = ("Agent alerts' tables in BigQuery are not created yet, or a setting changed what they hold. An admin can turn on "
                f'"{switch_title("bigquery_admin")}" under Settings, Switches; the next run creates them.')
 
 
 def said(result: dict[str, Any]) -> str:
     """One run in a line, for the job's summary."""
     if result.get("busy"):
-        return "own alerts: a run is already going"
+        return "agent alerts: a run is already going"
     if result.get("due") is False:
-        return "own alerts: not due"
+        return "agent alerts: not due"
     if result.get("error"):
-        return f"own alerts: {result['error']}"
-    return (f"own alerts: {result.get('read', 0)} read, {result.get('staged', 0)} kept, "
+        return f"agent alerts: {result['error']}"
+    return (f"agent alerts: {result.get('read', 0)} read, {result.get('staged', 0)} kept, "
             f"{result.get('hard', 0) + result.get('single_queued', 0) + result.get('stories_queued', 0)} sent to review")
 
 
 def _objects(ctx: "AgentContext") -> None:
-    """Creates own alerts' objects when they are missing or out of date."""
+    """Creates agent alerts' objects when they are missing or out of date."""
     from .. import bq_admin
 
     if schema.current(ctx):
@@ -82,7 +82,7 @@ def run(ctx: "AgentContext", force: bool = False) -> dict[str, Any]:
         if read["failing"]:
             labels = [state["sources"][k]["label"] for k in read["failing"]]
             out.update(ok=False, error="Could not read: " + ", ".join(labels))
-    except Exception as exc:  # noqa: BLE001 - shown on the Own alerts page; the next run tries again
+    except Exception as exc:  # noqa: BLE001 - shown on the Agent alerts page; the next run tries again
         out.update(ok=False, error=str(exc)[:400])
     finally:
         ctx.store.release_idempotent(LOCK)
@@ -94,7 +94,7 @@ def run(ctx: "AgentContext", force: bool = False) -> dict[str, Any]:
 
 
 def status(ctx: "AgentContext") -> dict[str, Any]:
-    """What the Own alerts page shows about the runs: the switch, the last run, each source, and the objects."""
+    """What the Agent alerts page shows about the runs: the switch, the last run, each source, and the objects."""
     state = ctx.store.get_kv(STATE) or {}
     try:
         objects = "ready" if schema.current(ctx) else "not created"

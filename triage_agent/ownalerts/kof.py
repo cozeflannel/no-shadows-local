@@ -1,6 +1,6 @@
 """The KOF list: who counts as a key opinion former.
 
-The list is a Google Sheet (Settings, Own alerts), read with the service's own account. An author is a KOF when a cell
+The list is a Google Sheet (Settings, Agent alerts), read with the service's own account. An author is a KOF when a cell
 of the sheet names their handle, by the sheet-based bot's rule (apps-script-chat-bot/Knowledge.gs,
 knowledgeKofCellHit_): the whole cell ("@handle" or "handle"), "@handle" as a word inside it ("Jane Doe (@handle)"),
 or a profile link (x.com/handle, tiktok.com/@handle, bsky.app/profile/handle, ...). Every author starts as not a KOF:

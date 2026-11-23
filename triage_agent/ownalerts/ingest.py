@@ -27,7 +27,7 @@ _WORD = re.compile(r"[^\W_]")
 
 
 class NotReady(RuntimeError):
-    """A setting own alerts cannot run without is missing."""
+    """A setting agent alerts cannot run without is missing."""
 
 
 def _sha(text: str) -> str:
@@ -126,7 +126,7 @@ def run(ctx: "AgentContext", state: dict[str, Any], now: datetime) -> dict[str, 
 
     own = ctx.config.platform.own_alerts
     if not own.hash_salt_secret.strip():
-        raise NotReady("Set the secret that holds the salt an author's handle is hashed with (Settings, Own alerts). Nothing is read without it.")
+        raise NotReady("Set the secret that holds the salt an author's handle is hashed with (Settings, Agent alerts). Nothing is read without it.")
     try:
         salt = secret_admin.read(ctx, own.hash_salt_secret.strip()).strip()
     except Exception as exc:

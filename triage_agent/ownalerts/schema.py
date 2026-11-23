@@ -1,6 +1,6 @@
-"""Own alerts' BigQuery objects: its tables, the pattern function, two remote models and the triage procedure.
+"""Agent alerts' BigQuery objects: its tables, the pattern function, two remote models and the triage procedure.
 
-Everything is created in the agent's own dataset (Settings, BigQuery), from the settings under Settings, Own alerts.
+Everything is created in the agent's own dataset (Settings, BigQuery), from the settings under Settings, Agent alerts.
 Nothing here names a source table, `agent_events` or a metric view, and no statement drops or replaces a table.
 Each table that holds posts expires its partitions (30 days at most); the daily retention run deletes the same rows.
 
@@ -43,44 +43,44 @@ TABLES: dict[str, tuple[str, str, str, str, str]] = {
         "ingested_at TIMESTAMP NOT NULL, post_id STRING NOT NULL, source_system STRING NOT NULL, published_at TIMESTAMP, platform STRING, "
         "author_hash STRING, author_followers INT64, is_kof BOOL NOT NULL, kof_tier STRING, sanitized_snippet STRING, views INT64, likes INT64, "
         "comments INT64, shares INT64, engagement_total INT64",
-        "ingested_at", "post_id", "1", "Own alerts: posts read from the sources, personal details already removed, waiting for the next run."),
+        "ingested_at", "post_id", "1", "Agent alerts: posts read from the sources, personal details already removed, waiting for the next run."),
     "author_vault_30d": (
         "post_id STRING NOT NULL, ingested_at TIMESTAMP NOT NULL, is_kof BOOL NOT NULL, kof_display_label STRING, post_url STRING",
-        "ingested_at", "post_id", "keep_days", "Own alerts: each post's link and, for a KOF, the name shown. No model reads this table."),
+        "ingested_at", "post_id", "keep_days", "Agent alerts: each post's link and, for a KOF, the name shown. No model reads this table."),
     "posts": (
         "post_id STRING NOT NULL, source_system STRING NOT NULL, published_at TIMESTAMP, ingested_at TIMESTAMP NOT NULL, platform STRING, "
         "author_hash STRING, author_followers INT64, is_kof BOOL NOT NULL, kof_tier STRING, sanitized_snippet STRING, rule_eval_status STRING, "
         "matched_rule_id STRING, story_id STRING, embedding ARRAY<FLOAT64>",
-        "ingested_at", "rule_eval_status, source_system", "keep_days", "Own alerts: every post kept, without personal details."),
+        "ingested_at", "rule_eval_status, source_system", "keep_days", "Agent alerts: every post kept, without personal details."),
     "post_metrics": (
         "post_id STRING NOT NULL, recorded_at TIMESTAMP NOT NULL, views INT64, likes INT64, comments INT64, shares INT64, engagement_total INT64",
-        "recorded_at", "post_id", "keep_days", "Own alerts: each post's engagement when it was first read."),
+        "recorded_at", "post_id", "keep_days", "Agent alerts: each post's engagement when it was first read."),
     "stories": (
         "story_id STRING NOT NULL, created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL, representative_post_id STRING, "
         "centroid_embedding ARRAY<FLOAT64>, post_count_15m INT64, unique_authors_15m INT64, post_count_1h INT64, velocity_ratio_15m FLOAT64, "
         "last_alerted_at TIMESTAMP, story_summary STRING, last_triaged_at TIMESTAMP, last_triaged_posts INT64",
-        "created_at", "story_id", "keep_days", "Own alerts: posts on one theme, and how fast the theme is growing."),
+        "created_at", "story_id", "keep_days", "Agent alerts: posts on one theme, and how fast the theme is growing."),
     "review_queue": (
         "queue_id STRING NOT NULL, queued_at TIMESTAMP NOT NULL, item_type STRING NOT NULL, target_id STRING NOT NULL, trigger_path STRING NOT NULL, "
         "matched_rule_id STRING, stage1_rank_score FLOAT64, stage1_rationale STRING, processed BOOL",
-        "queued_at", "processed", "keep_days", "Own alerts: posts and stories waiting for the review."),
+        "queued_at", "processed", "keep_days", "Agent alerts: posts and stories waiting for the review."),
     "decisions": (
         "decision_id STRING NOT NULL, decided_at TIMESTAMP NOT NULL, queue_id STRING NOT NULL, target_id STRING NOT NULL, item_type STRING NOT NULL, "
         "trigger_path STRING NOT NULL, escalate BOOL NOT NULL, severity STRING NOT NULL, escalation_path STRING NOT NULL, decision_rationale STRING, "
         "sanitized_evidence STRING, velocity_summary STRING, chat_message_id STRING, agent_engine_session STRING, embedding ARRAY<FLOAT64>",
-        "decided_at", "escalate, severity", "decisions_keep_days", "Own alerts: what the review decided, and why."),
+        "decided_at", "escalate, severity", "decisions_keep_days", "Agent alerts: what the review decided, and why."),
     "feedback": (
         "feedback_id STRING NOT NULL, submitted_at TIMESTAMP NOT NULL, decision_id STRING NOT NULL, reviewer_email STRING NOT NULL, verdict STRING NOT NULL",
-        "submitted_at", "decision_id", "decisions_keep_days", "Own alerts: an analyst's verdict on a decision."),
+        "submitted_at", "decision_id", "decisions_keep_days", "Agent alerts: an analyst's verdict on a decision."),
 }
 PLAIN_TABLES: dict[str, tuple[str, str]] = {
-    "pipeline_watermarks": ("source_name STRING NOT NULL, last_processed_ts TIMESTAMP NOT NULL", "Own alerts: when the last run finished."),
+    "pipeline_watermarks": ("source_name STRING NOT NULL, last_processed_ts TIMESTAMP NOT NULL", "Agent alerts: when the last run finished."),
     "policy_rules_config": (
         "rule_id STRING NOT NULL, rule_name STRING NOT NULL, process_doc_section STRING NOT NULL, execution_mode STRING NOT NULL, "
         "target_sources ARRAY<STRING>, platforms ARRAY<STRING>, require_kof BOOL, min_followers INT64, min_engagements INT64, "
         "required_keywords_any ARRAY<STRING>, required_keywords_all ARRAY<STRING>, excluded_keywords ARRAY<STRING>, forced_severity STRING, "
         "forced_escalation_path STRING, active BOOL, updated_by STRING, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()",
-        "Own alerts: the rules, as edited in the Console."),
+        "Agent alerts: the rules, as edited in the Console."),
 }
 
 
@@ -107,10 +107,10 @@ def days(own: Any, setting: str) -> int:
 
 def _models(own: Any) -> dict[str, str]:
     if not _CONNECTION.match(own.ai_connection.strip()):
-        raise ValueError("Set the BigQuery connection the models are called through, as project.location.name (Settings, Own alerts).")
+        raise ValueError("Set the BigQuery connection the models are called through, as project.location.name (Settings, Agent alerts).")
     for what, value in (("embedding model", own.embedding_endpoint), ("fast Gemini model", own.fast_endpoint)):
         if not _NAME.match(value):
-            raise ValueError(f"The {what}'s name has characters that are not allowed (Settings, Own alerts).")
+            raise ValueError(f"The {what}'s name has characters that are not allowed (Settings, Agent alerts).")
     return {EMBEDDING_MODEL: own.embedding_endpoint, FAST_MODEL: own.fast_endpoint}
 
 
@@ -354,7 +354,7 @@ END"""
 
 
 def statements(ctx: "AgentContext") -> list[dict[str, str]]:
-    """Every statement that creates own alerts' objects, in the order they run: {what, sql}."""
+    """Every statement that creates agent alerts' objects, in the order they run: {what, sql}."""
     own = ctx.config.platform.own_alerts
     ds = dataset(ctx)
     models = _models(own)
@@ -399,7 +399,7 @@ def current(ctx: "AgentContext") -> bool:
 
 
 def provision(ctx: "AgentContext") -> list[dict[str, Any]]:
-    """Creates own alerts' objects, or brings them up to date. Needs the switch Change BigQuery from here. Stops at the
+    """Creates agent alerts' objects, or brings them up to date. Needs the switch Change BigQuery from here. Stops at the
     first statement BigQuery refuses, and says which."""
     from .. import bq_admin
 

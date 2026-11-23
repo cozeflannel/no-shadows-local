@@ -26,6 +26,7 @@ const HelpPage = lazy(() => import("./pages/Help"));
 const KnowledgePage = lazy(() => import("./pages/Knowledge"));
 const LearningPage = lazy(() => import("./pages/Learning"));
 const OutboxPage = lazy(() => import("./pages/Outbox"));
+const OwnAlertsPage = lazy(() => import("./pages/OwnAlerts"));
 const OverviewPage = lazy(() => import("./pages/Overview"));
 const ParityPage = lazy(() => import("./pages/Parity"));
 const RostersPage = lazy(() => import("./pages/Rosters"));
@@ -82,6 +83,7 @@ export default function App() {
             <Route path="/stories/:storyId" element={<StoriesPage />} />
             <Route path="/compare" element={<ComparePage />} />
             <Route path="/early" element={<EarlyPage />} />
+            <Route path="/own-alerts" element={<OwnAlertsPage />} />
             <Route path="/routing" element={<RoutingPage />} />
             <Route path="/ai" element={<AiPage />} />
             <Route path="/connections" element={<ConnectionsPage />} />

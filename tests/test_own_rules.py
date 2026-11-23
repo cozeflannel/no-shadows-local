@@ -1,4 +1,4 @@
-"""Own alerts: the rules. They are kept in the store, which the Console reads, and copied to BigQuery, where each new
+"""Agent alerts: the rules. They are kept in the store, which the Console reads, and copied to BigQuery, where each new
 post is checked against them. Stand-ins: tests/own_helpers.py (no network)."""
 
 from __future__ import annotations
@@ -41,6 +41,15 @@ def test_a_rule_is_kept_tidied_and_copied_to_bigquery(ctx, world):
         0, 0, "P0", "LEGAL", True, ADMIN)
     assert not rules.pending(ctx)
     assert [e.payload["rule_id"] for e in ctx.events.query(types=["own.rule_saved"])] == [rule.rule_id]
+
+
+def test_two_rules_cannot_share_a_name(ctx, world):
+    first = rules.save(ctx, ADMIN, RECALL)
+    with pytest.raises(ValueError, match="already called Recall or safety notice"):
+        rules.save(ctx, ADMIN, {**RECALL, "rule_name": "recall OR safety notice ", "forced_severity": "P1"})
+    assert len(rules.list_rules(ctx)) == 1
+    again = rules.save(ctx, ADMIN, {**RECALL, "rule_id": first.rule_id, "forced_severity": "P1"})
+    assert again.forced_severity == "P1", "a rule keeps its own name when it is changed"
 
 
 def test_changing_a_rule_keeps_its_id(ctx, world):
