@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -20,12 +21,12 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from triage_agent import chatlog, golden, workforce
+from triage_agent import chatlog, golden, storyread, workforce
 from triage_agent import events as event_log
 from triage_agent.context import AgentContext
 from triage_agent.events import EventType as E
 from triage_agent.events import PlatformEvent as P
-from triage_agent.metrics import compute_kpis, timeseries
+from triage_agent.metrics import ALERT_DIMENSIONS, RESPONSE_EVENT_TYPES, alert_facts, alert_view, compute_kpis, matching_messages, timeseries
 from triage_agent.models import AgentEvent, Case, CaseStatus
 
 from .auth import User, get_ctx, require_analyst, require_viewer
@@ -33,6 +34,7 @@ from .ops import run_op
 from .routes_metrics import KPI_GROUPS, _fill_buckets, env_filter, kpi_definitions
 from .serializers import case_summary, event_json
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["live"])
 
 SERIES_TYPES = [E.ALERT_RECEIVED, E.TRIAGE_PASSED, E.TRIAGE_CORRECTED, E.TRIAGE_SUPPRESSED, E.TRIAGE_FAILED,
@@ -119,6 +121,101 @@ def cache_of(request: Request) -> EventCache:
     return state.event_cache
 
 
+class AlertIndex:
+    """One row of facts per alert (metrics.alert_facts) for the Dashboard's counts and filters, kept in memory per Console
+    process: read once for the longest range asked for, then topped up with the alerts that changed since (a saved case
+    always gets a newer updated_at), so a page that refreshes every few seconds reads only what changed."""
+
+    LIMIT = 20000  # alerts read for one range; more than this and the oldest are left out (the Dashboard says so)
+    REFRESH_S = 10.0  # how often changes made by other processes (the agent, the worker) are looked for
+    SENTIMENT_S = 120.0
+
+    def __init__(self) -> None:
+        self._rows: dict[str, dict[str, Any]] = {}
+        self._floor: datetime | None = None
+        self._cursor: datetime | None = None
+        self._checked = 0.0
+        self._writes = -1
+        self._capped = False
+        self._lock = threading.Lock()
+        self._sentiment: tuple[float, dict[str, str]] = (-1e9, {})
+
+    @property
+    def capped(self) -> bool:
+        return self._capped
+
+    def rows(self, ctx: AgentContext, since: datetime) -> list[dict[str, Any]]:
+        """Every alert that changed since `since` (so every alert with a message since then), as facts."""
+        now_m = time.monotonic()
+        written = event_log.writes()
+        with self._lock:
+            floor, cursor = self._floor, self._cursor
+            clock_back = cursor is not None and ctx.now() < cursor - timedelta(minutes=5)  # tests move the clock
+            full = floor is None or since < floor or clock_back
+            top_up = not full and (now_m - self._checked >= self.REFRESH_S or written != self._writes)
+        if full:
+            start = since if floor is None or clock_back else min(since, floor)
+            cases = ctx.store.list_cases(since=start, limit=self.LIMIT)
+            fresh = {c.case_id: alert_facts(c, ctx.config) for c in cases}
+            with self._lock:
+                self._rows, self._floor, self._capped = fresh, start, len(cases) >= self.LIMIT
+                self._cursor = max((c.updated_at for c in cases), default=None)
+                self._checked, self._writes = now_m, written
+        elif top_up:
+            changed = ctx.store.list_cases(since=(cursor or ctx.now()) - timedelta(seconds=30), limit=5000)
+            with self._lock:
+                for c in changed:
+                    self._rows[c.case_id] = alert_facts(c, ctx.config)
+                    if self._cursor is None or c.updated_at > self._cursor:
+                        self._cursor = c.updated_at
+                self._checked, self._writes = now_m, written
+        with self._lock:
+            return list(self._rows.values())
+
+    def sentiment(self, ctx: AgentContext) -> dict[str, str]:
+        """Gemini's label for each alert it read on the Stories page (negative, neutral or positive), by case id."""
+        at, labels = self._sentiment
+        if time.monotonic() - at < self.SENTIMENT_S:
+            return labels
+        try:
+            reads = storyread.reads_since(ctx, ctx.now() - timedelta(days=ctx.config.platform.stories.keep_days))
+            labels = {case_id: label for r in reads.values() for case_id, label in (r.get("labels") or {}).items()}
+        except Exception:  # noqa: BLE001 - the Dashboard still counts everything else; alerts show as not rated
+            log.exception("story reads could not be read for the Dashboard")
+            labels = {}
+        self._sentiment = (time.monotonic(), labels)
+        return labels
+
+
+def alert_index_of(request: Request) -> AlertIndex:
+    state = request.app.state
+    if not hasattr(state, "alert_index"):
+        state.alert_index = AlertIndex()
+    return state.alert_index
+
+
+def parse_filters(text: str | None) -> dict[str, list[str]]:
+    """The Dashboard's filters: a JSON object of dimension -> the values picked (any of them matches)."""
+    if not text:
+        return {}
+    try:
+        raw = json.loads(text)
+    except ValueError as exc:
+        raise HTTPException(422, {"error": "The filters could not be read.", "code": "validation_error"}) from exc
+    if not isinstance(raw, dict):
+        raise HTTPException(422, {"error": "The filters could not be read.", "code": "validation_error"})
+    out: dict[str, list[str]] = {}
+    for key, values in raw.items():
+        if key not in ALERT_DIMENSIONS:
+            raise HTTPException(422, {"error": f"Unknown filter '{key}'.", "code": "validation_error"})
+        items = values if isinstance(values, list) else [values]
+        if len(items) > 100 or any(not isinstance(v, str) or len(v) > 300 for v in items):
+            raise HTTPException(422, {"error": f"Too many or too long values for the {ALERT_DIMENSIONS[key]['label']} filter.", "code": "validation_error"})
+        if items:
+            out[key] = list(dict.fromkeys(items))
+    return out
+
+
 # -- ranges ------------------------------------------------------------------------------------------------------------
 def resolve_range(ctx: AgentContext, name: str, start: datetime | None, end: datetime | None) -> tuple[datetime, datetime, str]:
     """(since, until, bucket) for a range name. `today` is the display timezone's day so far."""
@@ -200,15 +297,31 @@ def get_dashboard(
     range: RangeName = "today",  # noqa: A002 - the query parameter's name
     start: datetime | None = Query(None, alias="from"),
     end: datetime | None = Query(None, alias="to"),
+    filters: str | None = Query(None, description="JSON object: dimension -> values picked (see metrics.ALERT_DIMENSIONS)"),
     env: str | None = None,
     ctx: AgentContext = Depends(get_ctx),
     user: User = Depends(require_viewer),
 ) -> dict[str, Any]:
     since, until, bucket = resolve_range(ctx, range, start, end)
     env_f = env_filter(ctx, env)
+    wanted = parse_filters(filters)
     cache = cache_of(request)
     events = cache.window(ctx, since, until, env_f)
     previous = cache.window(ctx, since - (until - since), since, env_f)
+    index = alert_index_of(request)
+    rows = [r for r in index.rows(ctx, since - (until - since)) if env_f is None or r["env"] == env_f]
+    sentiment = index.sentiment(ctx)
+    later: list[AgentEvent] = []  # a past range's alerts still count the emails and reports sent after it ended
+    if until < ctx.now() - timedelta(minutes=1):
+        later = ctx.events.query(since=until, until=min(ctx.now(), until + timedelta(days=14)), types=RESPONSE_EVENT_TYPES, env=env_f)
+    lines = alert_view(rows, since, until, wanted, sentiment=sentiment, config=ctx.config, events=[*events, *later])
+    previous_messages, previous_cases = matching_messages(rows, since - (until - since), since, wanted, sentiment)
+    if wanted:  # every number on the page is about the alerts in view: events of other alerts (and of none) are left out
+        keep = set(lines["case_ids"])
+        events = [e for e in events if e.case_id in keep]
+        previous = [e for e in previous if e.case_id in previous_cases]
+    lines.pop("case_ids")
+    lines.update(previous_messages=previous_messages, capped=index.capped)
     result, prev = compute_kpis(events, ctx.config), compute_kpis(previous, ctx.config)
     tz = ctx.config.timezone
     if bucket == "minute":
@@ -220,6 +333,7 @@ def get_dashboard(
     usage = [e for e in events if e.event_type == P.LLM_USAGE]
     return {
         "range": range, "window": {"since": since, "until": until, "bucket": bucket, "env": env_f, "timezone": tz},
+        "alert_lines": lines, "filtered": bool(wanted),
         "kpis": result["kpis"], "derived": result["derived"],
         "previous": {"kpis": prev["kpis"], "derived": prev["derived"], "event_count": len(previous)},
         "series": series, "series_types": SERIES_TYPES, "definitions": kpi_definitions(), "groups": KPI_GROUPS,
