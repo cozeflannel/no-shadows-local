@@ -7,6 +7,7 @@ mirrors these definitions in BigQuery for ad-hoc analysis.
 Event payload conventions are documented in docs/CONTRACTS.md#events.
 """
 
+import math
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from statistics import mean, median
@@ -82,24 +83,42 @@ def _count(events: Iterable[AgentEvent], event_type: str, **payload_eq: Any) -> 
     )
 
 
+def duration_s(value: Any) -> float | None:
+    """A duration in seconds from an event payload, or None when it can't be one: not a number, NaN or infinite, or below
+    zero (a clock slip between machines). Kept out of averages so no measure is ever negative, NaN or infinite."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
+
+
 def _minutes(values: list[float]) -> dict[str, float | None]:
+    values = [v for v in values if duration_s(v) is not None]
     if not values:
         return {"avg": None, "median": None, "n": 0}
     return {"avg": round(mean(values) / 60, 1), "median": round(median(values) / 60, 1), "n": len(values)}
 
 
 def _ms(values: list[int]) -> dict[str, float | None]:
+    values = [v for v in values if duration_s(v) is not None]
     if not values:
         return {"avg": None, "p50": None}
     return {"avg": round(mean(values)), "p50": round(median(values))}
 
 
 def _payload_values(events: list[AgentEvent], event_type: str, key: str) -> list[float]:
-    return [
-        float(e.payload[key])
-        for e in events
-        if e.event_type == event_type and (e.payload or {}).get(key) is not None
-    ]
+    out = []
+    for e in events:
+        if e.event_type == event_type:
+            seconds = duration_s((e.payload or {}).get(key))
+            if seconds is not None:
+                out.append(seconds)
+    return out
+
+
+def _durations(events: list[AgentEvent], key: str) -> list[float]:
+    return [s for s in (duration_s((e.payload or {}).get(key)) for e in events) if s is not None]
 
 
 def _pct(numerator: int, denominator: int) -> float | None:
@@ -193,9 +212,9 @@ def compute_kpis(events: list[AgentEvent], config: Any | None = None) -> dict:
         "parity_recall": _pct(kpis["parity_matched"], burson_side),
         # speed (seconds in payloads, reported in minutes)
         "detect_latency_min": _minutes(_payload_values(events, E.ALERT_RECEIVED, "detect_latency_s")),  # post -> alert
-        "post_to_send_min": _minutes([float((e.payload or {})["post_to_send_s"]) for e in alert_emails_sent if (e.payload or {}).get("post_to_send_s") is not None]),
-        "flag_to_send_min": _minutes([float((e.payload or {})["flag_to_send_s"]) for e in alert_emails_sent if (e.payload or {}).get("flag_to_send_s") is not None]),
-        "time_to_correction_min": _minutes([float((e.payload or {})["time_to_correction_s"]) for e in reruns_passed if (e.payload or {}).get("time_to_correction_s") is not None]),
+        "post_to_send_min": _minutes(_durations(alert_emails_sent, "post_to_send_s")),
+        "flag_to_send_min": _minutes(_durations(alert_emails_sent, "flag_to_send_s")),
+        "time_to_correction_min": _minutes(_durations(reruns_passed, "time_to_correction_s")),
         "triage_latency_ms": _ms([e.latency_ms for e in events if e.event_type in decisions and e.latency_ms is not None]),
     }
     if config is not None:
@@ -454,8 +473,8 @@ def _step_times(row: dict[str, Any], events: list[AgentEvent]) -> dict[str, date
         elif e.event_type == E.EMAIL_SENT and p.get("purpose", "alert") == "alert":
             # The event is written when the send is noticed; post_to_send_s gives the send time itself.
             base = row.get("clean_posted_at") or row.get("created_at")
-            sent = base + timedelta(seconds=float(p["post_to_send_s"])) if base and p.get("post_to_send_s") is not None else e.event_ts
-            first("email_sent", sent)
+            offset = duration_s(p.get("post_to_send_s"))
+            first("email_sent", base + timedelta(seconds=offset) if base and offset is not None else e.event_ts)
         elif e.event_type == E.TNS_SUBMITTED:
             first("tns_submitted", e.event_ts)
     return out

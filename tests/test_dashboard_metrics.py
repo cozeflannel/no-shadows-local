@@ -7,6 +7,7 @@ Alerts go through the real pipeline on a SQLite store (`handle()`), the API thro
 from __future__ import annotations
 
 import json
+import math
 import warnings
 from datetime import timedelta
 from typing import Any
@@ -18,8 +19,8 @@ from console.backend.app import create_app
 from triage_agent import storyread
 from triage_agent.events import EventType as E
 from triage_agent.events import make_event
-from triage_agent.metrics import NO_TOPIC, alert_facts, alert_view, matching_messages, response_times
-from triage_agent.models import Attempt
+from triage_agent.metrics import NO_TOPIC, alert_facts, alert_view, duration_s, matching_messages, response_times
+from triage_agent.models import Attempt, CaseStatus
 from triage_agent.operations import handle
 
 with warnings.catch_warnings():
@@ -195,3 +196,51 @@ def test_alert_view_lists_the_rest_as_more_when_there_are_many_values(ctx):
     view = alert_view(rows, arrived - timedelta(minutes=1), arrived + timedelta(minutes=1), {}, config=ctx.config, top=12)
     products = view["breakdowns"]["product"]
     assert len(products) == 13 and products[-1]["more"] is True and products[-1]["count"] == 3 and products[-1]["label"] == "3 more"
+
+
+# -- no number on the Dashboard is negative, NaN or infinite ------------------------------------------------------------------
+def _numbers(value: Any, path: str = "") -> list[tuple[str, float]]:
+    """Every number in a JSON answer with where it is (booleans are not numbers here)."""
+    if isinstance(value, bool) or value is None:
+        return []
+    if isinstance(value, (int, float)):
+        return [(path, value)]
+    if isinstance(value, dict):
+        return [x for k, v in value.items() for x in _numbers(v, f"{path}.{k}")]
+    if isinstance(value, list):
+        return [x for i, v in enumerate(value) for x in _numbers(v, f"{path}[{i}]")]
+    return []
+
+
+def test_duration_s_keeps_only_real_durations():
+    assert duration_s(90) == 90.0 and duration_s("12.5") == 12.5 and duration_s(0) == 0.0
+    for bad in (None, "", "soon", float("nan"), float("inf"), "-Infinity", -1, -0.5):
+        assert duration_s(bad) is None, bad
+
+
+def test_no_number_on_the_dashboard_is_negative_nan_or_infinite(ctx, client, clock):
+    first = triage(ctx, alert(1))["case_id"]
+    held = ctx.store.get_case(triage(ctx, alert(2, Product="Pixel"))["case_id"])
+    held.status = CaseStatus.NEEDS_REVIEW  # saved now, by the real clock: later than the test's clock, as when one machine runs ahead
+    ctx.store.save_case(held)
+    # Payloads a clock slip or a bad write can leave behind: a post dated after the alert, an email "sent" before it was
+    # posted, numbers that are not numbers.
+    ctx.events.log(make_event(E.ALERT_RECEIVED, env=ctx.config.env, case_id=first, attempt=1, event_ts=clock.now, payload={"source": "burson_chat", "detect_latency_s": -3600}))
+    ctx.events.log(make_event(E.EMAIL_SENT, env=ctx.config.env, case_id=first, event_ts=clock.now, payload={"purpose": "alert", "post_to_send_s": float("nan"), "flag_to_send_s": -500}))
+    ctx.events.log(make_event(E.TRIAGE_PASSED, env=ctx.config.env, case_id=first, attempt=2, event_ts=clock.now, payload={"after_bounce": True, "time_to_correction_s": "Infinity"}))
+    ctx.events.log(make_event(E.EMAIL_SENT, env=ctx.config.env, case_id=held.case_id, event_ts=clock.now, payload={"purpose": "alert", "post_to_send_s": "-90"}))
+    clock.advance(minutes=1)
+
+    for params in ({"range": "today"}, {"range": "24h"}, {"range": "7d"}, {"range": "30d"}, {"range": "today", "filters": json.dumps({"product": ["Pixel"]})},
+                   {"range": "custom", "from": "2026-10-11T00:00:00", "to": "2026-10-12T12:00:00"}):
+        res = client.get("/api/dashboard", params=params, headers=iap(ADMIN))
+        assert res.status_code == 200, (params, res.text[:300])
+        body = res.json()
+        bad = [(where, v) for where, v in _numbers(body) if not math.isfinite(v) or v < 0]
+        assert not bad, (params, bad[:10])
+    d = dashboard(client)
+    assert d["now"]["review_queue"] == 1 and d["now"]["oldest_review_min"] == 0, "a wait is never below zero"
+    assert d["derived"]["detect_latency_min"]["n"] == 2, "the two real alerts count; the post dated after its alert is left out"
+    assert d["derived"]["post_to_send_min"]["n"] == 0 and d["derived"]["flag_to_send_min"]["n"] == 0, "NaN, text and negative durations are left out"
+    steps = {s["key"]: s for s in d["alert_lines"]["response_times"]}
+    assert steps["email_sent"]["n"] in (0, 1, 2) and (steps["email_sent"]["avg_s"] is None or steps["email_sent"]["avg_s"] >= 0)

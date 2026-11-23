@@ -283,9 +283,9 @@ def operational_now(ctx: AgentContext) -> dict[str, Any]:
         dead = 0
     im = ctx.im_on_shift()
     return {
-        "review_queue": len(review), "oldest_review_min": round(max(((now - c.updated_at).total_seconds() / 60 for c in review), default=0), 1),
+        "review_queue": len(review), "oldest_review_min": round(max([0.0, *((now - c.updated_at).total_seconds() / 60 for c in review)]), 1),
         "unacknowledged": len(waiting), "sla_at_risk": len(at_risk), "waiting_on_burson": sum(1 for c in open_cases if c.status == CaseStatus.FAILED),
-        "outbox_waiting": len(outbox), "oldest_outbox_min": round(max(((now - i.created_at).total_seconds() / 60 for i in outbox), default=0), 1),
+        "outbox_waiting": len(outbox), "oldest_outbox_min": round(max([0.0, *((now - i.created_at).total_seconds() / 60 for i in outbox)]), 1),
         "dead_letters": dead, "im_on_shift": im.person.name if im.person else None, "im_source": im.source,
         "staff_on_shift": len(workforce.staff_at(ctx.roster("slrr_im"), now)),
     }
