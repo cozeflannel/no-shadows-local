@@ -321,6 +321,11 @@ class PlatformEvent:
     CAMPAIGN_SAVED = "campaign.saved"
     BIGQUERY_CHANGED = "bigquery.changed"
     SECRET_CHANGED = "secret.changed"
+    OWN_CYCLE = "own.cycle"  # one run of own alerts: payload read, staged, new_posts, hard, single_queued, stories_queued, failing
+    OWN_REVIEWED = "own.reviewed"  # payload: decision_id, item_type, trigger, escalate, severity, path, engine
+    OWN_RAISED = "own.raised"  # an own alert queued for Chat: payload decision_id, outbox_id, target
+    OWN_FEEDBACK = "own.feedback"  # an analyst's verdict: payload decision_id, verdict
+    OWN_RULE_SAVED = "own.rule_saved"
 
     @classmethod
     def all(cls) -> list[str]:

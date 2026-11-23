@@ -95,7 +95,7 @@ Verified when: `infra/deploy.sh` enables what is needed, grants the roles, creat
 
 | Phase | Status |
 |---|---|
-| 1 The data in | in progress |
+| 1 The data in | built: settings, scrub, the KOF list, the BigQuery objects, the nine reads, the run in the in-house job. Left for 3.2: the Integrations tick and Find and fill |
 | 2 Review and raise | to do |
 | 3 The Console | to do |
 | 4 Google Cloud | to do |

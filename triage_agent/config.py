@@ -1317,6 +1317,8 @@ class OwnAlertsConfig(ConfigModel):
     regrowth: float = Field(2.0, ge=1.1, le=100, description="...unless it has grown to this many times the posts it had when it was last looked at.")
     story_snippets: int = Field(8, ge=1, le=50, description="How many of a story's posts Gemini is shown.")
     story_active_hours: int = Field(24, ge=1, le=168, description="A story takes new posts for this many hours after its last one.")
+    neighbours: int = Field(50, ge=2, le=500, description="How many of a new post's closest new posts are looked at when posts start a story together.")
+    catch_up_hours: int = Field(6, ge=1, le=72, description="After an outage, posts up to this many hours old are still checked.")
 
     # -- the review -----------------------------------------------------------------------------------------------
     review_engine: Literal["agent_runtime", "worker"] = Field("agent_runtime", description="Where the review runs: on the Agent Runtime (the worker takes over when it cannot be reached), or always in the worker.")
