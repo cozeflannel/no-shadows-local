@@ -36,20 +36,26 @@ TOPICS: list[dict[str, Any]] = [
     },
     {
         "id": "dashboard", "page": "Dashboard", "title": "Dashboard", "audience": "everyone",
-        "summary": "Live numbers, charts and a feed you can act from.",
+        "summary": "Alert messages counted by the lines on the alert, with filters and response times.",
         "sections": [
-            {"heading": "Pick a period", "steps": [
-                "Use the range buttons: Hour, Today, 24 h, 7 days, 30 days or Custom.",
-                "Custom: set the start and the end. The numbers update at once.",
-                "Each card shows the change against the period before it."]},
-            {"heading": "Read the cards", "items": [
-                "Needs you now: alerts waiting for review, unacknowledged alerts, SLAs at risk. Click a card to open the Review Feed.",
-                "Alerts received, first-pass yield, auto-fix rate, SLA met: definitions are under each card's info icon.",
-                "Time saved uses the minutes set under Settings → Metrics."]},
-            {"heading": "Act from the live feed", "steps": [
-                "The feed updates as events arrive (the dot is green while live).",
-                "Click an item to open its alert.",
-                "Items marked Review, Acknowledge or SLA need a person."]},
+            {"heading": "Right now", "items": [
+                "The first row is live and the time range and filters don't change it: alerts held for review, alerts waiting for an IM, SLAs at risk, alerts sent back to Burson, posts waiting to go out and who is on shift.",
+                "Click a number to open the list behind it."]},
+            {"heading": "Pick a time range and filters", "steps": [
+                "Choose Today, Last 24 hours, Last 7 days, Last 30 days or Custom. Custom days run from midnight to midnight, Eastern time.",
+                "Open a filter (Product, Social network, Exposure tag, Sensitive topic, KOF, KOF list, Sentiment, What the agent decided, Came from) and tick one or more values. Each value shows how many alert messages it has.",
+                "Several values in one filter mean any of them; different filters must all hold.",
+                "Click a bar in any card to filter by it; click it again to stop.",
+                "The filters are in the page's address: copy it to share the same view. Reset filters goes back to Today with no filters."]},
+            {"heading": "Read the numbers", "items": [
+                "The big number is the alert messages in this view. A rerun or an engagement update is another message on the same alert.",
+                "Product, Social network, Exposure tag, Sensitive topic and KOF are the lines of a Burson alert, with the names from the requirements. An alert that names several products or topics counts under each.",
+                "Sentiment is Gemini's read of each post on the Stories page, when Gemini reads each story is on.",
+                "Response times run from an alert's first message to the agent's review, the first IM response, Burson's corrected re-post, the Social Alert draft, the email being sent and a Trust & Safety report. Each one counts only the alerts that got to that step.",
+                "The chart and every measure under Every measure follow the filters too."]},
+            {"heading": "Notifications and Ask Gemini", "items": [
+                "The bell at the top lists what happened lately. Click an item to see it without leaving the page; Open goes to its page.",
+                "Ask Gemini, in the corner of every page, opens the chat agent beside the page."]},
         ],
     },
     {
@@ -113,6 +119,7 @@ TOPICS: list[dict[str, Any]] = [
                 "Every reaction action: acknowledge, email draft, T&S form, teams, crisis chat.",
                 "Temp checks.", "Anything the agent understands in Chat (revise a draft, handover, roster sign-in).",
                 "Search knowledge, metrics, who is on shift."]},
+            {"heading": "From any page", "text": "Ask Gemini, in the bottom-right corner of every page, opens the same chat beside the page. It keeps your chat while you move between pages; New chat starts over and Open full page shows it on this page."},
             {"heading": "Record", "text": "Every tool call is in the audit log under your name."},
         ],
     },
