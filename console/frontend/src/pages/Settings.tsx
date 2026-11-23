@@ -1,6 +1,6 @@
 import { RotateCcw, Save } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, NavLink, useNavigate, useParams } from "react-router";
+import { Link, Navigate, NavLink, useNavigate, useParams } from "react-router";
 
 import { apiSend, type ApiError } from "../api/client";
 import { useApi } from "../api/hooks";
@@ -154,6 +154,8 @@ export default function SettingsPage() {
   ];
   const advanced = open || !!needle || (!!key && !start.includes(key));
 
+  if (key === "analysts" || sectionKey === "analysts" || key === "access") return <Navigate to="/admin" replace />;
+
   let body: React.ReactNode;
   if (!key) body = <SettingsHome tools={tools.data} admin={admin.data} />;
   else if (key === "secrets") body = <SecretsPanel />;
@@ -161,7 +163,7 @@ export default function SettingsPage() {
   else if (key === "audit") body = <AuditPanel />;
   else if (key === "history") body = <Card title="Change history"><HistoryList /></Card>;
   else if (sectionKey) body = config.loading && !config.data ? <Spinner /> : config.data && sections.some((s) => s.key === sectionKey)
-    ? <ConfigSection section={sectionKey} data={config.data} setData={config.setData} /> : <Alert tone="amber" title="No such setting">Pick one from the list.</Alert>;
+    ? <ConfigSection section={sectionKey} data={config.data} setData={config.setData} /> : <Alert tone="violet" title="No such setting">Pick one from the list.</Alert>;
   else body = <div className="space-y-5"><PartEditor key={key} part={key} onSaved={parts.reload} />{PART_PANEL[key]?.()}</div>;
 
   return (

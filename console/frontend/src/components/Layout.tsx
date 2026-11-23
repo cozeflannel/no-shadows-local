@@ -131,15 +131,16 @@ export function Layout({ children }: { children: ReactNode }) {
     { to: "/activity", label: "Event log", icon: <FileClock className={icon} /> },
   ];
   const setup: NavItem[] = [
+    { to: "/admin", label: "People & Admin", icon: <ShieldCheck className={icon} />, hint: "Add or remove people and set Admin or User roles" },
     { to: "/settings", label: "Settings", icon: <Settings className={icon} /> },
     { to: "/routing", label: "Routing", icon: <Route className={icon} /> },
     { to: "/ai", label: "AI", icon: <BrainCircuit className={icon} /> },
     { to: "/connections", label: "Integrations", icon: <Plug className={icon} /> },
-    { to: "/admin", label: "Admin", icon: <ShieldCheck className={icon} /> },
   ];
   const recordsActive = records.some((e) => location.pathname.startsWith(e.to));
   const showRecords = more || recordsActive || collapsed;
   const showSetup = setupOpen || collapsed || setup.some((e) => location.pathname.startsWith(e.to));
+  const meRoleLabel = me?.role === "admin" ? "Admin" : me?.role === "viewer" ? "Viewer" : "User";
 
   return (
     <div className="flex h-full">
@@ -177,7 +178,7 @@ export function Layout({ children }: { children: ReactNode }) {
             {!collapsed && (
               <button type="button" onClick={() => setSetupOpen((o) => !o)} aria-expanded={showSetup}
                 className="flex w-full items-center gap-2 rounded-full px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500 hover:bg-zinc-200/70 dark:hover:bg-zinc-800">
-                <span className="flex-1 text-left">Setup (admins and leads)</span><ChevronDown className={cx("size-3.5 transition-transform", showSetup && "rotate-180")} aria-hidden />
+                <span className="flex-1 text-left">Admin & setup</span><ChevronDown className={cx("size-3.5 transition-transform", showSetup && "rotate-180")} aria-hidden />
               </button>
             )}
             {showSetup && setup.map((item) => <Item key={item.to} item={item} collapsed={collapsed} />)}
@@ -210,11 +211,19 @@ export function Layout({ children }: { children: ReactNode }) {
             {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
           </button>
           {me && (
-            <span className="ml-1 inline-flex items-center gap-2 rounded-full border border-zinc-200 p-1 text-sm sm:pr-3 dark:border-zinc-800" title={`${me.email} (${me.role})`}>
-              <span className="bg-spark flex size-6 items-center justify-center rounded-full text-xs font-medium text-white">{(me.name || me.email).slice(0, 1).toUpperCase()}</span>
-              <span className="hidden max-w-40 truncate text-zinc-700 sm:inline dark:text-zinc-200">{me.name || me.email.split("@")[0]}</span>
-              <span className="hidden text-xs text-zinc-500 sm:inline">{me.role}</span>
-            </span>
+            me.is_admin ? (
+              <Link to="/admin" className="ml-1 inline-flex items-center gap-2 rounded-full border border-zinc-200 p-1 text-sm hover:bg-zinc-200/60 sm:pr-3 dark:border-zinc-800 dark:hover:bg-zinc-800/70" title={`${me.email} (${meRoleLabel}) — Manage people & roles`}>
+                <span className="bg-spark flex size-6 items-center justify-center rounded-full text-xs font-medium text-white">{(me.name || me.email).slice(0, 1).toUpperCase()}</span>
+                <span className="hidden max-w-40 truncate text-zinc-700 sm:inline dark:text-zinc-200">{me.name || me.email.split("@")[0]}</span>
+                <span className="hidden text-xs text-zinc-500 sm:inline">{meRoleLabel}</span>
+              </Link>
+            ) : (
+              <span className="ml-1 inline-flex items-center gap-2 rounded-full border border-zinc-200 p-1 text-sm sm:pr-3 dark:border-zinc-800" title={`${me.email} (${meRoleLabel})`}>
+                <span className="bg-spark flex size-6 items-center justify-center rounded-full text-xs font-medium text-white">{(me.name || me.email).slice(0, 1).toUpperCase()}</span>
+                <span className="hidden max-w-40 truncate text-zinc-700 sm:inline dark:text-zinc-200">{me.name || me.email.split("@")[0]}</span>
+                <span className="hidden text-xs text-zinc-500 sm:inline">{meRoleLabel}</span>
+              </span>
+            )
           )}
         </header>
         <main className="mx-auto w-full max-w-[1500px] flex-1 px-4 pb-24 pt-2 sm:px-6">{children}</main>

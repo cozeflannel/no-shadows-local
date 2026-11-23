@@ -1,7 +1,8 @@
+import { Check, Copy, Trash2, UserPlus } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
-import { apiSend } from "../api/client";
+import { apiSend, type ApiError } from "../api/client";
 import { useAction, useApi } from "../api/hooks";
 import { Alert, Badge, Button, Card, cx, Dot, ErrorState, Field, Input, Modal, PageHeader, Select, Spinner, Switch, Tabs, TD, TH, TR } from "../components/ui";
 import { useApp } from "../context";
@@ -30,51 +31,122 @@ interface Overview {
 interface Connections { summary: { required: number; ready: number; connected: number; failing: number; total: number } }
 
 type Tab = "people" | "system" | "changes";
-const ROLE: Record<string, { label: string; tone: "blue" | "violet" | "emerald" | "zinc" }> = {
-  admin: { label: "Admin", tone: "violet" }, lead: { label: "Lead", tone: "blue" }, im: { label: "Incident Manager", tone: "emerald" },
-  analyst: { label: "Analyst", tone: "emerald" }, viewer: { label: "Viewer", tone: "zinc" },
-};
+type SimpleRole = "admin" | "user";
 
-function PersonForm({ person, onDone, onClose }: { person: PersonRow | null; onDone: (message: string) => void; onClose: () => void }) {
-  const [email, setEmail] = useState(person?.email ?? "");
-  const [name, setName] = useState(person?.name ?? "");
-  const [role, setRole] = useState(person && person.role !== "viewer" ? person.role : "im");
-  const [onRoster, setOnRoster] = useState(person?.on_roster ?? true);
+function toSimpleRole(role: string): SimpleRole {
+  return role === "admin" ? "admin" : "user";
+}
+
+function roleLabel(role: string): { label: string; tone: "violet" | "blue" | "zinc" } {
+  if (role === "admin") return { label: "Admin", tone: "violet" };
+  if (role === "viewer") return { label: "Viewer", tone: "zinc" };
+  return { label: "User", tone: "blue" };
+}
+
+function QuickAddCard({ onAdded }: { onAdded: (msg: string) => void }) {
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [role, setRole] = useState<SimpleRole>("user");
+  const [onRoster, setOnRoster] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const addr = email.trim().toLowerCase();
+    if (!addr) return;
+    setSaving(true);
+    setErr(null);
+    try {
+      const res = await apiSend<{ person: PersonRow }>("put", `/admin/people/${encodeURIComponent(addr)}`, {
+        name: name.trim(),
+        role,
+        on_roster: onRoster,
+      });
+      setEmail("");
+      setName("");
+      setRole("user");
+      setOnRoster(false);
+      onAdded(`${res.person.name || addr} added as ${role === "admin" ? "Admin" : "User"}`);
+    } catch (ex) {
+      setErr((ex as ApiError).message || "Could not add person");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card title="Add someone" subtitle="Give a teammate User access (reviews alerts, runs tools, asks Gemini) or Admin access (also manages People, Settings & Switches).">
+      <form onSubmit={submit} className="flex flex-col gap-3">
+        {err && <Alert tone="rose">{err}</Alert>}
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_180px_auto]">
+          <Field label="Email address">
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Enter email address" autoComplete="off" required />
+          </Field>
+          <Field label="Display name (optional)">
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Auto-filled from email" autoComplete="off" />
+          </Field>
+          <Field label="Role">
+            <Select value={role} onChange={(e) => setRole(e.target.value as SimpleRole)}>
+              <option value="user">User</option>
+              <option value="admin">Admin</option>
+            </Select>
+          </Field>
+          <div className="flex items-end">
+            <Button type="submit" variant="primary" icon={<UserPlus className="size-4" />} loading={saving} disabled={!email.trim()}>
+              Add person
+            </Button>
+          </div>
+        </div>
+        <label className="inline-flex w-fit cursor-pointer items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+          <input type="checkbox" checked={onRoster} onChange={(e) => setOnRoster(e.target.checked)} className="size-4 rounded border-zinc-300 accent-blue-600" />
+          Also include on the Incident Manager shift roster
+        </label>
+      </form>
+    </Card>
+  );
+}
+
+function PersonForm({ person, onDone, onClose }: { person: PersonRow; onDone: (message: string) => void; onClose: () => void }) {
+  const [name, setName] = useState(person.name || "");
+  const [role, setRole] = useState<SimpleRole>(toSimpleRole(person.role));
+  const [onRoster, setOnRoster] = useState(person.on_roster);
   const [confirm, setConfirm] = useState(false);
-  const save = useAction(() => apiSend("put", `/admin/people/${encodeURIComponent(email.trim().toLowerCase())}`, { name: name.trim(), role, on_roster: onRoster }));
-  const remove = useAction(() => apiSend("delete", `/admin/people/${encodeURIComponent(person?.email ?? "")}`));
+  const save = useAction(() => apiSend("put", `/admin/people/${encodeURIComponent(person.email)}`, { name: name.trim(), role, on_roster: onRoster }));
+  const remove = useAction(() => apiSend("delete", `/admin/people/${encodeURIComponent(person.email)}`));
   const error = save.error ?? remove.error;
 
   return (
-    <Modal open onClose={onClose} title={person ? `Change ${person.name || person.email}` : "Add a person"}
+    <Modal open onClose={onClose} title={`Edit ${person.name || person.email}`}
       footer={confirm ? (
         <>
-          <span className="mr-auto text-sm text-zinc-600 dark:text-zinc-300">They lose their role and their place on the IM roster.</span>
+          <span className="mr-auto text-sm text-zinc-600 dark:text-zinc-300">Remove {person.name || person.email} from this app?</span>
           <Button onClick={() => setConfirm(false)}>Keep</Button>
-          <Button variant="danger" loading={remove.loading} onClick={async () => { if (await remove.run()) onDone(`${person?.name || person?.email} removed`); }}>Remove</Button>
+          <Button variant="danger" loading={remove.loading} onClick={async () => { if (await remove.run()) onDone(`${person.name || person.email} removed`); }}>Remove</Button>
         </>
       ) : (
         <>
-          {person && <Button className="mr-auto" onClick={() => setConfirm(true)}>Remove this person</Button>}
+          <Button className="mr-auto" onClick={() => setConfirm(true)}>Remove person</Button>
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" loading={save.loading} disabled={!email.trim() || !name.trim()} onClick={async () => { if (await save.run()) onDone(`${name.trim()} saved`); }}>Save</Button>
+          <Button variant="primary" loading={save.loading} onClick={async () => { if (await save.run()) onDone(`${name.trim() || person.email} updated`); }}>Save</Button>
         </>
       )}>
       <div className="flex flex-col gap-4">
         {error && <Alert tone="rose">{error.message}</Alert>}
-        <Field label="Email"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={!!person} autoComplete="off" /></Field>
-        <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" /></Field>
-        <Field label="Role" hint={role === "admin" ? "Changes settings, integrations and people." : role === "lead" ? "Sees Admin and reviews changes; works alerts." : "Works alerts: review, escalate, draft emails."}>
-          <Select value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="im">Incident Manager</option><option value="analyst">Analyst</option><option value="lead">Lead</option><option value="admin">Admin</option>
+        <Field label="Email"><Input type="email" value={person.email} disabled /></Field>
+        <Field label="Display name"><Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" /></Field>
+        <Field label="Role" hint={role === "admin" ? "Full access: manages People, Settings, Switches, Integrations, and works alerts." : "Standard access: reviews alerts, escalates, drafts emails, runs Temp check & Post velocity, creates signals, and asks Gemini."}>
+          <Select value={role} onChange={(e) => setRole(e.target.value as SimpleRole)}>
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
           </Select>
         </Field>
         <div className="flex items-center justify-between gap-4 rounded-xl border border-zinc-200 px-4 py-3 dark:border-zinc-800">
           <div>
-            <p className="text-sm text-zinc-900 dark:text-zinc-100">On the IM roster</p>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">Can be given shifts and be on call. Shifts are set in Workforce.</p>
+            <p className="text-sm text-zinc-900 dark:text-zinc-100">On the IM shift roster</p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">Can hold on-call shifts in Workforce.</p>
           </div>
-          <Switch label="On the IM roster" checked={onRoster} onChange={setOnRoster} />
+          <Switch label="On the IM shift roster" checked={onRoster} onChange={setOnRoster} />
         </div>
       </div>
     </Modal>
@@ -98,46 +170,185 @@ export default function AdminPage() {
   const current: Tab = tab === "system" || tab === "changes" ? tab : "people";
   const data = useApi<Overview>("/admin/overview", undefined, 30_000);
   const tools = useApi<Connections>("/connections", undefined, 60_000);
-  const [editing, setEditing] = useState<PersonRow | "new" | null>(null);
+  const [editing, setEditing] = useState<PersonRow | null>(null);
+  const [busyEmail, setBusyEmail] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [accessBusy, setAccessBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
   const o = data.data;
   const s = o?.status;
   const short = (resource: string) => resource.split("/").slice(-1)[0];
+  const openDomain = o?.access.viewer_domains?.[0] ?? "";
+  const workspaceDomain = openDomain || (me?.email.includes("@") ? me.email.split("@")[1] : "");
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.origin);
+      setCopied(true);
+      toast("App link copied to clipboard");
+      window.setTimeout(() => setCopied(false), 2500);
+    } catch {
+      toast(window.location.origin, "info");
+    }
+  };
+
+  const changeRoleInline = async (p: PersonRow, next: SimpleRole) => {
+    if (toSimpleRole(p.role) === next) return;
+    setBusyEmail(p.email);
+    try {
+      await apiSend("put", `/admin/people/${encodeURIComponent(p.email)}`, { name: p.name, role: next, on_roster: p.on_roster });
+      toast(`${p.name || p.email} is now ${next === "admin" ? "an Admin" : "a User"}`);
+      data.reload();
+    } catch (ex) {
+      toast((ex as ApiError).message || "Could not update role", "error");
+    } finally {
+      setBusyEmail(null);
+    }
+  };
+
+  const removeInline = async (p: PersonRow) => {
+    setBusyEmail(p.email);
+    try {
+      await apiSend("delete", `/admin/people/${encodeURIComponent(p.email)}`);
+      setConfirmRemove(null);
+      toast(`${p.name || p.email} removed`);
+      data.reload();
+    } catch (ex) {
+      toast((ex as ApiError).message || "Could not remove person", "error");
+    } finally {
+      setBusyEmail(null);
+    }
+  };
+
+  const toggleOpenViewers = async (checked: boolean) => {
+    setAccessBusy(true);
+    try {
+      await apiSend("put", "/admin/access", { open_domain_viewers: checked, domain: workspaceDomain });
+      toast(checked ? `Unlisted @${workspaceDomain} colleagues can now view read-only` : "Invite-only enabled: only people listed here can open the app");
+      data.reload();
+    } catch (ex) {
+      toast((ex as ApiError).message || "Could not change link access mode", "error");
+    } finally {
+      setAccessBusy(false);
+    }
+  };
 
   return (
     <div>
-      <PageHeader title="Admin"
-        actions={current === "people" && me?.is_admin ? <Button variant="primary" onClick={() => setEditing("new")}>Add a person</Button> : undefined} />
+      <PageHeader
+        title="People & Admin"
+        description="Manage who can open the app, set their role (User or Admin), and check system health."
+        actions={(
+          <Button size="sm" icon={copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />} onClick={copyLink}>
+            {copied ? "Copied link" : "Copy app link"}
+          </Button>
+        )}
+      />
       <Tabs<Tab> value={current} onChange={(t) => navigate(t === "people" ? "/admin" : `/admin/${t}`)}
-        tabs={[{ key: "people", label: "People", count: o?.people.length }, { key: "system", label: "System" }, { key: "changes", label: "Changes" }]} />
+        tabs={[{ key: "people", label: "People & roles", count: o?.people.length }, { key: "system", label: "System health" }, { key: "changes", label: "Recent changes" }]} />
       <ErrorState error={data.error} onRetry={data.reload} />
       {data.loading && !o ? <Spinner /> : o && s && (
         <div>
           {current === "people" && (
-            <>
-              <Card padded={false}>
-                <table className="w-full min-w-[760px] border-collapse">
-                  <thead><tr><th className={TH}>Person</th><th className={TH}>Role</th><th className={TH}>IM roster</th><th className={TH}>Gmail</th><th className={TH}>Last active</th>{me?.is_admin && <th className={TH}><span className="sr-only">Change</span></th>}</tr></thead>
+            <div className="flex flex-col gap-4">
+              {me?.is_admin && (
+                <QuickAddCard onAdded={(msg) => { toast(msg, "success"); data.reload(); }} />
+              )}
+
+              <Card title="Team members" subtitle="Users can work alerts and run every analyst tool; Admins can also manage People, Settings, and Switches." padded={false}>
+                <table className="w-full min-w-[740px] border-collapse">
+                  <thead>
+                    <tr>
+                      <th className={TH}>Person</th>
+                      <th className={TH}>Role</th>
+                      <th className={TH}>Shift roster</th>
+                      <th className={TH}>Gmail</th>
+                      <th className={TH}>Last active</th>
+                      {me?.is_admin && <th className={cx(TH, "text-right")}>Actions</th>}
+                    </tr>
+                  </thead>
                   <tbody>
-                    {o.people.map((p) => (
-                      <tr key={p.email} className={TR}>
-                        <td className={TD}><p className="font-medium text-zinc-900 dark:text-zinc-100">{p.name || p.email.split("@")[0]}</p><p className="text-xs text-zinc-500 dark:text-zinc-400">{p.email}</p></td>
-                        <td className={TD}><Badge tone={ROLE[p.role]?.tone ?? "zinc"}>{ROLE[p.role]?.label ?? p.role}</Badge>{p.role_source === "deploy" && <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Set at deploy. Save them here to keep it.</p>}</td>
-                        <td className={TD}>{p.on_roster ? (p.on_call ? <span className="inline-flex items-center gap-1.5"><Dot tone="emerald" pulse />On call now</span> : "On the roster") : <span className="text-zinc-400">Not on it</span>}</td>
-                        <td className={TD}>{p.gmail_connected === null ? <span className="text-zinc-400">Not known</span> : p.gmail_connected ? "Connected" : <span className="text-zinc-400">Not connected</span>}</td>
-                        <td className={TD}>{p.last_active ? <>{fmtRelative(p.last_active)}<span className="ml-1.5 text-xs text-zinc-500">{p.actions} this week</span></> : <span className="text-zinc-400">Not this week</span>}</td>
-                        {me?.is_admin && <td className={cx(TD, "text-right")}><Button size="sm" onClick={() => setEditing(p)}>Change</Button></td>}
-                      </tr>
-                    ))}
+                    {o.people.map((p) => {
+                      const badge = roleLabel(p.role);
+                      const busy = busyEmail === p.email;
+                      return (
+                        <tr key={p.email} className={TR}>
+                          <td className={TD}>
+                            <p className="font-medium text-zinc-900 dark:text-zinc-100">{p.name || p.email.split("@")[0]}</p>
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400">{p.email}</p>
+                          </td>
+                          <td className={TD}>
+                            {me?.is_admin ? (
+                              <Select
+                                aria-label={`Role for ${p.email}`}
+                                value={toSimpleRole(p.role)}
+                                disabled={busy}
+                                onChange={(e) => void changeRoleInline(p, e.target.value as SimpleRole)}
+                                className="w-32"
+                              >
+                                <option value="user">User</option>
+                                <option value="admin">Admin</option>
+                              </Select>
+                            ) : (
+                              <Badge tone={badge.tone}>{badge.label}</Badge>
+                            )}
+                            {p.role_source === "deploy" && <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Default deploy admin</p>}
+                          </td>
+                          <td className={TD}>
+                            {p.on_roster
+                              ? (p.on_call ? <span className="inline-flex items-center gap-1.5"><Dot tone="emerald" pulse />On call now</span> : "On shift roster")
+                              : <span className="text-zinc-400">—</span>}
+                          </td>
+                          <td className={TD}>{p.gmail_connected === null ? <span className="text-zinc-400">—</span> : p.gmail_connected ? "Connected" : <span className="text-zinc-400">Not connected</span>}</td>
+                          <td className={TD}>{p.last_active ? <>{fmtRelative(p.last_active)}<span className="ml-1.5 text-xs text-zinc-500">{p.actions} this week</span></> : <span className="text-zinc-400">Not this week</span>}</td>
+                          {me?.is_admin && (
+                            <td className={cx(TD, "text-right")}>
+                              {confirmRemove === p.email ? (
+                                <div className="inline-flex items-center gap-1.5">
+                                  <Button size="sm" onClick={() => setConfirmRemove(null)} disabled={busy}>Cancel</Button>
+                                  <Button size="sm" variant="danger" loading={busy} onClick={() => void removeInline(p)}>Confirm remove</Button>
+                                </div>
+                              ) : (
+                                <div className="inline-flex items-center gap-1.5">
+                                  <Button size="sm" onClick={() => setEditing(p)} disabled={busy}>Edit</Button>
+                                  <Button size="sm" icon={<Trash2 className="size-3.5" />} onClick={() => setConfirmRemove(p.email)} disabled={busy} title="Remove person">
+                                    Remove
+                                  </Button>
+                                </div>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
-                {!o.people.length && <p className="p-5 text-sm text-zinc-500 dark:text-zinc-400">Nobody has a role yet. Add yourself as an admin first.</p>}
+                {!o.people.length && <p className="p-5 text-sm text-zinc-500 dark:text-zinc-400">Nobody has been added yet. Use Add someone above to grant access.</p>}
               </Card>
-              <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">
-                Anyone signed in at {o.access.viewer_domains.join(", ") || "no domain"} can read the Console without being listed.
-                {me?.is_admin && <> <Link to="/settings/access" className="text-blue-700 hover:underline dark:text-blue-300">Change who can read</Link></>}
-                {" "}Each person connects their own Gmail from the top bar.
-              </p>
-            </>
+
+              <Card>
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                      {openDomain ? `Unlisted @${openDomain} colleagues can view in read-only mode` : "Invite-only: only people listed above can open the app"}
+                    </p>
+                    <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                      {openDomain
+                        ? `Anyone you add above gets User or Admin permissions; other signed-in @${openDomain} teammates can browse read-only. Turn this off if you want removed or unlisted people blocked completely.`
+                        : "Only the people listed in the table above can open this link. Removing someone immediately revokes their access."}
+                    </p>
+                  </div>
+                  {me?.is_admin && workspaceDomain && (
+                    <Switch
+                      label={`Allow read-only viewing for @${workspaceDomain}`}
+                      checked={Boolean(openDomain)}
+                      disabled={accessBusy}
+                      onChange={(checked) => void toggleOpenViewers(checked)}
+                    />
+                  )}
+                </div>
+              </Card>
+            </div>
           )}
 
           {current === "system" && (
@@ -206,7 +417,7 @@ export default function AdminPage() {
           )}
         </div>
       )}
-      {editing && <PersonForm person={editing === "new" ? null : editing} onClose={() => setEditing(null)} onDone={(message) => { setEditing(null); toast(message, "success"); data.reload(); }} />}
+      {editing && <PersonForm person={editing} onClose={() => setEditing(null)} onDone={(message) => { setEditing(null); toast(message, "success"); data.reload(); }} />}
     </div>
   );
 }

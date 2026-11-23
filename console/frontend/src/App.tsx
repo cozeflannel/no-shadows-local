@@ -63,7 +63,7 @@ export default function App() {
   if (!me.can_view) {
     return (
       <WelcomePage state="no-access">
-        <Alert tone="amber" title="No access yet">{me.email} is not an analyst, an Incident Manager or in a viewer domain. Ask an admin to add you under Settings, Analysts & roles.</Alert>
+        <Alert tone="violet" title="No access yet">{me.email} hasn't been added to this app yet. Ask an admin to add your email under People & Admin.</Alert>
       </WelcomePage>
     );
   }

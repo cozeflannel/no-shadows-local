@@ -310,9 +310,20 @@ _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class PersonBody(BaseModel):
-    name: str = Field(..., min_length=1, max_length=120)
-    role: Literal["admin", "lead", "im", "analyst"]
+    name: str = Field("", max_length=120)
+    role: Literal["admin", "user", "lead", "im", "analyst"] = "user"
     on_roster: bool = False
+
+
+class AccessModeBody(BaseModel):
+    open_domain_viewers: bool
+    domain: str = Field("", max_length=120)
+
+
+def _default_name(email: str) -> str:
+    local = email.split("@", 1)[0]
+    parts = [p for p in re.split(r"[._+-]+", local) if p]
+    return " ".join(p.capitalize() for p in parts) if parts else local
 
 
 def _address(email: str) -> str:
@@ -361,20 +372,45 @@ def _save_people(request: Request, ctx: AgentContext, user: User, analysts: list
 
 @router.put("/admin/people/{email}")
 def put_person(email: str, body: PersonBody, request: Request, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_admin)) -> dict[str, Any]:
-    """Add a person, or change them: their Console role and their place on the IM roster, from one record."""
+    """Add a person, or change them: their Console role (Admin or User) and their place on the IM roster, from one record."""
     email = _address(email)
-    name = body.name.strip()
-    analysts = [a.model_dump(mode="json") for a in ctx.config.analysts if a.email.lower() != email]
     was = ctx.config.analyst(email)
-    if was and was.role == "admin" and body.role != "admin" and not _other_admins(ctx, email):
+    name = body.name.strip() or (was.name if was else "") or _default_name(email)
+    stored_role = "analyst" if body.role == "user" else body.role
+    analysts = [a.model_dump(mode="json") for a in ctx.config.analysts if a.email.lower() != email]
+    if was and was.role == "admin" and stored_role != "admin" and not _other_admins(ctx, email):
         raise HTTPException(422, {"error": "This is the only admin. Make someone else an admin first.", "code": "validation_error"})
+    if user.role_source == "bootstrap" and user.email != email and not any(a["email"].lower() == user.email for a in analysts):
+        analysts.append({"name": user.name or _default_name(user.email), "email": user.email, "role": "admin"})
     _set_roster(ctx, user, email, name, body.on_roster)  # refused first when they hold shifts: nothing is half done
-    analysts.append({"name": name, "email": email, "role": body.role})
+    analysts.append({"name": name, "email": email, "role": stored_role})
     fresh = _save_people(request, ctx, user, analysts, None, f"{name} saved under People")
     audit.record(fresh, actor=user.email, action="people.save", surface="console", target_type="person", target_id=email,
-                 summary=f"{name}: role {body.role}, {'on' if body.on_roster else 'not on'} the IM roster",
-                 detail={"before": was.model_dump(mode="json") if was else None, "role": body.role, "on_roster": body.on_roster})
+                 summary=f"{name}: role {stored_role}, {'on' if body.on_roster else 'not on'} the IM roster",
+                 detail={"before": was.model_dump(mode="json") if was else None, "role": stored_role, "on_roster": body.on_roster})
     return {"ok": True, "person": next(p for p in people(fresh) if p["email"] == email)}
+
+
+@router.put("/admin/access")
+def put_access_mode(body: AccessModeBody, request: Request, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_admin)) -> dict[str, Any]:
+    """Switch between invite-only access (only listed People may open the Console) and workspace read-only viewer access."""
+    access = ctx.config.platform.access.model_dump(mode="json")
+    if body.open_domain_viewers:
+        dom = body.domain.strip().lower().lstrip("@") or (access["viewer_domains"][0] if access.get("viewer_domains") else "") or user.email.rsplit("@", 1)[-1]
+        if not dom or "." not in dom:
+            raise HTTPException(422, {"error": "Enter a valid workspace domain.", "code": "validation_error"})
+        access["viewer_domains"] = [dom]
+        summary = f"Allowed read-only Console viewing for @{dom}"
+    else:
+        access["viewer_domains"] = []
+        summary = "Restricted Console access to invited people only"
+    analysts = [a.model_dump(mode="json") for a in ctx.config.analysts]
+    if user.role_source == "bootstrap" and not any(a["email"].lower() == user.email for a in analysts):
+        analysts.append({"name": user.name or _default_name(user.email), "email": user.email, "role": "admin"})
+    fresh = _save_people(request, ctx, user, analysts, access, summary)
+    audit.record(fresh, actor=user.email, action="people.access", surface="console", target_type="setting", target_id="access", summary=summary,
+                 detail={"viewer_domains": access["viewer_domains"]})
+    return {"ok": True, "access": fresh.config.platform.access.model_dump(mode="json")}
 
 
 def _other_admins(ctx: AgentContext, email: str) -> list[str]:

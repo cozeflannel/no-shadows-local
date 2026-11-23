@@ -232,6 +232,24 @@ def test_removing_a_person_takes_their_access_and_keeps_the_console_and_the_shif
     emails = {p["email"] for p in client.get("/api/admin/overview", headers=iap(ADMIN)).json()["people"]}
     assert "temp@ops.test" not in emails
 
+    # Simplified "user" / "admin" role workflow + optional display name + invite-only vs workspace viewer toggle
+    quick = client.put("/api/admin/people/alex.morgan@ops.test", json={"role": "user"}, headers=iap(ADMIN))
+    assert quick.status_code == 200
+    assert quick.json()["person"]["name"] == "Alex Morgan" and quick.json()["person"]["role"] == "analyst"
+    me_user = client.get("/api/me", headers=iap("alex.morgan@ops.test")).json()
+    assert me_user["can_act"] is True and me_user["is_admin"] is False
+
+    promoted = client.put("/api/admin/people/alex.morgan@ops.test", json={"role": "admin"}, headers=iap(ADMIN))
+    assert promoted.status_code == 200 and promoted.json()["person"]["role"] == "admin"
+    assert client.get("/api/me", headers=iap("alex.morgan@ops.test")).json()["is_admin"] is True
+
+    opened = client.put("/api/admin/access", json={"open_domain_viewers": True, "domain": "ops.test"}, headers=iap(ADMIN))
+    assert opened.status_code == 200 and opened.json()["access"]["viewer_domains"] == ["ops.test"]
+    assert client.get("/api/me", headers=iap("unlisted@ops.test")).json()["role"] == "viewer"
+    closed = client.put("/api/admin/access", json={"open_domain_viewers": False}, headers=iap(ADMIN))
+    assert closed.status_code == 200 and closed.json()["access"]["viewer_domains"] == []
+    assert client.get("/api/me", headers=iap("unlisted@ops.test")).json()["role"] == "none"
+
 
 @pytest.fixture
 def own_secrets(ctx, tmp_path):
