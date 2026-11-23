@@ -46,6 +46,7 @@ PURPOSES: dict[str, str] = {
     "converse.intent": "Work out what a Chat message asks for",
     "converse.answer": "Answer a question from knowledge and live data",
     "converse.teach": "Turn a taught fact or a config request into a proposal",
+    "chat.campaign_route": "Decide whether a reply in Chat asks for the campaigns assistant",
     "handover.summary": "Write the shift handover",
     "console.chat_agent": "The in-Console chat agent's reasoning and tool use",
     "temp_check.writeup": "Write the temp check summary and themes",

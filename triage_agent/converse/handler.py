@@ -57,6 +57,8 @@ class Turn:
         self.burson = self.space == "burson"  # where the reply goes (burson_text, never reply_text)
         self.agency = _is_agency_person(ctx, self.asker, self.asker_name)  # a Burson roster member, wherever they write
         self.external = self.burson or self.agency  # who reads it (agency: no internals)
+        self.in_thread = False  # the reply goes under the message itself (the bot's own Chat sign-in): nobody is named in it
+        self.case_hint: str | None = None  # the alert the message's thread is about, when the caller looked already ("" = none)
 
     @property
     def event_space(self) -> str | None:
@@ -126,8 +128,11 @@ def conversation_key(msg: ChatMessage) -> str:
 
 
 def deliver(turn: Turn, out: ChatOutputs) -> ChatOutputs:
-    """Burson space: the reply goes to burson_text with the asker's email (an @mention), never reply_text."""
-    if not turn.burson or not out.reply_text.strip():
+    """Burson space: the reply goes to burson_text with the asker's email (an @mention), never reply_text. A reply the
+    caller posts itself under the message, through the bot's own Chat sign-in (`in_thread`, chatanswers), stays
+    reply_text and names nobody, as the sheet-based bot's answers did: the caller follows the Routing page's rules for
+    Burson's space and keeps it out of Burson's space while it is set to stay silent there."""
+    if not turn.burson or not out.reply_text.strip() or turn.in_thread:
         return out
     p = render.prefix(turn.ctx)
     body = out.reply_text.strip()
@@ -169,13 +174,34 @@ def _answered(turn: Turn, intent: str, grounded: bool, sources: list[str]) -> No
 # ---------------------------------------------------------------------------
 
 
-def _case_for_thread(ctx: AgentContext, thread_id: str | None):
-    if not thread_id:
+def _key(name: str | None) -> str:
+    """A thread's or a message's own id: the last part of its name, without Chat's '.part' (a thread's first message is
+    named after the thread)."""
+    return (name or "").rstrip("/").rsplit("/", 1)[-1].split(".", 1)[0]
+
+
+def case_for_thread(ctx: AgentContext, thread_id: str | None, cases: list[Any] | None = None):
+    """The alert a Chat thread is about, or None: the thread of the alert's own message (the source space), of its post
+    for the analysts, or of its copy in the second or third space on the Routing page (relay_threads)."""
+    from .. import mirror
+
+    key = _key(thread_id)
+    if not thread_id or not key:
         return None
-    key = thread_id.rstrip("/").rsplit("/", 1)[-1]
-    if not key:
-        return None
-    return next((c for c in ctx.store.list_cases(limit=300) if c.clean_message_ref and key in c.clean_message_ref), None)
+    threads = {thread_id}
+    for side in ("mirror", "third"):  # a copy's thread stands for the source message's thread
+        threads.update(d["source"] for d in ctx.store.list_docs(mirror.THREADS, where={side: thread_id}, limit=1) if d.get("source"))
+    keys = {_key(t) for t in threads}
+    for c in cases if cases is not None else ctx.store.list_cases(limit=300):
+        if c.clean_message_ref and (_key(c.clean_message_ref) in keys or key in c.clean_message_ref):
+            return c
+        for a in reversed(c.attempts):
+            if (a.message.thread_id and a.message.thread_id in threads) or (a.message.message_id and _key(a.message.message_id) in keys):
+                return c
+    return None
+
+
+_case_for_thread = case_for_thread
 
 
 def resolve_escalation(turn: Turn, intent: intents_mod.Intent, *, need_open_draft: bool = False) -> Escalation | None:
@@ -528,13 +554,28 @@ def _route(turn: Turn, ans: answer_mod.Answer, question: str) -> tuple[str, Chat
     return f"{s.team} owns this: ask {where}.", extra
 
 
+def _thread_case(turn: Turn, intent: intents_mod.Intent):
+    """The alert the question is about: an id typed in it, else the one its thread is about."""
+    ctx = turn.ctx
+    if intent.case_id:
+        return ctx.store.get_case(intent.case_id)
+    if turn.case_hint is not None:
+        return ctx.store.get_case(turn.case_hint) if turn.case_hint else None
+    return case_for_thread(ctx, turn.msg.thread_id)
+
+
 def _question(turn: Turn, intent: intents_mod.Intent) -> Result:
-    ans = answer_mod.answer_question(turn.ctx, intent.text, external=turn.external)
+    case = _thread_case(turn, intent)
+    ans = answer_mod.answer_question(turn.ctx, intent.text, external=turn.external, case=case)
     note, extra = _route(turn, ans, intent.text)
     text = ans.text + (f"\n{note}" if note else "")
     _answered(turn, "question", ans.grounded, ans.sources)
-    return turn.reply(text).merge(extra), {"grounded": ans.grounded, "sources": ans.sources,
-                                           "stakeholder": ans.stakeholder.id if ans.stakeholder else None}
+    data: Data = {"grounded": ans.grounded, "sources": ans.sources, "stakeholder": ans.stakeholder.id if ans.stakeholder else None}
+    if case is not None:
+        data["about_case"] = case.case_id
+    if ans.held_back:
+        data["held_back"] = ans.held_back
+    return turn.reply(text, case_id=case.case_id if case is not None else "").merge(extra), data
 
 
 def _temp_check(turn: Turn, intent: intents_mod.Intent) -> Result:
@@ -590,6 +631,8 @@ def converse(ctx: AgentContext, payload: dict[str, Any], rc: RequestContext):
     try:
 
         turn = Turn(ctx, msg)
+        turn.in_thread = bool(payload.get("in_thread"))
+        turn.case_hint = str(payload.get("case_id") or "").strip().upper() if "case_id" in payload else None
         text = intents_mod.strip_mention(msg.text, ctx.config)
         if not text:
             out, data = turn.reply(f"Hi! Ask me about alerts, drafts, T&S or who's on shift. "
