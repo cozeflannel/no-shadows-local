@@ -5,11 +5,9 @@
 #      the fast Gemini model of the triage procedure). The connection's own account gets Vertex AI User, and the
 #      agent's runtime account may use this one connection.
 #   2. A secret that holds the salt an author's handle is hashed with, made once from random bytes.
-#   3. Vertex AI's in-memory cache turned off, for zero data retention. The setting is the project's: off for every
-#      Gemini call in the project, in every region. It takes roles/aiplatform.admin.
 #
-#   infra/11_own_alerts.sh                 # 1, 2 and 3
-#   infra/11_own_alerts.sh --keep-cache    # 1 and 2: the project's cache setting is left as it is
+# Vertex AI's own settings for the project (its cache, its data retention) are not changed here or anywhere in the
+# deploy: they are the project's, and the app works within them.
 #
 # The rest is set in the Console: Integrations (Find and fill), then Settings, Agent alerts.
 set -euo pipefail
@@ -17,11 +15,9 @@ source "$(dirname "$0")/_lib.sh"
 
 CONNECTION="${OWN_CONNECTION:-slrr_vertex_conn}"
 SALT_SECRET="${OWN_SALT_SECRET:-slrr-author-hash-salt}"
-KEEP_CACHE=""
 for arg in "$@"; do
   case "${arg}" in
-    --keep-cache) KEEP_CACHE=1 ;;
-    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "Unknown option ${arg}" >&2; exit 2 ;;
   esac
 done
@@ -81,21 +77,6 @@ else
   echo "Created secret ${SALT_SECRET}"
 fi
 
-if [[ -z "${KEEP_CACHE}" ]]; then
-  # Vertex AI keeps Gemini inputs in memory for up to 24 hours to answer repeats faster. Off means off for every
-  # Gemini call in the project, this app's or not, in every region.
-  if curl -sf -X PATCH -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-      "https://${REGION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/cacheConfig" \
-      -d "{\"name\": \"projects/${PROJECT_ID}/cacheConfig\", \"disableCache\": true}" >/dev/null; then
-    echo "Vertex AI's cache is off for ${PROJECT_ID} (every Gemini call in the project)"
-  else
-    echo "Could not turn Vertex AI's cache off. It takes roles/aiplatform.admin on ${PROJECT_ID}." >&2
-    LEFT+=("Vertex AI's cache is still on. With roles/aiplatform.admin on ${PROJECT_ID}, run infra/11_own_alerts.sh again.")
-  fi
-else
-  echo "Vertex AI's cache setting was left as it is (--keep-cache)"
-fi
-
 echo
 echo "Agent alerts on Google Cloud. Left for a person:"
 n=0
@@ -103,4 +84,3 @@ for line in "${LEFT[@]}"; do
   n=$((n + 1))
   echo "  ${n}. ${line}"
 done
-echo "Google keeps prompts for abuse monitoring until it exempts a project. Only Google can do that, on request."

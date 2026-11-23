@@ -79,7 +79,7 @@ infra/04_bigquery.sh                   # dataset, agent_events, KPI views
 infra/06_jobs.sh                       # Cloud Run jobs + schedules
 infra/07_console.sh                    # Console on Cloud Run + IAP; prints the URL + OAuth redirect URI
 infra/08_gmail_oauth.sh client.json    # Gmail OAuth client -> Secret Manager (manual console steps in the script header)
-infra/11_own_alerts.sh                 # agent alerts: the BigQuery connection for Vertex AI, the salt's secret, Vertex AI's cache off
+infra/11_own_alerts.sh                 # agent alerts: the BigQuery connection for Vertex AI and the salt's secret
 ```
 
 Then:
@@ -117,9 +117,8 @@ settings that name the connection and the salt. Then, in the Console:
 Run on its own, `11_own_alerts.sh` leaves two things: redeploy the Agent Runtime (`05`; until then the worker reviews, and each alert's
 record says so), and fill the connection and the salt's secret (`10_seed_settings.py`, or Settings, Agent alerts).
 
-`11_own_alerts.sh` turns Vertex AI's in-memory cache off, for zero data retention. The setting is the project's: it covers every Gemini
-call in the project, in every region. It takes `roles/aiplatform.admin`; `--keep-cache` skips it. Google keeps prompts for abuse
-monitoring until it exempts the project, on request.
+No script changes Vertex AI's settings for the project (its cache, its data retention). They stay as the project has them, and the app
+works within them.
 
 ## Cutover to production
 

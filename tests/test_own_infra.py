@@ -76,12 +76,6 @@ elif tool == "curl":
         state["policy"] = body["policy"]
         save()
         print(json.dumps(body["policy"]))
-    elif url.endswith("/cacheConfig") and method == "PATCH":
-        if state["refuse"] == "cache":
-            sys.exit(22)
-        state["cache"] = {"url": url, **body}
-        save()
-        print("{}")
     else:
         sys.exit(f"curl was asked for something this stand-in does not know: {method} {url}")
 else:
@@ -182,10 +176,10 @@ def test_the_deploy_makes_the_connection_and_the_salt_before_it_fills_the_settin
     deploy = script("deploy.sh")
     assert deploy.index("11_own_alerts.sh\"") < deploy.index("10_seed_settings.py")
     assert deploy.index("04_bigquery.sh") < deploy.index("11_own_alerts.sh\""), "the connection goes where the dataset is"
-    assert '"${INFRA}/11_own_alerts.sh"\n' in deploy, "the deploy passes it no option, so Vertex AI's cache is turned off as the specification says"
+    assert '"${INFRA}/11_own_alerts.sh"\n' in deploy, "the deploy passes it no option"
 
 
-def test_a_first_run_makes_the_connection_lets_both_accounts_use_it_makes_the_salt_and_turns_the_cache_off(deployer):
+def test_a_first_run_makes_the_connection_lets_both_accounts_use_it_and_makes_the_salt(deployer):
     done, held, calls = deployer.run()
     assert done.returncode == 0, done.stderr
     assert held["connections"] == {"proj.us.slrr_vertex_conn": "connection@bq.test"}, "named the way BigQuery names it: the location in lower case"
@@ -193,12 +187,10 @@ def test_a_first_run_makes_the_connection_lets_both_accounts_use_it_makes_the_sa
     assert held["policy_of"] == "https://bigqueryconnection.googleapis.com/v1/projects/proj/locations/us/connections/slrr_vertex_conn"
     assert held["policy"] == {"etag": "ACAB", "bindings": [{"role": ADMIN, "members": [RUNTIME]}]}, "the runtime account, on this one connection"
     assert re.fullmatch(r"[0-9a-f]{64}", held["secrets"]["slrr-author-hash-salt"]), "32 random bytes, and no line break after them"
-    assert held["cache"] == {"url": "https://us-central1-aiplatform.googleapis.com/v1/projects/proj/cacheConfig",
-                             "name": "projects/proj/cacheConfig", "disableCache": True}
     left = done.stdout[done.stdout.index("Left for a person"):]
     assert "1. Share the KOF sheet (Viewer) with runtime@proj.test" in left, "the account to share the KOF sheet with is named"
     assert "3." not in left, "nothing else is left"
-    assert "Vertex AI's cache is off" in done.stdout and done.stderr == ""
+    assert done.stderr == ""
 
 
 def test_a_second_run_makes_nothing_twice_and_keeps_who_else_may_use_the_connection(deployer):
@@ -216,21 +208,16 @@ def test_a_second_run_makes_nothing_twice_and_keeps_who_else_may_use_the_connect
     assert deployer.run()[1]["policy"] == kept, "the runtime account is not listed twice"
 
 
-def test_keep_cache_leaves_the_projects_cache_setting_alone(deployer):
-    done, held, calls = deployer.run("--keep-cache")
+def test_vertex_ais_settings_for_the_project_are_left_as_they_are(deployer):
+    done, _, calls = deployer.run()
     assert done.returncode == 0, done.stderr
-    assert "cache" not in held and not [c for c in calls if any("cacheConfig" in a for a in c["args"])]
-    assert held["connections"] and held["secrets"], "the rest is still done"
-
-
-def test_a_refused_cache_change_is_said_and_the_rest_is_still_done(deployer):
-    deployer.exists(refuse="cache")
-    done, held, _ = deployer.run()
-    assert done.returncode == 0, "the deploy goes on: the Console and the jobs are still deployed"
-    assert "roles/aiplatform.admin" in done.stderr and "cache" not in held
-    assert held["connections"] and held["secrets"] and held["policy"].get("bindings")
-    left = done.stdout[done.stdout.index("Left for a person"):]
-    assert "cache" in left and "11_own_alerts.sh" in left, "what is left names the cache and how to try again"
+    asked = [a for c in calls for a in c["args"]]
+    assert not [a for a in asked if "aiplatform.googleapis.com" in a], "nothing is asked of Vertex AI: the project's cache and data retention stay the project's"
+    assert "cache" not in (done.stdout + done.stderr).lower()
+    for path in sorted(INFRA.glob("*")):
+        if path.is_file():
+            assert "cacheConfig" not in path.read_text(encoding="utf-8", errors="ignore"), f"{path.name} changes Vertex AI's cache setting"
+    assert deployer.run("--keep-cache")[0].returncode == 2, "there is no cache option any more"
 
 
 def test_a_refused_grant_on_the_connection_names_the_command_that_gives_it(deployer):

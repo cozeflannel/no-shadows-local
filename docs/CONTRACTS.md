@@ -710,8 +710,9 @@ query_ref?, filters?, draft_query?, case_id?, hours?, update_of?, keep_refreshed
   `own:state`, `own:schema`, `own:review`, `own:rules`, `own:kof` (and `own:kof:N`), `own:feedback`, `own:purge`.
 - **Google Cloud** (`infra/11_own_alerts.sh`, run by `infra/deploy.sh`): the BigQuery connection the two remote models are called through
   (`ai_connection`; its own account has Vertex AI User, the runtime account has Connection Admin on it), the secret that holds the salt
-  (`hash_salt_secret`, made once), and Vertex AI's cache turned off for the project. `infra/10_seed_settings.py` fills the two settings
-  while they are empty. The runtime account has `roles/dlp.user`. The in-house job may run for 600 s, the time a run holds its lock.
+  (`hash_salt_secret`, made once). `infra/10_seed_settings.py` fills the two settings while they are empty. The runtime account has
+  `roles/dlp.user`. The in-house job may run for 600 s, the time a run holds its lock. No script changes Vertex AI's settings for the
+  project (its cache, its data retention).
 
 **Triage additions** (flags): `classification_layer` runs purpose `triage.classify` first and picks the knowledge the assessment reads;
 `knowledge_rag` adds passages to `triage.assess` and to answers. The result's `extra` carries `classification`, `field_confidence`, `citations`,
