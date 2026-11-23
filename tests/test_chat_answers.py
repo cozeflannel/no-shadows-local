@@ -96,6 +96,42 @@ def test_apps_and_the_bots_own_posts_are_never_answered(on, world):
     assert tick(on, world)["answered"] == 0 and world.writes == []
 
 
+def test_the_bot_knows_its_own_account_from_a_post_it_made_or_from_chat_under_either_name_form(on, world):
+    """As the sheet-based bot does (Main.gs rememberBotUser_, Chat.gs chatMyUserId_)."""
+    from triage_agent import chatapi
+
+    world.members.clear()  # Chat answers for no address: the account's id cannot be asked
+    world.say(MIR, "<users/bot>", sender=PAT, **mention())
+    assert tick(on, world)["answered"] == 0, "not known yet: Chat's mention cannot be matched to the bot"
+    chatapi.client_for(on.ctx).post_message(MIR, "A note for the analysts", key="note")  # any post of its own tells it who it is
+    world.say(MIR, "<users/bot>", sender=PAT, **mention())
+    assert tick(on, world)["answered"] == 2, "both: the one it could not match a minute ago is answered too"
+    assert world.messages[MIR][-1]["text"].startswith(HELLO)
+
+
+def test_chat_is_asked_for_the_bots_account_under_the_second_name_form_when_the_first_is_refused(on, world):
+    world.members.clear()
+    world.members[(MIR, f"users/{on.ctx.config.agent.email}")] = BOT
+    world.say(MIR, "<users/bot>", sender=PAT, **mention())
+    assert tick(on, world)["answered"] == 1
+
+
+def test_chat_failing_when_asked_who_is_who_is_not_taken_for_an_answer(on, world):
+    world.members[(MIR, IM)] = PAT["name"]
+    world.fail_lookups_in.update({space_of(on, "burson"), MIR})
+    world.say(MIR, "<users/bot>", sender=PAT, **mention())
+    got = tick(on, world)
+    assert got["answered"] == 0 and got["ok"] is False
+    assert got["error"] == "the source space: 500: Chat is having trouble; the second space: 500: Chat is having trouble"
+
+    world.fail_lookups_in.discard(space_of(on, "burson"))  # the bot's own account can be asked again; the asker's cannot
+    got = tick(on, world)
+    assert (got["answered"], got["failed"]) == (0, 1) and rows(on)[0]["why"] == "500: Chat is having trouble"
+
+    world.fail_lookups_in.clear()
+    assert tick(on, world)["answered"] == 1 and rows(on)[0]["asker"] == IM, "asked again the next minute, not believed for hours"
+
+
 def test_the_asker_is_known_by_their_address_once_chat_has_matched_it_to_the_roster(on, world):
     world.members[(MIR, IM)] = PAT["name"]
     world.say(MIR, "<users/bot>", sender=PAT, **mention())

@@ -67,12 +67,14 @@ def _fresh(ctx: "AgentContext", at: str | None) -> bool:
 
 
 def _bot_user(ctx: "AgentContext", client: Any, known: dict[str, Any], space: str) -> str:
-    """The bot account's own Chat user id: asked of Chat in a space it is a member of, then remembered."""
+    """The bot account's own Chat user id: the sender of anything it has posted, else asked of Chat in a space it is a
+    member of. Remembered either way."""
     email = (ctx.config.agent.email or "").strip()
+    known["bot"] = known["bot"] or chatapi.me(ctx)
     if known["bot"] or not email or _fresh(ctx, known["bot_asked"].get(space)):
         return known["bot"]
-    known["bot_asked"][space] = ctx.now().isoformat()
     known["bot"] = client.member_user(space, email)
+    known["bot_asked"][space] = ctx.now().isoformat()  # kept only once Chat has answered: a failed call is asked again next minute
     return known["bot"]
 
 

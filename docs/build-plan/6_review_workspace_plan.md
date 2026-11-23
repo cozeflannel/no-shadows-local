@@ -79,6 +79,7 @@ code; step 1.1 confirms each row by reading both sides, and each confirmed gap b
 | Live dashboard | Yes: Dashboard and Stories |
 | Temp checks | In the Console, yes. Typed in Chat, no (1.5) |
 | Draft answers to questions | The sheet's is a Gmail draft on the Social Alert's thread: not found. Answers in Chat: op `converse`, reached from a mention in a space since 1.3; direct messages not yet |
+| A person's question or thread reply with no mention | The sheet answers these too (`Bot.gs` `handleHuman_`: a question, or a reply in an alert's thread that names a field or an action; a message that mentions someone else is left alone). The Console answers a mention only (1.3). Gap, for 1.7 |
 | Write back to SLRR BigQuery | Partly: Our own alerts' mark-delivered setting only |
 | Learn from IM calls | Partly: Learning page and checked examples. Showing Gemini the similar past calls: not found |
 | Check outage & comms docs | Partly: the Knowledge documents are read. The outage check and holding statements: not found |

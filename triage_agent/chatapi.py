@@ -37,6 +37,7 @@ SCOPES: tuple[str, ...] = tuple(SCOPE_WORDS)
 IDENTITY_SCOPES: tuple[str, ...] = ("openid", _SCOPE + "userinfo.email")
 TRIES = 3
 OWN = "chat_own"  # what the bot's account posted itself: {message, id (the id it was meant to have), at}
+ME = "chat:me"    # kv: the bot account's own Chat user id, kept from the sender of the first post it made
 # Chat's answer to a sign-in made in a Google Cloud project it takes no calls from, in the words a person reads.
 WRONG_PROJECT = ("Chat takes no calls from the Google Cloud project this sign-in was made in. Make the sign-in client in "
                  "the project the sheet-based bot runs in, where Chat already takes calls made as a person, and sign in "
@@ -186,6 +187,7 @@ class ChatClient:
         self.approved = False     # True only while a person's Send is being posted (mirror.decide)
         self.posted: Any = None   # posted(message, id): keeps the id a post was meant to have when Chat gave it none
         self.own_id: Any = None   # own_id(message) -> that id, or "" for a message the bot did not post
+        self.sent: Any = None     # sent(user): told the sender of each post this sign-in makes, the bot's own Chat user id
 
     def _call(self, method: str, path: str, params: dict[str, Any] | None = None, body: Any = None) -> tuple[int, dict[str, Any], str]:
         last: Any = None
@@ -250,7 +252,7 @@ class ChatClient:
             custom = meant = params["messageId"] = id_prefix + digest[:40]
         status, data, why = self._call("POST", path, params, body)
         if status == 409 and custom:  # posted on an earlier try: use that message
-            return message_view(self._get(f"{space}/messages/{custom}"))
+            return self._mine(message_view(self._get(f"{space}/messages/{custom}")))
         if status == 400 and custom and re.search(r"message_?id", why, re.I):  # custom ids refused: the request id still dedupes
             params.pop("messageId")
             status, data, why = self._call("POST", path, params, body)
@@ -261,6 +263,12 @@ class ChatClient:
             view["client_id"] = meant
             if self.posted and view["name"]:
                 self.posted(view["name"], meant)
+        return self._mine(view)
+
+    def _mine(self, view: dict[str, Any]) -> dict[str, Any]:
+        """A post this sign-in made: its sender is the bot's own account (Main.gs rememberBotUser_)."""
+        if self.sent and view["sender"]:
+            self.sent(view["sender"])
         return view
 
     def react(self, message: str, emoji: str) -> None:
@@ -288,13 +296,17 @@ class ChatClient:
 
     def member_user(self, space: str, email: str) -> str:
         """The Chat user id of the member of `space` with this address, or "" when they are not one. Chat gives a
-        signed-in account a person's id and nothing else, so this is how an id is matched to a person."""
-        status, body, why = self._call("GET", f"{space}/members/{email}")
-        if status in (400, 403, 404):
-            return ""
-        if status >= 300:
-            raise ChatError(status, why)
-        return str((body.get("member") or {}).get("name") or "")
+        signed-in account a person's id and nothing else, so this is how an id is matched to a person. Asked under
+        both forms of the name Chat takes (Chat.gs chatMyUserId_)."""
+        for path in (f"{space}/members/{email}", f"{space}/members/users/{email}"):
+            status, body, why = self._call("GET", path)
+            if status < 300:
+                found = str((body.get("member") or {}).get("name") or "")
+                if found:
+                    return found
+            elif status not in (400, 403, 404):
+                raise ChatError(status, why)
+        return ""
 
     def get_space(self, space: str) -> dict[str, Any]:
         body = self._get(space)
@@ -326,7 +338,13 @@ def client_for(ctx: "AgentContext") -> ChatClient:
     client.refuse = lambda space, approved=False: mirror.refusal(ctx, space, client, approved=approved)
     client.posted = lambda message, meant: ctx.store.put_doc(OWN, _own_key(message), {"message": message, "id": meant, "at": ctx.now().isoformat()})
     client.own_id = lambda message: str((ctx.store.get_doc(OWN, _own_key(message)) or {}).get("id") or "")
+    client.sent = lambda user: None if me(ctx) == user else ctx.store.put_kv(ME, {"user": user, "at": ctx.now().isoformat()})
     return client
+
+
+def me(ctx: "AgentContext") -> str:
+    """The bot account's own Chat user id, known once it has posted anything through its sign-in ('' until then)."""
+    return str((ctx.store.get_kv(ME) or {}).get("user") or "")
 
 
 def _own_key(message: str) -> str:

@@ -684,12 +684,13 @@ a day and never posted on its own.
 
 **Mentions answered in Chat** (plan 6, step 1.3; switch `chat_answers`, OFF by default; `triage_agent/chatanswers.py`): in the tick, after
 `chat_review`, the QA chatbot's account reads the Routing page's three spaces and the agent's spaces listed in `routing.answer_spaces`. A
-person's message that mentions it (a Chat `USER_MENTION` of the account, found once with `spaces.members.get`, or `@` and the agent's name
-typed out) is handed once to op `converse` with `deliver: outbox`, and `reply_text` is posted in that message's thread. In the source space
+person's message that mentions it (a Chat `USER_MENTION` of the account, or `@` and the agent's name typed out) is handed once to op `converse` with `deliver: outbox`, and `reply_text` is posted in that message's thread. In the source space
 the reply goes through `mirror.send`: posted, left for Send, or held and shown under the alert's copy (`mirror.reply_in_copies`). Apps and
 the bot's own posts are never answered. The asker's address comes from asking Chat, once per space, which roster addresses are members;
 someone not on the rosters is answered with no address. Docs `chat_answers` (status `answered | queued | held | ignored | failed |
-gave_up`), audit `chat.answer`, `GET /api/routing` `answers`. A reply Chat does not take is tried again each minute, up to
+gave_up`), audit `chat.answer`, `GET /api/routing` `answers`. The account's own Chat user id is the sender of any post it made (kv
+`chat:me`), else asked with `spaces.members.get` by address, under both name forms, as the sheet-based bot does; a failed lookup is asked
+again the next minute. A reply Chat does not take is tried again each minute, up to
 `routing.max_tries`; the operation is not run again. A space that cannot be read is named in `answers.last_run.error` and does not stop
 the others.
 
