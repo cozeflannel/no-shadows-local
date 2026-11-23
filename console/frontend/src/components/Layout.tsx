@@ -1,5 +1,5 @@
 import {
-  BookOpen, BrainCircuit, CalendarClock, ChevronDown, CircleHelp, FolderSearch, Gauge, Inbox, LayoutDashboard, Mail, Megaphone, Menu, MessagesSquare, Moon,
+  BookOpen, BrainCircuit, CalendarClock, ChevronDown, CircleHelp, Gauge, Inbox, LayoutDashboard, Mail, Megaphone, Menu, MessagesSquare, Moon,
   PanelLeftClose, PanelLeftOpen, Plug, Radar, Route, Scale, Settings, ShieldCheck, Siren, Sparkles, Sun, Thermometer, UsersRound, Waypoints,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
@@ -104,7 +104,6 @@ export function Layout({ children }: { children: ReactNode }) {
       { to: "/knowledge", label: "Knowledge", icon: <BookOpen className={icon} />, count: counts.learning },
     ],
     [
-      { to: "/cases", label: "Cases", icon: <FolderSearch className={icon} /> },
       { to: "/escalations", label: "Emails & T&S", icon: <Mail className={icon} /> },
       { to: "/rosters", label: "Rosters", icon: <CalendarClock className={icon} /> },
       { to: "/compare", label: "Compare", icon: <Scale className={icon} /> },
