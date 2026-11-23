@@ -172,6 +172,43 @@ def test_the_apis_and_the_role_agent_alerts_needs_are_set_by_the_deploy():
     assert "roles/dlp.user" in script("02_service_accounts.sh")
 
 
+# gcloud as infra/01_enable_apis.sh meets it: Google takes at most 20 services in one call, and says so in these words.
+GCLOUD_ENABLE = r'''
+import json, os, sys
+
+args = sys.argv[1:]
+with open(os.environ["CALLS"], "a") as log:
+    log.write(json.dumps(args) + "\n")
+if args[:2] != ["services", "enable"]:
+    sys.exit("a call the script was never meant to make: " + " ".join(args))
+if len([a for a in args[2:] if not a.startswith("--")]) > 20:
+    sys.exit("ERROR: (gcloud.services.enable) INVALID_ARGUMENT: Number of services must not exceed the maximum batch size (20).")
+'''
+
+
+def test_the_apis_are_turned_on_in_calls_google_takes(tmp_path):
+    """Google refuses more than 20 services in one call; the agent needs more than 20."""
+    infra, tools, calls = tmp_path / "infra", tmp_path / "bin", tmp_path / "calls.jsonl"
+    infra.mkdir()
+    tools.mkdir()
+    shutil.copy(INFRA / "01_enable_apis.sh", infra / "01_enable_apis.sh")
+    (infra / ".env").write_text('export PROJECT_ID="proj"\n', encoding="utf-8")
+    (tools / "gcloud.py").write_text(GCLOUD_ENABLE, encoding="utf-8")
+    stand_in = tools / "gcloud"
+    stand_in.write_text(f'#!/usr/bin/env bash\nexec "{sys.executable}" "{tools / "gcloud.py"}" "$@"\n', encoding="utf-8")
+    stand_in.chmod(0o755)
+    calls.write_text("", encoding="utf-8")
+    env = {**os.environ, "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}", "CALLS": str(calls)}
+    done = subprocess.run(["bash", str(infra / "01_enable_apis.sh")], env=env, capture_output=True, text=True, check=False)
+    assert done.returncode == 0, done.stderr
+    asked = [json.loads(line) for line in calls.read_text(encoding="utf-8").splitlines()]
+    wanted = re.findall(r"^\s*([a-z]+\.googleapis\.com)\b", script("01_enable_apis.sh"), flags=re.M)
+    assert len(wanted) > 20 and len(set(wanted)) == len(wanted)
+    assert all("--project=proj" in call for call in asked)
+    assert [a for call in asked for a in call[2:] if not a.startswith("--")] == wanted, "each API once, none left out"
+    assert done.stdout.strip().endswith("APIs enabled for proj")
+
+
 def test_the_deploy_makes_the_connection_and_the_salt_before_it_fills_the_settings():
     deploy = script("deploy.sh")
     assert deploy.index("11_own_alerts.sh\"") < deploy.index("10_seed_settings.py")
