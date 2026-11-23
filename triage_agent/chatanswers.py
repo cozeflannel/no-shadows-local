@@ -280,9 +280,16 @@ def _hand_off(ctx: "AgentContext", client: Any, m: dict[str, Any], space: str, d
               memo: dict[str, Any], out: dict[str, Any]) -> dict[str, Any]:
     """Hand the thread to the campaigns assistant: its record of the thread, then one line in the thread
     (CampaignHandoff.gs handOffThreadToCampaigns_). Tried again next minute when either does not go through."""
+    from . import safety
+
     doc = doc or {"id": mirror._id(m["name"]), "message": m["name"], "space": space, "space_name": "", "thread": m["thread"],
                   "at": m["create_time"].isoformat(), "text": (m["text"] or "")[:300], "asker": "", "status": "waiting", "why": "",
                   "tries": 0, "reply": "", "pending": "", "ran": True, "routed": ["ignored", ""], "how": "campaign", "case_id": ""}
+    blocked = safety.testing_space_block(ctx, space=space)
+    if blocked:
+        doc.update(status="held", why=blocked)
+        out["held"] += 1
+        return doc
     key = chatrules.ownership_id(m["thread"])
     try:
         docs = _campaigns(ctx, memo)
@@ -362,6 +369,9 @@ def _post(ctx: "AgentContext", client: Any, doc: dict[str, Any]) -> tuple[str, s
             return "queued", WAITS
         shown = safety._shown_in_copies(ctx, text, thread, "converse", "")
         return "held", _held_why(ctx, {"check": "routing", **shown}) if not mirror.mode(ctx)["live"] else f"Held: {got['why']}."
+    blocked = safety.testing_space_block(ctx, space=space)
+    if blocked:
+        return "held", blocked
     try:
         client.post_message(space, text, thread=thread, key=f"answer:{doc['message']}")
     except chatapi.Refused as exc:

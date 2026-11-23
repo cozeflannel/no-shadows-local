@@ -370,7 +370,7 @@ export default function AdminPage() {
                 <p>{s.delivery.waiting} waiting to post{s.delivery.waiting ? `, the oldest for ${Math.round(s.delivery.oldest_waiting_min)} min` : ""} · {s.delivery.dead_letters} could not be delivered.</p>
               </StatusCard>
               <StatusCard title="Safety" ok={s.safety.passed} to="/settings/safety" link="Open Safety">
-                <p>{s.safety.checks - s.safety.failed.length} of {s.safety.checks} checks pass. Testing is {s.safety.testing ? "ON: emails go to the testing recipients only" : "OFF: emails go to real recipients"}.</p>
+                <p>{s.safety.checks - s.safety.failed.length} of {s.safety.checks} checks pass. Testing is {s.safety.testing ? "ON: emails/DMs go to testing recipients only and live spaces are held" : "OFF: live mode (real recipients and spaces)"}.</p>
                 {s.safety.failed.map((f) => <p key={f.id}>{f.title}: {f.fix}</p>)}
               </StatusCard>
               <StatusCard title="BigQuery" ok={s.bigquery.dataset ? s.bigquery.connected : null} to="/connections/bigquery" link="Open BigQuery">

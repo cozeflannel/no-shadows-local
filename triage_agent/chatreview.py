@@ -106,6 +106,10 @@ def _read(ctx: "AgentContext", client: Any, out: dict[str, Any]) -> None:
             continue
         doc = _review(ctx, m, space, doc, out)
         ctx.store.put_doc(ROWS, doc["id"], doc)
+        if doc.get("case_id") and m.get("emojis"):
+            from . import chatreactions
+
+            chatreactions.record_source_emojis(ctx, m["name"], m["emojis"], m.get("thread") or "")
         done += 1
         if doc["status"] in DONE:
             cursor = max(cursor, at) if waiting is None else cursor

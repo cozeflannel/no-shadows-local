@@ -142,7 +142,27 @@ def test_with_send_first_on_a_source_post_waits_on_the_routing_page_for_a_person
     assert asked["text"].startswith("Please update the link") and rows(on)[0]["status"] == "waits_for_send"
 
 
+def test_while_testing_posts_to_live_team_and_partner_spaces_are_held(on, world):
+    assert on.ctx.config.platform.safety.testing is True
+    world.add_space(space_of(on, "youtube"), "[S-F] YouTube Social")
+    world.add_space(space_of(on, "crisis"), "Crisis Chat")
+    on.ctx.enqueue("team", "SLA passed warning that must NOT hit live team chat while Testing")
+    world.clock.advance(seconds=2)
+    on.ctx.enqueue("youtube", "YouTube partner notice")
+    world.clock.advance(seconds=2)
+    on.ctx.enqueue("crisis", "Crisis notice")
+    world.clock.advance(seconds=2)
+    on.ctx.enqueue("clean", "Safe analyst clean-space post")
+    got = tick(on, world)
+    assert (got["sent"], got["held"]) == (1, 3)
+    assert world.texts(space_of(on, "team")) == []
+    assert world.texts(space_of(on, "youtube")) == []
+    assert world.texts(space_of(on, "crisis")) == []
+    assert world.texts(space_of(on, "clean")) == ["Safe analyst clean-space post"]
+
+
 def test_a_space_people_outside_google_can_join_is_never_written_unless_it_is_the_source(on, world):
+    route(on, safety_valve=False)
     world.spaces[space_of(on, "team")]["externalUserAllowed"] = True
     on.ctx.enqueue("team", "Shift note for the team")
     got = tick(on, world)
@@ -188,6 +208,7 @@ def test_while_testing_a_direct_message_goes_only_to_the_testing_recipients(on, 
 
 
 def test_when_chat_has_trouble_with_a_space_its_posts_wait_in_order_and_other_spaces_still_get_theirs(on, world):
+    route(on, safety_valve=False)
     clean, team = space_of(on, "clean"), space_of(on, "team")
     world.fail_posts_to.add(clean)
     on.ctx.enqueue("clean", "First note")
@@ -217,6 +238,7 @@ def test_when_chat_cannot_be_reached_the_pass_ends_and_the_next_minute_tries_aga
 
 
 def test_a_space_the_bot_is_not_in_is_given_up_after_the_set_tries_until_someone_presses_try_again(on, world):
+    route(on, safety_valve=False)
     team = space_of(on, "team")
     del world.spaces[team]
     item = on.ctx.enqueue("team", "Shift note for the team")

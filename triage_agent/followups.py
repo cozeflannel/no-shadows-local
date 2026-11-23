@@ -388,7 +388,13 @@ def parity_reconcile(ctx: AgentContext) -> int:
 
 @operation("run_followups")
 def run_followups(ctx: AgentContext, payload: dict[str, Any], rc: RequestContext):
-    steps = payload.get("steps") or ["sla", "reviews", "burson", "sent", "sla_misses", "digest", "handover", "parity", "own_alerts", "rering"]
+    explicit = payload.get("steps")
+    if explicit:
+        steps = list(explicit)
+    elif ctx.flag("followups"):
+        steps = ["sla", "reviews", "burson", "sent", "sla_misses", "digest", "handover", "parity", "own_alerts", "rering"]
+    else:
+        steps = ["sent", "sla_misses", "parity", "own_alerts", "rering"]
     report: dict[str, Any] = {}
     failed: list[str] = []
 

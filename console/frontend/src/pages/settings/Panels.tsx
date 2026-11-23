@@ -368,7 +368,7 @@ export function SafetyPanel() {
   if (!s.data) return null;
   return (
     <div className="space-y-5">
-      {s.data.testing.on && <Alert tone="amber" title="Testing is on">Every email draft goes to {s.data.testing.recipients} stand-in recipient{s.data.testing.recipients === 1 ? "" : "s"} only.</Alert>}
+      {s.data.testing.on && <Alert tone="blue" title="Testing sandbox is ON">Every email draft and DM goes to {s.data.testing.recipients} stand-in recipient{s.data.testing.recipients === 1 ? "" : "s"} only, and posts to the source space and live team/partner spaces are held.</Alert>}
       {s.data.stealth && <Alert tone="blue" title="The agent is silent in the Burson space">It reads and triages there but posts nothing.</Alert>}
       <Card padded={false} title={s.data.passed ? "Runtime checks pass" : "A blocking check fails"} subtitle="Run on every delivery. A failed blocking check holds outbound delivery." className={cx(!s.data.passed && "glow border-transparent dark:border-transparent")}
         actions={<Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={s.reload}>Run again</Button>}>

@@ -171,6 +171,42 @@ def _external_roster_emails(ctx: "AgentContext") -> list[str]:
         return []
 
 
+LIVE_GROUP_TARGETS = frozenset({"team", "youtube", "doodle", "crisis", "handover"})
+
+
+def testing_space_block(ctx: "AgentContext", target: str = "", space: str = "") -> str:
+    """When Testing (`Safety valve`) is ON, hold writes to live team and partner group spaces (`24/7 SL Team`,
+    `YouTube`, `Doodle`, `Crisis`, `Handover`) unless the target points at the sandbox clean/copy space."""
+    if not ctx.config.platform.safety.testing:
+        return ""
+    from . import chatapi, mirror
+
+    r = ctx.config.platform.routing
+    sandbox: list[str] = []
+    for raw in (r.mirror, r.third):
+        s = mirror._ref(raw)
+        if s:
+            sandbox.append(s)
+    clean_ref = ctx.config.space("clean")
+    if clean_ref:
+        cs = chatapi.space_name(clean_ref.space_id, clean_ref.url)
+        if cs:
+            sandbox.append(cs)
+    if space and any(mirror._same(space, s) for s in sandbox):
+        return ""
+    tgt = target.strip().lower()
+    if tgt in LIVE_GROUP_TARGETS:
+        return "Testing is ON: nothing is posted to live team or partner spaces (only the clean/copy space and testing DMs)."
+    if space:
+        for key in LIVE_GROUP_TARGETS:
+            ref = ctx.config.space(key)
+            if ref:
+                ks = chatapi.space_name(ref.space_id, ref.url)
+                if ks and mirror._same(space, ks):
+                    return "Testing is ON: nothing is posted to live team or partner spaces."
+    return ""
+
+
 def target_block(ctx: "AgentContext", target: str, text: str) -> tuple[str, list[str]]:
     """Why a message for `target` may not be posted as things stand ("" when it may), and the leak terms found.
     Asked when an operation hands over its outputs, and again when a queued post is about to be posted."""
@@ -417,8 +453,8 @@ def run_checks(ctx: "AgentContext") -> list[CheckResult]:
         over = len([e for e in safety.testing_recipients if e.strip()]) > TESTERS_MAX
         out.append(CheckResult(
             id="testing_mode", title="Testing mode", passed=not over, severity="warning",
-            detail=(f"Testing is ON: every draft goes to {len(stand_ins)} stand-in recipient(s)." if stand_ins
-                    else "Testing is ON with no stand-in: drafts are made with no recipients."),
+            detail=(f"Testing is ON: every draft and DM goes to {len(stand_ins)} stand-in recipient(s), and live team/partner spaces are held." if stand_ins
+                    else "Testing is ON with no stand-in: drafts are made with no recipients, and DMs plus live team/partner spaces are held."),
             fix=f"At most {TESTERS_MAX} testing recipients are used."))
 
     bad_domains = [d for d in safety.allowed_recipient_domains if not re.fullmatch(r"@?[\w-]+(\.[\w-]+)+", d.strip())]

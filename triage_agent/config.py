@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -886,6 +887,7 @@ class FeatureFlags(ConfigModel):
     own_alerts: bool = Field(False, title="Agent alerts", description="ON: every few minutes the sources under Settings, Agent alerts are read. Personal details are taken out of each post before it is kept, each post is checked against the rules, like posts are grouped into stories in BigQuery, and what passes is reviewed. OFF: nothing is read and nothing is reviewed.")
     own_alerts_post: bool = Field(False, title="Post agent alerts in Chat", description="ON: each alert the review raises is posted in the space named under Settings, Agent alerts. OFF: raised alerts show in the Console only.")
     velocity_tracking: bool = Field(False, title="Post velocity polling & spike alerts", description="ON: tracked X and Bluesky posts are polled on a tiered schedule for 7 days (T+0 to T+168h), and watched or alert-linked posts that cross into Growing or Surging raise a Console bell alert and an internal notification. OFF: no background polling or spike alerts run; analysts can still check any post's velocity on demand.")
+    followups: bool = Field(False, title="SLA nudges, reminders & shift handovers", description="ON: the scheduled follow-ups job queues SLA risk warnings, review and bounce reminders, daily QA digests, and shift handovers. OFF: no automatic nudges, reminders, digests, or shift handovers are queued.")
 
 
 def switch_title(name: str) -> str:
@@ -1158,8 +1160,8 @@ class SafetyConfig(ConfigModel):
 
     external_spaces: list[str] = Field(default_factory=lambda: ["burson"], description="Space keys people outside the company can read. The leak guard runs on everything bound for them.")
     leak_terms: list[str] = Field(default_factory=list, description="Words that must never appear in a message to an external space.")
-    testing: bool = Field(True, description="Testing: emails go only to the testing recipients below and nothing is sent when there are none.")
-    testing_recipients: list[str] = Field(default_factory=list, description="Who receives every email while Testing is ON (5 at most).")
+    testing: bool = Field(True, description="Testing sandbox (same switch as Safety valve on Routing): emails and DMs go only to the testing recipients below, and nothing is written to the source space or live team/partner spaces (only the clean/copy space receives posts).")
+    testing_recipients: list[str] = Field(default_factory=list, description="Who receives every email and DM while Testing is ON (5 at most).")
     allowed_recipient_domains: list[str] = Field(default_factory=list, description="Email is only ever drafted to these domains. Blank = no restriction.")
     allowed_post_targets: list[str] = Field(default_factory=lambda: ["burson", "clean", "dm", "youtube", "doodle", "team", "crisis", "handover"], description="Targets the agent may post to. A target not listed is held, never posted.")
     block_on_failed_check: bool = Field(True, description="A failed runtime check stops outbound delivery until it passes.")
@@ -1485,8 +1487,9 @@ class AgentConfig(ConfigModel):
 
 
 def _strip_variation(value: str | None) -> str:
-    """Normalize emoji for comparison (drop variation selectors / keycap combiners, trim)."""
-    return (value or "").strip().replace("\ufe0f", "").replace("\u20e3", "")
+    """Normalize emoji for comparison (drop variation selectors / keycap combiners / skin tones, trim)."""
+    s = (value or "").strip().replace("\ufe0f", "").replace("\u20e3", "")
+    return re.sub(r"[\U0001f3fb-\U0001f3ff]", "", s)
 
 
 # ---------------------------------------------------------------------------

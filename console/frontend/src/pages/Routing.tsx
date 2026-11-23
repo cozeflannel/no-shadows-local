@@ -67,7 +67,7 @@ const SPACES: { key: SpaceKey; title: string; says: string }[] = [
 ];
 const SWITCHES: { key: "bot_on" | "safety_valve" | "copy_everything" | "ask_before_source"; title: string; says: string }[] = [
   { key: "bot_on", title: "QA chatbot", says: "ON: it reads the source space every minute and copies it. OFF: it reads and writes nothing in Chat." },
-  { key: "safety_valve", title: "Safety valve", says: "ON: nothing is written in the source space, and emails go only to your test addresses. The copy spaces still get everything." },
+  { key: "safety_valve", title: "Safety valve", says: "ON: nothing is written in the source space or live team/partner spaces, and emails/DMs go only to your test addresses. Only the copy/clean spaces get posts." },
   { key: "copy_everything", title: "Copy replies and emojis too", says: "ON: replies, people's messages and emojis are copied. OFF: only alerts are copied." },
   { key: "ask_before_source", title: "Ask before each post to the source", says: "ON: each message for the source space waits for Send or Skip. OFF: it is posted straight away." },
 ];

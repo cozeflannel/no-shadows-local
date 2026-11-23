@@ -25,7 +25,7 @@ TICK_KEY = "tick:last"  # when the once-a-minute tick last ran, and which of its
 
 def run_job(ctx: "AgentContext", name: str) -> dict[str, Any]:
     """One scheduled job by name."""
-    from . import chatanswers, chatdelivery, chatreview, early, mirror, retention, stories, storyread, tempcheck, velocity, workforce
+    from . import chatanswers, chatdelivery, chatreactions, chatreview, early, mirror, retention, stories, storyread, tempcheck, velocity, workforce
     from .ownalerts import purge as own_purge
     from .ownalerts import review as own_review
 
@@ -47,6 +47,7 @@ def run_job(ctx: "AgentContext", name: str) -> dict[str, Any]:
             results["stories"] = {"ok": False, "error": str(exc)[:300]}
         results["routing"] = mirror.run(ctx)  # the QA chatbot's copy of the source space (Routing page)
         results["chat_review"] = chatreview.run(ctx)  # ...and its review of each new alert there, when that switch is ON
+        results["chat_reactions"] = chatreactions.run(ctx)  # ...and emoji reactions in the clean/mirror and source spaces
         results["chat_answers"] = chatanswers.run(ctx)  # ...and its answer to each message that mentions it, when that switch is ON
         reviewed, swept = own_review.run(ctx), own_purge.run(ctx)  # agent alerts: what BigQuery queued is reviewed and raised; old rows leave once a day
         results["own_alerts"] = {**reviewed, "purge": swept, "ok": bool(reviewed.get("ok", True)) and bool(swept.get("ok", True))}

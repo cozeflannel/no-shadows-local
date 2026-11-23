@@ -130,6 +130,11 @@ def _to_space(ctx: "AgentContext", client: Any, item: "OutboxItem", doc: dict[st
     doc["to"] = name
     if space in quiet:
         return
+    blocked = safety.testing_space_block(ctx, item.target, space)
+    if blocked:
+        _close(ctx, item, doc, "held", blocked, check="safety_valve")
+        out["held"] += 1
+        return
     if not space:
         _fail(ctx, doc, f"No space is set for {name}. Set it under Integrations, Google Chat.")
         out["failed"] += 1

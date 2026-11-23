@@ -119,7 +119,7 @@ function SettingsHome({ tools, admin }: Glance) {
         <StartCard n={3} title="Switches" done={!!s && s.switches_on.length > 0} to="/settings/flags" action="Open Switches"
           state={s ? `${s.switches_on.length} of ${s.switches} on. Every feature starts OFF.` : "What the agent may do on its own."} />
         <StartCard n={4} title="Safety and Testing" done={!!s && s.safety.passed} to="/settings/safety" action="Open Safety and Testing"
-          state={s ? `Testing is ${s.safety.testing ? "ON: emails go only to the testing recipients" : "OFF: emails go to real recipients"}.` : "Testing recipients, allow-lists and the leak guard."} />
+          state={s ? `Testing is ${s.safety.testing ? "ON: emails/DMs go only to testing recipients and live spaces are held" : "OFF: live mode (real recipients and spaces)"}.` : "Testing recipients, allow-lists and the leak guard."} />
       </div>
     </div>
   );

@@ -404,6 +404,10 @@ def _copy(ctx: "AgentContext", client: Any, sp: dict[str, Any], third_ok: bool, 
             if what != "alert":
                 doc["who"] = _person(ctx, m, sp["source"]["name"] or "the source space")
                 text = f"{doc['who']}: {text}"
+                if what == "reply":
+                    from . import chatreactions
+
+                    chatreactions.acknowledge_source_reply(ctx, m, who=doc["who"])
             posted = client.post_message(mir, text, thread=_thread(ctx, m["thread"], "mirror") if what == "reply" else "",
                                          key=f"{'zmir' if what == 'alert' else 'zrly'}:{m['name']}",
                                          id_prefix=chatapi.MIRROR_PREFIX if what == "alert" else chatapi.RELAY_PREFIX)
@@ -439,9 +443,14 @@ def _copy(ctx: "AgentContext", client: Any, sp: dict[str, Any], third_ok: bool, 
 
 
 def _emojis(ctx: "AgentContext", client: Any, messages: list[dict[str, Any]], third: bool, out: dict[str, Any]) -> None:
-    """Each emoji on a source message goes once onto its copies, as the bot's account. Removed emojis stay."""
+    """Each emoji on a source message goes once onto its copies, as the bot's account, and acknowledges its Case."""
+    from . import chatreactions
+
     for m in messages:
-        if not m["emojis"] or out["emojis"] >= EMOJIS_PER_RUN:
+        if not m["emojis"]:
+            continue
+        chatreactions.record_source_emojis(ctx, m["name"], m["emojis"], m.get("thread") or "")
+        if out["emojis"] >= EMOJIS_PER_RUN:
             continue
         doc = ctx.store.get_doc(COPIES, _id(m["name"]))
         if not doc or doc["status"] != "copied":

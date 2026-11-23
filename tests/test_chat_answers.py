@@ -211,12 +211,16 @@ def test_a_mention_is_cut_out_of_the_question_where_chat_says_it_sits(on, world)
 
 def test_one_of_the_agents_own_spaces_is_read_once_it_is_picked_on_the_routing_page(on, world):
     team = world.add_space(space_of(on, "team"), "24/7 SL Team")
+    world.members[(team, on.ctx.config.agent.email)] = BOT
     world.say(team, "<users/bot>", sender=PAT, **mention())
     assert tick(on, world)["answered"] == 0 and world.writes == [], "not picked: not read"
     state = route(on, answer_spaces=["team"])["answers"]
     assert state["spaces"][-1] == on.ctx.config.space("team").display_name
     assert {"key": "team", "name": on.ctx.config.space("team").display_name, "picked": True} in state["choices"]
     assert "burson" not in [c["key"] for c in state["choices"]], "the source space is read already: it is not offered again"
+    assert tick(on, world)["held"] == 1 and len(world.messages[team]) == 1, "while Testing is ON, nothing is posted to live team space"
+    route(on, safety_valve=False)
+    world.say(team, "<users/bot>", sender=PAT, **mention())
     assert tick(on, world)["answered"] == 1 and world.messages[team][-1]["text"].startswith(HELLO)
 
     r = on.put("/api/routing", {"value": {"answer_spaces": ["nowhere"]}})
