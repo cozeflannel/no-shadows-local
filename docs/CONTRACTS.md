@@ -613,6 +613,32 @@ Response schemas are pydantic models next to the code that uses them.
   - `GET /api/timeseries?days=30&bucket=day`
   - `GET /api/errors?days=7`
   - `GET /api/failures-by-oncall?days=7`
+- Dashboard and live views (`console/backend/live.py`, `triage_agent/metrics.py`):
+  - `GET /api/dashboard?range=hour|today|24h|7d|30d|custom&from=&to=&filters=` → `kpis`, `derived`, `previous`, `series`, `now`, `extra`,
+    `alert_lines`, `filtered`. `filters` is a JSON object of dimension → values picked: `product`, `social_network`, `exposure_tag`,
+    `sensitive_topic`, `kof`, `kof_list`, `sentiment`, `verdict`, `source` (`metrics.ALERT_DIMENSIONS`). Several values in one dimension
+    match any of them; different dimensions must all hold. An unknown dimension, more than 100 values or a value over 300 characters is a
+    422. Custom `from`/`to` without a zone are in the display timezone.
+  - `alert_lines` (`metrics.alert_view`): `total_messages` (alert messages in the range that match: each Burson message on an alert counts
+    once, the first one, a rerun, an engagement update; an IM's re-assessment is not a message), `total_alerts`, `new_alerts` (first message
+    in the range), `previous_messages` (same filters, the period before), `breakdowns[dim]` (the top 12 `{value, label, count}` and a
+    `more` row), `options[dim]` (every value the taxonomy knows plus the ones seen, each counted with the other filters applied),
+    `dimensions`, `capped`, and `response_times`: `{key, label, description, of, avg_s, median_s, n, recorded_from?}` for `agent_review`
+    (the alert's first decision event), `im_response` (`acknowledged_at`, an IM's `review.at`, their first action), `burson_fix` (the first
+    passing message after a FAIL), `email_draft` (`email.drafted`, purpose alert), `email_sent` (`email.sent`, the send time from
+    `post_to_send_s`) and `tns_submitted` (`tns.submitted`). Each runs from the alert's first message, over the alerts that first arrived
+    in the range and got to that step. For a range that ended in the past, steps up to 14 days after it still count.
+  - Values carry the taxonomy's names: products through `distribution.product` (the product and `other_products`), the exposure tag through
+    `collection.tag`, Sensitive Topics from the assessment's `risk_topics` (else the alert's `risk_tags`) through `collection.topic`, the
+    network from the template's allowed list (anything else is `Other`), KOF from `is_kof` and `kof_lists`. Blank lines are `Not given`
+    (`None` for a topic line of `-`). Sentiment is Gemini's story-read label (`story_reads` docs, `labels`); blank = not rated.
+  - With filters on, `kpis`, `previous` and `series` count only the events of the alerts in view (events that belong to no alert are left
+    out). `now` is never filtered.
+  - Alert facts are kept per Console process (`live.AlertIndex`): the first request for a range reads `store.list_cases(since=)` once (at
+    most 20,000, `capped` says when more were left out); later requests read only the cases updated since (every 10 seconds, or at once
+    after this process writes an event).
+  - `GET /api/live/feed?since=&limit=` and `GET /api/live/stream` (server-sent events `events` and `now`) feed the header bell and the
+    alert pop-ups. The bell keeps what was read in the browser (`localStorage`).
 - Activity: `GET /api/activity?limit=&type=&case_id=&escalation_id=`
 - Cases:
   - `GET /api/cases?status=&source=&track=&limit=`

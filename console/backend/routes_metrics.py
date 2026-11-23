@@ -18,14 +18,14 @@ router = APIRouter(prefix="/api", tags=["metrics"])
 
 # Display order + labels for KPI_DEFINITIONS groups.
 KPI_GROUPS: list[dict[str, str]] = [
-    {"key": "intake", "label": "Intake & QA", "description": "What arrived and what the agent decided."},
-    {"key": "quality", "label": "Quality", "description": "Corrections and how often IMs disagreed with the agent."},
-    {"key": "im", "label": "IM workflow", "description": "Acknowledgements, emoji actions, protocol pings and SLAs."},
-    {"key": "email", "label": "Email drafts", "description": "Social Alert drafts in the IMs' Gmail (Brand Social alias)."},
-    {"key": "tns", "label": "Trust & Safety", "description": "go/WD-Triage forms, outcomes and the Watchdog loop."},
-    {"key": "chat", "label": "Conversation", "description": "Questions answered and routed in chat."},
-    {"key": "parity", "label": "Path B parity", "description": "In-house alerts compared with Burson's."},
-    {"key": "jobs", "label": "Jobs", "description": "Scheduled handovers and Burson digests."},
+    {"key": "intake", "label": "Alerts in, and what the agent did", "description": "What arrived and what the agent decided."},
+    {"key": "quality", "label": "Fixes and disagreements", "description": "Fields the agent fixed, and how often an IM said it was wrong."},
+    {"key": "im", "label": "Incident Manager work", "description": "Reactions, emoji actions, protocol pings and SLAs."},
+    {"key": "email", "label": "Social Alert emails", "description": "Drafts in the IMs' Gmail (Brand Social alias) and what happened to them."},
+    {"key": "tns", "label": "Trust & Safety", "description": "go/WD-Triage forms, their outcomes and the Watchdog loop."},
+    {"key": "chat", "label": "Questions in Chat", "description": "Questions the agent answered or passed on in Chat."},
+    {"key": "parity", "label": "In-house alerts and Burson's", "description": "Posts both caught, or only one of them."},
+    {"key": "jobs", "label": "Scheduled posts", "description": "Shift handovers and Burson digests."},
 ]
 
 DEFAULT_TIMESERIES_TYPES = [

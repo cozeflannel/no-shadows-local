@@ -7,6 +7,7 @@ mirrors these definitions in BigQuery for ad-hoc analysis.
 Event payload conventions are documented in docs/CONTRACTS.md#events.
 """
 
+import math
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from statistics import mean, median
@@ -82,24 +83,42 @@ def _count(events: Iterable[AgentEvent], event_type: str, **payload_eq: Any) -> 
     )
 
 
+def duration_s(value: Any) -> float | None:
+    """A duration in seconds from an event payload, or None when it can't be one: not a number, NaN or infinite, or below
+    zero (a clock slip between machines). Kept out of averages so no measure is ever negative, NaN or infinite."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
+
+
 def _minutes(values: list[float]) -> dict[str, float | None]:
+    values = [v for v in values if duration_s(v) is not None]
     if not values:
         return {"avg": None, "median": None, "n": 0}
     return {"avg": round(mean(values) / 60, 1), "median": round(median(values) / 60, 1), "n": len(values)}
 
 
 def _ms(values: list[int]) -> dict[str, float | None]:
+    values = [v for v in values if duration_s(v) is not None]
     if not values:
         return {"avg": None, "p50": None}
     return {"avg": round(mean(values)), "p50": round(median(values))}
 
 
 def _payload_values(events: list[AgentEvent], event_type: str, key: str) -> list[float]:
-    return [
-        float(e.payload[key])
-        for e in events
-        if e.event_type == event_type and (e.payload or {}).get(key) is not None
-    ]
+    out = []
+    for e in events:
+        if e.event_type == event_type:
+            seconds = duration_s((e.payload or {}).get(key))
+            if seconds is not None:
+                out.append(seconds)
+    return out
+
+
+def _durations(events: list[AgentEvent], key: str) -> list[float]:
+    return [s for s in (duration_s((e.payload or {}).get(key)) for e in events) if s is not None]
 
 
 def _pct(numerator: int, denominator: int) -> float | None:
@@ -193,9 +212,9 @@ def compute_kpis(events: list[AgentEvent], config: Any | None = None) -> dict:
         "parity_recall": _pct(kpis["parity_matched"], burson_side),
         # speed (seconds in payloads, reported in minutes)
         "detect_latency_min": _minutes(_payload_values(events, E.ALERT_RECEIVED, "detect_latency_s")),  # post -> alert
-        "post_to_send_min": _minutes([float((e.payload or {})["post_to_send_s"]) for e in alert_emails_sent if (e.payload or {}).get("post_to_send_s") is not None]),
-        "flag_to_send_min": _minutes([float((e.payload or {})["flag_to_send_s"]) for e in alert_emails_sent if (e.payload or {}).get("flag_to_send_s") is not None]),
-        "time_to_correction_min": _minutes([float((e.payload or {})["time_to_correction_s"]) for e in reruns_passed if (e.payload or {}).get("time_to_correction_s") is not None]),
+        "post_to_send_min": _minutes(_durations(alert_emails_sent, "post_to_send_s")),
+        "flag_to_send_min": _minutes(_durations(alert_emails_sent, "flag_to_send_s")),
+        "time_to_correction_min": _minutes(_durations(reruns_passed, "time_to_correction_s")),
         "triage_latency_ms": _ms([e.latency_ms for e in events if e.event_type in decisions and e.latency_ms is not None]),
     }
     if config is not None:
@@ -252,3 +271,287 @@ def timeseries(events: list[AgentEvent], types: list[str], bucket: str = "day", 
 def window(days: int = 7, now: datetime | None = None) -> tuple[datetime, datetime]:
     now = now or datetime.now(timezone.utc)
     return now - timedelta(days=days), now
+
+
+# -- the Dashboard: alert messages by the lines of a Burson alert --------------------------------------------------------------
+# A Burson alert reads [Product(s)]: [Social Network]: [Exposure Tag]: [Sensitive Topic]: [KOF]:. The Dashboard counts the
+# alert messages in a time range by those lines (with the names from the taxonomy in config), plus Gemini's sentiment
+# label, what the agent decided and where the alert came from, and filters by any of them. Each alert is one row of facts
+# (alert_facts), built from its case; each Burson message on it (the first one, a rerun, an engagement update) counts once.
+
+# Dimension key -> what the Dashboard calls it. "multi" dimensions can hold several values on one alert.
+ALERT_DIMENSIONS: dict[str, dict[str, Any]] = {
+    "product": {"label": "Product", "line": "[Product(s)]", "multi": True},
+    "social_network": {"label": "Social network", "line": "[Social Network]", "multi": False},
+    "exposure_tag": {"label": "Exposure tag", "line": "[Exposure Tag]", "multi": False},
+    "sensitive_topic": {"label": "Sensitive topic", "line": "[Sensitive Topic]", "multi": True},
+    "kof": {"label": "KOF", "line": "[KOF]", "multi": False},
+    "kof_list": {"label": "KOF list", "line": "[KOF] list", "multi": True},
+    "sentiment": {"label": "Sentiment", "line": "Gemini's read", "multi": False},
+    "verdict": {"label": "What the agent decided", "line": "", "multi": False},
+    "source": {"label": "Came from", "line": "", "multi": False},
+}
+NOT_GIVEN = "Not given"
+NO_TOPIC = "None"
+NO_KOF_LIST = "List not named"
+SENTIMENT_LABELS = {"negative": "Negative", "neutral": "Neutral", "positive": "Positive", "": "Not rated"}
+VERDICT_LABELS = {"PASS": "Passed as sent", "CORRECTED": "Fixed by the agent", "NEEDS_REVIEW": "Held for an IM to review",
+                  "FAIL": "Sent back to Burson", "SUPPRESSED": "No alert needed (suppressed)"}
+SOURCE_LABELS = {"burson_chat": "Burson", "inhouse": "In-house", "watchdog": "Watchdog email", "manual": "Pasted by hand"}
+_EMPTY_VALUES = {"", "-", "–", "—", "none", "n/a", "na", "no", "null"}
+
+# Response times: from the alert's first message to each step, over the alerts where that step happened.
+RESPONSE_STEPS: list[tuple[str, str, str]] = [
+    ("agent_review", "The agent's review", "From the alert message arriving to the agent's verdict on it: passed, fixed, held for an IM or sent back to Burson."),
+    ("im_response", "First response by an IM", "To the first Incident Manager reaction on the alert, or their decision on an alert held for review."),
+    ("burson_fix", "Burson's corrected re-post", "For alerts sent back to Burson: to the corrected message that then passed."),
+    ("email_draft", "Social Alert draft ready", "To the Social Alert email draft landing in the IM's Gmail."),
+    ("email_sent", "Social Alert email sent", "To the Social Alert email being sent."),
+    ("tns_submitted", "Trust & Safety report submitted", "To the Trust & Safety form submission being confirmed."),
+]
+RESPONSE_EVENT_TYPES = [E.TRIAGE_PASSED, E.TRIAGE_CORRECTED, E.TRIAGE_FAILED, E.TRIAGE_NEEDS_REVIEW, E.TRIAGE_SUPPRESSED,
+                        E.EMAIL_DRAFTED, E.EMAIL_SENT, E.TNS_SUBMITTED]
+_DECISIONS = (E.TRIAGE_PASSED, E.TRIAGE_CORRECTED, E.TRIAGE_FAILED, E.TRIAGE_NEEDS_REVIEW, E.TRIAGE_SUPPRESSED)
+
+
+def _text_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    items = value if isinstance(value, (list, tuple)) else str(value).replace(";", ",").split(",")
+    return [str(v).strip() for v in items if str(v).strip() and str(v).strip().lower() not in _EMPTY_VALUES]
+
+
+def _canonical_network(config: Any, value: str | None) -> str:
+    """The Social Network as the taxonomy names it (X, Reddit, ...). A value that is not a network is counted as Other."""
+    raw = (value or "").strip()
+    if not raw or raw.lower() in _EMPTY_VALUES:
+        return NOT_GIVEN
+    spec = config.alert_template.field("social_network") if config is not None else None
+    allowed = list(spec.allowed or []) if spec is not None and getattr(spec, "allowed", None) else []
+    key = raw.lower()
+    if key in ("twitter", "x (twitter)", "x/twitter", "twitter/x"):
+        key = "x"
+    match = next((a for a in allowed if a.lower() == key), None)
+    if match:
+        return match
+    return "Other" if allowed else raw
+
+
+def alert_facts(case: Any, config: Any) -> dict[str, Any]:
+    """One alert as the Dashboard counts it: its lines (taxonomy names), its messages and when people responded.
+
+    `messages` holds one (arrived at, verdict) pair for each Burson message on the alert. An IM's re-assessment (forward
+    after review, an undone fix) adds an attempt to the case but is not a new message, so it is left out."""
+    attempts = list(case.attempts or [])
+    latest = attempts[-1] if attempts else None
+    result = latest.result if latest else None
+    a = result.assessment if result else None
+    norm = (result.normalized or {}) if result else {}
+    collection = config.collection if config is not None else None
+    distribution = config.distribution if config is not None else None
+
+    def product_name(name: str) -> str:
+        found = distribution.product(name) if distribution is not None else None
+        return found.name if found is not None else name
+
+    products: list[str] = []
+    for name in [(a.product if a else None) or case.product or norm.get("product"), *_text_list(norm.get("other_products"))]:
+        if name and str(name).strip().lower() not in _EMPTY_VALUES:
+            canonical = product_name(str(name).strip())
+            if canonical not in products:
+                products.append(canonical)
+    tag_raw = (a.exposure_tag if a else None) or case.exposure_tag or norm.get("exposure_tag")
+    tag = collection.tag(tag_raw) if collection is not None and tag_raw else None
+    exposure_tag = tag.name if tag is not None else (str(tag_raw).strip() if tag_raw and str(tag_raw).strip().lower() not in _EMPTY_VALUES else NOT_GIVEN)
+    topics_raw = list(a.risk_topics) if a and a.risk_topics else _text_list(norm.get("risk_tags"))
+    topics: list[str] = []
+    for t in topics_raw:
+        found = collection.topic(t) if collection is not None else None
+        name = found.name if found is not None else t
+        if name not in topics:
+            topics.append(name)
+    is_kof = bool(a.is_kof) if a else norm.get("kof") is True
+    kof_lists = list(a.kof_lists) if a and a.kof_lists else _text_list(norm.get("kof_lists"))
+
+    messages: list[tuple[datetime, str]] = []
+    previous = None
+    for att in attempts:
+        message = att.message.model_dump(mode="json") if hasattr(att.message, "model_dump") else att.message
+        if previous is None or message != previous:
+            verdict = att.result.verdict
+            messages.append((att.received_at, verdict.value if hasattr(verdict, "value") else str(verdict)))
+        previous = message
+    burson_fix_at = None
+    for (_, verdict), (at, after) in zip(messages, messages[1:]):
+        if verdict == "FAIL" and after in ("PASS", "CORRECTED"):
+            burson_fix_at = at
+            break
+    responses = [case.acknowledged_at]
+    if case.review is not None and (case.review.decided_by or "agent") != "agent":
+        responses.append(case.review.at)
+    responses.extend(x.at for x in (case.actions or []) if (x.actor or "agent") != "agent")
+    im_response_at = min((t for t in responses if t is not None), default=None)
+    status = case.status.value if hasattr(case.status, "value") else str(case.status)
+    return {
+        "case_id": case.case_id, "env": case.env, "source": case.source, "status": status,
+        "alert_name": case.alert_name, "messages": messages,
+        "first_at": messages[0][0] if messages else case.created_at, "last_at": messages[-1][0] if messages else case.created_at,
+        "product": products or [NOT_GIVEN],
+        "social_network": _canonical_network(config, (a.platform if a else None) or case.platform or norm.get("social_network")),
+        "exposure_tag": exposure_tag, "priority": (tag.priority if tag is not None else (case.priority or "")) or "",
+        "sensitive_topic": topics or [NO_TOPIC],
+        "kof": "Yes" if is_kof else "No",
+        "kof_list": (kof_lists or [NO_KOF_LIST]) if is_kof else [],
+        "im_response_at": im_response_at, "burson_fix_at": burson_fix_at,
+        "clean_posted_at": case.clean_posted_at, "created_at": case.created_at,
+    }
+
+
+def _values(row: dict[str, Any], dim: str, verdict: str, sentiment: dict[str, str]) -> list[str]:
+    if dim == "verdict":
+        return [verdict]
+    if dim == "sentiment":
+        return [sentiment.get(row["case_id"], "")]
+    if dim == "source":
+        return [row["source"]]
+    value = row.get(dim)
+    return list(value) if isinstance(value, list) else [value or ""]
+
+
+def _matches(row: dict[str, Any], verdict: str, filters: dict[str, list[str]], sentiment: dict[str, str], skip: str | None = None) -> bool:
+    for dim, wanted in filters.items():
+        if dim == skip or not wanted:
+            continue
+        if not set(_values(row, dim, verdict, sentiment)) & set(wanted):
+            return False
+    return True
+
+
+def option_label(dim: str, value: str) -> str:
+    if dim == "sentiment":
+        return SENTIMENT_LABELS.get(value, value)
+    if dim == "verdict":
+        return VERDICT_LABELS.get(value, value)
+    if dim == "source":
+        return SOURCE_LABELS.get(value, value)
+    return value
+
+
+def taxonomy_values(config: Any) -> dict[str, list[str]]:
+    """Every value the taxonomy knows for each dimension, so a filter lists them all, not only the ones seen lately."""
+    if config is None:
+        return {}
+    spec = config.alert_template.field("social_network")
+    return {
+        "product": [p.name for p in config.distribution.products if not p.deprecated],
+        "social_network": list(spec.allowed or []) if spec is not None and getattr(spec, "allowed", None) else [],
+        "exposure_tag": [t.name for t in config.collection.exposure_tags],
+        "sensitive_topic": [t.name for t in config.collection.sensitive_topics],
+        "kof": ["Yes", "No"],
+        "sentiment": ["negative", "neutral", "positive", ""],
+        "verdict": list(VERDICT_LABELS),
+        "source": list(SOURCE_LABELS),
+    }
+
+
+def _step_times(row: dict[str, Any], events: list[AgentEvent]) -> dict[str, datetime | None]:
+    """When each response step first happened for one alert (events are that alert's, in any order)."""
+    out: dict[str, datetime | None] = {"agent_review": None, "im_response": row.get("im_response_at"), "burson_fix": row.get("burson_fix_at"),
+                                       "email_draft": None, "email_sent": None, "tns_submitted": None}
+
+    def first(key: str, at: datetime) -> None:
+        held = out[key]
+        if held is None or at < held:
+            out[key] = at
+
+    for e in events:
+        p = e.payload or {}
+        if e.event_type in _DECISIONS:
+            first("agent_review", e.event_ts)
+        elif e.event_type == E.EMAIL_DRAFTED and p.get("purpose", "alert") == "alert":
+            first("email_draft", e.event_ts)
+        elif e.event_type == E.EMAIL_SENT and p.get("purpose", "alert") == "alert":
+            # The event is written when the send is noticed; post_to_send_s gives the send time itself.
+            base = row.get("clean_posted_at") or row.get("created_at")
+            offset = duration_s(p.get("post_to_send_s"))
+            first("email_sent", base + timedelta(seconds=offset) if base and offset is not None else e.event_ts)
+        elif e.event_type == E.TNS_SUBMITTED:
+            first("tns_submitted", e.event_ts)
+    return out
+
+
+def _seconds_stats(values: list[float]) -> dict[str, Any]:
+    if not values:
+        return {"avg_s": None, "median_s": None, "n": 0}
+    return {"avg_s": round(mean(values), 1), "median_s": round(median(values), 1), "n": len(values)}
+
+
+def response_times(rows: list[dict[str, Any]], events: list[AgentEvent]) -> list[dict[str, Any]]:
+    """Average and median time from each alert's first message to each step, over the alerts where the step happened."""
+    by_case: dict[str, list[AgentEvent]] = defaultdict(list)
+    for e in events:
+        if e.case_id and e.event_type in RESPONSE_EVENT_TYPES:
+            by_case[e.case_id].append(e)
+    durations: dict[str, list[float]] = {key: [] for key, _, _ in RESPONSE_STEPS}
+    for row in rows:
+        start = row["first_at"]
+        for key, at in _step_times(row, by_case.get(row["case_id"], [])).items():
+            if at is not None and at >= start - timedelta(minutes=1):  # a step logged before the message arrived is a clock slip
+                durations[key].append(max(0.0, (at - start).total_seconds()))
+    return [{"key": key, "label": label, "description": desc, "of": len(rows), **_seconds_stats(durations[key])}
+            for key, label, desc in RESPONSE_STEPS]
+
+
+def matching_messages(rows: list[dict[str, Any]], since: datetime, until: datetime, filters: dict[str, list[str]] | None,
+                      sentiment: dict[str, str] | None = None) -> tuple[int, set[str]]:
+    """How many alert messages in [since, until) match the filters, and the alerts they are on (for the period before)."""
+    sentiment = sentiment or {}
+    wanted = {k: [str(v) for v in vs] for k, vs in (filters or {}).items() if k in ALERT_DIMENSIONS and vs}
+    count, cases = 0, set()
+    for row in rows:
+        for at, verdict in row["messages"]:
+            if since <= at < until and _matches(row, verdict, wanted, sentiment):
+                count += 1
+                cases.add(row["case_id"])
+    return count, cases
+
+
+def alert_view(rows: list[dict[str, Any]], since: datetime, until: datetime, filters: dict[str, list[str]] | None, *,
+               sentiment: dict[str, str] | None = None, config: Any | None = None, events: list[AgentEvent] | None = None,
+               top: int = 12) -> dict[str, Any]:
+    """The Dashboard's numbers for a range and filters: how many alert messages, the breakdown by each line of the alert,
+    the choices for each filter (each counted with the other filters applied) and the response times.
+
+    Several values picked in one filter mean any of them; different filters must all hold."""
+    sentiment = sentiment or {}
+    wanted = {k: [str(v) for v in vs] for k, vs in (filters or {}).items() if k in ALERT_DIMENSIONS and vs}
+    in_range = [(row, at, verdict) for row in rows for at, verdict in row["messages"] if since <= at < until]
+    matching = [(row, at, verdict) for row, at, verdict in in_range if _matches(row, verdict, wanted, sentiment)]
+    breakdowns: dict[str, list[dict[str, Any]]] = {}
+    options: dict[str, list[dict[str, Any]]] = {}
+    known = taxonomy_values(config)
+    for dim in ALERT_DIMENSIONS:
+        counts: Counter[str] = Counter()
+        for row, _, verdict in matching:
+            counts.update(set(_values(row, dim, verdict, sentiment)))
+        ranked = counts.most_common()
+        breakdowns[dim] = [{"value": v, "label": option_label(dim, v), "count": n} for v, n in ranked[:top]]
+        if len(ranked) > top:
+            breakdowns[dim].append({"value": "", "label": f"{len(ranked) - top} more", "count": sum(n for _, n in ranked[top:]), "more": True})
+        choice: Counter[str] = Counter()
+        for row, _, verdict in in_range:
+            if _matches(row, verdict, wanted, sentiment, skip=dim):
+                choice.update(set(_values(row, dim, verdict, sentiment)))
+        values = list(dict.fromkeys([*choice, *known.get(dim, []), *wanted.get(dim, [])]))
+        options[dim] = sorted(({"value": v, "label": option_label(dim, v), "count": choice.get(v, 0)} for v in values),
+                              key=lambda o: (-o["count"], o["label"].lower()))
+    alerts = {row["case_id"]: row for row, _, _ in matching}
+    firsts = [row for row in alerts.values() if since <= row["first_at"] < until]
+    return {
+        "total_messages": len(matching), "total_alerts": len(alerts), "messages_in_range": len(in_range),
+        "new_alerts": len(firsts), "case_ids": sorted(alerts),
+        "breakdowns": breakdowns, "options": options,
+        "dimensions": [{"key": k, **v} for k, v in ALERT_DIMENSIONS.items()],
+        "response_times": response_times(firsts, events or []),
+        "filters": wanted,
+    }

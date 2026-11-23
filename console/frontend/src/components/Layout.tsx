@@ -1,5 +1,5 @@
 import {
-  BookOpen, BrainCircuit, CalendarClock, ChevronDown, CircleHelp, Gauge, Inbox, LayoutDashboard, Mail, Megaphone, Menu, MessagesSquare, Moon,
+  BookOpen, BrainCircuit, CalendarClock, ChevronDown, CircleHelp, FileClock, Inbox, LayoutDashboard, Mail, Megaphone, Menu, MessagesSquare, Moon,
   PanelLeftClose, PanelLeftOpen, Plug, Radar, Route, Scale, Settings, ShieldCheck, Siren, Sparkles, Sun, Thermometer, UsersRound, Waypoints,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
@@ -7,10 +7,12 @@ import { Link, NavLink, useLocation } from "react-router";
 
 import { useApp } from "../context";
 import { AlertPopups } from "./AlertPopups";
+import { ChatWidget } from "./ChatWidget";
 import { GmailButton } from "./GmailButton";
 import { cx } from "./ui";
 
-interface NavItem { to: string; label: string; icon: ReactNode; count?: number }
+interface NavItem { to: string; label: string; icon: ReactNode; count?: number; hint?: string }
+interface NavGroup { label: string; items: NavItem[] }
 
 /** The Help topic that goes with each page (the first path segment). */
 const HELP_TOPIC: Record<string, string> = {
@@ -59,7 +61,7 @@ function Mark({ className }: { className?: string }) {
 
 function Item({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   return (
-    <NavLink to={item.to} end={item.to === "/"} title={collapsed ? item.label : undefined}
+    <NavLink to={item.to} end={item.to === "/"} title={collapsed ? item.label : item.hint}
       className={({ isActive }) => cx("flex items-center gap-3 rounded-full px-3 py-2 text-sm transition-colors",
         collapsed && "justify-center px-0",
         isActive ? "bg-blue-100 font-medium text-blue-800 dark:bg-blue-200/15 dark:text-blue-200" : "text-zinc-700 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800")}>
@@ -71,6 +73,11 @@ function Item({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   );
 }
 
+function GroupLabel({ children, collapsed }: { children: ReactNode; collapsed: boolean }) {
+  if (collapsed) return null;
+  return <p className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-500">{children}</p>;
+}
+
 export function Layout({ children }: { children: ReactNode }) {
   const { me, counts, theme, toggleTheme } = useApp();
   const location = useLocation();
@@ -80,42 +87,58 @@ export function Layout({ children }: { children: ReactNode }) {
   });
   const [drawer, setDrawer] = useState(false);
   const [more, setMore] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(() => {
+    try { return localStorage.getItem("console-nav-setup") !== "closed"; } catch { return true; }
+  });
   useEffect(() => {
     try { localStorage.setItem("console-nav", folded ? "collapsed" : "open"); } catch { /* private mode */ }
   }, [folded]);
+  useEffect(() => {
+    try { localStorage.setItem("console-nav-setup", setupOpen ? "open" : "closed"); } catch { /* private mode */ }
+  }, [setupOpen]);
   useEffect(() => { setDrawer(false); }, [location.pathname, location.search]);
   const collapsed = folded && wide; // the drawer always shows labels
 
   const icon = "size-[18px]";
-  const groups: NavItem[][] = [
-    [
-      { to: "/", label: "Dashboard", icon: <LayoutDashboard className={icon} /> },
-      { to: "/feed", label: "Review feed", icon: <Inbox className={icon} />, count: counts.review },
-      { to: "/stories", label: "Stories", icon: <Waypoints className={icon} /> },
-      { to: "/early", label: "Early Detection", icon: <Radar className={icon} /> },
-      { to: "/own-alerts", label: "Agent alerts", icon: <Siren className={icon} /> },
-      { to: "/chat", label: "Chat spaces", icon: <MessagesSquare className={icon} /> },
-      { to: "/agent", label: "Chat agent", icon: <Sparkles className={icon} /> },
-    ],
-    [
-      { to: "/temp-check", label: "Temp check", icon: <Thermometer className={icon} /> },
-      { to: "/workforce", label: "Workforce", icon: <UsersRound className={icon} /> },
-      { to: "/campaigns", label: "Campaigns & watches", icon: <Megaphone className={icon} /> },
-      { to: "/knowledge", label: "Knowledge", icon: <BookOpen className={icon} />, count: counts.learning },
-    ],
-    [
-      { to: "/escalations", label: "Emails & T&S", icon: <Mail className={icon} /> },
-      { to: "/rosters", label: "Rosters", icon: <CalendarClock className={icon} /> },
-      { to: "/compare", label: "Compare", icon: <Scale className={icon} /> },
-    ],
+  // The analyst's day first; rarely used records fold away; setup pages (admins and leads) sit at the bottom.
+  const groups: NavGroup[] = [
+    { label: "Daily work", items: [
+      { to: "/", label: "Dashboard", icon: <LayoutDashboard className={icon} />, hint: "Alert messages, filters and response times" },
+      { to: "/feed", label: "Review feed", icon: <Inbox className={icon} />, count: counts.review, hint: "Alerts waiting for someone, and every alert" },
+      { to: "/stories", label: "Stories", icon: <Waypoints className={icon} />, hint: "Alerts on the same story, grouped" },
+      { to: "/agent", label: "Ask Gemini", icon: <Sparkles className={icon} />, hint: "The Console chat agent" },
+      { to: "/chat", label: "Chat spaces", icon: <MessagesSquare className={icon} />, hint: "What the agent read and posted in Chat" },
+    ] },
+    { label: "Look into", items: [
+      { to: "/temp-check", label: "Temp check", icon: <Thermometer className={icon} />, hint: "How big a conversation is, right now" },
+      { to: "/early", label: "Early Detection", icon: <Radar className={icon} />, hint: "Stories growing before anyone alerted them" },
+      { to: "/own-alerts", label: "Agent alerts", icon: <Siren className={icon} />, hint: "Alerts the agent raises from its own sources" },
+      { to: "/escalations", label: "Emails & T&S", icon: <Mail className={icon} />, hint: "Social Alert emails and Trust & Safety reports" },
+    ] },
+    { label: "Team and knowledge", items: [
+      { to: "/rosters", label: "Rosters", icon: <CalendarClock className={icon} />, hint: "Who is on shift and on call" },
+      { to: "/workforce", label: "Workforce", icon: <UsersRound className={icon} />, hint: "Staffing against the alert volume" },
+      { to: "/knowledge", label: "Knowledge", icon: <BookOpen className={icon} />, count: counts.learning, hint: "The documents and facts the agent uses" },
+      { to: "/campaigns", label: "Campaigns & watches", icon: <Megaphone className={icon} />, hint: "Topics watched for a while" },
+    ] },
   ];
-  const extra: NavItem[] = [
-    { to: "/suppressed", label: "Suppressed", icon: <Gauge className={icon} /> },
-    { to: "/parity", label: "Our alerts vs Burson's", icon: <Gauge className={icon} /> },
-    { to: "/outbox", label: "Waiting to post", icon: <Gauge className={icon} />, count: counts.outbox },
-    { to: "/activity", label: "Event log", icon: <Gauge className={icon} /> },
+  const records: NavItem[] = [
+    { to: "/compare", label: "Agent, Burson and IMs compared", icon: <Scale className={icon} /> },
+    { to: "/suppressed", label: "Suppressed alerts", icon: <FileClock className={icon} /> },
+    { to: "/parity", label: "Our alerts vs Burson's", icon: <FileClock className={icon} /> },
+    { to: "/outbox", label: "Waiting to post", icon: <FileClock className={icon} />, count: counts.outbox },
+    { to: "/activity", label: "Event log", icon: <FileClock className={icon} /> },
   ];
-  const extraActive = extra.some((e) => location.pathname.startsWith(e.to));
+  const setup: NavItem[] = [
+    { to: "/settings", label: "Settings", icon: <Settings className={icon} /> },
+    { to: "/routing", label: "Routing", icon: <Route className={icon} /> },
+    { to: "/ai", label: "AI", icon: <BrainCircuit className={icon} /> },
+    { to: "/connections", label: "Integrations", icon: <Plug className={icon} /> },
+    { to: "/admin", label: "Admin", icon: <ShieldCheck className={icon} /> },
+  ];
+  const recordsActive = records.some((e) => location.pathname.startsWith(e.to));
+  const showRecords = more || recordsActive || collapsed;
+  const showSetup = setupOpen || collapsed || setup.some((e) => location.pathname.startsWith(e.to));
 
   return (
     <div className="flex h-full">
@@ -132,34 +155,37 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
         <nav className="flex flex-1 flex-col gap-1" aria-label="Main">
           {groups.map((group, i) => (
-            <div key={i} className={cx("flex flex-col gap-0.5", i > 0 && "mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800")}>
-              {group.map((item) => <Item key={item.to} item={item} collapsed={collapsed} />)}
+            <div key={group.label} className={cx("flex flex-col gap-0.5", i > 0 && "mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800")}>
+              <GroupLabel collapsed={collapsed}>{group.label}</GroupLabel>
+              {group.items.map((item) => <Item key={item.to} item={item} collapsed={collapsed} />)}
             </div>
           ))}
-          {!collapsed && (
-            <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-              <button type="button" onClick={() => setMore((m) => !m)} aria-expanded={more || extraActive}
-                className="flex w-full items-center gap-3 rounded-full px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-400 dark:hover:bg-zinc-800">
-                <ChevronDown className={cx(icon, "transition-transform", (more || extraActive) && "rotate-180")} />More
+          <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+            {!collapsed && (
+              <button type="button" onClick={() => setMore((m) => !m)} aria-expanded={showRecords}
+                className="flex w-full items-center gap-2 rounded-full px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500 hover:bg-zinc-200/70 dark:hover:bg-zinc-800">
+                <span className="flex-1 text-left">Records</span><ChevronDown className={cx("size-3.5 transition-transform", showRecords && "rotate-180")} aria-hidden />
               </button>
-              {(more || extraActive) && <div className="mt-0.5 flex flex-col gap-0.5">{extra.map((item) => <Item key={item.to} item={{ ...item, icon: <span className="size-[18px]" /> }} collapsed={false} />)}</div>}
-            </div>
-          )}
+            )}
+            {showRecords && <div className="mt-0.5 flex flex-col gap-0.5">{records.map((item) => <Item key={item.to} item={item} collapsed={collapsed} />)}</div>}
+          </div>
         </nav>
-        <div className="mt-4 flex flex-col gap-0.5">
+        <div className="mt-4 flex flex-col gap-0.5 border-t border-zinc-200 pt-3 dark:border-zinc-800">
           {!wide && <div className="px-1 pb-2"><GmailButton /></div>}
-          <Item item={{ to: "/help", label: "Help", icon: <CircleHelp className={icon} /> }} collapsed={collapsed} />
           {(me?.is_admin || me?.is_lead) && <>
-            <Item item={{ to: "/routing", label: "Routing", icon: <Route className={icon} /> }} collapsed={collapsed} />
-            <Item item={{ to: "/ai", label: "AI", icon: <BrainCircuit className={icon} /> }} collapsed={collapsed} />
-            <Item item={{ to: "/connections", label: "Integrations", icon: <Plug className={icon} /> }} collapsed={collapsed} />
-            <Item item={{ to: "/admin", label: "Admin", icon: <ShieldCheck className={icon} /> }} collapsed={collapsed} />
-            <Item item={{ to: "/settings", label: "Settings", icon: <Settings className={icon} /> }} collapsed={collapsed} />
+            {!collapsed && (
+              <button type="button" onClick={() => setSetupOpen((o) => !o)} aria-expanded={showSetup}
+                className="flex w-full items-center gap-2 rounded-full px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500 hover:bg-zinc-200/70 dark:hover:bg-zinc-800">
+                <span className="flex-1 text-left">Setup (admins and leads)</span><ChevronDown className={cx("size-3.5 transition-transform", showSetup && "rotate-180")} aria-hidden />
+              </button>
+            )}
+            {showSetup && setup.map((item) => <Item key={item.to} item={item} collapsed={collapsed} />)}
           </>}
+          <Item item={{ to: "/help", label: "Help", icon: <CircleHelp className={icon} /> }} collapsed={collapsed} />
           {wide && (
-            <button type="button" onClick={() => setFolded((c) => !c)} title={collapsed ? "Open the menu" : "Collapse the menu"}
+            <button type="button" onClick={() => setFolded((c) => !c)} title={collapsed ? "Open the menu" : "Make the menu narrow"}
               className={cx("flex items-center gap-3 rounded-full px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-400 dark:hover:bg-zinc-800", collapsed && "justify-center px-0")}>
-              {collapsed ? <PanelLeftOpen className={icon} /> : <PanelLeftClose className={icon} />}{!collapsed && "Collapse"}
+              {collapsed ? <PanelLeftOpen className={icon} /> : <PanelLeftClose className={icon} />}{!collapsed && "Narrow menu"}
             </button>
           )}
         </div>
@@ -175,10 +201,10 @@ export function Layout({ children }: { children: ReactNode }) {
           <span className="flex-1" />
           {wide && <GmailButton />}
           <AlertPopups />
-          <Link to={helpPathFor(location.pathname)} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800">
-            <CircleHelp className="size-4" />Help
+          <Link to={helpPathFor(location.pathname)} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800" title="Help for this page">
+            <CircleHelp className="size-4" /><span className="hidden sm:inline">Help</span>
           </Link>
-          <button type="button" onClick={toggleTheme} aria-label={theme === "dark" ? "Use the light theme" : "Use the dark theme"}
+          <button type="button" onClick={toggleTheme} aria-label={theme === "dark" ? "Use the light theme" : "Use the dark theme"} title={theme === "dark" ? "Light theme" : "Dark theme"}
             className="rounded-full p-2 text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800">
             {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
           </button>
@@ -190,8 +216,9 @@ export function Layout({ children }: { children: ReactNode }) {
             </span>
           )}
         </header>
-        <main className="mx-auto w-full max-w-[1500px] flex-1 px-4 pb-12 pt-2 sm:px-6">{children}</main>
+        <main className="mx-auto w-full max-w-[1500px] flex-1 px-4 pb-24 pt-2 sm:px-6">{children}</main>
       </div>
+      <ChatWidget />
     </div>
   );
 }
