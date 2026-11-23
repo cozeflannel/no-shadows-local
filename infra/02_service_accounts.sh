@@ -33,8 +33,9 @@ echo "Runtime SA roles:"
 # pubsub.editor: the Console creates the delivery topics and subscriptions and publishes to them.
 # bigquery.user: datasets created from the Console (the creator owns what it creates; nothing else is granted).
 # cloudtrace.agent + telemetry.tracesWriter: traces, when tracing is switched on in Settings.
+# dlp.user: agent alerts has Sensitive Data Protection take personal details out of every post before it is kept.
 for role in roles/aiplatform.user roles/datastore.user roles/bigquery.jobUser roles/bigquery.user roles/secretmanager.admin \
-            roles/logging.logWriter roles/pubsub.editor roles/cloudtrace.agent roles/telemetry.tracesWriter; do
+            roles/logging.logWriter roles/pubsub.editor roles/cloudtrace.agent roles/telemetry.tracesWriter roles/dlp.user; do
   bind "serviceAccount:${RUNTIME_SA}" "${role}"
 done
 

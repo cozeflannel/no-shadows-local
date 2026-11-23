@@ -53,6 +53,7 @@ PURPOSES: dict[str, str] = {
     "temp_check.relevance": "Judge which posts are about the issue",
     "temp_check.web": "Search the web for what an analyst needs to know about a temp check's issue",
     "workforce.explain": "Explain a staffing recommendation",
+    "own.review": "Review a post or story agent alerts queued, before it is raised",
 }
 
 

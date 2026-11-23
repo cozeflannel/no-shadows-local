@@ -2,9 +2,10 @@
 """Write what the deploy already knows into the Console's settings, so nobody types it twice.
 
 Fills only settings that are still empty: the project and region, the Console and worker addresses, the Agent Runtime
-resource, the push identity, and the BigQuery dataset with its events table. Anything already set in the Console is
-left alone. The values land in the same settings store the Console edits, with a history entry and an audit entry,
-so they can be changed there afterwards.
+resource, the push identity, the BigQuery dataset with its events table, and for agent alerts the BigQuery connection
+and the salt's secret once infra/11_own_alerts.sh has made them. Anything already set in the Console is left alone.
+The values land in the same settings store the Console edits, with a history entry and an audit entry, so they can
+be changed there afterwards.
 
     source infra/.env && .venv/bin/python infra/10_seed_settings.py [--dry-run]
 """
@@ -36,8 +37,14 @@ def service_url(service: str) -> str:
     return out.stdout.strip() if out.returncode == 0 else ""
 
 
+def exists(*command: str) -> bool:
+    return subprocess.run(list(command), capture_output=True, text=True, check=False).returncode == 0
+
+
 def known() -> dict[str, dict[str, object]]:
     project, region, dataset = env("PROJECT_ID"), env("REGION"), env("DATASET")
+    connection = f"{project}.{env('BQ_LOCATION').lower()}.{env('OWN_CONNECTION', 'slrr_vertex_conn')}"  # as BigQuery names it
+    salt = env("OWN_SALT_SECRET", "slrr-author-hash-salt")
     console = service_url(env("CONSOLE_SERVICE"))
     worker = read(ROOT / ".local" / "worker_url.txt") or service_url(env("WORKER_SERVICE") or f"{env('CONSOLE_SERVICE')}-worker")
     resource = env("AGENT_RESOURCE") or read(ROOT / ".local" / "agent_resource.txt")
@@ -46,6 +53,9 @@ def known() -> dict[str, dict[str, object]]:
         "pubsub": {"project": project, "worker_url": worker, "push_service_account": env("SCHEDULER_SA"), "push_audience": worker},
         "bigquery": {"project": project, "location": env("BQ_LOCATION"), "dataset": f"{project}.{dataset}" if dataset else "",
                      "tables": {"events": f"{project}.{dataset}.agent_events"} if dataset else {}},
+        # Agent alerts: named only once they exist, so the settings never point at something that is not there.
+        "own_alerts": {"ai_connection": connection if exists("bq", "show", "--connection", connection) else "",
+                       "hash_salt_secret": salt if exists("gcloud", "secrets", "describe", salt, f"--project={project}") else ""},
     }
 
 

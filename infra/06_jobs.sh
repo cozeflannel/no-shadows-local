@@ -5,7 +5,8 @@
 #
 #   slrr-followups   every minute    SLA nudges, review reminders, Burson re-pings, Gmail sent detection,
 #                                    daily Burson digest, shift handovers, parity reconciliation, re-rings
-#   slrr-inhouse     every 2 min     Path B: brand_safety_alert_log -> triage (parity mode until cutover)
+#   slrr-inhouse     every 2 min     Path B: brand_safety_alert_log -> triage (parity mode until cutover); then one
+#                                    run of agent alerts when that switch is ON (read, clean, stage, BigQuery's triage)
 #
 # On demand (needs run.jobs.runWithOverrides, e.g. roles/run.developer):
 #   gcloud run jobs execute slrr-followups --region=$REGION --args=handover
@@ -48,7 +49,9 @@ echo "Deploying jobs"
 # Followups must finish well inside a minute so runs rarely overlap (overlaps are safe: claims are atomic
 # and every step is idempotent via kv markers).
 deploy_job slrr-followups followups 120s
-deploy_job slrr-inhouse inhouse 240s
+# A run of agent alerts reads every source, cleans each post and waits for BigQuery's procedure, which asks Gemini.
+# Ten minutes is also how long a run holds its lock, so a run cut off here never overlaps the next one.
+deploy_job slrr-inhouse inhouse 600s
 
 echo "Scheduling"
 schedule slrr-followups-every-minute "${FOLLOWUPS_SCHEDULE}" slrr-followups

@@ -1,0 +1,56 @@
+# Agent alerts' setup, kept as data: the two tables of posts only agent alerts read, each read by its real columns
+# (the sheet-based bot's Watch reads them the same way: apps-script-chat-bot/ProactiveWatch.gs, PW_SOURCE_SQL_).
+#
+# Nothing here is used by itself. "Find and fill" on the Console's Integrations page adds these to the tables of posts
+# (Settings, Temp check, sources) when they are not there yet, with temp checks OFF for both, and ticks every table of
+# posts for agent alerts while none is ticked. From then on the settings are what counts.
+
+tables:
+  - key: owned
+    label: Sprinklr owned posts
+    what: >-
+      Google's own posts on X, Reddit, Bluesky, Facebook, Instagram, YouTube and TikTok, with how many comments each
+      has and how many of them are negative, from Sprinklr's report. Loaded once a day.
+    table: brand-social-central-data.reporting_data.sprinklr_outbound_reporting
+    location: US
+    enabled: false
+    freshness: loaded once a day
+    has: [text, author, url, platform, followers, language]
+    dedupe_by: id
+    x_lookup: false
+    read_sql: |-
+      SELECT IF(LOWER(ANY_VALUE(Social_Network)) = 'twitter', 'x', LOWER(ANY_VALUE(Social_Network))) AS platform,
+        ANY_VALUE(Account_Screen_Name) AS author,
+        CONCAT("[A post Google itself published. Comments so far: ", CAST(IFNULL(SAFE_CAST(MAX(Comments) AS INT64), 0) AS STRING),
+          ", negative: ", CAST(IFNULL(SAFE_CAST(MAX(Negative_Sentiment_Comment_Count) AS INT64), 0) AS STRING), "] ",
+          IFNULL(ANY_VALUE(SUBSTR(Outbound_Post, 1, 1400)), '')) AS text,
+        ANY_VALUE(Post_Permalink) AS url, MIN(Post_Published_Date_UTC) AS posted,
+        SAFE_CAST(MAX(Followers_At_Time_Of_Post) AS INT64) AS followers, SAFE_CAST(MAX(Engagements) AS INT64) AS eng,
+        CAST(NULL AS STRING) AS sentiment, LOWER(ANY_VALUE(Language_Code)) AS language, CAST(NULL AS INT64) AS shares,
+        SAFE_CAST(MAX(Comments) AS INT64) AS replies, MAX(load_timestamp) AS seen, CAST(Outbound_Post_ID AS STRING) AS one
+      FROM `{table}`
+      WHERE Report_Date BETWEEN DATE_SUB(DATE(@t_from), INTERVAL 3 DAY) AND DATE_ADD(DATE(@t_to), INTERVAL 1 DAY)
+        AND Post_Permalink IS NOT NULL AND NOT IFNULL(Is_Deleted, FALSE) AND NOT IFNULL(Is_External, FALSE)
+      GROUP BY Outbound_Post_ID
+
+  - key: story
+    label: DSD story selection
+    what: >-
+      Brandwatch's HIGH and KOF alert emails about Google, one row a post (the DSD desk's story pool), about every
+      30 minutes, a few hours after posting.
+    table: brand-social-central-data.DSD.DSD-story-selection
+    location: US
+    enabled: false
+    freshness: a few hours after posting
+    has: [text, author, url, platform, followers]
+    dedupe_by: url
+    x_lookup: false
+    read_sql: |-
+      SELECT IF(LOWER(platform) = 'twitter', 'x', LOWER(platform)) AS platform, author, snippet AS text, url,
+        post_time AS posted, SAFE_CAST(follower_count AS INT64) AS followers,
+        IF((likes = 500 AND shares = 500 AND comments = 500 AND total_engagements = 2000) OR IFNULL(total_engagements, 0) = 0,
+          NULL, SAFE_CAST(total_engagements AS INT64)) AS eng,
+        CAST(NULL AS STRING) AS sentiment, CAST(NULL AS STRING) AS language, SAFE_CAST(shares AS INT64) AS shares,
+        SAFE_CAST(comments AS INT64) AS replies, ingestion_time AS seen, url AS one
+      FROM `{table}`
+      WHERE ingestion_time >= @t_from AND ingestion_time < TIMESTAMP_ADD(@t_to, INTERVAL 24 HOUR) AND url IS NOT NULL

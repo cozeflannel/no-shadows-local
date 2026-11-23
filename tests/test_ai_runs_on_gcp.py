@@ -49,7 +49,8 @@ def test_the_only_other_model_hosts_are_gemini_decisions_and_the_agent_runtime()
     assert named_in(r"generativelanguage\.googleapis\.com") == ["triage_agent/config.py"], "Gemini Decisions' address is a setting"
     config = (ROOT / "triage_agent/config.py").read_text(encoding="utf-8")
     assert re.search(r'base_url: str = Field\("https://generativelanguage\.googleapis\.com", description="Where the Decisions API is reached\."\)', config)
-    assert named_in(r"aiplatform\.googleapis\.com") == ["console/backend/connections.py", "console/backend/routes_admin.py", "triage_agent/agent_engine_app.py"]
+    assert named_in(r"aiplatform\.googleapis\.com") == ["console/backend/connections.py", "console/backend/routes_admin.py", "triage_agent/agent_engine_app.py",
+                                                         "triage_agent/agent_runtime.py"], "the last one asks the Agent Runtime to run an operation"
     for path, text in sources():
         for line in text.splitlines():
             if "aiplatform.googleapis.com" in line:

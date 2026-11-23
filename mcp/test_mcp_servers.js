@@ -461,24 +461,21 @@ async function runInProcessCases(sampleAlert) {
     assert.strictEqual(out.relay.exists, false);
   });
 
-  await check('the audit says so when git itself cannot be run', async () => {
-    const runner = git => ({
-      runSubprocess: (cmd, args) => (cmd === 'git' ? Object.assign({ duration_ms: 1, signal: null }, git)
-        : { exit_code: 0, duration_ms: 1, stdout: '', stderr: '', signal: null, error: null }),
+  await check('the audit asks git nothing, so a clone that has a remote passes like any other', async () => {
+    const ran = [];
+    const out = await devTool('slrr_audit_safety_invariants').handler({}, {
+      runSubprocess: cmd => {
+        ran.push(cmd);
+        return { exit_code: 0, duration_ms: 1, stdout: '', stderr: '', signal: null, error: null };
+      },
     });
-    const remoteCheck = async git => (await devTool('slrr_audit_safety_invariants').handler({}, runner(git)))
-      .checks.find(c => c.id === 'local_only_no_github_remote');
-    let c = await remoteCheck({ exit_code: 128, stdout: '', stderr: 'fatal: not a git repository', error: null });
-    assert.strictEqual(c.passed, false);
-    assert.strictEqual(c.detail, 'Could not run `git remote -v` (fatal: not a git repository), so the remotes were not checked');
-    c = await remoteCheck({ exit_code: -1, stdout: '', stderr: '', error: 'spawnSync git ENOENT' });
-    assert.strictEqual(c.passed, false);
-    assert(/spawnSync git ENOENT/.test(c.detail) && !/Zero git remotes/.test(c.detail), c.detail);
-    c = await remoteCheck({ exit_code: 0, stdout: '', stderr: '', error: null });
-    assert.deepStrictEqual([c.passed, c.detail], [true, 'Zero git remotes configured (local-only policy intact)']);
-    c = await remoteCheck({ exit_code: 0, stdout: 'origin\thttps://example.invalid/repo.git (fetch)\n', stderr: '', error: null });
-    assert.strictEqual(c.passed, false);
-    assert(/^Unexpected git remotes: origin/.test(c.detail), c.detail);
+    assert(!ran.includes('git'), `the audit ran ${ran.join(', ')}`);
+    assert.deepStrictEqual(out.checks.map(c => c.id), [
+      'generated_gs_in_sync', 'testing_sandbox_b30_and_zero_hardcoded_emails', 'all_switches_default_off',
+      'b31_lookback_strict_15min_dropdown', 'b35_watch_alerts_default_off', 'sheets_50k_cell_caps_enforced',
+      'claspignore_whitelists_only_gs_and_manifest',
+    ]);
+    assert.strictEqual(out.checked_count, 7);
   });
 
   console.log(`✓ ${passed} in-process cases passed (canned Sheets and subprocess responses; nothing live was read)`);
@@ -561,6 +558,7 @@ async function main() {
     assert.strictEqual(backtestOffline.total_tested, 1);
 
     console.log('✓ slrr-dev-pipeline passed all stdio protocol & VM tool assertions (7 tools)');
+    await runInProcessCases(sampleAlert);
   } finally {
     await devClient.close();
   }

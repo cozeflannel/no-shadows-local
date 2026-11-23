@@ -26,6 +26,7 @@ from .models import Case, CaseStatus, ChatOutputs, EmailStatus, OnCallNotice, Re
 from .oncall.roster import escalation_chain
 from .operations import enqueue_outputs, operation
 from .outbox import rering_stale
+from .ownalerts import surge as own_surge
 
 log = logging.getLogger(__name__)
 
@@ -387,7 +388,7 @@ def parity_reconcile(ctx: AgentContext) -> int:
 
 @operation("run_followups")
 def run_followups(ctx: AgentContext, payload: dict[str, Any], rc: RequestContext):
-    steps = payload.get("steps") or ["sla", "reviews", "burson", "sent", "sla_misses", "digest", "handover", "parity", "rering"]
+    steps = payload.get("steps") or ["sla", "reviews", "burson", "sent", "sla_misses", "digest", "handover", "parity", "own_alerts", "rering"]
     report: dict[str, Any] = {}
     failed: list[str] = []
 
@@ -419,6 +420,7 @@ def run_followups(ctx: AgentContext, payload: dict[str, Any], rc: RequestContext
     step("digest", burson_digest)
     step("handover", post_due_handovers)
     step("parity", parity_reconcile)
+    step("own_alerts", own_surge.run)  # a raised agent alert that is growing again is reviewed once more
     step("rering", rering_stale)
     summary = "followups: " + ", ".join(f"{k}={v}" for k, v in report.items())
     if failed:  # the operation still answers ok (every step ran); jobs/run_job.py exits non-zero on this

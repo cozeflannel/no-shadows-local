@@ -73,6 +73,7 @@ flowchart LR
 | `triage_agent/stories.py` · `console/backend/{routes_insight,connections}.py` | Stories (the Chat bot's same-story rules), the comparison page, Admin and people, Integrations |
 | `triage_agent/{knowledge,classify,golden,tools,chat_agent}.py` | Knowledge retrieval, classification layer, golden set, the shared tool surface, the in-Console chat agent |
 | `triage_agent/{tempcheck,bwquery,workforce,watches,campaigns_admin,bq_admin,secret_admin}.py` | Temp checks, Boolean conversion, workforce and forecasting, watches, campaign change requests, BigQuery and Secret Manager gateways |
+| `triage_agent/ownalerts/` · `triage_agent/agent_runtime.py` · `console/backend/routes_own.py` | Agent alerts: alerts the agent raises itself from the sources it reads. Personal details are taken out before a post is kept; BigQuery checks, groups and queues; the Agent Runtime reviews; analysts give verdicts. Plan: [`docs/build-plan/5_own_alerts_plan.md`](docs/build-plan/5_own_alerts_plan.md) |
 | `studio-addon/` · `flows/` · `analytics/` · `infra/` | Studio custom steps, flow setup + Phase 0 spike, BigQuery views, deployment |
 
 ## Quickstart (local, offline)
@@ -125,7 +126,7 @@ Use real Gemini with `--live` (needs `GOOGLE_CLOUD_PROJECT` and ADC):
 ## Configuration
 
 - Everything rule-like lives in `config/*.yaml` and can be overridden per section from the Console's Settings page. Every event records the config version.
-- Platform settings (switches, access, project, safety, delivery, BigQuery, forecasting, chat agent, classification, knowledge, temp check, campaigns, costs, telemetry) exist only in the Console. Every switch starts OFF. Secrets are kept in Secret Manager and named in settings.
+- Platform settings (switches, access, project, safety, delivery, BigQuery, forecasting, chat agent, classification, knowledge, temp check, agent alerts, campaigns, costs, telemetry) exist only in the Console. Every switch starts OFF. Secrets are kept in Secret Manager and named in settings.
 - Values marked `PLACEHOLDER` need real inputs:
   - the alert template labels (from real Burson samples);
   - space ids, IM shift roster, Burson roster;
@@ -140,7 +141,7 @@ Use real Gemini with `--live` (needs `GOOGLE_CLOUD_PROJECT` and ADC):
 `infra/deploy.sh --project PROJECT_ID --region REGION` runs every step and fills the Console's settings with what it knows.
 
 Start with the Phase 0 spike ([`flows/PHASE0_SPIKE.md`](flows/PHASE0_SPIKE.md)), then follow:
-- [`infra/README.md`](infra/README.md): APIs, service accounts, Firestore, BigQuery, the Agent Runtime, jobs, Console + IAP, Gmail OAuth, and the cutover to production.
+- [`infra/README.md`](infra/README.md): APIs, service accounts, Firestore, BigQuery, the Agent Runtime, jobs, Console + IAP, Gmail OAuth, agent alerts, and the cutover to production.
 - [`studio-addon/README.md`](studio-addon/README.md): the custom steps.
 - [`flows/FLOW_SETUP.md`](flows/FLOW_SETUP.md): the Studio flows.
 

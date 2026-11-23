@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import audit, chatapi, chatlog, chatdelivery, chatreview, early, mirror, stories, storyread, tempcheck
 from .events import HOT_COLLECTION, TeeEventLogger
+from .ownalerts import review as own_review
 
 if TYPE_CHECKING:
     from .context import AgentContext
@@ -39,6 +40,7 @@ def run(ctx: "AgentContext", force: bool = False) -> dict[str, Any]:
         (chatapi.OWN, "at", now - timedelta(days=cfg.routing.keep_days)),  # ...and of which messages the bot's account posted itself
         (early.SIGNALS, "raised", now - timedelta(days=cfg.early.keep_days)),  # raised early stories
         (tempcheck.POSTS, "at", now - timedelta(days=cfg.temp_check.keep_posts_days)),  # posts kept with a temp check, for reuse
+        (own_review.DECISIONS, "at", now - timedelta(days=cfg.own_alerts.console_keep_days)),  # agent alerts' decisions, with their links and KOF names
     ]
     if isinstance(ctx.events, TeeEventLogger) and ctx.events.cold is not None:
         plan.append((HOT_COLLECTION, "event_ts", now - timedelta(hours=2 * cfg.bigquery.hot_window_hours)))

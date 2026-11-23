@@ -29,6 +29,7 @@ flowchart LR
 | Worker (Pub/Sub pushes for delivery and dead letters; the once-a-minute tick for knowledge, watches, temp checks, forecast, retention) | Cloud Run, private | `09_worker.sh` |
 | Outbound delivery | Pub/Sub topics and push subscriptions | Console: Settings, Delivery, "Create what is missing" |
 | State / analytics | Firestore / BigQuery | `03_firestore.sh` / `04_bigquery.sh` |
+| Agent alerts (reads the sources, cleans and stages each post, BigQuery's triage; the review) | The `slrr-inhouse` job; the worker's tick and the Agent Runtime | `11_own_alerts.sh` for its BigQuery connection and salt; its tables are created from the Console |
 | Studio custom steps | Apps Script add-on (Triage Agent account) | [`../studio-addon/README.md`](../studio-addon/README.md) |
 | Studio flows | Workspace Studio (Triage Agent account) | [`../flows/FLOW_SETUP.md`](../flows/FLOW_SETUP.md) |
 
@@ -55,7 +56,7 @@ infra/deploy.sh --project PROJECT_ID --region REGION     # add --env prod, --age
 ```
 
 It writes `infra/.env` if there is none, then runs every step below in order, deploys the worker (`09_worker.sh`) and
-writes what it knows (project, region, addresses, Agent Runtime, dataset) into the Console's settings
+writes what it knows (project, region, addresses, Agent Runtime, dataset, agent alerts' connection and salt) into the Console's settings
 (`10_seed_settings.py`, empty settings only). Safe to run again. You become the Console's first admin; its Dashboard
 lists the setup steps left. Two steps stay manual: the Gmail OAuth client (`08_gmail_oauth.sh`) and the Studio flows.
 
@@ -78,6 +79,7 @@ infra/04_bigquery.sh                   # dataset, agent_events, KPI views
 infra/06_jobs.sh                       # Cloud Run jobs + schedules
 infra/07_console.sh                    # Console on Cloud Run + IAP; prints the URL + OAuth redirect URI
 infra/08_gmail_oauth.sh client.json    # Gmail OAuth client -> Secret Manager (manual console steps in the script header)
+infra/11_own_alerts.sh                 # agent alerts: the BigQuery connection for Vertex AI and the salt's secret
 ```
 
 Then:
@@ -97,6 +99,26 @@ Then:
    - go/WD-Triage entry ids;
    - the Burson alert template labels.
 5. **IMs connect Gmail** once from the Console (drafts are created in their own mailbox, From: the Brand Social alias).
+
+## Agent alerts
+
+`infra/deploy.sh` does the Google Cloud side: it redeploys the Agent Runtime with the review, runs `11_own_alerts.sh` and fills the two
+settings that name the connection and the salt. Then, in the Console:
+
+1. **Integrations**, Find and fill: adds the two tables only agent alerts read and ticks the tables it reads.
+2. Share the KOF sheet (Viewer) with the runtime service account. Enter the sheet's link under **Settings, Agent alerts**.
+3. **Settings, Switches**: turn on Change BigQuery from here. On **Agent alerts**, press Create the tables.
+4. **Agent alerts**, Rules: add the rules.
+5. **Settings, Switches**: turn on Agent alerts.
+6. **Agent alerts**, Run now: one run and one review at once. Sources shows what each source handed over; a source that could not be read
+   says why, in BigQuery's own words.
+7. To post in Chat, choose the space under Settings, Agent alerts, then turn on Post agent alerts in Chat.
+
+Run on its own, `11_own_alerts.sh` leaves two things: redeploy the Agent Runtime (`05`; until then the worker reviews, and each alert's
+record says so), and fill the connection and the salt's secret (`10_seed_settings.py`, or Settings, Agent alerts).
+
+No script changes Vertex AI's settings for the project (its cache, its data retention). They stay as the project has them, and the app
+works within them.
 
 ## Cutover to production
 

@@ -26,6 +26,8 @@ TICK_KEY = "tick:last"  # when the once-a-minute tick last ran, and which of its
 def run_job(ctx: "AgentContext", name: str) -> dict[str, Any]:
     """One scheduled job by name."""
     from . import chatdelivery, chatreview, early, mirror, retention, stories, storyread, tempcheck, workforce
+    from .ownalerts import purge as own_purge
+    from .ownalerts import review as own_review
 
     if name in JOB_OPS:
         op, payload = JOB_OPS[name]
@@ -45,6 +47,8 @@ def run_job(ctx: "AgentContext", name: str) -> dict[str, Any]:
             results["stories"] = {"ok": False, "error": str(exc)[:300]}
         results["routing"] = mirror.run(ctx)  # the QA chatbot's copy of the source space (Routing page)
         results["chat_review"] = chatreview.run(ctx)  # ...and its review of each new alert there, when that switch is ON
+        reviewed, swept = own_review.run(ctx), own_purge.run(ctx)  # agent alerts: what BigQuery queued is reviewed and raised; old rows leave once a day
+        results["own_alerts"] = {**reviewed, "purge": swept, "ok": bool(reviewed.get("ok", True)) and bool(swept.get("ok", True))}
         results["chat_delivery"] = chatdelivery.run(ctx)  # ...and what is queued is posted through its Chat sign-in, when that switch is ON
         read = early.check(ctx)  # Early Detection: BigQuery reads and groups the posts when a read is due...
         results["early"] = {**early.drain(ctx), "read": read, "ok": read.get("ok", True)}  # ...and Gemini writes up what was raised

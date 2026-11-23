@@ -309,6 +309,22 @@ def mark_delivered(ctx: AgentContext, alert_ids: list[str]) -> None:
 
 @operation("ingest_inhouse")
 def ingest_inhouse(ctx: AgentContext, payload: dict[str, Any], rc: RequestContext):
+    """The in-house job: Path B's alerts, then one run of agent alerts when that switch is ON. A run handed its rows
+    (a test feed) does Path B only."""
+    outputs, data = _path_b(ctx, payload, rc)
+    if payload.get("rows") is None:
+        from .ownalerts import cycle
+
+        own = cycle.run(ctx)
+        if not own.get("off"):
+            data["own_alerts"] = own
+            if not own.get("ok", True):
+                data["failed_steps"] = ["own_alerts"]  # the job must not look green (jobs/run_job.py)
+            outputs.summary = f"{outputs.summary}; {cycle.said(own)}"
+    return outputs, data
+
+
+def _path_b(ctx: AgentContext, payload: dict[str, Any], rc: RequestContext):
     from .triage import process_alert  # local import: triage imports operations
 
     cfg = ctx.config.inhouse

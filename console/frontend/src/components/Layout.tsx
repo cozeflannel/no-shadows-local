@@ -1,6 +1,6 @@
 import {
   BookOpen, BrainCircuit, CalendarClock, ChevronDown, CircleHelp, FolderSearch, Gauge, Inbox, LayoutDashboard, Mail, Megaphone, Menu, MessagesSquare, Moon,
-  PanelLeftClose, PanelLeftOpen, Plug, Radar, Route, Scale, Settings, ShieldCheck, Sparkles, Sun, Thermometer, UsersRound, Waypoints,
+  PanelLeftClose, PanelLeftOpen, Plug, Radar, Route, Scale, Settings, ShieldCheck, Siren, Sparkles, Sun, Thermometer, UsersRound, Waypoints,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router";
@@ -18,13 +18,14 @@ const HELP_TOPIC: Record<string, string> = {
   rosters: "rosters", knowledge: "knowledge", campaigns: "campaigns", cases: "cases", escalations: "cases", settings: "settings",
   suppressed: "cases", parity: "cases", learning: "knowledge", outbox: "delivery", activity: "audit", help: "getting-started",
   stories: "stories", compare: "compare", connections: "integrations", admin: "admin", early: "early-detection", routing: "routing", ai: "ai",
+  "own-alerts": "agent-alerts",
 };
 
 export function helpPathFor(pathname: string): string {
   const [first, second] = pathname.split("/").filter(Boolean);
   if (first === "settings" && second) {
     const byPart: Record<string, string> = { flags: "feature-flags", secrets: "secrets", bigquery: "bigquery", pubsub: "delivery", prompts: "ai-behavior",
-      safety: "safety", audit: "audit", costs: "costs", gcp: "deploy" };
+      safety: "safety", audit: "audit", costs: "costs", gcp: "deploy", early: "early-detection", own_alerts: "agent-alerts" };
     return `/help/${byPart[second] ?? "settings"}`;
   }
   return `/help/${HELP_TOPIC[first ?? ""] ?? "getting-started"}`;
@@ -92,6 +93,7 @@ export function Layout({ children }: { children: ReactNode }) {
       { to: "/feed", label: "Review feed", icon: <Inbox className={icon} />, count: counts.review },
       { to: "/stories", label: "Stories", icon: <Waypoints className={icon} /> },
       { to: "/early", label: "Early Detection", icon: <Radar className={icon} /> },
+      { to: "/own-alerts", label: "Agent alerts", icon: <Siren className={icon} /> },
       { to: "/chat", label: "Chat spaces", icon: <MessagesSquare className={icon} /> },
       { to: "/agent", label: "Chat agent", icon: <Sparkles className={icon} /> },
     ],
