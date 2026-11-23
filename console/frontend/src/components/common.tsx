@@ -4,7 +4,7 @@ import { Link } from "react-router";
 
 import type { AgentEvent } from "../api/types";
 import { fmtDateTime, fmtRelative, fmtTime } from "../lib/format";
-import { eventTone } from "../lib/labels";
+import { eventLabel, eventTone } from "../lib/labels";
 import { Badge, CodeBlock, cx } from "./ui";
 
 /** Case id chip that opens the case drawer (/cases/:id). */
@@ -20,7 +20,7 @@ export function CaseLink({ id, className }: { id: string | null | undefined; cla
 export function EscLink({ id }: { id: string | null | undefined }) {
   if (!id) return null;
   return (
-    <Link to={`/escalations?q=${id}`} className="whitespace-nowrap rounded bg-cyan-50 px-1.5 py-0.5 font-mono text-xs font-medium text-cyan-800 transition-colors hover:bg-cyan-100 dark:bg-cyan-900/30 dark:text-cyan-300">
+    <Link to={`/escalations?q=${id}`} className="whitespace-nowrap rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700">
       {id}
     </Link>
   );
@@ -35,7 +35,7 @@ export function TimeCell({ value }: { value: string | null | undefined }) {
   );
 }
 
-/** One event line (Activity feed, case timeline) with an expandable payload. */
+/** One event line (Activity feed, case timeline): what happened in words, with the raw record folded under Details. */
 export function EventRow({ event, compact = false, showCase = true }: { event: AgentEvent; compact?: boolean; showCase?: boolean }) {
   const [open, setOpen] = useState(false);
   const hasDetail = Object.keys(event.payload ?? {}).length > 0 || event.error_codes.length > 0;
@@ -47,7 +47,8 @@ export function EventRow({ event, compact = false, showCase = true }: { event: A
           onClick={() => setOpen((o) => !o)}
           disabled={!hasDetail}
           aria-expanded={open}
-          aria-label={open ? "Hide details" : "Show details"}
+          aria-label={open ? "Hide the details" : "Show the details"}
+          title={open ? "Hide the details" : "Details"}
           className="mt-0.5 rounded p-0.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 disabled:invisible dark:hover:bg-zinc-800"
         >
           {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
@@ -57,7 +58,7 @@ export function EventRow({ event, compact = false, showCase = true }: { event: A
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <Badge tone={eventTone(event.event_type)} className="font-mono">{event.event_type}</Badge>
+            <Badge tone={eventTone(event.event_type)} title={event.event_type}>{eventLabel(event.event_type)}</Badge>
             {showCase && event.case_id && <CaseLink id={event.case_id} />}
             {event.escalation_id && <EscLink id={event.escalation_id} />}
             {event.actor && event.actor !== "agent" && <span className="truncate text-xs text-zinc-500">by {event.actor}</span>}
@@ -68,6 +69,7 @@ export function EventRow({ event, compact = false, showCase = true }: { event: A
       </div>
       {open && (
         <div className="pb-3 pl-9">
+          <p className="mb-1.5 text-xs text-zinc-500">The record as the agent logged it ({event.event_type}), for whoever looks after the agent.</p>
           <CodeBlock value={{ ...event.payload, ...(event.error_codes.length ? { error_codes: event.error_codes } : {}),
             ...(event.latency_ms !== null ? { latency_ms: event.latency_ms } : {}), ...(event.model ? { model: event.model } : {}),
             space: event.space, attempt: event.attempt, config_version: event.config_version }} />

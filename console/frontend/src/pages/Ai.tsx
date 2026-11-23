@@ -17,9 +17,9 @@ interface Engine {
   settings: { label: string; to: string }[]; check: Check | null;
 }
 
-const STATE: Record<Engine["state"], { label: string; tone: "emerald" | "zinc" | "amber" | "rose" }> = {
+const STATE: Record<Engine["state"], { label: string; tone: "emerald" | "zinc" | "violet" | "rose" }> = {
   ready: { label: "Ready", tone: "emerald" }, not_connected: { label: "Not connected", tone: "zinc" },
-  incomplete: { label: "Needs values", tone: "amber" }, failing: { label: "Failing", tone: "rose" },
+  incomplete: { label: "Needs settings", tone: "violet" }, failing: { label: "Not working", tone: "rose" },
 };
 /** How one early story moves through the engines, left to right. */
 const PATH: { engine: string; does: string }[] = [
@@ -70,11 +70,11 @@ function EngineCard({ engine, canCheck, onChecked }: { engine: Engine; canCheck:
             {last.steps.map((s) => (
               <li key={s.step} className="flex gap-2 text-sm">
                 {s.ok ? <CircleCheck aria-label="Passed" className="mt-0.5 size-4 shrink-0 text-emerald-600" />
-                  : s.waiting ? <Hourglass aria-label="Waiting for access" className="mt-0.5 size-4 shrink-0 text-amber-600" />
+                  : s.waiting ? <Hourglass aria-label="Waiting for access" className="mt-0.5 size-4 shrink-0 text-violet-600 dark:text-violet-300" />
                   : <CircleX aria-label="Failed" className="mt-0.5 size-4 shrink-0 text-rose-600" />}
                 <span className="min-w-0">
                   <span className="text-zinc-900 dark:text-zinc-100">{s.step}</span>
-                  <span className={cx("block break-words", s.ok ? "text-zinc-500" : s.waiting ? "text-amber-800 dark:text-amber-300" : "text-rose-600 dark:text-rose-400")}>
+                  <span className={cx("block break-words", s.ok ? "text-zinc-500" : s.waiting ? "text-violet-800 dark:text-violet-300" : "text-rose-600 dark:text-rose-400")}>
                     {s.waiting ? "Waiting for access: skipped until its owners let the Console read it." : s.detail}
                   </span>
                 </span>
@@ -94,7 +94,7 @@ export default function AiPage() {
   if (!data) return <ErrorState error={error} onRetry={reload} />;
   return (
     <div>
-      <PageHeader title="AI" description="Three engines with one job each, and the documents that ground them." />
+      <PageHeader title="AI" description="The AI the agent uses, what each part does, and whether it is working." />
       <Card className="mb-4" title="How an early story is made">
         <ol className="flex flex-col gap-3 lg:flex-row lg:items-stretch">
           {PATH.map((p, i) => (

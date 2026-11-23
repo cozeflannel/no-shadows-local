@@ -6,7 +6,7 @@ import type { AgentEvent } from "../api/types";
 import { EventRow } from "../components/common";
 import { Button, Card, EmptyState, ErrorState, Field, Input, PageHeader, Select, Spinner } from "../components/ui";
 import { useApp } from "../context";
-import { EVENT_GROUPS } from "../lib/labels";
+import { EVENT_GROUPS, eventLabel } from "../lib/labels";
 
 export default function ActivityPage() {
   const { meta } = useApp();
@@ -24,7 +24,7 @@ export default function ActivityPage() {
     <div>
       <PageHeader
         title="Activity"
-        description="Every agent action as it's logged (agent_events). Live mode refreshes every 15 seconds."
+        description="Everything the agent did, newest first. While live is on the list refreshes every 15 seconds."
         actions={<>
           <Button size="sm" icon={live ? <Pause className="size-3.5" /> : <Play className="size-3.5" />} onClick={() => setLive((l) => !l)}>{live ? "Pause live" : "Resume live"}</Button>
           <Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={reload}>Refresh</Button>
@@ -37,15 +37,17 @@ export default function ActivityPage() {
               {EVENT_GROUPS.map((g) => <option key={g.label} value={g.value}>{g.label}</option>)}
             </Select>
           </Field>
-          <Field label="Event type">
+          <Field label="What happened">
             <Select value={type} onChange={(e) => setType(e.target.value)}>
-              <option value="">Any in category</option>
-              {(meta?.event_types ?? []).filter((t) => !group || group.split(",").some((g) => t === g || t.startsWith(g))).map((t) => <option key={t} value={t}>{t}</option>)}
+              <option value="">Anything in the category</option>
+              {(meta?.event_types ?? []).filter((t) => !group || group.split(",").some((g) => t === g || t.startsWith(g)))
+                .map((t) => ({ t, label: eventLabel(t) })).sort((a, b) => a.label.localeCompare(b.label))
+                .map(({ t, label }) => <option key={t} value={t}>{label}</option>)}
             </Select>
           </Field>
-          <Field label="Case id"><Input value={caseId} onChange={(e) => setCaseId(e.target.value)} placeholder="TRG-1042" /></Field>
-          <Field label="Escalation id"><Input value={escId} onChange={(e) => setEscId(e.target.value)} placeholder="ESC-1207" /></Field>
-          <Field label="Actor contains"><Input value={actor} onChange={(e) => setActor(e.target.value)} placeholder="email" /></Field>
+          <Field label="Case"><Input value={caseId} onChange={(e) => setCaseId(e.target.value)} placeholder="TRG-1042" /></Field>
+          <Field label="Escalation"><Input value={escId} onChange={(e) => setEscId(e.target.value)} placeholder="ESC-1207" /></Field>
+          <Field label="Done by"><Input value={actor} onChange={(e) => setActor(e.target.value)} placeholder="Part of a name or email" /></Field>
           <Field label="Show">
             <Select value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
               {[100, 200, 500, 1000].map((n) => <option key={n} value={n}>Latest {n}</option>)}
@@ -54,7 +56,7 @@ export default function ActivityPage() {
         </div>
       </Card>
       <ErrorState error={error} onRetry={reload} />
-      <Card title={data ? `${data.count} events` : "Events"} subtitle="Newest first · expand a row for its payload" padded={false}>
+      <Card title={data ? `${data.count} events` : "Events"} subtitle="Newest first. The arrow on a row shows its details." padded={false}>
         {loading && !data ? <Spinner /> : data && data.events.length === 0 ? (
           <EmptyState icon={<Search className="size-8" />} title="No events match these filters" />
         ) : (

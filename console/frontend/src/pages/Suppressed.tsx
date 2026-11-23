@@ -5,9 +5,12 @@ import { useApi } from "../api/hooks";
 import type { SuppressedResponse } from "../api/types";
 import { BarList } from "../components/charts";
 import { CaseLink, TimeCell } from "../components/common";
-import { Badge, Button, Card, cx, EmptyState, ErrorState, PageHeader, Pagination, Segmented, Spinner, TD, TH, TR } from "../components/ui";
+import { Badge, Button, Card, cx, Details, EmptyState, ErrorState, PageHeader, Pagination, Segmented, Spinner, TD, TH, TR } from "../components/ui";
 import { fmtCompact } from "../lib/format";
-import { CHART_COLORS, SOURCE_LABEL, SUPPRESSION_LABEL } from "../lib/labels";
+import { CHART_COLORS, SOURCE_LABEL, suppressionLabel } from "../lib/labels";
+
+/** Each reason's words, as the server sends them: label on a count, reason_label on a case. */
+type Named = { label?: string; reason_label?: string };
 
 const PAGE = 30;
 
@@ -18,6 +21,8 @@ export default function SuppressedPage() {
   const { data, error, loading, reload } = useApi<SuppressedResponse>("/suppressed", { days });
   const rows = useMemo(() => (data?.cases ?? []).filter((c) => !reason || c.reason === reason), [data, reason]);
   const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+  const named = (code: string, label?: string) => label || suppressionLabel(code);  // the server sends each reason's label
+  const labelOf = (x: object) => (x as Named).label ?? (x as Named).reason_label;
 
   return (
     <div>
@@ -29,18 +34,18 @@ export default function SuppressedPage() {
       <ErrorState error={error} onRetry={reload} />
       {loading && !data ? <Spinner /> : data && (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-          <Card title="Reasons" subtitle={`${data.cases.length} suppressed · ${data.review_suppressed} by IM review`}>
-            <BarList color={CHART_COLORS[9]} labelWidth={200} data={data.reasons.map((r) => ({ label: SUPPRESSION_LABEL[r.reason] ?? r.reason, value: r.count }))} valueLabel="Alerts" />
+          <Card title="Reasons" subtitle={`${data.cases.length} suppressed · ${data.review_suppressed} by an IM after review`}>
+            <BarList color={CHART_COLORS[9]} labelWidth={200} data={data.reasons.map((r) => ({ label: named(r.reason, labelOf(r)), value: r.count }))} valueLabel="Alerts" />
             <div className="mt-3 flex flex-wrap gap-1.5">
-              <button type="button" onClick={() => { setReason(null); setPage(1); }}><Badge tone={reason === null ? "blue" : "zinc"}>All</Badge></button>
+              <button type="button" aria-pressed={reason === null} onClick={() => { setReason(null); setPage(1); }}><Badge tone={reason === null ? "blue" : "zinc"}>All</Badge></button>
               {data.reasons.map((r) => (
-                <button type="button" key={r.reason} onClick={() => { setReason(r.reason); setPage(1); }}>
-                  <Badge tone={reason === r.reason ? "blue" : "zinc"}>{SUPPRESSION_LABEL[r.reason] ?? r.reason} · {r.count}</Badge>
+                <button type="button" key={r.reason} aria-pressed={reason === r.reason} onClick={() => { setReason(r.reason); setPage(1); }}>
+                  <Badge tone={reason === r.reason ? "blue" : "zinc"}>{named(r.reason, labelOf(r))} · {r.count}</Badge>
                 </button>
               ))}
             </div>
           </Card>
-          <Card className="xl:col-span-2" padded={false} title={reason ? SUPPRESSION_LABEL[reason] ?? reason : "All suppressed alerts"}>
+          <Card className="xl:col-span-2" padded={false} title={reason ? named(reason, labelOf(data.reasons.find((r) => r.reason === reason) ?? {})) : "All suppressed alerts"}>
             {rows.length === 0 ? <EmptyState icon={<EyeOff className="size-8" />} title="Nothing suppressed in this window" /> : (
               <>
                 <div className="scroll-thin max-h-[65vh] overflow-auto">
@@ -55,9 +60,11 @@ export default function SuppressedPage() {
                             <p className="truncate text-xs text-zinc-500">{[c.exposure_tag, c.product].filter(Boolean).join(" · ")}</p>
                           </td>
                           <td className={TD}>
-                            <Badge tone={c.reason.startsWith("EXCLUDED_") ? "violet" : c.reason === "im_review" ? "amber" : "zinc"}>{SUPPRESSION_LABEL[c.reason] ?? c.reason}</Badge>
+                            <Badge tone={c.reason === "im_review" ? "blue" : "zinc"}>{named(c.reason, labelOf(c))}</Badge>
                             {c.review_reason && <p className="mt-1 text-xs text-zinc-500">“{c.review_reason}” · {c.suppressed_by}</p>}
-                            {c.reason_codes.length > 0 && <p className="mt-1 font-mono text-[11px] text-zinc-400">{c.reason_codes.join(", ")}</p>}
+                            {c.reason_codes.length > 0 && (
+                              <Details summary="Rule codes" className="mt-1"><p className="font-mono text-[11px] text-zinc-500">{c.reason_codes.join(", ")}</p></Details>
+                            )}
                           </td>
                           <td className={cx(TD, "text-right font-mono text-xs")}>{fmtCompact(c.engagement_total)}</td>
                           <td className={cx(TD, "text-xs")}>{SOURCE_LABEL[c.source] ?? c.source}</td>

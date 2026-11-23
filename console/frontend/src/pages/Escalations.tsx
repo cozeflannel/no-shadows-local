@@ -5,7 +5,8 @@ import { useSearchParams } from "react-router";
 import { useApi } from "../api/hooks";
 import type { Escalation } from "../api/types";
 import { CaseLink, TimeCell } from "../components/common";
-import { EMAIL_STATUS_TONE, EscalationView, TNS_STATUS_TONE } from "../components/EscalationView";
+import { EMAIL_STATUS_LABEL, EMAIL_STATUS_TONE, EscalationView, TNS_STATUS_LABEL, TNS_STATUS_TONE, triggerLabel } from "../components/EscalationView";
+import { humanize } from "../lib/labels";
 import { Badge, Button, Card, cx, EmptyState, ErrorState, Input, PageHeader, Pagination, Spinner, TD, TH, Toggle, TR } from "../components/ui";
 
 const PAGE = 25;
@@ -28,7 +29,7 @@ export default function EscalationsPage() {
 
   return (
     <div>
-      <PageHeader title="Escalations" description="Social Alert drafts in the IMs' Gmail (Brand Social alias), their versions, and the Trust & Safety loop (forms, WD intake, outcomes, bug-ID follow-ups)."
+      <PageHeader title="Escalations" description="Social Alert email drafts in the IMs' Gmail with each version, and Trust & Safety reports with their outcomes."
         actions={<Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={reload}>Refresh</Button>} />
       <Card className="mb-4">
         <div className="flex flex-wrap items-center gap-4">
@@ -36,7 +37,7 @@ export default function EscalationsPage() {
             <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-zinc-400" />
             <Input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="ESC-1207, TRG-1042, IM email, bug id…" className="pl-8" aria-label="Search escalations" />
           </div>
-          <Toggle checked={openOnly} onChange={(v) => { setOpenOnly(v); setPage(1); }} label="Open only (unsent drafts, pending T&S)" />
+          <Toggle checked={openOnly} onChange={(v) => { setOpenOnly(v); setPage(1); }} label="Open only (drafts not sent yet, T&S not finished)" />
           {data && <span className="text-sm text-zinc-500">{data.open} open of {data.count}</span>}
         </div>
       </Card>
@@ -56,7 +57,7 @@ export default function EscalationsPage() {
                           <td className={cx(TD, "w-8")}>{isOpen ? <ChevronDown className="size-4 text-zinc-400" /> : <ChevronRight className="size-4 text-zinc-400" />}</td>
                           <td className={TD}>
                             <span className="font-mono text-xs font-semibold">{e.escalation_id}</span>
-                            <div className="mt-1 flex gap-1"><Badge tone={e.is_open ? "amber" : "zinc"}>{e.is_open ? "open" : "done"}</Badge><Badge tone="cyan">{e.trigger.replace("_", " ")}</Badge></div>
+                            <div className="mt-1 flex gap-1"><Badge tone={e.is_open ? "violet" : "zinc"}>{e.is_open ? "Open" : "Done"}</Badge><Badge tone="zinc">{triggerLabel(e.trigger)}</Badge></div>
                           </td>
                           <td className={cx(TD, "max-w-[18rem]")} onClick={(ev) => ev.stopPropagation()}>
                             <CaseLink id={e.case_id} />
@@ -68,7 +69,7 @@ export default function EscalationsPage() {
                               {e.emails.length === 0 && <span className="text-xs text-zinc-400">—</span>}
                               {e.emails.map((m, i) => (
                                 <Badge key={i} tone={EMAIL_STATUS_TONE[m.status] ?? "zinc"} title={m.error ?? undefined}>
-                                  {PURPOSE_SHORT[m.purpose] ?? m.purpose}: {m.status.toLowerCase().replace("_", " ")}{m.versions.length > 1 ? ` · v${m.versions.length}` : ""}
+                                  {PURPOSE_SHORT[m.purpose] ?? humanize(m.purpose)}: {(EMAIL_STATUS_LABEL[m.status] ?? humanize(m.status)).toLowerCase()}{m.versions.length > 1 ? ` · version ${m.versions.length}` : ""}
                                 </Badge>
                               ))}
                             </div>
@@ -76,7 +77,7 @@ export default function EscalationsPage() {
                           <td className={TD}>
                             {e.tns ? (
                               <div className="flex flex-wrap gap-1">
-                                <Badge tone={TNS_STATUS_TONE[e.tns.status] ?? "zinc"}>{e.tns.status.toLowerCase().replace("_", " ")}</Badge>
+                                <Badge tone={TNS_STATUS_TONE[e.tns.status] ?? "zinc"}>{TNS_STATUS_LABEL[e.tns.status] ?? humanize(e.tns.status)}</Badge>
                                 {e.tns.outcome && <Badge tone={e.tns.outcome === "Fixed" ? "emerald" : "zinc"}>{e.tns.outcome}</Badge>}
                                 {e.tns.bug_id && <Badge tone="violet">b/{e.tns.bug_id}</Badge>}
                               </div>

@@ -6,7 +6,7 @@ import { useApi } from "../api/hooks";
 import type { CaseSummary } from "../api/types";
 import { CaseDrawer } from "../components/CaseDrawer";
 import { TimeCell } from "../components/common";
-import { Badge, Button, Card, cx, EmptyState, ErrorState, Field, Input, PageHeader, Pagination, Select, Spinner, StatusBadge, TD, TH, TR, VerdictBadge } from "../components/ui";
+import { Badge, Button, Card, CaseBadges, cx, EmptyState, ErrorState, Field, Input, PageHeader, Pagination, Select, Spinner, TD, TH, TR } from "../components/ui";
 import { useApp } from "../context";
 import { fmtCompact, fmtDateTime } from "../lib/format";
 import { SOURCE_LABEL, STATUS_LABEL, TRACK_LABEL } from "../lib/labels";
@@ -14,13 +14,13 @@ import { SOURCE_LABEL, STATUS_LABEL, TRACK_LABEL } from "../lib/labels";
 const PAGE = 30;
 
 function SlaCell({ c }: { c: CaseSummary }) {
-  if (!c.sla_due_at) return <span className="text-xs text-zinc-400">no SLA</span>;
-  if (c.sla_met === true) return <Badge tone="emerald">met</Badge>;
-  if (c.sla_met === false) return <Badge tone="rose">missed</Badge>;
+  if (!c.sla_due_at) return <span className="text-xs text-zinc-400">No SLA</span>;
+  if (c.sla_met === true) return <Badge tone="emerald">Met</Badge>;
+  if (c.sla_met === false) return <Badge tone="rose">Missed</Badge>;
   const due = new Date(c.sla_due_at).getTime();
   const open = c.status === "VERIFIED";
   if (!open) return <span className="text-xs text-zinc-400" title={fmtDateTime(c.sla_due_at)}>—</span>;
-  return due < Date.now() ? <Badge tone="rose" title={fmtDateTime(c.sla_due_at)}>overdue</Badge> : <Badge tone="amber" title={fmtDateTime(c.sla_due_at)}>due <TimeCell value={c.sla_due_at} /></Badge>;
+  return due < Date.now() ? <Badge tone="rose" title={fmtDateTime(c.sla_due_at)}>Overdue</Badge> : <Badge tone="violet" title={fmtDateTime(c.sla_due_at)}>Due <TimeCell value={c.sla_due_at} /></Badge>;
 }
 
 export default function CasesPage() {
@@ -60,7 +60,7 @@ export default function CasesPage() {
 
   return (
     <div>
-      <PageHeader title="Cases" description="One case per alert record (reruns attach as attempts). Click a row for attempts, corrections, routing, escalations and the event timeline."
+      <PageHeader title="Cases" description="One case per alert. When Burson sends a fixed version it is added to the same case. Open a case for its versions, corrections, emails and timeline."
         actions={<Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={reload}>Refresh</Button>} />
       <Card className="mb-4">
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
@@ -73,7 +73,7 @@ export default function CasesPage() {
           <Field label="Status">
             <Select value={status} onChange={(e) => setStatus(e.target.value)}>
               <option value="">All statuses</option>
-              <option value="VERIFIED,FAILED,NEEDS_REVIEW">Open (verified, Burson, review)</option>
+              <option value="VERIFIED,FAILED,NEEDS_REVIEW">Open (verified, waiting on Burson, needs review)</option>
               {(meta?.statuses ?? []).map((s) => <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>)}
             </Select>
           </Field>
@@ -83,7 +83,7 @@ export default function CasesPage() {
               {(meta?.sources ?? []).map((s) => <option key={s} value={s}>{SOURCE_LABEL[s] ?? s}</option>)}
             </Select>
           </Field>
-          <Field label="Track / priority">
+          <Field label="Track and priority">
             <div className="flex gap-2">
               <Select value={track} onChange={(e) => setTrack(e.target.value)} aria-label="Track">
                 <option value="">Any track</option>
@@ -91,7 +91,7 @@ export default function CasesPage() {
                 <option value="NONE">No track</option>
               </Select>
               <Select value={priority} onChange={(e) => setPriority(e.target.value)} aria-label="Priority" className="w-24">
-                <option value="">P*</option>
+                <option value="">Any</option>
                 {(meta?.priorities ?? []).map((p) => <option key={p} value={p}>{p}</option>)}
               </Select>
             </div>
@@ -114,7 +114,7 @@ export default function CasesPage() {
               <table className="w-full min-w-[1080px]">
                 <thead>
                   <tr>
-                    <th className={TH}>Case</th><th className={TH}>Status</th><th className={TH}>Verdict</th><th className={TH}>Alert</th>
+                    <th className={TH}>Case</th><th className={TH}>Status</th><th className={TH}>Alert</th>
                     <th className={TH}>Track</th><th className={TH}>Source</th><th className={cx(TH, "text-right")}>Engagement</th>
                     <th className={TH}>SLA</th><th className={TH}>Fixes</th><th className={TH}>Received</th>
                   </tr>
@@ -124,23 +124,22 @@ export default function CasesPage() {
                     <tr key={c.case_id} onClick={() => open(c.case_id)} tabIndex={0} onKeyDown={(e) => e.key === "Enter" && open(c.case_id)}
                       className={cx(TR, "cursor-pointer", caseId === c.case_id && "bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/40 dark:hover:bg-blue-900/60")}>
                       <td className={cx(TD, "whitespace-nowrap font-mono text-xs font-medium")}>{c.case_id}</td>
-                      <td className={TD}><StatusBadge status={c.status} /></td>
-                      <td className={TD}><VerdictBadge verdict={c.verdict} /></td>
+                      <td className={TD}><span className="flex flex-wrap gap-1"><CaseBadges status={c.status} verdict={c.verdict} /></span></td>
                       <td className={cx(TD, "max-w-[28rem]")}>
                         <p className="truncate font-medium" title={c.alert_name ?? ""}>{c.alert_name ?? "—"}</p>
                         <p className="truncate text-xs text-zinc-500">{[c.product, c.exposure_tag, c.platform].filter(Boolean).join(" · ")}</p>
                       </td>
                       <td className={TD}>
-                        {c.track ? <Badge tone={c.track === "URGENT" ? "rose" : "amber"}>{TRACK_LABEL[c.track] ?? c.track}</Badge> : <span className="text-xs text-zinc-400">—</span>}
+                        {c.track ? <Badge tone={c.track === "URGENT" ? "rose" : "blue"}>{TRACK_LABEL[c.track] ?? c.track}</Badge> : <span className="text-xs text-zinc-400">—</span>}
                         {c.priority && <span className="ml-1 font-mono text-xs text-zinc-500">{c.priority}</span>}
                       </td>
-                      <td className={cx(TD, "whitespace-nowrap text-xs")}>{SOURCE_LABEL[c.source] ?? c.source}{c.counterpart_case_id && <span className="ml-1 text-teal-600" title={`The same post was also alerted as ${c.counterpart_case_id}`}>⇄</span>}</td>
+                      <td className={cx(TD, "whitespace-nowrap text-xs")}>{SOURCE_LABEL[c.source] ?? c.source}{c.counterpart_case_id && <span className="ml-1 text-blue-600 dark:text-blue-300" title={`The same post was also alerted as ${c.counterpart_case_id}`}>⇄</span>}</td>
                       <td className={cx(TD, "text-right font-mono text-xs")}>{fmtCompact(c.engagement_total)}{c.is_kof && <span className="ml-1" title="KOF">⭐</span>}</td>
                       <td className={TD}><SlaCell c={c} /></td>
                       <td className={cx(TD, "whitespace-nowrap text-xs")}>
-                        {c.corrections > 0 && <Badge tone="blue" title="Applied corrections">✏️ {c.corrections}</Badge>}
-                        {c.proposed > 0 && <Badge tone="amber" className="ml-1" title="Proposed corrections">? {c.proposed}</Badge>}
-                        {c.escalation_ids.length > 0 && <Badge tone="cyan" className="ml-1" title="Escalations">📨 {c.escalation_ids.length}</Badge>}
+                        {c.corrections > 0 && <Badge tone="blue" title="Fields the agent corrected">✏️ {c.corrections}</Badge>}
+                        {c.proposed > 0 && <Badge tone="violet" className="ml-1" title="Corrections waiting for an IM">{c.proposed} to confirm</Badge>}
+                        {c.escalation_ids.length > 0 && <Badge tone="zinc" className="ml-1" title="Emails started">📨 {c.escalation_ids.length}</Badge>}
                       </td>
                       <td className={cx(TD, "text-xs")}><TimeCell value={c.received_at} /></td>
                     </tr>

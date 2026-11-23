@@ -376,7 +376,7 @@ def summary(ctx: "AgentContext", story: Story, since: datetime | None = None) ->
         sub["alerts"] += 1
         sub["engagement"] += m.engagement
         sub["last_at"] = max(sub["last_at"], m.at)
-        points.append({"t": m.at, "e": m.engagement, "s": list(subs).index(key), "id": m.case_id})
+        points.append({"t": m.at, "e": m.engagement, "s": list(subs).index(key), "id": m.case_id, "a": m.author})  # a: the account that posted it
     start = _hour(max(story.first_at, since) if since else story.first_at)
     step = max(1, math.ceil(((now - start).total_seconds() / 3600 + 1) / GROWTH_POINTS))
     growth = []

@@ -38,7 +38,7 @@ const ICON: Record<string, ReactNode> = {
 };
 const POST_READS: [keyof Omit<Reads, "key">, string][] = [["temp_checks", "Temp checks"], ["early", "Early Detection"], ["watches", "Watches"], ["own", "Agent alerts"]];
 
-function stateOf(t: Tool): { label: string; tone: "emerald" | "blue" | "amber" | "zinc" | "rose" } {
+function stateOf(t: Tool): { label: string; tone: "emerald" | "blue" | "violet" | "zinc" | "rose" } {
   const waiting = t.test?.details.filter((d) => d.waiting).length ?? 0;
   if (t.state === "connected") return { label: waiting ? `Connected, ${waiting} waiting` : "Connected", tone: "emerald" };
   if (t.state === "ready") return { label: "Set, not checked", tone: "blue" };
@@ -47,7 +47,7 @@ function stateOf(t: Tool): { label: string; tone: "emerald" | "blue" | "amber" |
     return { label: `${failed.length} ${failed.length === 1 ? "table" : "tables"} not readable`, tone: "rose" };
   }
   if (t.state === "failing") return { label: "Check failed", tone: "rose" };
-  if (t.state === "incomplete") return { label: `Needs ${t.missing.length} ${t.missing.length === 1 ? "value" : "values"}`, tone: "amber" };
+  if (t.state === "incomplete") return { label: `Needs ${t.missing.length} ${t.missing.length === 1 ? "value" : "values"}`, tone: "violet" };
   return { label: "Not connected", tone: "zinc" };
 }
 
@@ -112,7 +112,7 @@ function BotSignIn({ n, admin, onChanged }: { n: number; admin: boolean; onChang
             {s.email ? `Google will ask you to choose an account: choose ${s.email}. It is asked to let the QA chatbot read messages, post, add emoji reactions, and see spaces and their members.`
               : "Enter the QA chatbot's account above and save it first."}
           </p>
-          {!s.client_ready && <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">No Google sign-in client is set up yet. Create one once: the steps are at the top of infra/08_gmail_oauth.sh.</p>}
+          {!s.client_ready && <p className="mt-2 text-sm text-violet-800 dark:text-violet-300">No Google sign-in client is set up yet. Whoever deploys the Console creates it once (the steps are at the top of infra/08_gmail_oauth.sh).</p>}
           {admin && <Button className="mt-3" variant="primary" loading={start.loading} disabled={!s.email || !s.client_ready}
             onClick={async () => { const r = await start.run(); if (r) window.location.href = r.auth_url; }}>Sign in as the QA chatbot</Button>}
         </>
@@ -175,7 +175,7 @@ function TablesStep({ n, rows, admin, onChanged }: { n: number; rows: TableRow[]
             <li key={r.id} className="py-4 first:pt-0 last:pb-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium text-zinc-950 dark:text-zinc-50">{r.name}</span>
-                {!r.set ? <Badge tone="zinc">Not set</Badge> : r.status ? <Badge tone={r.status.ok ? "emerald" : r.status.waiting ? "amber" : "rose"}>{r.status.ok ? "Readable" : r.status.waiting ? "Waiting for access" : "Not readable"}</Badge>
+                {!r.set ? <Badge tone="zinc">Not set</Badge> : r.status ? <Badge tone={r.status.ok ? "emerald" : r.status.waiting ? "violet" : "rose"}>{r.status.ok ? "Readable" : r.status.waiting ? "Waiting for access" : "Not readable"}</Badge>
                   : !r.reads.length ? <Badge tone="zinc">Nothing reads it</Badge> : null}
                 {r.location && <span className="text-xs text-zinc-500 dark:text-zinc-400">in {r.location}</span>}
               </div>
@@ -189,7 +189,7 @@ function TablesStep({ n, rows, admin, onChanged }: { n: number; rows: TableRow[]
                 </div>
               )}
               {others.length > 0 && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{now ? "Also read by" : "Read by"} {others.join(", ")}</p>}
-              {r.status && said(r.status) && <p className={cx("mt-2 break-words text-sm", r.status.ok ? "text-zinc-600 dark:text-zinc-400" : r.status.waiting ? "text-amber-800 dark:text-amber-300" : "text-rose-700 dark:text-rose-300")}>{said(r.status)}</p>}
+              {r.status && said(r.status) && <p className={cx("mt-2 break-words text-sm", r.status.ok ? "text-zinc-600 dark:text-zinc-400" : r.status.waiting ? "text-violet-800 dark:text-violet-300" : "text-rose-700 dark:text-rose-300")}>{said(r.status)}</p>}
             </li>
           );
         })}

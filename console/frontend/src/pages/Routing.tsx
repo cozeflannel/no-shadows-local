@@ -7,6 +7,7 @@ import { useAction, useApi } from "../api/hooks";
 import { TimeCell } from "../components/common";
 import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, Field, Input, PageHeader, Select, Spinner, Switch, TD, TH, TR } from "../components/ui";
 import { useApp } from "../context";
+import { humanize, TARGET_LABEL, VERDICT_TONE, verdictLabel } from "../lib/labels";
 
 type SpaceKey = "source" | "mirror" | "third";
 interface SpaceInfo { space: string; name: string; external: boolean; error: string }
@@ -48,15 +49,15 @@ interface Routing {
   copies: Copy[]; replies: OwnReply[]; people: Person[]; review: Review; answers: Answers; delivery: Delivery; can_edit: boolean; can_act: boolean;
 }
 
-const ANSWERED: Record<AnswerRow["status"], { label: string; tone: "emerald" | "blue" | "amber" | "rose" | "zinc" }> = {
-  answered: { label: "Answered", tone: "emerald" }, queued: { label: "Queued", tone: "blue" }, held: { label: "Held", tone: "amber" },
-  ignored: { label: "Nothing to say", tone: "zinc" }, failed: { label: "Trying again", tone: "amber" }, gave_up: { label: "Given up", tone: "rose" },
+const ANSWERED: Record<AnswerRow["status"], { label: string; tone: "emerald" | "blue" | "violet" | "rose" | "zinc" }> = {
+  answered: { label: "Answered", tone: "emerald" }, queued: { label: "Queued", tone: "blue" }, held: { label: "Held", tone: "violet" },
+  ignored: { label: "Nothing to say", tone: "zinc" }, failed: { label: "Trying again", tone: "violet" }, gave_up: { label: "Given up", tone: "rose" },
   waiting: { label: "Next minute", tone: "zinc" },
 };
 
-const POSTED: Record<PostRow["status"], { label: string; tone: "emerald" | "blue" | "amber" | "rose" | "zinc" }> = {
-  sent: { label: "Posted", tone: "emerald" }, held: { label: "Held", tone: "amber" }, waits_for_send: { label: "Waiting for Send", tone: "blue" },
-  failed: { label: "Trying again", tone: "amber" }, gave_up: { label: "Given up", tone: "rose" }, waiting: { label: "Next minute", tone: "zinc" },
+const POSTED: Record<PostRow["status"], { label: string; tone: "emerald" | "blue" | "violet" | "rose" | "zinc" }> = {
+  sent: { label: "Posted", tone: "emerald" }, held: { label: "Held", tone: "violet" }, waits_for_send: { label: "Waiting for Send", tone: "blue" },
+  failed: { label: "Trying again", tone: "violet" }, gave_up: { label: "Given up", tone: "rose" }, waiting: { label: "Next minute", tone: "zinc" },
 };
 
 const SPACES: { key: SpaceKey; title: string; says: string }[] = [
@@ -83,7 +84,7 @@ function SpaceCard({ item, value, onChange, info, problem, disabled }: {
       {info && !info.error && (
         <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
           <span className="font-medium">{info.name || info.space}</span>
-          <Badge tone={info.external ? "amber" : "emerald"}>{info.external ? "People outside Google can join" : "Google people only"}</Badge>
+          <Badge tone={info.external ? "violet" : "emerald"}>{info.external ? "People outside Google can join" : "Google people only"}</Badge>
         </div>
       )}
       {!info && <p className="mt-3 text-sm text-zinc-500">{item.key === "source" ? "Not set. Nothing is read." : "Not set. No copy is made."}</p>}
@@ -110,7 +111,6 @@ function PersonRow({ person, canEdit, onSaved }: { person: Person; canEdit: bool
   );
 }
 
-const VERDICT_TONE: Record<string, "emerald" | "blue" | "amber" | "rose" | "zinc"> = { PASS: "emerald", CORRECTED: "blue", NEEDS_REVIEW: "amber", FAIL: "rose", SUPPRESSED: "zinc" };
 
 /** What the QA chatbot read in the source space and what the review made of each message. */
 function ReviewCard({ review }: { review: Review }) {
@@ -135,16 +135,20 @@ function ReviewCard({ review }: { review: Review }) {
                   <td className={cx(TD, "max-w-xl")}>
                     <span className="line-clamp-2 whitespace-pre-wrap">{r.text}</span>
                     {r.status === "gave_up" && <span className="mt-1 block text-rose-600 dark:text-rose-400">Given up after {r.tries} tries: {r.why}</span>}
-                    {r.status === "waiting" && <span className="mt-1 block text-amber-600 dark:text-amber-400">Trying again: {r.why}</span>}
+                    {r.status === "waiting" && <span className="mt-1 block text-violet-700 dark:text-violet-300">Trying again: {r.why}</span>}
                   </td>
                   <td className={TD}>
-                    {r.status === "reviewed" ? <Badge tone={VERDICT_TONE[r.verdict] ?? "zinc"}>{r.verdict.replace(/_/g, " ").toLowerCase() || "reviewed"}</Badge>
+                    {r.status === "reviewed" ? <Badge tone={VERDICT_TONE[r.verdict] ?? "zinc"}>{r.verdict ? verdictLabel(r.verdict) : "Reviewed"}</Badge>
                       : r.status === "ignored" ? <span className="text-zinc-500">{r.summary || "set aside"}</span> : null}
                   </td>
                   <td className={TD}>{r.case_id ? <Link className="text-blue-700 hover:underline dark:text-blue-300" to={`/feed/${r.case_id}`}>{r.case_id}</Link> : ""}</td>
                   <td className={TD}>
                     {r.queued > 0 && <span>{r.queued}</span>}
-                    {r.held.length > 0 && <span className="block text-xs text-amber-600 dark:text-amber-400">held: {r.held.map((h) => `${h.target} (${h.check.replace(/_/g, " ")})`).join(", ")}</span>}
+                    {r.held.length > 0 && (
+                      <span className="block text-xs text-violet-700 dark:text-violet-300">
+                        Held by a safety check: {r.held.map((h) => `${TARGET_LABEL[h.target] ?? humanize(h.target)} (${humanize(h.check).toLowerCase()})`).join(", ")}
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -243,10 +247,10 @@ function DeliveryCard({ delivery, canAct, onChanged }: { delivery: Delivery; can
               {delivery.rows.map((r) => (
                 <tr key={r.id} className={TR}>
                   <td className={TD}><TimeCell value={r.at} /></td>
-                  <td className={TD}>{r.to || r.target}</td>
+                  <td className={TD}>{r.to || TARGET_LABEL[r.target] || humanize(r.target)}</td>
                   <td className={cx(TD, "max-w-xl")}>
                     <span className="line-clamp-2 whitespace-pre-wrap">{r.text}</span>
-                    {r.why && <span className={cx("mt-1 block", r.status === "gave_up" ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400")}>{r.why}</span>}
+                    {r.why && <span className={cx("mt-1 block", r.status === "gave_up" ? "text-rose-600 dark:text-rose-400" : "text-violet-700 dark:text-violet-300")}>{r.why}</span>}
                   </td>
                   <td className={TD}>
                     <Badge tone={POSTED[r.status].tone}>{POSTED[r.status].label}</Badge>
@@ -290,7 +294,7 @@ export default function RoutingPage() {
         actions={canEdit && <Button variant="primary" icon={<Save className="size-4" />} disabled={!dirty} loading={save.loading} onClick={onSave}>Save</Button>} />
       <ErrorState error={save.error ?? decide.error ?? error} />
       {!data.signed_in && (
-        <Alert tone="amber" className="mb-4" title="The QA chatbot is not signed in to Chat">
+        <Alert tone="violet" className="mb-4" title="The QA chatbot is not signed in to Chat">
           Nothing is read or copied until it is. <Link className="font-medium underline" to="/connections/chat">Sign it in under Integrations, Google Chat</Link>.
         </Alert>
       )}
@@ -376,7 +380,7 @@ export default function RoutingPage() {
                     <td className={cx(TD, "max-w-xl")}>
                       <span className="line-clamp-2 whitespace-pre-wrap">{r.text}</span>
                       {r.status === "gave_up" && <span className="mt-1 block text-rose-600 dark:text-rose-400">Given up: {r.why}</span>}
-                      {r.status === "waiting" && <span className="mt-1 block text-amber-600 dark:text-amber-400">{r.why ? `Trying again: ${r.why}` : "Waiting for its alert to be copied"}</span>}
+                      {r.status === "waiting" && <span className="mt-1 block text-violet-700 dark:text-violet-300">{r.why ? `Trying again: ${r.why}` : "Waiting for its alert to be copied"}</span>}
                     </td>
                     <td className={TD}>{r.mirror ? <CircleCheck aria-label="Posted" className="size-4 text-emerald-600" /> : <CircleX aria-label="Not posted" className="size-4 text-zinc-400" />}</td>
                     <td className={TD}>{r.third ? <CircleCheck aria-label="Posted" className="size-4 text-emerald-600" /> : <CircleX aria-label="Not posted" className="size-4 text-zinc-400" />}</td>
@@ -401,7 +405,7 @@ export default function RoutingPage() {
                     <td className={cx(TD, "max-w-xl")}>
                       <span className="line-clamp-2 whitespace-pre-wrap">{c.text}</span>
                       {c.status === "gave_up" && <span className="mt-1 block text-rose-600 dark:text-rose-400">Given up: {c.why}</span>}
-                      {c.status === "waiting" && <span className="mt-1 block text-amber-600 dark:text-amber-400">Trying again: {c.why}</span>}
+                      {c.status === "waiting" && <span className="mt-1 block text-violet-700 dark:text-violet-300">Trying again: {c.why}</span>}
                     </td>
                     <td className={TD}>{c.mirror ? <CircleCheck aria-label="Copied" className="size-4 text-emerald-600" /> : <CircleX aria-label="Not copied" className="size-4 text-zinc-400" />}</td>
                     <td className={TD}>{c.third ? <CircleCheck aria-label="Copied" className="size-4 text-emerald-600" />

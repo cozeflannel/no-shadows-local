@@ -1,18 +1,19 @@
-import { ExternalLink, Pause, Play, Search, Sparkles, Waypoints } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ExternalLink, Pause, Play, RotateCcw, Search, Sparkles, Waypoints } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
 import { apiSend, type ApiError } from "../api/client";
 import { useApi } from "../api/hooks";
 import { Badge, Button, Card, cx, EmptyState, ErrorState, Input, PageHeader, Segmented, Select, Spinner, StatusBadge, TD, TH, TR } from "../components/ui";
 import { useApp } from "../context";
-import { fmtCompact, fmtDateTime, fmtNum, fmtRelative } from "../lib/format";
+import { fmtCompact, fmtDateTime, fmtMoment, fmtNum, fmtRelative } from "../lib/format";
 import { bounds, pack, packInside, type Circle } from "../lib/pack";
 
 type Tone = "negative" | "neutral" | "positive" | "";  // "" = not rated: Gemini has not labelled it
 type ViewBy = "story" | "product" | "topic" | "sentiment";
 interface Sub { key: string; name: string; alerts: number; engagement: number; first_at: string; last_at: string }
-interface Point { t: string; e: number; s: number; id: string; m: Tone }
+/** One alert on the map: when it came in (t), its engagement (e), its smaller story (s), its case (id), its label (m) and its post's author (a). */
+interface Point { t: string; e: number; s: number; id: string; m: Tone; a?: string }
 interface Counts { negative: number; neutral: number; positive: number; unrated: number }
 interface Story {
   story_id: string; title: string; tag: string; product: string; first_at: string; last_at: string; alerts: number; engagement: number; size: number;
@@ -51,7 +52,7 @@ const SUB_FILL: Record<Story["status"], string> = {
 const NONE = "~none";  // a filter's value for "has none": no topic yet, not rated
 const TONE: Record<"negative" | "neutral" | "positive" | "none", { label: string; ring: string; fill: string; sub: string; dot: string; bar: string; tone: "rose" | "zinc" | "emerald" }> = {
   negative: { label: "Negative", ring: "stroke-rose-600 dark:stroke-rose-400", fill: "fill-rose-500/20 dark:fill-rose-400/20", sub: "fill-rose-600/45 dark:fill-rose-400/45", dot: "bg-rose-600 dark:bg-rose-400", bar: "bg-rose-600 dark:bg-rose-400", tone: "rose" },
-  neutral: { label: "Neutral", ring: "stroke-slate-500 dark:stroke-slate-400", fill: "fill-slate-400/15 dark:fill-slate-400/15", sub: "fill-slate-500/40 dark:fill-slate-400/40", dot: "bg-slate-500 dark:bg-slate-400", bar: "bg-slate-500 dark:bg-slate-400", tone: "zinc" },
+  neutral: { label: "Neutral", ring: "stroke-zinc-500 dark:stroke-zinc-400", fill: "fill-zinc-400/15 dark:fill-zinc-400/15", sub: "fill-zinc-500/40 dark:fill-zinc-400/40", dot: "bg-zinc-500 dark:bg-zinc-400", bar: "bg-zinc-500 dark:bg-zinc-400", tone: "zinc" },
   positive: { label: "Positive", ring: "stroke-emerald-600 dark:stroke-emerald-400", fill: "fill-emerald-500/15 dark:fill-emerald-400/15", sub: "fill-emerald-600/40 dark:fill-emerald-400/40", dot: "bg-emerald-600 dark:bg-emerald-400", bar: "bg-emerald-600 dark:bg-emerald-400", tone: "emerald" },
   none: { label: "Not rated", ring: "stroke-zinc-400 dark:stroke-zinc-500", fill: "fill-zinc-400/10 dark:fill-zinc-400/10", sub: "fill-zinc-400/25 dark:fill-zinc-500/30", dot: "bg-zinc-300 dark:bg-zinc-600", bar: "bg-zinc-300 dark:bg-zinc-600", tone: "zinc" },
 };
@@ -150,7 +151,262 @@ function lines(text: string, perLine: number): string[] {
   return out;
 }
 
-function BubbleMap({ bubbles, by, at, selected, onSelect, label }: { bubbles: Bubble[]; by: "engagement" | "alerts"; at: number; selected: string | null; onSelect: (id: string) => void; label: string }) {
+// -- playback ---------------------------------------------------------------------------------------------------------------
+/**
+ * The slider's scale, from just before the first alert of the stories on the map (often before the window: a story active
+ * in the window may have started earlier) to just after the last. Each stretch between two moments with an alert gets a
+ * share of the slider: an equal part (BUSY of the slider, split evenly between the stretches) plus a part for how long it
+ * lasted. Busy stretches get room, a quiet night doesn't swallow the slider, and every move of the thumb shows a change,
+ * whatever the window. `marks` are the corners of the scale (u from 0 to 1, t in ms), `moments` the slider positions of the
+ * moments with an alert, `windowAt` where the window starts (null when every alert is inside it).
+ */
+interface Timeline { start: number; end: number; marks: { u: number; t: number }[]; moments: number[]; windowAt: number | null }
+const BUSY = 0.6;
+
+function timelineOf(times: number[], since: number): Timeline {
+  const moments = [...new Set(times)].sort((a, b) => a - b);
+  if (!moments.length) return { start: since, end: since + 1, marks: [{ u: 0, t: since }, { u: 1, t: since + 1 }], moments: [], windowAt: null };
+  const first = moments[0];
+  const last = moments[moments.length - 1];
+  const pad = Math.max(60_000, (last - first) * 0.03);  // room before the first alert and after the last, so each grows in
+  const start = first - pad;
+  const end = last + pad;
+  const corners = [start, ...moments, end];
+  const gaps = corners.length - 1;
+  const marks = [{ u: 0, t: start }];
+  for (let i = 1; i < corners.length; i += 1) {
+    const share = BUSY / gaps + ((1 - BUSY) * (corners[i] - corners[i - 1])) / (end - start);
+    marks.push({ u: Math.min(1, marks[i - 1].u + share), t: corners[i] });
+  }
+  marks[marks.length - 1].u = 1;
+  const tl: Timeline = { start, end, marks, moments: marks.slice(1, -1).map((m) => m.u), windowAt: null };
+  return { ...tl, windowAt: since > first ? uAt(tl, since) : null };
+}
+
+/** Where a moment sits on the slider, from 0 to 1. */
+function uAt(tl: Timeline, t: number): number {
+  const m = tl.marks;
+  if (t <= m[0].t) return 0;
+  if (t >= m[m.length - 1].t) return 1;
+  let lo = 0;
+  let hi = m.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (m[mid].t <= t) lo = mid;
+    else hi = mid;
+  }
+  return m[lo].u + ((t - m[lo].t) / (m[hi].t - m[lo].t)) * (m[hi].u - m[lo].u);
+}
+
+/** The moment at a slider position. */
+function timeAt(tl: Timeline, u: number): number {
+  const m = tl.marks;
+  if (u <= 0) return m[0].t;
+  if (u >= 1) return m[m.length - 1].t;
+  let lo = 0;
+  let hi = m.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (m[mid].u <= u) lo = mid;
+    else hi = mid;
+  }
+  const span = m[hi].u - m[lo].u;
+  return span > 0 ? m[lo].t + ((u - m[lo].u) / span) * (m[hi].t - m[lo].t) : m[lo].t;
+}
+
+/** How many of a sorted list are at or before `u`. */
+function upTo(list: number[], u: number): number {
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid] <= u) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** One circle's alerts in slider order, with running totals, so what it holds at any position is a quick lookup. */
+interface Track { u: number[]; w: number[]; cw: number[]; ce: number[]; total: number }
+
+function trackOf(pts: Point[], place: (p: Point) => number, by: "engagement" | "alerts"): Track {
+  const rows = pts.map((p) => ({ u: place(p), w: weight(p, by), e: p.e })).sort((a, b) => a.u - b.u);
+  const cw = [0];
+  const ce = [0];
+  rows.forEach((r, i) => { cw.push(cw[i] + r.w); ce.push(ce[i] + r.e); });
+  return { u: rows.map((r) => r.u), w: rows.map((r) => r.w), cw, ce, total: cw[rows.length] };
+}
+
+/** What a circle holds at slider position `u`: an alert counts in full once the thumb is `fade` past it, and eases in before that. */
+function amountAt(tr: Track, u: number, fade: number): number {
+  if (u >= 1) return tr.total;
+  if (fade <= 0) return tr.cw[upTo(tr.u, u)];
+  const full = upTo(tr.u, u - fade);
+  let sum = tr.cw[full];
+  for (let i = full; i < tr.u.length && tr.u[i] <= u; i += 1) {
+    const x = (u - tr.u[i]) / fade;
+    sum += tr.w[i] * (1 - (1 - x) * (1 - x));
+  }
+  return sum;
+}
+
+/** Everything the slider needs, worked out once per set of stories (not on every frame of the playback). */
+interface Playback { tl: Timeline; tracks: Track[]; parts: Track[][]; alerts: number[]; stories: number[]; accounts: number[]; knowsAccounts: boolean }
+
+function playbackOf(drawn: Story[], bubbles: Bubble[], since: number, by: "engagement" | "alerts"): Playback {
+  const ms = new Map<Point, number>();
+  drawn.forEach((s) => s.points.forEach((p) => ms.set(p, Date.parse(p.t))));
+  const tl = timelineOf([...ms.values()], since);
+  const place = new Map<Point, number>();
+  ms.forEach((t, p) => place.set(p, uAt(tl, t)));
+  const at = (p: Point) => place.get(p) ?? uAt(tl, Date.parse(p.t));
+  const alerts: number[] = [];
+  const stories: number[] = [];
+  const accounts = new Map<string, number>();
+  for (const s of drawn) {
+    let first = Infinity;
+    for (const p of s.points) {
+      const u = at(p);
+      alerts.push(u);
+      first = Math.min(first, u);
+      const who = (p.a ?? "").trim().replace(/^@/, "").toLowerCase();
+      if (who) accounts.set(who, Math.min(accounts.get(who) ?? Infinity, u));
+    }
+    if (first < Infinity) stories.push(first);
+  }
+  const sorted = (list: number[]) => list.sort((a, b) => a - b);
+  return {
+    tl, tracks: bubbles.map((b) => trackOf(b.pts, at, by)), parts: bubbles.map((b) => b.parts.map((part) => trackOf(part.pts, at, by))),
+    alerts: sorted(alerts), stories: sorted(stories), accounts: sorted([...accounts.values()]), knowsAccounts: drawn.some((s) => s.points.some((p) => p.a !== undefined)),
+  };
+}
+
+/** Whole playback in 6 to 14 seconds, by how many moments have an alert, not by how long the window is. */
+const playMs = (moments: number) => Math.min(14_000, Math.max(6_000, 4_000 + moments * 200));
+
+function useReducedMotion(): boolean {
+  const [calm, setCalm] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const change = () => setCalm(query.matches);
+    query.addEventListener("change", change);
+    return () => query.removeEventListener("change", change);
+  }, []);
+  return calm;
+}
+
+/**
+ * The map and its time slider. At a moment on the slider each circle holds only the alerts that had come in by then: circles
+ * appear and grow, and the line under the slider counts the alerts, stories and accounts so far. Play runs from the first
+ * alert of the stories on the map to now; with reduced motion it steps from one alert to the next.
+ */
+function StoryPlayer({ drawn, bubbles, since, asOf, by, selected, onSelect, label }: {
+  drawn: Story[]; bubbles: Bubble[]; since: number; asOf: number; by: "engagement" | "alerts"; selected: string | null; onSelect: (id: string) => void; label: string;
+}) {
+  const model = useMemo(() => playbackOf(drawn, bubbles, since, by), [drawn, bubbles, since, by]);
+  const calm = useReducedMotion();
+  const [pos, setPos] = useState(1);
+  const [playing, setPlaying] = useState(false);
+  const posRef = useRef(1);
+  const move = useCallback((u: number) => { const next = Math.min(1, Math.max(0, u)); posRef.current = next; setPos(next); }, []);
+  const moments = model.tl.moments;
+  const fade = calm ? 0 : Math.min(0.05, Math.max(0.004, 0.6 / Math.max(1, moments.length)));
+  const nextMoment = (u: number) => moments.find((m) => m > u + 1e-9) ?? 1;
+  const prevMoment = (u: number) => [...moments].reverse().find((m) => m < u - 1e-9) ?? 0;
+
+  useEffect(() => {
+    if (!playing) return;
+    if (calm) {  // one alert at a time, with no motion in between
+      const id = window.setInterval(() => {
+        const next = model.tl.moments.find((m) => m > posRef.current + 1e-9) ?? 1;
+        move(next);
+        if (next >= 1) setPlaying(false);
+      }, 700);
+      return () => window.clearInterval(id);
+    }
+    const length = playMs(model.tl.moments.length);
+    let last = performance.now();
+    let frame = 0;
+    const tick = (now: number) => {
+      const next = Math.min(1, posRef.current + Math.min(64, now - last) / length);  // a tab in the background doesn't jump ahead
+      last = now;
+      move(next);
+      if (next >= 1) { setPlaying(false); return; }
+      frame = window.requestAnimationFrame(tick);
+    };
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, [playing, calm, model, move]);
+
+  const empty = moments.length === 0;
+  const play = () => {
+    if (playing) { setPlaying(false); return; }
+    if (posRef.current >= 1) move(0);
+    setPlaying(true);
+  };
+  const keys = (e: KeyboardEvent<HTMLInputElement>) => {
+    const steps: Record<string, number> = { ArrowRight: nextMoment(pos), ArrowUp: nextMoment(pos), ArrowLeft: prevMoment(pos), ArrowDown: prevMoment(pos),
+      Home: 0, End: 1, PageUp: pos + 0.1, PageDown: pos - 0.1 };  // the arrows step from one alert to the next
+    const to = steps[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    setPlaying(false);
+    move(to);
+  };
+  const plural = (n: number, one: string, many: string) => `${fmtNum(n)} ${n === 1 ? one : many}`;
+  const alerts = upTo(model.alerts, pos);
+  const storiesSoFar = upTo(model.stories, pos);
+  const accounts = upTo(model.accounts, pos);
+  const now = pos >= 1;
+  const early = model.tl.windowAt !== null && pos < model.tl.windowAt;  // before the window: these stories' earlier alerts
+  const when = now ? "Now" : `${fmtMoment(Math.min(timeAt(model.tl, pos), asOf))}${early ? " (before this window)" : ""}`;
+  const counts = [
+    now ? plural(model.alerts.length, "alert", "alerts") : `${fmtNum(alerts)} of ${plural(model.alerts.length, "alert", "alerts")}`,
+    now ? plural(model.stories.length, "story", "stories") : `${fmtNum(storiesSoFar)} of ${plural(model.stories.length, "story", "stories")}`,
+    model.knowsAccounts ? plural(now ? model.accounts.length : accounts, "account", "accounts") : "",
+  ].filter(Boolean).join(" · ");
+  const ticks = [...new Set(moments.map((m) => Math.round(m * (moments.length > 300 ? 250 : 1000))))].map((m) => m / (moments.length > 300 ? 250 : 1000));
+
+  return (
+    <>
+      <BubbleMap bubbles={bubbles} model={model} pos={pos} fade={fade} by={by} selected={selected} onSelect={onSelect} label={label} />
+      <div className="mt-2 border-t border-zinc-100 px-1 pt-3 dark:border-zinc-800">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <Button variant="primary" disabled={empty} icon={playing ? <Pause className="size-4" /> : <Play className="size-4" />} onClick={play}
+            title={empty ? "No alert came in during this window" : playing ? "Pause" : now ? "Play from the first alert to now" : "Carry on to now"}>
+            {playing ? "Pause" : "Play"}
+          </Button>
+          <Button variant="ghost" disabled={empty || (pos <= 0 && !playing)} icon={<RotateCcw className="size-4" />} onClick={() => move(0)} title="Back to the first alert">Start over</Button>
+          <div className="min-w-48 flex-1">
+            <div className="relative mx-2 h-3" aria-hidden>
+              {model.tl.windowAt !== null && (
+                <span className="absolute -bottom-1 h-4 w-0.5 rounded-full bg-zinc-500 dark:bg-zinc-400" style={{ left: `${model.tl.windowAt * 100}%` }} title="The window starts here" />
+              )}
+              {ticks.map((u) => (
+                <span key={u} className={cx("absolute bottom-0 w-px rounded-full", u <= pos ? "h-3 bg-blue-500 dark:bg-blue-300" : "h-2 bg-zinc-300 dark:bg-zinc-600")} style={{ left: `${u * 100}%` }} />
+              ))}
+            </div>
+            <input type="range" min={0} max={1000} step={1} value={Math.round(pos * 1000)} disabled={empty}
+              onChange={(e) => { setPlaying(false); move(Number(e.target.value) / 1000); }} onKeyDown={keys}
+              aria-label="Time on the map" aria-valuetext={`${when}: ${counts}`}
+              title="Drag to see the map at an earlier moment. Each tick is a moment when an alert came in, and busy stretches take up more of the slider. The grey line is where the window starts: stories on the map can have alerts from before it."
+              className="block h-1.5 w-full cursor-pointer accent-blue-600 disabled:cursor-not-allowed disabled:opacity-50 dark:accent-blue-300" />
+          </div>
+        </div>
+        <p className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm" aria-live="off">
+          <span className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">{when}</span>
+          <span className="tabular-nums text-zinc-600 dark:text-zinc-300">{counts}</span>
+          {!now && <button type="button" onClick={() => { setPlaying(false); move(1); }} className="ml-auto text-sm font-medium text-blue-700 hover:underline dark:text-blue-300">Jump to now</button>}
+          {empty && <span className="text-zinc-500 dark:text-zinc-400">No alert came in during this window, so there is nothing to play. Pick a longer window.</span>}
+        </p>
+      </div>
+    </>
+  );
+}
+
+function BubbleMap({ bubbles, model, pos, fade, by, selected, onSelect, label }: {
+  bubbles: Bubble[]; model: Playback; pos: number; fade: number; by: "engagement" | "alerts"; selected: string | null; onSelect: (id: string) => void; label: string;
+}) {
   const [box, size] = useSize<HTMLDivElement>();
   const aspect = size.w && size.h ? Math.min(2.4, Math.max(0.6, size.w / size.h)) : 1.6;
   const layout = useMemo(() => {
@@ -159,11 +415,10 @@ function BubbleMap({ bubbles, by, at, selected, onSelect, label }: { bubbles: Bu
     const most = Math.max(...total, 1);
     const circles = pack(total.map((t) => Math.max(9, 92 * Math.sqrt(t / most))), aspect, 3);
     const parts = bubbles.map((b, i) => (b.parts.length < 2 ? [] as Circle[] : packInside(b.parts.map((part) => Math.sqrt(Math.max(sum(part.pts), 0.0001))), circles[i].r * 0.84)));
-    return { circles, parts, total, view: bounds(circles, 10) };
+    return { circles, parts, view: bounds(circles, 10) };
   }, [bubbles, by, aspect]);
   const { view } = layout;
   const scale = size.w && size.h ? Math.min(size.w / view.w, size.h / view.h) : 1;
-  const sumAt = (pts: Point[]) => pts.reduce((total, p) => (Date.parse(p.t) <= at ? total + weight(p, by) : total), 0);
 
   return (
     <div ref={box} className="h-[58vh] min-h-[340px] w-full">
@@ -175,29 +430,30 @@ function BubbleMap({ bubbles, by, at, selected, onSelect, label }: { bubbles: Bu
         </defs>
         {bubbles.map((b, i) => {
           const c = layout.circles[i];
-          const seen = b.pts.filter((p) => Date.parse(p.t) <= at);
-          const now = sumAt(b.pts);
-          if (!now) return null;
-          const grow = Math.sqrt(now / layout.total[i]);
+          const track = model.tracks[i];
+          const now = track ? amountAt(track, pos, fade) : 0;
+          if (now <= 0) return null;
+          const seen = upTo(track.u, pos);
+          const grow = Math.sqrt(now / (track.total || 1));
           const r = c.r * grow;
           const px = r * scale;
           const active = selected === b.id;
           const text = px >= 34 ? lines(b.title, Math.max(4, Math.floor((px * 1.7) / 6.6))) : [];
           const font = 12 / scale;
           return (
-            <g key={b.id} role="button" tabIndex={0} aria-pressed={active} aria-label={`${b.title}: ${b.caption(seen.length)}, ${b.says}`}
+            <g key={b.id} role="button" tabIndex={0} aria-pressed={active} aria-label={`${b.title}: ${b.caption(seen)}, ${b.says}`}
               onClick={() => onSelect(b.id)}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(b.id); } }}
               className="cursor-pointer outline-none [&:focus-visible>circle:first-of-type]:stroke-[3px]">
-              <title>{`${b.title}\n${b.caption(seen.length)} · ${fmtNum(seen.reduce((sum, p) => sum + p.e, 0))} engagement\n${b.says}`}</title>
+              <title>{`${b.title}\n${b.caption(seen)} · ${fmtNum(track.ce[seen])} engagement\n${b.says}`}</title>
               <circle cx={c.x} cy={c.y} r={r} vectorEffect="non-scaling-stroke" strokeDasharray={b.dashed && !b.needs ? "4 3" : undefined}
-                className={cx("transition-[r] duration-300 ease-out motion-reduce:transition-none", b.fill, b.needs ? "" : b.ring, active ? "stroke-[3px]" : "stroke-[1.5px]")}
+                className={cx(b.fill, b.needs ? "" : b.ring, active ? "stroke-[3px]" : "stroke-[1.5px]")}
                 stroke={b.needs ? "url(#story-ring)" : undefined} strokeWidth={b.needs ? (active ? 4 : 2.5) : undefined} />
               {px >= 26 && layout.parts[i].map((pc, k) => {
-                const part = sumAt(b.parts[k].pts);
-                const whole = b.parts[k].pts.reduce((total, p) => total + weight(p, by), 0);
-                if (!part) return null;
-                return <circle key={b.parts[k].key} cx={c.x + pc.x * grow} cy={c.y + pc.y * grow} r={pc.r * grow * Math.sqrt(part / whole)} className={cx("transition-[r] duration-300 ease-out motion-reduce:transition-none", b.parts[k].fill)} />;
+                const partTrack = model.parts[i]?.[k];
+                const part = partTrack ? amountAt(partTrack, pos, fade) : 0;
+                if (part <= 0 || !partTrack) return null;
+                return <circle key={b.parts[k].key} cx={c.x + pc.x * grow} cy={c.y + pc.y * grow} r={pc.r * grow * Math.sqrt(part / (partTrack.total || 1))} className={b.parts[k].fill} />;
               })}
               {text.map((line, n) => (
                 <text key={n} x={c.x} y={c.y + (n - (text.length - 1) / 2) * font * 1.25 - (px >= 52 ? font * 0.6 : 0)} textAnchor="middle" dominantBaseline="middle"
@@ -205,7 +461,7 @@ function BubbleMap({ bubbles, by, at, selected, onSelect, label }: { bubbles: Bu
               ))}
               {px >= 52 && (
                 <text x={c.x} y={c.y + (text.length / 2) * font * 1.25 + font * 0.5} textAnchor="middle" dominantBaseline="middle" fontSize={font * 0.9}
-                  className="pointer-events-none fill-zinc-600 dark:fill-zinc-300">{b.caption(seen.length)}</text>
+                  className="pointer-events-none fill-zinc-600 dark:fill-zinc-300">{b.caption(seen)}</text>
               )}
             </g>
           );
@@ -300,7 +556,7 @@ function StoryPanel({ id, by, canAct, onClose, onRead }: { id: string; by: "enga
         </div>
         {read ? <p className="mt-2.5 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">{read.summary}</p>
           : <p className="mt-2.5 text-sm text-zinc-500 dark:text-zinc-400">{readsOn ? "Gemini reads the biggest unread stories first, a few on every run." : 'Gemini is not reading stories: the switch "Gemini reads each story" is OFF.'}</p>}
-        {read?.stale && <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">{plural(Math.max(0, story.alerts - read.members), "alert has", "alerts have")} joined since this read. They are not rated yet.</p>}
+        {read?.stale && <p className="mt-2 text-xs text-violet-800 dark:text-violet-300">{plural(Math.max(0, story.alerts - read.members), "alert has", "alerts have")} joined since this read. They are not rated yet.</p>}
         {(rated > 0 || !!read) && (
           <div className="mt-3">
             <SentimentBar counts={story.sentiment} />
@@ -433,28 +689,14 @@ export default function StoriesPage() {
   const [tone, setTone] = useState("");
   const [find, setFind] = useState("");
   const [groupKey, setGroupKey] = useState<string | null>(null);
-  const [frac, setFrac] = useState(1);
-  const [playing, setPlaying] = useState(false);
   const data = useApi<StoriesResponse>("/stories", hours ? { hours } : undefined, 30_000);
-  const all = data.data?.stories ?? [];
+  const all = useMemo(() => data.data?.stories ?? [], [data.data]);
   const by = data.data?.size_by ?? "engagement";
   const from = data.data ? Date.parse(data.data.since) : 0;
   const to = data.data ? Date.parse(data.data.as_of) : 0;
-  const at = from + (to - from) * frac;
   const negativeBar = data.data?.negative_share ?? 1;
   const positiveBar = data.data?.positive_share ?? 1;
   const ratedBar = data.data?.min_rated_share ?? 1;
-
-  useEffect(() => {
-    if (!playing) return;
-    const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const id = window.setInterval(() => setFrac((f) => {
-      const next = Math.min(1, f + (calm ? 1 / 12 : 1 / 240));
-      if (next >= 1) setPlaying(false);
-      return next;
-    }), calm ? 500 : 50);
-    return () => window.clearInterval(id);
-  }, [playing]);
 
   const stories = useMemo(() => {
     const words = find.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -465,7 +707,8 @@ export default function StoriesPage() {
   }, [all, product, topic, tone, find]);
   const groups = useMemo(() => (viewBy === "story" ? [] : groupsOf(stories, viewBy, { negative: negativeBar, positive: positiveBar, rated: ratedBar })),
     [stories, viewBy, negativeBar, positiveBar, ratedBar]);
-  const bubbles = useMemo(() => (viewBy === "story" ? stories.slice(0, ON_MAP).map((s) => storyBubble(s, color)) : groups.map((g) => groupBubble(g, viewBy))), [stories, groups, viewBy, color]);
+  const drawn = useMemo(() => (viewBy === "story" ? stories.slice(0, ON_MAP) : stories), [stories, viewBy]);  // the stories on the map
+  const bubbles = useMemo(() => (viewBy === "story" ? drawn.map((s) => storyBubble(s, color)) : groups.map((g) => groupBubble(g, viewBy))), [drawn, groups, viewBy, color]);
   const group = viewBy === "story" ? null : groups.find((g) => g.key === groupKey) ?? null;
 
   const select = (id: string) => navigate(storyId === id ? "/stories" : `/stories/${id}`);
@@ -494,7 +737,7 @@ export default function StoriesPage() {
         description={totals ? `${totals.stories} stories from ${fmtNum(totals.alerts)} alerts · ${totals.growing} active · ${totals.needs} alerts need action${filtered ? ` · showing ${stories.length}` : ""}` : undefined}
         actions={<>
           <Segmented label="View" value={view} onChange={setView} options={[{ value: "map", label: "Map" }, { value: "list", label: "List" }]} />
-          <Segmented label="Window" value={span} onChange={(h) => { setHours(h); setFrac(1); }}
+          <Segmented label="Window" value={span} onChange={setHours}
             options={windows.map((h) => ({ value: h, label: h < 48 ? `${h} h` : `${Math.round(h / 24)} days` }))} />
         </>} />
       <ErrorState error={data.error} onRetry={data.reload} />
@@ -556,15 +799,8 @@ export default function StoriesPage() {
               <div className="min-w-0">
                 {view === "map" ? (
                   <Card padded={false} bodyClassName="p-3 sm:p-4">
-                    <BubbleMap bubbles={bubbles} by={by} at={at} label={mapLabel}
+                    <StoryPlayer key={span} drawn={drawn} bubbles={bubbles} since={from} asOf={to} by={by} label={mapLabel}
                       selected={viewBy === "story" ? storyId ?? null : groupKey} onSelect={viewBy === "story" ? select : pickGroup} />
-                    <div className="mt-2 flex flex-wrap items-center gap-3 border-t border-zinc-100 px-1 pt-3 dark:border-zinc-800">
-                      <Button variant="primary" icon={playing ? <Pause className="size-4" /> : <Play className="size-4" />}
-                        onClick={() => { if (frac >= 1) setFrac(0); setPlaying((p) => !p); }}>{playing ? "Pause" : "Play growth"}</Button>
-                      <input type="range" min={0} max={1000} value={Math.round(frac * 1000)} onChange={(e) => { setPlaying(false); setFrac(Number(e.target.value) / 1000); }}
-                        aria-label="Time" aria-valuetext={fmtDateTime(new Date(at).toISOString())} className="h-1.5 min-w-40 flex-1 cursor-pointer accent-blue-600 dark:accent-blue-300" />
-                      <span className="w-40 text-right text-sm tabular-nums text-zinc-600 dark:text-zinc-300">{frac >= 1 ? "Now" : fmtDateTime(new Date(at).toISOString())}</span>
-                    </div>
                     <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 px-1 text-xs text-zinc-500 dark:text-zinc-400">
                       {viewBy === "story" && color === "activity"
                         ? (Object.keys(STATUS) as Story["status"][]).map((k) => <span key={k} className="inline-flex items-center gap-1.5"><span className={cx("size-2.5 rounded-full", STATUS[k].dot)} />{STATUS[k].label}</span>)

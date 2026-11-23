@@ -18,7 +18,7 @@ from triage_agent.models import AgentEvent, Case, CaseStatus, ChatMessage
 from .auth import User, get_ctx, require_analyst, require_viewer
 from .ops import op_available, run_op
 from .routes_metrics import env_filter
-from .serializers import case_summary, escalation_json, event_json
+from .serializers import case_summary, escalation_json, event_json, suppression_label
 
 router = APIRouter(prefix="/api", tags=["cases"])
 
@@ -212,6 +212,7 @@ def get_suppressed(
         s = case_summary(c)
         reviewed = bool(c.review and c.review.decision == "suppress")
         s["reason"] = ("im_review" if reviewed else s["suppression_reason"]) or "unspecified"
+        s["reason_label"] = suppression_label(s["reason"])
         s["suppressed_by"] = c.review.decided_by if reviewed and c.review else "agent"
         s["review_reason"] = c.review.reason if reviewed and c.review else None
         rows.append(s)
@@ -222,8 +223,8 @@ def get_suppressed(
     return {
         "window": {"days": days, "since": since, "until": until},
         "cases": rows,
-        "reasons": [{"reason": k, "count": v} for k, v in reasons.most_common()],
-        "event_reasons": [{"reason": k, "count": v} for k, v in event_reasons.most_common()],
+        "reasons": [{"reason": k, "label": suppression_label(k), "count": v} for k, v in reasons.most_common()],
+        "event_reasons": [{"reason": k, "label": suppression_label(k), "count": v} for k, v in event_reasons.most_common()],
         "review_suppressed": sum(1 for e in events if e.event_type == E.REVIEW_SUPPRESSED),
     }
 

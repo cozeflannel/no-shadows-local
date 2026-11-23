@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { apiGet, apiSend, type ApiError } from "../api/client";
 import { fmtDateTime, fmtNum } from "../lib/format";
+import { humanize } from "../lib/labels";
 import { Badge, Button, Card, cx, Field, Input, Segmented, Select, Textarea, Toggle } from "./ui";
 
 /** What the form needs to know from Settings: the tables that can be searched and the numbers its labels name. */
@@ -70,8 +71,8 @@ export function ConvertReport({ r, tables }: { r: ConvertResult; tables: FormInf
         <ul className="space-y-2">
           {r.report.notes.map((n, i) => (
             <li key={i} className="flex items-start gap-2">
-              <Badge tone={n.status === "converted" ? "emerald" : n.status === "approximated" ? "amber" : "rose"} className="shrink-0">
-                {n.status}{n.effect && n.effect !== "nothing left" ? `: ${n.effect}` : ""}
+              <Badge tone={n.status === "converted" ? "emerald" : n.status === "approximated" ? "violet" : "rose"} className="shrink-0">
+                {humanize(n.status)}{n.effect && n.effect !== "nothing left" ? `: ${n.effect}` : ""}
               </Badge>
               <span className="min-w-0">
                 {n.clause && <code className="break-all font-mono text-xs text-zinc-800 dark:text-zinc-200">{n.clause}</code>}
@@ -81,7 +82,7 @@ export function ConvertReport({ r, tables }: { r: ConvertResult; tables: FormInf
           ))}
         </ul>
       )}
-      {r.report.warnings?.map((w) => <p key={w} className="text-xs text-amber-700 dark:text-amber-300">{w}</p>)}
+      {r.report.warnings?.map((w) => <p key={w} className="text-xs text-violet-800 dark:text-violet-300">{w}</p>)}
       {r.estimate && (
         <p className="text-xs text-zinc-500 dark:text-zinc-400">
           Searching would scan: {Object.entries(r.estimate).map(([k, e]) => (e.skip ? `${label(k)}: skipped (${e.skip})` : `${label(k)} ${gb(e.bytes ?? 0)}`)).join(" · ") || "no table"}
@@ -268,7 +269,7 @@ export function TempCheckForm({ info, past, canAct, enabled, brandwatch, caseId,
                 <Input className="pl-9" value={qText} onChange={(e) => setQText(e.target.value)} placeholder="e.g. gmail outage" autoComplete="off" disabled={locked || !brandwatch} />
               </div>
             </Field>
-            {!brandwatch && <p className="text-xs text-amber-700 dark:text-amber-300">Brandwatch is not set up yet (Settings, Temp check). Use "No query yet" to count from our own tables.</p>}
+            {!brandwatch && <p className="text-xs text-violet-800 dark:text-violet-300">Brandwatch is not set up yet (Settings, Temp check). Use "No query yet" to count from our own tables.</p>}
             {qNote && <p className="text-xs text-zinc-500 dark:text-zinc-400">{qNote}</p>}
             {!!qList?.length && (
               <ul className="scroll-thin max-h-56 divide-y divide-zinc-100 overflow-y-auto rounded-xl border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
@@ -341,7 +342,7 @@ export function TempCheckForm({ info, past, canAct, enabled, brandwatch, caseId,
                     </span>
                   ))}
                 </div>
-              ) : <p className="text-xs text-amber-700 dark:text-amber-300">No table of posts is set up yet (Settings, Temp check).</p>}
+              ) : <p className="text-xs text-violet-800 dark:text-violet-300">No table of posts is set up yet (Settings, Temp check).</p>}
               <div className="space-y-2">
                 <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Search them with</p>
                 {!alert && <Radio name="tc-ownq" checked={ownq === "auto"} onChange={() => setOwnq("auto")} disabled={locked}>The Brandwatch query's own Boolean, converted</Radio>}

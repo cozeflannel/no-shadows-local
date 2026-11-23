@@ -2,7 +2,8 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* The palette: Gemini's neutral surfaces and Google blue, mapped onto the scales the components use. Dark is the default. */
+/* The palette: Gemini's neutral surfaces, Google blue, Gemini violet, Gemini rose and Google green, mapped onto the scales the
+   components use. Nothing else is drawn: no yellow, orange, amber, gold or lime. Dark is the default. */
 @theme {
   --font-sans: "Google Sans Flex Variable", "Google Sans Flex", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Google Sans Code Variable", "Google Sans Code", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -34,6 +35,33 @@
   --color-spark-blue: #4285f4;
   --color-spark-violet: #9b72cb;
   --color-spark-rose: #d96570;
+
+  /* Gemini violet (#9b72cb at 500): the colour for "needs a look" and for warnings. */
+  --color-violet-50: #f7f3fc; --color-violet-100: #efe6f9; --color-violet-200: #dfcdf2; --color-violet-300: #c9abe6; --color-violet-400: #b18fd9; --color-violet-500: #9b72cb; --color-violet-600: #8459b8; --color-violet-700: #6c469c; --color-violet-800: #56387d; --color-violet-900: #3f2a5c; --color-violet-950: #2a1b3f;
+  /* Gemini rose (#d96570 at 500), deepened towards Google red so error text stays easy to read: errors and the gradients. */
+  --color-rose-50: #fdf1f2; --color-rose-100: #fbe1e3; --color-rose-200: #f6c3c7; --color-rose-300: #ee9ca3; --color-rose-400: #e47b84; --color-rose-500: #d96570; --color-rose-600: #c3434f; --color-rose-700: #a3333f; --color-rose-800: #822a34; --color-rose-900: #5e2027; --color-rose-950: #3c1418;
+  /* Google red (#ea4335 at 500) and Google green (#34a853 at 500). */
+  --color-red-50: #fce8e6; --color-red-100: #fad2cf; --color-red-200: #f6aea9; --color-red-300: #f28b82; --color-red-400: #ee675c; --color-red-500: #ea4335; --color-red-600: #d93025; --color-red-700: #c5221f; --color-red-800: #b31412; --color-red-900: #a50e0e; --color-red-950: #5f0b08;
+  --color-emerald-50: #e6f4ea; --color-emerald-100: #ceead6; --color-emerald-200: #a8dab5; --color-emerald-300: #81c995; --color-emerald-400: #5bb974; --color-emerald-500: #34a853; --color-emerald-600: #1e8e3e; --color-emerald-700: #188038; --color-emerald-800: #137333; --color-emerald-900: #0d652d; --color-emerald-950: #083d1b;
+  --color-green-50: #e6f4ea; --color-green-100: #ceead6; --color-green-200: #a8dab5; --color-green-300: #81c995; --color-green-400: #5bb974; --color-green-500: #34a853; --color-green-600: #1e8e3e; --color-green-700: #188038; --color-green-800: #137333; --color-green-900: #0d652d; --color-green-950: #083d1b;
+
+  /* Safety net. Yellow, orange, amber and lime (gold) draw Gemini violet; pink and fuchsia draw Gemini rose; the other
+     off-brand scales draw the nearest brand colour or the Gemini neutrals. A stray class can't bring a warm colour back. */
+  --color-amber-50: #f7f3fc; --color-amber-100: #efe6f9; --color-amber-200: #dfcdf2; --color-amber-300: #c9abe6; --color-amber-400: #b18fd9; --color-amber-500: #9b72cb; --color-amber-600: #8459b8; --color-amber-700: #6c469c; --color-amber-800: #56387d; --color-amber-900: #3f2a5c; --color-amber-950: #2a1b3f;
+  --color-orange-50: #f7f3fc; --color-orange-100: #efe6f9; --color-orange-200: #dfcdf2; --color-orange-300: #c9abe6; --color-orange-400: #b18fd9; --color-orange-500: #9b72cb; --color-orange-600: #8459b8; --color-orange-700: #6c469c; --color-orange-800: #56387d; --color-orange-900: #3f2a5c; --color-orange-950: #2a1b3f;
+  --color-yellow-50: #f7f3fc; --color-yellow-100: #efe6f9; --color-yellow-200: #dfcdf2; --color-yellow-300: #c9abe6; --color-yellow-400: #b18fd9; --color-yellow-500: #9b72cb; --color-yellow-600: #8459b8; --color-yellow-700: #6c469c; --color-yellow-800: #56387d; --color-yellow-900: #3f2a5c; --color-yellow-950: #2a1b3f;
+  --color-lime-50: #f7f3fc; --color-lime-100: #efe6f9; --color-lime-200: #dfcdf2; --color-lime-300: #c9abe6; --color-lime-400: #b18fd9; --color-lime-500: #9b72cb; --color-lime-600: #8459b8; --color-lime-700: #6c469c; --color-lime-800: #56387d; --color-lime-900: #3f2a5c; --color-lime-950: #2a1b3f;
+  --color-purple-50: #f7f3fc; --color-purple-100: #efe6f9; --color-purple-200: #dfcdf2; --color-purple-300: #c9abe6; --color-purple-400: #b18fd9; --color-purple-500: #9b72cb; --color-purple-600: #8459b8; --color-purple-700: #6c469c; --color-purple-800: #56387d; --color-purple-900: #3f2a5c; --color-purple-950: #2a1b3f;
+  --color-pink-50: #fdf1f2; --color-pink-100: #fbe1e3; --color-pink-200: #f6c3c7; --color-pink-300: #ee9ca3; --color-pink-400: #e47b84; --color-pink-500: #d96570; --color-pink-600: #c3434f; --color-pink-700: #a3333f; --color-pink-800: #822a34; --color-pink-900: #5e2027; --color-pink-950: #3c1418;
+  --color-fuchsia-50: #fdf1f2; --color-fuchsia-100: #fbe1e3; --color-fuchsia-200: #f6c3c7; --color-fuchsia-300: #ee9ca3; --color-fuchsia-400: #e47b84; --color-fuchsia-500: #d96570; --color-fuchsia-600: #c3434f; --color-fuchsia-700: #a3333f; --color-fuchsia-800: #822a34; --color-fuchsia-900: #5e2027; --color-fuchsia-950: #3c1418;
+  --color-teal-50: #e6f4ea; --color-teal-100: #ceead6; --color-teal-200: #a8dab5; --color-teal-300: #81c995; --color-teal-400: #5bb974; --color-teal-500: #34a853; --color-teal-600: #1e8e3e; --color-teal-700: #188038; --color-teal-800: #137333; --color-teal-900: #0d652d; --color-teal-950: #083d1b;
+  --color-cyan-50: #ecf3fe; --color-cyan-100: #d3e3fd; --color-cyan-200: #a8c7fa; --color-cyan-300: #7cacf8; --color-cyan-400: #4c8df6; --color-cyan-500: #1b6ef3; --color-cyan-600: #0b57d0; --color-cyan-700: #0842a0; --color-cyan-800: #062e6f; --color-cyan-900: #041e49; --color-cyan-950: #03142f;
+  --color-sky-50: #ecf3fe; --color-sky-100: #d3e3fd; --color-sky-200: #a8c7fa; --color-sky-300: #7cacf8; --color-sky-400: #4c8df6; --color-sky-500: #1b6ef3; --color-sky-600: #0b57d0; --color-sky-700: #0842a0; --color-sky-800: #062e6f; --color-sky-900: #041e49; --color-sky-950: #03142f;
+  --color-indigo-50: #ecf3fe; --color-indigo-100: #d3e3fd; --color-indigo-200: #a8c7fa; --color-indigo-300: #7cacf8; --color-indigo-400: #4c8df6; --color-indigo-500: #1b6ef3; --color-indigo-600: #0b57d0; --color-indigo-700: #0842a0; --color-indigo-800: #062e6f; --color-indigo-900: #041e49; --color-indigo-950: #03142f;
+  --color-slate-50: #f0f4f9; --color-slate-100: #e9eef6; --color-slate-200: #dde3ea; --color-slate-300: #c4c7c5; --color-slate-400: #9aa0a6; --color-slate-500: #80868b; --color-slate-600: #5f6368; --color-slate-700: #444746; --color-slate-800: #333537; --color-slate-900: #1e1f20; --color-slate-950: #131314;
+  --color-gray-50: #f0f4f9; --color-gray-100: #e9eef6; --color-gray-200: #dde3ea; --color-gray-300: #c4c7c5; --color-gray-400: #9aa0a6; --color-gray-500: #80868b; --color-gray-600: #5f6368; --color-gray-700: #444746; --color-gray-800: #333537; --color-gray-900: #1e1f20; --color-gray-950: #131314;
+  --color-neutral-50: #f0f4f9; --color-neutral-100: #e9eef6; --color-neutral-200: #dde3ea; --color-neutral-300: #c4c7c5; --color-neutral-400: #9aa0a6; --color-neutral-500: #80868b; --color-neutral-600: #5f6368; --color-neutral-700: #444746; --color-neutral-800: #333537; --color-neutral-900: #1e1f20; --color-neutral-950: #131314;
+  --color-stone-50: #f0f4f9; --color-stone-100: #e9eef6; --color-stone-200: #dde3ea; --color-stone-300: #c4c7c5; --color-stone-400: #9aa0a6; --color-stone-500: #80868b; --color-stone-600: #5f6368; --color-stone-700: #444746; --color-stone-800: #333537; --color-stone-900: #1e1f20; --color-stone-950: #131314;
 }
 
 @property --glow-angle {
@@ -102,6 +130,83 @@ body {
   }
 }
 
+/* '< back' at the top of a page: plain small text. Pressed, or reached with the keyboard, its edge lights up with the
+   Gemini gradient, which turns once and fades (about 600 ms). While it has keyboard focus the thin edge stays.
+   .back-ring is the edge, .back-soft the glow around it. --back-delay starts the glow part way through when the page
+   before handed it on. */
+.back-link {
+  position: relative;
+  isolation: isolate;
+}
+
+.back-ring,
+.back-soft {
+  position: absolute;
+  inset: -2px -6px;
+  border-radius: 9999px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.back-ring {
+  padding: 1.5px;
+  background: conic-gradient(from var(--glow-angle), #4285f4, #9b72cb, #d96570, #9b72cb, #4285f4);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.back-soft {
+  box-shadow:
+    -6px 0 18px -6px rgb(66 133 244 / 0.75),
+    6px 0 18px -6px rgb(217 101 112 / 0.75),
+    0 6px 18px -8px rgb(155 114 203 / 0.75);
+}
+
+.back-link[data-glow] .back-ring,
+.back-link[data-glow] .back-soft {
+  animation: back-glow 600ms ease-out var(--back-delay, 0ms);
+}
+
+.back-link:focus-visible {
+  outline: none;
+}
+
+.back-link:focus-visible .back-ring {
+  opacity: 0.9;
+  animation: back-turn 600ms ease-out;
+}
+
+.back-link:focus-visible .back-soft {
+  animation: back-glow 600ms ease-out;
+}
+
+@keyframes back-glow {
+  0% {
+    opacity: 0;
+    --glow-angle: 120deg;
+  }
+  25%,
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    --glow-angle: 480deg;
+  }
+}
+
+@keyframes back-turn {
+  from {
+    --glow-angle: 120deg;
+  }
+  to {
+    --glow-angle: 480deg;
+  }
+}
+
 .text-spark {
   background: linear-gradient(92deg, #4285f4 0%, #9b72cb 48%, #d96570 100%);
   -webkit-background-clip: text;
@@ -152,6 +257,11 @@ body {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+
+  /* No turning edge: '< back' shows its edge, still, for the moment it is pressed. */
+  .back-link[data-glow] .back-ring {
+    opacity: 1;
   }
 }
 

@@ -32,6 +32,7 @@ TOPICS: list[dict[str, Any]] = [
                 "Admin: people and roles, system status, recent changes (leads and admins).",
                 "Settings: tuning values. Each has a working default (admins)."]},
             {"heading": "Chat or Console", "text": "Work an alert in Chat with reactions, or here. Both are recorded in the same case timeline and audit log."},
+            {"heading": "Going back", "text": "Every page but the Dashboard has < back above its title. It opens the page you came from, or the Dashboard."},
         ],
     },
     {
@@ -61,12 +62,16 @@ TOPICS: list[dict[str, Any]] = [
                 "Switch the view: Review, Verified, Suppressed, Closed or All.",
                 "Search by case id, product, tag or issue."]},
             {"heading": "Read a card", "items": [
-                "Verdict: the agent's decision.",
+                "The first badge says what the alert is waiting for (Needs review, To acknowledge, SLA at risk, Waiting on Burson) or, when "
+                "nothing, where it is now (Verified, Suppressed, Closed).",
+                "A second badge is the agent's verdict, shown only when it adds something: Corrected, or Held for review on an alert an IM has "
+                "since suppressed. Needs review is never shown twice.",
+                "Why it was held for review: each reason as a sentence, with the field's name as the alert writes it.",
                 "Burson 3 of 5 right (60%): of the fields Burson filled in, how many stood up to the checks. Counted, not estimated.",
                 "72% likely to need a person: Gemini Decisions' probability, shown when the switch Gemini Decisions scores each alert is ON.",
                 "Kept 47 of 50, beside a field: how often incident managers kept the app's value for that field in their own assessments, last 30 days.",
                 "Class: the classification layer's class (when that switch is on).",
-                "Corrections: what the agent changed, old to new. Proposed corrections wait for you.",
+                "Corrections: what the agent changed, old to new. Suggested corrections wait for you.",
                 "Sources: the knowledge passages the assessment cited. Click one to open the document.",
                 "Suggested actions: what the routing rules recommend."]},
             {"heading": "Decide an alert held for review", "steps": [
@@ -244,7 +249,7 @@ TOPICS: list[dict[str, Any]] = [
                 "One circle per story. Its size is its engagement (or its number of alerts: Settings → Stories → Size by).",
                 "Red: at least half of the story's rated posts are negative. Grey: neutral. Green: positive. A dashed grey ring: not rated yet.",
                 "Inner circles are the smaller stories in it: the alerts under one issue name.",
-                "Color by Activity shows blue for growing, purple for new and grey for quiet instead.",
+                "Color by Activity shows blue for growing, violet for new and grey for quiet instead.",
                 "A gradient ring: an alert in the story needs action."]},
             {"heading": "Change the view", "steps": [
                 "View by Product or Topic: one circle per product or topic. Its inner circles are its posts by sentiment.",
@@ -257,8 +262,16 @@ TOPICS: list[dict[str, Any]] = [
                 "The biggest unread stories are read first, a few on every run. A story that grows is read again.",
                 "Read now on a story reads it straight away.",
                 "The shares that make a story negative or positive, and how many posts are read, are in Settings → Stories."]},
-            {"heading": "Watch a story grow", "steps": ["Click Play growth, or drag the time slider.", "Circles grow in place from the start of the window to now.",
-                                                         "Use Window to look further back, up to 30 days."]},
+            {"heading": "Watch a story grow", "steps": [
+                "Click Play. The map starts just before the first alert of the stories shown and grows to now in 6 to 14 seconds. Pause stops it.",
+                "Or drag the time slider. At each moment a circle holds only the alerts that had come in by then. The line under the slider "
+                "says the moment and how many alerts, stories and accounts there were so far.",
+                "Each tick above the slider is a moment when an alert came in. Busy stretches take up more of the slider, so every move shows "
+                "a change. The grey line is where the window starts: a story on the map can have alerts from before it.",
+                "With the slider selected, the arrow keys step from one alert to the next; Home goes to the start and End to now.",
+                "Start over goes back to the first alert. Jump to now shows the map as it is now.",
+                "With reduced motion turned on in your computer's settings, Play steps from one alert to the next without moving in between.",
+                "Use Window to choose which stories are shown: those with an alert in the last 24 hours, up to 30 days."]},
             {"heading": "Open a story", "steps": [
                 "Click a circle, or a row in List.",
                 "The panel shows Gemini's read, the posts by sentiment, the running total, the smaller stories, every post with its words, and the Chat messages linked to them.",

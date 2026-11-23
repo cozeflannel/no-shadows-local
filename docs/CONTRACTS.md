@@ -614,7 +614,11 @@ Response schemas are pydantic models next to the code that uses them.
 - Cases:
   - `GET /api/cases?status=&source=&track=&limit=`
   - `GET /api/cases/{id}` (case + events + escalations)
-- Suppressed: `GET /api/suppressed?days=7` (case list + reasons)
+  - Every case summary (`serializers.case_summary`: case lists, the Review feed, a story's alerts) also says two things in plain words:
+    `review_reasons_plain` (the `review_reasons`, one sentence each: field labels for field keys, words for codes) and
+    `suppression_label` (`suppression_reason` in words; `null` when there is none). The codes stay as they were.
+- Suppressed: `GET /api/suppressed?days=7` (case list + reasons). Each case has `reason_label`, and each count in `reasons` /
+  `event_reasons` has `label`: the reason in words (`serializers.SUPPRESSION_LABELS`, the same words as the Console's).
 - Review queue:
   - `GET /api/review-queue`
   - `POST /api/review-queue/{case_id}` `{decision, reason?, fields?}` → `handle(review_decision, deliver=outbox)`
@@ -665,7 +669,9 @@ Console re-read overrides within 5 seconds.
 identifier clash, `same_story_similarity`, `gray_similarity` with the same tag and product, word likeness without vectors, `keep_days`).
 Collections `stories`, `story_members` (case id to story), `story_vectors` (removed past `keep_days`). `stories.refresh` runs on
 `GET /api/stories` and in the once-a-minute tick. `GET /api/stories?hours=` returns each story's size, status (`new`, `growing`, `quiet`),
-smaller stories, per-alert points and hourly running totals; `GET /api/stories/{id}` adds its alerts and Chat messages.
+smaller stories, per-alert points and hourly running totals; `GET /api/stories/{id}` adds its alerts and Chat messages. A point is
+`{t, e, s, id, a, m}`: when the alert came in, its engagement, its smaller story, its case, its post's author (the account; `""` when
+not known) and its sentiment label. The map's time slider counts alerts, stories and accounts from them.
 
 **Compare, Admin, Integrations:** `GET /api/compare?days=` (four sections of `{key, label, value, unit, note, previous}`),
 `GET /api/admin/overview` (leads), `PUT|DELETE /api/admin/people/{email}` (admins; audit `people.save`, `people.remove`),
