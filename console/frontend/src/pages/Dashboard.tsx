@@ -8,7 +8,7 @@ import { TimeseriesChart } from "../components/charts";
 import { ActiveFilters, FilterMenu, RangePicker } from "../components/DashboardFilters";
 import { Button, Card, cx, ErrorState, PageHeader, Segmented, Skeleton, Stat, Tooltip } from "../components/ui";
 import { useApp } from "../context";
-import { useDashboardQuery, type AlertLines, type Breakdown, type DimensionKey, type ResponseStep } from "../lib/dashboard";
+import { DIMENSIONS, useDashboardQuery, type AlertLines, type Breakdown, type DimensionKey, type ResponseStep } from "../lib/dashboard";
 import { fmtDuration, fmtMinutes, fmtNum, fmtPct, fmtTime, tzAbbr } from "../lib/format";
 import { CHART_COLORS } from "../lib/labels";
 import { useLive } from "../lib/live";
@@ -132,7 +132,7 @@ export default function DashboardPage() {
   const now = live.now;
   const delta = (key: string) => (k && p ? (k[key] ?? 0) - (p[key] ?? 0) : null);
   const todo = setup.data?.steps.filter((s) => !s.done) ?? [];
-  const dims = lines?.dimensions ?? [];
+  const dims = lines?.dimensions ?? DIMENSIONS;
   const dim = (key: DimensionKey) => dims.find((x) => x.key === key);
   const selected = (key: DimensionKey) => q.query.filters[key] ?? [];
   const total = lines?.total_messages ?? 0;
@@ -206,6 +206,12 @@ export default function DashboardPage() {
                 On {fmtNum(lines.total_alerts)} alert{lines.total_alerts === 1 ? "" : "s"} (a rerun or an engagement update is another message on the same alert).
                 {" "}{change === 0 ? "Same as" : `${change > 0 ? "+" : ""}${fmtNum(change)} against`} the period before ({fmtNum(lines.previous_messages)}).
               </p>
+              <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-zinc-100 pt-3 text-xs dark:border-zinc-800">
+                <div><dt className="text-zinc-500">New alerts</dt><dd className="mt-0.5 text-lg font-medium tabular-nums text-zinc-900 dark:text-zinc-100">{fmtNum(lines.new_alerts)}</dd><dd className="text-zinc-500">first message in this view</dd></div>
+                <div><dt className="text-zinc-500">{d?.filtered ? "Match the filters" : "Every alert message"}</dt>
+                  <dd className="mt-0.5 text-lg font-medium tabular-nums text-zinc-900 dark:text-zinc-100">{lines.messages_in_range ? fmtPct(total / lines.messages_in_range, 0) : "—"}</dd>
+                  <dd className="text-zinc-500">of {fmtNum(lines.messages_in_range)} in this time range</dd></div>
+              </dl>
               {lines.capped && <p className="mt-2 text-xs text-rose-600 dark:text-rose-300">Only the most recent 20,000 alerts are counted for this range.</p>}
             </>
           )}
@@ -250,7 +256,7 @@ export default function DashboardPage() {
         {!d ? Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[104px] rounded-2xl" />) : <>
           <Stat label="Passed as sent, first try" value={fmtPct(d.derived.first_pass_yield, 0)} hint={`${fmtNum(k?.forwarded_without_edits)} alerts`} />
           <Stat label="Fixed by the agent" value={fmtPct(d.derived.auto_fix_rate, 0)} hint={`${fmtNum(k?.auto_corrected)} alerts, no Burson rerun needed`} />
-          <Stat label="Sent back to Burson" value={fmtNum(k?.sent_back_for_edits)} delta={delta("sent_back_for_edits")} hint="needed Burson to fix them" />
+          <Stat label="Sent back to Burson" value={fmtNum(k?.sent_back_for_edits)} hint="alerts only Burson could fix" />
           <Stat label="Social Alert emails on time" value={fmtPct(d.derived.sla_met_pct, 0)} hint={k?.sla_missed ? `${fmtNum(k.sla_missed)} sent late` : "none late"} tone={k?.sla_missed ? "rose" : undefined} />
         </>}
       </div>

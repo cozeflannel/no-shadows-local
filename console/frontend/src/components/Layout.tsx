@@ -87,9 +87,15 @@ export function Layout({ children }: { children: ReactNode }) {
   });
   const [drawer, setDrawer] = useState(false);
   const [more, setMore] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(() => {
+    try { return localStorage.getItem("console-nav-setup") !== "closed"; } catch { return true; }
+  });
   useEffect(() => {
     try { localStorage.setItem("console-nav", folded ? "collapsed" : "open"); } catch { /* private mode */ }
   }, [folded]);
+  useEffect(() => {
+    try { localStorage.setItem("console-nav-setup", setupOpen ? "open" : "closed"); } catch { /* private mode */ }
+  }, [setupOpen]);
   useEffect(() => { setDrawer(false); }, [location.pathname, location.search]);
   const collapsed = folded && wide; // the drawer always shows labels
 
@@ -132,6 +138,7 @@ export function Layout({ children }: { children: ReactNode }) {
   ];
   const recordsActive = records.some((e) => location.pathname.startsWith(e.to));
   const showRecords = more || recordsActive || collapsed;
+  const showSetup = setupOpen || collapsed || setup.some((e) => location.pathname.startsWith(e.to));
 
   return (
     <div className="flex h-full">
@@ -166,8 +173,13 @@ export function Layout({ children }: { children: ReactNode }) {
         <div className="mt-4 flex flex-col gap-0.5 border-t border-zinc-200 pt-3 dark:border-zinc-800">
           {!wide && <div className="px-1 pb-2"><GmailButton /></div>}
           {(me?.is_admin || me?.is_lead) && <>
-            <GroupLabel collapsed={collapsed}>Setup</GroupLabel>
-            {setup.map((item) => <Item key={item.to} item={item} collapsed={collapsed} />)}
+            {!collapsed && (
+              <button type="button" onClick={() => setSetupOpen((o) => !o)} aria-expanded={showSetup}
+                className="flex w-full items-center gap-2 rounded-full px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500 hover:bg-zinc-200/70 dark:hover:bg-zinc-800">
+                <span className="flex-1 text-left">Setup (admins and leads)</span><ChevronDown className={cx("size-3.5 transition-transform", showSetup && "rotate-180")} aria-hidden />
+              </button>
+            )}
+            {showSetup && setup.map((item) => <Item key={item.to} item={item} collapsed={collapsed} />)}
           </>}
           <Item item={{ to: "/help", label: "Help", icon: <CircleHelp className={icon} /> }} collapsed={collapsed} />
           {wide && (

@@ -18,6 +18,19 @@ export interface AlertLines {
   response_times: ResponseStep[]; filters: Filters;
 }
 
+/** The filters' names before the first answer arrives (the API sends the same list in `alert_lines.dimensions`). */
+export const DIMENSIONS: Dimension[] = [
+  { key: "product", label: "Product", line: "[Product(s)]", multi: true },
+  { key: "social_network", label: "Social network", line: "[Social Network]", multi: false },
+  { key: "exposure_tag", label: "Exposure tag", line: "[Exposure Tag]", multi: false },
+  { key: "sensitive_topic", label: "Sensitive topic", line: "[Sensitive Topic]", multi: true },
+  { key: "kof", label: "KOF", line: "[KOF]", multi: false },
+  { key: "kof_list", label: "KOF list", line: "[KOF] list", multi: true },
+  { key: "sentiment", label: "Sentiment", line: "Gemini's read", multi: false },
+  { key: "verdict", label: "What the agent decided", line: "", multi: false },
+  { key: "source", label: "Came from", line: "", multi: false },
+];
+
 export const RANGES: { value: RangeName; label: string }[] = [
   { value: "today", label: "Today" }, { value: "24h", label: "Last 24 hours" }, { value: "7d", label: "Last 7 days" },
   { value: "30d", label: "Last 30 days" }, { value: "custom", label: "Custom" },
