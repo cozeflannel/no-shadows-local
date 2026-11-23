@@ -14,6 +14,7 @@ reviewers before they were accepted; nothing here needs designing again. What is
 | `3_requirements_first_plan.md` | "requirements first, then clustering" (its section C wins over its section B, and the whole file wins over the open-engine plan where they differ) |
 | `4_first_screen_plan.md` | the first screen in front of the one-post quick look (step S19h) |
 | `5_own_alerts_plan.md` | agent alerts in the Python app (the Console), from the owner's rebuild specification of 22 Nov 2026: its decisions, its steps and its own Progress table. It is separate from the steps listed below, which are the sheet-based bot's |
+| `6_review_workspace_plan.md` | the QA chatbot run from the Console and Review as the workspace, from the owner's request of 23 Nov 2026: its decisions, its steps in order and its own Progress table. Separate from the steps listed below |
 
 ## What is being built
 
