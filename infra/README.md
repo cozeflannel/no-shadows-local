@@ -109,7 +109,10 @@ settings that name the connection and the salt. Then, in the Console:
 2. Share the KOF sheet (Viewer) with the runtime service account. Enter the sheet's link under **Settings, Agent alerts**.
 3. **Settings, Switches**: turn on Change BigQuery from here. On **Agent alerts**, press Create the tables.
 4. **Agent alerts**, Rules: add the rules.
-5. **Settings, Switches**: turn on Agent alerts. To post in Chat, choose the space under Settings, Agent alerts, then turn on Post agent alerts in Chat.
+5. **Settings, Switches**: turn on Agent alerts.
+6. **Agent alerts**, Run now: one run and one review at once. Sources shows what each source handed over; a source that could not be read
+   says why, in BigQuery's own words.
+7. To post in Chat, choose the space under Settings, Agent alerts, then turn on Post agent alerts in Chat.
 
 Run on its own, `11_own_alerts.sh` leaves two things: redeploy the Agent Runtime (`05`; until then the worker reviews, and each alert's
 record says so), and fill the connection and the salt's secret (`10_seed_settings.py`, or Settings, Agent alerts).

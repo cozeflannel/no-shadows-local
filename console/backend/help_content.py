@@ -430,6 +430,7 @@ TOPICS: list[dict[str, Any]] = [
                 "Open Settings, Switches and turn on Change BigQuery from here. Then open Agent alerts and press Create the tables.",
                 "Open Agent alerts, Rules, and add your rules.",
                 "Open Settings, Switches and turn on Agent alerts.",
+                "Open Agent alerts and press Run now. Sources shows what each source handed over. A source that could not be read says why.",
                 "To post in Chat: choose the space under Settings, Agent alerts, then turn on Post agent alerts in Chat. An alert is never posted in the source space."]},
         ],
     },
