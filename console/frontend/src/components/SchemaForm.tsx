@@ -1,15 +1,18 @@
 import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { ModelSelect, modelKindOf, withoutBlank, type ModelCatalog } from "./settings/ModelSelect";
 import { Button, cx, Input, Select, Switch, Textarea } from "./ui";
 
 /** A JSON Schema node as pydantic writes it (only the parts the settings use). */
 export interface Schema {
   type?: string; title?: string; description?: string; enum?: unknown[]; default?: unknown; properties?: Record<string, Schema>; items?: Schema;
   additionalProperties?: boolean | Schema; anyOf?: Schema[]; allOf?: Schema[]; $ref?: string; $defs?: Record<string, Schema>;
-  minimum?: number; maximum?: number; exclusiveMinimum?: number;
+  minimum?: number; maximum?: number; exclusiveMinimum?: number; "x-model"?: string;
 }
 type Errors = Record<string, string>;
+/** Where the form's settings live (platform.chat_agent) and the models on offer: a model setting is then a list. */
+export interface FormModels { scope: string; catalog: ModelCatalog | null }
 
 function resolve(node: Schema | undefined, root: Schema): Schema {
   let s = node ?? {};
@@ -48,22 +51,29 @@ function Json({ value, onChange, disabled }: { value: unknown; onChange: (v: unk
     onChange={(e) => { setText(e.target.value); try { onChange(JSON.parse(e.target.value)); setBad(false); } catch { setBad(true); } }} />;
 }
 
-function Node({ name, schema, root, value, onChange, path, errors, disabled }: {
-  name: string; schema: Schema; root: Schema; value: unknown; onChange: (v: unknown) => void; path: string; errors: Errors; disabled?: boolean;
+function Node({ name, schema, root, value, onChange, path, errors, disabled, models }: {
+  name: string; schema: Schema; root: Schema; value: unknown; onChange: (v: unknown) => void; path: string; errors: Errors; disabled?: boolean; models?: FormModels;
 }) {
   const s = resolve(schema, root);
   const error = errors[path];
+  // A model setting: from what the settings say about it (the list's metadata), else from its name.
+  const meta = models?.catalog?.fields[`${models.scope}.${path}`];
+  const kind = !models || s.type !== "string" || s.enum ? null : meta ? (meta.kind === "none" ? null : meta.kind) : modelKindOf(name, s);
+  const description = kind ? withoutBlank(s.description) : s.description;
   const head = (
     <div className="min-w-0">
       <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{label(name, s)}</p>
-      {s.description && <p className="mt-0.5 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{s.description}</p>}
+      {description && <p className="mt-0.5 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{description}</p>}
       {error && <p className="mt-0.5 text-xs text-rose-500">{error}</p>}
     </div>
   );
   if (s.type === "boolean") return <div className="flex items-start justify-between gap-6 py-3">{head}<Switch checked={!!value} onChange={onChange} disabled={disabled} label={label(name, s)} /></div>;
 
   let control;
-  if (s.enum) {
+  if (kind && models) {
+    control = <ModelSelect value={String(value ?? "")} kind={kind} field={meta} catalog={models.catalog} disabled={disabled} label={label(name, s)}
+      onChange={(v) => onChange(v === "" && nullable(schema) ? null : v)} />;
+  } else if (s.enum) {
     control = <Select value={String(value ?? "")} disabled={disabled} onChange={(e) => onChange(e.target.value)}>{s.enum.map((o) => <option key={String(o)} value={String(o)}>{String(o)}</option>)}</Select>;
   } else if (s.type === "integer" || s.type === "number") {
     control = <Input type="number" step={s.type === "integer" ? 1 : "any"} min={s.minimum} max={s.maximum} disabled={disabled} value={value === null || value === undefined ? "" : String(value)}
@@ -80,7 +90,7 @@ function Node({ name, schema, root, value, onChange, path, errors, disabled }: {
         <div className="space-y-3">
           {list.map((row, i) => (
             <div key={i} className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
-              <Fields schema={item} root={root} value={row as Record<string, unknown>} onChange={(v) => onChange(list.map((x, n) => (n === i ? v : x)))} path={`${path}.${i}`} errors={errors} disabled={disabled} />
+              <Fields schema={item} root={root} value={row as Record<string, unknown>} onChange={(v) => onChange(list.map((x, n) => (n === i ? v : x)))} path={`${path}.${i}`} errors={errors} disabled={disabled} models={models} />
               <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} disabled={disabled} onClick={() => onChange(list.filter((_, n) => n !== i))}>Remove</Button>
             </div>
           ))}
@@ -91,7 +101,7 @@ function Node({ name, schema, root, value, onChange, path, errors, disabled }: {
       control = <Lines value={list} disabled={disabled} onChange={(v) => onChange(item.type === "string" ? v : v.map(Number).filter((n) => !Number.isNaN(n)))} />;
     } else control = <Json value={list} onChange={onChange} disabled={disabled} />;
   } else if (s.type === "object" && s.properties) {
-    control = <div className="rounded-xl border border-zinc-200 px-3 dark:border-zinc-800"><Fields schema={s} root={root} value={(value ?? {}) as Record<string, unknown>} onChange={onChange} path={path} errors={errors} disabled={disabled} /></div>;
+    control = <div className="rounded-xl border border-zinc-200 px-3 dark:border-zinc-800"><Fields schema={s} root={root} value={(value ?? {}) as Record<string, unknown>} onChange={onChange} path={path} errors={errors} disabled={disabled} models={models} /></div>;
   } else if (s.type === "object" && typeof s.additionalProperties === "object") {
     const inner = resolve(s.additionalProperties, root);
     const map = (value ?? {}) as Record<string, unknown>;
@@ -102,7 +112,7 @@ function Node({ name, schema, root, value, onChange, path, errors, disabled }: {
         {entries.map(([k, v], i) => (
           <div key={i} className={cx("gap-2", inner.properties ? "rounded-xl border border-zinc-200 p-3 dark:border-zinc-800" : "flex items-center")}>
             <Input value={k} disabled={disabled} aria-label="Name" className={cx(!inner.properties && "max-w-56")} onChange={(e) => rename(k, e.target.value)} />
-            {inner.properties ? <Fields schema={inner} root={root} value={v as Record<string, unknown>} onChange={(nv) => onChange({ ...map, [k]: nv })} path={`${path}.${k}`} errors={errors} disabled={disabled} />
+            {inner.properties ? <Fields schema={inner} root={root} value={v as Record<string, unknown>} onChange={(nv) => onChange({ ...map, [k]: nv })} path={`${path}.${k}`} errors={errors} disabled={disabled} models={models} />
               : <Input value={String(v ?? "")} disabled={disabled} aria-label={`Value for ${k}`} onChange={(e) => onChange({ ...map, [k]: inner.type === "number" || inner.type === "integer" ? Number(e.target.value) : e.target.value })} />}
             <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} disabled={disabled} aria-label={`Remove ${k}`} onClick={() => onChange(Object.fromEntries(entries.filter(([x]) => x !== k)))} />
           </div>
@@ -115,18 +125,19 @@ function Node({ name, schema, root, value, onChange, path, errors, disabled }: {
   return <div className="grid grid-cols-1 gap-2 py-3 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] md:gap-6">{head}<div className="min-w-0">{control}</div></div>;
 }
 
-function Fields({ schema, root, value, onChange, path, errors, disabled }: { schema: Schema; root: Schema; value: Record<string, unknown>; onChange: (v: Record<string, unknown>) => void; path: string; errors: Errors; disabled?: boolean }) {
+function Fields({ schema, root, value, onChange, path, errors, disabled, models }: { schema: Schema; root: Schema; value: Record<string, unknown>; onChange: (v: Record<string, unknown>) => void; path: string; errors: Errors; disabled?: boolean; models?: FormModels }) {
   return (
     <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
       {Object.entries(schema.properties ?? {}).map(([key, sub]) => (
-        <Node key={key} name={key} schema={sub} root={root} value={value?.[key]} path={path ? `${path}.${key}` : key} errors={errors} disabled={disabled}
+        <Node key={key} name={key} schema={sub} root={root} value={value?.[key]} path={path ? `${path}.${key}` : key} errors={errors} disabled={disabled} models={models}
           onChange={(v) => onChange({ ...value, [key]: v })} />
       ))}
     </div>
   );
 }
 
-/** A form built from a settings schema: one row a setting, with its description and the right control for its type. */
-export function SchemaForm({ schema, value, onChange, errors = {}, disabled }: { schema: Schema; value: Record<string, unknown>; onChange: (v: Record<string, unknown>) => void; errors?: Errors; disabled?: boolean }) {
-  return <Fields schema={resolve(schema, schema)} root={schema} value={value} onChange={onChange} path="" errors={errors} disabled={disabled} />;
+/** A form built from a settings schema: one row a setting, with its description and the right control for its type.
+ * With `models`, a setting that names a Gemini model is a list of the models the project can use. */
+export function SchemaForm({ schema, value, onChange, errors = {}, disabled, models }: { schema: Schema; value: Record<string, unknown>; onChange: (v: Record<string, unknown>) => void; errors?: Errors; disabled?: boolean; models?: FormModels }) {
+  return <Fields schema={resolve(schema, schema)} root={schema} value={value} onChange={onChange} path="" errors={errors} disabled={disabled} models={models} />;
 }

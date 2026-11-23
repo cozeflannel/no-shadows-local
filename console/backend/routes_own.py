@@ -2,6 +2,10 @@
 
 What the page is given, a run and the set-up of the BigQuery objects started by hand, the rules each new post is
 checked against, and an analyst's verdict on an alert. Its settings are a Settings page of their own (own_alerts).
+
+What went wrong in a run, a review or a source's read reaches the page as `problem` (ownalerts/plain.py): what
+happened and what to do, in plain words. Google's own words are given to admins only, as the problem's `technical`;
+for everyone else each `error` holds the plain words too.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from triage_agent import bq_admin
 from triage_agent.config import switch_off
 from triage_agent.context import AgentContext
 from triage_agent.models import SPACE_TARGETS
-from triage_agent.ownalerts import POST_SWITCH, SWITCH, cycle, feedback, kof, review, rules, schema, sources
+from triage_agent.ownalerts import POST_SWITCH, SWITCH, cycle, feedback, kof, plain, review, rules, schema, sources
 
 from .auth import User, get_ctx, require_admin, require_analyst, require_lead, require_viewer
 
@@ -24,22 +28,41 @@ NAME = "Agent alerts"
 VERDICT_WORDS = {"TRUE_POSITIVE": "Confirmed", "FALSE_POSITIVE": "False positive"}
 
 
-def _state(ctx: AgentContext) -> dict[str, Any]:
+def _plain(state: dict[str, Any], admin: bool) -> dict[str, Any]:
+    """Each error the state holds, as what happened and what to do. Google's own words stay for admins only."""
+    def said(raw: str, what: str) -> dict[str, Any]:
+        return plain.for_viewer(plain.explain(raw, what), admin)
+
+    state["problem"] = said(state.get("error") or "", "run")
+    state["review"]["problem"] = said(state["review"].get("error") or "", "review")
+    state["kof"]["problem"] = said(state["kof"].get("error") or "", "source")
+    for source in state["sources"]:  # a source waiting for its owners is explained on the page as it is
+        source["problem"] = said(source.get("error") or "", "source") if source.get("status") != "waiting" else {}
+    if not admin:
+        for holder in (state, state["review"], state["kof"], *state["sources"]):
+            if holder.get("error"):
+                holder["error"] = (holder.get("problem") or {}).get("message") or "It could not finish."
+    return state
+
+
+def _state(ctx: AgentContext, user: User) -> dict[str, Any]:
     cfg = ctx.config.platform
     own = cfg.own_alerts
     target = own.post_target.strip()
     space = ctx.config.space(target) if target in SPACE_TARGETS else None
-    return {**cycle.status(ctx), "review": review.status(ctx), "kof": kof.status(ctx), "rules_pending": rules.pending(ctx),
-            "post": {"on": cfg.flag(POST_SWITCH), "target": target, "space": space.display_name if space else ""},
-            "engine": own.review_engine, "severities": list(own.severities), "paths": list(own.escalation_paths),
-            "bigquery_admin": cfg.flags.bigquery_admin}
+    state = {**cycle.status(ctx), "review": review.status(ctx), "kof": kof.status(ctx), "rules_pending": rules.pending(ctx),
+             "post": {"on": cfg.flag(POST_SWITCH), "target": target, "space": space.display_name if space else ""},
+             "engine": own.review_engine, "severities": list(own.severities), "paths": list(own.escalation_paths),
+             "bigquery_admin": cfg.flags.bigquery_admin,
+             "made_before": bool((ctx.store.get_kv(schema.STATE) or {}).get("version"))}  # out of date, rather than never made
+    return _plain(state, user.has("admin"))
 
 
 @router.get("")
 def own_page(days: int = 7, status: Literal["", "raised", "passed"] = "", ctx: AgentContext = Depends(get_ctx),
              user: User = Depends(require_viewer)) -> dict[str, Any]:
     keep = ctx.config.platform.own_alerts.console_keep_days
-    return {"state": _state(ctx), "decisions": review.list_decisions(ctx, max(1, min(days, keep)), status),
+    return {"state": _state(ctx, user), "decisions": review.list_decisions(ctx, max(1, min(days, keep)), status),
             "can_act": user.has("analyst"), "can_run": user.has("lead"), "can_edit_rules": user.has("lead"), "can_set_up": user.has("admin")}
 
 
@@ -54,7 +77,13 @@ def own_run(ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_l
     ok = bool(run.get("ok", True)) and bool(reviewed.get("ok", True))
     ctx.audit(actor=user.email, action="own.run", surface="console", target_type="own_alerts", status="ok" if ok else "error",
               summary=f"Started a run by hand. {cycle.said(run)}. Reviewed {reviewed.get('reviewed', 0)}, raised {reviewed.get('raised', 0)}"[:300])
-    return {"ok": ok, "run": run, "review": reviewed}
+    admin = user.has("admin")
+    problem = plain.explain(run.get("error") or "", "run") or plain.explain(reviewed.get("error") or "", "review")
+    if not admin:  # Google's own words are for admins: everyone else is told what happened and what to do
+        for part, what in ((run, "run"), (reviewed, "review")):
+            if part.get("error"):
+                part["error"] = plain.explain(part["error"], what)["message"]
+    return {"ok": ok, "run": run, "review": reviewed, "problem": plain.for_viewer(problem, admin)}
 
 
 @router.post("/setup")

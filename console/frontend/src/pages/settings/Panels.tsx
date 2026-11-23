@@ -4,6 +4,7 @@ import { Link } from "react-router";
 
 import { apiGet, apiSend, type ApiError } from "../../api/client";
 import { useApi } from "../../api/hooks";
+import { ModelSelect, useModelCatalog } from "../../components/settings/ModelSelect";
 import { Alert, Badge, Button, Card, CodeBlock, cx, EmptyState, ErrorState, Field, Input, Modal, OffNotice, Segmented, Select, Spinner, Stat, TD, TH, TR, Textarea } from "../../components/ui";
 import { useApp } from "../../context";
 import { fmtDateTime, fmtNum, fmtRelative } from "../../lib/format";
@@ -79,7 +80,7 @@ export function SecretsPanel() {
                     {versions.loading && !versions.data ? <Spinner /> : (
                       <ul className="space-y-2 text-sm">{(versions.data?.versions ?? []).map((v) => (
                         <li key={v.version} className="flex flex-wrap items-center gap-3">
-                          <span className="tabular-nums">Version {v.version}</span><Badge tone={v.state === "ENABLED" ? "emerald" : v.state === "DISABLED" ? "amber" : "zinc"}>{v.state.toLowerCase()}</Badge>
+                          <span className="tabular-nums">Version {v.version}</span><Badge tone={v.state === "ENABLED" ? "emerald" : v.state === "DISABLED" ? "violet" : "zinc"}>{v.state.toLowerCase()}</Badge>
                           <span className="text-xs text-zinc-500">{v.created ? fmtDateTime(v.created) : ""}</span>
                           <span className="ml-auto flex gap-2">
                             {v.state === "ENABLED" && <Button size="sm" disabled={!s.data!.can_write} loading={busy === `${v.version}DISABLED`} onClick={() => run(`${v.version}DISABLED`, () => apiSend("post", `/secrets/${x.name}/versions/${v.version}`, { state: "DISABLED" }), "Disabled").then(() => versions.reload())}>Disable</Button>}
@@ -301,6 +302,7 @@ export function PromptsPanel() {
     const active = detail.data?.versions.find((v) => v.active);
     setForm({ system: active?.system ?? "", model: active?.model ?? "", temperature: active?.temperature === null || active?.temperature === undefined ? "" : String(active.temperature), note: "" });
   }, [detail.data]);
+  const models = useModelCatalog(list.data ? JSON.stringify(list.data.models) : undefined);  // a task's default follows these
   if (list.loading && !list.data) return <Spinner />;
   if (list.error) return <ErrorState error={list.error} onRetry={list.reload} />;
   if (!list.data) return null;
@@ -329,8 +331,11 @@ export function PromptsPanel() {
               <Field label="Instructions" hint="Write {{default}} where the built-in instructions should go, to add to them instead of replacing them. Empty: built-in.">
                 <Textarea rows={10} className="font-sans text-sm" value={form.system} disabled={!can} onChange={(e) => setForm({ ...form, system: e.target.value })} />
               </Field>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <Field label="Model" hint="Empty: the default model."><Input value={form.model} disabled={!can} onChange={(e) => setForm({ ...form, model: e.target.value })} /></Field>
+              <Field label="Model">
+                <ModelSelect value={form.model} kind="text" field={models.catalog?.fields[`prompts.${purpose}`]} catalog={models.catalog} disabled={!can} label="Model"
+                  unknownDefault="the model this task is set to use" onChange={(v) => setForm({ ...form, model: v })} />
+              </Field>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label="Temperature" hint="Empty: the default."><Input type="number" min={0} max={2} step="0.1" value={form.temperature} disabled={!can} onChange={(e) => setForm({ ...form, temperature: e.target.value })} /></Field>
                 <Field label="Note"><Input value={form.note} disabled={!can} onChange={(e) => setForm({ ...form, note: e.target.value })} /></Field>
               </div>
@@ -369,7 +374,7 @@ export function SafetyPanel() {
         actions={<Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={s.reload}>Run again</Button>}>
         <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">{s.data.checks.map((c) => (
           <li key={c.id} className="flex items-start gap-3 px-5 py-3">
-            {c.passed ? <CircleCheck className="mt-0.5 size-4 shrink-0 text-emerald-500" /> : <CircleX className={cx("mt-0.5 size-4 shrink-0", c.severity === "blocker" ? "text-rose-500" : "text-amber-500")} />}
+            {c.passed ? <CircleCheck className="mt-0.5 size-4 shrink-0 text-emerald-500" /> : <CircleX className={cx("mt-0.5 size-4 shrink-0", c.severity === "blocker" ? "text-rose-500" : "text-violet-500")} />}
             <div className="min-w-0"><p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{c.title}</p><p className="text-xs text-zinc-500">{c.detail}</p>{!c.passed && c.fix && <p className="mt-0.5 text-xs text-zinc-800 dark:text-zinc-200">Fix: {c.fix}</p>}</div>
           </li>))}</ul>
       </Card>
@@ -456,7 +461,7 @@ export function AuditPanel() {
                 <td className={cx(TD, "whitespace-nowrap")}>{fmtDateTime(e.ts)}</td><td className={TD}>{e.actor}</td><td className={TD}>{e.surface.replace(/_/g, " ")}</td>
                 <td className={TD}><span className="break-words">{e.summary || e.action}</span>{e.case_id && <Link className="ml-2 text-blue-600 dark:text-blue-200" to={`/feed/${e.case_id}`} onClick={(ev) => ev.stopPropagation()}>{e.case_id}</Link>}
                   {open === e.audit_id && <CodeBlock className="mt-2" value={{ action: e.action, target: `${e.target_type} ${e.target_id}`.trim(), ...e.detail }} />}</td>
-                <td className={TD}><Badge tone={e.status === "ok" ? "emerald" : e.status === "denied" || e.status === "blocked" ? "amber" : "rose"}>{e.status}</Badge></td>
+                <td className={TD}><Badge tone={e.status === "ok" ? "emerald" : e.status === "denied" || e.status === "blocked" ? "violet" : "rose"}>{e.status}</Badge></td>
               </tr>))}</tbody></table>
         </div>
       )}

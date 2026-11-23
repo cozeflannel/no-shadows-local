@@ -133,13 +133,21 @@ def _pending(ctx: "AgentContext", gw: Any) -> list[dict[str, Any]]:
     and did not finish, the decision BigQuery holds (kept_*). Those come first."""
     own = ctx.config.platform.own_alerts
     q, r, s, p, d = (schema.table(ctx, n) for n in ("review_queue", "policy_rules_config", "stories", "posts", "decisions"))
+    # A story's evidence is its latest posts. They are gathered for every story waiting in the queue first and joined
+    # on: BigQuery refuses a subquery that reads another table once for each row when it cannot turn it into a join,
+    # and one that keeps only the latest few posts is such a subquery.
     sql = (
+        "WITH story_evidence AS (\n"
+        f"  SELECT x.story_id, STRING_AGG(x.sanitized_snippet, '{SNIPPET_BREAK}' ORDER BY x.ingested_at DESC LIMIT {own.story_snippets}) AS evidence\n"
+        f"  FROM `{p}` x\n"
+        f"  JOIN (SELECT DISTINCT target_id FROM `{q}` WHERE queued_at >= @queued_since AND IFNULL(processed, FALSE) = FALSE AND item_type = 'STORY') w\n"
+        "    ON w.target_id = x.story_id\n"
+        "  WHERE x.ingested_at >= @since\n"
+        "  GROUP BY x.story_id\n"
+        ")\n"
         "SELECT rq.queue_id, rq.queued_at, rq.item_type, rq.target_id, rq.trigger_path, rq.matched_rule_id, rq.stage1_rank_score, rq.stage1_rationale,\n"
         "  r.rule_name, r.process_doc_section, r.forced_severity, r.forced_escalation_path,\n"
-        "  IF(rq.item_type = 'STORY',\n"
-        f"     (SELECT STRING_AGG(x.sanitized_snippet, '{SNIPPET_BREAK}' ORDER BY x.ingested_at DESC LIMIT {own.story_snippets}) FROM `{p}` x\n"
-        "      WHERE x.story_id = rq.target_id AND x.ingested_at >= @since),\n"
-        "     pp.sanitized_snippet) AS evidence,\n"
+        "  IF(rq.item_type = 'STORY', se.evidence, pp.sanitized_snippet) AS evidence,\n"
         "  s.post_count_15m, s.post_count_1h, s.unique_authors_15m, s.velocity_ratio_15m, s.story_summary,\n"
         "  pp.source_system, pp.platform, pp.kof_tier, pp.is_kof, pp.author_followers,\n"
         "  d.decision_id AS kept_id, d.decided_at AS kept_at, d.escalate AS kept_escalate, d.severity AS kept_severity, d.escalation_path AS kept_path,\n"
@@ -149,6 +157,7 @@ def _pending(ctx: "AgentContext", gw: Any) -> list[dict[str, Any]]:
         f"LEFT JOIN `{r}` r ON r.rule_id = rq.matched_rule_id\n"
         f"LEFT JOIN `{s}` s ON rq.item_type = 'STORY' AND s.story_id = rq.target_id\n"
         f"LEFT JOIN `{p}` pp ON rq.item_type != 'STORY' AND pp.post_id = rq.target_id AND pp.ingested_at >= @since\n"
+        "LEFT JOIN story_evidence se ON rq.item_type = 'STORY' AND se.story_id = rq.target_id\n"
         f"LEFT JOIN (SELECT * FROM `{d}` WHERE decided_at >= @queued_since\n"
         "           QUALIFY ROW_NUMBER() OVER (PARTITION BY queue_id ORDER BY decided_at) = 1) d ON d.queue_id = rq.queue_id\n"
         "WHERE rq.queued_at >= @queued_since AND IFNULL(rq.processed, FALSE) = FALSE\n"

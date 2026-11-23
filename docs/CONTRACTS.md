@@ -633,6 +633,18 @@ Response schemas are pydantic models next to the code that uses them.
   - `PUT /api/settings/{section}` for any top-level `AgentConfig` key except `version`/`env`
   - Validate with `AgentConfig`, then `store.save_config_overrides` and emit `config.updated`
   - `GET /api/settings/history`
+  - `GET /api/settings/available-models[?refresh=true]` (viewers; `refresh` reads the list again now, admins only;
+    `console/backend/model_catalog.py`): the Gemini models every model setting picks from. Read from Vertex AI's catalogue of
+    Google's models through the agent's own Gemini client (`triage_agent/llm.py`) in the location it calls Gemini in, kept for an
+    hour. Left out: models for other jobs (speech, pictures, video, live audio), experiments and dated previews, the retired
+    generations (1.0, 1.5, 2.0) and anything the catalogue marks retired. Answer: `{source: vertex|fallback, project, location,
+    fetched_at, error, text: [choice], embedding: [choice], fields, technical?}`; a choice is `{name, label, description, preview,
+    in_use: [what uses it]}`; `fields` maps each model setting (`models.triage`, `platform.chat_agent.model`, ...,
+    `prompts.<purpose>`) to `{kind: text|embedding|none, label, blank, default, follows, none_label}`: the list it picks from,
+    whether blank means the default, the model the default uses and the setting it follows. `kind: none` marks settings named
+    model that name no Vertex AI model (Gemini Decisions, the forecast). With `source: fallback` (offline, refused, slow) the
+    lists are every model the settings and their defaults name plus a few known to work, and `error` says why in plain words;
+    `technical` (admins) holds Google's own words. Its path has a hyphen so it never clashes with a section's name.
 - Escalations and outbox:
   - `GET /api/escalations?open_only=`
   - `GET /api/outbox?undelivered_only=`
@@ -722,7 +734,11 @@ query_ref?, filters?, draft_query?, case_id?, hours?, update_of?, keep_refreshed
 - **BigQuery objects**, all in the agent's dataset: tables `posts_staging`, `author_vault_30d`, `posts`, `post_metrics`, `stories`,
   `review_queue`, `decisions`, `feedback` (partitioned, expiring), `pipeline_watermarks`, `policy_rules_config`; function
   `fast_regex_sanitize`; remote models `embedding_model`, `gemini4_fast_decisions`; procedure `run_9source_triage_cycle`. `agent_events`
-  and the metric views are never touched. No statement names anything with a reserved word (`tests/test_own_sql_words.py`).
+  and the metric views are never touched. No statement names anything with a reserved word, and none reads another table once
+  for each row outside EXISTS / NOT EXISTS: BigQuery refuses such a subquery when it cannot turn it into a join, and always when
+  it keeps only the latest rows (ORDER BY ... LIMIT). Rows are gathered first (a GROUP BY, or ROW_NUMBER() and QUALIFY) and
+  joined on (`tests/test_own_sql_words.py`). A changed statement changes `schema.version`, so the next run (with
+  `bigquery_admin` ON) makes the objects again before it reads anything; the review waits until it has.
 - **The review** (`review.run`, in the worker's once-a-minute tick): reads the open queue items with any decision already kept, reviews the
   rest through operation `review_own_candidate {item, precedents}` (answers `data.verdict {escalate, severity, escalation_path,
   decision_rationale}`; asked of the Agent Runtime through `agent_runtime.query`, run by the worker when that fails), applies the hard-rule
@@ -732,6 +748,11 @@ query_ref?, filters?, draft_query?, case_id?, hours?, update_of?, keep_refreshed
   raised; `purge.run` deletes rows past their days once a day; retention removes `own_decisions` past `console_keep_days`.
 - **Console:** `GET /api/own?days=&status=`, `POST /api/own/run` (leads), `POST /api/own/setup` (admins), `GET|POST /api/own/rules`,
   `PUT|DELETE /api/own/rules/{id}` (leads), `POST /api/own/decisions/{id}/verdict {verdict: TRUE_POSITIVE|FALSE_POSITIVE}` (analysts).
+  What went wrong reaches the page in plain words (`ownalerts/plain.py`): `state.problem`, `state.review.problem`,
+  `state.kof.problem` and each source's `problem` are `{kind, title, message, action, link: {to, label}, technical?}` (kind `setup`,
+  `sources`, `missing`, `permission`, `model`, `quota`, `timeout`, `unavailable`, `query` or `other`), and `POST /api/own/run`
+  answers `problem` too. `technical` (Google's own words) and the raw `error` strings go to admins only; for everyone else each
+  `error` holds the plain message. `state.made_before` says the BigQuery objects were made before (they are out of date, not new).
   Audit actions `own.run`, `own.setup`, `own.rule_saved`, `own.rule_removed`, `own.verdict`. On Integrations each table of posts carries an
   `own` tick (`platform.own_alerts.sources`); Find and fill adds the two tables in `config/own_alerts.yaml`.
 - **Events:** `own.cycle`, `own.reviewed`, `own.raised`, `own.feedback`, `own.rule_saved`. **State:** docs `own_decisions`, `own_rules`; kv

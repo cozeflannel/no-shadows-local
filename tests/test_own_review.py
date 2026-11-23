@@ -93,6 +93,22 @@ def test_the_queue_is_read_mandatory_first_up_to_the_number_a_minute(ctx, world)
     assert "author_vault_30d" not in read["sql"], "the vault is not read for the review"
 
 
+def test_a_storys_evidence_is_gathered_once_for_the_open_stories_and_joined(ctx, world):
+    """The latest posts of each story waiting in the queue are gathered first and joined on. A subquery that read them
+    for each queue item (ORDER BY ... LIMIT inside it) is what BigQuery refused on the live project: every review stopped."""
+    ctx.config.platform.own_alerts.story_snippets = 4
+    schema.provision(ctx)  # the procedure shows a story's posts too: the objects follow the setting
+    review.run(ctx)
+    sql = next(r for r in world.ran if QUEUE in r["sql"])["sql"]
+    assert sql.startswith("WITH story_evidence AS (\n")
+    head = sql[:sql.index(")\nSELECT rq.queue_id")]
+    assert "STRING_AGG(x.sanitized_snippet, ' || ' ORDER BY x.ingested_at DESC LIMIT 4) AS evidence" in head and "GROUP BY x.story_id" in head
+    assert (f"JOIN (SELECT DISTINCT target_id FROM `{HOME}.review_queue` WHERE queued_at >= @queued_since AND IFNULL(processed, FALSE) = FALSE "
+            "AND item_type = 'STORY') w") in head, "only the stories waiting now are read"
+    assert "IF(rq.item_type = 'STORY', se.evidence, pp.sanitized_snippet) AS evidence" in sql
+    assert "LEFT JOIN story_evidence se ON rq.item_type = 'STORY' AND se.story_id = rq.target_id" in sql and "(SELECT STRING_AGG" not in sql
+
+
 # -- the decision --------------------------------------------------------------------------------------------------------
 def test_a_candidate_the_review_turns_down_is_kept_and_not_raised(ctx, fake_llm, world):
     fake_llm.on("own.review", {"escalate": False, "severity": "P2", "escalation_path": "BRAND_SOCIAL", "decision_rationale": "One owner, no pattern."})

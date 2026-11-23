@@ -17,14 +17,17 @@ interface Decision {
   evidence: string; velocity: string; engine: string; note: string; status: "raised" | "passed"; links: string[]; kof: string; posted_to: string;
   verdict: "" | Verdict; verdict_by: string; verdict_at: string;
 }
-interface Source { key: string; label: string; where: string; status: string; at: string; error: string; read: number; kept: number; more: boolean }
+/** What went wrong, in plain words (triage_agent/ownalerts/plain.py). `technical` holds Google's own words, for admins only. */
+interface Problem { kind: string; title: string; message: string; action: string; link: { to?: string; label?: string }; technical?: string }
+interface Source { key: string; label: string; where: string; status: string; at: string; error: string; read: number; kept: number; more: boolean; problem?: Problem }
 interface Counts { read?: number; staged?: number; reviewed?: number; raised?: number; left?: number; failed?: number }
 interface State {
-  on: boolean; last: string; error: string; result: Counts; sources: Source[]; objects: string; interval_minutes: number;
-  review: { last: string; error: string; result: Counts }; kof: { set: boolean; handles: number; error: string };
-  post: { on: boolean; target: string; space: string }; severities: string[]; bigquery_admin: boolean;
+  on: boolean; last: string; error: string; problem?: Problem; result: Counts; sources: Source[]; objects: string; interval_minutes: number;
+  review: { last: string; error: string; result: Counts; problem?: Problem }; kof: { set: boolean; handles: number; error: string; problem?: Problem };
+  post: { on: boolean; target: string; space: string }; severities: string[]; bigquery_admin: boolean; made_before?: boolean;
 }
 interface Page { state: State; decisions: Decision[]; can_act: boolean; can_run: boolean; can_edit_rules: boolean; can_set_up: boolean }
+interface RunAnswer { ok: boolean; run: { error?: string; read?: number; staged?: number; waiting?: string[] }; review: { error?: string; raised?: number }; problem?: Problem }
 interface Rule {
   rule_id: string; rule_name: string; process_doc_section: string; execution_mode: "HARD_MANDATE" | "SOFT_CANDIDATE"; target_sources: string[];
   platforms: string[]; require_kof: boolean; min_followers: number; min_engagements: number; required_keywords_any: string[];
@@ -45,15 +48,67 @@ const NEW_RULE: RuleForm = {
   min_followers: "", min_engagements: "", any: "", all: "", none: "", forced_severity: "", forced_escalation_path: "", active: true,
 };
 const BETWEEN_POSTS = " || ";  // what the agent puts between two posts of a story
+// Problems where nothing is broken: the agent waits, or a person sets something. They are shown in blue, not red.
+const CALM = new Set(["setup", "sources", "quota", "timeout", "unavailable"]);
 const words = (text: string) => text.split(",").map((x) => x.trim()).filter(Boolean);
+/** Who an alert goes to, as words: BRAND_SOCIAL -> Brand Social, PR_COMMS -> PR Comms. */
+const pathLabel = (path: string) => path.split("_").filter(Boolean).map((w) => (w.length <= 2 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1).toLowerCase())).join(" ");
 
 /** Why the review looked at it, in a few words. */
 function reason(d: Decision): string {
   const rule = d.rule ? `${d.rule}${d.section ? ` (${d.section})` : ""}` : "";
   if (d.trigger === "MET_IN_CODE") return rule ? `Mandatory rule: ${rule}` : "Raised by another tool in the Other alerts space";
-  if (d.trigger === "FOLLOWUP_SURGE") return "A raised story that is growing again";
-  if (d.item_type === "STORY") return "A story no rule covers";
+  if (d.trigger === "FOLLOWUP_SURGE") return "A story already raised that is growing again";
+  if (d.item_type === "STORY") return "A fast-growing story that no rule covers";
   return `Rule: ${rule}`;
+}
+
+/** What went wrong and what to do. Google's own words are folded away under Technical details, for admins. */
+function ProblemAlert({ problem, title, admin }: { problem: Problem; title?: string; admin: boolean }) {
+  return (
+    <Alert tone={CALM.has(problem.kind) ? "blue" : "rose"} className="mb-4" title={title ?? problem.title}>
+      <p>{problem.message}</p>
+      {(problem.action || problem.link?.to) && (
+        <p className="mt-1">
+          {problem.action}
+          {problem.link?.to && <>{" "}<Link className="font-medium underline" to={problem.link.to}>Open {problem.link.label}</Link></>}
+        </p>
+      )}
+      {admin && problem.technical && (
+        <details className="mt-2">
+          <summary className="cursor-pointer select-none text-xs font-medium">Technical details (for admins)</summary>
+          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-white/70 p-2 font-mono text-[11px] leading-relaxed text-zinc-700 dark:bg-zinc-950/50 dark:text-zinc-300">
+            {problem.technical}
+          </pre>
+        </details>
+      )}
+    </Alert>
+  );
+}
+
+/** What is left to set up before the agent can run, said once. */
+function SetupNotice({ s, canSetUp, busy, onSetUp }: { s: State; canSetUp: boolean; busy: boolean; onSetUp: () => void }) {
+  if (s.objects !== "not created") {  // a setting the agent needs is missing: the sentence says which
+    return (
+      <Alert tone="blue" className="mb-4" title="Agent alerts is not set up yet">
+        <p>{s.objects}</p>
+        <p className="mt-1"><Link className="font-medium underline" to="/settings/own_alerts">Open Settings, Agent alerts</Link></p>
+      </Alert>
+    );
+  }
+  return (
+    <Alert tone="blue" className="mb-4" title={s.made_before ? "Agent alerts is getting an update" : "Agent alerts is not set up yet"}>
+      <p>
+        {s.made_before
+          ? "The tables and checks it keeps in BigQuery need updating after a change to the Console or to its settings. Nothing is lost while it waits."
+          : "The tables it keeps in BigQuery have not been created yet."}
+        {" "}{s.bigquery_admin
+          ? "The next run does it on its own, in a few minutes."
+          : <>An admin needs to turn on “Change BigQuery from here” under <Link className="font-medium underline" to="/settings/flags">Settings, Switches</Link>; the next run then does it.</>}
+      </p>
+      {canSetUp && s.bigquery_admin && <Button size="sm" className="mt-2" loading={busy} onClick={onSetUp}>Do it now</Button>}
+    </Alert>
+  );
 }
 
 function AlertCard({ d, severities, canAct, marked, onVerdict }: {
@@ -66,10 +121,10 @@ function AlertCard({ d, severities, canAct, marked, onVerdict }: {
   return (
     <Card className={cx(marked && "ring-2 ring-blue-500/60")}>
       <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={d.status === "passed" ? "zinc" : rank === 0 ? "rose" : rank === 1 ? "amber" : "blue"}>{d.severity}</Badge>
-        <Badge>{d.path.replace(/_/g, " ")}</Badge>
+        <Badge tone={d.status === "passed" ? "zinc" : rank === 0 ? "rose" : rank === 1 ? "violet" : "blue"} title="Severity">{d.severity}</Badge>
+        <Badge title="Who it goes to">{pathLabel(d.path)}</Badge>
         <Badge tone="zinc">{story ? "Story" : "Post"}</Badge>
-        {d.verdict && <Badge tone={d.verdict === "TRUE_POSITIVE" ? "emerald" : "amber"}>{VERDICT[d.verdict]}</Badge>}
+        {d.verdict && <Badge tone={d.verdict === "TRUE_POSITIVE" ? "emerald" : "zinc"}>{VERDICT[d.verdict]}</Badge>}
         <span className="ml-auto text-sm text-zinc-500"><TimeCell value={d.at} /></span>
       </div>
       <p className="mt-3 text-sm font-medium text-zinc-900 dark:text-zinc-100">{reason(d)}</p>
@@ -81,9 +136,9 @@ function AlertCard({ d, severities, canAct, marked, onVerdict }: {
       ) : (
         <p className="mt-3 whitespace-pre-line rounded-xl bg-zinc-50 p-3 text-sm text-zinc-800 dark:bg-zinc-800/50 dark:text-zinc-200">{d.evidence}</p>
       )}
-      <p className="mt-3 text-sm text-zinc-700 dark:text-zinc-300">{d.rationale}</p>
+      <p className="mt-3 text-sm text-zinc-700 dark:text-zinc-300"><span className="font-medium">Why: </span>{d.rationale}</p>
       <p className="mt-2 text-sm text-zinc-500">
-        {d.kof ? `${story ? "KOF in the story" : "KOF"}: ${d.kof}` : `${story ? "No author" : "Author not"} on the KOF list. Details removed.`}
+        {d.kof ? `${story ? "KOF in the story" : "Posted by a KOF"}: ${d.kof}` : `${story ? "No author in the story is" : "The author is not"} on the KOF list. Personal details were removed.`}
       </p>
       {d.links.length > 0 && (
         <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
@@ -95,7 +150,7 @@ function AlertCard({ d, severities, canAct, marked, onVerdict }: {
         </p>
       )}
       <p className="mt-3 text-xs text-zinc-500">
-        Reviewed {d.engine === "agent_runtime" ? "on the Agent Runtime" : "by the worker"}.
+        Checked by Gemini.
         {d.status === "raised" && (d.posted_to ? " Posted in Chat." : " Not posted in Chat.")}
         {d.note && ` ${d.note}`}
       </p>
@@ -111,15 +166,16 @@ function AlertCard({ d, severities, canAct, marked, onVerdict }: {
   );
 }
 
-function SourcesTab({ state }: { state: State }) {
+function SourcesTab({ state, admin }: { state: State; admin: boolean }) {
+  const kof = state.kof;
   return (
     <div className="space-y-4">
-      <Card padded={false} title="Sources" subtitle={`Read every ${state.interval_minutes} minutes. Choose the tables on Integrations, the rest under Settings, Agent alerts.`}>
+      <Card padded={false} title="Where it reads posts" subtitle={`Each source is read every ${state.interval_minutes} minutes. Tables are chosen on Integrations; the rest under Settings, Agent alerts.`}>
         {state.sources.length === 0 ? (
           <EmptyState title="No source is set">Open <Link className="font-medium underline" to="/connections/bigquery">Integrations</Link> and press Find and fill.</EmptyState>
         ) : (
           <table className="w-full">
-            <thead><tr><th className={TH}>Source</th><th className={TH}>Last read</th><th className={TH}>Read</th><th className={TH}>Kept</th><th className={TH}>State</th></tr></thead>
+            <thead><tr><th className={TH}>Source</th><th className={TH}>Last read</th><th className={TH}>Posts read</th><th className={TH}>Kept</th><th className={TH}>State</th></tr></thead>
             <tbody>{state.sources.map((s) => (
               <tr key={s.key} className={TR}>
                 <td className={TD}>{s.label}<span className="block text-xs text-zinc-500">{s.where}</span></td>
@@ -127,16 +183,24 @@ function SourcesTab({ state }: { state: State }) {
                 <td className={cx(TD, "tabular-nums")}>{fmtNum(s.read)}</td>
                 <td className={cx(TD, "tabular-nums")}>{fmtNum(s.kept)}</td>
                 <td className={TD}>
-                  <Badge tone={s.status === "live" ? "emerald" : s.status === "failing" ? "rose" : s.status === "waiting" ? "amber" : "zinc"}>
-                    {s.status === "live" ? "Read" : s.status === "failing" ? "Failing" : s.status === "waiting" ? "Waiting for access" : "Not read yet"}
+                  <Badge tone={s.status === "live" ? "emerald" : s.status === "failing" ? "rose" : s.status === "waiting" ? "violet" : "zinc"}>
+                    {s.status === "live" ? "Read" : s.status === "failing" ? "Could not read" : s.status === "waiting" ? "Waiting for access" : "Not read yet"}
                   </Badge>
-                  {s.more && <span className="ml-2 text-xs text-zinc-500">More waiting</span>}
+                  {s.more && <span className="ml-2 text-xs text-zinc-500">More posts waiting</span>}
                   {s.status === "waiting" && (
-                    <span className="mt-1 block text-xs text-amber-800 dark:text-amber-300">
+                    <span className="mt-1 block text-xs text-violet-700 dark:text-violet-300">
                       Skipped until its owners let the Console read it. The statement to send them is under <Link className="font-medium underline" to="/connections/bigquery">Integrations, BigQuery</Link>.
                     </span>
                   )}
-                  {s.error && s.status !== "waiting" && <span className="mt-1 block text-xs text-rose-600 dark:text-rose-400">{s.error}</span>}
+                  {s.status !== "waiting" && s.problem?.message && (
+                    <span className="mt-1 block text-xs text-rose-600 dark:text-rose-400">
+                      {s.problem.message} {s.problem.action}
+                      {admin && s.problem.technical && (
+                        <details className="mt-1 text-zinc-500"><summary className="cursor-pointer select-none">Technical details (for admins)</summary>
+                          <span className="block whitespace-pre-wrap break-words font-mono text-[11px]">{s.problem.technical}</span></details>
+                      )}
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}</tbody>
@@ -144,8 +208,8 @@ function SourcesTab({ state }: { state: State }) {
         )}
       </Card>
       <p className="text-sm text-zinc-500">
-        KOF list: {!state.kof.set ? "no sheet is set" : state.kof.error ? `could not be read (${state.kof.error})` : `${fmtNum(state.kof.handles)} handles`}.
-        {" "}<Link className="font-medium text-blue-700 dark:text-blue-400" to="/settings/own_alerts">Settings</Link>
+        KOF list: {!kof.set ? "no sheet is set, so no author counts as a KOF" : kof.problem?.message ? `it could not be read just now. ${kof.problem.message}` : `${fmtNum(kof.handles)} handles`}.
+        {" "}<Link className="font-medium text-blue-700 dark:text-blue-400" to="/settings/own_alerts">Settings, Agent alerts</Link>
       </p>
     </div>
   );
@@ -207,7 +271,7 @@ function RulesTab() {
   const set = (patch: Partial<RuleForm>) => setForm((old) => (old ? { ...old, ...patch } : old));
   return (
     <div className="space-y-4">
-      {d.pending && <Alert tone="blue">The rules are copied to BigQuery before the next run.</Alert>}
+      {d.pending && <Alert tone="blue">Rule changes reach the agent at its next run.</Alert>}
       <Card padded={false} title="Rules" subtitle="Each new post is checked against every rule that is on."
         actions={<Button variant="primary" icon={<Plus className="size-4" />} disabled={!d.can_edit} onClick={() => { setError(null); setForm(NEW_RULE); }}>Add a rule</Button>}>
         {d.rules.length === 0 ? (
@@ -222,7 +286,7 @@ function RulesTab() {
                     <Badge tone={r.execution_mode === "HARD_MANDATE" ? "rose" : "blue"}>{r.execution_mode === "HARD_MANDATE" ? "Mandatory" : "Candidate"}</Badge>
                     {!r.active && <Badge tone="zinc">Off</Badge>}
                     {r.forced_severity && <Badge>{r.forced_severity}</Badge>}
-                    {r.forced_escalation_path && <Badge>{r.forced_escalation_path.replace(/_/g, " ")}</Badge>}
+                    {r.forced_escalation_path && <Badge>{pathLabel(r.forced_escalation_path)}</Badge>}
                   </p>
                   <p className="mt-0.5 text-xs text-zinc-500">{r.process_doc_section && `${r.process_doc_section}. `}{conditions(r, labels)}</p>
                 </div>
@@ -268,12 +332,12 @@ function RulesTab() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="Severity">
                 <Select value={form.forced_severity} onChange={(e) => set({ forced_severity: e.target.value })}>
-                  <option value="">The review decides</option>{d.severities.map((s) => <option key={s} value={s}>{s}</option>)}
+                  <option value="">Gemini decides</option>{d.severities.map((s) => <option key={s} value={s}>{s}</option>)}
                 </Select>
               </Field>
               <Field label="Goes to">
                 <Select value={form.forced_escalation_path} onChange={(e) => set({ forced_escalation_path: e.target.value })}>
-                  <option value="">The review decides</option>{d.paths.map((p) => <option key={p} value={p}>{p.replace(/_/g, " ")}</option>)}
+                  <option value="">Gemini decides</option>{d.paths.map((p) => <option key={p} value={p}>{pathLabel(p)}</option>)}
                 </Select>
               </Field>
             </div>
@@ -294,7 +358,7 @@ export default function OwnAlertsPage() {
   const tab = TABS.includes(search.get("tab") as Tab) ? (search.get("tab") as Tab) : "raised";
   const marked = search.get("decision") ?? "";
   const { data, error, loading, reload } = useApi<Page>("/own", { days: 30 }, 30_000);
-  const run = useAction(() => apiSend<{ ok: boolean; run: { error?: string; read?: number; staged?: number; waiting?: string[] }; review: { error?: string; raised?: number } }>("post", "/own/run"));
+  const run = useAction(() => apiSend<RunAnswer>("post", "/own/run"));
   const setup = useAction(() => apiSend<{ ok: boolean; steps: number }>("post", "/own/setup"));
   const linked = useRef(false);
 
@@ -320,51 +384,54 @@ export default function OwnAlertsPage() {
   if (loading && !data) return <Spinner />;
   if (!data) return <ErrorState error={error} onRetry={reload} />;
   const s = data.state;
+  const admin = data.can_set_up;
   const shown = data.decisions.filter((d) => d.status === tab);
   const count = (status: Decision["status"]) => data.decisions.filter((d) => d.status === status).length;
   const failing = s.sources.filter((x) => x.status === "failing");
   const ready = s.objects === "ready";
+  const runNow = async () => {
+    const r = await run.run();
+    if (!r) return;
+    const waiting = r.run.waiting?.length ? `, ${r.run.waiting.length} source${r.run.waiting.length === 1 ? "" : "s"} waiting for access` : "";
+    toast(r.ok ? `Run finished: ${fmtNum(r.run.staged ?? 0)} new posts kept, ${fmtNum(r.review.raised ?? 0)} alerts raised${waiting}`
+      : r.problem?.title ? `${r.problem.title}. ${r.problem.message}` : "The run did not finish. Press Run now to try again.", r.ok ? "success" : "error");
+    reload();
+  };
 
   return (
     <div>
-      <PageHeader title="Agent alerts" description="Alerts the agent raises itself from the sources it reads. Each one is reviewed before anyone is told."
-        actions={data.can_run && s.on && ready && (
-          <Button icon={<Play className="size-4" />} loading={run.loading}
-            onClick={async () => {
-              const r = await run.run();
-              if (r) { toast(r.ok ? `Run done: ${r.run.staged ?? 0} posts kept, ${r.review.raised ?? 0} raised${r.run.waiting?.length ? `, ${r.run.waiting.length} waiting for access` : ""}` : r.run.error || r.review.error || "The run failed", r.ok ? "success" : "error"); reload(); }
-            }}>Run now</Button>
+      <PageHeader title="Agent alerts" description="Alerts the agent raises on its own from the posts it reads. Gemini checks each one before anyone is told."
+        actions={data.can_run && s.on && (ready || s.bigquery_admin) && (
+          <Button icon={<Play className="size-4" />} loading={run.loading} onClick={() => void runNow()}>Run now</Button>
         )} />
-      {!s.on && <OffNotice what="Agent alerts" flag="own_alerts">Nothing is read or reviewed while it is off.</OffNotice>}
+      {!s.on && <OffNotice what="Agent alerts" flag="own_alerts">Nothing is read or checked while it is off.</OffNotice>}
       {!ready && (
-        <Alert tone="amber" className="mb-4" title={s.objects === "not created" ? "Its tables in BigQuery are not created yet" : "It is not set up yet"}>
-          {s.objects !== "not created" && <p>{s.objects}</p>}
-          {s.objects === "not created" && !s.bigquery_admin && <p>An admin turns on Change BigQuery from here under <Link className="font-medium underline" to="/settings/flags">Settings, Switches</Link> first.</p>}
-          {s.objects !== "not created" && <p><Link className="font-medium underline" to="/settings/own_alerts">Settings, Agent alerts</Link></p>}
-          {s.objects === "not created" && data.can_set_up && s.bigquery_admin && (
-            <Button size="sm" className="mt-2" loading={setup.loading}
-              onClick={async () => { const r = await setup.run(); if (r) { toast(`Created: ${r.steps} steps`, "success"); reload(); } }}>Create the tables</Button>
-          )}
-        </Alert>
+        <SetupNotice s={s} canSetUp={data.can_set_up} busy={setup.loading}
+          onSetUp={async () => { const r = await setup.run(); if (r) { toast("Agent alerts is set up", "success"); reload(); } }} />
       )}
       <ErrorState error={setup.error} />
       <ErrorState error={run.error} />
-      {failing.map((x) => <Alert key={x.key} tone="rose" className="mb-4" title={`${x.label} could not be read`}>{x.error}</Alert>)}
-      {s.error && failing.length === 0 && <Alert tone="rose" className="mb-4" title="The last run failed">{s.error}</Alert>}
-      {s.review.error && <Alert tone="rose" className="mb-4" title="The last review failed">{s.review.error}</Alert>}
+      {failing.map((x) => x.problem?.message && <ProblemAlert key={x.key} title={`${x.label} could not be read`} problem={x.problem} admin={admin} />)}
+      {s.problem?.message && failing.length === 0 && <ProblemAlert problem={s.problem} admin={admin} />}
+      {s.review.problem?.message && <ProblemAlert problem={s.review.problem} admin={admin} />}
       {s.on && (
         <p className="mb-4 text-sm text-zinc-500">
-          Last run {s.last ? <TimeCell value={s.last} /> : "not yet"}{s.last && `: ${fmtNum(s.result.read ?? 0)} read, ${fmtNum(s.result.staged ?? 0)} kept`}.
+          New posts are read every {s.interval_minutes} minutes. Last read {s.last ? <TimeCell value={s.last} /> : "not yet"}
+          {s.last && `: ${fmtNum(s.result.read ?? 0)} posts read, ${fmtNum(s.result.staged ?? 0)} kept`}.
           {" "}Last review {s.review.last ? <TimeCell value={s.review.last} /> : "not yet"}
           {(s.review.result.left ?? 0) > 0 && `, ${fmtNum(s.review.result.left)} left for the next minute`}.
-          {" "}{s.post.on && s.post.space ? `Alerts are posted in ${s.post.space}.` : <>Alerts are not posted in Chat. <Link className="font-medium text-blue-700 dark:text-blue-400" to="/settings/own_alerts">Settings</Link></>}
+          {" "}{s.post.on && s.post.space ? `Raised alerts are also posted in ${s.post.space}.`
+            : <>Raised alerts are shown here only, not posted in Chat. <Link className="font-medium text-blue-700 dark:text-blue-400" to="/settings/own_alerts">Change this</Link></>}
         </p>
       )}
       <Tabs<Tab> value={tab} onChange={(t) => setSearch(t === "raised" ? {} : { tab: t }, { replace: true })}
-        tabs={[{ key: "raised", label: "Raised", count: count("raised") }, { key: "passed", label: "Passed over", count: count("passed") },
+        tabs={[{ key: "raised", label: "Raised", count: count("raised") }, { key: "passed", label: "Not raised", count: count("passed") },
           { key: "sources", label: "Sources" }, { key: "rules", label: "Rules" }]} />
-      {tab === "sources" ? <SourcesTab state={s} /> : tab === "rules" ? <RulesTab /> : shown.length === 0 ? (
-        <EmptyState title={tab === "raised" ? "No alerts raised" : "Nothing passed over"}>The last 30 days show here.</EmptyState>
+      {tab === "sources" ? <SourcesTab state={s} admin={admin} /> : tab === "rules" ? <RulesTab /> : shown.length === 0 ? (
+        <EmptyState title={tab === "raised" ? "No alerts raised in the last 30 days" : "Nothing turned down in the last 30 days"}>
+          {tab === "raised" ? "When the agent raises an alert, it shows here with its posts and the reason."
+            : "Posts and stories Gemini looked at and decided not to raise show here, with the reason."}
+        </EmptyState>
       ) : (
         <div className={cx("grid gap-4", shown.length > 1 && "xl:grid-cols-2")}>
           {shown.map((d) => <AlertCard key={d.id} d={d} severities={s.severities} canAct={data.can_act} marked={d.id === marked} onVerdict={verdict} />)}

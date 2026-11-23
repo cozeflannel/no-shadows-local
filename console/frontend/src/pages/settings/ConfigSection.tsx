@@ -110,7 +110,7 @@ export function ConfigSection({ section, data, setData }: { section: string; dat
   const editor = () => {
     if (!meta || draft === null) return <EmptyState title="Unknown section" />;
     const disabled = !canEdit;
-    if (meta.kind === "structured") return <StructuredEditor section={section} value={draft as Record<string, Json>} onChange={change} fieldErrors={fieldErrors} disabled={disabled} />;
+    if (meta.kind === "structured") return <StructuredEditor section={section} value={draft as Record<string, Json>} onChange={change} fieldErrors={fieldErrors} disabled={disabled} version={data.config_version} />;
     if (section === "spaces") return <SpacesEditor value={draft as unknown as any[]} onChange={change} disabled={disabled} />;
     if (section === "distribution") return <DistributionEditor value={draft as unknown as Distribution} onChange={change} disabled={disabled} />;
     if (section === "actions") {

@@ -205,6 +205,21 @@ def test_a_story_is_asked_about_once_per_cool_down_unless_it_grew(ctx, own):
     assert "LIMIT 5)" in sql
 
 
+def test_a_storys_prompt_reads_its_latest_posts_through_a_join(ctx, own):
+    """Each story's latest posts are gathered once, by story, and joined on. A subquery that read them for each story
+    (ORDER BY ... LIMIT inside it) is what BigQuery refused on the live project: every run stopped there."""
+    own.story_snippets = 6
+    sql = procedure(ctx)
+    made = sql[sql.index("CREATE TEMP TABLE story_candidates AS"):]
+    made = made[:made.index(";")]
+    assert "WITH latest_posts AS (" in made and "GROUP BY p.story_id" in made
+    assert "STRING_AGG(p.sanitized_snippet, '\\n---\\n' ORDER BY p.ingested_at DESC LIMIT 6) AS snippets" in made
+    assert "WHERE p.ingested_at >= TIMESTAMP_SUB(run_ts, INTERVAL 1 HOUR) AND p.story_id IS NOT NULL" in made, "only the last hour, as before"
+    assert "LEFT JOIN latest_posts lp ON lp.story_id = s.story_id" in made and "'\\nSnippets:\\n', lp.snippets) AS prompt" in made
+    assert "(SELECT STRING_AGG" not in sql
+    assert "FROM story_candidates WHERE prompt IS NOT NULL" in sql, "a story with no post in the last hour has no prompt and is not asked about"
+
+
 def test_the_call_passes_every_parameter_the_procedure_declares_in_order(ctx, own):
     sql = procedure(ctx)
     header = sql[sql.index("(") + 1: sql.index("BEGIN")]

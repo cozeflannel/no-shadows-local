@@ -2,13 +2,15 @@ import { useEffect, useState } from "react";
 
 import type { Json } from "../../api/types";
 import { Field, Input, Select, Textarea, Toggle } from "../ui";
+import { ModelSelect, useModelCatalog, type ModelKind } from "./ModelSelect";
 
 type FieldDef =
   | { key: string; label: string; help?: string; type: "number"; min?: number; max?: number; step?: number; integer?: boolean }
   | { key: string; label: string; help?: string; type: "boolean" }
   | { key: string; label: string; help?: string; type: "text"; nullable?: boolean; placeholder?: string }
   | { key: string; label: string; help?: string; type: "select"; options: string[] }
-  | { key: string; label: string; help?: string; type: "list"; placeholder?: string };
+  | { key: string; label: string; help?: string; type: "list"; placeholder?: string }
+  | { key: string; label: string; help?: string; type: "model"; kind: ModelKind };
 
 export const STRUCTURED_SCHEMAS: Record<string, FieldDef[]> = {
   thresholds: [
@@ -51,9 +53,9 @@ export const STRUCTURED_SCHEMAS: Record<string, FieldDef[]> = {
     { key: "im_minutes_per_alert", label: "IM minutes per drafted alert", type: "number", min: 0, step: 1, integer: true, help: "Manual Alert Assistant + email work replaced per draft." },
   ],
   models: [
-    { key: "triage", label: "Triage model", type: "text" },
-    { key: "drafting", label: "Drafting model", type: "text" },
-    { key: "converse", label: "Conversation model", type: "text" },
+    { key: "triage", label: "Triage model", type: "model", kind: "text", help: "Checks each alert against the rules and the taxonomy." },
+    { key: "drafting", label: "Drafting model", type: "model", kind: "text", help: "Writes the Social Alert emails and the other write-ups." },
+    { key: "converse", label: "Conversation model", type: "model", kind: "text", help: "Answers questions in Chat and on the Chat agent page." },
     { key: "location", label: "Vertex AI location", type: "text" },
     { key: "temperature_triage", label: "Triage temperature", type: "number", min: 0, max: 2, step: 0.1 },
     { key: "temperature_drafting", label: "Drafting temperature", type: "number", min: 0, max: 2, step: 0.1 },
@@ -79,11 +81,13 @@ export function ListInput({ value, onChange, placeholder, disabled, rows = 3, cl
   );
 }
 
-export function StructuredEditor({ section, value, onChange, fieldErrors, disabled }: {
+export function StructuredEditor({ section, value, onChange, fieldErrors, disabled, version }: {
   section: string; value: Record<string, Json>; onChange: (v: Record<string, Json>) => void; fieldErrors: Record<string, string>; disabled?: boolean;
+  version?: string;  // the settings' version: a model setting's default follows the others
 }) {
   const schema = STRUCTURED_SCHEMAS[section] ?? [];
   const set = (key: string, v: Json) => onChange({ ...value, [key]: v });
+  const models = useModelCatalog(schema.some((f) => f.type === "model") ? version ?? "" : undefined);
   return (
     <div className="grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2">
       {schema.map((f) => {
@@ -109,6 +113,9 @@ export function StructuredEditor({ section, value, onChange, fieldErrors, disabl
               </Select>
             ) : f.type === "list" ? (
               <ListInput value={Array.isArray(v) ? v.map(String) : []} placeholder={f.placeholder} disabled={disabled} onChange={(list) => set(f.key, list)} />
+            ) : f.type === "model" ? (
+              <ModelSelect value={v === null || v === undefined ? "" : String(v)} kind={f.kind} field={models.catalog?.fields[`${section}.${f.key}`]} catalog={models.catalog}
+                disabled={disabled} label={f.label} onChange={(x) => set(f.key, x)} />
             ) : (
               <Input value={v === null || v === undefined ? "" : String(v)} placeholder={f.placeholder} disabled={disabled}
                 onChange={(e) => set(f.key, f.nullable && e.target.value.trim() === "" ? null : e.target.value)} />
