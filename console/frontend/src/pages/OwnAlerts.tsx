@@ -127,9 +127,16 @@ function SourcesTab({ state }: { state: State }) {
                 <td className={cx(TD, "tabular-nums")}>{fmtNum(s.read)}</td>
                 <td className={cx(TD, "tabular-nums")}>{fmtNum(s.kept)}</td>
                 <td className={TD}>
-                  <Badge tone={s.status === "live" ? "emerald" : s.status === "failing" ? "rose" : "zinc"}>{s.status === "live" ? "Read" : s.status === "failing" ? "Failing" : "Not read yet"}</Badge>
+                  <Badge tone={s.status === "live" ? "emerald" : s.status === "failing" ? "rose" : s.status === "waiting" ? "amber" : "zinc"}>
+                    {s.status === "live" ? "Read" : s.status === "failing" ? "Failing" : s.status === "waiting" ? "Waiting for access" : "Not read yet"}
+                  </Badge>
                   {s.more && <span className="ml-2 text-xs text-zinc-500">More waiting</span>}
-                  {s.error && <span className="mt-1 block text-xs text-rose-600 dark:text-rose-400">{s.error}</span>}
+                  {s.status === "waiting" && (
+                    <span className="mt-1 block text-xs text-amber-800 dark:text-amber-300">
+                      Skipped until its owners let the Console read it. The statement to send them is under <Link className="font-medium underline" to="/connections/bigquery">Integrations, BigQuery</Link>.
+                    </span>
+                  )}
+                  {s.error && s.status !== "waiting" && <span className="mt-1 block text-xs text-rose-600 dark:text-rose-400">{s.error}</span>}
                 </td>
               </tr>
             ))}</tbody>
@@ -287,7 +294,7 @@ export default function OwnAlertsPage() {
   const tab = TABS.includes(search.get("tab") as Tab) ? (search.get("tab") as Tab) : "raised";
   const marked = search.get("decision") ?? "";
   const { data, error, loading, reload } = useApi<Page>("/own", { days: 30 }, 30_000);
-  const run = useAction(() => apiSend<{ ok: boolean; run: { error?: string; read?: number; staged?: number }; review: { error?: string; raised?: number } }>("post", "/own/run"));
+  const run = useAction(() => apiSend<{ ok: boolean; run: { error?: string; read?: number; staged?: number; waiting?: string[] }; review: { error?: string; raised?: number } }>("post", "/own/run"));
   const setup = useAction(() => apiSend<{ ok: boolean; steps: number }>("post", "/own/setup"));
   const linked = useRef(false);
 
@@ -325,7 +332,7 @@ export default function OwnAlertsPage() {
           <Button icon={<Play className="size-4" />} loading={run.loading}
             onClick={async () => {
               const r = await run.run();
-              if (r) { toast(r.ok ? `Run done: ${r.run.staged ?? 0} posts kept, ${r.review.raised ?? 0} raised` : r.run.error || r.review.error || "The run failed", r.ok ? "success" : "error"); reload(); }
+              if (r) { toast(r.ok ? `Run done: ${r.run.staged ?? 0} posts kept, ${r.review.raised ?? 0} raised${r.run.waiting?.length ? `, ${r.run.waiting.length} waiting for access` : ""}` : r.run.error || r.review.error || "The run failed", r.ok ? "success" : "error"); reload(); }
             }}>Run now</Button>
         )} />
       {!s.on && <OffNotice what="Agent alerts" flag="own_alerts">Nothing is read or reviewed while it is off.</OffNotice>}

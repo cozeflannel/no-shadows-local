@@ -48,7 +48,7 @@ def test_a_run_creates_the_objects_reads_the_sources_then_calls_the_procedure(ct
     out = cycle.run(ctx)
     assert kinds(gw) == ["create", "read", "held", "call"], "both tables are read, then what is new is checked against what is kept"
     assert out == {"ok": True, "due": True, "error": "", "read": 2, "staged": 2, "new_posts": 2, "hard": 0, "single_asked": 1, "single_queued": 1,
-                   "embedded": 1, "stories_asked": 0, "stories_queued": 0, "failing": []}
+                   "embedded": 1, "stories_asked": 0, "stories_queued": 0, "failing": [], "waiting": []}
     call = gw.ran[-1]
     wanted_sql, wanted_params = schema.call(ctx, "other_alerts")
     assert call["sql"] == wanted_sql == f"CALL `{HOME}.run_9source_triage_cycle`(" + ", ".join(f"@{n}" for n, _ in schema.PARAMS) + ")"
@@ -107,7 +107,7 @@ def test_what_a_run_found_is_kept_for_the_console_and_recorded_as_an_event(ctx, 
     assert [(s["key"], s["status"], s["kept"]) for s in st["sources"]] == [("comments", "live", 0), ("sonar", "live", 1)]
     (event,) = events(ctx, "own.cycle")
     assert event.actor == "agent" and event.space == "system" and event.payload["staged"] == 1 and event.payload["hard"] == 1
-    assert event.payload["failing"] == [] and isinstance(event.latency_ms, int)
+    assert event.payload["failing"] == [] and event.payload["waiting"] == [] and isinstance(event.latency_ms, int)
 
 
 def test_a_source_that_fails_does_not_stop_the_procedure_but_the_run_is_not_ok(ctx, world):
@@ -116,6 +116,19 @@ def test_a_source_that_fails_does_not_stop_the_procedure_but_the_run_is_not_ok(c
     out = cycle.run(ctx)
     assert out["ok"] is False and out["failing"] == ["sonar"] and out["error"] == "Could not read: Sonar"
     assert gw.ran[-1]["sql"].startswith("CALL "), "what the other sources staged is still checked"
+
+
+def test_a_source_waiting_for_access_leaves_the_run_ok(ctx, world):
+    gw, _ = world
+    gw.no_access = f"`{SONAR}`"
+    out = cycle.run(ctx)
+    assert out["ok"] is True and out["error"] == "" and out["failing"] == [] and out["waiting"] == ["sonar"]
+    assert gw.ran[-1]["sql"].startswith("CALL "), "what the other sources staged is still checked"
+    st = cycle.status(ctx)
+    assert st["error"] == "" and [(s["key"], s["status"]) for s in st["sources"]] == [("comments", "live"), ("sonar", "waiting")]
+    (event,) = events(ctx, "own.cycle")
+    assert event.payload["waiting"] == ["sonar"] and event.payload["failing"] == [] and event.payload["error"] == ""
+    assert cycle.said(out) == "agent alerts: 0 read, 0 kept, 0 sent to review, 1 source waiting for access"
 
 
 def test_the_procedure_failing_is_said_in_bigquerys_words(ctx, clock, world):

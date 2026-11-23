@@ -321,6 +321,24 @@ class ReadTables:
         return 3 * 1024 ** 3
 
 
+class OnlySonarRefuses(ReadTables):
+    """Every read is taken; the Sonar dataset alone has not let this account in yet."""
+
+    def dry_run(self, sql, params=None, *, location=None):
+        self.asked.append((sql, dict(params or {}), location))
+        return 3 * 1024 ** 3
+
+
+class MayNotRunQueries(ReadTables):
+    """The account may see every table and may not run a query in its own project."""
+
+    def get_table(self, table_id):
+        return {"full_id": table_id, "rows": 12, "location": "US"}
+
+    def dry_run(self, sql, params=None, *, location=None):
+        raise RuntimeError("403 Access Denied: Project this-project: User does not have bigquery.jobs.create permission in project this-project.")
+
+
 def bigquery_card(client):
     return next(c for c in client.get("/api/connections", headers=iap(IM)).json()["connections"] if c["key"] == "bigquery")
 
@@ -414,8 +432,11 @@ def test_the_bigquery_card_checks_every_table_and_names_each_grant_once(ctx, cli
                            "Sprinklr owned posts", "DSD story selection", "Alert log"], "a table nothing reads, and one that is not set, are not asked for"
     assert lines["Sundar all mentions"]["ok"] is True and lines["Sundar all mentions"]["message"] == "Readable. A day's read scans 3.0 GB."
     grant = 'GRANT `roles/bigquery.dataViewer` ON SCHEMA `bsip-s-bsip-gg-26-2cf3`.`google_bg` TO "serviceAccount:agent@project.test"'
-    assert lines["Sonar"]["ok"] is False and lines["Sonar"]["message"] == f"Access denied. The dataset's owners run: {grant}"
-    assert got["test"]["grants"] == [grant + ";"], "one line for the dataset, though three settings read its table"
+    assert lines["Sonar"]["ok"] is False and lines["Sonar"]["waiting"] is True
+    assert lines["Sonar"]["message"] == f"Waiting for access. It is skipped until then. The dataset's owners run: {grant}"
+    named = f"-- Sonar: bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw\n{grant};"
+    assert got["test"]["grants"] == [named], "one line for the dataset, though three settings read its table, and it says which table it is for"
+    assert got["test"]["message"].startswith("Tubular videos: "), "what the card says first is the table that failed, not the one that is waiting"
     assert lines["Tubular videos"]["ok"] is False and lines["Tubular videos"]["message"].startswith("BigQuery would not take this table's read: 400 Unrecognized name: video_title")
     assert lines["DSD story selection"]["message"] == "Readable. A day's read scans 3.0 GB." and lines["Alert log"]["ok"] is True
     assert lines["Sprinklr owned posts"]["ok"] is True, "the two tables only agent alerts read are checked with their own reads"
@@ -429,10 +450,11 @@ def test_the_bigquery_card_checks_every_table_and_names_each_grant_once(ctx, cli
     card = bigquery_card(client)
     rows = {r["name"]: r for r in card["tables"]}
     assert card["state"] == "failing" and rows["Sonar"]["status"]["ok"] is False and rows["Sundar all mentions"]["status"]["ok"] is True
+    assert rows["Sonar"]["status"]["waiting"] is True and rows["Tubular videos"]["status"]["waiting"] is False
     assert rows["Sprinklr comments"]["status"] is None and rows["Brandwatch stored mentions"]["location"] == "EU"
     listed = client.get("/api/connections", headers=iap(IM)).json()
-    assert {"tool": "bigquery", "name": "BigQuery", "text": "Sonar: no access. Send the line below to the dataset's owners.", "required": True} in listed["todo"]
-    assert listed["grants"] == [grant + ";"], "the line itself is listed once, to copy"
+    assert {"tool": "bigquery", "name": "BigQuery", "text": "Sonar: waiting for access. Send the statement below to the dataset's owners.", "required": True} in listed["todo"]
+    assert listed["grants"] == [named], "the line itself is listed once, to copy"
 
     alert_log = rows["Alert log"]
     client.put("/api/connections/bigquery/tables", json={"tables": [{"id": alert_log["id"], "table": "this-project.slrr_alerts.gone"}]}, headers=iap(ADMIN))
@@ -441,6 +463,45 @@ def test_the_bigquery_card_checks_every_table_and_names_each_grant_once(ctx, cli
     again = client.post("/api/connections/bigquery/test", headers=iap(ADMIN)).json()
     gone = next(d for d in again["test"]["details"] if d["label"] == "Alert log")
     assert gone["ok"] is False and gone["message"] == "BigQuery has no table this-project.slrr_alerts.gone."
+
+
+def checked_card(ctx, client, monkeypatch, gw):
+    """The BigQuery card after its check, with every table of posts read by something and `gw` standing in for BigQuery."""
+    client.post("/api/connections/autofill", headers=iap(ADMIN))
+    own_dataset(client, ctx)
+    ctx.config.inhouse.enabled = ctx.config.sonar_lookup.enabled = True
+    monkeypatch.setattr(connections, "_on_cloud", lambda: True)
+    ctx.bq = gw
+    return client.post("/api/connections/bigquery/test", headers=iap(ADMIN)).json()
+
+
+def test_a_table_waiting_for_access_does_not_fail_the_bigquery_card(ctx, client, monkeypatch, own_secrets):
+    got = checked_card(ctx, client, monkeypatch, OnlySonarRefuses())
+    lines = {d["label"]: d for d in got["test"]["details"]}
+    assert [label for label, d in lines.items() if not d["ok"]] == ["Sonar"] and lines["Sonar"]["waiting"] is True
+    assert got["test"]["ok"] is True and got["connection"]["state"] == "connected", "a table its owners have not opened yet is not a broken connection"
+    assert got["test"]["message"] == "Connected. Waiting for access to 1 table: Sonar."
+
+    rows = {r["name"]: r for r in bigquery_card(client)["tables"]}
+    assert rows["Sonar"]["status"]["ok"] is False and rows["Sonar"]["status"]["waiting"] is True
+    assert rows["Sundar all mentions"]["status"] == {"ok": True, "waiting": False, "message": "Readable. A day's read scans 3.0 GB."}
+    listed = client.get("/api/connections", headers=iap(IM)).json()
+    assert listed["summary"]["failing"] == 0 and listed["summary"]["connected"] >= 1
+    assert {"tool": "bigquery", "name": "BigQuery", "text": "Sonar: waiting for access. Send the statement below to the dataset's owners.", "required": True} in listed["todo"], \
+        "sending the line is still on the list of what is left"
+    grant = 'GRANT `roles/bigquery.dataViewer` ON SCHEMA `bsip-s-bsip-gg-26-2cf3`.`google_bg` TO "serviceAccount:agent@project.test"'
+    assert listed["grants"] == [f"-- Sonar: bsip-s-bsip-gg-26-2cf3.google_bg.sonar_raw\n{grant};"]
+    check = client.get("/api/audit", params={"action": "connection.test"}, headers=iap(ADMIN)).json()["entries"][0]
+    assert check["status"] == "ok" and check["summary"] == "BigQuery: Connected. Waiting for access to 1 table: Sonar."
+
+
+def test_a_refusal_that_is_not_about_a_table_is_a_failure_and_names_no_grant(ctx, client, monkeypatch, own_secrets):
+    got = checked_card(ctx, client, monkeypatch, MayNotRunQueries())
+    tables = [d for d in got["test"]["details"] if d.get("row")]
+    assert tables and all(not d["ok"] and not d.get("waiting") and not d.get("grant") for d in tables)
+    assert all(d["message"].startswith("BigQuery would not take this table's read: 403 Access Denied: Project this-project") for d in tables)
+    assert got["test"]["ok"] is False and got["connection"]["state"] == "failing" and got["test"]["grants"] == [], \
+        "letting the account read a dataset would not fix this, so no such line is offered"
 
 
 def test_what_is_left_says_how_people_connect_gmail(ctx, client):

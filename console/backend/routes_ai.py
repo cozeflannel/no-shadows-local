@@ -119,7 +119,8 @@ def _step(name: str, fn: Any) -> dict[str, Any]:
         detail = fn()
         return {"step": name, "ok": True, "detail": str(detail), "ms": int((time.monotonic() - t0) * 1000)}
     except Exception as exc:  # noqa: BLE001 - the reason is the result
-        return {"step": name, "ok": False, "detail": str(exc)[:400], "ms": int((time.monotonic() - t0) * 1000)}
+        out = {"step": name, "ok": False, "detail": str(exc)[:400], "ms": int((time.monotonic() - t0) * 1000)}
+        return {**out, "waiting": True} if bq_admin.no_access(exc) else out
 
 
 def _check_gemini(ctx: AgentContext) -> list[dict[str, Any]]:
@@ -149,17 +150,19 @@ def _check_decisions(ctx: AgentContext) -> list[dict[str, Any]]:
 
 def _check_bigquery(ctx: AgentContext) -> list[dict[str, Any]]:
     """Each Early Detection statement is checked by BigQuery against the real tables without running (a dry run),
-    and the last real read of each table is reported."""
+    and the last real read of each table is reported. A table whose owners have not let this account in yet is
+    marked `waiting`: it is said, and it does not fail the check."""
     gw = bq_admin.get_gateway(ctx)
     try:
         plan = early.plan(ctx, ctx.now())
     except Exception as exc:  # noqa: BLE001
         return [{"step": "Early Detection's statements", "ok": False, "detail": str(exc)[:400], "ms": 0}]
-    steps = [_step(f"Early Detection: {item['what']}", lambda item=item: f"valid, would read {gw.dry_run(item['sql'], item['params'], location=item['location']):,} bytes")
-             for item in plan]
+    steps = [{**_step(f"Early Detection: {item['what']}", lambda item=item: f"valid, would read {gw.dry_run(item['sql'], item['params'], location=item['location']):,} bytes"),
+              "source": item["source"]} for item in plan]
     for src in early.status(ctx)["sources"]:
         steps.append({"step": f"Last real read of {src.get('label') or src['key']}", "ok": src.get("status") == "live",
-                      "detail": src.get("error") or f"{src.get('how', 'read')} at {str(src.get('at', ''))[:16].replace('T', ' ')} UTC", "ms": 0})
+                      "detail": src.get("error") or f"{src.get('how', 'read')} at {str(src.get('at', ''))[:16].replace('T', ' ')} UTC", "ms": 0,
+                      "source": src["key"], **({"waiting": True} if src.get("status") == "waiting" else {})})
     return steps
 
 
@@ -183,8 +186,11 @@ def ai_check(key: str, ctx: AgentContext = Depends(get_ctx), user: User = Depend
         steps = run(ctx)
     except Exception as exc:  # noqa: BLE001
         steps = [{"step": "Reach the service", "ok": False, "detail": str(exc)[:400], "ms": 0}]
-    result = {"ok": all(s["ok"] for s in steps), "steps": steps, "at": ctx.now().isoformat(), "by": user.email}
+    failed = [s for s in steps if not s["ok"] and not s.get("waiting")]
+    waiting = len({s.get("source") or s["step"] for s in steps if s.get("waiting")})
+    result = {"ok": not failed, "steps": steps, "at": ctx.now().isoformat(), "by": user.email}
     ctx.store.put_kv(f"ai:check:{key}", result)
+    said = "all good" + (f", {waiting} table{'' if waiting == 1 else 's'} waiting for access" if waiting else "")
     ctx.audit(actor=user.email, action="ai.check", surface="console", target_type="engine", target_id=key, status="ok" if result["ok"] else "error",
-              summary=f"Checked {key}: {'all good' if result['ok'] else next(s['detail'] for s in steps if not s['ok'])}"[:300])
+              summary=f"Checked {key}: {said if result['ok'] else failed[0]['detail']}"[:300])
     return result

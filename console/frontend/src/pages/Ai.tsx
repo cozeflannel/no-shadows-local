@@ -1,4 +1,4 @@
-import { ArrowRight, CircleCheck, CircleX } from "lucide-react";
+import { ArrowRight, CircleCheck, CircleX, Hourglass } from "lucide-react";
 import { Link } from "react-router";
 
 import { apiSend } from "../api/client";
@@ -7,7 +7,8 @@ import { TimeCell } from "../components/common";
 import { Badge, Button, Card, cx, ErrorState, PageHeader, Spinner } from "../components/ui";
 import { useApp } from "../context";
 
-interface Step { step: string; ok: boolean; detail: string; ms: number }
+/** One line of a check. `waiting`: a table whose owners have not let the Console read it yet. It does not fail the check. */
+interface Step { step: string; ok: boolean; detail: string; ms: number; waiting?: boolean }
 interface Check { ok: boolean; steps: Step[]; at: string; by: string }
 interface Engine {
   key: "gemini" | "decisions" | "bigquery" | "documents"; name: string; role: string; does: string;
@@ -68,10 +69,14 @@ function EngineCard({ engine, canCheck, onChecked }: { engine: Engine; canCheck:
           <ul className="mt-2 flex flex-col gap-2">
             {last.steps.map((s) => (
               <li key={s.step} className="flex gap-2 text-sm">
-                {s.ok ? <CircleCheck aria-label="Passed" className="mt-0.5 size-4 shrink-0 text-emerald-600" /> : <CircleX aria-label="Failed" className="mt-0.5 size-4 shrink-0 text-rose-600" />}
+                {s.ok ? <CircleCheck aria-label="Passed" className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+                  : s.waiting ? <Hourglass aria-label="Waiting for access" className="mt-0.5 size-4 shrink-0 text-amber-600" />
+                  : <CircleX aria-label="Failed" className="mt-0.5 size-4 shrink-0 text-rose-600" />}
                 <span className="min-w-0">
                   <span className="text-zinc-900 dark:text-zinc-100">{s.step}</span>
-                  <span className={cx("block break-words", s.ok ? "text-zinc-500" : "text-rose-600 dark:text-rose-400")}>{s.detail}</span>
+                  <span className={cx("block break-words", s.ok ? "text-zinc-500" : s.waiting ? "text-amber-800 dark:text-amber-300" : "text-rose-600 dark:text-rose-400")}>
+                    {s.waiting ? "Waiting for access: skipped until its owners let the Console read it." : s.detail}
+                  </span>
                 </span>
               </li>
             ))}

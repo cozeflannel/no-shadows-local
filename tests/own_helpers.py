@@ -30,6 +30,7 @@ class BigQuery:
         self.source_rows: dict[str, list[dict[str, Any]]] = {}
         self.held: set[str] = set()
         self.fail = ""
+        self.no_access = ""  # a table whose owners have not let this account in yet
         self.refused: list[str] = []  # statements BigQuery was made to refuse
         self.fail_insert = ""
         self.summary: list[dict[str, Any]] = [{"staged": 0, "new_posts": 0, "hard": 0, "single_asked": 0, "single_queued": 0, "embedded": 0,
@@ -37,6 +38,9 @@ class BigQuery:
         self.answers: list[tuple[str, list[dict[str, Any]]]] = []  # (what the statement starts with or contains, rows)
 
     def query(self, sql: str, params: dict[str, Any] | None = None, *, location: str | None = None, max_rows: int = 10000, labels=None):
+        if self.no_access and self.no_access in sql:
+            self.refused.append(sql)
+            raise RuntimeError("403 Access Denied: Table p:d.t: User does not have permission to query table p:d.t, or perhaps it does not exist.")
         if self.fail and self.fail in sql:
             self.refused.append(sql)
             raise RuntimeError("403 Access Denied: the table can't be read")

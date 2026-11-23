@@ -138,7 +138,7 @@ def run(ctx: "AgentContext", state: dict[str, Any], now: datetime) -> dict[str, 
     cursors, entries = state.setdefault("cursors", {}), state.setdefault("sources", {})
     listed = sources.listing(ctx)
     taken: set[str] = set()
-    out: dict[str, Any] = {"staged": 0, "read": 0, "failing": []}
+    out: dict[str, Any] = {"staged": 0, "read": 0, "failing": [], "waiting": []}
     for source in listed:
         entry: dict[str, Any] = {"label": source.label, "kind": source.kind, "where": source.where, "at": now.isoformat(), "error": ""}
         try:
@@ -150,8 +150,9 @@ def run(ctx: "AgentContext", state: dict[str, Any], now: datetime) -> dict[str, 
             out["staged"] += kept
             out["read"] += len(with_words) + left_out
         except Exception as exc:  # noqa: BLE001 - noted on the source; its cursor stays, so the same rows are read again
-            entry.update(status="failing", error=str(exc)[:400])
-            out["failing"].append(source.key)
+            waiting = bq_admin.no_access(exc)  # its owners have not let this account in yet: skipped, and not a failure
+            entry.update(status="waiting" if waiting else "failing", error=str(exc)[:400])
+            out["waiting" if waiting else "failing"].append(source.key)
         entries[source.key] = entry
     for key in [k for k in entries if k not in {s.key for s in listed}]:
         del entries[key]  # a source taken out of Settings leaves the table

@@ -9,7 +9,9 @@ Values are saved to the same settings the rest of the Console edits; a check's r
 
 BigQuery is one card: the agent's own dataset, and every table the app reads listed once with what reads it. A table
 several settings name is one row, and changing it there changes each of them. A table's location is read from BigQuery
-by the check, never typed. The catalog also carries what is left to do across every tool, and each GRANT line once.
+by the check, never typed. A table its owners have not opened to this account yet is waiting, not failing: the card
+stays connected, the features skip that table, and its GRANT line says which table it is for. The catalog also
+carries what is left to do across every tool, and each GRANT line once.
 """
 
 from __future__ import annotations
@@ -264,7 +266,7 @@ def table_list(settings: dict[str, Any], test: dict[str, Any] | None) -> list[di
                     "watches": first.post in (read(settings, WATCH_PATH) or []), "own": first.post in (read(settings, OWN_PATH) or [])}
         was = checked.get(row.id)
         out.append({"id": row.id, "name": first.name, "what": first.what, "table": row.table, "set": bool(row.table), "location": _row_location(settings, row),
-                    "post": post, "reads": _reads(settings, row), "status": {"ok": was["ok"], "message": was["message"]} if was else None})
+                    "post": post, "reads": _reads(settings, row), "status": {"ok": was["ok"], "waiting": bool(was.get("waiting")), "message": was["message"]} if was else None})
     return out
 
 
@@ -340,10 +342,10 @@ def _todo(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         line = {"tool": r["key"], "name": r["name"], "required": r["required"]}
         if r["required"] or r["state"] != "not_connected":
             out += [{**line, "text": f"Set {label}"} for label in r["missing"]]
-        if r["test"] and not r["test"]["ok"]:
-            failed = [f"{d['label']}: no access. Send the line below to the dataset's owners." if d.get("grant") else f"{d['label']}: {d['message']}"
-                      for d in r["test"]["details"] if not d["ok"]]
-            out += [{**line, "text": text} for text in failed or [r["test"]["message"]]]
+        if r["test"]:
+            left = [f"{d['label']}: waiting for access. Send the statement below to the dataset's owners." if d.get("waiting") else f"{d['label']}: {d['message']}"
+                    for d in r["test"]["details"] if not d["ok"]]
+            out += [{**line, "text": text} for text in left or ([] if r["test"]["ok"] else [r["test"]["message"]])]
     return out
 
 
@@ -595,7 +597,8 @@ GRANT = 'GRANT `roles/bigquery.dataViewer` ON SCHEMA `{project}`.`{dataset}` TO 
 
 def _check_bigquery(ctx: AgentContext) -> list[dict[str, Any]]:
     """The agent's own dataset, then every table something reads: where it lives, and an estimate of its read. Both
-    are free to ask. A line may carry `grant` (what the table's owners run) and `set` (a location read from BigQuery)."""
+    are free to ask. A line may carry `waiting` with `grant` (the table's owners have not let this account in; what
+    they run) and `set` (a location read from BigQuery)."""
     cfg = ctx.config.platform.bigquery
     state: dict[str, Any] = {}
 
@@ -642,12 +645,12 @@ def _check_tables(ctx: AgentContext, gw: Any, who: str) -> list[dict[str, Any]]:
         line: dict[str, Any] = {"label": first.name, "row": row.id, "ok": False}
         out.append(line)
 
-        def denied(exc: Exception, table: str = row.table) -> bool:
-            if "Access Denied" not in str(exc) and "403" not in str(exc):
+        def denied(exc: Exception, table: str = row.table, name: str = first.name) -> bool:
+            if not bq_admin.no_access(exc):
                 return False
-            project, name = table.split(".")[:2]
-            line["grant"] = GRANT.format(project=project, dataset=name, who=who)
-            line["message"] = f"Access denied. The dataset's owners run: {line['grant']}"
+            project, dataset = table.split(".")[:2]
+            line.update(waiting=True, grant=GRANT.format(project=project, dataset=dataset, who=who), grant_for=f"{name}: {table}")
+            line["message"] = f"Waiting for access. It is skipped until then. The dataset's owners run: {line['grant']}"
             return True
 
         try:
@@ -793,10 +796,16 @@ def test_connection(key: str, request: Request, ctx: AgentContext = Depends(get_
         audit.record(ctx, actor=user.email, action="connection.save", surface="console", target_type="connection", target_id=t.key,
                      summary=f"{t.name}: its check read {', '.join(f'{path} = {value}' for path, value in sorted(read_here.items()))}"[:300],
                      detail={"read": read_here})
-    failed = [d for d in details if not d["ok"]]
+    failed = [d for d in details if not d["ok"] and not d.get("waiting")]
+    waiting = [d["label"] for d in details if d.get("waiting")]  # its owners have not let this account in yet: skipped, not broken
+    lines: dict[str, list[str]] = {}
+    for d in details:
+        if d.get("grant"):
+            lines.setdefault(d["grant"], []).append(d.pop("grant_for"))
+    connected = "Connected." + (f" Waiting for access to {len(waiting)} table{'' if len(waiting) == 1 else 's'}: {', '.join(waiting)}." if waiting else "")
     result = {"ok": not failed, "details": details, "at": ctx.now().isoformat(), "by": user.email,
-              "grants": sorted({d["grant"] + ";" for d in details if d.get("grant")}),
-              "message": "Connected." if not failed else f"{failed[0]['label']}: {failed[0]['message']}"}
+              "grants": [f"-- {'; '.join(names)}\n{grant};" for grant, names in sorted(lines.items())],
+              "message": connected if not failed else f"{failed[0]['label']}: {failed[0]['message']}"}
     ctx.store.put_kv(TEST_KV + t.key, {**result, "fingerprint": _fingerprint(settings, t)})
     audit.record(ctx, actor=user.email, action="connection.test", surface="console", target_type="connection", target_id=t.key,
                  status="ok" if result["ok"] else "error", summary=f"{t.name}: {result['message']}"[:300])
