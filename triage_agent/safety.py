@@ -55,6 +55,20 @@ _GUARD_RX = [re.compile(p, re.IGNORECASE) for p in GUARD_PATTERNS]
 _GO_LINK_RX = re.compile(r"(?<![\w/])go/[\w-]+", re.IGNORECASE)
 
 
+_ROBOT = re.compile("\U0001F916\ufe0f?")
+
+
+def unmarked(config: AgentConfig, text: str) -> str:
+    """A text for Burson's space, or for the copy that shows what Burson would read, without the agent's prefix or the
+    robot emoji: nothing there shows it was written by a bot. Posts in the internal spaces keep the prefix."""
+    t = str(text or "")
+    prefix = (config.agent.message_prefix or "").strip()
+    if prefix:
+        t = re.sub(rf"(?m)^([ \t]*){re.escape(prefix)}[ \t]*", r"\1", t)
+    t = _ROBOT.sub("", t)
+    return re.sub(r"(?m)[ \t]+$", "", re.sub(r"[ \t]{2,}", " ", t)).strip()
+
+
 class GuardResult(BaseModel):
     ok: bool = True
     hits: list[str] = Field(default_factory=list)
@@ -420,12 +434,22 @@ def run_checks(ctx: "AgentContext") -> list[CheckResult]:
         fix="Settings → Agent behavior → Agent identity: enter the Triage Agent account."))
 
     deployed = os.environ.get("TRIAGE_BACKEND", "local") == "gcp" or bool(os.environ.get("K_SERVICE", "").strip())
-    audience = bool(os.environ.get("TRIAGE_IAP_AUDIENCE", "").strip())
-    out.append(CheckResult(
-        id="signed_identity", title="Console identity is verified", passed=(audience or not deployed),
-        detail=("The signed IAP assertion is verified." if audience else
-                ("Local run: the dev identity is used." if not deployed else "The IAP audience is not set: sign-in is refused.")),
-        fix="Redeploy the Console with the deploy script: it sets the IAP audience."))
+    if in_worker(ctx):  # the worker has no sign-in page: it verifies the token Google signs for each caller instead
+        sched = os.environ.get("TRIAGE_SCHEDULER_SA", "").strip().lower()
+        push = (cfg.platform.pubsub.push_service_account or "").strip().lower()
+        callers = (["the scheduler's account"] if sched else []) + (["the push account"] if push and push != sched else [])
+        out.append(CheckResult(
+            id="signed_identity", title="Calls to the worker are verified", passed=bool(callers) or not deployed,
+            detail=(f"The worker only takes calls signed by {' or '.join(callers)}." if callers else
+                    ("Local run: no signed calls are needed." if not deployed else "No account may call the worker, so it refuses every call.")),
+            fix="Redeploy the worker with infra/09_worker.sh: it sets the scheduler's account."))
+    else:
+        audience = bool(os.environ.get("TRIAGE_IAP_AUDIENCE", "").strip())
+        out.append(CheckResult(
+            id="signed_identity", title="Console identity is verified", passed=(audience or not deployed),
+            detail=("The signed IAP assertion is verified." if audience else
+                    ("Local run: the dev identity is used." if not deployed else "The IAP audience is not set: sign-in is refused.")),
+            fix="Redeploy the Console with the deploy script: it sets the IAP audience."))
 
     try:
         ctx.store.put_doc("health", "audit_probe", {"at": ctx.now().isoformat()})
@@ -468,6 +492,13 @@ def run_checks(ctx: "AgentContext") -> list[CheckResult]:
         detail="None found." if not secretish else f"Looks like a secret: {', '.join(secretish[:5])}",
         fix="Put the value in Settings → Secrets and keep only the secret's name in the setting."))
     return out
+
+
+def in_worker(ctx: "AgentContext") -> bool:
+    """True in the worker service: it marks the context it works with (console/backend/worker.py get_ctx), and Cloud Run
+    names it after the Console with "-worker" at the end (infra/09_worker.sh). The worker takes only calls Google signed
+    for the scheduler's account or the Pub/Sub push account (worker.verify_caller)."""
+    return getattr(ctx, "service", "") == "worker" or os.environ.get("K_SERVICE", "").strip().endswith("-worker")
 
 
 def blocking_failures(ctx: "AgentContext") -> list[CheckResult]:

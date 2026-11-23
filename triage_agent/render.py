@@ -226,7 +226,7 @@ def short_label(text: str) -> str:
 def needs_burson(ctx: "AgentContext", case: Case, result: TriageResult, oncall_email: str | None,
                  oncall_name: str | None = None) -> str:
     who = f"{oncall_email} ({oncall_name or 'Burson on-call'})" if oncall_email else "Burson on-call"
-    lines = [f"{prefix(ctx)} *Needs Burson* · {case.case_id}"]
+    lines = ["*Needs Burson*"]
     title = result.normalized.get("alert_name")
     if title:
         lines.append(f"_{truncate(title, 160)}_")

@@ -150,6 +150,8 @@ def _to_space(ctx: "AgentContext", client: Any, item: "OutboxItem", doc: dict[st
         _fail(ctx, doc, info["error"])
         out["failed"] += 1
         return
+    if source or info["external"] or item.target in set(ctx.config.platform.safety.external_spaces):
+        text = safety.unmarked(ctx.config, text)
     hits = safety.leak_guard(ctx.config, text).hits if source and info["external"] else []
     if hits:  # the source space is open to people outside: nothing internal goes there, whatever its key is called
         _close(ctx, item, doc, "held", "It names something internal: " + ", ".join(hits[:4]), check="leak_guard", hits=hits)
@@ -238,6 +240,53 @@ def release(ctx: "AgentContext", outbox_id: str) -> None:
         give(f"chatpost:{outbox_id}")
 
 
+def _floor_window(ctx: "AgentContext", *, recovering: bool = False) -> tuple[datetime, int]:
+    """The earliest `created_at` a pass or Pub/Sub push may post, and how many older waiting posts were skipped on recovery."""
+    r = ctx.config.platform.routing
+    now = ctx.now()
+    window = timedelta(minutes=r.start_minutes)
+    st = dict(ctx.store.get_kv(STATE) or {})
+    changed = False
+    if not st.get("floor"):  # just turned ON: what was queued before the last few minutes is not sent late
+        st["floor"] = (now - window).isoformat()
+        changed = True
+    floor = datetime.fromisoformat(st["floor"])
+    held_since = datetime.fromisoformat(st["held_since"]) if st.get("held_since") else None
+    last = ctx.store.get_kv(LAST) or {}
+    legacy_blocked = held_since is None and last.get("ok") is False
+    skipped = 0
+    if recovering and ((held_since is not None and now - held_since > window) or legacy_blocked):
+        new_floor = max(floor, now - window)
+        gave_up = {d["id"] for d in ctx.store.list_docs(ROWS, where={"status": "gave_up"}, limit=READ)}
+        older = [i for i in ctx.store.list_outbox(undelivered_only=True, limit=READ)
+                 if takes(ctx, i.target) and i.outbox_id not in gave_up and i.created_at < new_floor]
+        skipped = len(older)
+        if older:
+            ctx.store.mark_outbox_delivered([i.outbox_id for i in older], delivered_by=f"{BY}:too_old")
+            audit.record(ctx, actor="agent", action="chat.delivery.late", surface="agent", target_type="output", target_id=SWITCH,
+                         summary=f"{skipped} older post{' was' if skipped == 1 else 's were'} not sent late",
+                         detail={"count": skipped, "floor": new_floor.isoformat()})
+        floor = new_floor
+        st["floor"] = floor.isoformat()
+        st.pop("held_since", None)
+        if skipped:
+            st["late"] = {"count": skipped, "at": now.isoformat()}
+        changed = True
+    elif recovering and held_since is not None:
+        st.pop("held_since", None)
+        changed = True
+    if changed:
+        ctx.store.put_kv(STATE, st)
+    return max(floor, now - mirror.MAX_GAP), skipped
+
+
+def _mark_held(ctx: "AgentContext") -> None:
+    st = dict(ctx.store.get_kv(STATE) or {})
+    if not st.get("held_since"):
+        st["held_since"] = ctx.now().isoformat()
+        ctx.store.put_kv(STATE, st)
+
+
 def post_now(ctx: "AgentContext", item: "OutboxItem") -> str:
     """One queued post, as soon as its Pub/Sub push arrives (pubsub._run). Returns what came of it. Raises when it was
     not posted and should be pushed again: Pub/Sub tries again and sets it aside after the last try, and the minute
@@ -245,7 +294,13 @@ def post_now(ctx: "AgentContext", item: "OutboxItem") -> str:
     why = why_off(ctx)
     if why:
         return f"waits for the minute run: {why}"
-    if item.created_at < ctx.now() - mirror.MAX_GAP:
+    if ctx.config.platform.safety.block_on_failed_check:
+        failed = safety.blocking_failures(ctx)
+        if failed:
+            _mark_held(ctx)
+            raise RuntimeError("Held by a failed safety check: " + "; ".join(c.title for c in failed[:3]))
+    since, _ = _floor_window(ctx, recovering=True)
+    if item.created_at < since:
         return "too old to post"
     doc = ctx.store.get_doc(ROWS, item.outbox_id) or _row(item)
     if doc["status"] == "gave_up":
@@ -257,7 +312,7 @@ def post_now(ctx: "AgentContext", item: "OutboxItem") -> str:
         try:
             _post(ctx, chatapi.client_for(ctx), item, doc, out, set())
         except _Stop:  # Chat could not be reached: the row says why
-            pass
+            _mark_held(ctx)
         finally:
             ctx.store.put_doc(ROWS, doc["id"], doc)
     finally:
@@ -269,21 +324,25 @@ def post_now(ctx: "AgentContext", item: "OutboxItem") -> str:
 
 def _post_all(ctx: "AgentContext", out: dict[str, Any]) -> None:
     r = ctx.config.platform.routing
-    now = ctx.now()
-    st = ctx.store.get_kv(STATE) or {}
-    if not st.get("floor"):  # just turned ON: what was queued before the last few minutes is not sent late
-        st = {"floor": (now - timedelta(minutes=r.start_minutes)).isoformat()}
-        ctx.store.put_kv(STATE, st)
-    since = max(datetime.fromisoformat(st["floor"]), now - mirror.MAX_GAP)
+    since_peek, _ = _floor_window(ctx, recovering=False)
     rows = {d["id"]: d for d in ctx.store.list_docs(ROWS, where={"status": "gave_up"}, limit=READ)}
-    items = [i for i in ctx.store.list_outbox(undelivered_only=True, limit=READ, since=since) if takes(ctx, i.target) and i.outbox_id not in rows]
-    if not items:
+    candidates = [i for i in ctx.store.list_outbox(undelivered_only=True, limit=READ, since=since_peek) if takes(ctx, i.target) and i.outbox_id not in rows]
+    st = ctx.store.get_kv(STATE) or {}
+    last = ctx.store.get_kv(LAST) or {}
+    if not candidates and not st.get("held_since") and last.get("ok") is not False:
         return
     if ctx.config.platform.safety.block_on_failed_check:
         failed = safety.blocking_failures(ctx)
         if failed:
             raise _Stop("Held by a failed safety check: " + "; ".join(c.title for c in failed[:3]))
     client = chatapi.client_for(ctx)
+    since, skipped = _floor_window(ctx, recovering=True)
+    if skipped:
+        out["not_sent_late"] = skipped
+        out["note"] = f"{skipped} older post{' was' if skipped == 1 else 's were'} not sent late."
+    items = [i for i in ctx.store.list_outbox(undelivered_only=True, limit=READ, since=since) if takes(ctx, i.target) and i.outbox_id not in rows]
+    if not items:
+        return
     quiet: set[str] = set()  # spaces Chat did not answer for in this pass ("dm" for direct messages)
     for item in items[: r.max_per_run]:
         if not claim(ctx, item.outbox_id):
@@ -309,6 +368,7 @@ def run(ctx: "AgentContext") -> dict[str, Any]:
     try:
         _post_all(ctx, out)
     except Exception as exc:  # noqa: BLE001 - shown on the Routing page; the next minute tries again
+        _mark_held(ctx)
         out.update(ok=False, error=str(exc)[:300])
     ctx.store.put_kv(LAST, {**out, "at": ctx.now().isoformat()})
     return out
@@ -330,5 +390,11 @@ def status(ctx: "AgentContext") -> dict[str, Any]:
     """What the Routing page shows about posting: whether it runs, what the last pass did, and the last 100 posts."""
     why = why_off(ctx)
     rows = sorted(ctx.store.list_docs(ROWS, limit=100), key=lambda d: d["at"], reverse=True)
-    return {"on": not why, "why": why, "switch": ctx.flag(SWITCH), "last_run": ctx.store.get_kv(LAST),
-            "rows": [{k: d.get(k) for k in ("id", "at", "target", "to", "text", "status", "why", "tries", "case_id", "message")} for d in rows]}
+    st = ctx.store.get_kv(STATE) or {}
+    out: dict[str, Any] = {"on": not why, "why": why, "switch": ctx.flag(SWITCH), "last_run": ctx.store.get_kv(LAST),
+                           "rows": [{k: d.get(k) for k in ("id", "at", "target", "to", "text", "status", "why", "tries", "case_id", "message")} for d in rows]}
+    if st.get("late"):
+        n = int(st["late"].get("count") or 0)
+        if n > 0:
+            out["not_sent_late"] = {"count": n, "at": st["late"].get("at"), "note": f"{n} older post{' was' if n == 1 else 's were'} not sent late."}
+    return out

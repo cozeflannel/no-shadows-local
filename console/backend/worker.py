@@ -31,6 +31,7 @@ def get_ctx() -> AgentContext:
     ctx = _state.get("ctx")
     if ctx is None:
         ctx = _state["ctx"] = build_context()
+    ctx.service = "worker"  # type: ignore[attr-defined]
     ctx.maybe_reload()
     return ctx
 

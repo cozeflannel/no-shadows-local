@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from . import audit, chatapi
+from . import audit, chatapi, safety
 
 if TYPE_CHECKING:  # pragma: no cover
     from .context import AgentContext
@@ -173,6 +173,7 @@ def _leaks(ctx: "AgentContext", text: str) -> list[str]:
 def send(ctx: "AgentContext", text: str, *, thread: str = "", origin: str = "", case_id: str = "", actor: str = "agent") -> dict[str, Any]:
     """A message for the source space: posted, queued for a person's Send, or held, as the Routing page says."""
     r = ctx.config.platform.routing
+    text = safety.unmarked(ctx.config, text) if is_source_target(ctx, "burson") else text
     m = mode(ctx)
     if not m["live"]:
         return {"status": "held", "why": m["why"]}
@@ -197,6 +198,7 @@ def reply_in_copies(ctx: "AgentContext", text: str, *, thread: str = "", origin:
     run posts it there and on to the third, under the copy of the message it answers. None when there is no second
     space. Nothing here, and nothing that posts it, writes in the source space."""
     r = ctx.config.platform.routing
+    text = safety.unmarked(ctx.config, text) if is_source_target(ctx, "burson") else text
     if not r.bot_on or not r.mirror.strip() or not text.strip():
         return None
     item_id = uuid.uuid4().hex[:16]

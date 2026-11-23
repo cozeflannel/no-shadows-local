@@ -275,3 +275,64 @@ def test_a_reviewed_alert_is_posted_in_the_same_minute_run(on, world):
     assert len(posted) == 1 and "TRG-" in posted[0], "the reviewed alert is in the analysts' space"
     page = on.get("/api/routing", user=VIEWER).json()["delivery"]
     assert page["on"] is True and page["last_run"]["sent"] >= 1 and page["last_run"]["at"]
+
+
+def test_worker_identity_check_passes_with_scheduler_account_while_console_requires_iap(api, monkeypatch):
+    monkeypatch.setenv("K_SERVICE", "slrr-triage-console")
+    monkeypatch.delenv("TRIAGE_IAP_AUDIENCE", raising=False)
+    monkeypatch.setenv("TRIAGE_SCHEDULER_SA", "sched@ops.test")
+    console_check = next(c for c in safety.run_checks(api.ctx) if c.id == "signed_identity")
+    assert not console_check.passed and "IAP" in console_check.detail
+
+    monkeypatch.setenv("K_SERVICE", "slrr-triage-console-worker")
+    worker_check = next(c for c in safety.run_checks(api.ctx) if c.id == "signed_identity")
+    assert worker_check.passed and "The worker only takes calls signed by the scheduler's account." in worker_check.detail
+
+
+def test_posts_held_through_a_long_block_are_not_sent_late_on_recovery(on, world, monkeypatch):
+    clean = space_of(on, "clean")
+    stale = on.ctx.enqueue("clean", "Queued while delivery was blocked")
+    failing = safety.CheckResult(id="signed_identity", title="Console identity is verified", passed=False)
+    monkeypatch.setattr(safety, "blocking_failures", lambda ctx: [failing])
+    assert tick(on, world)["ok"] is False
+    world.clock.advance(minutes=45)
+    fresh = on.ctx.enqueue("clean", "Queued right before recovery")
+    monkeypatch.setattr(safety, "blocking_failures", lambda ctx: [])
+
+    got = tick(on, world)
+    assert got["ok"] is True and got["sent"] == 1 and got["not_sent_late"] == 1
+    assert got["note"] == "1 older post was not sent late."
+    assert world.texts(clean) == ["Queued right before recovery"]
+    assert waiting(on) == []
+    assert chatdelivery.post_now(on.ctx, stale) == "too old to post"
+    st = chatdelivery.status(on.ctx)
+    assert st["not_sent_late"]["count"] == 1 and "1 older post was not sent late." in st["not_sent_late"]["note"]
+
+
+def test_testing_mode_keeps_dms_off_real_ims_and_strips_bot_markers_from_burson(on, world):
+    burson = space_of(on, "burson")
+    clean = space_of(on, "clean")
+    dm_real = world.dms[IM1] = world.add_space("spaces/DM1aaaaaaaa", "", kind="DIRECT_MESSAGE")
+    dm_tester = world.dms[IM2] = world.add_space("spaces/DM2bbbbbbbb", "", kind="DIRECT_MESSAGE")
+    safety_val = {**on.ctx.config.platform.safety.model_dump(mode="json"), "testing": True, "testing_recipients": [IM2]}
+    assert on.put("/api/platform/safety", {"value": safety_val, "note": "test"}).status_code == 200
+
+    on.ctx.enqueue("dm", "🤖 Review needed", recipients=[IM1])
+    on.ctx.enqueue("dm", "🤖 Review needed for tester", recipients=[IM1, IM2])
+    on.ctx.enqueue("burson", "🤖 Please add the link and resend.")
+    got = tick(on, world)
+    assert got["sent"] == 1 and got["held"] == 2
+    assert world.texts(dm_real) == [], "real IMs never receive DMs while Testing is ON"
+    assert world.texts(dm_tester) == ["🤖 Review needed for tester"]
+    assert world.texts(burson) == [], "Burson receives nothing while the safety valve / testing holds it"
+
+    # When the source space is open and not in stealth, Burson posts strip the robot prefix while internal spaces keep it.
+    safety_live = {**safety_val, "testing": False, "testing_recipients": []}
+    assert on.put("/api/platform/safety", {"value": safety_live, "note": "live"}).status_code == 200
+    route(on, bot_on=True, source=burson, mirror="", safety_valve=False, ask_before_source=False)
+    on.ctx.enqueue("burson", "🤖 Please include the full post URL on the View Post line.")
+    on.ctx.enqueue("clean", "🤖 Internal triage note")
+    got2 = tick(on, world)
+    assert got2["sent"] == 2
+    assert world.texts(burson) == ["Please include the full post URL on the View Post line."]
+    assert world.texts(clean) == ["🤖 Internal triage note"]
