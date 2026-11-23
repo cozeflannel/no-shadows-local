@@ -24,7 +24,7 @@ Local Apps Script V8 VM simulation, pre-deploy safety auditing, leak-guard testi
 
 | Tool | What It Does |
 |---|---|
-| `slrr_audit_safety_invariants` | Verifies all 6 mandatory invariants (`Generated.gs` sync, `stand_in` active, all switches defaulting to `OFF`, `B31` strict 15-min dropdown, `<= 49,000` cell caps, `.claspignore`, and zero GitHub remotes). |
+| `slrr_audit_safety_invariants` | Runs the 7 pre-deploy checks (`Generated.gs` sync, the `B30` testing sandbox with no hardcoded emails, all switches defaulting to `OFF`, `B31` strict 15-min dropdown, `B35` Watch alerts `OFF`, `<= 49,000` cell caps, `.claspignore`). |
 | `slrr_test_leak_guard` | Runs production `outboxGuardHits_()`, `guardHits_()`, `relayGuardHits_()`, and `outboxEmojiProblem_()` in the V8 VM on candidate text/emojis. |
 | `slrr_preview_alert_triage` | Runs `parseAlert_`, `reviewAlert_`, `escalation_`, `planRecipients_`, and `socialAlertEmail_` in `< 100ms` on any raw Zapier alert text. |
 | `slrr_run_tests` | Runs `node` (all tests or a single `switch_*.test.js`), `pytest`, `evals`, or `all`. |

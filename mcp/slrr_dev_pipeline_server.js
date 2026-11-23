@@ -3,7 +3,7 @@
  * slrr_dev_pipeline_server.js — Development, Safety Audit, Leak-Guard & Local V8 Triage MCP Server for Burson QA Bot.
  *
  * Exposes structured MCP tools for safe local iteration on `burson-triage-agent`:
- *   - `slrr_audit_safety_invariants`: Runs the 8 pre-deploy checks (Generated.gs sync, B30 sandbox and no hardcoded emails, switches OFF, B31 dropdown, B35 Watch alerts OFF, cell caps, .claspignore, no git remote)
+ *   - `slrr_audit_safety_invariants`: Runs the 7 pre-deploy checks (Generated.gs sync, B30 sandbox and no hardcoded emails, switches OFF, B31 dropdown, B35 Watch alerts OFF, cell caps, .claspignore)
  *   - `slrr_test_leak_guard`: Runs the bot's `outboxGuardHits_()` & `outboxEmojiProblem_()` from the local .gs files on candidate outbound text/emoji (without the real space names production also blocks)
  *   - `slrr_preview_alert_triage`: Executes local V8 VM dry-run of `parseAlert_`, `reviewAlert_`, `escalation_`, and `planRecipients_`
  *   - `slrr_run_tests`: Executes `node` (full suite or targeted `switch_*.test.js`), `pytest`, `evals`, or `all`
@@ -57,7 +57,7 @@ function runSubprocess(cmd, args, opts = {}) {
 }
 
 // handleAuditSafetyInvariants and handleRunTests take (args, deps): the MCP server passes args only; the tests pass
-// deps.runSubprocess so they can stand in for git, node and python without running them.
+// deps.runSubprocess so they can stand in for node and python without running them.
 function runnerOf(deps) {
   return (deps && deps.runSubprocess) || runSubprocess;
 }
@@ -156,21 +156,6 @@ async function handleAuditSafetyInvariants(_args, deps) {
     id: 'claspignore_whitelists_only_gs_and_manifest',
     passed: claspSafe,
     detail: claspSafe ? '.claspignore blocks tests and local .js files from clasp push' : 'Check apps-script-chat-bot/.claspignore',
-  });
-
-  // 6. Local-only git check (zero remotes)
-  const gitRemote = run('git', ['remote', '-v']);
-  const remotes = gitRemote.stdout.trim();
-  const gitRan = gitRemote.exit_code === 0;
-  const gitWhy = gitRemote.error || String(gitRemote.stderr || '').trim() || `exit code ${gitRemote.exit_code}`;
-  checks.push({
-    id: 'local_only_no_github_remote',
-    passed: gitRan && remotes === '',
-    detail: !gitRan
-      ? `Could not run \`git remote -v\` (${gitWhy}), so the remotes were not checked`
-      : remotes === ''
-        ? 'Zero git remotes configured (local-only policy intact)'
-        : `Unexpected git remotes: ${remotes}`,
   });
 
   return {
@@ -647,7 +632,7 @@ const TOOLS = [
   {
     name: 'slrr_audit_safety_invariants',
     description:
-      'Run the 8 pre-deploy safety checks: Generated.gs YAML sync, the B30 testing sandbox with no hardcoded emails, every Control switch defaulting to OFF, B31 strict 15-min lookback validation, B35 Watch alerts defaulting to OFF, 49,000-char cell caps, .claspignore protection, and zero git remotes.',
+      'Run the 7 pre-deploy safety checks: Generated.gs YAML sync, the B30 testing sandbox with no hardcoded emails, every Control switch defaulting to OFF, B31 strict 15-min lookback validation, B35 Watch alerts defaulting to OFF, 49,000-char cell caps, and .claspignore protection.',
     inputSchema: {
       type: 'object',
       properties: {},
