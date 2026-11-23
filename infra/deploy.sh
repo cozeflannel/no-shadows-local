@@ -79,6 +79,7 @@ if [[ -z "${AGENT_RESOURCE:-}" && -f "${ROOT}/.local/agent_resource.txt" ]]; the
   set_var AGENT_RESOURCE "$(cat "${ROOT}/.local/agent_resource.txt")"
 fi
 step "Dataset access for the Agent Runtime" "${INFRA}/04_bigquery.sh"
+step "Agent alerts: BigQuery connection and salt" "${INFRA}/11_own_alerts.sh"
 
 step "Scheduled jobs" "${INFRA}/06_jobs.sh"
 step "Console" "${INFRA}/07_console.sh"
@@ -99,4 +100,6 @@ Two things cannot be done from here:
      Cloud console. The steps are at the top of infra/08_gmail_oauth.sh; then run:
      infra/08_gmail_oauth.sh path/to/client_secret.json
   2. The Studio flows are built in Chat as the agent's account: flows/FLOW_SETUP.md
+
+Agent alerts: what is left for a person is listed under "Agent alerts: BigQuery connection and salt" above.
 EOF

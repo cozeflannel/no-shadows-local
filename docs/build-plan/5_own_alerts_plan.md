@@ -35,6 +35,8 @@ Where the specification's own text cannot run, or breaks one of its hard rules, 
 | D19 | A button on the card records the verdict when its link is opened | The link opens the Agent alerts page, which records the verdict once for the analyst who is signed in and can be changed there | A link that changes something when fetched can be set off by a preview. The page asks the API as the person |
 | D20 | The seven tables are named in the procedure | Find and fill (Integrations) adds the two tables only agent alerts read and ticks the tables it reads. Each tick can be changed there | Which tables are read is a setting, like every other read |
 | D21 | The alert space is an environment value | The space is chosen from the agent's spaces under Settings, Agent alerts. The source space is not among the choices and is refused again when an alert is queued | Nothing the agent raises may reach the source space |
+| D22 | Phase 1 grants the agent's account `storage.objectAdmin` and `chat.bot`, the scheduler `cloudfunctions.invoker`, the connection's account `dlp.user` and `run.invoker`, and Chat's publishers `pubsub.publisher` | None of those. Added to what the deploy already grants: `dlp.user` for the agent's account, Vertex AI User for the connection's account, and Connection Admin on the one connection for the agent's account | Each role left out serves a part that is not built (D5, D6) or nothing. The account that creates the two remote models needs Connection Admin, which the specification leaves out |
+| D23 | Phase 1 enables 22 APIs | Two are added to the deploy's list: Sensitive Data Protection and BigQuery Connection | The rest are on already or serve nothing built: Workspace Events (D6), Data Transfer (D12), Data Policy, Data Catalog and Monitoring, which no code calls |
 
 Defects in the specification's SQL and code that are fixed here:
 - `last_alerted_at` is read (cool-down, follow-up) and never written. The review writes it.
@@ -48,7 +50,7 @@ Defects in the specification's SQL and code that are fixed here:
 
 ## Phases
 
-Each step is built test-first. The suite command is in `check.sh`.
+Each step is built test-first. The suite: `TRIAGE_LLM=fake .venv/bin/python -m pytest -q` (README, Quickstart).
 
 ### Phase 1: the data in
 Verified when: with the switch ON and BigQuery stood in for, one run stages scrubbed posts from all nine sources, fills the vault and calls the procedure.
@@ -88,14 +90,14 @@ Verified when: `infra/deploy.sh` enables what is needed, grants the roles, creat
 
 | Step | What | Files | Blocked by |
 |---|---|---|---|
-| 4.1 | Deploy scripts | `infra/01_enable_apis.sh`, `infra/02_service_accounts.sh`, `infra/11_own_alerts.sh`, `infra/10_seed_settings.py` | Phase 1 |
+| 4.1 | Deploy scripts | `infra/01_enable_apis.sh`, `infra/02_service_accounts.sh`, `infra/06_jobs.sh`, `infra/11_own_alerts.sh`, `infra/10_seed_settings.py`, `infra/deploy.sh`, `tests/test_own_infra.py` | Phase 1 |
 | 4.2 | Documents | `README.md`, `infra/README.md`, `docs/CONTRACTS.md` | all |
 
 ## Not yet specified
 
 - **Nothing here has run against Google Cloud.** This workspace cannot reach the project. The first live run is the proof of the SQL.
 - `gemini-4-hydrogen` as a BigQuery remote model is taken from Google's model list, not from a run. The name is a setting.
-- Zero data retention: turning the cache off needs the Vertex AI admin role, and prompt logging for abuse monitoring stays on until Google grants an exception. The script does the first; the second is a request to Google.
+- Zero data retention: `infra/11_own_alerts.sh` turns Vertex AI's cache off, for every Gemini call in the project (it needs the Vertex AI admin role; `--keep-cache` skips it). Prompt logging for abuse monitoring stays on until Google grants an exception, which is a request to Google.
 - Cards in Chat. They need a configured Chat app (D6).
 
 ## Always / Never
@@ -110,4 +112,4 @@ Verified when: `infra/deploy.sh` enables what is needed, grants the roles, creat
 | 1 The data in | built: settings, scrub, the KOF list, the BigQuery objects, the nine reads, the run in the in-house job. Left for 3.2: the Integrations tick and Find and fill |
 | 2 Review and raise | built: rules, the review, the alert, verdicts, the follow-up, the purge, the minute tick. A raised alert is not edited in Chat after its verdict (D6) |
 | 3 The Console | built: the Agent alerts page (raised, passed over, sources, rules), verdicts from the page and from a Chat link, its Settings and Help pages, its tick on Integrations, Find and fill, its place on the AI page |
-| 4 Google Cloud | to do |
+| 4 Google Cloud | built: the two APIs, the DLP role, the BigQuery connection with its two grants, the salt, Vertex AI's cache off, the two settings filled, ten minutes for the in-house job, the documents. The script was run against stand-ins for gcloud, bq and curl, not against the project |

@@ -23,6 +23,8 @@ gcloud services enable --project="${PROJECT_ID}" \
   drive.googleapis.com \
   chat.googleapis.com \
   telemetry.googleapis.com \
-  cloudtrace.googleapis.com
+  cloudtrace.googleapis.com \
+  dlp.googleapis.com \
+  bigqueryconnection.googleapis.com
 
 echo "APIs enabled for ${PROJECT_ID}"

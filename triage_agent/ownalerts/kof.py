@@ -114,7 +114,9 @@ def read_sheet(link: str) -> list[tuple[str, list[list[Any]]]]:
         return out
     except HttpError as exc:
         if exc.resp.status in (403, 404):
-            raise Unreadable("The service's account can't open the KOF sheet: share it with that account (Viewer is enough).") from exc
+            email = str(getattr(creds, "service_account_email", "") or "")
+            who = email if "@" in email else "the service's account"
+            raise Unreadable(f"Share the KOF sheet with {who} (Viewer is enough). It cannot open the sheet.") from exc
         raise Unreadable(f"Google Sheets answered {exc.resp.status} reading the KOF sheet.") from exc
 
 

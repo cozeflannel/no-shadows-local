@@ -426,7 +426,7 @@ TOPICS: list[dict[str, Any]] = [
                 "Rules: what each new post is checked against."]},
             {"heading": "Turn it on", "steps": [
                 "Open Integrations and press Find and fill. It adds the two tables only Agent alerts read, and ticks the tables it reads.",
-                "Open Settings, Agent alerts. Enter the BigQuery connection, the secret that holds the salt and the KOF sheet. Add the Brandwatch queries and the Other alerts space if you use them.",
+                "Open Settings, Agent alerts. Enter the KOF sheet's link, and share that sheet (Viewer) with the service's account. The deploy fills the BigQuery connection and the salt's secret: enter them only if they are blank. Add the Brandwatch queries and the Other alerts space if you use them.",
                 "Open Settings, Switches and turn on Change BigQuery from here. Then open Agent alerts and press Create the tables.",
                 "Open Agent alerts, Rules, and add your rules.",
                 "Open Settings, Switches and turn on Agent alerts.",

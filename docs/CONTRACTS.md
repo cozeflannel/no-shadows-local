@@ -684,6 +684,35 @@ check reads each space and its latest message with it.
 query_ref?, filters?, draft_query?, case_id?, hours?, update_of?, keep_refreshed_hours?, actor}`, `run_forecast {force?}`, `refresh_knowledge {}`,
 `run_watches {}`. From Chat an assessment needs an analyst or IM; a Console call was already checked against the person's role.
 
+**Agent alerts** (`triage_agent/ownalerts/`, settings `platform.own_alerts`, flags `own_alerts` and `own_alerts_post`; plan and decisions in
+`docs/build-plan/5_own_alerts_plan.md`). Alerts the agent raises itself. In the code and the settings it is `own_alerts`.
+- **A run** (`cycle.run`, inside `ingest_inhouse` when no rows are handed in, every `interval_minutes`): the BigQuery objects are created or
+  brought up to date (`schema.provision`, needs `bigquery_admin`), the rules are copied when the copy is behind, each source is read from its
+  cursor (`sources`: the tables in `sources` each in its own location, the Brandwatch queries, the Other alerts space), personal details are
+  taken out (`scrub`: patterns, then Cloud DLP `content:deidentify`; nothing is kept when DLP fails), authors are hashed with the salt, KOFs
+  are found from the KOF sheet, and rows go to `posts_staging` and `author_vault_30d` (`ingest`). Then `CALL run_9source_triage_cycle(...)`.
+- **BigQuery objects**, all in the agent's dataset: tables `posts_staging`, `author_vault_30d`, `posts`, `post_metrics`, `stories`,
+  `review_queue`, `decisions`, `feedback` (partitioned, expiring), `pipeline_watermarks`, `policy_rules_config`; function
+  `fast_regex_sanitize`; remote models `embedding_model`, `gemini4_fast_decisions`; procedure `run_9source_triage_cycle`. `agent_events`
+  and the metric views are never touched. No statement names anything with a reserved word (`tests/test_own_sql_words.py`).
+- **The review** (`review.run`, in the worker's once-a-minute tick): reads the open queue items with any decision already kept, reviews the
+  rest through operation `review_own_candidate {item, precedents}` (answers `data.verdict {escalate, severity, escalation_path,
+  decision_rationale}`; asked of the Agent Runtime through `agent_runtime.query`, run by the worker when that fails), applies the hard-rule
+  lock, inserts the decisions once, keeps a record in `own_decisions`, queues the alert (`raise_`, outbox source `own_alerts`, never the
+  source space), remembers a raised story, and closes the queue last. LLM purpose `own.review`.
+- **Afterwards:** `run_followups` step `own_alerts` (`surge.run`) queues a raised story that is growing again, once for each time it was
+  raised; `purge.run` deletes rows past their days once a day; retention removes `own_decisions` past `console_keep_days`.
+- **Console:** `GET /api/own?days=&status=`, `POST /api/own/run` (leads), `POST /api/own/setup` (admins), `GET|POST /api/own/rules`,
+  `PUT|DELETE /api/own/rules/{id}` (leads), `POST /api/own/decisions/{id}/verdict {verdict: TRUE_POSITIVE|FALSE_POSITIVE}` (analysts).
+  Audit actions `own.run`, `own.setup`, `own.rule_saved`, `own.rule_removed`, `own.verdict`. On Integrations each table of posts carries an
+  `own` tick (`platform.own_alerts.sources`); Find and fill adds the two tables in `config/own_alerts.yaml`.
+- **Events:** `own.cycle`, `own.reviewed`, `own.raised`, `own.feedback`, `own.rule_saved`. **State:** docs `own_decisions`, `own_rules`; kv
+  `own:state`, `own:schema`, `own:review`, `own:rules`, `own:kof` (and `own:kof:N`), `own:feedback`, `own:purge`.
+- **Google Cloud** (`infra/11_own_alerts.sh`, run by `infra/deploy.sh`): the BigQuery connection the two remote models are called through
+  (`ai_connection`; its own account has Vertex AI User, the runtime account has Connection Admin on it), the secret that holds the salt
+  (`hash_salt_secret`, made once), and Vertex AI's cache turned off for the project. `infra/10_seed_settings.py` fills the two settings
+  while they are empty. The runtime account has `roles/dlp.user`. The in-house job may run for 600 s, the time a run holds its lock.
+
 **Triage additions** (flags): `classification_layer` runs purpose `triage.classify` first and picks the knowledge the assessment reads;
 `knowledge_rag` adds passages to `triage.assess` and to answers. The result's `extra` carries `classification`, `field_confidence`, `citations`,
 `knowledge_read`. Both off: prompts and results are unchanged.
@@ -698,13 +727,14 @@ returned to a Studio flow and Gmail drafts are not queued.
 **Events** (`events.PlatformEvent`): `audit.recorded`, `chat.inbound|outbound`, `triage.classified`, `assessment.recorded`, `golden.recorded`,
 `safety.blocked|checked`, `outbound.published|delivered|failed|dead_lettered|replayed`, `llm.usage`, `prompt.published`, `agent_chat.turn|tool`,
 `temp_check.started|completed|failed|actioned`, `forecast.run|failed`, `workforce.recommendation_created|recommendation_decided|gap_alert|shift_updated`,
-`knowledge.doc_saved|doc_removed|indexed`, `watch.saved|detected`, `campaign.saved`, `bigquery.changed`, `secret.changed`.
+`knowledge.doc_saved|doc_removed|indexed`, `watch.saved|detected`, `campaign.saved`, `bigquery.changed`, `secret.changed`,
+`own.cycle|reviewed|raised|feedback|rule_saved`.
 
 **State** (generic documents, `Store.put_doc/get_doc/list_docs/create_doc/delete_doc/delete_docs_before`): `audit`, `chat_activity`, `events_hot`,
 `outbound`, `dead_letters`, `prompt_versions`, `prompt_defaults`, `knowledge_docs|chunks|text`, `golden`, `agent_sessions`, `temp_checks`, `tc_curves`, `tc_issues`,
 `wf_forecasts`, `wf_recommendations`, `watches`, `watch_detections`, `watch_sources`. Equality filters need no composite index.
 
-**LLM purposes added:** `triage.classify`, `console.chat_agent`, `temp_check.query`, `temp_check.relevance`, `temp_check.writeup`. Each purpose's
+**LLM purposes added:** `triage.classify`, `console.chat_agent`, `temp_check.query`, `temp_check.relevance`, `temp_check.writeup`, `own.review`. Each purpose's
 instructions, model and temperature can be published as a version in the Console (`prompts.py`); `{{default}}` stands for the built-in text.
 
 **Forecast SQL.** Primary: `AI.FORECAST((series), data_col => 'y', timestamp_col => 'ts', horizon => N, confidence_level => X)` (TimesFM).

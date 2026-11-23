@@ -132,3 +132,34 @@ def test_a_long_list_is_kept_in_parts_and_read_back_whole(ctx, monkeypatch):
     first = kof.lookup(ctx)
     monkeypatch.setattr(kof, "read_sheet", lambda link: pytest.fail("the kept list is used"))
     assert kof.lookup(ctx) == first and len(first) == kof.PART * 2 + 7
+
+
+def test_a_sheet_the_service_cannot_open_names_the_account_to_share_it_with(monkeypatch):
+    import google.auth
+    import googleapiclient.discovery
+    from googleapiclient.errors import HttpError
+
+    class Creds:
+        service_account_email = "runtime@proj.test"
+
+    class Resp:
+        status, reason = 403, "Forbidden"
+
+    class Sheets:
+        def spreadsheets(self):
+            return self
+
+        def get(self, **_):
+            return self
+
+        def execute(self):
+            raise HttpError(Resp(), b'{"error": {"message": "The caller does not have permission"}}')
+
+    monkeypatch.setattr(google.auth, "default", lambda scopes=None: (Creds(), "proj"))
+    monkeypatch.setattr(googleapiclient.discovery, "build", lambda *args, **kwargs: Sheets())
+    link = "https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/edit"
+    with pytest.raises(kof.Unreadable, match="Share the KOF sheet with runtime@proj.test"):
+        kof.read_sheet(link)
+    Creds.service_account_email = "default"  # the address is not known yet
+    with pytest.raises(kof.Unreadable, match="Share the KOF sheet with the service's account"):
+        kof.read_sheet(link)
