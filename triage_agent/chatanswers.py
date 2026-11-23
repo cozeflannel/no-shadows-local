@@ -42,6 +42,7 @@ SAID = {"answered": "Answered", "queued": "Queued the answer to", "held": "Held 
 WAITS = "It waits for a person's Send on the Routing page."
 HANDED = "Handed this thread to the campaigns assistant."
 PURPOSE_CAMPAIGN = "chat.campaign_route"
+_COPY = re.compile(r"^[^\n]{1,80} \((?:Burson|Google)\): ")  # how the copy spaces show a person's message (mirror._person)
 SELF = "chat_answers:self"  # kv: answers the bot's own account got, by thread (the loop backstop)
 SELF_MAX, SELF_WINDOW = 3, timedelta(minutes=15)
 SELF_WHY = (f"Not answered: the QA chatbot's own account already had {SELF_MAX} answers in this thread in the last "
@@ -139,9 +140,9 @@ def _from_bot_or_app(ctx: "AgentContext", m: dict[str, Any], bot: str) -> bool:
     its id (or the record of its posts) or by its prefix (Bot.gs isOwnMessage_)."""
     if chatapi.OWN_ID.match(m["client_id"]):
         return True
-    prefix = (ctx.config.agent.message_prefix or "").strip()
-    if bot and m["sender"] == bot and prefix and (m["text"] or "").lstrip().startswith(prefix):
-        return True
+    prefix, text = (ctx.config.agent.message_prefix or "").strip(), (m["text"] or "").lstrip()
+    if bot and m["sender"] == bot and ((prefix and text.startswith(prefix)) or _COPY.match(text)):
+        return True  # its own words, or its copy of someone's message ("Name (Burson): ...") even with no record of it
     return m["sender_type"] == "BOT" or bool(re.search(r"\bzapier\b", m["sender_display"], re.I))
 
 

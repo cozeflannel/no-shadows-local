@@ -300,3 +300,9 @@ def test_an_answer_for_burson_keeps_only_the_links_its_context_holds():
             "<https://other.example/a|this guide> and [the requirements](https://docs.example.com/requirements).")
     assert known_links_only(said, context) == ("The rule is in https://docs.example.com/requirements. See also , this guide and "
                                                "<https://docs.example.com/requirements|the requirements>.")
+
+
+def test_a_copy_of_someones_message_is_never_taken_for_the_account_owners_question(on, world):
+    switches(on, chat_questions=True)
+    world.say(MIR, "Pat (Burson): why was this alert sent back?", sender=ME)  # the bot's copy, with no record of it kept
+    assert tick(on, world)["answered"] == 0 and world.writes == [] and rows(on) == []

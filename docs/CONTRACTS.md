@@ -691,7 +691,8 @@ person's message that mentions it (a Chat `USER_MENTION` of the account, or `@` 
 the reply goes through `mirror.send`: posted, left for Send, or held and shown under the alert's copy (`mirror.reply_in_copies`). While
 Burson is to hear nothing (`burson_feedback.silent_in_burson_space`, or `TRIAGE_STEALTH_BURSON`) and the source space is the agent's
 `burson` space, the reply is never written there: it is held and shown under the copy only. Apps and the bot's own posts (its client ids,
-its record of its posts, or text that starts with the agent's prefix) are never answered.
+its record of its posts, text that starts with the agent's prefix, or its copy of someone's message, "Name (Burson): ...")
+are never answered.
 - **The person the bot's account belongs to** may ask too, as with the sheet-based bot: at most 3 answers a thread in 15 minutes for messages
   from the bot's own account (kv `chat_answers:self`, Bot.gs `selfAnswerOk_`); the next is kept as `ignored` with the reason. Their row's
   `asker` is `agent.email`; the operation is handed no address for them.
