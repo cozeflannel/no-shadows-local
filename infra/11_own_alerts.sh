@@ -37,8 +37,32 @@ try:
     print(json.load(sys.stdin)["cloudResource"]["serviceAccountId"])
 except Exception:
     sys.exit(1)')" || { echo "BigQuery did not show the account of connection ${FULL}. Nothing else was changed." >&2; exit 1; }
-gcloud projects add-iam-policy-binding "${PROJECT_ID}" --member="serviceAccount:${CONNECTION_SA}" --role=roles/aiplatform.user \
-  --condition=None --quiet >/dev/null
+# Google takes a minute or so to finish making the account of a connection it just created. Until then it answers a
+# grant to that account with "does not exist": wait and ask again. Any other answer stops the script at once.
+GRANT_TRIES="${OWN_GRANT_TRIES:-12}"
+GRANT_WAIT="${OWN_GRANT_WAIT:-10}"
+grant_vertex() {
+  local tries=0 said
+  while true; do
+    if said="$(gcloud projects add-iam-policy-binding "${PROJECT_ID}" --member="serviceAccount:${CONNECTION_SA}" --role=roles/aiplatform.user \
+        --condition=None --quiet 2>&1 >/dev/null)"; then
+      return 0
+    fi
+    tries=$((tries + 1))
+    if [[ "${said}" != *"does not exist"* ]]; then
+      echo "${said}" >&2
+      return 1
+    fi
+    if (( tries >= GRANT_TRIES )); then
+      echo "${said}" >&2
+      echo "Google has not finished making ${CONNECTION_SA}. Run it again in a minute: nothing is made twice." >&2
+      return 1
+    fi
+    echo "  Waiting for Google to finish making ${CONNECTION_SA} (asked ${tries} of ${GRANT_TRIES} times)"
+    sleep "${GRANT_WAIT}"
+  done
+}
+grant_vertex
 echo "  roles/aiplatform.user -> ${CONNECTION_SA} (the connection's own account)"
 
 # The runtime account creates the two remote models on this connection and runs them. That takes the Connection Admin

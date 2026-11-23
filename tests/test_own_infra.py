@@ -51,6 +51,13 @@ elif tool == "gcloud" and args[:2] == ["secrets", "create"]:
     state["secrets"][args[2]] = piped
     save()
 elif tool == "gcloud" and args[:2] == ["projects", "add-iam-policy-binding"]:
+    if state["refuse"] == "role":
+        sys.exit("ERROR: (gcloud.projects.add-iam-policy-binding) PERMISSION_DENIED: Policy update access denied.")
+    if state["not_made_yet"] > 0:  # Google has not finished making the account of a connection it just created
+        state["not_made_yet"] -= 1
+        save()
+        sys.exit("ERROR: (gcloud.projects.add-iam-policy-binding) INVALID_ARGUMENT: Service account "
+                 + flag("--member").split(":", 1)[1] + " does not exist.")
     state["project_roles"].append([args[2], flag("--member"), flag("--role")])
     save()
 elif tool == "bq" and args[0] == "show" and "--connection" in args:
@@ -109,13 +116,15 @@ class Deployer:
 
     def exists(self, **what) -> None:
         """What the project already holds before the next run."""
-        held = {"connections": {}, "secrets": {}, "project_roles": [], "policy": {"etag": "ACAB"}, "refuse": "", **what}
+        held = {"connections": {}, "secrets": {}, "project_roles": [], "policy": {"etag": "ACAB"}, "refuse": "", "not_made_yet": 0, **what}
         (self.home / "state.json").write_text(json.dumps(held), encoding="utf-8")
 
-    def run(self, *options: str):
-        """One run: (how it ended, what the project holds afterwards, what was asked of gcloud, bq and curl)."""
+    def run(self, *options: str, **env_values: str):
+        """One run: (how it ended, what the project holds afterwards, what was asked of gcloud, bq and curl). It does not
+        wait between tries (OWN_GRANT_WAIT=0)."""
         (self.home / "calls.jsonl").write_text("", encoding="utf-8")
-        env = {**os.environ, "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}", "FAKE_CLOUD": str(self.home)}
+        env = {**os.environ, "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}", "FAKE_CLOUD": str(self.home), "OWN_GRANT_WAIT": "0",
+               **env_values}
         done = subprocess.run(["bash", str(self.infra / "11_own_alerts.sh"), *options], env=env, capture_output=True, text=True, check=False)
         calls = [json.loads(line) for line in (self.home / "calls.jsonl").read_text(encoding="utf-8").splitlines()]
         return done, json.loads((self.home / "state.json").read_text(encoding="utf-8")), calls
@@ -228,6 +237,31 @@ def test_a_first_run_makes_the_connection_lets_both_accounts_use_it_and_makes_th
     assert "1. Share the KOF sheet (Viewer) with runtime@proj.test" in left, "the account to share the KOF sheet with is named"
     assert "3." not in left, "nothing else is left"
     assert done.stderr == ""
+
+
+def test_a_new_connections_account_is_waited_for_until_google_has_made_it(deployer):
+    """Google answers a grant to the account of a connection made seconds ago with "does not exist"."""
+    deployer.exists(not_made_yet=2)
+    done, held, calls = deployer.run()
+    assert done.returncode == 0, done.stderr
+    grants = [c for c in calls if c["args"][:2] == ["projects", "add-iam-policy-binding"]]
+    assert len(grants) == 3, "asked again until the account was there"
+    assert held["project_roles"] == [["proj", "serviceAccount:connection@bq.test", "roles/aiplatform.user"]], "given once"
+    assert done.stdout.count("Waiting for Google to finish making connection@bq.test") == 2 and done.stderr == ""
+    assert held["secrets"], "the rest of the script ran"
+
+
+def test_the_wait_ends_after_the_set_tries_and_another_refusal_is_not_waited_on(deployer):
+    deployer.exists(not_made_yet=99)
+    done, held, calls = deployer.run(OWN_GRANT_TRIES="3")
+    assert done.returncode == 1 and len([c for c in calls if c["args"][:2] == ["projects", "add-iam-policy-binding"]]) == 3
+    assert "Service account connection@bq.test does not exist." in done.stderr and "Run it again in a minute" in done.stderr
+    assert held["project_roles"] == [] and held["secrets"] == {}, "nothing after it was changed"
+
+    deployer.exists(refuse="role")
+    done, _, calls = deployer.run()
+    assert done.returncode == 1 and len([c for c in calls if c["args"][:2] == ["projects", "add-iam-policy-binding"]]) == 1
+    assert "PERMISSION_DENIED" in done.stderr and "Waiting" not in done.stdout
 
 
 def test_a_second_run_makes_nothing_twice_and_keeps_who_else_may_use_the_connection(deployer):
