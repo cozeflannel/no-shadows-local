@@ -730,6 +730,7 @@ def _handle_conversation_reply(
     reply_text: str,
 ) -> None:
     """Process one human reply inside an active conversation state."""
+    target_space = state.space or cfg.alerts_space
     direct_cmd = extract_direct_chat_command(reply_text)
     existing_camp = _find_campaign_for_thread(store, state.thread)
     if direct_cmd and existing_camp:
@@ -744,7 +745,7 @@ def _handle_conversation_reply(
             campaign=existing_camp,
             changes=direct_cmd,
         )
-        workspace.post_message(cfg.alerts_space, msg, thread_name=state.thread)
+        workspace.post_message(target_space, msg, thread_name=state.thread)
         return
 
     prompt_context = _step_prompt(state, settings)
@@ -761,7 +762,7 @@ def _handle_conversation_reply(
         state.last_prompted_at_utc = _now_iso()
         store.save_conversation(state)
         workspace.post_message(
-            cfg.alerts_space,
+            target_space,
             "Cancelled. Nothing was created.",
             thread_name=state.thread,
         )
@@ -780,7 +781,7 @@ def _handle_conversation_reply(
             campaign=existing_camp,
             changes=cmd_map,
         )
-        workspace.post_message(cfg.alerts_space, msg, thread_name=state.thread)
+        workspace.post_message(target_space, msg, thread_name=state.thread)
         return
 
     if parsed.outcome == "unclear":
@@ -790,7 +791,7 @@ def _handle_conversation_reply(
             store.save_conversation(state)
             q_text = strip_emojis(parsed.clarifying_question) or "Could you clarify your choice?"
             workspace.post_message(
-                cfg.alerts_space,
+                target_space,
                 f"{q_text}\n(Clarification {state.clarifications_asked}/2, or reply 'cancel'.)",
                 thread_name=state.thread,
             )
@@ -799,7 +800,7 @@ def _handle_conversation_reply(
         state.last_prompted_at_utc = _now_iso()
         store.save_conversation(state)
         workspace.post_message(
-            cfg.alerts_space,
+            target_space,
             f"Let's try this step again:\n\n{prompt_context}",
             thread_name=state.thread,
         )
@@ -816,7 +817,7 @@ def _handle_conversation_reply(
             state.step = "done"
             store.save_conversation(state)
             workspace.post_message(
-                cfg.alerts_space,
+                target_space,
                 "Understood. The deep dive Google Doc remains in Drive; no campaign was created.",
                 thread_name=state.thread,
             )
@@ -897,7 +898,7 @@ def _handle_conversation_reply(
             _enter_campaign_settings_for_existing_query(state, chosen)
         else:
             workspace.post_message(
-                cfg.alerts_space,
+                target_space,
                 f"Please pick a number between 1 and {none_idx} (or 'cancel').",
                 thread_name=state.thread,
             )
@@ -967,7 +968,7 @@ def _handle_conversation_reply(
             candidate = parsed.text_value.strip()[:10]
             if not re.match(r"^\d{4}-\d{2}-\d{2}$", candidate):
                 workspace.post_message(
-                    cfg.alerts_space,
+                    target_space,
                     "Please enter a valid YYYY-MM-DD start date (or reply '1' for today).",
                     thread_name=state.thread,
                 )
@@ -1042,7 +1043,7 @@ def _handle_conversation_reply(
                     unresolved.append(em)
             if unresolved:
                 workspace.post_message(
-                    cfg.alerts_space,
+                    target_space,
                     f"Could not resolve directory user IDs for: {', '.join(unresolved)}. "
                     "Please reply with valid Google Workspace emails (or '1' for requester only).",
                     thread_name=state.thread,
@@ -1125,7 +1126,7 @@ def _handle_conversation_reply(
 
         if chosen_dt is None or chosen_dt <= now or chosen_dt > max_dt:
             workspace.post_message(
-                cfg.alerts_space,
+                target_space,
                 "Shutdown time must be in the future and within "
                 f"{settings.max_campaign_duration_days} days from now. "
                 "Reply with 1, 2, 3, or a valid YYYY-MM-DD HH:MM ET timestamp.",
@@ -1141,7 +1142,7 @@ def _handle_conversation_reply(
             target_step = _map_edit_field_to_step(parsed.edit_field_name or reply_text, state.query_origin)
             if target_step is None:
                 workspace.post_message(
-                    cfg.alerts_space,
+                    target_space,
                     "Specify which field to edit: space name, members, platforms, post types, "
                     "sentiment, threshold, alerts echo, or shutdown time.",
                     thread_name=state.thread,
@@ -1180,7 +1181,7 @@ def _handle_conversation_reply(
                 state.step = target_step
             else:
                 workspace.post_message(
-                    cfg.alerts_space,
+                    target_space,
                     "Reply 'yes' to confirm, name a field to edit, or 'cancel' to abort.",
                     thread_name=state.thread,
                 )
@@ -1191,7 +1192,7 @@ def _handle_conversation_reply(
         is_approve = parsed.outcome == "approve" or reply_text.strip().lower().startswith("approve")
         if not is_approve:
             workspace.post_message(
-                cfg.alerts_space,
+                target_space,
                 "Waiting for an authorized approver listed in Registry Settings to reply "
                 "'approve' (or 'cancel' to abort).",
                 thread_name=state.thread,
@@ -1199,7 +1200,7 @@ def _handle_conversation_reply(
             return
         if sender_user not in approver_map:
             workspace.post_message(
-                cfg.alerts_space,
+                target_space,
                 f"Sender {sender_user} is not listed as an approver in Registry Settings "
                 f"({', '.join(settings.approver_emails)}). An authorized approver must reply 'approve'.",
                 thread_name=state.thread,
@@ -1227,7 +1228,7 @@ def _handle_conversation_reply(
     state.last_prompted_at_utc = _now_iso()
     store.save_conversation(state)
     workspace.post_message(
-        cfg.alerts_space,
+        target_space,
         f"{extra_prefix}{_step_prompt(state, settings)}",
         thread_name=state.thread,
     )
@@ -1247,6 +1248,7 @@ def _handle_initial_thread_request(
     user_text: str,
 ) -> None:
     """Handle the initial handoff message or a fresh request in an owned thread."""
+    target_space = ownership.space or cfg.alerts_space
     direct_cmd = extract_direct_chat_command(user_text)
     existing_camp = _find_campaign_for_thread(store, ownership.thread)
     if direct_cmd and existing_camp:
@@ -1261,7 +1263,7 @@ def _handle_initial_thread_request(
             campaign=existing_camp,
             changes=direct_cmd,
         )
-        workspace.post_message(cfg.alerts_space, msg, thread_name=ownership.thread)
+        workspace.post_message(target_space, msg, thread_name=ownership.thread)
         return
 
     parsed_intent = gemini.parse_initial_intent(
@@ -1292,7 +1294,7 @@ def _handle_initial_thread_request(
                 campaign=existing_camp,
                 changes=cmd_changes,
             )
-            workspace.post_message(cfg.alerts_space, msg, thread_name=ownership.thread)
+            workspace.post_message(target_space, msg, thread_name=ownership.thread)
             return
 
     if parsed_intent.intent == "deep_dive":
@@ -1308,10 +1310,11 @@ def _handle_initial_thread_request(
             days=parsed_intent.deep_dive_days,
             alert_name_hint=parsed_intent.alert_name_hint,
             search_topic=parsed_intent.search_topic,
+            space=target_space,
         )
         conv = ConversationState(
             thread=ownership.thread,
-            space=ownership.space,
+            space=target_space,
             requester_user=sender_user,
             flow="campaign",
             step="offer_after_deep_dive",
@@ -1331,7 +1334,7 @@ def _handle_initial_thread_request(
 
     conv = ConversationState(
         thread=ownership.thread,
-        space=ownership.space,
+        space=target_space,
         requester_user=sender_user,
         flow="campaign",
         step="init",
@@ -1351,7 +1354,7 @@ def _handle_initial_thread_request(
     conv.last_prompted_at_utc = _now_iso()
     store.save_conversation(conv)
     workspace.post_message(
-        cfg.alerts_space,
+        target_space,
         _step_prompt(conv, settings),
         thread_name=ownership.thread,
     )
@@ -1367,15 +1370,16 @@ def process_owned_threads(
     gemini: GeminiFlows,
     settings: RegistrySettings,
 ) -> dict[str, int]:
-    """Poll all owned threads in spaces/AAQAnWE2vpo, expire 24h idle conversations, and advance steps."""
+    """Poll all owned threads in allowed Google-only alert spaces, expire 24h idle conversations, and advance steps."""
     owned_list = store.list_owned_threads()
     threads_checked = 0
     messages_handled = 0
     expired_count = 0
 
     for ownership in owned_list:
-        if ownership.space != cfg.alerts_space:
+        if not cfg.is_allowed_alerts_space(ownership.space):
             continue
+        thread_space = ownership.space
         owner_token = f"thread-{int(_now_utc().timestamp())}"
         if not store.acquire_lease("thread", ownership.thread, owner_token, ttl_s=110.0):
             continue
@@ -1404,7 +1408,7 @@ def process_owned_threads(
                     conv.step = "done"
                     store.save_conversation(conv)
                     workspace.post_message(
-                        cfg.alerts_space,
+                        thread_space,
                         "This request expired after 24 hours without a reply or approval. "
                         "Post a new message in this thread whenever you would like to start again.",
                         thread_name=ownership.thread,
@@ -1423,7 +1427,7 @@ def process_owned_threads(
                 src_sender = str(((source_msg.get("sender") or {}).get("name")) or ownership.requester)
                 if not ownership.alert_text:
                     ownership.alert_text = workspace.get_thread_root_text(
-                        cfg.alerts_space,
+                        thread_space,
                         ownership.thread,
                     )
                 try:
@@ -1459,7 +1463,7 @@ def process_owned_threads(
                         error_message=str(exc)[:300],
                     )
                     workspace.post_message(
-                        cfg.alerts_space,
+                        thread_space,
                         f"Request failed: {strip_emojis(str(exc))[:350]}",
                         thread_name=ownership.thread,
                     )
@@ -1470,7 +1474,7 @@ def process_owned_threads(
                     store.set_cursor(cursor_key, cursor)
 
             new_msgs = workspace.list_human_messages(
-                cfg.alerts_space,
+                thread_space,
                 thread_name=ownership.thread,
                 since_iso=cursor,
             )
@@ -1544,7 +1548,7 @@ def process_owned_threads(
                         error_message=str(exc)[:300],
                     )
                     workspace.post_message(
-                        cfg.alerts_space,
+                        thread_space,
                         f"Could not complete step: {strip_emojis(str(exc))[:350]}",
                         thread_name=ownership.thread,
                     )

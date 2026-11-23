@@ -35,6 +35,7 @@ class CampaignsConfig(BaseModel):
     cloud_run_service: str = Field(min_length=1)
     firestore_database: str = Field(min_length=1)
     alerts_space: str = Field(min_length=1)
+    extra_alert_spaces: list[str] = Field(default_factory=list)
     forbidden_burson_space: str = Field(min_length=1)
     drive_folder_id: str
     registry_spreadsheet_id: str
@@ -44,6 +45,13 @@ class CampaignsConfig(BaseModel):
     brandwatch_project_ids: list[int] = Field(min_length=1)
     secrets: SecretNamesConfig
 
+    def is_allowed_alerts_space(self, space: str) -> bool:
+        """Return True if space is an allowed Google-only alerts space and never the Burson space."""
+        return bool(space) and space != self.forbidden_burson_space and space in {
+            self.alerts_space,
+            *self.extra_alert_spaces,
+        }
+
     def require_provisioned_ids(self) -> None:
         """Raise ValueError if setup-created Drive or Registry IDs have not been populated yet."""
         if not self.drive_folder_id.strip():
@@ -52,8 +60,8 @@ class CampaignsConfig(BaseModel):
             raise ValueError(
                 "registry_spreadsheet_id is empty in config/campaigns.yaml; run ./setup.sh first"
             )
-        if self.alerts_space == self.forbidden_burson_space:
-            raise ValueError("alerts_space must never equal forbidden_burson_space")
+        if self.alerts_space == self.forbidden_burson_space or self.forbidden_burson_space in self.extra_alert_spaces:
+            raise ValueError("alerts_space / extra_alert_spaces must never include forbidden_burson_space")
 
 
 def resolve_config_path(explicit_path: str | Path | None = None) -> Path:

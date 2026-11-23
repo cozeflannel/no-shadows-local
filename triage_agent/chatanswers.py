@@ -290,9 +290,14 @@ def _hand_off(ctx: "AgentContext", client: Any, m: dict[str, Any], space: str, d
             raise RuntimeError("No campaigns database is set under Settings, Campaigns.")
         doc["space_name"] = mirror.space_info(ctx, client, space)["name"]
         if docs.get(chatrules.OWNERSHIP, key) is None:
+            alert_text = memo["roots"].get(m["thread"], "")
+            if not alert_text:
+                c = _case_of(ctx, memo, m["thread"])
+                if c is not None and c.attempts:
+                    alert_text = (c.attempts[0].raw_text or "") or f"{c.alert_name or ''} {c.product or ''}".strip()
             docs.put(chatrules.OWNERSHIP, key, {
                 "space": space, "thread": m["thread"], "requester": m["sender"], "source_message": m["name"],
-                "source_text": chatrules.campaign_text(m["text"]), "alert_text": memo["roots"].get(m["thread"], "")[:4000],
+                "source_text": chatrules.campaign_text(m["text"]), "alert_text": alert_text[:4000],
                 "created_at": ctx.now().isoformat(), "handled_initial": False})
         memo["owned"][key] = True
         client.post_message(space, chatrules.HANDOFF_REPLY, thread=m["thread"], key=f"campaign-handoff:{m['thread']}")
@@ -437,10 +442,10 @@ def _read(ctx: "AgentContext", client: Any, known: dict[str, Any], space: str, s
         doc = ctx.store.get_doc(ROWS, mirror._id(m["name"]))
         how, case_id = "", ""
         if doc is None:
-            if _from_bot_or_app(ctx, m, bot) or (second and m["reply"] and _owned(ctx, memo, m["thread"])):
+            if _from_bot_or_app(ctx, m, bot) or (not source and m["reply"] and _owned(ctx, memo, m["thread"])):
                 cursor = max(cursor, at) if waiting is None else cursor
                 continue  # never answered: the bot's own, an app's, or in a thread the campaigns assistant owns
-            if second and _hands_off(ctx, memo, m):
+            if not source and _hands_off(ctx, memo, m):
                 how = "campaign"
             else:
                 how = _asks(ctx, m, bot, source=source, alert_thread=lambda: _case_of(ctx, memo, m["thread"]) is not None)

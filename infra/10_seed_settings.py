@@ -53,7 +53,13 @@ def known() -> dict[str, dict[str, object]]:
         "pubsub": {"project": project, "worker_url": worker, "push_service_account": env("SCHEDULER_SA"), "push_audience": worker},
         "bigquery": {"project": project, "location": env("BQ_LOCATION"), "dataset": f"{project}.{dataset}" if dataset else "",
                      "tables": {"events": f"{project}.{dataset}.agent_events"} if dataset else {}},
-        # Agent alerts: named only once they exist, so the settings never point at something that is not there.
+        # Agent alerts & Campaigns: named only once they exist, so the settings never point at something that is not there.
+        "campaigns": {
+            "firestore_project": project,
+            "firestore_database": env("CAMPAIGNS_FIRESTORE_DB", "slrr-social-alerts")
+            if exists("gcloud", "firestore", "databases", "describe", f"--database={env('CAMPAIGNS_FIRESTORE_DB', 'slrr-social-alerts')}", f"--project={project}")
+            else "",
+        },
         "own_alerts": {"ai_connection": connection if exists("bq", "show", "--connection", connection) else "",
                        "hash_salt_secret": salt if exists("gcloud", "secrets", "describe", salt, f"--project={project}") else ""},
     }

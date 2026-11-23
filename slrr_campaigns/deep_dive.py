@@ -136,6 +136,7 @@ def run_deep_dive(
     days: int,
     alert_name_hint: str = "",
     search_topic: str = "",
+    space: str | None = None,
 ) -> DeepDiveOutcome:
     """Execute a live Brandwatch/BigQuery deep dive, write Google Doc report, and post summary."""
     clamped_days = max(1, min(7, days))
@@ -427,7 +428,7 @@ def run_deep_dive(
         "3. No thanks (reply 'cancel' or '3' to close)"
     )
     workspace.post_message(
-        cfg.alerts_space,
+        space or cfg.alerts_space,
         thread_summary,
         thread_name=thread_name,
         idempotency_key=f"deep-dive-{thread_name}-{end_dt.strftime('%Y%m%d%H%M')}",

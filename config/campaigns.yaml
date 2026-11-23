@@ -3,7 +3,11 @@ chat_project_id: brand-social-central-data
 cloud_run_region: us-central1
 cloud_run_service: slrr-campaigns
 firestore_database: slrr-social-alerts
-alerts_space: spaces/AAQAnWE2vpo
+alerts_space: spaces/AAQAaLn375E
+extra_alert_spaces:
+- spaces/AAQAnWE2vpo
+- spaces/AAQAdLjWeTU
+- spaces/AAAAEoKjb2g
 forbidden_burson_space: spaces/AAQAaa_0I9g
 drive_folder_id: 1D1TPdVmD1fFTDQQAWSkz6jI3eO3DZVXt
 registry_spreadsheet_id: 1dp5te1avPOkw34x8P0TPmM456u9UJLoJVWtl9myt2ng

@@ -163,7 +163,7 @@ class WorkspaceClients:
             )
         if space in self._ephemeral_allowed_spaces:
             return
-        if space == self._cfg.alerts_space:
+        if self._cfg.is_allowed_alerts_space(space):
             if not thread_name or not self._store.is_owned_thread(space, thread_name):
                 raise WorkspaceApiError(
                     f"Write in alerts space {space} requires an owned thread; got {thread_name!r}",
