@@ -367,6 +367,11 @@ TOPICS: list[dict[str, Any]] = [
                 "In the source space the reply follows the rules at the top of this page. While that space is closed, the reply is shown in the second space under the alert's copy.",
                 "Who asked is matched from the rosters and the people under Settings. Someone not on them is still answered.",
                 "A reply Chat does not take is tried again each minute and given up after five tries. Its row says why."]},
+            {"heading": "Acting on emojis added in Chat", "items": [
+                "Turn on Act on emojis added in Chat under Settings, Switches. With the QA chatbot ON, a legend emoji a person adds to one of its alert posts is acted on within a minute, once, with the reply in that post's thread.",
+                "It reads the space it posts its alerts in, as far back as the emoji hours set for Routing. Only its own alert posts count: an emoji on a person's message, an emoji outside the legend and its own emojis are left alone.",
+                "The Emojis list shows each one: who added it, the alert, and the reply. Who added it is matched from the rosters and the people under Settings; someone not on them is recorded as unknown, and an emoji that drafts in a person's Gmail asks them to react again.",
+                "A reply Chat does not take is tried again each minute and given up after five tries. Its row says why."]},
             {"heading": "Posting queued messages in Chat", "items": [
                 "Turn on Post queued messages in Chat under Settings, Switches. With the QA chatbot ON, each queued message is posted within a minute, once, as the QA chatbot's account, with no Chat flow in between.",
                 "With Retry posts that fail ON too, each message goes through Google Pub/Sub and is posted as soon as it is queued. Pub/Sub tries a failed one again and sets it aside after the last try (Settings, Delivery); the minute run still posts whatever is left.",

@@ -161,7 +161,8 @@ Which messages count, the look-back days, the number of rows, the two spaces and
 | 1.1 Parity table | first pass done and searched across the Console's code; each gap is read on both sides when its step is picked up |
 | 1.2 Replies in the alert's thread | built (`tests/test_chat_threads.py`); not proven live |
 | 1.3 Mentions answered in Chat | mentions in spaces built (`tests/test_chat_answers.py`); direct messages to the bot not started; not proven live |
-| 1.4 to 1.7 | not started |
+| 1.4 Emojis added in Chat | built (`tests/test_chat_emojis.py`); not proven live. The sheet also copies an analyst's legend emoji onto Burson's own post (`Bot.gs` `analystReactions_`): not checked against `record_reaction` yet, for 1.7 |
+| 1.5 to 1.7 | not started |
 | Phase 2 | not started |
 | Phase 3 | not started |
 | Phase 4 | not started |

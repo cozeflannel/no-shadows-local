@@ -294,6 +294,19 @@ class ChatClient:
             raise ChatError(status, why)
         return str(body.get("name") or "")
 
+    def list_reactions(self, message: str) -> list[dict[str, str]]:
+        """Who added which emoji to a message: [{emoji, user}] (Chat.gs chatListReactions_)."""
+        out: list[dict[str, str]] = []
+        params: dict[str, Any] = {"pageSize": 200}
+        while True:
+            body = self._get(f"{message}/reactions", params)
+            out += [{"emoji": x["emoji"]["unicode"], "user": str((x.get("user") or {}).get("name") or "")}
+                    for x in body.get("reactions") or [] if (x.get("emoji") or {}).get("unicode")]
+            if not body.get("nextPageToken") or len(out) >= 2000:
+                break
+            params = {**params, "pageToken": body["nextPageToken"]}
+        return out
+
     def member_user(self, space: str, email: str) -> str:
         """The Chat user id of the member of `space` with this address, or "" when they are not one. Chat gives a
         signed-in account a person's id and nothing else, so this is how an id is matched to a person. Asked under

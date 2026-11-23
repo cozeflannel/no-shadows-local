@@ -31,6 +31,14 @@ interface Answers {
   on: boolean; why: string; switch: boolean; spaces: string[]; choices: { key: string; name: string; picked: boolean }[]; rows: AnswerRow[];
   last_run: { ok: boolean; at: string; error: string; answered: number; queued: number; held: number; ignored: number; failed: number } | null;
 }
+interface EmojiRow {
+  at: string; message: string; emoji: string; who: string; case_id: string; code: string; why: string; reply: string; tries: number;
+  status: "acted" | "queued" | "held" | "failed" | "gave_up" | "waiting";
+}
+interface Emojis {
+  on: boolean; why: string; switch: boolean; space: string; rows: EmojiRow[];
+  last_run: { ok: boolean; at: string; error: string; acted: number; queued: number; held: number; failed: number } | null;
+}
 interface PostRow {
   id: string; at: string; target: string; to: string; text: string; status: "sent" | "held" | "waits_for_send" | "failed" | "gave_up" | "waiting";
   why: string; tries: number; case_id: string; message: string;
@@ -45,7 +53,7 @@ interface Routing {
   signed_in: boolean; bot: string;
   last_run: { ok: boolean; at: string; error: string; copied: { mirror: number; third: number }; emojis: number } | null;
   queue: { id: string; text: string; origin: string; case_id: string; at: string }[];
-  copies: Copy[]; replies: OwnReply[]; people: Person[]; review: Review; answers: Answers; delivery: Delivery; can_edit: boolean; can_act: boolean;
+  copies: Copy[]; replies: OwnReply[]; people: Person[]; review: Review; answers: Answers; emojis: Emojis; delivery: Delivery; can_edit: boolean; can_act: boolean;
 }
 
 const ANSWERED: Record<AnswerRow["status"], { label: string; tone: "emerald" | "blue" | "amber" | "rose" | "zinc" }> = {
@@ -220,6 +228,50 @@ function AnswersCard({ answers, canEdit, onChanged }: { answers: Answers; canEdi
   );
 }
 
+const ACTED: Record<EmojiRow["status"], { label: string; tone: "emerald" | "blue" | "amber" | "rose" | "zinc" }> = {
+  acted: { label: "Done", tone: "emerald" }, queued: { label: "Queued", tone: "blue" }, held: { label: "Held", tone: "amber" },
+  failed: { label: "Trying again", tone: "amber" }, gave_up: { label: "Given up", tone: "rose" }, waiting: { label: "Next minute", tone: "zinc" },
+};
+
+/** Each legend emoji a person added to one of the QA chatbot's alert posts, and what it did about it. */
+function EmojisCard({ emojis }: { emojis: Emojis }) {
+  const last = emojis.last_run;
+  const ran = last ? `Last read ${new Date(last.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}: ${last.ok ? `${last.acted} done, ${last.queued} queued, ${last.held} held${last.failed ? `, ${last.failed} failed` : ""}` : last.error}` : "";
+  return (
+    <Card className="mb-4" padded={false} title="Emojis" subtitle={`Each legend emoji a person added to one of the QA chatbot's alert posts${emojis.space ? ` in ${emojis.space}` : ""}, and what it did.`}>
+      {!emojis.on && (
+        <p className="px-5 pb-4 text-sm text-zinc-600 dark:text-zinc-400">
+          Not running: {emojis.why}.{!emojis.switch && <> Emojis wait for a Chat flow. An admin can turn it on under <Link className="font-medium text-blue-700 hover:underline dark:text-blue-300" to="/settings/flags">Settings, Switches</Link>.</>}
+        </p>
+      )}
+      {emojis.on && ran && <p className={cx("px-5 pb-3 text-xs", last?.ok ? "text-zinc-500" : "text-rose-600 dark:text-rose-400")}>{ran}</p>}
+      {emojis.rows.length === 0 ? (emojis.on && <EmptyState title="No emojis yet">A legend emoji added to an alert post shows here within a minute.</EmptyState>) : (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead><tr><th className={TH}>When</th><th className={TH}>Emoji</th><th className={TH}>Who</th><th className={TH}>Alert</th><th className={TH}>Result</th><th className={TH}>Reply</th></tr></thead>
+            <tbody>
+              {emojis.rows.map((r) => (
+                <tr key={`${r.message}:${r.emoji}:${r.who}:${r.at}`} className={TR}>
+                  <td className={TD}><TimeCell value={r.at} /></td>
+                  <td className={TD}>{r.emoji} <span className="text-xs text-zinc-500">{r.code.replace(/_/g, " ")}</span></td>
+                  <td className={TD}>{r.who || "Someone not on the rosters"}</td>
+                  <td className={TD}>{r.case_id ? <Link className="text-blue-700 hover:underline dark:text-blue-300" to={`/feed/${r.case_id}`}>{r.case_id}</Link> : ""}</td>
+                  <td className={TD}><Badge tone={ACTED[r.status].tone}>{ACTED[r.status].label}</Badge></td>
+                  <td className={cx(TD, "max-w-xl")}>
+                    {r.reply && <span className="line-clamp-3 whitespace-pre-wrap">{r.reply}</span>}
+                    {r.why && <span className={cx("block", r.reply && "mt-1", r.status === "gave_up" ? "text-rose-600 dark:text-rose-400" : "text-zinc-500")}>
+                      {r.status === "gave_up" ? `After ${r.tries} tries: ` : ""}{r.why}</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 /** What the QA chatbot posted from the queue through its Chat sign-in, held, or could not post. */
 function DeliveryCard({ delivery, canAct, onChanged }: { delivery: Delivery; canAct: boolean; onChanged: () => void }) {
   const { toast } = useApp();
@@ -362,6 +414,7 @@ export default function RoutingPage() {
 
       <ReviewCard review={data.review} />
       <AnswersCard answers={data.answers} canEdit={canEdit} onChanged={reload} />
+      <EmojisCard emojis={data.emojis} />
       <DeliveryCard delivery={data.delivery} canAct={data.can_act} onChanged={reload} />
 
       {data.replies.length > 0 && (

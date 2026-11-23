@@ -89,16 +89,21 @@ def _roster(ctx: "AgentContext") -> list[str]:
 
 def _asker(ctx: "AgentContext", client: Any, known: dict[str, Any], space: str, user: str) -> str:
     """The address of the person behind a Chat user id, or "" for someone the agent does not know. Each address is asked
-    of the space once; what Chat answers is remembered."""
-    if not user or user in known["users"] or _fresh(ctx, known["asked"].get(space)):
+    of the space once and what Chat answers is remembered. An address new to the rosters is asked the next time someone
+    unknown turns up; one Chat did not know in this space is asked again only after some hours."""
+    if not user or user in known["users"]:
         return known["users"].get(user, "")
-    have = set(known["users"].values())
-    for email in _roster(ctx):
-        if email not in have:
-            found = client.member_user(space, email)
-            if found:
-                known["users"][found] = email
-    known["asked"][space] = ctx.now().isoformat()
+    asked = known["asked"].get(space)
+    asked = asked if isinstance(asked, dict) else {"at": None, "emails": []}
+    stale = not _fresh(ctx, asked["at"])
+    have, before = set(known["users"].values()), set(asked["emails"])
+    todo = [e for e in _roster(ctx) if e not in have and (stale or e not in before)]
+    for email in todo:
+        found = client.member_user(space, email)
+        if found:
+            known["users"][found] = email
+    if todo:
+        known["asked"][space] = {"at": ctx.now().isoformat() if stale else asked["at"], "emails": sorted(set(todo) | (set() if stale else before))}
     return known["users"].get(user, "")
 
 
@@ -154,8 +159,8 @@ def _routed(ctx: "AgentContext", data: dict[str, Any]) -> tuple[str, str]:
     return "ignored", ""
 
 
-def _post(ctx: "AgentContext", client: Any, doc: dict[str, Any]) -> tuple[str, str]:
-    """Post the reply in the message's thread. In the source space the Routing page decides."""
+def _post(ctx: "AgentContext", client: Any, doc: dict[str, Any], key: str) -> tuple[str, str]:
+    """Post the reply in the message's thread, once for `key`. In the source space the Routing page decides."""
     from . import safety
 
     space, text, thread = doc["space"], doc["pending"], doc["thread"]
@@ -168,7 +173,7 @@ def _post(ctx: "AgentContext", client: Any, doc: dict[str, Any]) -> tuple[str, s
         shown = safety._shown_in_copies(ctx, text, thread, "converse", "")
         return "held", _held_why(ctx, {"check": "routing", **shown}) if not mirror.mode(ctx)["live"] else f"Held: {got['why']}."
     try:
-        client.post_message(space, text, thread=thread, key=f"answer:{doc['message']}")
+        client.post_message(space, text, thread=thread, key=key)
     except chatapi.Refused as exc:
         return "held", str(exc)
     return "answered", ""
@@ -194,7 +199,7 @@ def _answer(ctx: "AgentContext", client: Any, known: dict[str, Any], m: dict[str
             doc.update(ran=True, pending=(resp.data.get("reply_text") or "").strip(), routed=list(_routed(ctx, resp.data)))
         status, why = doc["routed"]
         if doc["pending"]:
-            status, said = _post(ctx, client, doc)
+            status, said = _post(ctx, client, doc, f"answer:{doc['message']}")
             why = " ".join(t for t in (said, why if doc["routed"][0] != "ignored" else "") if t)
             if status == "answered":
                 doc["reply"] = doc["pending"]

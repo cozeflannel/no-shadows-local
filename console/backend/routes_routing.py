@@ -7,7 +7,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from triage_agent import chatanswers, chatdelivery, chatreview, mirror
+from triage_agent import chatanswers, chatdelivery, chatreactions, chatreview, mirror
 from triage_agent.context import AgentContext
 
 from .auth import User, get_ctx, require_admin, require_analyst, require_viewer
@@ -18,7 +18,7 @@ SPACES = ("source", "mirror", "third")
 
 
 def _status(ctx: AgentContext, user: User) -> dict[str, Any]:
-    return {**mirror.status(ctx), "review": chatreview.status(ctx), "answers": chatanswers.status(ctx), "delivery": chatdelivery.status(ctx), "can_edit": user.has("admin"),
+    return {**mirror.status(ctx), "review": chatreview.status(ctx), "answers": chatanswers.status(ctx), "emojis": chatreactions.status(ctx), "delivery": chatdelivery.status(ctx), "can_edit": user.has("admin"),
             "can_act": user.has("analyst")}
 
 

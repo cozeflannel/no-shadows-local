@@ -98,6 +98,10 @@ class ChatWorld:
             since = re.search(r'create_time > "([^"]+)"', params.get("filter", ""))
             rows = [self._view(m) for m in self.messages[space] if not since or m["createTime"] > since.group(1)]
             return _Resp(200, {"messages": rows})
+        if method == "GET" and path.endswith("/reactions"):  # who added which emoji to a message
+            message = path.rsplit("/reactions", 1)[0]
+            return _Resp(200, {"reactions": [{"name": f"{message}/reactions/r{i}", "user": {"name": user, "type": "HUMAN"}, "emoji": {"unicode": e}}
+                                             for i, (user, e) in enumerate(self.reactions.get(message, []))]})
         if method == "GET" and "/messages/" in path:
             found = next((m for m in self.messages[space] if path in (m["name"], f"{space}/messages/{m.get('clientAssignedMessageId')}")), None)
             return _Resp(200, self._view(found)) if found else _Resp(404, {"error": {"message": "not found"}})

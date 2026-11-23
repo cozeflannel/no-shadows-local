@@ -694,6 +694,15 @@ again the next minute. A reply Chat does not take is tried again each minute, up
 `routing.max_tries`; the operation is not run again. A space that cannot be read is named in `answers.last_run.error` and does not stop
 the others.
 
+**Emojis acted on in Chat** (plan 6, step 1.4; switch `chat_reactions`, OFF by default; `triage_agent/chatreactions.py`): in the tick, after
+`chat_answers`, the QA chatbot's account lists the agent's `clean` space back to `routing.emoji_hours`. For one of its own posts that
+`actions.find_case` matches to an alert, and only when that post's legend emojis changed since the last read, it asks Chat who reacted
+(`spaces.messages.reactions.list`) and hands each new (post, emoji, person) once to op `record_reaction` with `deliver: outbox`; `reply_text`
+is posted in the post's thread. The bot's own emojis and emojis outside the legend are skipped. The reactor's address is matched as for
+mentions; with none, the operation's actor is `unknown`. Docs `chat_reactions` (status `acted | queued | held | failed | gave_up`) and
+`chat_reactions_seen`, audit `chat.reaction`, `GET /api/routing` `emojis`. An address new to the rosters is asked of Chat the next time
+someone unknown turns up; one Chat did not know in a space is asked again after six hours.
+
 **A table waiting for access** (`bq_admin.no_access`): BigQuery's answer `Access Denied: Table|Dataset ...` means the table's owners have
 not let the runtime account read it yet. It is waiting, not failing. On Integrations its check line carries `waiting: true` and `grant`, the
 tool's `ok` and state leave waiting lines out, and `grants` holds one statement a dataset, each led by a `--` comment naming the tables it

@@ -147,6 +147,21 @@ def test_the_asker_is_known_by_their_address_once_chat_has_matched_it_to_the_ros
     assert rows(on)[0]["asker"] == "", "someone the roster does not hold is answered as an unknown person"
 
 
+def test_a_person_put_on_the_rosters_later_is_matched_the_next_time_they_ask(on, world):
+    from triage_agent.config import Analyst
+
+    world.say(MIR, "<users/bot>", sender={"name": "users/444", "type": "HUMAN"}, **mention())
+    tick(on, world)
+    assert rows(on)[0]["asker"] == "", "not on the rosters yet"
+    on.ctx.config.analysts.append(Analyst(name="New Analyst", email="new.analyst@ops.test", role="analyst"))
+    world.members[(MIR, "new.analyst@ops.test")] = "users/444"
+    before = len([r for r in world.asked if "/members/" in r])
+    world.say(MIR, "<users/bot>", sender={"name": "users/444", "type": "HUMAN"}, **mention())
+    tick(on, world)
+    assert rows(on)[0]["asker"] == "new.analyst@ops.test", "no wait of hours for a new address"
+    assert len([r for r in world.asked if "/members/" in r]) - before <= 2, "only the new address is asked, not the whole roster again"
+
+
 def test_a_mention_in_the_closed_source_space_is_answered_under_its_copy_and_nothing_is_written_there(on, world):
     burson = space_of(on, "burson")
     alert = world.say(burson, ALERT.format(n=1))
