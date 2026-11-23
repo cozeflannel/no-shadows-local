@@ -77,9 +77,10 @@ code; step 1.1 confirms each row by reading both sides, and each confirmed gap b
 | Write early-wave records to BigQuery | Yes, always: Early Detection keeps its records in BigQuery |
 | Early Detection and Proactive watch also read the AMIE table | Yes: a tick per table on Integrations |
 | Live dashboard | Yes: Dashboard and Stories |
-| Temp checks | In the Console, yes. Typed in Chat, no (1.5) |
-| Draft answers to questions | The sheet's is a Gmail draft on the Social Alert's thread: not found. Answers in Chat: op `converse`, reached from a mention in a space since 1.3; direct messages not yet |
-| A person's question or thread reply with no mention | The sheet answers these too (`Bot.gs` `handleHuman_`: a question, or a reply in an alert's thread that names a field or an action; a message that mentions someone else is left alone). The Console answers a mention only (1.3). Gap, for 1.7 |
+| Temp checks | In the Console, yes. Typed in Chat: with a mention (op `converse`), and with `chat_questions` ON also without one in a space only Google people read, as the sheet takes them; the result posted in Chat is 1.5 |
+| Draft answers to questions | The sheet's is a Gmail draft on the Social Alert's thread: not found. Answers in Chat: op `converse`, reached from a mention in a space since 1.3, and with the alert a thread is about; direct messages not yet (the bot's account is a person's own today: answering its direct messages needs its own switch first) |
+| A person's question or thread reply with no mention | Yes since 1.3, with the switch `chat_questions` (Answer questions without a mention, OFF by default): the sheet's rules word for word (`triage_agent/chatrules.py`, from `Bot.gs` `handleHuman_` and `pollAnalystMessages_`). A message that mentions someone else, and an alert a person pasted, are left alone. The person the bot's account belongs to is answered too, 3 a thread in 15 minutes at most (`selfAnswerOk_`) |
+| Campaign hand-off (`CampaignHandoff.gs`) | Yes since 1.3, with the switch `campaign_handoff` (OFF by default): a thread in the second space that asks for a deep dive or an alert campaign is handed to the campaigns assistant; a thread it owns is never answered |
 | Write back to SLRR BigQuery | Partly: Our own alerts' mark-delivered setting only |
 | Learn from IM calls | Partly: Learning page and checked examples. Showing Gemini the similar past calls: not found |
 | Check outage & comms docs | Partly: the Knowledge documents are read. The outage check and holding statements: not found |
@@ -160,7 +161,7 @@ Which messages count, the look-back days, the number of rows, the two spaces and
 | 1.0 Live proof | the owner's steps, given 23 Nov |
 | 1.1 Parity table | first pass done and searched across the Console's code; each gap is read on both sides when its step is picked up |
 | 1.2 Replies in the alert's thread | built (`tests/test_chat_threads.py`); not proven live |
-| 1.3 Mentions answered in Chat | mentions in spaces built (`tests/test_chat_answers.py`); direct messages to the bot not started; not proven live |
+| 1.3 Mentions answered in Chat | mentions in spaces built (`tests/test_chat_answers.py`); questions without a mention, alert-thread answers, the bot account's own person, the fixed answer for Burson and the campaigns hand-off built (`tests/test_chat_parity.py`, switches `chat_questions` and `campaign_handoff`); direct messages to the bot not started; not proven live |
 | 1.4 to 1.7 | not started |
 | Phase 2 | not started |
 | Phase 3 | not started |

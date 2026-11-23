@@ -476,6 +476,9 @@ Intents are matched by regex first, then by Gemini (`converse.intent`).
 **Questions:**
 - Grounding: approved facts, FAQ, the Collection Requirements and distribution config, the stakeholder directory, live case/escalation data and metrics, then Vertex AI Search if configured.
 - Answers cite sources and say "I don't know" rather than guess.
+- **The alert a thread is about** (`handler.case_for_thread`): a question in an alert's thread is answered with that alert in CONTEXT (`answer.alert_context`, label `[This alert]`, source `live:<case id>`), as the sheet-based bot answered (Voice.gs `answerPrompts_` / `answerAnalystPrompts_`). The thread is matched to the alert's own message in the source space (the attempt's `thread_id` or `message_id`), its post for the analysts (`clean_message_ref`), or its copy in the second or third space (`relay_threads`). An id typed in the question wins; a caller that knows the alert passes `payload.case_id`. For analysts: the alert's values, what the review corrected or proposes, what Burson was asked to fix, why it needs a person, and its escalations and actions. For Burson: only the fixes it was asked for, what was corrected, the alert's values and where it stands in plain words (`answer.burson_status_lines`, never who works on it, never a draft's details or a case id).
+- **Answers for Burson** (the Burson space, or a Burson roster member anywhere): warm, 1 to 5 short lines, no source labels in brackets, nothing about how alerts are handled behind the scenes. An answer the leak guard holds (`safety.leak_guard`) is replaced by the fixed answer (`answer.safe_answer`, Voice.gs `fallbackAnswer_`: what needs fixing, else where the alert stands, else an offer to help) and the reply's `data.held_back` names what it held. When Gemini does not answer, Burson gets the same fixed answer, never a bare "I don't know". The answer is never held back in silence.
+- `payload.in_thread: true` (chatanswers): the caller posts the reply itself under the message, through the bot's own Chat sign-in. A reply in the Burson space then stays `reply_text` (not `burson_text`) and names nobody (no address is put in front of it), as the sheet-based bot's answers did; the caller follows the Routing page's rules for that space.
 - Stakeholder routing follows `autonomy`: `answer_only` and `notify_with_approval` emit `route.forwarded`; `auto_notify` DMs the contacts and emits `route.relayed`.
 
 ## 11. Jobs (`followups.py`, A1)
@@ -684,11 +687,33 @@ a day and never posted on its own.
 
 **Mentions answered in Chat** (plan 6, step 1.3; switch `chat_answers`, OFF by default; `triage_agent/chatanswers.py`): in the tick, after
 `chat_review`, the QA chatbot's account reads the Routing page's three spaces and the agent's spaces listed in `routing.answer_spaces`. A
-person's message that mentions it (a Chat `USER_MENTION` of the account, or `@` and the agent's name typed out) is handed once to op `converse` with `deliver: outbox`, and `reply_text` is posted in that message's thread. In the source space
-the reply goes through `mirror.send`: posted, left for Send, or held and shown under the alert's copy (`mirror.reply_in_copies`). Apps and
-the bot's own posts are never answered. The asker's address comes from asking Chat, once per space, which roster addresses are members;
+person's message that mentions it (a Chat `USER_MENTION` of the account, or `@` and the agent's name typed out) is handed once to op `converse` with `deliver: outbox`, `in_thread: true` and the alert its thread is about (`case_id`, when it is one), and `reply_text` is posted in that message's thread. In the source space
+the reply goes through `mirror.send`: posted, left for Send, or held and shown under the alert's copy (`mirror.reply_in_copies`). While
+Burson is to hear nothing (`burson_feedback.silent_in_burson_space`, or `TRIAGE_STEALTH_BURSON`) and the source space is the agent's
+`burson` space, the reply is never written there: it is held and shown under the copy only. Apps and the bot's own posts (its client ids,
+its record of its posts, or text that starts with the agent's prefix) are never answered.
+- **The person the bot's account belongs to** may ask too, as with the sheet-based bot: at most 3 answers a thread in 15 minutes for messages
+  from the bot's own account (kv `chat_answers:self`, Bot.gs `selfAnswerOk_`); the next is kept as `ignored` with the reason. Their row's
+  `asker` is `agent.email`; the operation is handed no address for them.
+- **Questions without a mention** (switch `chat_questions`, "Answer questions without a mention", OFF by default; `triage_agent/chatrules.py`,
+  the sheet-based bot's rules): in the source space, a question (a `?`, or a first word such as why, how, what, can, is) or, in an alert's
+  thread, a follow-up that names an alert field (tag, product, priority, status, link, escalation...); in the other spaces, a question that is
+  not a short reply ("ok", "thanks", "will fix", an emoji) or, in a thread, a follow-up about the alert or the next steps; and "temp check
+  ..." in a space only Google people read, while temp checks are ON. Rows carry `how: mention | question | campaign`; audit summaries say
+  "a mention" or "a question".
+- **Never answered:** a message that mentions someone and not the bot, and an alert a person pasted (`parser.detect`), even one that mentions
+  the bot.
+- **The campaigns assistant** (CampaignHandoff.gs): in the second space, with switch `campaign_handoff` ("Hand threads to the campaigns
+  assistant", OFF by default) and the campaigns database set (Settings → Campaigns), a person's thread reply that asks for a Brandwatch deep
+  dive or an alert campaign (`chatrules.campaign_ask`; a "maybe" is judged by Gemini, purpose `chat.campaign_route`) hands the thread over:
+  a `thread_ownership` record in the campaigns database (document id `chatrules.ownership_id(thread)`, fields `space, thread, requester,
+  source_message, source_text, alert_text, created_at, handled_initial: false`), then "Campaign assistant now owns this thread and will reply
+  shortly." in the thread. The row is `answered` with why "Handed this thread to the campaigns assistant.", audit `chat.campaign_handoff`,
+  `answers.last_run.handed_off`. Whatever the switch, a thread with a `thread_ownership` record is never answered.
+- The asker's address comes from asking Chat, once per space, which roster addresses are members;
 someone not on the rosters is answered with no address. Docs `chat_answers` (status `answered | queued | held | ignored | failed |
-gave_up`), audit `chat.answer`, `GET /api/routing` `answers`. The account's own Chat user id is the sender of any post it made (kv
+gave_up`, plus `how` and `case_id`), audit `chat.answer`, `GET /api/routing` `answers` (with `questions` and `handoff`: the two switches).
+The account's own Chat user id is the sender of any post it made (kv
 `chat:me`), else asked with `spaces.members.get` by address, under both name forms, as the sheet-based bot does; a failed lookup is asked
 again the next minute. A reply Chat does not take is tried again each minute, up to
 `routing.max_tries`; the operation is not run again. A space that cannot be read is named in `answers.last_run.error` and does not stop
