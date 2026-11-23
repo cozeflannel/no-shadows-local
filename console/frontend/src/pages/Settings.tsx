@@ -6,6 +6,7 @@ import { apiSend, type ApiError } from "../api/client";
 import { useApi } from "../api/hooks";
 import type { SettingsResponse } from "../api/types";
 import { SchemaForm, type Schema } from "../components/SchemaForm";
+import { useModelCatalog } from "../components/settings/ModelSelect";
 import { Alert, Badge, Button, Card, cx, ErrorState, Input, PageHeader, Select, Spinner } from "../components/ui";
 import { useApp } from "../context";
 import { ConfigSection, HistoryList } from "./settings/ConfigSection";
@@ -36,6 +37,7 @@ function PartEditor({ part, onSaved }: { part: string; onSaved: () => void }) {
   const [saveError, setSaveError] = useState<ApiError | null>(null);
   useEffect(() => { if (data) { setDraft(structuredClone(data.value)); setDirty(false); setSaveError(null); setNote(""); } }, [data]);
   const errors = useMemo(() => Object.fromEntries((saveError?.errors ?? []).map((e) => [e.loc.join("."), e.msg])), [saveError]);
+  const models = useModelCatalog(data?.config_version);  // a model setting is a list of the models this project can use
   if (loading && !data) return <Spinner />;
   if (error) return <ErrorState error={error} onRetry={reload} />;
   if (!data) return null;
@@ -63,7 +65,8 @@ function PartEditor({ part, onSaved }: { part: string; onSaved: () => void }) {
       {PART_TOOL[part] && <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">The values that connect this tool are set under <Link to={`/connections/${PART_TOOL[part]}`} className="text-blue-700 hover:underline dark:text-blue-300">Integrations</Link>. The rest here is tuning.</p>}
       {!data.can_edit && <Alert tone="blue" className="mb-3" title="Read-only">Only admins can change settings{me ? ` (you are ${me.role})` : ""}.</Alert>}
       {saveError && saveError.status !== 409 && <ErrorState error={saveError} />}
-      <SchemaForm schema={data.schema} value={draft} errors={errors} disabled={!data.can_edit} onChange={(v) => { setDraft(v); setDirty(true); }} />
+      <SchemaForm schema={data.schema} value={draft} errors={errors} disabled={!data.can_edit} models={{ scope: `platform.${part}`, catalog: models.catalog }}
+        onChange={(v) => { setDraft(v); setDirty(true); }} />
       {data.can_edit && (
         <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-zinc-100 pt-4 dark:border-zinc-800">
           <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note for the history (optional)" className="max-w-md" aria-label="Change note" />

@@ -18,6 +18,7 @@ from triage_agent.config import AgentConfig, deep_merge, load_default_dict
 from triage_agent.context import AgentContext
 from triage_agent.events import EventType as E
 
+from . import model_catalog
 from .auth import User, get_ctx, require_admin, require_viewer
 
 router = APIRouter(prefix="/api", tags=["settings"])
@@ -207,6 +208,14 @@ def get_settings_history(
             "changes": {k: {"before": previous.get(k), "after": current.get(k)} for k in changed},
         })
     return {"history": out}
+
+
+@router.get("/settings/available-models")
+def get_available_models(refresh: bool = False, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> dict[str, Any]:
+    """The Gemini models each model setting can pick from: what Vertex AI offers this project (kept for an hour), or a
+    fallback list with the reason. `refresh` (admins) reads the list again now. Its path cannot clash with a section's:
+    a section's name has no hyphen."""
+    return model_catalog.choices(ctx, refresh=refresh and user.has("admin"), admin=user.has("admin"))
 
 
 @router.get("/settings/{section}")

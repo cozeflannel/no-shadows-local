@@ -457,9 +457,16 @@ TOPICS: list[dict[str, Any]] = [
                 "Set a severity and who it goes to, or leave both for the review.",
                 "Save. The rule applies from the next run."]},
             {"heading": "The tabs", "items": [
-                "Raised: the alerts, with each verdict.", "Passed over: what the review turned down, and why.",
+                "Raised: the alerts, with each verdict.", "Not raised: what Gemini looked at and decided not to raise, and why.",
                 "Sources: each source, when it was last read, and how many posts were kept.",
                 "Rules: what each new post is checked against."]},
+            {"heading": "When something goes wrong", "items": [
+                "A box above the tabs says what happened and what to do, in plain words. Blue means nothing is broken: the agent is waiting, or something needs setting. Red means a person should look.",
+                "A problem in the agent's own check: press Run now. If it keeps failing, tell an admin.",
+                "A table the Console may not read: its owners let the Console's account in. The statement to send them is under Integrations, BigQuery. Nothing fails over it meanwhile.",
+                "Google Cloud busy or slow: wait a few minutes. Nothing is lost; the agent tries again on its own.",
+                "Admins see Google's own words under Technical details, to send on to whoever looks after the Console.",
+                "After an update to the Console the agent remakes its tables and checks in BigQuery on its next run, while Change BigQuery from here is on."]},
             {"heading": "Turn it on", "steps": [
                 "Open Integrations and press Find and fill. It adds the two tables only Agent alerts read, and ticks the tables it reads.",
                 "Open Settings, Agent alerts. Enter the KOF sheet's link, and share that sheet (Viewer) with the service's account. The deploy fills the BigQuery connection and the salt's secret: enter them only if they are blank. Add the Brandwatch queries and the Other alerts space if you use them.",
@@ -585,9 +592,11 @@ TOPICS: list[dict[str, Any]] = [
             {"heading": "Change instructions", "steps": [
                 "Open Settings → AI instructions and pick a task.", "Read the built-in instructions.",
                 "Write the new version. Put {{default}} where the built-in text should stay, then add your rules after it.",
-                "Optionally set a model or temperature for that task.", "Publish. The new version is used from the next call."]},
+                "Optionally pick a model from the list, or set a temperature, for that task.", "Publish. The new version is used from the next call."]},
             {"heading": "Roll back", "steps": ["Open the task.", "Click Use this on an earlier version, or Use built-in."]},
-            {"heading": "Models", "text": "The default models for triage, drafting and conversation are under Settings → Models."},
+            {"heading": "Models", "text": "Every model setting is a list of the Gemini models this Google Cloud project can use, each with a line on what it is "
+                                          "like. The first choice, Use the default, names the model the default uses; Other lets you type a name. The "
+                                          "defaults for triage, drafting and conversation are under Settings, Gemini models."},
         ],
     },
     {

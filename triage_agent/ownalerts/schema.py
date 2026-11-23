@@ -308,15 +308,23 @@ BEGIN
   VALUES (S.story_id, run_ts, run_ts, S.rep_post_id, S.sample_emb, S.c15, S.u15, S.c60, S.vel_ratio);
 
   -- 5. Gemini looks at each story that is growing fast enough, once per cool-down unless it has grown again.
+  -- Each story's latest posts are gathered first and joined on. BigQuery refuses a subquery that reads another table
+  -- once for each row when it cannot turn it into a join, and one that keeps only the latest few posts is such a
+  -- subquery. A story with no post in the last hour still gets no prompt, so it is not asked about.
   CREATE TEMP TABLE story_candidates AS
+  WITH latest_posts AS (
+    SELECT p.story_id, STRING_AGG(p.sanitized_snippet, '\\n---\\n' ORDER BY p.ingested_at DESC LIMIT {own.story_snippets}) AS snippets
+    FROM `{ds}.posts` p
+    WHERE p.ingested_at >= TIMESTAMP_SUB(run_ts, INTERVAL 1 HOUR) AND p.story_id IS NOT NULL
+    GROUP BY p.story_id
+  )
   SELECT s.story_id, s.post_count_15m,
     CONCAT('Stage 1 Story Triage. Instructions: ', discovery_guidelines,
            '\\n15m Posts: ', CAST(s.post_count_15m AS STRING), ' | Velocity: ', CAST(ROUND(s.velocity_ratio_15m, 2) AS STRING),
            '\\nMemory: ', IFNULL(s.story_summary, 'Unalerted'),
-           '\\nSnippets:\\n', (SELECT STRING_AGG(p.sanitized_snippet, '\\n---\\n' ORDER BY p.ingested_at DESC LIMIT {own.story_snippets})
-                               FROM `{ds}.posts` p
-                               WHERE p.story_id = s.story_id AND p.ingested_at >= TIMESTAMP_SUB(run_ts, INTERVAL 1 HOUR))) AS prompt
+           '\\nSnippets:\\n', lp.snippets) AS prompt
   FROM `{ds}.stories` s
+  LEFT JOIN latest_posts lp ON lp.story_id = s.story_id
   WHERE s.updated_at >= active_ts
     AND s.post_count_15m >= min_story_posts AND s.velocity_ratio_15m >= min_vel_ratio
     AND (s.last_alerted_at IS NULL OR s.last_alerted_at < TIMESTAMP_SUB(run_ts, INTERVAL cooldown_mins MINUTE))
