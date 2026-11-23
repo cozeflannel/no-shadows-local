@@ -35,6 +35,7 @@ const RoutingPage = lazy(() => import("./pages/Routing"));
 const StoriesPage = lazy(() => import("./pages/Stories"));
 const SuppressedPage = lazy(() => import("./pages/Suppressed"));
 const TempCheckPage = lazy(() => import("./pages/TempCheck"));
+const VelocityPage = lazy(() => import("./pages/Velocity"));
 const WorkforcePage = lazy(() => import("./pages/Workforce"));
 
 export default function App() {
@@ -95,6 +96,7 @@ export default function App() {
             <Route path="/agent/:sessionId" element={<AgentPage />} />
             <Route path="/temp-check" element={<TempCheckPage />} />
             <Route path="/temp-check/:checkId" element={<TempCheckPage />} />
+            <Route path="/velocity" element={<VelocityPage />} />
             <Route path="/workforce" element={<WorkforcePage />} />
             <Route path="/rosters" element={<RostersPage />} />
             <Route path="/knowledge" element={<KnowledgePage />} />

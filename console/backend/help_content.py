@@ -645,6 +645,17 @@ TOPICS: list[dict[str, Any]] = [
         ],
     },
     {
+        "id": "velocity", "page": "Post velocity", "title": "Post velocity & 7-day curves", "audience": "analysts",
+        "summary": "Live engagement velocity (T+0 to T+168h), peak hourly spikes, side-by-side post comparisons and spike alerts.",
+        "sections": [
+            {"heading": "Check a post", "steps": ["Open Post velocity under Look into, or click Check velocity on any alert in Review feed, Cases, Stories, Early Detection or Temp check.",
+                                                  "Paste an X (x.com) or Bluesky (bsky.app) post link and press Track post.",
+                                                  "Click any row to view its 7-day curve (Hourly velocity, Cumulative engagements, or Reposts & replies)."]},
+            {"heading": "Compare posts", "text": "Tick Compare on 2 to 6 posts to overlay their curves from the hour each post was published (T+0h to T+168h), even if they went live on different days."},
+            {"heading": "Spike alerts", "text": "Press Watch on a post to be notified when it crosses into Growing (+1,000 or 1.35x baseline) or Surging (+10,000 or 5x). Turn on Post velocity polling & spike alerts under Settings → Switches to enable automatic background polling."},
+        ],
+    },
+    {
         "id": "deploy", "page": "Start", "title": "Deploy and connect", "audience": "admins",
         "summary": "From an empty project to a working Console.",
         "sections": [

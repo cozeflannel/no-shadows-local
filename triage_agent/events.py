@@ -326,6 +326,7 @@ class PlatformEvent:
     OWN_RAISED = "own.raised"  # an agent alert queued for Chat: payload decision_id, outbox_id, target
     OWN_FEEDBACK = "own.feedback"  # an analyst's verdict: payload decision_id, verdict
     OWN_RULE_SAVED = "own.rule_saved"
+    VELOCITY_SPIKE = "velocity.spike"  # a tracked post crossed into Growing or Surging: payload post_key, url, tier, peak_per_hour
 
     @classmethod
     def all(cls) -> list[str]:

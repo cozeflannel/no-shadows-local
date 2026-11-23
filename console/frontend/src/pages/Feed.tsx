@@ -6,6 +6,7 @@ import { apiSend, type ApiError } from "../api/client";
 import { useApi } from "../api/hooks";
 import type { ActionDef } from "../api/types";
 import { Alert, Badge, Button, Card, CaseBadges, cx, EmptyState, ErrorState, Field, Input, Modal, PageHeader, Segmented, Select, Spinner, Textarea } from "../components/ui";
+import { useVelocityMap, VelocityBadge, type VelocitySummary } from "../components/VelocityInline";
 import { useApp } from "../context";
 import { fmtDateTime, fmtMinutes, fmtRelative, fmtValue, probability } from "../lib/format";
 import { humanize, plainReason, suppressionLabel, TARGET_LABEL, verdictLabel } from "../lib/labels";
@@ -77,7 +78,7 @@ function useRun(onDone: (card: FeedCard | null) => void) {
   return { busy, run };
 }
 
-function CardRow({ card, selected, onOpen }: { card: FeedCard; selected: boolean; onOpen: () => void }) {
+function CardRow({ card, velocity, selected, onOpen }: { card: FeedCard; velocity?: VelocitySummary | null; selected: boolean; onOpen: () => void }) {
   return (
     <button type="button" onClick={onOpen} aria-current={selected}
       className={cx("block w-full rounded-2xl border p-4 text-left transition-colors",
@@ -86,6 +87,7 @@ function CardRow({ card, selected, onOpen }: { card: FeedCard; selected: boolean
       <div className="flex flex-wrap items-center gap-1.5">
         <CaseBadges status={card.status} verdict={card.verdict} need={card.needs} />
         {card.priority && <Badge tone="zinc">{card.priority}</Badge>}
+        {velocity && velocity.tier !== "steady" && <Badge tone={velocity.tier === "surging" ? "rose" : "violet"}>{velocity.tier_label} · {velocity.peak_per_hour > 0 ? `${Math.round(velocity.peak_per_hour).toLocaleString()}/hr` : `+${velocity.delta_engagements.toLocaleString()}`}</Badge>}
         <span className="ml-auto text-xs tabular-nums text-zinc-500">{card.needs ? `waiting ${fmtMinutes(card.waiting_min)}` : fmtRelative(card.latest_received_at)}</span>
       </div>
       <p className={cx("mt-2 line-clamp-2 text-sm font-medium", card.alert_name || card.issue_name ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-500 dark:text-zinc-400")}>
@@ -100,7 +102,9 @@ function CardRow({ card, selected, onOpen }: { card: FeedCard; selected: boolean
   );
 }
 
-function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legend: ActionDef[]; verdicts: string[]; onChanged: () => void }) {
+function Detail({ caseId, velocity, onVelocityUpdated, legend, verdicts, onChanged }: {
+  caseId: string; velocity?: VelocitySummary | null; onVelocityUpdated?: (s: VelocitySummary) => void; legend: ActionDef[]; verdicts: string[]; onChanged: () => void;
+}) {
   const { me, meta } = useApp();
   const { data, error, loading, setData, reload } = useApi<FeedCard>(`/feed/${caseId}`);
   const done = useCallback((card: FeedCard | null) => { if (card) setData(card); else reload(); onChanged(); }, [setData, reload, onChanged]);
@@ -127,6 +131,7 @@ function Detail({ caseId, legend, verdicts, onChanged }: { caseId: string; legen
       <Card title={<span className="flex flex-wrap items-center gap-2">{c.case_id}<CaseBadges status={c.status} verdict={c.verdict} need={c.needs} /></span>}
         subtitle={c.alert_name || c.issue_name || undefined}
         actions={<>
+          <VelocityBadge summary={velocity} caseId={c.case_id} postUrl={c.post_url} onUpdated={onVelocityUpdated} />
           {c.post_url && <a href={c.post_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 dark:text-blue-200">Post<ExternalLink className="size-3" /></a>}
           <Link to={`/cases/${c.case_id}`} className="text-xs font-medium text-blue-600 dark:text-blue-200">Full case</Link>
         </>}>
@@ -326,6 +331,7 @@ export default function FeedPage() {
   };
 
   const cards = list.data?.cards ?? [];
+  const vel = useVelocityMap({ caseIds: [caseId, ...cards.map((c) => c.case_id)] });
   return (
     <div>
       <PageHeader title="Review feed"
@@ -339,13 +345,13 @@ export default function FeedPage() {
         <div className={cx("min-w-0 space-y-3", caseId && "hidden xl:block")}>
           {list.loading && !list.data ? <Spinner /> : cards.length === 0 ? (
             <Card><EmptyState icon={<Inbox className="size-8" />} title={view === "action" ? "Nothing is waiting" : "No alerts in this view"}>{view === "action" ? "New alerts appear here the moment they are triaged." : "Try another view or a wider search."}</EmptyState></Card>
-          ) : cards.map((c) => <CardRow key={c.case_id} card={c} selected={c.case_id === caseId} onOpen={() => navigate(`/feed/${c.case_id}${search.toString() ? `?${search}` : ""}`)} />)}
+          ) : cards.map((c) => <CardRow key={c.case_id} card={c} velocity={vel.find(c.case_id)} selected={c.case_id === caseId} onOpen={() => navigate(`/feed/${c.case_id}${search.toString() ? `?${search}` : ""}`)} />)}
           {list.data && list.data.total > cards.length && <p className="text-center text-xs text-zinc-500">Showing {cards.length} of {list.data.total}. Search to narrow.</p>}
         </div>
         <div className={cx("min-w-0", !caseId && "hidden xl:block")}>
           {caseId ? <>
             <button type="button" onClick={() => navigate(`/feed${search.toString() ? `?${search}` : ""}`)} className="mb-3 inline-flex items-center gap-1 text-sm text-blue-600 xl:hidden dark:text-blue-200"><ArrowLeft className="size-4" />Back to the feed</button>
-            <Detail key={caseId} caseId={caseId} legend={list.data?.legend ?? []} verdicts={list.data?.verdicts ?? []} onChanged={changed} />
+            <Detail key={caseId} caseId={caseId} velocity={vel.find(caseId)} onVelocityUpdated={vel.updateOne} legend={list.data?.legend ?? []} verdicts={list.data?.verdicts ?? []} onChanged={changed} />
           </> : <Card><EmptyState title="Pick an alert">What the agent found, why, and what you can do about it open here.</EmptyState></Card>}
         </div>
       </div>

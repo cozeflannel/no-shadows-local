@@ -885,6 +885,7 @@ class FeatureFlags(ConfigModel):
     alert_popups: bool = Field(False, title="Alert pop-ups", description="ON: people in the Console get a pop-up when an alert comes in; each person can mute their own. OFF: no pop-ups.")
     own_alerts: bool = Field(False, title="Agent alerts", description="ON: every few minutes the sources under Settings, Agent alerts are read. Personal details are taken out of each post before it is kept, each post is checked against the rules, like posts are grouped into stories in BigQuery, and what passes is reviewed. OFF: nothing is read and nothing is reviewed.")
     own_alerts_post: bool = Field(False, title="Post agent alerts in Chat", description="ON: each alert the review raises is posted in the space named under Settings, Agent alerts. OFF: raised alerts show in the Console only.")
+    velocity_tracking: bool = Field(False, title="Post velocity polling & spike alerts", description="ON: tracked X and Bluesky posts are polled on a tiered schedule for 7 days (T+0 to T+168h), and watched or alert-linked posts that cross into Growing or Surging raise a Console bell alert and an internal notification. OFF: no background polling or spike alerts run; analysts can still check any post's velocity on demand.")
 
 
 def switch_title(name: str) -> str:

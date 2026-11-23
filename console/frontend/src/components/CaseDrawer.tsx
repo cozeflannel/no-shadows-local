@@ -12,6 +12,7 @@ import { AssessmentPanel, AttemptsList, CorrectionsTable, IssuesList, RoutingPla
 import { CaseLink, EventRow } from "./common";
 import { EscalationView } from "./EscalationView";
 import { Alert, Badge, Button, Card, CaseBadges, Details, Drawer, ErrorState, Field, KV, Modal, Spinner, StatusBadge, Tabs, Textarea } from "./ui";
+import { VelocityBadge } from "./VelocityInline";
 
 type Tab = "overview" | "attempts" | "escalations" | "timeline";
 const DECISION: Record<string, string> = { forward: "Sent on", bounce: "Sent back to Burson", suppress: "Suppressed" };
@@ -90,6 +91,7 @@ export function CaseDrawer({ caseId, onClose, onChanged }: { caseId: string | nu
         </div>
       ) : <span className="font-mono text-sm">{caseId}</span>}
       actions={c && <>
+        <VelocityBadge caseId={c.case_id} postUrl={s?.post_url} compact />
         {s?.post_url && <a href={s.post_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950">View post <ExternalLink className="size-3" /></a>}
         {data?.can_close && (
           <Button size="sm" variant="danger" icon={<CircleX className="size-3.5" />} disabled={!canAct || data.operations.close_case === false}

@@ -8,6 +8,7 @@ import { SafeHtml } from "./SafeHtml";
 import { ConvertReport, type ConvertResult, type FormInfo } from "./TempCheckForm";
 import { TempCheckWeb } from "./TempCheckWeb";
 import { Alert, Badge, Button, KV, Modal, Tabs } from "./ui";
+import { VelocityBadge } from "./VelocityInline";
 
 export interface TcPost {
   key: string; x?: boolean; id?: string; source: string; author: string; text: string; url: string; eng: number | null; negative: boolean;
@@ -135,7 +136,10 @@ function PostGrid({ posts }: { posts: TcPost[] }) {
               <p className="whitespace-pre-line text-zinc-800 dark:text-zinc-200">{shown.text || "No words came with this post."}</p>
               <KV cols={1} items={[["Posted", shown.at ? fmtDateTime(shown.at) : "not known"], ["Engagement", engagementOf(shown).text],
                 ["Sentiment it came with", shown.negative ? "negative" : "not negative"], ...(shown.text_from ? [["Words from", shown.text_from] as [ReactNode, ReactNode]] : [])]} />
-              {/^https?:\/\//i.test(shown.url) && <a href={shown.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-blue-700 hover:underline dark:text-blue-300">Open the post<ExternalLink className="size-3.5" /></a>}
+              <div className="flex flex-wrap items-center gap-3">
+                {/^https?:\/\//i.test(shown.url) && <a href={shown.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-blue-700 hover:underline dark:text-blue-300">Open the post<ExternalLink className="size-3.5" /></a>}
+                {/^https?:\/\//i.test(shown.url) && <VelocityBadge postUrl={shown.url} />}
+              </div>
             </div>
             <div className="min-w-0">
               {frame ? (

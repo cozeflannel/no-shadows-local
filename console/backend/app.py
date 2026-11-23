@@ -31,7 +31,7 @@ from triage_agent.render import FIELD_LABELS
 
 from . import (
     chat_signin, connections, gmail_oauth, help_content, live, routes_admin, routes_ai, routes_cases, routes_insight, routes_learning, routes_metrics, routes_own, routes_rosters, routes_routing,
-    routes_settings, routes_work,
+    routes_settings, routes_velocity, routes_work,
 )
 from .audit_mw import audit_requests
 from .auth import User, current_user, get_ctx, require_viewer
@@ -142,7 +142,7 @@ def create_app(ctx: AgentContext | None = None, state: ConsoleState | None = Non
         return {"topics": help_content.topics()}
 
     for module in (routes_metrics, routes_cases, routes_rosters, routes_admin, routes_settings, routes_learning, gmail_oauth, live,
-                   routes_work, routes_insight, connections, chat_signin, routes_routing, routes_ai, routes_own):
+                   routes_work, routes_insight, connections, chat_signin, routes_routing, routes_ai, routes_own, routes_velocity):
         app.include_router(module.router)
 
     # -- static frontend (SPA) -------------------------------------------------

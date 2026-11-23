@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { apiSend, type ApiError } from "../api/client";
 import { useApi } from "../api/hooks";
 import { Badge, Button, Card, cx, EmptyState, ErrorState, Input, PageHeader, Segmented, Select, Spinner, StatusBadge, TD, TH, TR } from "../components/ui";
+import { VelocityBadge } from "../components/VelocityInline";
 import { useApp } from "../context";
 import { fmtCompact, fmtDateTime, fmtMoment, fmtNum, fmtRelative } from "../lib/format";
 import { bounds, pack, packInside, type Circle } from "../lib/pack";
@@ -602,11 +603,12 @@ function StoryPanel({ id, by, canAct, onClose, onRead }: { id: string; by: "enga
               <p className="mt-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">{a.issue_name || a.alert_name || a.case_id}</p>
               {a.post_text && <p className="mt-1 line-clamp-4 whitespace-pre-line text-sm text-zinc-700 dark:text-zinc-300">{a.post_text}</p>}
               <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{a.author ? `${a.author} · ` : ""}{HOW[a.how]}{a.sim !== null && a.how !== "lead" ? ` (${a.sim.toFixed(2)})` : ""}{a.also.length ? ` · also alerted as ${a.also.join(", ")}` : ""}</p>
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
                 <Link to={`/feed/${a.case_id}`} className="text-blue-700 hover:underline dark:text-blue-300">Open alert {a.case_id}</Link>
                 {a.post_url && /^https?:\/\//.test(a.post_url) && (
                   <a href={a.post_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-blue-700 hover:underline dark:text-blue-300">Open post<ExternalLink className="size-3.5" /></a>
                 )}
+                <VelocityBadge caseId={a.case_id} postUrl={a.post_url} compact />
               </div>
             </li>
           ))}

@@ -23,14 +23,14 @@ const KEPT_IDS = 300;
 const BELL_TYPES = new Set([
   "triage.passed", "triage.corrected", "triage.needs_review", "triage.failed", "triage.suppressed", "sla.at_risk", "sla.missed",
   "review.forwarded", "review.bounced", "review.suppressed", "email.drafted", "email.sent", "tns.submitted", "parity.unmatched",
-  "safety.blocked", "outbound.dead_lettered", "temp_check.completed", "temp_check.failed", "workforce.gap_alert", "error",
+  "safety.blocked", "outbound.dead_lettered", "temp_check.completed", "temp_check.failed", "workforce.gap_alert", "velocity.spike", "error",
 ]);
 const WHAT: Record<string, string> = {
   "triage.passed": "Passed as sent", "triage.corrected": "Fixed by the agent and posted", "triage.needs_review": "Held for an IM to review",
   "triage.failed": "Sent back to Burson", "triage.suppressed": "No alert needed", "sla.at_risk": "SLA at risk", "sla.missed": "SLA missed",
   "review.forwarded": "Forwarded after review", "review.bounced": "Sent back to Burson after review", "review.suppressed": "Suppressed after review",
   "email.drafted": "Social Alert draft ready", "email.sent": "Social Alert email sent", "tns.submitted": "Trust & Safety report submitted",
-  "parity.unmatched": "Only one side alerted",
+  "parity.unmatched": "Only one side alerted", "velocity.spike": "Post velocity spike",
 };
 const NEEDS: Record<string, string> = { sla: "SLA at risk: needs an IM now", review: "Waiting for an IM to review", acknowledge: "Waiting for an IM to react", source_fix: "Waiting for Burson's fix" };
 
@@ -86,12 +86,13 @@ function popupOf(item: LiveItem): Popup {
 function lineOf(item: LiveItem): string {
   const name = item.case?.alert_name || item.case_id;
   const what = WHAT[item.event_type];
-  if (what) return name ? `${what}: ${name}` : what;
+  if (what) return name ? `${what}: ${name}` : (item.summary || what);
   return item.summary || item.event_type.replace(/[._]/g, " ");
 }
 
 /** Where "Open" goes, when the thing has a page. */
 function pageOf(item: LiveItem): string | null {
+  if (item.event_type === "velocity.spike" && item.payload.post_key) return `/velocity?focus=${encodeURIComponent(String(item.payload.post_key))}`;
   if (item.case_id) return `/feed/${item.case_id}`;
   if (item.event_type.startsWith("temp_check.") && item.payload.check_id) return `/temp-check/${String(item.payload.check_id)}`;
   if (item.event_type === "safety.blocked") return "/settings/safety";

@@ -6,6 +6,7 @@ import { apiSend } from "../api/client";
 import { useAction, useApi } from "../api/hooks";
 import { TimeCell } from "../components/common";
 import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, Input, OffNotice, PageHeader, Spinner, Tabs } from "../components/ui";
+import { VelocityBadge } from "../components/VelocityInline";
 import { useApp } from "../context";
 import { fmtTime } from "../lib/format";
 import { humanize } from "../lib/labels";
@@ -80,9 +81,12 @@ function Story({ signal, canAct, onDone }: { signal: Signal; canAct: boolean; on
       <ul className="mt-4 flex flex-col gap-2">
         {posts.map((p, i) => (
           <li key={p.url + i} className="rounded-xl bg-zinc-50 p-3 text-sm dark:bg-zinc-800/50">
-            <a href={p.url} target="_blank" rel="noreferrer" className="font-medium text-blue-700 underline-offset-2 hover:underline dark:text-blue-400">
-              {p.platform || "Post"} · {fmtTime(p.posted)}
-            </a>
+            <div className="flex flex-wrap items-center gap-2">
+              <a href={p.url} target="_blank" rel="noreferrer" className="font-medium text-blue-700 underline-offset-2 hover:underline dark:text-blue-400">
+                {p.platform || "Post"} · {fmtTime(p.posted)}
+              </a>
+              <VelocityBadge postUrl={p.url} compact />
+            </div>
             <p className="mt-1 text-zinc-700 dark:text-zinc-300">{p.text}</p>
           </li>
         ))}

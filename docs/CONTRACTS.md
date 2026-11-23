@@ -868,9 +868,11 @@ returned to a Studio flow and Gmail drafts are not queued.
 `knowledge.doc_saved|doc_removed|indexed`, `watch.saved|detected`, `campaign.saved`, `bigquery.changed`, `secret.changed`,
 `own.cycle|reviewed|raised|feedback|rule_saved`.
 
+**Post velocity (`/api/velocity`, `triage_agent/velocity.py`, `console/backend/routes_velocity.py`):** `GET /api/velocity` (leaderboard + traction counts + poller state), `POST /api/velocity/track` (URL or `case_id`, SSRF-safe X/Bluesky public polling), `POST /api/velocity/lookup` (batch summaries by `case_id` and `url` for inline badges across Review feed, Cases, Stories, Early Detection and Temp check), `GET /api/velocity/posts/{key}` (`T+0…T+168h` curve), `GET /api/velocity/compare?keys=…`, `POST /api/velocity/posts/{key}/refresh`, `POST /api/velocity/refresh`, `POST /api/velocity/posts/{key}/watch`, `DELETE /api/velocity/posts/{key}`, `POST /api/velocity/import-legacy` (admin dry-run/apply from `slrr-tooling` GCS). Background polling & `velocity.spike` alerts gated by `platform.flags.velocity_tracking` (default `false`).
+
 **State** (generic documents, `Store.put_doc/get_doc/list_docs/create_doc/delete_doc/delete_docs_before`): `audit`, `chat_activity`, `events_hot`,
 `outbound`, `dead_letters`, `prompt_versions`, `prompt_defaults`, `knowledge_docs|chunks|text`, `golden`, `agent_sessions`, `temp_checks`, `tc_curves`, `tc_issues`,
-`wf_forecasts`, `wf_recommendations`, `watches`, `watch_detections`, `watch_sources`. Equality filters need no composite index.
+`wf_forecasts`, `wf_recommendations`, `watches`, `watch_detections`, `watch_sources`, `velocity_posts`, `velocity_snapshots`. Equality filters need no composite index.
 
 **LLM purposes added:** `triage.classify`, `console.chat_agent`, `temp_check.query`, `temp_check.relevance`, `temp_check.writeup`, `own.review`. Each purpose's
 instructions, model and temperature can be published as a version in the Console (`prompts.py`); `{{default}}` stands for the built-in text.

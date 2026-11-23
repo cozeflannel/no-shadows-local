@@ -1,6 +1,6 @@
 import {
   BookOpen, BrainCircuit, CalendarClock, ChevronDown, CircleHelp, FileClock, Inbox, LayoutDashboard, Mail, Megaphone, Menu, MessagesSquare, Moon,
-  PanelLeftClose, PanelLeftOpen, Plug, Radar, Route, Scale, Settings, ShieldCheck, Siren, Sparkles, Sun, Thermometer, UsersRound, Waypoints,
+  PanelLeftClose, PanelLeftOpen, Plug, Radar, Route, Scale, Settings, ShieldCheck, Siren, Sparkles, Sun, Thermometer, TrendingUp, UsersRound, Waypoints,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router";
@@ -16,7 +16,7 @@ interface NavGroup { label: string; items: NavItem[] }
 
 /** The Help topic that goes with each page (the first path segment). */
 const HELP_TOPIC: Record<string, string> = {
-  "": "dashboard", feed: "review-feed", chat: "chat-spaces", agent: "chat-agent", "temp-check": "temp-check", workforce: "workforce",
+  "": "dashboard", feed: "review-feed", chat: "chat-spaces", agent: "chat-agent", "temp-check": "temp-check", velocity: "velocity", workforce: "workforce",
   rosters: "rosters", knowledge: "knowledge", campaigns: "campaigns", cases: "cases", escalations: "cases", settings: "settings",
   suppressed: "cases", parity: "cases", learning: "knowledge", outbox: "delivery", activity: "audit", help: "getting-started",
   stories: "stories", compare: "compare", connections: "integrations", admin: "admin", early: "early-detection", routing: "routing", ai: "ai",
@@ -111,6 +111,7 @@ export function Layout({ children }: { children: ReactNode }) {
     ] },
     { label: "Look into", items: [
       { to: "/temp-check", label: "Temp check", icon: <Thermometer className={icon} />, hint: "How big a conversation is, right now" },
+      { to: "/velocity", label: "Post velocity", icon: <TrendingUp className={icon} />, hint: "7-day post curves, peak spikes and comparisons" },
       { to: "/early", label: "Early Detection", icon: <Radar className={icon} />, hint: "Stories growing before anyone alerted them" },
       { to: "/own-alerts", label: "Agent alerts", icon: <Siren className={icon} />, hint: "Alerts the agent raises from its own sources" },
       { to: "/escalations", label: "Emails & T&S", icon: <Mail className={icon} />, hint: "Social Alert emails and Trust & Safety reports" },
