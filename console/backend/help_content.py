@@ -359,6 +359,14 @@ TOPICS: list[dict[str, Any]] = [
                 "What the review wants posted is queued. It is posted when Post queued messages in Chat is ON (the next section); otherwise it waits for a Chat flow.",
                 "A message whose review fails is tried again each minute and given up after five tries. Its row says why. It does not hold the messages behind it.",
                 "Reading starts from the last 15 minutes when the switch goes ON or the source space changes."]},
+            {"heading": "Answering mentions in Chat", "items": [
+                "Turn on Answer mentions in Chat under Settings, Switches. With the QA chatbot ON, a message that mentions it is answered within a minute, in that message's thread, with no Chat flow in between.",
+                "It reads the source, second and third spaces. Under Answered, tick any of the agent's other spaces to read them too.",
+                "A mention is the QA chatbot's account picked from Chat's @ list, or @ and the agent's name typed out. Apps and the QA chatbot's own posts are never answered.",
+                "The Answered list shows each mention, who asked, and the reply. Queued means the reply waits for Send or for Post queued messages in Chat. Held means a rule said no; its row says why.",
+                "In the source space the reply follows the rules at the top of this page. While that space is closed, the reply is shown in the second space under the alert's copy.",
+                "Who asked is matched from the rosters and the people under Settings. Someone not on them is still answered.",
+                "A reply Chat does not take is tried again each minute and given up after five tries. Its row says why."]},
             {"heading": "Posting queued messages in Chat", "items": [
                 "Turn on Post queued messages in Chat under Settings, Switches. With the QA chatbot ON, each queued message is posted within a minute, once, as the QA chatbot's account, with no Chat flow in between.",
                 "With Retry posts that fail ON too, each message goes through Google Pub/Sub and is posted as soon as it is queued. Pub/Sub tries a failed one again and sets it aside after the last try (Settings, Delivery); the minute run still posts whatever is left.",

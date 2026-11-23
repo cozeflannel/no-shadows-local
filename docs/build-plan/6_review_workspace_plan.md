@@ -35,6 +35,7 @@ Not proven: nothing the bot does through its Chat sign-in has run against live C
 | D8 | The Cases tab | Out of the menu. Its links open the same alert in Review | His words: "Remove or hide the cases tab" |
 | D9 | How Chat is read | By the bot's sign-in, every minute, as now. No Chat app, no webhooks, no Apps Script | Standing rule (22 Nov) |
 | D11 | Where the bot's reply to Burson shows while the source space is closed | Held for the source as before. With a second space set it is also posted under the alert's copy in the second and third spaces. A reply that names something internal is not shown | The owner's routing rule of 22 Nov: with the valve ON nothing is written to Burson and the other spaces are still written. The sheet-based bot shows its Burson replies in its Mirror space |
+| D12 | Where mentions are read | The Routing page's three spaces. One of the agent's other spaces is read only once it is ticked under Answered on the Routing page (`routing.answer_spaces`, empty to start) | Nothing new is read until it is chosen; no space list in code |
 | D10 | Order | The QA chatbot first, then Review, then identity, shifts and the handover, then Settings | His words: "prioritize the chatbot working and that streaming through the web app" |
 
 ## Phases and steps
@@ -77,7 +78,7 @@ code; step 1.1 confirms each row by reading both sides, and each confirmed gap b
 | Early Detection and Proactive watch also read the AMIE table | Yes: a tick per table on Integrations |
 | Live dashboard | Yes: Dashboard and Stories |
 | Temp checks | In the Console, yes. Typed in Chat, no (1.5) |
-| Draft answers to questions | The sheet's is a Gmail draft on the Social Alert's thread: not found. Answers in Chat exist as op `converse`, not reached from Chat yet (1.3) |
+| Draft answers to questions | The sheet's is a Gmail draft on the Social Alert's thread: not found. Answers in Chat: op `converse`, reached from a mention in a space since 1.3; direct messages not yet |
 | Write back to SLRR BigQuery | Partly: Our own alerts' mark-delivered setting only |
 | Learn from IM calls | Partly: Learning page and checked examples. Showing Gemini the similar past calls: not found |
 | Check outage & comms docs | Partly: the Knowledge documents are read. The outage check and holding statements: not found |
@@ -158,7 +159,8 @@ Which messages count, the look-back days, the number of rows, the two spaces and
 | 1.0 Live proof | the owner's steps, given 23 Nov |
 | 1.1 Parity table | first pass done and searched across the Console's code; each gap is read on both sides when its step is picked up |
 | 1.2 Replies in the alert's thread | built (`tests/test_chat_threads.py`); not proven live |
-| 1.3 to 1.7 | not started |
+| 1.3 Mentions answered in Chat | mentions in spaces built (`tests/test_chat_answers.py`); direct messages to the bot not started; not proven live |
+| 1.4 to 1.7 | not started |
 | Phase 2 | not started |
 | Phase 3 | not started |
 | Phase 4 | not started |
