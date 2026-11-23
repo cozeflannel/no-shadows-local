@@ -82,6 +82,16 @@ class NotAllowed(RuntimeError):
     """The Console may not change this object (switch OFF, or the dataset isn't on the allow-list)."""
 
 
+_NO_ACCESS = re.compile(r"access denied: (table|dataset) ", re.IGNORECASE)
+
+
+def no_access(exc: BaseException) -> bool:
+    """BigQuery's answer for a table or dataset this account may not read yet (a view is a table to BigQuery). Such a table is waiting for its
+    owners, not broken: it is skipped and read by itself once they let the account in. Every other refusal (quota,
+    billing, an organisation's policy, the account's own project, a connection) is a failure a person looks at."""
+    return bool(_NO_ACCESS.search(str(exc)))
+
+
 def check_table_id(table_id: str) -> str:
     table_id = (table_id or "").strip().strip("`")
     if not TABLE_ID.match(table_id):

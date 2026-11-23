@@ -313,7 +313,10 @@ def _load_state(ctx: "AgentContext", now: datetime) -> dict[str, Any]:
 
 
 def _ingest(ctx: "AgentContext", gw: Any, step: dict[str, Any], st: dict[str, Any], now: datetime) -> None:
-    """One table's read. One table failing never stops the others; it is read again from the same start."""
+    """One table's read. One table failing never stops the others; it is read again from the same start. A table
+    whose owners have not let this account in yet is waiting, not failing."""
+    from . import bq_admin
+
     e = ctx.config.platform.early
     entry: dict[str, Any] = {"label": step["what"][5:], "at": now.isoformat(), "error": ""}
     try:
@@ -335,7 +338,7 @@ def _ingest(ctx: "AgentContext", gw: Any, step: dict[str, Any], st: dict[str, An
         st["cursors"][step["source"]] = now.isoformat()
         entry["status"] = "live"
     except Exception as exc:  # noqa: BLE001
-        entry.update(status="failing", error=str(exc)[:400])
+        entry.update(status="waiting" if bq_admin.no_access(exc) else "failing", error=str(exc)[:400])
     st["sources"][step["source"]] = entry
 
 
@@ -354,7 +357,7 @@ def check(ctx: "AgentContext", force: bool = False) -> dict[str, Any]:
     st = _load_state(ctx, now)
     if not force and st.get("last") and now - datetime.fromisoformat(st["last"]) < timedelta(minutes=cfg.interval_minutes):
         return {"ok": True, "due": False}
-    out: dict[str, Any] = {"ok": True, "due": True, "raised": 0, "held": 0, "error": ""}
+    out: dict[str, Any] = {"ok": True, "due": True, "raised": 0, "held": 0, "error": "", "waiting": []}
     try:
         if not _sources(ctx):
             raise ValueError("No post table is named. Add one under Settings, Early Detection, sources.")
@@ -375,6 +378,7 @@ def check(ctx: "AgentContext", force: bool = False) -> dict[str, Any]:
             signal = _record(ctx, row, now)
             out["held" if signal["status"] == "held" else "raised"] += 1
             st["raised"] += signal["status"] != "held"
+        out["waiting"] = [k for k, v in st["sources"].items() if v.get("status") == "waiting" and k in cfg.sources]
         failing = [k for k, v in st["sources"].items() if v.get("status") == "failing" and k in cfg.sources]
         if failing:
             out.update(ok=False, error="Could not read: " + ", ".join(failing))

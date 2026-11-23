@@ -182,6 +182,19 @@ def test_a_table_that_cannot_be_read_is_noted_and_the_others_carry_on(ctx, world
     assert out["failing"] == ["comments"]
 
 
+def test_a_table_waiting_for_access_is_skipped_and_is_not_a_failure(ctx, world):
+    gw, _ = world
+    gw.no_access = f"`{COMMENTS}`"
+    gw.source_rows[SONAR] = [row(1)]
+    out = run(ctx)
+    comments = out["state"]["sources"]["comments"]
+    assert out["staged"] == 1 and comments["status"] == "waiting" and "Access Denied: Table p:d.t" in comments["error"]
+    assert out["failing"] == [] and out["waiting"] == ["comments"] and "comments" not in out["state"]["cursors"]
+    gw.no_access = ""
+    out = run(ctx)
+    assert out["waiting"] == [] and out["state"]["sources"]["comments"]["status"] == "live", "it is read by itself once access arrives"
+
+
 def test_a_read_whose_posts_could_not_be_written_is_read_again(ctx, world):
     gw, _ = world
     gw.source_rows[SONAR] = [row(1)]

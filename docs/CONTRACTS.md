@@ -674,6 +674,14 @@ smaller stories, per-alert points and hourly running totals; `GET /api/stories/{
 Settings. A check's result is kept in kv `connection:test:<key>` with a fingerprint of the values and dropped when they change.
 `GET /api/meta` carries `notifications` for the pop-ups. The tick records kv `tick:last`.
 
+**A table waiting for access** (`bq_admin.no_access`): BigQuery's answer `Access Denied: Table|Dataset ...` means the table's owners have
+not let the runtime account read it yet. It is waiting, not failing. On Integrations its check line carries `waiting: true` and `grant`, the
+tool's `ok` and state leave waiting lines out, and `grants` holds one statement a dataset, each led by a `--` comment naming the tables it
+is for. Early Detection (`sources[].status = "waiting"`, `check().waiting`), Watches (`watch_sources.status = "waiting"`, no try counted) and
+Agent alerts (`sources[].status = "waiting"`, `cycle.run().waiting`, `own.cycle` payload `waiting`) skip the table without failing the read,
+the run or the job, keep its cursor, and read it once access arrives. `POST /api/ai/bigquery/check` marks such steps `waiting` and does not
+fail over them. Every other refusal (quota, billing, an organisation's policy, the account's own project, a connection) stays a failure.
+
 **Chat as the QA chatbot's account** (`chatapi.py`, `console/backend/chat_signin.py`): the Console calls the Chat REST API with the sign-in
 of the account in `agent.email`, as the sheet-based bot does (no Chat app, no webhooks). `GET /api/chat-signin`, `GET /api/chat-signin/connect`
 (admins; Google returns to `/api/gmail/callback`, shared with Gmail), `DELETE /api/chat-signin`. Scopes: the sheet-based bot's five `chat.*`

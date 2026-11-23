@@ -9,14 +9,15 @@ import { useApp } from "../context";
 import { fmtRelative } from "../lib/format";
 
 interface FieldRow { path: string; label: string; required: boolean; help: string; options: string; choices: string[]; value: string | null; set: boolean }
-interface Detail { label: string; ok: boolean; message: string; row?: string }
+/** One line of a check. `waiting`: a table whose owners have not let the Console read it yet. It is skipped, and it is not a failure. */
+interface Detail { label: string; ok: boolean; message: string; row?: string; waiting?: boolean }
 interface Test { ok: boolean; message: string; details: Detail[]; grants: string[]; at: string; by: string }
 type State = "connected" | "ready" | "incomplete" | "not_connected" | "failing";
 interface Reads { key: string; temp_checks: boolean; early: boolean; watches: boolean; own: boolean }
 /** A table the app reads. One row even when several settings name it. */
 interface TableRow {
   id: string; name: string; what: string; table: string; set: boolean; location: string; post: Reads | null; reads: string[];
-  status: { ok: boolean; message: string } | null;
+  status: { ok: boolean; waiting?: boolean; message: string } | null;
 }
 interface Tool {
   key: string; name: string; what: string; required: boolean; uses: string[]; access: string; settings: string; create: string; fields: FieldRow[];
@@ -38,9 +39,10 @@ const ICON: Record<string, ReactNode> = {
 const POST_READS: [keyof Omit<Reads, "key">, string][] = [["temp_checks", "Temp checks"], ["early", "Early Detection"], ["watches", "Watches"], ["own", "Agent alerts"]];
 
 function stateOf(t: Tool): { label: string; tone: "emerald" | "blue" | "amber" | "zinc" | "rose" } {
-  if (t.state === "connected") return { label: "Connected", tone: "emerald" };
+  const waiting = t.test?.details.filter((d) => d.waiting).length ?? 0;
+  if (t.state === "connected") return { label: waiting ? `Connected, ${waiting} waiting` : "Connected", tone: "emerald" };
   if (t.state === "ready") return { label: "Set, not checked", tone: "blue" };
-  const failed = t.test?.details.filter((d) => !d.ok) ?? [];
+  const failed = t.test?.details.filter((d) => !d.ok && !d.waiting) ?? [];
   if (t.state === "failing" && failed.length > 0 && failed.every((d) => d.row)) {
     return { label: `${failed.length} ${failed.length === 1 ? "table" : "tables"} not readable`, tone: "rose" };
   }
@@ -120,24 +122,33 @@ function BotSignIn({ n, admin, onChanged }: { n: number; admin: boolean; onChang
 }
 
 /** Lines for the owners of the data to run, with one Copy for all of them. */
+/** The statements the owners of the data run. Each one starts with a comment naming the tables it is for. */
 function Grants({ lines, className }: { lines: string[]; className?: string }) {
   const { toast } = useApp();
   if (!lines.length) return null;
   return (
     <div className={className}>
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Send to the owners of the data</p>
-        <Button size="sm" icon={<Copy className="size-3.5" />}
-          onClick={async () => { await navigator.clipboard.writeText(lines.join("\n")); toast(lines.length === 1 ? "Line copied" : `${lines.length} lines copied`, "success"); }}>Copy</Button>
-      </div>
-      <pre className="mt-2 overflow-x-auto rounded-lg bg-zinc-100 p-3 font-mono text-xs text-zinc-800 dark:bg-zinc-800/70 dark:text-zinc-200">{lines.join("\n")}</pre>
-      <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">Each line lets this Console read one dataset. Check again once they have run them.</p>
+      <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Send to the owners of the data</p>
+      <ul className="mt-2 flex flex-col gap-2">
+        {lines.map((line) => (
+          <li key={line} className="flex items-start gap-2">
+            <pre className="min-w-0 flex-1 overflow-x-auto rounded-lg bg-zinc-100 p-3 font-mono text-xs text-zinc-800 dark:bg-zinc-800/70 dark:text-zinc-200">{line}</pre>
+            <Button size="sm" icon={<Copy className="size-3.5" />} aria-label={`Copy the statement for ${line.split("\n")[0].replace(/^-- /, "")}`}
+              onClick={async () => { await navigator.clipboard.writeText(line); toast("Statement copied", "success"); }}>Copy</Button>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+        Each statement lets this Console read one dataset, and is run by itself in BigQuery by someone who owns that dataset. Until then the app skips those tables
+        and reads the rest. BigQuery answers the same way for a table that does not exist, so check each table's name too.
+      </p>
     </div>
   );
 }
 
 /** What a check found beyond the row's badge: "Readable" is already on the badge. */
-const said = (status: { ok: boolean; message: string }) => (status.ok ? status.message.replace(/^Readable\.\s*/, "") : status.message);
+const said = (status: { ok: boolean; waiting?: boolean; message: string }) =>
+  status.ok ? status.message.replace(/^Readable\.\s*/, "") : status.waiting ? "It is skipped until its owners let the Console read it. The statement to send them is under Check access." : status.message;
 
 /** Every table the app reads, once: its id, what reads it, and what the last check found. */
 function TablesStep({ n, rows, admin, onChanged }: { n: number; rows: TableRow[]; admin: boolean; onChanged: () => void }) {
@@ -154,7 +165,7 @@ function TablesStep({ n, rows, admin, onChanged }: { n: number; rows: TableRow[]
   const save = useAction(() => apiSend("put", "/connections/bigquery/tables", { tables, reads: chosen }));
   const count = tables.length + chosen.length;
   return (
-    <Step n={n} title="The tables it reads" done={rows.some((r) => r.status?.ok) && rows.every((r) => !r.status || r.status.ok)}>
+    <Step n={n} title="The tables it reads" done={rows.some((r) => r.status?.ok) && rows.every((r) => !r.status || r.status.ok || r.status.waiting)}>
       {save.error && <Alert tone="rose" className="mb-3">{save.error.message}</Alert>}
       <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-800">
         {rows.map((r) => {
@@ -164,7 +175,7 @@ function TablesStep({ n, rows, admin, onChanged }: { n: number; rows: TableRow[]
             <li key={r.id} className="py-4 first:pt-0 last:pb-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium text-zinc-950 dark:text-zinc-50">{r.name}</span>
-                {!r.set ? <Badge tone="zinc">Not set</Badge> : r.status ? <Badge tone={r.status.ok ? "emerald" : "rose"}>{r.status.ok ? "Readable" : "Not readable"}</Badge>
+                {!r.set ? <Badge tone="zinc">Not set</Badge> : r.status ? <Badge tone={r.status.ok ? "emerald" : r.status.waiting ? "amber" : "rose"}>{r.status.ok ? "Readable" : r.status.waiting ? "Waiting for access" : "Not readable"}</Badge>
                   : !r.reads.length ? <Badge tone="zinc">Nothing reads it</Badge> : null}
                 {r.location && <span className="text-xs text-zinc-500 dark:text-zinc-400">in {r.location}</span>}
               </div>
@@ -178,7 +189,7 @@ function TablesStep({ n, rows, admin, onChanged }: { n: number; rows: TableRow[]
                 </div>
               )}
               {others.length > 0 && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{now ? "Also read by" : "Read by"} {others.join(", ")}</p>}
-              {r.status && said(r.status) && <p className={cx("mt-2 break-words text-sm", r.status.ok ? "text-zinc-600 dark:text-zinc-400" : "text-rose-700 dark:text-rose-300")}>{said(r.status)}</p>}
+              {r.status && said(r.status) && <p className={cx("mt-2 break-words text-sm", r.status.ok ? "text-zinc-600 dark:text-zinc-400" : r.status.waiting ? "text-amber-800 dark:text-amber-300" : "text-rose-700 dark:text-rose-300")}>{said(r.status)}</p>}
             </li>
           );
         })}
@@ -321,7 +332,8 @@ function ToolFlow({ tool, admin, onChanged }: { tool: Tool; admin: boolean; onCh
             {!test.details.length && <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">{test.message}</p>}
             {tool.tables && test.details.some((d) => d.row) && (
               <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">
-                {test.details.filter((d) => d.row && d.ok).length} of {test.details.filter((d) => d.row).length} tables are readable. Each table's line is in the list above.
+                {test.details.filter((d) => d.row && d.ok).length} of {test.details.filter((d) => d.row).length} tables are readable
+                {test.details.some((d) => d.waiting) ? `, ${test.details.filter((d) => d.waiting).length} waiting for access` : ""}. Each table's line is in the list above.
               </p>
             )}
             <ul className="mt-2 flex flex-col gap-2">

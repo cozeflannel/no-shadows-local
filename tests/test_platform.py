@@ -798,6 +798,38 @@ def test_a_failing_source_is_noted_and_skipped_after_three_tries(ctx, clock):
     assert ctx.store.get_doc(watches.SOURCES_STATE, "sonar")["failures"] == 0, "after 3 tries the window is skipped"
 
 
+def test_a_source_waiting_for_access_is_skipped_without_counting_as_a_failure(ctx, clock):
+    flags(ctx, watches=True)
+    cfg = ctx.config.platform
+    cfg.temp_check.sources = [TempCheckSource(key="sonar", table="p.d.t", text_columns=["text"], url_column="url", time_column="ts")]
+    cfg.campaigns.watch_sources = ["sonar"]
+    w = watches.save_watch(ctx, LEAD, {"name": "W", "question": "q?", "enabled": True})
+
+    class NoAccessYet(Rows):
+        open = False
+
+        def query(self, *a, **k):
+            if not self.open:
+                raise RuntimeError("403 Access Denied: Table p:d.t: User does not have permission to query table p:d.t, or perhaps it does not exist.")
+            return [{"kind": "src", "found": 3, "checked": 3, "posted": clock.now}]
+
+    ctx.bq = NoAccessYet([], [])
+    ctx.bq._settings_key = ("", "", 0)
+    for _ in range(4):
+        out = watches.run_due(ctx, force=True)
+    state = ctx.store.get_doc(watches.SOURCES_STATE, "sonar")
+    assert state["status"] == "waiting" and not state.get("failures") and "cursor" not in state, "no try is counted, so its window is never skipped"
+    assert "Access Denied: Table p:d.t" in state["error"]
+    assert out["sources"] == [{"source": "sonar", "since": out["sources"][0]["since"], "waiting": True}], "it is not reported as an error"
+    assert watches.list_watches(ctx)[0].status == f"looked at 1 source(s) at {clock.now:%H:%M} UTC; 1 waiting for access"
+
+    ctx.bq.open = True
+    watches.run_due(ctx, force=True)
+    state = ctx.store.get_doc(watches.SOURCES_STATE, "sonar")
+    assert state["status"] == "live" and state["error"] == "" and state["checked"] == 3, "it is read by itself once access arrives"
+    assert watches.list_watches(ctx)[0].status == f"looked at 1 source(s) at {clock.now:%H:%M} UTC"
+
+
 # -- the Console API ---------------------------------------------------------------------------------------------------------------
 def test_dashboard_ranges_and_the_live_feed(ctx, client, clock):
     triage(ctx)

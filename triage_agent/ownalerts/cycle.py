@@ -35,8 +35,10 @@ def said(result: dict[str, Any]) -> str:
         return "agent alerts: not due"
     if result.get("error"):
         return f"agent alerts: {result['error']}"
+    waiting = len(result.get("waiting") or [])
     return (f"agent alerts: {result.get('read', 0)} read, {result.get('staged', 0)} kept, "
-            f"{result.get('hard', 0) + result.get('single_queued', 0) + result.get('stories_queued', 0)} sent to review")
+            f"{result.get('hard', 0) + result.get('single_queued', 0) + result.get('stories_queued', 0)} sent to review"
+            + (f", {waiting} source{'' if waiting == 1 else 's'} waiting for access" if waiting else ""))
 
 
 def _objects(ctx: "AgentContext") -> None:
@@ -66,12 +68,12 @@ def run(ctx: "AgentContext", force: bool = False) -> dict[str, Any]:
     if not ctx.store.claim_idempotent(LOCK, ttl_s=LOCK_S):
         return {"ok": True, "busy": True}
     started = time.monotonic()
-    out: dict[str, Any] = {"ok": True, "due": True, "error": "", "read": 0, **{k: 0 for k in COUNTS}, "failing": []}
+    out: dict[str, Any] = {"ok": True, "due": True, "error": "", "read": 0, **{k: 0 for k in COUNTS}, "failing": [], "waiting": []}
     try:
         _objects(ctx)
         rules.sync_if_pending(ctx)
         read = ingest.run(ctx, state, now)
-        out.update(read=read["read"], staged=read["staged"], failing=read["failing"])
+        out.update(read=read["read"], staged=read["staged"], failing=read["failing"], waiting=read["waiting"])
         call, params = schema.call(ctx, sources.OTHER_ALERTS)
         try:
             rows = bq_admin.get_gateway(ctx).query(call, params, location=ctx.config.platform.bigquery.location or None, labels=schema.LABELS)
@@ -89,7 +91,7 @@ def run(ctx: "AgentContext", force: bool = False) -> dict[str, Any]:
     state.update(last=now.isoformat(), error=out["error"], result={"read": out["read"], **{k: out[k] for k in COUNTS}})
     ctx.store.put_kv(STATE, state)
     ctx.emit(PlatformEvent.OWN_CYCLE, actor="agent", space="system", latency_ms=int((time.monotonic() - started) * 1000),
-             payload={"read": out["read"], **{k: out[k] for k in COUNTS}, "failing": out["failing"], "error": out["error"]})
+             payload={"read": out["read"], **{k: out[k] for k in COUNTS}, "failing": out["failing"], "waiting": out["waiting"], "error": out["error"]})
     return out
 
 

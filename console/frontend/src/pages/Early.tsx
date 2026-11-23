@@ -116,25 +116,31 @@ export default function EarlyPage() {
   const { toast } = useApp();
   const [tab, setTab] = useState<Tab>("new");
   const { data, error, loading, reload } = useApi<Early>("/early", { hours: 168 }, 30_000);
-  const read = useAction(() => apiSend<{ ok: boolean; error?: string; raised?: number }>("post", "/early/check"));
+  const read = useAction(() => apiSend<{ ok: boolean; error?: string; raised?: number; waiting?: string[] }>("post", "/early/check"));
   if (loading && !data) return <Spinner />;
   if (!data) return <ErrorState error={error} onRetry={reload} />;
   const count = (t: Tab) => data.signals.filter((s) => IN_TAB[t].includes(s.status)).length;
   const shown = data.signals.filter((s) => IN_TAB[tab].includes(s.status));
   const failing = data.state.sources.filter((s) => s.status === "failing" && data.state.named_sources.includes(s.key));
+  const waiting = data.state.sources.filter((s) => s.status === "waiting" && data.state.named_sources.includes(s.key));
 
   return (
     <div>
       <PageHeader title="Early Detection" description="Posts on one theme from small accounts, grouped into a story before anyone raises an alert."
         actions={data.can_run && data.state.on && (
           <Button icon={<Play className="size-4" />} loading={read.loading}
-            onClick={async () => { const r = await read.run(); if (r) { toast(r.ok ? `Read done: ${r.raised ?? 0} raised` : r.error ?? "The read failed", r.ok ? "success" : "error"); reload(); } }}>Read now</Button>
+            onClick={async () => { const r = await read.run(); if (r) { toast(r.ok ? `Read done: ${r.raised ?? 0} raised${r.waiting?.length ? `, ${r.waiting.length} waiting for access` : ""}` : r.error ?? "The read failed", r.ok ? "success" : "error"); reload(); } }}>Read now</Button>
         )} />
       {!data.state.on && <OffNotice what="Early Detection" flag="early_detection">Nothing is read while it is off.</OffNotice>}
       {data.state.on && data.state.named_sources.length === 0 && (
         <Alert tone="amber" className="mb-4" title="No post table is named">Name the tables to read under <Link className="font-medium underline" to="/settings/early">Settings, Early Detection</Link>.</Alert>
       )}
       {failing.map((s) => <Alert key={s.key} tone="rose" className="mb-4" title={`${s.label} could not be read`}>{s.error}</Alert>)}
+      {waiting.map((s) => (
+        <Alert key={s.key} tone="amber" className="mb-4" title={`${s.label} is waiting for access`}>
+          It is skipped until its owners let the Console read it, and the other tables are read as usual. The statement to send them is under <Link className="font-medium underline" to="/connections/bigquery">Integrations, BigQuery</Link>.
+        </Alert>
+      ))}
       {data.state.error && failing.length === 0 && <Alert tone="rose" className="mb-4" title="The last read failed">{data.state.error}</Alert>}
       <ErrorState error={read.error} />
       {data.state.on && (

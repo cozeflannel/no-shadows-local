@@ -233,6 +233,12 @@ def run_due(ctx: "AgentContext", actor: str = "agent", force: bool = False) -> d
                           "found": entry["found"], "checked": entry["checked"], "label": src.label or src.key,
                           "newest": meta.get("posted") or state.get("newest")})
         except Exception as exc:  # noqa: BLE001 - noted; tried again from the same start at the next look
+            if bq_admin.no_access(exc):  # its owners have not let this account in yet: no try is counted, so its window is kept
+                entry["waiting"] = True
+                state.update({"last_look": now.isoformat(), "status": "waiting", "error": str(exc)[:300], "label": src.label or src.key})
+                ctx.store.put_doc(SOURCES_STATE, src.key, state)
+                results.append(entry)
+                continue
             failures = int(state.get("failures") or 0) + 1
             entry["error"] = str(exc)[:300]
             state.update({"last_look": now.isoformat(), "status": "failing", "error": entry["error"], "failures": failures,
@@ -243,7 +249,9 @@ def run_due(ctx: "AgentContext", actor: str = "agent", force: bool = False) -> d
         results.append(entry)
     if results:
         errors = [r for r in results if r.get("error")]
-        _set_status(ctx, watches, f"looked at {len(results)} source(s) at {now:%H:%M} UTC" + (f"; {len(errors)} failing" if errors else ""))
+        waiting = [r for r in results if r.get("waiting")]
+        _set_status(ctx, watches, f"looked at {len(results)} source(s) at {now:%H:%M} UTC" + (f"; {len(errors)} failing" if errors else "")
+                    + (f"; {len(waiting)} waiting for access" if waiting else ""))
         link_alerts(ctx)
     return {"watches": len(watches), "sources": results, "flagged": flagged,
             "summary": f"watches: {flagged} flagged" if flagged else ""}

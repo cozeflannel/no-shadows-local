@@ -36,9 +36,16 @@ class BigQuery:
         self.raised: list[dict[str, Any]] = []      # what the "read raised stories" statement returns
         self.remote_posts: list[dict[str, Any]] = []  # what a table in another location hands over
         self.fail: str = ""
+        self.no_access: str = ""  # a table whose owners have not let this account in yet
+
+    def _refuse(self, sql: str) -> None:
+        if self.no_access and self.no_access in sql:
+            table = self.no_access.replace(".", ":", 1)
+            raise RuntimeError(f"403 Access Denied: Table {table}: User does not have permission to query table {table}, or perhaps it does not exist.")
 
     def query(self, sql: str, params: dict[str, Any] | None = None, *, location: str | None = None, max_rows: int = 10000, labels=None):
         self.ran.append({"sql": sql, "params": dict(params or {}), "location": location})
+        self._refuse(sql)
         if self.fail and self.fail in sql:
             raise RuntimeError("403 Access Denied: the table can't be read")
         if sql.startswith("SELECT g.signal_id"):
@@ -52,6 +59,7 @@ class BigQuery:
 
     def dry_run(self, sql: str, params: dict[str, Any] | None = None, *, location: str | None = None) -> int:
         self.dry.append({"sql": sql, "params": dict(params or {}), "location": location})
+        self._refuse(sql)
         if self.fail and self.fail in sql:
             raise RuntimeError("400 Unrecognized name: first_seen at [3:120]")
         return 1048576
@@ -174,6 +182,41 @@ def test_a_table_that_cannot_be_read_is_named_and_the_others_carry_on(api, bq):
     state = api.get("/api/early").json()["state"]
     failing = next(s for s in state["sources"] if s["key"] == "sonar")
     assert failing["status"] == "failing" and "Access Denied" in failing["error"] and len(bq.ran) == 6, "the grouping still ran"
+
+
+def test_a_table_waiting_for_access_is_skipped_and_the_read_still_passes(api, bq):
+    flags(api.ctx, early_detection=True)
+    bq.no_access = "other.google_bg.sonar_raw"
+    result = early.check(api.ctx)
+    assert result["ok"] is True and result["error"] == "" and result["waiting"] == ["sonar"], "its owners have not let the account in: nothing failed"
+    assert len(bq.ran) == 6, "the other table was read and the grouping ran"
+    state = api.get("/api/early").json()["state"]
+    sonar = next(s for s in state["sources"] if s["key"] == "sonar")
+    assert sonar["status"] == "waiting" and "Access Denied: Table other:google_bg.sonar_raw" in sonar["error"] and state["error"] == ""
+    assert "sonar" not in api.ctx.store.get_kv(early.STATE)["cursors"], "nothing of it was read, so its start does not move"
+    assert api.get("/api/ai").json()["engines"][2]["state"] == "ready", "the engine is not failing over a table that is waiting"
+
+    cfg = api.ctx.config.platform.early
+    named, cfg.sources = cfg.sources, [k for k in cfg.sources if k != "sonar"]
+    assert early.check(api.ctx, force=True)["waiting"] == [], "a table Early Detection no longer reads is not listed"
+    cfg.sources = named
+    bq.no_access = ""
+    assert early.check(api.ctx, force=True)["waiting"] == []
+    state = api.get("/api/early").json()["state"]
+    assert next(s for s in state["sources"] if s["key"] == "sonar")["status"] == "live", "it is read by itself once access arrives"
+
+
+def test_the_bigquery_check_passes_while_a_table_waits_for_access_and_says_which(api, bq):
+    bq.no_access = "other.google_bg.sonar_raw"
+    flags(api.ctx, early_detection=True)
+    early.check(api.ctx)
+    got = api.post("/api/ai/bigquery/check").json()
+    waiting = [s for s in got["steps"] if s.get("waiting")]
+    assert got["ok"] is True and [s["step"] for s in waiting] == ["Early Detection: read sonar", "Last real read of sonar"]
+    assert all(s["ok"] is False and "Access Denied: Table other:google_bg.sonar_raw" in s["detail"] for s in waiting)
+    assert [s["step"] for s in got["steps"] if not s["ok"] and not s.get("waiting")] == []
+    entry = api.get("/api/audit", action="ai.check").json()["entries"][0]
+    assert entry["status"] == "ok" and entry["summary"] == "Checked bigquery: all good, 1 table waiting for access"
 
 
 def test_a_raised_story_is_written_up_by_gemini_and_people_act_on_it(api, bq):
