@@ -1323,6 +1323,8 @@ class OwnAlertsConfig(ConfigModel):
     # -- the review -----------------------------------------------------------------------------------------------
     review_engine: Literal["agent_runtime", "worker"] = Field("agent_runtime", description="Where the review runs: on the Agent Runtime (the worker takes over when it cannot be reached), or always in the worker.")
     reviews_per_minute: int = Field(25, ge=1, le=200, description="The most posts and stories reviewed each minute.")
+    review_seconds: int = Field(45, ge=5, le=600, description="A run stops starting new reviews after this many seconds. The rest wait for the next minute.")
+    runtime_timeout_seconds: int = Field(60, ge=5, le=300, description="How long the Agent Runtime is given to answer one review before the worker reviews it.")
     precedents: int = Field(10, ge=0, le=50, description="How many earlier decisions with an analyst's verdict are shown to the reviewer, the most alike first.")
     precedent_days: int = Field(60, ge=1, le=365, description="Only decisions this recent are shown.")
     severities: list[str] = Field(default_factory=lambda: ["P0", "P1", "P2"], description="The severities the review may give, the most severe first.")

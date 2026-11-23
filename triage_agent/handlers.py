@@ -16,6 +16,7 @@ HANDLER_MODULES = [
     "triage_agent.followups",  # run_followups, generate_handover
     "triage_agent.inhouse",  # ingest_inhouse
     "triage_agent.platform_ops",  # record_assessment, run_temp_check, run_forecast, refresh_knowledge, run_watches
+    "triage_agent.ownalerts.review",  # review_own_candidate
 ]
 
 for _name in HANDLER_MODULES:

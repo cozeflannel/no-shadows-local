@@ -100,7 +100,8 @@ def table(ctx: "AgentContext", name: str) -> str:
     return f"{dataset(ctx)}.{name}"
 
 
-def _days(own: Any, setting: str) -> int:
+def days(own: Any, setting: str) -> int:
+    """How many days a table's rows are kept: a number, or the setting that holds it."""
     return int(setting) if setting.isdigit() else int(getattr(own, setting))
 
 
@@ -125,8 +126,6 @@ def procedure_sql(ds: str, own: Any) -> str:
     """One run inside BigQuery: staged posts are kept, checked against the rules, asked about, grouped and measured."""
     dedupe_days = max(7, math.ceil(own.posted_within_hours / 24) + 1)
     queue_cols = "queue_id, queued_at, item_type, target_id, trigger_path, matched_rule_id, stage1_rank_score, stage1_rationale, processed"
-    unplaced = (f"SELECT post_id, published_at, embedding FROM `{ds}.posts`\n"
-                "         WHERE ingested_at >= pending_ts AND rule_eval_status = 'NEEDS_STORY_CLUSTER' AND story_id IS NULL AND ARRAY_LENGTH(embedding) > 0")
     header = ",\n  ".join(f"{name} {kind}" for name, kind in PARAMS)
     return f"""CREATE OR REPLACE PROCEDURE `{ds}.{PROCEDURE}`(
   {header})
@@ -242,17 +241,21 @@ BEGIN
   WHERE T.post_id = S.post_id AND T.ingested_at >= pending_ts;
   SET n_embedded = @@row_count;
 
-  IF EXISTS (SELECT 1 FROM `{ds}.stories` WHERE updated_at >= active_ts AND ARRAY_LENGTH(centroid_embedding) > 0)
-     AND EXISTS ({unplaced}) THEN
+  -- BigQuery's search takes whole tables: posts and stories whose numbers are missing, or of another length, are left out first.
+  CREATE TEMP TABLE unplaced AS
+  SELECT post_id, published_at, embedding FROM `{ds}.posts`
+  WHERE ingested_at >= pending_ts AND rule_eval_status = 'NEEDS_STORY_CLUSTER' AND story_id IS NULL AND ARRAY_LENGTH(embedding) = {own.embedding_dimensions};
+
+  CREATE TEMP TABLE running_stories AS
+  SELECT story_id, centroid_embedding FROM `{ds}.stories`
+  WHERE updated_at >= active_ts AND ARRAY_LENGTH(centroid_embedding) = {own.embedding_dimensions};
+
+  IF EXISTS (SELECT 1 FROM running_stories) AND EXISTS (SELECT 1 FROM unplaced) THEN
     UPDATE `{ds}.posts` p
     SET story_id = matched.story_id
     FROM (
       SELECT query.post_id, ARRAY_AGG(base.story_id ORDER BY distance ASC LIMIT 1)[SAFE_OFFSET(0)] AS story_id
-      FROM VECTOR_SEARCH(
-        (SELECT story_id, centroid_embedding FROM `{ds}.stories` WHERE updated_at >= active_ts AND ARRAY_LENGTH(centroid_embedding) > 0),
-        'centroid_embedding',
-        ({unplaced}),
-        'embedding', top_k => 1, distance_type => 'COSINE')
+      FROM VECTOR_SEARCH(TABLE running_stories, 'centroid_embedding', TABLE unplaced, 'embedding', top_k => 1, distance_type => 'COSINE')
       WHERE distance <= cos_threshold
       GROUP BY query.post_id
     ) matched
@@ -260,16 +263,17 @@ BEGIN
   END IF;
 
   -- ...then with each other: a post starts a story with the earliest new post it is close to.
-  IF (SELECT COUNT(*) FROM ({unplaced})) > 1 THEN
+  CREATE TEMP TABLE still_unplaced AS
+  SELECT u.post_id, u.published_at, u.embedding
+  FROM unplaced u JOIN `{ds}.posts` p ON p.post_id = u.post_id AND p.ingested_at >= pending_ts
+  WHERE p.story_id IS NULL;
+
+  IF (SELECT COUNT(*) FROM still_unplaced) > 1 THEN
     UPDATE `{ds}.posts` p
     SET story_id = CONCAT('st-', started.leader)
     FROM (
       SELECT query.post_id, ARRAY_AGG(base.post_id ORDER BY base.published_at ASC, base.post_id ASC LIMIT 1)[SAFE_OFFSET(0)] AS leader
-      FROM VECTOR_SEARCH(
-        ({unplaced}),
-        'embedding',
-        ({unplaced}),
-        'embedding', top_k => {own.neighbours}, distance_type => 'COSINE')
+      FROM VECTOR_SEARCH(TABLE still_unplaced, 'embedding', TABLE still_unplaced, 'embedding', top_k => {own.neighbours}, distance_type => 'COSINE')
       WHERE distance <= cos_threshold
       GROUP BY query.post_id
     ) started
@@ -356,11 +360,11 @@ def statements(ctx: "AgentContext") -> list[dict[str, str]]:
     models = _models(own)
     out: list[dict[str, str]] = []
     for name, (columns, partition, cluster, keep, what) in TABLES.items():
-        days = _days(own, keep)
+        kept = days(own, keep)
         out.append({"what": f"table {name}", "sql": (
             f"CREATE TABLE IF NOT EXISTS `{ds}.{name}` (\n  {columns}\n)\nPARTITION BY DATE({partition})\nCLUSTER BY {cluster}\n"
-            f"OPTIONS (partition_expiration_days = {days}, description = \"{what}\")")})
-        out.append({"what": f"days {name} is kept", "sql": f"ALTER TABLE `{ds}.{name}` SET OPTIONS (partition_expiration_days = {days})"})
+            f"OPTIONS (partition_expiration_days = {kept}, description = \"{what}\")")})
+        out.append({"what": f"days {name} is kept", "sql": f"ALTER TABLE `{ds}.{name}` SET OPTIONS (partition_expiration_days = {kept})"})
     for name, (columns, what) in PLAIN_TABLES.items():
         out.append({"what": f"table {name}", "sql": f"CREATE TABLE IF NOT EXISTS `{ds}.{name}` (\n  {columns}\n)\nOPTIONS (description = \"{what}\")"})
     out.append({"what": f"function {FUNCTION}", "sql": function_sql(ds, own)})
@@ -407,7 +411,7 @@ def provision(ctx: "AgentContext") -> list[dict[str, Any]]:
     for statement in todo:
         try:
             gw.query(statement["sql"], location=home, labels=LABELS)
-        except Exception as exc:  # noqa: BLE001 - the step is named, with BigQuery's own words
+        except Exception as exc:  # the step is named, with BigQuery's own words
             raise RuntimeError(f"BigQuery refused to create the {statement['what']}: {str(exc)[:400]}") from exc
         steps.append({"step": statement["what"], "ok": True})
     ctx.store.put_kv(STATE, {"version": version(ctx), "at": ctx.now().isoformat()})

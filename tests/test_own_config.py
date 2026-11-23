@@ -45,6 +45,11 @@ def test_the_specifications_numbers_are_the_defaults():
     assert own.review_engine == "agent_runtime" and own.other_alerts_mandatory is True
 
 
+def test_a_review_run_has_a_time_limit_and_the_agent_runtime_a_timeout():
+    own = OwnAlertsConfig()
+    assert (own.review_seconds, own.runtime_timeout_seconds) == (45, 60)
+
+
 def test_posts_and_the_vault_are_never_kept_past_thirty_days():
     with pytest.raises(ValidationError):
         OwnAlertsConfig(keep_days=31)

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import switch_title
 from ..events import PlatformEvent
-from . import SWITCH, ingest, schema, sources
+from . import SWITCH, ingest, rules, schema, sources
 
 if TYPE_CHECKING:
     from ..context import AgentContext
@@ -49,6 +49,7 @@ def _objects(ctx: "AgentContext") -> None:
         schema.provision(ctx)
     except bq_admin.NotAllowed as exc:
         raise RuntimeError(NOT_CREATED) from exc
+    rules.mark_pending(ctx)  # the rules table may be new: every rule is copied again
 
 
 def run(ctx: "AgentContext", force: bool = False) -> dict[str, Any]:
@@ -68,12 +69,13 @@ def run(ctx: "AgentContext", force: bool = False) -> dict[str, Any]:
     out: dict[str, Any] = {"ok": True, "due": True, "error": "", "read": 0, **{k: 0 for k in COUNTS}, "failing": []}
     try:
         _objects(ctx)
+        rules.sync_if_pending(ctx)
         read = ingest.run(ctx, state, now)
         out.update(read=read["read"], staged=read["staged"], failing=read["failing"])
         call, params = schema.call(ctx, sources.OTHER_ALERTS)
         try:
             rows = bq_admin.get_gateway(ctx).query(call, params, location=ctx.config.platform.bigquery.location or None, labels=schema.LABELS)
-        except Exception as exc:  # noqa: BLE001 - what was staged waits for the next run
+        except Exception as exc:  # what was staged waits for the next run
             raise RuntimeError(f"BigQuery could not finish the run: {str(exc)[:300]}") from exc
         summary = rows[0] if rows else {}
         out.update({k: int(summary.get(k) or 0) for k in COUNTS if k != "staged"})

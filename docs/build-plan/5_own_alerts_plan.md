@@ -26,6 +26,11 @@ Where the specification's own text cannot run, or breaks one of its hard rules, 
 | D11 | A remote model `gemini4_deep_reviewer` | Not created. The deep model is called by the Agent Runtime, and by the worker when the Agent Runtime cannot be reached | Nothing in the specification's own code calls that BigQuery model |
 | D12 | A scheduled query purges after 30 days | The app's daily retention run deletes the rows; every table also expires its partitions | Same result with nothing extra to set up |
 | D13 | A DLP template `slrr_social_pii_scrubber` | The same DLP settings are sent with each call, from Settings | Nothing to create by hand; the list of detail types can be changed in the Console |
+| D14 | The review marks the queue item done, then publishes the alert | The decision is written to BigQuery first, once. Then its Console record and its alert. The queue item is closed last, and an open item comes back with the decision BigQuery holds | A run cut short between two steps would otherwise lose an alert, or raise one twice |
+| D15 | `VECTOR_SEARCH` over a query that filters on the embedding column | Each search reads temporary tables made just before it | BigQuery allows only SELECT, FROM and WHERE in the base query, and no filter on the embedding column |
+| D16 | The follow-up job re-queues a surging story every minute, with a made-up score of 0.95 | A raised story is queued again once for each time it was raised, with no score, and only when it was measured in the last 15 minutes | Once a minute would send the same story to review 200 times; a stale count is not a surge |
+| D17 | The ten most recent verdicts are shown to every review | The ten decisions most like the item under review, among those with a verdict | A verdict on an unrelated post says nothing about this one |
+| D18 | The review handles 25 items a minute, however long each takes | A run stops starting reviews after its seconds (a setting); the rest wait a minute. One run at a time | Two slow runs would otherwise overlap and review the same items |
 
 Defects in the specification's SQL and code that are fixed here:
 - `last_alerted_at` is read (cool-down, follow-up) and never written. The review writes it.
@@ -34,6 +39,8 @@ Defects in the specification's SQL and code that are fixed here:
 - Posts that start a story in one run each get their own story, so a spike splits across stories. They are grouped first.
 - A story's alert carries no link. It now lists its posts' links from the vault.
 - A story that stays above the bar is sent to Gemini again every run. It is asked again only after the cool-down, or when it has grown.
+- `rows`, `at`, `from` and `to` are reserved words in BigQuery and cannot name a table expression, a column or a parameter. A test reads every statement for them.
+- The vault is looked up by post id only, so a story's alert gets no author and no link. A story's posts are looked up, and each KOF among them is named once.
 
 ## Phases
 
@@ -60,8 +67,9 @@ Verified when: a queued post or story is reviewed, a mandatory rule cannot be ov
 | 2.2 | The review: Agent Runtime first, the worker when it cannot be reached; the hard-rule lock; decisions | `triage_agent/ownalerts/review.py`, `triage_agent/agent_runtime.py`, `triage_agent/handlers.py` | 2.1 |
 | 2.3 | The alert in Chat, with the KOF label and links from the vault | `triage_agent/ownalerts/raise_.py` | 2.2 |
 | 2.4 | Verdicts | `triage_agent/ownalerts/feedback.py` | 2.2 |
-| 2.5 | Follow-up: a raised story that surges is reviewed again | `triage_agent/followups.py` | 2.2 |
-| 2.6 | The 30-day purge | `triage_agent/retention.py` | 1.4 |
+| 2.5 | Follow-up: a raised story that surges is reviewed again | `triage_agent/ownalerts/surge.py`, `triage_agent/followups.py` | 2.2 |
+| 2.6 | The 30-day purge | `triage_agent/ownalerts/purge.py`, `triage_agent/retention.py` | 1.4 |
+| 2.7 | The review and the purge run in the worker's minute tick | `triage_agent/platform_jobs.py` | 2.2, 2.6 |
 
 ### Phase 3: the Console
 Verified when: the page shows sources, alerts and rules from the real routes, type-check and build pass, and the page is looked at in a browser.
@@ -96,6 +104,6 @@ Verified when: `infra/deploy.sh` enables what is needed, grants the roles, creat
 | Phase | Status |
 |---|---|
 | 1 The data in | built: settings, scrub, the KOF list, the BigQuery objects, the nine reads, the run in the in-house job. Left for 3.2: the Integrations tick and Find and fill |
-| 2 Review and raise | to do |
+| 2 Review and raise | built: rules, the review, the alert, verdicts, the follow-up, the purge, the minute tick. A raised alert is not edited in Chat after its verdict (D6) |
 | 3 The Console | to do |
 | 4 Google Cloud | to do |

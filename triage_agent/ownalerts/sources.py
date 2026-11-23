@@ -158,7 +158,7 @@ def read_brandwatch(ctx: "AgentContext", source: Source, since: datetime, now: d
     found = xposts.lookup(x_ids) if x_ids else {}
     rows: list[dict[str, Any]] = []
     left_out = 0
-    for mention, post in zip(raw, posts):
+    for mention, post in zip(raw, posts, strict=True):
         added = tempcheck._bw_time(mention.get("added")) or now
         full = tempcheck.post_with_text(post, found)
         if full is None:

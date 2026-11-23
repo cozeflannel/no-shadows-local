@@ -19,7 +19,7 @@ KOF_TABS = [("SLRR Global INFs", [["Name", "Handle"], ["Jane Doe", "@jdoe"]])]
 
 
 class BigQuery:
-    """Records each statement with its parameters and location. A read of a source table answers with the rows queued
+    """Records each statement that ran, with its parameters and location. A read of a source table answers with the rows queued
     for it; the "already kept" check answers with the ids in `held`; the procedure's call answers with `summary`."""
 
     project = "proj"
@@ -30,15 +30,17 @@ class BigQuery:
         self.source_rows: dict[str, list[dict[str, Any]]] = {}
         self.held: set[str] = set()
         self.fail = ""
+        self.refused: list[str] = []  # statements BigQuery was made to refuse
         self.fail_insert = ""
         self.summary: list[dict[str, Any]] = [{"staged": 0, "new_posts": 0, "hard": 0, "single_asked": 0, "single_queued": 0, "embedded": 0,
                                                "stories_asked": 0, "stories_queued": 0}]
         self.answers: list[tuple[str, list[dict[str, Any]]]] = []  # (what the statement starts with or contains, rows)
 
     def query(self, sql: str, params: dict[str, Any] | None = None, *, location: str | None = None, max_rows: int = 10000, labels=None):
-        self.ran.append({"sql": sql, "params": dict(params or {}), "location": location, "labels": labels})
         if self.fail and self.fail in sql:
+            self.refused.append(sql)
             raise RuntimeError("403 Access Denied: the table can't be read")
+        self.ran.append({"sql": sql, "params": dict(params or {}), "location": location, "labels": labels})
         for mark, rows in self.answers:
             if mark in sql:
                 return rows

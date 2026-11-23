@@ -133,7 +133,8 @@ def test_a_missing_salt_stops_the_run_before_anything_is_read(ctx, world):
     ctx.config.platform.own_alerts.hash_salt_secret = ""
     out = cycle.run(ctx)
     assert out["ok"] is False and "salt" in out["error"]
-    assert not [r for r in gw.ran if not r["sql"].startswith(("CREATE", "ALTER"))], "no source is read and the procedure is not called"
+    assert not [r for r in gw.ran if r["sql"].startswith(("SELECT CAST(one AS STRING)", "SELECT post_id FROM", "CALL "))], "no source is read and the procedure is not called"
+    assert gw.inserted == []
 
 
 def test_the_in_house_job_runs_own_alerts_and_fails_when_it_fails(ctx, world):

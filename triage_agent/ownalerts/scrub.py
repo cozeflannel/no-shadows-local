@@ -81,7 +81,7 @@ class CloudDlp:
         url = f"https://dlp.googleapis.com/v2/projects/{self.project}/locations/{self.location}/content:deidentify"
         try:
             reply = self._http().post(url, json=body, timeout=self.timeout)
-        except Exception as exc:  # noqa: BLE001 - whatever stopped the call, nothing is kept
+        except Exception as exc:  # whatever stopped the call, nothing is kept
             raise Unavailable(f"Sensitive Data Protection could not be reached: {exc}") from exc
         if reply.status_code != 200:
             raise Unavailable(f"Sensitive Data Protection answered {reply.status_code}: {str(reply.text)[:300]}")
@@ -124,6 +124,6 @@ def clean_all(ctx: "AgentContext", texts: list[Any]) -> list[str]:
         cleaned = gateway.deidentify([out[i] for i in group], list(own.dlp_info_types))
         if len(cleaned) != len(group):
             raise Unavailable(f"Sensitive Data Protection handed back {len(cleaned)} of {len(group)} posts.")
-        for i, value in zip(group, cleaned):
+        for i, value in zip(group, cleaned, strict=True):
             out[i] = _cut(value.strip(), own.snippet_chars).strip()
     return out

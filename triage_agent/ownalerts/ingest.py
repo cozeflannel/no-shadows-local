@@ -82,7 +82,6 @@ def _read(ctx: "AgentContext", gw: Any, source: sources.Source, cursor: dict[str
 def _stage(ctx: "AgentContext", gw: Any, source: sources.Source, rows: list[dict[str, Any]], salt: str, index: dict[str, dict[str, str]],
            taken: set[str], now: datetime) -> int:
     """Cleans and stages one source's new posts. Returns how many were kept."""
-    own = ctx.config.platform.own_alerts
     fresh: dict[str, dict[str, Any]] = {}
     for row in rows:
         if not str(row.get("text") or "").strip():
@@ -99,7 +98,7 @@ def _stage(ctx: "AgentContext", gw: Any, source: sources.Source, rows: list[dict
     cleaned = scrub.clean_all(ctx, [row["text"] for _, row in todo])
     at = now.isoformat()
     staged, vault = [], []
-    for (pid, row), text in zip(todo, cleaned):
+    for (pid, row), text in zip(todo, cleaned, strict=True):
         if not _WORD.search(_PLACEHOLDER.sub("", text)):  # nothing but what was taken out
             continue
         handle = _handle(row.get("author"))
@@ -130,7 +129,7 @@ def run(ctx: "AgentContext", state: dict[str, Any], now: datetime) -> dict[str, 
         raise NotReady("Set the secret that holds the salt an author's handle is hashed with (Settings, Own alerts). Nothing is read without it.")
     try:
         salt = secret_admin.read(ctx, own.hash_salt_secret.strip()).strip()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NotReady(f"The salt secret could not be read: {exc}") from exc
     if not salt:
         raise NotReady("The salt secret is empty. Nothing is read without a salt.")

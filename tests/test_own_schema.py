@@ -176,6 +176,26 @@ def test_new_posts_on_one_theme_start_one_story_together(ctx, own):
     assert sql.index("SET story_id = matched.story_id") < sql.index("SET story_id = CONCAT('st-', started.leader)"), "a running story is joined first"
 
 
+def test_each_search_for_the_nearest_reads_tables_made_just_before_it(ctx, own):
+    """BigQuery's VECTOR_SEARCH takes a base table, or a query with SELECT, FROM and WHERE only and no filter on the numbers.
+    Each search here reads temporary tables the procedure makes first, where posts and stories without usable numbers are left out."""
+    own.embedding_dimensions = 512
+    sql = procedure(ctx)
+    searches = re.findall(r"VECTOR_SEARCH\((.*?)top_k", sql, re.S)
+    assert [" ".join(found.split()) for found in searches] == [
+        "TABLE running_stories, 'centroid_embedding', TABLE unplaced, 'embedding',",
+        "TABLE still_unplaced, 'embedding', TABLE still_unplaced, 'embedding',",
+    ]
+    for name, column in (("unplaced", "embedding"), ("running_stories", "centroid_embedding")):
+        made = sql[sql.index(f"CREATE TEMP TABLE {name} AS"):]
+        made = made[:made.index(";")]
+        assert f"ARRAY_LENGTH({column}) = 512" in made, "numbers of another length (an older model or setting) are never compared"
+        assert sql.index(f"CREATE TEMP TABLE {name} AS") < sql.index("VECTOR_SEARCH(")
+    again = sql[sql.index("CREATE TEMP TABLE still_unplaced AS"):]
+    assert "story_id IS NULL" in again[:again.index(";")], "only posts the first search left without a story look for each other"
+    assert sql.index("SET story_id = matched.story_id") < sql.index("CREATE TEMP TABLE still_unplaced AS") < sql.index("started.leader")
+
+
 def test_a_story_is_asked_about_once_per_cool_down_unless_it_grew(ctx, own):
     own.story_snippets = 5
     sql = procedure(ctx)
