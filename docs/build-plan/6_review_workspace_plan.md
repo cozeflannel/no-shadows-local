@@ -57,21 +57,40 @@ line in the decision log saying why not.
 | 1.6 | One QA chatbot panel on the Routing page: every switch that decides where the bot reads and writes, each saying what ON and OFF do, and one guarded step to go live in Burson | S | `tests/test_routing.py` plus a browser check | 1.1 |
 | 1.7 | Whatever 1.1 finds missing, one step each | ? | named at 1.1 | 1.1 |
 
-Parity, first cut (step 1.1 verifies each row in the code of both):
+Parity, first pass (23 Nov). "Not found" means no setting or module of that kind was found by name in the Console's
+code; step 1.1 confirms each row by reading both sides, and each confirmed gap becomes a step under 1.7.
 
 | Sheet Control switch | Console today |
 |---|---|
-| Relay with S-F Burson; Post in S-F Burson; Safety valve; Work directly in B25 | Routing page: source, second and third space, Safety valve, Wait for Send |
-| Draft answers to questions | Built as op `converse`; not reached from Chat yet (1.3) |
-| Temp checks | Console page and buttons; not in Chat yet (1.5) |
-| Auto-find missing links | Find missing links |
-| Direct BigQuery alerts; Write back to SLRR BigQuery | Our own alerts; its mark-delivered setting |
-| Early wave & velocity check; the three Fast triage switches | Early Detection; Gemini Decisions switches. Velocity spikes were not carried over |
-| Proactive watch | Watches |
-| Auto-send Social Alerts; Auto-submit T&S form | Not built: a person sends and submits |
-| KB & Guidance can start alerts; Learn from IM calls; Watch sent alerts (24h); Check outage & comms docs; Track post-alert outcomes; Never wait on Burson; Draft follow-ups; Group test emails | To check |
-| Early Detection: AMIE table; Brandwatch live; Proactive watch: AMIE; Open engine; Write early-wave records to BigQuery | To check |
-| Live dashboard; Slide deliveries | The Console's Dashboard and Stories pages; slides are not in the Console |
+| Bot (B2) | Yes: Routing, QA chatbot ON |
+| Relay with S-F Burson | Yes: Routing, source, second and third space, Copy everything |
+| Post in S-F Burson, with the Burson outbox's Send | Yes: Routing writes in the source only with the valve OFF and no second space; Wait for Send |
+| Safety valve | Yes |
+| Work directly in B25 | Yes: Routing with no second space |
+| Auto-find missing links | Yes: Find missing links |
+| Direct BigQuery alerts | Yes: Our own alerts |
+| Proactive watch | Yes: Watches |
+| Early wave & velocity check | Yes, as Early Detection in BigQuery. Velocity spikes were not carried over |
+| Fast triage, and its rank and hold-back switches | Yes: the Gemini Decisions switches |
+| Write early-wave records to BigQuery | Yes, always: Early Detection keeps its records in BigQuery |
+| Early Detection and Proactive watch also read the AMIE table | Yes: a tick per table on Integrations |
+| Live dashboard | Yes: Dashboard and Stories |
+| Temp checks | In the Console, yes. Typed in Chat, no (1.5) |
+| Draft answers to questions | The sheet's is a Gmail draft on the Social Alert's thread: not found. Answers in Chat exist as op `converse`, not reached from Chat yet (1.3) |
+| Write back to SLRR BigQuery | Partly: Our own alerts' mark-delivered setting only |
+| Learn from IM calls | Partly: Learning page and checked examples. Showing Gemini the similar past calls: not found |
+| Check outage & comms docs | Partly: the Knowledge documents are read. The outage check and holding statements: not found |
+| Track post-alert outcomes | Partly: T&S outcome emails are read only when a Studio flow hands them over. Replies on sent Social Alerts and the Follow-up list: not found |
+| Auto-send Social Alerts | No: the email is a Gmail draft a person sends |
+| Auto-submit T&S form | No: a pre-filled form a person submits |
+| KB & Guidance can start alerts | Not found |
+| Watch sent alerts (24h) | Not found |
+| Never wait on Burson | Not found: the Console sends a broken alert back to Burson and waits for the rerun |
+| Draft follow-ups | Not found |
+| Group test emails | Not found |
+| Early Detection also reads Brandwatch live | Not in Early Detection. Agent alerts reads Brandwatch live |
+| Open engine | Does not apply: the Console's Early Detection has no fixed review limits to replace |
+| Slide deliveries | No |
 
 ### Phase 2: Review is the workspace
 
