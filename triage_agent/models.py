@@ -494,7 +494,9 @@ class ConfigChangeProposal(BaseModel):
 
 
 class KnowledgeFact(BaseModel):
-    """A fact taught in chat ("remember that…"). Used only once APPROVED."""
+    """A fact taught in chat ("remember that…"), or a lesson from an analyst's evaluation of the agent's work
+    (lessons.py). Used only once APPROVED: by a lead, or, for a lesson, by the contradiction check when the switch
+    "Apply evaluation lessons without approval" is on."""
 
     fact_id: str
     text: str
@@ -504,6 +506,8 @@ class KnowledgeFact(BaseModel):
     created_at: datetime
     decided_by: str | None = None
     decided_at: datetime | None = None
+    scope: str = ""  # who reads it besides chat answers: "alert_review" | "agent_alerts" | "" (chat answers only)
+    check: dict[str, Any] | None = None  # the contradiction check's answer, when it was run (lessons.check)
 
 
 # ---------------------------------------------------------------------------

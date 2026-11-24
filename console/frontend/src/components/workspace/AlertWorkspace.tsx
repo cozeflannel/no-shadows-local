@@ -13,7 +13,7 @@ import { Alert, Badge, Button, CaseBadges, cx, ErrorState, Input, Spinner, Tabs 
 import { VelocityBadge, type VelocitySummary } from "../VelocityInline";
 import { EmailComposer } from "./EmailComposer";
 import { checkStatus, EvalLayer, TempCheckLayer, TempCheckNewLayer } from "./Layers";
-import { GRADE, type AgentAlert, type Brief, type FeedCard, type QaEval, type Rubric, type TempView, type TnsView, type Workspace } from "./types";
+import { GRADE, type AgentAlert, type Brief, type FeedCard, type QaEval, type QaStanding, type Rubric, type TempView, type TnsView, type Workspace } from "./types";
 
 type Layer = { kind: "temp"; id: string } | { kind: "temp-new" } | { kind: "eval" } | null;
 type Tab = "email" | "alert" | "activity";
@@ -254,19 +254,20 @@ function TempPanel({ temp, canAct, onOpen, onNew }: { temp: TempView; canAct: bo
   );
 }
 
-function QaPanel({ evals, rubric, canAct, onOpen, what }: { evals: QaEval[]; rubric: Rubric; canAct: boolean; onOpen: () => void; what: string }) {
-  const last = evals[0];
-  const lessons = last ? last.steps.filter((s) => s.kind === "lesson").length : 0;
+function QaPanel({ evals, rubric, standing, canAct, onOpen, what }: { evals: QaEval[]; rubric: Rubric; standing: QaStanding; canAct: boolean; onOpen: () => void; what: string }) {
+  const last = evals[0];  // the evaluation that stands: one person evaluates an alert
+  const taught = last ? last.steps.filter((s) => s.kind === "lesson" && s.status !== "rejected") : [];
+  const inUse = taught.filter((s) => s.status === "applied").length;
   return (
-    <Box title="Chatbot QA" icon={<ClipboardCheck className="size-4 text-zinc-400" />} actions={evals.length > 0 && <Badge tone="zinc">{evals.length}</Badge>}>
+    <Box title="Chatbot QA" icon={<ClipboardCheck className="size-4 text-zinc-400" />} actions={last && last.revision > 0 && <Badge tone="zinc">revised</Badge>}>
       {last ? (
         <p className="flex flex-wrap items-center gap-2 text-sm">
           <span className="text-xl font-medium tabular-nums text-zinc-950 dark:text-zinc-50">{last.score ?? "n/a"}</span><span className="text-zinc-500">of 100</span>
           <Badge tone={(GRADE[last.grade] ?? GRADE[""]).tone}>{(GRADE[last.grade] ?? GRADE[""]).label}</Badge>
-          <span className="w-full text-xs text-zinc-500">{last.evaluator} · {fmtRelative(last.at)} · {lessons === 1 ? "1 lesson filed" : `${lessons} lessons filed`}</span>
+          <span className="w-full text-xs text-zinc-500">{standing.mine ? "You" : last.evaluator} · {fmtRelative(last.at)} · {taught.length === 0 ? "no lesson" : `${inUse} of ${taught.length} ${taught.length === 1 ? "lesson" : "lessons"} in use`}</span>
         </p>
-      ) : <p className="text-sm text-zinc-500">Nobody has graded {what} yet. {rubric.criteria.length} things to rate; it takes a minute.</p>}
-      <Button size="sm" className="mt-3" variant={last ? "secondary" : "primary"} onClick={onOpen}>{last ? (canAct ? "Grade it again, or see the evaluations" : "See the evaluations") : "Grade the chatbot's work"}</Button>
+      ) : <p className="text-sm text-zinc-500">Nobody has graded {what} yet. {rubric.criteria.length} things to rate; it takes a minute. One person evaluates an alert.</p>}
+      <Button size="sm" className="mt-3" variant={last ? "secondary" : "primary"} onClick={onOpen}>{!last ? "Grade the chatbot's work" : standing.mine && canAct ? "Revise your evaluation" : "See the evaluation"}</Button>
     </Box>
   );
 }
@@ -462,7 +463,7 @@ export function AlertWorkspace({ caseId, velocity, onVelocityUpdated, onClose, o
           <div className="scroll-thin min-h-0 space-y-4 lg:overflow-y-auto lg:pr-1">
             <TnsPanel tns={data.tns} canAct={data.can_act} busy={busy} onAct={(a) => void actTns(a)} />
             <TempPanel temp={data.temp} canAct={data.can_act} onOpen={(id) => setLayer({ kind: "temp", id })} onNew={() => setLayer({ kind: "temp-new" })} />
-            <QaPanel evals={data.qa.evals} rubric={data.qa.rubric} canAct={data.can_act} onOpen={() => setLayer({ kind: "eval" })} what="the chatbot's review of this alert" />
+            <QaPanel evals={data.qa.evals} rubric={data.qa.rubric} standing={data.qa.standing} canAct={data.can_act} onOpen={() => setLayer({ kind: "eval" })} what="the chatbot's review of this alert" />
             {c.actions_taken.length > 0 && (
               <Box title="Actions taken">
                 <ul className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-400">
@@ -476,8 +477,8 @@ export function AlertWorkspace({ caseId, velocity, onVelocityUpdated, onClose, o
       {data && layer?.kind === "temp" && <TempCheckLayer key={layer.id} id={layer.id} canAct={data.can_act} onClose={closeLayer} onChanged={reload} onOpen={(id) => setLayer({ kind: "temp", id })} />}
       {data && c && layer?.kind === "temp-new" && <TempCheckNewLayer caseId={caseId} issue={c.issue_name || c.alert_name || ""} canAct={data.can_act} onClose={closeLayer}
         onDone={(id) => { reload(); setLayer({ kind: "temp", id }); }} />}
-      {data && c && layer?.kind === "eval" && <EvalLayer subjectType="case" subjectId={caseId} title={`${caseId} · ${c.alert_name || c.issue_name || ""}`} rubric={data.qa.rubric} evals={data.qa.evals}
-        verdicts={data.verdicts} canAct={data.can_act} onClose={closeLayer} onSubmitted={() => { reload(); onChanged(); }} />}
+      {data && c && layer?.kind === "eval" && <EvalLayer subjectType="case" subjectId={caseId} title={`${caseId} · ${c.alert_name || c.issue_name || ""}`}
+        rubric={data.qa.rubric} evals={data.qa.evals} standing={data.qa.standing} verdicts={data.verdicts} canAct={data.can_act} onClose={closeLayer} onSubmitted={() => { reload(); onChanged(); }} />}
     </Shell>
   );
 }
@@ -496,7 +497,7 @@ function agentReason(d: AgentAlert): string {
 
 export function AgentAlertWorkspace({ alert, canAct, onClose, onChanged }: { alert: AgentAlert; canAct: boolean; onClose: () => void; onChanged: () => void }) {
   const { toast } = useApp();
-  const qa = useApi<{ rubric: Rubric; evals: QaEval[] }>("/qa-evals/subject", { subject_type: "agent_alert", subject_id: alert.id });
+  const qa = useApi<{ rubric: Rubric; evals: QaEval[]; standing: QaStanding }>("/qa-evals/subject", { subject_type: "agent_alert", subject_id: alert.id });
   const [layer, setLayer] = useState<Layer>(null);
   const [busy, setBusy] = useState("");
   const [verdict, setVerdict] = useState(alert.verdict);
@@ -561,7 +562,7 @@ export function AgentAlertWorkspace({ alert, canAct, onClose, onChanged }: { ale
             <p className="text-sm text-zinc-700 dark:text-zinc-300">{verdict ? `Recorded as ${verdict === "TRUE_POSITIVE" ? "confirmed" : "a false positive"}${alert.verdict_by && verdict === alert.verdict ? ` by ${alert.verdict_by}${alert.verdict_at ? `, ${fmtDateTime(alert.verdict_at)}` : ""}` : ""}.` : "Not judged yet. Confirm it, or mark it a false positive: the agent's reviewer is shown your verdict on alerts like it."}</p>
             {alert.posted_to && <p className="mt-2 text-xs text-zinc-500">Posted in {alert.posted_to}.</p>}
           </Box>
-          {qa.data && <QaPanel evals={qa.data.evals} rubric={qa.data.rubric} canAct={canAct} onOpen={() => setLayer({ kind: "eval" })} what="this alert" />}
+          {qa.data && <QaPanel evals={qa.data.evals} rubric={qa.data.rubric} standing={qa.data.standing} canAct={canAct} onOpen={() => setLayer({ kind: "eval" })} what="this alert" />}
           <Box title="Temp check" icon={<Thermometer className="size-4 text-zinc-400" />}>
             <p className="text-sm text-zinc-500">See how big this conversation is right now.</p>
             <Button size="sm" className="mt-3" disabled={!canAct} onClick={() => setLayer({ kind: "temp-new" })}>Run a temp check</Button>
@@ -574,8 +575,8 @@ export function AgentAlertWorkspace({ alert, canAct, onClose, onChanged }: { ale
       </div>
       {layer?.kind === "temp-new" && <TempCheckNewLayer issue={alert.title} canAct={canAct} onClose={closeLayer} onDone={(id) => setLayer({ kind: "temp", id })} />}
       {layer?.kind === "temp" && <TempCheckLayer key={layer.id} id={layer.id} canAct={canAct} onClose={closeLayer} onChanged={() => undefined} onOpen={(id) => setLayer({ kind: "temp", id })} />}
-      {layer?.kind === "eval" && qa.data && <EvalLayer subjectType="agent_alert" subjectId={alert.id} title={alert.title} rubric={qa.data.rubric} evals={qa.data.evals} verdicts={[]}
-        canAct={canAct} onClose={closeLayer} onSubmitted={() => { qa.reload(); onChanged(); }} />}
+      {layer?.kind === "eval" && qa.data && <EvalLayer subjectType="agent_alert" subjectId={alert.id} title={alert.title} rubric={qa.data.rubric}
+        evals={qa.data.evals} standing={qa.data.standing} verdicts={[]} canAct={canAct} onClose={closeLayer} onSubmitted={() => { qa.reload(); onChanged(); }} />}
     </Shell>
   );
 }

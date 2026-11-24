@@ -56,6 +56,7 @@ PURPOSES: dict[str, str] = {
     "temp_check.revise": "Reword a temp check's written lines as an analyst asks",
     "workspace.brief": "Word the short brief of an alert an analyst opens",
     "qa.comprehend": "Say back what an analyst's QA evaluation found, and the lessons in it",
+    "lessons.check": "Name what a new lesson goes against in the knowledge documents and the lessons in use",
     "workforce.explain": "Explain a staffing recommendation",
     "own.review": "Review a post or story agent alerts queued, before it is raised",
 }

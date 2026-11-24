@@ -317,8 +317,16 @@ def filter_recipients(cfg: AgentConfig, recipients: Iterable[str]) -> tuple[list
     return kept, dropped
 
 
+SEND_SWITCH = "console_send_email"
+
+
+class SendRefused(RuntimeError):
+    """An email was not sent, on purpose: the switch is off, or the recipient rules leave it nobody to go to."""
+
+
 class SafeGmail:
-    """Wraps the Gmail gateway: Testing recipients and the recipient allow-list apply to every draft.
+    """Wraps the Gmail gateway: Testing recipients and the recipient allow-list apply to every draft, and to every
+    draft sent from the Console (send_draft).
 
     While Testing, each draft goes only to the stand-ins, with one last line naming how many real recipients it
     would have had (never their addresses). With Testing on and no stand-in, the draft is made with no recipients:
@@ -368,6 +376,26 @@ class SafeGmail:
 
     def update_draft(self, user_email: str, draft_id: str, **fields: Any) -> dict:
         return self._inner.update_draft(user_email, draft_id, **self._apply(fields))
+
+    def send_draft(self, user_email: str, draft_id: str, **fields: Any) -> dict:
+        """Sends a draft, and only as it is written here: the whole email is written to the draft once more, through
+        the same recipient rules, and sent straight after. A draft can be changed in Gmail after the Console saved it;
+        what goes out is never that, it is what this call was given. Refused while the switch is off, and when the rules
+        leave it nobody to go to (Testing on with no Testing recipient: nothing is sent)."""
+        from .escalation.gmail import GmailError
+
+        ctx = self._ctx()
+        if not ctx.flag(SEND_SWITCH):
+            raise SendRefused("Sending from the Console is off (Settings, Switches: Send alert emails from the Console).")
+        missing = [k for k in ("from_header", "to", "cc", "bcc", "subject", "body") if k not in fields]
+        if missing:
+            raise GmailError(f"A draft is sent only with the whole email given (missing: {', '.join(missing)})")
+        safe = self._apply(fields)
+        if not (safe.get("to") or safe.get("cc") or safe.get("bcc")):
+            raise SendRefused("Testing is on and no Testing recipient is named, so nothing is sent." if testing_recipients(ctx.config) is not None
+                              else "The email has nobody to go to: none of its recipients is at an allowed domain.")
+        self._inner.update_draft(user_email, draft_id, **safe)
+        return self._inner.send_draft(user_email, draft_id)
 
 
 # -- runtime checks --------------------------------------------------------------------------------------------

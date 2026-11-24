@@ -9,7 +9,7 @@ import { humanize, verdictLabel } from "../../lib/labels";
 import { TempCheckForm, type FormInfo } from "../TempCheckForm";
 import type { TcCheck } from "../TempCheckResult";
 import { Alert, Badge, Button, cx, ErrorState, Field, Input, OffNotice, Select, Spinner, Textarea } from "../ui";
-import { GRADE, STEP_TONE, STEP_WORD, type QaEval, type Rubric } from "./types";
+import { GRADE, STEP_TONE, STEP_WORD, type QaEval, type QaStanding, type Rubric } from "./types";
 
 const TempCheckResult = lazy(() => import("../TempCheckResult").then((m) => ({ default: m.TempCheckResult })));
 
@@ -155,7 +155,7 @@ function Result({ ev }: { ev: QaEval }) {
       <p className="flex flex-wrap items-center gap-2 text-sm">
         <span className="text-2xl font-medium tabular-nums text-zinc-950 dark:text-zinc-50">{ev.score ?? "n/a"}</span><span className="text-zinc-500">of 100</span>
         <Badge tone={grade.tone}>{grade.label}</Badge>
-        <span className="ml-auto text-xs text-zinc-500">{ev.id} · {ev.evaluator} · {fmtDateTime(ev.at)} · {ev.rated} of {ev.of} rated</span>
+        <span className="ml-auto text-xs text-zinc-500">{ev.id} · {ev.evaluator} · {fmtDateTime(ev.at)} · {ev.rated} of {ev.of} rated{ev.revision > 0 ? ` · revised ${ev.revision === 1 ? "once" : `${ev.revision} times`}` : ""}</span>
       </p>
       {ev.comment && <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300">“{ev.comment}”</p>}
       <p className="mt-3 text-xs font-medium text-zinc-500">What {ev.comprehension.by === "gemini" ? "Gemini" : "the agent"} understood</p>
@@ -165,7 +165,7 @@ function Result({ ev }: { ev: QaEval }) {
         {ev.steps.map((s, i) => (
           <li key={i} className="flex items-start gap-2 text-sm">
             <Badge tone={STEP_TONE[s.status]} className="mt-0.5 shrink-0">{STEP_WORD[s.status]}</Badge>
-            <span className="min-w-0 text-zinc-800 dark:text-zinc-200">{s.kind === "lesson" ? <><span className="text-zinc-500">Lesson filed: </span>{s.text}</> : s.text}{s.note ? <span className="block text-xs text-zinc-500">{s.note}</span> : null}</span>
+            <span className="min-w-0 text-zinc-800 dark:text-zinc-200">{s.kind === "lesson" ? <><span className="text-zinc-500">Lesson: </span>{s.text}</> : s.text}{s.note ? <span className="block text-xs text-zinc-500">{s.note}</span> : null}</span>
           </li>
         ))}
         {ev.steps.length === 0 && <li className="text-sm text-zinc-500">Nothing yet.</li>}
@@ -176,16 +176,19 @@ function Result({ ev }: { ev: QaEval }) {
 
 /**
  * The analyst grades the chatbot's work on one alert. The score is counted by the server from the ratings and their
- * weights; Gemini only says back what it understood, and each lesson waits for a lead before the agent uses it.
+ * weights; Gemini only says back what it understood. One person evaluates an alert: the first to submit, who can revise
+ * it here; everyone else reads it. What becomes of each lesson (in use, held for a lead, waiting) is said under the result.
  */
-export function EvalLayer({ subjectType, subjectId, title, rubric, evals, verdicts, canAct, onClose, onSubmitted }: {
-  subjectType: "case" | "agent_alert"; subjectId: string; title: string; rubric: Rubric; evals: QaEval[]; verdicts: string[]; canAct: boolean;
-  onClose: () => void; onSubmitted: (ev: QaEval) => void;
+export function EvalLayer({ subjectType, subjectId, title, rubric, evals, standing, verdicts, canAct, onClose, onSubmitted }: {
+  subjectType: "case" | "agent_alert"; subjectId: string; title: string; rubric: Rubric; evals: QaEval[]; standing: QaStanding; verdicts: string[]; canAct: boolean;
+  onClose: () => void; onSubmitted: (ev?: QaEval) => void;  // called with nothing when someone else turned out to have evaluated it first
 }) {
   const { toast } = useApp();
-  const [ratings, setRatings] = useState<Record<string, number | null>>({});
-  const [comment, setComment] = useState("");
-  const [verdict, setVerdict] = useState("");
+  const mine = standing.mine ? evals.find((e) => e.id === standing.eval_id) : undefined;  // the evaluation this person may revise
+  const theirs = !!standing.evaluator && !standing.mine;
+  const [ratings, setRatings] = useState<Record<string, number | null>>(() => ({ ...(mine?.ratings ?? {}) }));
+  const [comment, setComment] = useState(mine?.comment ?? "");
+  const [verdict, setVerdict] = useState(mine?.corrections?.verdict ?? "");
   const [busy, setBusy] = useState(false);
   const [made, setMade] = useState<QaEval | null>(null);
   const rated = rubric.criteria.filter((c) => ratings[c.id] != null).length;
@@ -193,21 +196,41 @@ export function EvalLayer({ subjectType, subjectId, title, rubric, evals, verdic
     setBusy(true);
     try {
       const res = await apiSend<{ eval: QaEval }>("post", "/qa-evals", { subject_type: subjectType, subject_id: subjectId, ratings, comment, verdict: verdict || undefined });
-      setMade(res.eval); onSubmitted(res.eval); toast("Evaluation submitted");
-    } catch (err) { toast((err as ApiError).message, "error"); } finally { setBusy(false); }
+      setMade(res.eval); onSubmitted(res.eval); toast(mine ? "Evaluation revised" : "Evaluation submitted");
+    } catch (err) {
+      toast((err as ApiError).message, "error");
+      if ((err as ApiError).status === 409) onSubmitted();  // someone else evaluated it meanwhile: show theirs
+    } finally { setBusy(false); }
   };
+  if (theirs) {
+    return (
+      <Layer wide={false} onClose={onClose} title="The evaluation of this alert" subtitle={title}>
+        <div className="space-y-4">
+          <Alert tone="blue" title={`Evaluated by ${standing.evaluator}`}>One person evaluates an alert, and only they can revise it.</Alert>
+          {evals.map((ev, i) => (
+            <div key={ev.id} className="space-y-2">
+              {i === 1 && <p className="text-xs font-medium text-zinc-500">Kept from before one person evaluated an alert</p>}
+              <Result ev={ev} />
+            </div>
+          ))}
+        </div>
+      </Layer>
+    );
+  }
   return (
-    <Layer wide={false} onClose={onClose} title={subjectType === "case" ? "Grade the chatbot's review" : "Grade the chatbot's alert"} subtitle={title}
-      actions={!made && <Button variant="primary" disabled={!canAct || rated === 0} loading={busy} onClick={submit}>Submit evaluation</Button>}>
+    <Layer wide={false} onClose={onClose} title={made ? "Your evaluation" : mine ? "Revise your evaluation" : subjectType === "case" ? "Grade the chatbot's review" : "Grade the chatbot's alert"} subtitle={title}
+      actions={!made && <Button variant="primary" disabled={!canAct || rated === 0} loading={busy} onClick={submit}>{mine ? "Save the revision" : "Submit evaluation"}</Button>}>
       {made ? (
         <div className="space-y-4">
-          <Alert tone="emerald" title="Submitted">The score was counted from your ratings. Here is what was understood and what was done with it.</Alert>
+          <Alert tone="emerald" title={made.revision > 0 ? "Revised" : "Submitted"}>The score was counted from your ratings. Here is what was understood and what was done with it.</Alert>
           <Result ev={made} />
           <Button onClick={onClose}>Back to the alert</Button>
         </div>
       ) : (
         <div className="space-y-5">
           {!canAct && <Alert tone="blue">Only analysts and Incident Managers can submit an evaluation.</Alert>}
+          {mine ? <Alert tone="blue" title="This is your evaluation">Change what you rated or wrote and save. It stays one evaluation: the score is counted again, and a lesson your revision no longer teaches is withdrawn.</Alert>
+            : canAct && <p className="text-xs text-zinc-500">One person evaluates an alert. Once you submit, this evaluation is yours: you can revise it, and nobody else can submit one.</p>}
           <ul className="space-y-4">
             {rubric.criteria.map((c) => (
               <li key={c.id} className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
@@ -245,7 +268,7 @@ export function EvalLayer({ subjectType, subjectId, title, rubric, evals, verdic
           <p className="text-xs text-zinc-500">{rated} of {rubric.criteria.length} rated. The score is counted from your ratings and their weights ({rubric.pass_at} and above passes); no model sets or changes it.</p>
           {evals.length > 0 && (
             <div className="space-y-3">
-              <p className="text-xs font-medium text-zinc-500">Earlier evaluations of this alert</p>
+              <p className="text-xs font-medium text-zinc-500">{mine ? "Your evaluation as it stands" : "Evaluations of this alert"}</p>
               {evals.map((ev) => <Result key={ev.id} ev={ev} />)}
             </div>
           )}

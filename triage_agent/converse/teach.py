@@ -203,22 +203,31 @@ def _decision(value: str | None) -> str:
     return d
 
 
+WITHDRAW = "withdraw"  # a decision of its own: take a fact or a lesson that is in use out of use
+
+
 def decide_fact(ctx: "AgentContext", fact_id: str, decision: str, actor: str | None, *, via: str = "console") -> ChatOutputs:
+    """approve | reject decide a pending fact, once. withdraw takes one that is in use out of use: a lesson may have been
+    put to use by the contradiction check with no lead, and a lead must be able to undo that. An approve or a reject of a
+    fact already decided is refused, as it always was."""
     p = render.prefix(ctx)
-    d = _decision(decision)
+    withdrawn = (decision or "").strip().lower() == WITHDRAW
+    d = "reject" if withdrawn else _decision(decision)
     if not actor or actor.lower() not in {e.lower() for e in ctx.config.lead_emails()}:
         raise UserFacingError("Only SLRR admins and leads can approve facts.")
     fact = ctx.store.get_fact((fact_id or "").strip().upper())
     if fact is None:
         raise UserFacingError(f"I can't find {fact_id}.")
-    if fact.status != ProposalStatus.PENDING:
+    if withdrawn and fact.status != ProposalStatus.APPROVED:
+        raise UserFacingError(f"{fact.fact_id} is not in use.")
+    if not withdrawn and fact.status != ProposalStatus.PENDING:
         raise UserFacingError(f"{fact.fact_id} was already {fact.status.value.lower()}.")
     fact.status = ProposalStatus.APPROVED if d == "approve" else ProposalStatus.REJECTED
     fact.decided_by, fact.decided_at = actor, ctx.now()
     ctx.store.save_fact(fact)
     ctx.emit(EventType.FACT_APPROVED if d == "approve" else EventType.FACT_REJECTED, actor=actor,
-             payload={"id": fact.fact_id, "via": via})
-    verb = "approved" if d == "approve" else "rejected"
+             payload={"id": fact.fact_id, "via": via, **({"withdrawn": True} if withdrawn else {})})
+    verb = "approved" if d == "approve" else "taken out of use" if withdrawn else "rejected"
     out = ChatOutputs(reply_text=f"{p} 🧠 {fact.fact_id} {verb}: “{render.truncate(fact.text, 300)}”",
                       summary=f"{fact.fact_id} {verb} by {actor}")
     if fact.created_by and fact.created_by.lower() != actor.lower() and "@" in fact.created_by:

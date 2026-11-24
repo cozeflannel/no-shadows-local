@@ -87,6 +87,8 @@ class GmailGateway(Protocol):
     # Optional: current content {to, cc, bcc, subject, body, thread_id, …}; None if unreadable.
     def get_draft(self, user_email: str, draft_id: str) -> dict | None: ...
 
+    def send_draft(self, user_email: str, draft_id: str) -> dict: ...  # sends it as it stands in Gmail: {message_id, thread_id}
+
     def draft_status(
         self, user_email: str, draft_id: str, thread_id: str | None,
         *, since: datetime | None = None, exclude: Iterable[str] = (),
@@ -268,6 +270,7 @@ class FakeGmail:
         self.drafts: dict[str, dict[str, Any]] = {}
         self.threads: dict[str, dict[str, Any]] = {}
         self.sent: list[dict[str, Any]] = []  # send_as_agent
+        self.sent_drafts: list[dict[str, Any]] = []  # send_draft: each draft as it stood when it went out
         self.history: list[tuple[str, str]] = []  # (operation, draft_id)
         self._n = 0
         self._lock = threading.Lock()
@@ -365,6 +368,19 @@ class FakeGmail:
         if best is None:
             return {"status": "DISCARDED"}
         return {"status": "SENT", "rfc822_message_id": best.get("rfc822"), "sent_at": best["internal_date"]}
+
+    def send_draft(self, user_email, draft_id) -> dict:
+        """Sends the draft as it stands, as Gmail does: it must be this person's, and it must have a recipient."""
+        user = self._require(user_email)
+        draft = self.drafts.get(draft_id)
+        if draft is None or draft["user"] != user:
+            raise GmailDraftNotFound(f"draft {draft_id} not found")
+        if not (draft["to"] or draft["cc"] or draft["bcc"]):
+            raise GmailError("Gmail API error 400: Recipient address required")
+        self.sent_drafts.append({k: (list(v) if isinstance(v, list) else v) for k, v in draft.items()})
+        thread_id = draft["thread_id"]
+        self.mark_sent(draft_id)
+        return {"message_id": self.threads[thread_id]["messages"][-1]["id"], "thread_id": thread_id}
 
     # -- test helpers (simulate the IM in Gmail) --------------------------------------
     def mark_sent(self, draft_id: str, rfc822_message_id: str | None = None, sent_at: datetime | None = None) -> str:
@@ -690,6 +706,11 @@ class GoogleGmail:
             log.info("draft %s unreadable for %s: %s", draft_id, user_email, exc)
             return None
         return {**message_fields(current), "draft_id": draft_id, "thread_id": thread_id}
+
+    def send_draft(self, user_email, draft_id) -> dict:
+        """Sends the draft as it stands in Gmail (users.drafts.send: gmail.compose allows it, no further permission)."""
+        resp = self._execute(user_email, lambda s: s.users().drafts().send(userId="me", body={"id": draft_id}))
+        return {"message_id": resp.get("id"), "thread_id": resp.get("threadId")}
 
     def draft_status(self, user_email, draft_id, thread_id=None, *, since=None, exclude=()) -> dict:
         try:

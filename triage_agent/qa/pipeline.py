@@ -122,6 +122,21 @@ def run_qa(ctx: "AgentContext", parsed: ParsedAlert, *, source: str, received_at
             if passages:
                 checks_run.append("knowledge")
 
+    # 2b. The lessons in use from analysts' evaluations of these reviews: read on every alert, with or without the
+    #     documents. They are guidance: they come first and outrank the documents.
+    if cfg.thresholds.llm_checks_enabled:
+        try:
+            from .. import knowledge as knowledge_mod
+            from .. import lessons as lessons_mod
+
+            learnt = lessons_mod.passages(ctx, lessons_mod.ALERT_REVIEW)
+            if learnt:
+                passages = learnt + passages
+                knowledge_text = knowledge_mod.render_passages(passages)
+                checks_run.append("lessons")
+        except Exception as exc:  # noqa: BLE001 - the assessment still runs without them
+            log.warning("the lessons in use could not be read: %s", exc)
+
     # 3. Gemini judgment checks + enrichment. Gemini judges and proposes; it is not asked how sure it is.
     enrichment: Enrichment | None = None
     llm_issues: list[Issue] = []

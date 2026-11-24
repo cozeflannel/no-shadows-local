@@ -649,15 +649,23 @@ def classes(ctx: "AgentContext") -> list[Any]:
     return list(seen.values())
 
 
+def ready_count(ctx: "AgentContext") -> int:
+    """How many documents can be read: switched on and indexed."""
+    return len(_index(ctx).docs)
+
+
 def retrieve(ctx: "AgentContext", query: str, *, label: str | None = None, external: bool = False, top_k: int | None = None,
-             budget_chars: int = 24000, include_cases: bool = False, exclude_case_id: str | None = None) -> list[Passage]:
+             budget_chars: int = 24000, include_cases: bool = False, exclude_case_id: str | None = None,
+             min_score: float | None = None) -> list[Passage]:
     """Passages for `query`, best first. Guidance comes before documents.
 
     All of the allowed knowledge is returned when it fits `budget_chars` (as the chat bot handed Gemini every
     document when they fit); otherwise the best-scoring passages. `external` keeps only documents marked safe for
-    an external space."""
+    an external space. `min_score` replaces the setting's floor for this call: 0 gives the nearest passages however
+    far they are (a caller that must compare with something, not one that wants only what is relevant)."""
     cfg = ctx.config.platform.knowledge
     k = top_k or cfg.top_k
+    floor = cfg.min_score if min_score is None else min_score
     index = _index(ctx)
     allowed = docs_for_class(ctx, label)
     candidates = []
@@ -685,8 +693,8 @@ def retrieve(ctx: "AgentContext", query: str, *, label: str | None = None, exter
                         if vec:
                             scores[i] = 0.5 * scores[i] + 0.5 * max(0.0, cosine(qv[0], vec))
             ranked = sorted(candidates, key=lambda i: scores[i], reverse=True)
-            chosen = [(i, scores[i]) for i in ranked if scores[i] >= cfg.min_score][:k]
-            guidance = [(i, max(scores[i], cfg.min_score)) for i in candidates
+            chosen = [(i, scores[i]) for i in ranked if scores[i] >= floor][:k]
+            guidance = [(i, max(scores[i], floor)) for i in candidates
                         if index.docs[index.chunks[i]["doc_id"]].kind == "guidance" and i not in {c[0] for c in chosen}]
             used = sum(len(index.chunks[i]["text"]) for i, _ in chosen)
             for i, s in guidance:  # guidance always applies while it fits

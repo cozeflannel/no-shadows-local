@@ -1,4 +1,4 @@
-import { Bold, ExternalLink, Italic, Link2, List, ListOrdered, Redo2, RemoveFormatting, RotateCcw, Save, Underline, Undo2, Unlink } from "lucide-react";
+import { Bold, ExternalLink, Italic, Link2, List, ListOrdered, Redo2, RemoveFormatting, RotateCcw, Save, Send, Underline, Undo2, Unlink } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { apiSend, type ApiError } from "../../api/client";
@@ -37,8 +37,10 @@ const FIELD = "w-full bg-transparent py-1 text-sm text-zinc-900 outline-none pla
 
 /**
  * The Social Alert email, written from the alert in the team's template and edited here as it will look: the body is the
- * email itself, typed into directly. Saving writes it to the draft in the analyst's own Gmail, where it is sent from.
- * The body is a page of its own with scripts off; what is saved is cleaned again by the server.
+ * email itself, typed into directly. Saving writes it to the draft in the analyst's own Gmail, where it is sent from;
+ * with the switch "Send alert emails from the Console" on it can be sent from here too, after a question that says who
+ * it goes to (the Testing recipients only, while Testing is on). The body is a page of its own with scripts off; what is
+ * saved or sent is cleaned again by the server.
  */
 export function EmailComposer({ caseId, email, canAct, onSaved }: { caseId: string; email: EmailDraft; canAct: boolean; onSaved: (email: EmailDraft) => void }) {
   const { toast } = useApp();
@@ -89,6 +91,26 @@ export function EmailComposer({ caseId, email, canAct, onSaved }: { caseId: stri
       toast(res.email.testing.on ? "Draft written to your Gmail (Testing: addressed to the testing recipients only)" : "Draft written to your Gmail");
     } catch (err) { toast((err as ApiError).message, "error"); } finally { setBusy(""); }
   };
+  const people = split(to).length + split(cc).length + split(bcc).length;
+  // Nothing is sent to nobody: an email needs its own recipients even while Testing sends it to the testing recipients instead
+  const nobody = people === 0 ? "The email has no recipients in To, Cc or Bcc"
+    : email.testing.on && email.testing.recipients === 0 ? "Testing is on and no testing recipient is set: nothing can be sent" : "";
+  const send = async () => {
+    const doc = frame.current?.contentDocument;
+    if (!doc) return;
+    const asked = email.testing.on
+      ? `Send this email now, from your Gmail?\n\nTesting is ON: it goes to your ${email.testing.recipients} testing recipient${email.testing.recipients === 1 ? "" : "s"} only, not to the ${people} ${people === 1 ? "person" : "people"} in To, Cc and Bcc.`
+      : `Send this email now, from your Gmail, to ${people} ${people === 1 ? "recipient" : "recipients"}?\n\nIt goes out as it is written here and cannot be unsent.`;
+    if (!window.confirm(asked)) return;
+    setBusy("send");
+    try {
+      const res = await apiSend<{ email: EmailDraft }>("post", `/workspace/${caseId}/email/send`, {
+        subject, to: split(to), cc: split(cc), bcc: split(bcc), html: `<!DOCTYPE html>${doc.documentElement.outerHTML}` });
+      setDirty(false);
+      onSaved(res.email);
+      toast(res.email.testing.on ? "Sent from your Gmail (Testing: to the testing recipients only)" : "Sent from your Gmail");
+    } catch (err) { toast((err as ApiError).message, "error"); } finally { setBusy(""); }
+  };
   const reset = async () => {
     if (!window.confirm("Start over from the alert? Your edits to this email are dropped.")) return;
     setBusy("reset");
@@ -115,6 +137,7 @@ export function EmailComposer({ caseId, email, canAct, onSaved }: { caseId: stri
       {email.testing.on && !sent && (
         <p className="border-b border-zinc-200 bg-blue-50 px-4 py-2 text-xs text-blue-900 dark:border-zinc-800 dark:bg-blue-900/20 dark:text-blue-200">
           Testing is ON: the draft in Gmail is addressed to {email.testing.recipients ? `your ${email.testing.recipients} testing recipient${email.testing.recipients === 1 ? "" : "s"}` : "nobody (no testing recipient is set)"}, not to the people below.
+          {email.can_send ? (email.testing.recipients ? " Sending from here goes to them only." : " Nothing can be sent from here until one is set.") : ""}
         </p>
       )}
       {!email.gmail.connected && !sent && (
@@ -163,9 +186,15 @@ export function EmailComposer({ caseId, email, canAct, onSaved }: { caseId: stri
         className="h-[56vh] min-h-[24rem] w-full bg-white" />
 
       <div className="flex flex-wrap items-center gap-2 border-t border-zinc-200 px-4 py-3 dark:border-zinc-800">
-        <Button variant="primary" icon={<Save className="size-4" />} disabled={!editable} loading={busy === "save"} onClick={save}>
+        <Button variant="primary" icon={<Save className="size-4" />} disabled={!editable || busy !== ""} loading={busy === "save"} onClick={save}>
           {email.status === "new" || email.status === "failed" || email.status === "discarded" ? "Save as a draft in Gmail" : "Update the draft in Gmail"}
         </Button>
+        {email.can_send && editable && email.gmail.connected && (
+          <Button icon={<Send className="size-4" />} disabled={nobody !== "" || busy !== ""} loading={busy === "send"} onClick={send}
+            title={nobody || "Saves the email as it is written here and sends it from your Gmail"}>
+            {email.testing.on ? "Send to the testing recipients" : "Send now"}
+          </Button>
+        )}
         {email.status !== "new" && email.gmail.connected && (
           <a href={email.gmail.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
             {sent ? "Open in Gmail" : "Open in Gmail to send"}<ExternalLink className="size-3.5" />

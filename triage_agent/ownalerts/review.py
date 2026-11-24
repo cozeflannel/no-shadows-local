@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -30,6 +31,8 @@ from . import SNIPPET_BREAK, SWITCH, feedback, raise_, schema
 
 if TYPE_CHECKING:
     from ..context import AgentContext
+
+log = logging.getLogger(__name__)
 
 OP = "review_own_candidate"
 PURPOSE = "own.review"
@@ -67,7 +70,8 @@ def _system(ctx: "AgentContext") -> str:
         "decision_rationale: two sentences at most, in plain words, for a busy incident manager.\n"
         "The evidence has had personal details removed. Name no person and quote no link.\n"
         "A candidate that met a mandatory rule is raised whatever you answer; still give its severity, path and reason.\n"
-        "Earlier decisions like this one are given with what an analyst said about each: weigh them."
+        "Earlier decisions like this one are given with what an analyst said about each: weigh them. "
+        "A standing lesson from an analyst's evaluation may be given with them: follow it; it outranks an earlier decision."
     )
 
 
@@ -333,6 +337,13 @@ def _decide(ctx: "AgentContext", gw: Any, items: list[dict[str, Any]], out: dict
         if not item.get("kept_id"):
             lead.setdefault((str(item["item_type"]), str(item["target_id"])), item)
     precedents = _precedents(ctx, gw, list(lead.values()))
+    try:  # the lessons in use from analysts' evaluations of the agent's own alerts go with what analysts said before
+        from .. import lessons
+
+        learnt = lessons.lines(ctx, lessons.AGENT_ALERTS)
+    except Exception as exc:  # noqa: BLE001 - the review still runs without them
+        log.warning("the lessons in use could not be read: %s", exc)
+        learnt = []
     kept: list[tuple[dict[str, Any], dict[str, Any], str, str]] = []
     fresh: list[tuple[dict[str, Any], dict[str, Any], str, str]] = []
     reviewed: set[tuple[str, str]] = set()
@@ -361,7 +372,7 @@ def _decide(ctx: "AgentContext", gw: Any, items: list[dict[str, Any]], out: dict
             continue
         try:
             asked = {k: v for k, v in item.items() if k != "queued_at" and not k.startswith("kept_")}
-            verdict, engine, note = ask(ctx, asked, precedents.get(str(item["queue_id"]), []))
+            verdict, engine, note = ask(ctx, asked, [*learnt, *precedents.get(str(item["queue_id"]), [])])
         except Exception as exc:  # noqa: BLE001 - this one stays queued and is reviewed next minute
             out["failed"] += 1
             errors.append(f"A review failed and will be tried again: {str(exc)[:200]}")

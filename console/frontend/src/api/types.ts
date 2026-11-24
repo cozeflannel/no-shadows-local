@@ -456,7 +456,15 @@ export interface Proposal {
   sections: string[];
   preview: { valid: boolean; errors: { loc: (string | number)[]; msg: string }[] } | null;
 }
-export interface Fact { fact_id: string; text: string; source: string; status: "PENDING" | "APPROVED" | "REJECTED"; created_by: string; created_at: string; decided_by: string | null; decided_at: string | null }
+export interface Fact {
+  fact_id: string; text: string; source: string; status: "PENDING" | "APPROVED" | "REJECTED"; created_by: string; created_at: string; decided_by: string | null; decided_at: string | null;
+  /** Who reads it besides chat answers: the alert reviewer, the agent's own alert review, or nobody else (a fact taught in Chat). */
+  scope?: "alert_review" | "agent_alerts" | "";
+  /** The contradiction check's answer, when it was run: what the lesson goes against. */
+  check?: { result: "clear" | "same" | "conflict" | "unchecked"; by: string; why: string; against: { ref: string; title: string; kind: string; why: string }[] } | null;
+  /** How it stands now, in words (worked out by the server). */
+  standing?: { status: "waiting" | "held" | "applied" | "rejected"; note: string };
+}
 
 export interface GmailStatus {
   available: boolean;

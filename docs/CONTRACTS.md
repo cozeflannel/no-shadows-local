@@ -722,6 +722,28 @@ not known) and its sentiment label. The map's time slider counts alerts, stories
 Settings. A check's result is kept in kv `connection:test:<key>` with a fingerprint of the values and dropped when they change.
 `GET /api/meta` carries `notifications` for the pop-ups. The tick records kv `tick:last`.
 
+**QA evaluations and lessons** (`qa_evals.py`, `lessons.py`, collection `qa_evals`): `POST /api/qa-evals` keeps one evaluation per alert
+(`subject_type` `case` | `agent_alert`). The first evaluator owns it: their next submit revises the same record (`revision`, `first_at`,
+`history`), anyone else gets `409`; `GET /api/qa-evals/subject` and `GET /api/workspace/{case}` carry `standing {evaluator, eval_id, mine,
+can_submit}`. Each lesson is a `KnowledgeFact` with `scope` (`alert_review` | `agent_alerts`) and, when checked, `check {result: clear | same |
+conflict | unchecked, against[{ref, title, kind, why}], read{lessons, passages, documents, documents_kept}}`. Flag `lessons_auto_apply` off:
+it stays `PENDING` for a lead. On: `lessons.check` compares it with the lessons in use of its scope (same words, in Python), then hands
+Gemini (`lessons.check`) those lessons and the knowledge passages nearest to it (every document when they fit in 48,000 characters, else up
+to 24 passages, however far: `retrieve(min_score=0)`), and Gemini must answer `finding: nothing_against | goes_against` with the labels it
+goes against. `clear` approves it at once (`decided_by` "the contradiction check"); anything else leaves it `PENDING`: a conflict, no
+answer, an answer without `finding`, `goes_against` naming nothing, a label Gemini was not shown, documents kept but none handed over
+(`unchecked`). `read` counts what was actually put in the prompt. With no document and no lesson in use nothing is asked and it is `clear`.
+The check compares with the nearest passages, not every line of every document. `APPROVED` lessons are read by `triage.assess` as guidance
+passages (`checks_run` gets `lessons`; no flag, and without `knowledge_rag`), by `own.review` as lines with its precedents, and by chat
+answers. `POST /api/facts/{id}` `withdraw` takes an `APPROVED` fact out of use (leads); `approve` / `reject` still decide a `PENDING` one once.
+
+**Sending from the Console** (flag `console_send_email`, default off): `POST /api/workspace/{case}/email/send` takes the composer's email
+(`subject, to, cc, bcc, html`), saves it as `PUT …/email` does, then calls `SafeGmail.send_draft(user, draft_id, **whole email)`, which
+writes the whole email to the draft once more under the recipient rules (`_apply`: allowed domains, Testing stand-ins) and calls
+`users.drafts.send` straight after, so a draft changed in Gmail is never what goes out. It refuses (`409`) with the flag off, with Testing
+on and no Testing recipient, with no recipient left, and for an email already sent. The gateway refuses on its own with the flag off. The
+send is then read back like a send from Gmail (`_refresh` / `_mark_sent`: `email.sent`, SLA, `alert_email_message_ids`); audit `email.send`.
+
 **Usage tracking** (settings `platform.analytics`, the Console only): `gtm_container` is a Google Tag Manager container id
 (`GTM-XXXXXXX`, nothing else is accepted) or `""`, the default, for no tracking. `GET /api/meta` carries it as
 `analytics.gtm_container`. The browser (`console/frontend/src/lib/analytics.ts`) never loads the container into the Console's own page:

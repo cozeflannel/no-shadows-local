@@ -40,6 +40,8 @@ export interface Brief {
 }
 
 export interface EmailDraft {
+  /** The switch "Send alert emails from the Console" is on: the composer may send the email, not only save the draft. */
+  can_send?: boolean;
   status: "new" | "drafted" | "revision_requested" | "redrafted" | "sent" | "discarded" | "failed";
   subject: string; to: string[]; cc: string[]; bcc: string[]; html: string; template: string; templates: Record<string, string>;
   groups: string[]; missing: string[]; reasons: Record<string, string>; notes: string[];
@@ -61,17 +63,22 @@ export interface TempView { enabled: boolean; auto: boolean; docs: boolean; chec
 
 export interface Criterion { id: string; label: string; weight: number; asks: string }
 export interface Rubric { subject_type: "case" | "agent_alert"; criteria: Criterion[]; scale: { value: number; label: string }[]; pass_at: number; fail_below: number }
-export interface EvalStep { kind: "golden" | "verdict" | "lesson"; status: "done" | "failed" | "skipped" | "waiting" | "applied" | "rejected"; ref: string; text: string; note?: string; decided_by?: string | null }
+export interface EvalStep { kind: "golden" | "verdict" | "lesson"; status: "done" | "failed" | "skipped" | "waiting" | "held" | "applied" | "rejected"; ref: string; text: string; note?: string; decided_by?: string | null; same?: boolean }
+/** Who evaluated an alert and what the person looking may do. One person evaluates an alert: the first to submit, who may revise it. */
+export interface QaStanding { evaluator: string | null; eval_id: string | null; mine: boolean; can_submit: boolean }
 export interface QaEval {
   id: string; subject_type: "case" | "agent_alert"; subject_id: string; case_id: string | null; title: string; evaluator: string; at: string;
   ratings: Record<string, number | null>; comment: string; corrections: { verdict?: string; fields?: Record<string, unknown> };
   score: number | null; grade: "pass" | "needs_work" | "fail" | ""; rated: number; of: number;
   comprehension: { by: "gemini" | "rules"; understood: string; lessons: string[]; why_plain?: string };
   steps: EvalStep[];
+  /** How many times its owner revised it, when it was first submitted, and its earlier versions (score, ratings, words). */
+  revision: number; first_at: string;
+  history?: { at: string; score: number | null; grade: string; ratings: Record<string, number | null>; comment: string }[];
 }
 
 export interface Workspace {
-  card: FeedCard; brief: Brief; email: EmailDraft; tns: TnsView; temp: TempView; qa: { rubric: Rubric; evals: QaEval[] };
+  card: FeedCard; brief: Brief; email: EmailDraft; tns: TnsView; temp: TempView; qa: { rubric: Rubric; evals: QaEval[]; standing: QaStanding };
   events: AgentEvent[]; legend: ActionDef[]; verdicts: string[]; can_act: boolean;
 }
 
@@ -79,8 +86,8 @@ export const GRADE: Record<string, { label: string; tone: "emerald" | "violet" |
   pass: { label: "Pass", tone: "emerald" }, needs_work: { label: "Needs work", tone: "violet" }, fail: { label: "Fail", tone: "rose" }, "": { label: "Not scored", tone: "zinc" },
 };
 export const STEP_TONE: Record<EvalStep["status"], "emerald" | "violet" | "rose" | "zinc" | "blue"> = {
-  done: "emerald", applied: "emerald", waiting: "blue", skipped: "zinc", rejected: "zinc", failed: "rose",
+  done: "emerald", applied: "emerald", waiting: "blue", held: "violet", skipped: "zinc", rejected: "zinc", failed: "rose",
 };
 export const STEP_WORD: Record<EvalStep["status"], string> = {
-  done: "Done", applied: "In use", waiting: "Waiting for approval", skipped: "Skipped", rejected: "Rejected", failed: "Failed",
+  done: "Done", applied: "In use", waiting: "Waiting for a lead", held: "Held for a lead", skipped: "Skipped", rejected: "Not in use", failed: "Failed",
 };

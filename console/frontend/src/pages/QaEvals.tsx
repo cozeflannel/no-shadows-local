@@ -10,9 +10,11 @@ import { fmtDate, fmtDateTime } from "../lib/format";
 interface CriterionRow { subject_type: "case" | "agent_alert"; id: string; label: string; rated: number; mean: number | null; low: number }
 interface Report {
   days: number; evals: QaEval[]; pass_at: number; fail_below: number;
+  /** The switch "Apply evaluation lessons without approval": a lesson nothing goes against is put to use with no lead. */
+  lessons_auto_apply: boolean;
   summary: {
-    count: number; mean_score: number | null; pass_rate: number | null; grades: Record<"pass" | "needs_work" | "fail", number>; evaluators: number; read_by_gemini: number;
-    lessons: { filed: number; waiting: number; applied: number; rejected: number; failed: number }; examples_kept: number; verdicts_recorded: number;
+    count: number; mean_score: number | null; pass_rate: number | null; grades: Record<"pass" | "needs_work" | "fail", number>; evaluators: number; read_by_gemini: number; revised: number;
+    lessons: { filed: number; waiting: number; held: number; applied: number; rejected: number; failed: number }; examples_kept: number; verdicts_recorded: number;
   };
   criteria: CriterionRow[];
   weekly: { week: string; count: number; mean_score: number | null }[];
@@ -42,7 +44,7 @@ function EvalRow({ ev, open, onToggle }: { ev: QaEval; open: boolean; onToggle: 
         <td className={cx(TD, "whitespace-nowrap")}>{fmtDateTime(ev.at)}</td>
         <td className={TD}>
           <span className="font-medium text-zinc-900 dark:text-zinc-100">{ev.title}</span>
-          <span className="block text-xs text-zinc-500">{ev.id} · {KIND_WORDS[ev.subject_type]}{ev.case_id ? <> · <Link className="text-blue-600 dark:text-blue-200" to={`/feed/${ev.case_id}`} onClick={(e) => e.stopPropagation()}>{ev.case_id}</Link></> : null}</span>
+          <span className="block text-xs text-zinc-500">{ev.id}{ev.revision > 0 ? " (revised)" : ""} · {KIND_WORDS[ev.subject_type]}{ev.case_id ? <> · <Link className="text-blue-600 dark:text-blue-200" to={`/feed/${ev.case_id}`} onClick={(e) => e.stopPropagation()}>{ev.case_id}</Link></> : null}</span>
         </td>
         <td className={TD}>{ev.evaluator}</td>
         <td className={cx(TD, "whitespace-nowrap tabular-nums")}><span className="font-medium">{ev.score ?? "n/a"}</span> <Badge tone={grade.tone}>{grade.label}</Badge></td>
@@ -105,10 +107,10 @@ export default function QaEvalsPage() {
       {report.loading && !r ? <Spinner /> : r && s && (
         <div className="space-y-5">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <Stat label="Evaluations" value={s.count} hint={`by ${s.evaluators} ${s.evaluators === 1 ? "person" : "people"}`} />
+            <Stat label="Evaluations" value={s.count} hint={`one an alert, by ${s.evaluators} ${s.evaluators === 1 ? "person" : "people"}; ${s.revised} revised`} />
             <Stat label="Average score" value={s.mean_score ?? "n/a"} hint="of 100" tone={s.mean_score === null ? undefined : s.mean_score >= r.pass_at ? "emerald" : s.mean_score < r.fail_below ? "rose" : "violet"} />
             <Stat label="Passed" value={s.pass_rate === null ? "n/a" : `${Math.round(s.pass_rate * 100)}%`} hint={`${s.grades.pass} pass, ${s.grades.needs_work} need work, ${s.grades.fail} fail`} />
-            <Stat label="Lessons filed" value={s.lessons.filed} hint={`${s.lessons.applied} in use, ${s.lessons.waiting} waiting`} />
+            <Stat label="Lessons filed" value={s.lessons.filed} hint={`${s.lessons.applied} in use, ${s.lessons.held + s.lessons.waiting} with a lead`} />
             <Stat label="Checked examples kept" value={s.examples_kept} hint="the agent is tested against these" />
             <Stat label="Read by Gemini" value={s.read_by_gemini} hint={`of ${s.count}; the rest read plainly`} />
           </div>
@@ -139,7 +141,13 @@ export default function QaEvalsPage() {
                   ))}
                 </ul>
               )}
-              <p className="mt-4 text-xs text-zinc-500">A lesson is used by the agent only after a lead approves it under <Link className="font-medium text-blue-600 dark:text-blue-200" to="/learning">Knowledge, Learning</Link>. {s.lessons.waiting} waiting now.</p>
+              <p className="mt-4 text-xs text-zinc-500">
+                {r.lessons_auto_apply
+                  ? "Gemini compares a lesson with the lessons already in use and the nearest passages of the knowledge documents. Nothing against it: it is in use at once. Something against it, or no clear answer: it is held for a lead under "
+                  : "A lesson is used by the agent only after a lead approves it under "}
+                <Link className="font-medium text-blue-600 dark:text-blue-200" to="/learning">Knowledge, Learning</Link>. {s.lessons.held + s.lessons.waiting} with a lead now.
+                {" "}A lesson in use is read by the alert reviewer on every alert, or by the agent's own alert review when it came from one of its alerts.
+              </p>
             </Card>
           </div>
 

@@ -84,7 +84,9 @@ TOPICS: list[dict[str, Any]] = [
                 "Click into the email and type: you edit it as it will look. The toolbar has bold, italic, underline, lists and links.",
                 "Check To, Cc, Bcc and the subject. Routed to shows the groups the routing rules chose.",
                 "Press Save as a draft in Gmail. The draft lands in your own Gmail; connect Gmail from the top bar first.",
-                "Open it in Gmail to send. The Console never sends an email.",
+                "Open it in Gmail to send. The Console sends nothing on its own.",
+                "With the switch Send alert emails from the Console on, Send now is beside Save: it asks first, saying who the email goes to, "
+                "then saves it as it is written and sends it from your Gmail. While Testing is on it goes to the Testing recipients only, and with none set it is not sent.",
                 "Start over from the alert drops your edits and writes the email again.",
                 "While Testing is ON the draft is addressed only to the testing recipients."]},
             {"heading": "Trust & Safety form", "steps": [
@@ -103,7 +105,15 @@ TOPICS: list[dict[str, Any]] = [
                 "Press Grade the chatbot's work. Rate each thing from 1 to 5, or leave it Not rated.",
                 "Say what was right, what was wrong and what it should do next time.",
                 "Submit. The score is counted from your ratings and their weights; no model sets it.",
-                "You are shown what was understood and what was done with it: a checked example kept, and each lesson filed for a lead to approve.",
+                "One person evaluates an alert. The first to submit owns its evaluation and can revise it (Revise your evaluation); everyone else reads it.",
+                "You are shown what was understood and what was done with it: a checked example kept, and what became of each lesson.",
+                "A lesson waits for a lead under Knowledge, Learning. With the switch Apply evaluation lessons without approval on, Gemini compares it with the "
+                "lessons already in use and the passages of the knowledge documents nearest to it instead: nothing against it and it is in use at once; "
+                "anything else (something against it, or no clear answer) and it is held for a lead, with what it goes against.",
+                "The check lowers the chance of a contradiction; it does not rule one out. It reads the nearest passages, not every line of every document. "
+                "Each lesson in use says what it was compared with.",
+                "A lesson in use is read by the alert reviewer on every alert (by the agent's own alert review when it came from one of its alerts) and in chat answers. "
+                "A lead can take one out of use under Knowledge, Learning.",
                 "Every evaluation is listed under Records, Chatbot QA evaluations."]},
             {"heading": "Decide an alert held for review", "steps": [
                 "Open the alert and press Decide.", "Tick the proposed corrections to apply, then send it on. Or Send back to Burson, or Suppress.",
@@ -270,7 +280,7 @@ TOPICS: list[dict[str, Any]] = [
                 "Tie a document to a class on the document itself (Classes), or give the class tags under Settings → Classification."]},
             {"heading": "Try retrieval", "steps": ["Open Try a search.", "Type a question or paste an alert.", "The passages the agent would read are listed with their scores."]},
             {"heading": "Checked examples", "items": ["Every alert an IM confirmed or corrected is kept as an example of the right answer.", "Export downloads them as a file used to test the agent."]},
-            {"heading": "Learning", "text": "Facts taught in Chat and proposed configuration changes wait under Proposed rules and facts."},
+            {"heading": "Learning", "text": "Facts taught in Chat, lessons from evaluations that are held or waiting, and proposed configuration changes wait under Proposed rules and facts. A lead can take a fact or a lesson in use out of use there."},
         ],
     },
     {

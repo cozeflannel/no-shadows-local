@@ -288,6 +288,7 @@ def email_state(ctx: "AgentContext", case: Case, analyst: str) -> dict[str, Any]
         "gmail": {"connected": service.connection_error(ctx, analyst) is None, "url": _gmail_link(analyst, email)},
         "testing": {"on": testers is not None, "recipients": len(testers or [])}, "others": others,
         "templates": alert_html.TEMPLATES, "recipients_in": ctx.config.escalation.recipients_in,
+        "can_send": ctx.flag(safety.SEND_SWITCH),  # the switch "Send alert emails from the Console"
     }
 
 
@@ -360,6 +361,46 @@ def save_email(ctx: "AgentContext", case: Case, analyst: str, *, subject: str, t
         if email.versions:
             email.versions[-1].instruction = CONSOLE_EDIT
             ctx.store.save_escalation(esc)
+    return email_state(ctx, case, analyst)
+
+
+def send_email(ctx: "AgentContext", case: Case, analyst: str, *, subject: str, to: list[str], cc: list[str], bcc: list[str],
+               html: str) -> dict[str, Any]:
+    """Send the alert email from the analyst's own Gmail, as it is written in the composer right now.
+
+    The email is saved first, exactly as Save does (the edit kept, the draft written), then sent through the safety
+    wrapper, which writes the whole email to the draft once more under the recipient rules and sends it straight after:
+    while Testing is on it goes to the Testing recipients only, and with none named it is not sent. What Gmail then holds
+    is read back the way a send from Gmail is noticed, so the alert's record, its SLA and the event log read the same."""
+    if not ctx.flag(safety.SEND_SWITCH):
+        raise UserFacingError("Sending from the Console is off (Settings, Switches: Send alert emails from the Console). Save the draft and send it from Gmail.")
+    testers = safety.testing_recipients(ctx.config)
+    if testers is not None and not testers:
+        raise UserFacingError("Testing is on and no Testing recipient is named, so nothing is sent. Name one under Settings, Safety and Testing.")
+    if not (to or cc or bcc):
+        raise UserFacingError("The email has no recipients.")
+    save_email(ctx, case, analyst, subject=subject, to=to, cc=cc, bcc=bcc, html=html)
+    esc = _mine(ctx, case, analyst)
+    email = esc.email_for("alert") if esc else None
+    if esc is None or email is None or not service.is_open(email) or not email.draft_id:
+        raise UserFacingError("There is no draft to send. Save the email and try again.")
+    kept = ctx.store.get_doc(COMPOSE, _compose_id(case, analyst)) or {}
+    full = {**service._full_fields(ctx, email, subject=kept["subject"], body=alert_html.html_to_text(kept["html"]), to=kept["to"], cc=kept["cc"], bcc=kept["bcc"]),
+            "html_body": kept["html"]}
+    gateway = ctx.gmail if isinstance(ctx.gmail, safety.SafeGmail) else safety.SafeGmail(ctx.gmail, lambda: ctx)  # never sent around the rules
+    try:
+        gateway.send_draft(analyst, email.draft_id, **full)
+    except safety.SendRefused as exc:
+        raise UserFacingError(str(exc)) from exc
+    except GmailError as exc:
+        raise UserFacingError(f"Gmail did not send it: {exc}. The draft is still in your Gmail.") from exc
+    service._refresh(ctx, esc, email, case)  # Gmail now holds a sent message where the draft was
+    if email.status != EmailStatus.SENT:  # Gmail has not shown it yet: it was sent, so it is recorded as sent now
+        service._mark_sent(ctx, esc, email, {"sent_at": ctx.now()}, case)
+    went_to = len(testers) if testers is not None else len(safety.filter_recipients(ctx.config, [*kept["to"], *kept["cc"], *kept["bcc"]])[0])
+    ctx.audit(actor=analyst, action="email.send", surface="console", target_type="escalation", target_id=esc.escalation_id, case_id=case.case_id,
+              summary=f"Sent the alert email for {case.case_id} from the Console to {went_to} {'Testing recipient' if testers is not None else 'recipient'}{'s' if went_to != 1 else ''}",
+              detail={"testing": testers is not None, "recipients": went_to})
     return email_state(ctx, case, analyst)
 
 

@@ -9,9 +9,15 @@
                                              is shown as a precedent
                                           2. Gemini says back what it understood and words up to three lessons (it adds
                                              no numbers; when it can't be asked, the analyst's own words stand)
-                                          3. each lesson is filed as a proposed fact: the agent reads it only once a lead
-                                             approves it under Knowledge, Learning
+                                          3. each lesson is filed (lessons.py): with the switch "Apply evaluation lessons
+                                             without approval" on it is checked against the knowledge documents and the
+                                             lessons in use, and is in use at once when nothing goes against it; otherwise
+                                             it waits for a lead under Knowledge, Learning
+    standing(ctx, type, id, person)     who evaluated this alert, and whether this person may evaluate or revise it
     report(ctx, days)                   every evaluation with its score and steps as they stand now, and the totals
+
+One person evaluates an alert. The first to submit owns its evaluation: they may revise it (the same evaluation, counted
+again, its earlier lessons withdrawn unless the revision says the same), and nobody else may submit one.
 
 What is graded: "case" = the chatbot's review of an alert (its call, its fixes, what it wrote, who it routed to);
 "agent_alert" = an alert the agent raised on its own (whether to raise it, its severity, its routing, its reasoning).
@@ -26,13 +32,17 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field
 
 from . import render
-from .models import ProposalStatus
 from .operations import UserFacingError
 
 if TYPE_CHECKING:  # pragma: no cover
     from .context import AgentContext
 
 log = logging.getLogger(__name__)
+
+
+class Taken(UserFacingError):
+    """Someone else has evaluated this alert: one person evaluates an alert."""
+
 
 COLLECTION = "qa_evals"
 ID_PREFIX = "QAE"
@@ -41,6 +51,8 @@ SubjectType = Literal["case", "agent_alert"]
 SCALE = {1: "Wrong", 2: "Mostly wrong", 3: "Partly right", 4: "Mostly right", 5: "Right"}
 PASS_AT, FAIL_BELOW = 80.0, 50.0  # the score at which the work passes, and below which it fails
 LESSONS_MAX = 3
+HISTORY_MAX = 10  # the earlier versions of a revised evaluation that are kept
+LOCK_SECONDS = 120
 
 RUBRICS: dict[str, list[dict[str, Any]]] = {
     "case": [
@@ -174,8 +186,12 @@ def comprehend(ctx: "AgentContext", record: dict[str, Any]) -> dict[str, Any]:
         return {**plain, "why_plain": str(exc)[:200]}
 
 
-def _apply(ctx: "AgentContext", record: dict[str, Any]) -> list[dict[str, Any]]:
-    """Use the evaluation and say what was done with it, step by step. A step that fails is kept as failed, with why."""
+def _apply(ctx: "AgentContext", record: dict[str, Any], previous: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Use the evaluation and say what was done with it, step by step. A step that fails is kept as failed, with why.
+    `previous` is the evaluation this one revises: a lesson it filed stands when the revision says the same, and is
+    withdrawn when it does not."""
+    from . import lessons
+
     steps: list[dict[str, Any]] = []
     actor, ratings = record["evaluator"], record["ratings"]
     if record["subject_type"] == "case":
@@ -191,6 +207,7 @@ def _apply(ctx: "AgentContext", record: dict[str, Any]) -> list[dict[str, Any]]:
             steps.append({"kind": "golden", "status": "failed", "ref": record["subject_id"], "text": f"Not kept as a checked example: {str(exc)[:200]}"})
     else:
         from .ownalerts import feedback
+        from .ownalerts.review import DECISIONS
 
         rating = ratings.get("raise")
         verdict = "TRUE_POSITIVE" if rating is not None and rating >= 4 else "FALSE_POSITIVE" if rating is not None and rating <= 2 else ""
@@ -199,21 +216,54 @@ def _apply(ctx: "AgentContext", record: dict[str, Any]) -> list[dict[str, Any]]:
                           "text": "No verdict was recorded: \"Raising it\" was rated in the middle or not at all."})
         else:
             words = "confirmed" if verdict == "TRUE_POSITIVE" else "a false positive"
+            said = f"Recorded as {words}: the reviewer is shown this verdict as a precedent on alerts like it."
             try:
-                feedback.record(ctx, record["subject_id"], verdict, actor)
-                steps.append({"kind": "verdict", "status": "done", "ref": record["subject_id"],
-                              "text": f"Recorded as {words}: the reviewer is shown this verdict as a precedent on alerts like it."})
+                if (ctx.store.get_doc(DECISIONS, record["subject_id"]) or {}).get("verdict") != verdict:  # the same verdict again is not a new row
+                    feedback.record(ctx, record["subject_id"], verdict, actor)
+                steps.append({"kind": "verdict", "status": "done", "ref": record["subject_id"], "text": said})
             except Exception as exc:  # noqa: BLE001
                 steps.append({"kind": "verdict", "status": "failed", "ref": record["subject_id"], "text": f"The verdict ({words}) was not recorded: {str(exc)[:200]}"})
-    from .converse import teach
-
+    source = f"{lessons.SOURCE}{record['id']}"
+    earlier = {lessons._same_words(s["text"]): s for s in (previous or {}).get("steps") or [] if s.get("kind") == "lesson" and s.get("ref")}
     for lesson in record["comprehension"]["lessons"]:
+        stands = earlier.pop(lessons._same_words((lesson or "").strip().rstrip(".") + "."), None)
+        if stands is not None:  # the revision says the same: the lesson filed before stands as it is
+            steps.append({k: stands[k] for k in ("kind", "status", "ref", "text", "same") if k in stands})
+            continue
         try:
-            fact, _ = teach.propose_fact(ctx, lesson, actor, source=f"qa_eval:{record['id']}")
-            steps.append({"kind": "lesson", "status": "waiting", "ref": fact.fact_id, "text": lesson})
+            steps.append(lessons.file(ctx, lesson, actor, source=source, scope=lessons.SCOPES[record["subject_type"]]))
         except Exception as exc:  # noqa: BLE001
             steps.append({"kind": "lesson", "status": "failed", "ref": "", "text": f"{lesson} (not filed: {str(exc)[:160]})"})
+    for gone in earlier.values():  # what the earlier version taught and this one does not
+        try:
+            if lessons.withdraw(ctx, gone["ref"], actor, source=source):
+                steps.append({"kind": "lesson", "status": "rejected", "ref": gone["ref"], "text": gone["text"]})
+        except Exception as exc:  # noqa: BLE001
+            steps.append({"kind": "lesson", "status": "failed", "ref": gone["ref"], "text": f"{gone['text']} (not withdrawn: {str(exc)[:160]})"})
     return steps
+
+
+def _records(ctx: "AgentContext", subject_type: str, subject_id: str) -> list[dict[str, Any]]:
+    """Every evaluation kept for one alert, the first one first."""
+    rows = [r for r in ctx.store.list_docs(COLLECTION, where={"subject_id": subject_id}, limit=50) if r.get("subject_type") == subject_type]
+    return sorted(rows, key=lambda r: (r.get("first_at") or r.get("at") or "", r.get("id") or ""))
+
+
+def _owned(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The evaluation that stands for an alert: the first evaluator's, as they last left it."""
+    if not rows:
+        return None
+    owner = str(rows[0].get("evaluator") or "").lower()
+    return max((r for r in rows if str(r.get("evaluator") or "").lower() == owner), key=lambda r: (r.get("at") or "", r.get("id") or ""))
+
+
+def standing(ctx: "AgentContext", subject_type: str, subject_id: str, person: str) -> dict[str, Any]:
+    """Who evaluated this alert and what `person` may do: {evaluator, eval_id, mine, can_submit}."""
+    owned = _owned(_records(ctx, subject_type, subject_id))
+    if owned is None:
+        return {"evaluator": None, "eval_id": None, "mine": False, "can_submit": True}
+    mine = str(owned.get("evaluator") or "").lower() == (person or "").lower()
+    return {"evaluator": owned.get("evaluator"), "eval_id": owned.get("id"), "mine": mine, "can_submit": mine}
 
 
 def submit(ctx: "AgentContext", *, subject_type: str, subject_id: str, evaluator: str, ratings: dict[str, int | None], comment: str = "",
@@ -232,17 +282,30 @@ def submit(ctx: "AgentContext", *, subject_type: str, subject_id: str, evaluator
     if counted["score"] is None:
         raise UserFacingError("Rate at least one criterion.")
     subject = _subject(ctx, subject_type, subject_id)
-    now = ctx.now()
-    record: dict[str, Any] = {
-        "id": ctx.store.next_id(ID_PREFIX), "subject_type": subject_type, "subject_id": subject["id"], "case_id": subject["case_id"],
-        "title": subject["title"], "work": subject["work"], "evaluator": evaluator, "at": now.isoformat(), "ratings": clean,
-        "comment": " ".join((comment or "").split())[:2000], "corrections": corrections or {}, **counted, "env": ctx.config.env,
-    }
-    record["comprehension"] = comprehend(ctx, record)
-    record["steps"] = _apply(ctx, record)
-    ctx.store.put_doc(COLLECTION, record["id"], record)
-    ctx.audit(actor=evaluator, action="qa_eval.submit", surface="console", target_type="qa_eval", target_id=record["id"], case_id=subject["case_id"],
-              summary=f"Graded the chatbot's work on {subject['id']}: {counted['score']} of 100")
+    lock = f"qa_eval:{subject_type}:{subject['id']}"  # two people submitting at the same moment: one of them is first
+    if not ctx.store.claim_idempotent(lock, ttl_s=LOCK_SECONDS):
+        raise Taken("An evaluation of this alert is being submitted right now. Open the alert again in a moment.")
+    try:
+        previous = _owned(_records(ctx, subject_type, subject["id"]))
+        if previous is not None and str(previous.get("evaluator") or "").lower() != evaluator.lower():
+            raise Taken(f"{previous.get('evaluator')} evaluated this alert. One person evaluates an alert: only they can revise it.")
+        now = ctx.now()
+        record: dict[str, Any] = {
+            "id": previous["id"] if previous else ctx.store.next_id(ID_PREFIX), "subject_type": subject_type, "subject_id": subject["id"],
+            "case_id": subject["case_id"], "title": subject["title"], "work": subject["work"], "evaluator": evaluator, "at": now.isoformat(),
+            "ratings": clean, "comment": " ".join((comment or "").split())[:2000], "corrections": corrections or {}, **counted, "env": ctx.config.env,
+            "first_at": (previous or {}).get("first_at") or (previous or {}).get("at") or now.isoformat(), "revision": 0, "history": [],
+        }
+        if previous:
+            record["revision"] = int(previous.get("revision") or 0) + 1
+            record["history"] = [*(previous.get("history") or []), {k: previous.get(k) for k in ("at", "score", "grade", "ratings", "comment", "corrections")}][-HISTORY_MAX:]
+        record["comprehension"] = comprehend(ctx, record)
+        record["steps"] = _apply(ctx, record, previous)
+        ctx.store.put_doc(COLLECTION, record["id"], record)
+    finally:
+        ctx.store.release_idempotent(lock)
+    ctx.audit(actor=evaluator, action="qa_eval.revise" if previous else "qa_eval.submit", surface="console", target_type="qa_eval", target_id=record["id"],
+              case_id=subject["case_id"], summary=f"{'Revised the grade of' if previous else 'Graded'} the chatbot's work on {subject['id']}: {counted['score']} of 100")
     return view(ctx, record)
 
 
@@ -250,29 +313,30 @@ def submit(ctx: "AgentContext", *, subject_type: str, subject_id: str, evaluator
 # Reading them back
 # ---------------------------------------------------------------------------------------------------------------
 
-_LESSON_WORDS = {"PENDING": ("waiting", "Waiting for a lead to approve it under Knowledge, Learning."),
-                 "APPROVED": ("applied", "Approved: the agent reads it on every alert from now on."),
-                 "REJECTED": ("rejected", "Rejected by a lead: the agent does not use it.")}
-
-
 def view(ctx: "AgentContext", record: dict[str, Any]) -> dict[str, Any]:
-    """An evaluation with its steps as they stand now (a lesson filed earlier may since have been approved or rejected)."""
+    """An evaluation with its steps as they stand now (a lesson filed earlier may since have been put to use, held,
+    turned down or withdrawn)."""
+    from . import lessons
+
     steps = []
     for step in record.get("steps") or []:
         step = dict(step)
         if step.get("kind") == "lesson" and step.get("ref"):
             fact = ctx.store.get_fact(step["ref"])
-            status = fact.status.value if fact is not None else ProposalStatus.PENDING.value
-            step["status"], step["note"] = _LESSON_WORDS.get(status, _LESSON_WORDS["PENDING"])
+            if fact is not None:
+                lessons.scope_of(ctx, fact)
+            step["status"], step["note"] = lessons.standing(fact, same=bool(step.get("same")))
             step["decided_by"] = fact.decided_by if fact is not None else None
         steps.append(step)
-    return {**record, "steps": steps}
+    return {"revision": 0, "first_at": record.get("at"), **record, "steps": steps}
 
 
 def for_subject(ctx: "AgentContext", subject_type: str, subject_id: str) -> list[dict[str, Any]]:
-    rows = ctx.store.list_docs(COLLECTION, where={"subject_id": subject_id}, limit=50)
-    rows = [r for r in rows if r.get("subject_type") == subject_type]
-    return [view(ctx, r) for r in sorted(rows, key=lambda r: r.get("at") or "", reverse=True)]
+    """An alert's evaluations, the one that stands first (from before one person evaluated an alert there can be more)."""
+    rows = _records(ctx, subject_type, subject_id)
+    owned = _owned(rows)
+    rest = sorted((r for r in rows if r is not owned), key=lambda r: r.get("at") or "", reverse=True)
+    return [view(ctx, r) for r in ([owned] if owned else []) + rest]
 
 
 def _mean(values: list[float]) -> float | None:
@@ -306,12 +370,13 @@ def report(ctx: "AgentContext", days: int = 30, subject_type: str = "") -> dict[
     return {
         "days": days, "evals": evals,
         "summary": {"count": len(evals), "mean_score": _mean(scores), "pass_rate": round(grades["pass"] / len(evals), 3) if evals else None,
-                    "grades": grades, "evaluators": len({r.get("evaluator") for r in evals}),
+                    "grades": grades, "evaluators": len({r.get("evaluator") for r in evals}), "revised": sum(1 for r in evals if int(r.get("revision") or 0) > 0),
                     "read_by_gemini": sum(1 for r in evals if (r.get("comprehension") or {}).get("by") == "gemini"),
-                    "lessons": {"filed": len(lessons), **{k: sum(1 for s in lessons if s.get("status") == k) for k in ("waiting", "applied", "rejected", "failed")}},
+                    "lessons": {"filed": len(lessons), **{k: sum(1 for s in lessons if s.get("status") == k) for k in ("waiting", "held", "applied", "rejected", "failed")}},
                     "examples_kept": sum(1 for s in steps if s.get("kind") == "golden" and s.get("status") == "done"),
                     "verdicts_recorded": sum(1 for s in steps if s.get("kind") == "verdict" and s.get("status") == "done")},
         "criteria": criteria,
         "weekly": [{"week": w, "count": len(v), "mean_score": _mean(v)} for w, v in sorted(weeks.items())],
         "pass_at": PASS_AT, "fail_below": FAIL_BELOW,
+        "lessons_auto_apply": ctx.flag("lessons_auto_apply"),  # whether a lesson nothing goes against is put to use with no lead
     }

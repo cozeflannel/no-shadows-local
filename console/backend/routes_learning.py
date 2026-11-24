@@ -21,6 +21,10 @@ class DecisionBody(BaseModel):
     decision: Literal["approve", "reject"]
 
 
+class FactDecisionBody(BaseModel):
+    decision: Literal["approve", "reject", "withdraw"]  # withdraw: take a fact or a lesson that is in use out of use
+
+
 def _status(status: str | None) -> ProposalStatus | None:
     if not status:
         return None
@@ -92,25 +96,36 @@ def get_facts(
     ctx: AgentContext = Depends(get_ctx),
     user: User = Depends(require_viewer),
 ) -> dict[str, Any]:
+    from triage_agent import lessons
+
     items = sorted(ctx.store.list_facts(status=_status(status), limit=2000), key=lambda f: f.created_at, reverse=True)
+    facts = []
+    for f in items:
+        lessons.scope_of(ctx, f)
+        word, note = lessons.standing(f)  # how it stands and who reads it, in words
+        facts.append({**f.model_dump(mode="json"), "standing": {"status": word, "note": note}})
     return {
-        "facts": [f.model_dump(mode="json") for f in items],
+        "facts": facts,
         "pending": sum(1 for f in items if f.status == ProposalStatus.PENDING),
         "op_available": op_available("decide_fact"),
+        "auto_apply": ctx.flag(lessons.SWITCH),
     }
 
 
 @router.post("/facts/{fact_id}")
 def post_fact_decision(
     fact_id: str,
-    body: DecisionBody,
+    body: FactDecisionBody,
     ctx: AgentContext = Depends(get_ctx),
     user: User = Depends(require_lead),
 ) -> dict[str, Any]:
     fact = ctx.store.get_fact(fact_id)
     if fact is None:
         raise HTTPException(404, {"error": f"Fact {fact_id} not found", "code": "not_found"})
-    if fact.status != ProposalStatus.PENDING:
+    if body.decision == "withdraw":  # take one that is in use out of use
+        if fact.status != ProposalStatus.APPROVED:
+            raise HTTPException(409, {"error": f"Fact {fact_id} is not in use", "code": "conflict"})
+    elif fact.status != ProposalStatus.PENDING:
         raise HTTPException(409, {"error": f"Fact {fact_id} is already {fact.status.value}", "code": "conflict"})
     result = run_op(ctx, "decide_fact", {"id": fact.fact_id, "decision": body.decision, "actor": user.email}, user)
     updated = ctx.store.get_fact(fact.fact_id)

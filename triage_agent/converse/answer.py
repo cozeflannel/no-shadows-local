@@ -239,7 +239,7 @@ def grounding(ctx: "AgentContext", question: str, *, external: bool = False, cas
 
     facts = ctx.store.list_facts(status=ProposalStatus.APPROVED, limit=100)
     if facts:
-        sections.append("[Facts] (approved by admins)\n" + "\n".join(f"- [{f.fact_id}] {f.text}" for f in facts))
+        sections.append("[Facts] (in use: approved by a lead, or a lesson nothing was found against)\n" + "\n".join(f"- [{f.fact_id}] {f.text}" for f in facts))
         sources.append("facts")
     if cfg.knowledge.faq:
         sections.append("[FAQ]\n" + "\n".join(f"- [FAQ {i}] Q: {f.question} A: {f.answer}" for i, f in enumerate(cfg.knowledge.faq, 1)))

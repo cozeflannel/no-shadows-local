@@ -67,6 +67,7 @@ PURPOSE_MODELS: dict[str, str] = {
     "temp_check.query": "platform.temp_check.model", "temp_check.suggest": "platform.temp_check.model", "temp_check.relevance": "platform.temp_check.model",
     "temp_check.writeup": "platform.temp_check.model", "temp_check.web": "platform.temp_check.model",
     "stories.read": "platform.stories.read_model", "own.review": "platform.own_alerts.deep_model",
+    "qa.comprehend": "models.converse", "lessons.check": "models.converse",
 }
 # Known to work for this project, offered when the catalogue cannot be read: the chat models each answered Vertex AI in
 # November 2026; the embedding models are in Vertex AI's catalogue for us-central1, where BigQuery's US datasets call them.
