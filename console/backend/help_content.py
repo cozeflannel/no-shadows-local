@@ -187,6 +187,13 @@ TOPICS: list[dict[str, Any]] = [
                 "Nothing changes the schedule until you accept."]},
             {"heading": "Methods", "text": "TimesFM (BigQuery AI.FORECAST) is the primary method. ARIMA_PLUS is the fallback and shows trend and daily and weekly patterns. Choose under Settings → Forecasting."},
             {"heading": "Reports", "steps": ["Open Reports and pick a period.", "Coverage, utilization, forecast accuracy (MAPE) and the gaps are shown.", "Export CSV downloads the report."]},
+            {"heading": "Handovers and the calendar", "items": [
+                "A handover is made for each shift when it ends, and posted to the team space. It is listed under Handovers on the Now tab and shows on the calendar below it.",
+                "Click a handover to open it: what was posted, the shift in numbers, its incident reports, and each alert with its timeline.",
+                "Add a note at the bottom of a handover. It is kept under your name.",
+                "Make the handover for the shift that just ended yourself with the button on the Handovers card. A shift is handed over once.",
+                "The calendar also shows incident reports. Click one to open it.",
+                "The Handover doc is no longer written. An admin can turn it back on under Settings."]},
         ],
     },
     {

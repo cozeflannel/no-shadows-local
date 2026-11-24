@@ -96,6 +96,7 @@ def test_burson_digest_once_per_day(ctx, fake_llm):
 
 
 def test_handover_after_shift_end(ctx, clock):
+    ctx.config.handover.append_to_doc = True  # the Handover doc is an option now, off unless set (the owner, 24 Nov 2026)
     triage(ctx, GOOD_ALERT)
     clock.now = datetime(2026, 10, 12, 22, 10, tzinfo=timezone.utc)  # 6:10 pm ET: AMER late ended at 6:00
     run(ctx, "handover")

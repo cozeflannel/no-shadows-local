@@ -215,7 +215,7 @@ outbox:
 handover:
   enabled: true
   post_to_team: true
-  append_to_doc: true
+  append_to_doc: false  # the team space and the Console, not the Handover doc (the owner, 24 Nov 2026)
   minutes_after_shift_end: 5
 
 metrics:

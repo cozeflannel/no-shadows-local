@@ -2,7 +2,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useApi } from "../api/hooks";
-import { IncidentDialog } from "./IncidentDialog";
+import { HandoverDialog, IncidentDialog } from "./IncidentDialog";
 import { Alert, Button, Card, cx, Segmented } from "./ui";
 
 export interface CalEvent { kind: "incident" | "handover"; id: string; title: string; start: string; end: string; open: boolean; priority: string; notes: number }
@@ -16,7 +16,8 @@ const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), 
 const weekStart = (d: Date) => addDays(dayStart(d), -d.getDay());
 const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 const hour = (h: number) => new Date(2000, 0, 1, h).toLocaleTimeString([], { hour: "numeric" });
-const tone = (e: CalEvent) => (e.priority === "P0" ? "bg-rose-600 text-white dark:bg-rose-300 dark:text-rose-950"
+const tone = (e: CalEvent) => (e.kind === "handover" ? "bg-emerald-700 text-white dark:bg-emerald-300 dark:text-emerald-950"
+  : e.priority === "P0" ? "bg-rose-600 text-white dark:bg-rose-300 dark:text-rose-950"
   : e.open ? "bg-blue-600 text-white dark:bg-blue-200 dark:text-blue-950" : "bg-zinc-300 text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100");
 
 /** The part of an event that falls on one day, as minutes from midnight. */
@@ -55,7 +56,7 @@ function Month({ anchor, events, onOpen, onDay }: { anchor: Date; events: CalEve
                 sameDay(day, today) ? "bg-blue-600 font-semibold text-white dark:bg-blue-200 dark:text-blue-950" : out ? "text-zinc-400" : "text-zinc-700 dark:text-zinc-200")}>{day.getDate()}</button>
             <div className="space-y-1">
               {here.slice(0, 3).map((e) => (
-                <button key={e.id} type="button" onClick={() => onOpen(e)} title={e.title} className={cx("block w-full truncate rounded px-1.5 py-0.5 text-left text-xs font-medium", tone(e))}>{e.title}</button>
+                <button key={`${e.kind}${e.id}`} type="button" onClick={() => onOpen(e)} title={e.title} className={cx("block w-full truncate rounded px-1.5 py-0.5 text-left text-xs font-medium", tone(e))}>{e.title}</button>
               ))}
               {here.length > 3 && <button type="button" onClick={() => onDay(day)} className="text-xs text-blue-700 hover:underline dark:text-blue-200">{here.length - 3} more</button>}
             </div>
@@ -88,7 +89,7 @@ function Week({ anchor, events, onOpen }: { anchor: Date; events: CalEvent[]; on
             <div key={day.toISOString()} className="relative border-l border-zinc-200 dark:border-zinc-800"
               style={{ backgroundImage: "linear-gradient(to bottom, color-mix(in srgb, currentColor 10%, transparent) 1px, transparent 1px)", backgroundSize: `100% ${HOUR}px` }}>
               {placed.map(({ e, from, to, lane }) => (
-                <button key={e.id} type="button" onClick={() => onOpen(e)} title={e.title}
+                <button key={`${e.kind}${e.id}`} type="button" onClick={() => onOpen(e)} title={e.title}
                   className={cx("absolute overflow-hidden rounded-md px-1.5 py-0.5 text-left text-xs font-medium leading-tight shadow-sm", tone(e))}
                   style={{ top: (from / 60) * HOUR, height: Math.max(((to - from) / 60) * HOUR - 2, 20), left: `calc(${(lane / count) * 100}% + 2px)`, width: `calc(${100 / count}% - 4px)` }}>{e.title}</button>
               ))}
@@ -100,16 +101,18 @@ function Week({ anchor, events, onOpen }: { anchor: Date; events: CalEvent[]; on
   );
 }
 
-/** Incident reports (and handovers) on a calendar, by month or week. Clicking one opens it in a window over the page. */
-export function CalendarCard({ title = "Calendar", className }: { title?: string; className?: string }) {
+/** Incident reports and handovers on a calendar, by month or week. Clicking one opens it in a window over the page. */
+export function CalendarCard({ title = "Calendar", className, refreshKey = 0 }: { title?: string; className?: string; refreshKey?: number }) {
   const [view, setView] = useState<View>("month");
   const [anchor, setAnchor] = useState(() => dayStart(new Date()));
-  const [open, setOpen] = useState<string | null>(null);
+  const [incident, setIncident] = useState<string | null>(null);
+  const [handover, setHandover] = useState<string | null>(null);
+  const openEvent = (e: CalEvent) => (e.kind === "handover" ? setHandover(e.id) : setIncident(e.id));
   const [from, to] = useMemo(() => {
     const a = view === "month" ? weekStart(new Date(anchor.getFullYear(), anchor.getMonth(), 1)) : weekStart(anchor);
     return [a, addDays(a, view === "month" ? 42 : 7)];
   }, [view, anchor]);
-  const params = useMemo(() => ({ start: from.toISOString(), end: to.toISOString() }), [from, to]);
+  const params = useMemo(() => ({ start: from.toISOString(), end: to.toISOString(), n: refreshKey }), [from, to, refreshKey]);
   const { data, error, reload } = useApi<Feed>("/calendar", params, 60_000);
   const move = (n: number) => setAnchor(view === "month" ? new Date(anchor.getFullYear(), anchor.getMonth() + n, 1) : addDays(anchor, 7 * n));
   const heading = view === "month" ? anchor.toLocaleDateString([], { month: "long", year: "numeric" })
@@ -117,7 +120,7 @@ export function CalendarCard({ title = "Calendar", className }: { title?: string
   const events = data?.events ?? [];
 
   return (
-    <Card className={className} title={title} subtitle="Incident reports, from each alert's arrival to its end. Click one to open it."
+    <Card className={className} title={title} subtitle="Incident reports, from each alert's arrival to its end, and each shift's handover. Click one to open it."
       actions={<div className="flex flex-wrap items-center gap-2">
         <Button onClick={() => setAnchor(dayStart(new Date()))}>Today</Button>
         <Button aria-label={view === "month" ? "Earlier month" : "Earlier week"} icon={<ChevronLeft className="size-4" />} onClick={() => move(-1)} />
@@ -129,9 +132,10 @@ export function CalendarCard({ title = "Calendar", className }: { title?: string
       {data && !data.incident_reports.on && (
         <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-400">Incident reports are not opened automatically: {data.incident_reports.why}. One a person opened still shows here.</p>
       )}
-      {view === "month" ? <Month anchor={anchor} events={events} onOpen={(e) => setOpen(e.id)} onDay={(d) => { setAnchor(d); setView("week"); }} />
-        : <Week anchor={anchor} events={events} onOpen={(e) => setOpen(e.id)} />}
-      <IncidentDialog id={open} onClose={() => { setOpen(null); reload(); }} />
+      {view === "month" ? <Month anchor={anchor} events={events} onOpen={openEvent} onDay={(d) => { setAnchor(d); setView("week"); }} />
+        : <Week anchor={anchor} events={events} onOpen={openEvent} />}
+      <IncidentDialog id={incident} onClose={() => { setIncident(null); reload(); }} />
+      <HandoverDialog id={handover} onClose={() => { setHandover(null); reload(); }} onIncident={(id) => { setHandover(null); setIncident(id); }} />
     </Card>
   );
 }
