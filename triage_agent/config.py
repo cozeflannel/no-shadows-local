@@ -882,6 +882,7 @@ class FeatureFlags(ConfigModel):
     chat_answers: bool = Field(False, title="Answer mentions in Chat", description="ON: every minute the QA chatbot reads the spaces it works in and answers each message that mentions it, in that message's thread, through its own Chat sign-in, with no Chat flow in between. A reply for the source space follows the Routing page's rules. OFF: mentions are answered only when a Chat flow hands them over.")
     chat_questions: bool = Field(False, title="Answer questions without a mention", description="ON: with Answer mentions in Chat ON too, the QA chatbot also answers what the sheet-based bot answered without being mentioned. In Burson's space: a question, or in an alert's thread a follow-up about the alert (its fields, status or escalation). In the other spaces it reads: a question, or in a thread a follow-up about the alert or about what to do next. Short replies like \"ok, will fix\", messages that mention someone else and alerts a person pastes are left alone. OFF: only messages that mention it are answered.")
     campaign_handoff: bool = Field(False, title="Hand threads to the campaigns assistant", description="ON: with Answer mentions in Chat ON too, when someone in the second space on the Routing page asks, in a thread, for a Brandwatch deep dive or an alert campaign, the QA chatbot hands that thread to the campaigns assistant, says so in the thread and leaves the thread to it, as the sheet-based bot did. Needs the campaigns database under Settings, Campaigns. OFF: nothing is handed over. Either way the QA chatbot never answers in a thread the campaigns assistant owns.")
+    incident_reports: bool = Field(False, title="Incident reports", description="ON: every minute an incident report is opened for each alert that was escalated (a draft, a sent email or a T&S form), and kept up to date until the alert is closed. It shows on the calendars in Review and Workforce. OFF: an incident report exists only where a person opened one.")
     chat_delivery: bool = Field(False, title="Post queued messages in Chat", description="ON: the QA chatbot posts what is queued, in its space or in each person's direct message, through its own Chat sign-in, with no Chat flow in between: every minute, or as soon as it is queued when Retry posts that fail is ON too. Each post passes the Routing page's rules and the leak guard again first. OFF: queued posts wait for a Chat flow.")
     alert_popups: bool = Field(False, title="Alert pop-ups", description="ON: people in the Console get a pop-up when an alert comes in; each person can mute their own. OFF: no pop-ups.")
     own_alerts: bool = Field(False, title="Agent alerts", description="ON: every few minutes the sources under Settings, Agent alerts are read. Personal details are taken out of each post before it is kept, each post is checked against the rules, like posts are grouped into stories in BigQuery, and what passes is reviewed. OFF: nothing is read and nothing is reviewed.")
@@ -1214,6 +1215,14 @@ class RoutingConfig(ConfigModel):
     answer_spaces: list[str] = Field(default_factory=list, description="More spaces where a mention of the QA chatbot is answered, picked from the agent's spaces under Integrations, Google Chat. The source, second and third spaces are always read. Empty = only those three.")
 
 
+class ReportsConfig(ConfigModel):
+    """Incident reports and handovers: what happened to an alert, or in a shift, read from the event log."""
+
+    keep_days: int = Field(30, ge=1, le=365, description="How long an incident report or a handover is kept after its last activity.")
+    max_alerts: int = Field(300, ge=1, le=2000, description="The most alerts one handover lists with their timelines. The totals still count every alert.")
+    max_days: int = Field(62, ge=1, le=366, description="The longest stretch of time one report or one calendar view may cover.")
+
+
 class DecisionsConfig(ConfigModel):
     """Gemini Decisions: the decision maker. It answers set questions with probabilities and writes no text."""
 
@@ -1375,6 +1384,7 @@ class PlatformConfig(ConfigModel):
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    reports: ReportsConfig = Field(default_factory=ReportsConfig)
     decisions: DecisionsConfig = Field(default_factory=DecisionsConfig)
     early: EarlyConfig = Field(default_factory=EarlyConfig)
     own_alerts: OwnAlertsConfig = Field(default_factory=OwnAlertsConfig)
