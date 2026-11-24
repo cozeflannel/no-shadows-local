@@ -305,6 +305,13 @@ def fake_llm() -> FakeLLM:
     return FakeLLM(default_json=None, default_text="I don't know.")
 
 
+@pytest.fixture(autouse=True)
+def _no_owner_from_the_shell(monkeypatch):
+    """The Console's owner comes from the environment (TRIAGE_OWNER_ADMIN): a test names one itself, and never inherits
+    one from the shell it runs in."""
+    monkeypatch.delenv("TRIAGE_OWNER_ADMIN", raising=False)
+
+
 @pytest.fixture
 def ctx(tmp_path, fake_llm, clock) -> AgentContext:
     db = tmp_path / "triage.db"

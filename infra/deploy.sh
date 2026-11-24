@@ -59,6 +59,7 @@ fi
 source "${ENV_FILE}"
 set_var PROJECT_NUMBER "$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')"
 grep -q "^export BOOTSTRAP_ADMIN=" "${ENV_FILE}" || set_var BOOTSTRAP_ADMIN "${ACCOUNT}"   # the Console's first admin, until one is named there
+grep -q "^export OWNER_ADMIN=" "${ENV_FILE}" || set_var OWNER_ADMIN "${ACCOUNT}"           # the Console's owner: always an admin, whatever People says
 
 step() { echo; echo "== $1"; shift; "$@"; }
 

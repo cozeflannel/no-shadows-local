@@ -10,6 +10,7 @@ import { fmtDateTime, fmtRelative } from "../lib/format";
 
 interface PersonRow {
   email: string; name: string; role: string; role_source: string; on_roster: boolean; on_call: boolean; gmail_connected: boolean | null;
+  locked?: boolean;  // the Console's owner, set on the back end: always an admin, not changeable or removable here
   last_active: string | null; actions: number;
 }
 interface Change { audit_id: string; ts: string; actor: string; action: string; summary: string; status: string; target_id: string }
@@ -107,7 +108,11 @@ function QuickAddCard({ onAdded }: { onAdded: (msg: string) => void }) {
   );
 }
 
+const OWN_ROLE_WARNING = "You are about to take away your own Admin role.\n\nYou will lose People, Settings and Switches straight away, and only another admin can give the role back.\n\nMake yourself a User?";
+const OWNER_NOTE = "Owner: always an Admin. Set on the back end, not here.";
+
 function PersonForm({ person, onDone, onClose }: { person: PersonRow; onDone: (message: string) => void; onClose: () => void }) {
+  const { me } = useApp();
   const [name, setName] = useState(person.name || "");
   const [role, setRole] = useState<SimpleRole>(toSimpleRole(person.role));
   const [onRoster, setOnRoster] = useState(person.on_roster);
@@ -126,9 +131,12 @@ function PersonForm({ person, onDone, onClose }: { person: PersonRow; onDone: (m
         </>
       ) : (
         <>
-          <Button className="mr-auto" onClick={() => setConfirm(true)}>Remove person</Button>
+          {person.locked ? <span className="mr-auto text-xs text-zinc-500 dark:text-zinc-400">{OWNER_NOTE}</span> : <Button className="mr-auto" onClick={() => setConfirm(true)}>Remove person</Button>}
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" loading={save.loading} onClick={async () => { if (await save.run()) onDone(`${name.trim() || person.email} updated`); }}>Save</Button>
+          <Button variant="primary" loading={save.loading} onClick={async () => {
+            if (person.email === me?.email && person.role === "admin" && role !== "admin" && !window.confirm(OWN_ROLE_WARNING)) return;
+            if (await save.run()) onDone(`${name.trim() || person.email} updated`);
+          }}>Save</Button>
         </>
       )}>
       <div className="flex flex-col gap-4">
@@ -136,7 +144,7 @@ function PersonForm({ person, onDone, onClose }: { person: PersonRow; onDone: (m
         <Field label="Email"><Input type="email" value={person.email} disabled /></Field>
         <Field label="Display name"><Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" /></Field>
         <Field label="Role" hint={role === "admin" ? "Full access: manages People, Settings, Switches, Integrations, and works alerts." : "Standard access: reviews alerts, escalates, drafts emails, runs Temp check & Post velocity, creates signals, and asks Gemini."}>
-          <Select value={role} onChange={(e) => setRole(e.target.value as SimpleRole)}>
+          <Select value={role} disabled={person.locked} onChange={(e) => setRole(e.target.value as SimpleRole)}>
             <option value="user">User</option>
             <option value="admin">Admin</option>
           </Select>
@@ -194,6 +202,8 @@ export default function AdminPage() {
 
   const changeRoleInline = async (p: PersonRow, next: SimpleRole) => {
     if (toSimpleRole(p.role) === next) return;
+    // The role changes the moment it is picked: taking your own admin role away is asked about first, since it locks you out
+    if (p.email === me?.email && p.role === "admin" && next !== "admin" && !window.confirm(OWN_ROLE_WARNING)) return;
     setBusyEmail(p.email);
     try {
       await apiSend("put", `/admin/people/${encodeURIComponent(p.email)}`, { name: p.name, role: next, on_roster: p.on_roster });
@@ -282,7 +292,8 @@ export default function AdminPage() {
                               <Select
                                 aria-label={`Role for ${p.email}`}
                                 value={toSimpleRole(p.role)}
-                                disabled={busy}
+                                disabled={busy || p.locked}
+                                title={p.locked ? OWNER_NOTE : undefined}
                                 onChange={(e) => void changeRoleInline(p, e.target.value as SimpleRole)}
                                 className="w-32"
                               >
@@ -293,6 +304,7 @@ export default function AdminPage() {
                               <Badge tone={badge.tone}>{badge.label}</Badge>
                             )}
                             {p.role_source === "deploy" && <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Default deploy admin</p>}
+                            {p.locked && <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{OWNER_NOTE}</p>}
                           </td>
                           <td className={TD}>
                             {p.on_roster
@@ -311,9 +323,11 @@ export default function AdminPage() {
                               ) : (
                                 <div className="inline-flex items-center gap-1.5">
                                   <Button size="sm" onClick={() => setEditing(p)} disabled={busy}>Edit</Button>
-                                  <Button size="sm" icon={<Trash2 className="size-3.5" />} onClick={() => setConfirmRemove(p.email)} disabled={busy} title="Remove person">
-                                    Remove
-                                  </Button>
+                                  {!p.locked && (
+                                    <Button size="sm" icon={<Trash2 className="size-3.5" />} onClick={() => setConfirmRemove(p.email)} disabled={busy} title="Remove person">
+                                      Remove
+                                    </Button>
+                                  )}
                                 </div>
                               )}
                             </td>

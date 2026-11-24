@@ -12,6 +12,8 @@ Identity:
     set explicitly.
 
 Roles:
+  * an owner (TRIAGE_OWNER_ADMIN, set on the back end at deploy time) -> admin, always: nothing under People or
+    Settings changes it, so an owner can't be locked out of the Console from the Console
   * `config.analysts` -> admin | lead | analyst | im (an IM ranks as an analyst)
   * people in roster("slrr_im") -> analyst (Incident Managers)
   * anyone at a domain listed in Settings -> Access -> viewer domains -> viewer (read-only)
@@ -28,7 +30,7 @@ from typing import Any, Callable
 
 from fastapi import Depends, HTTPException, Request
 
-from triage_agent.config import AccessConfig
+from triage_agent.config import AccessConfig, owner_admins
 from triage_agent.context import ROSTER_IM, AgentContext
 from triage_agent.oncall.roster import person_by_email
 
@@ -49,7 +51,7 @@ class User:
     email: str
     role: str  # admin | lead | analyst | viewer | none
     name: str | None = None
-    role_source: str = "none"  # config | roster | domain | none
+    role_source: str = "none"  # owner | config | settings | bootstrap | roster | domain | none
     via: str = "dev"  # iap | iap_jwt | dev
 
     def has(self, role: str) -> bool:
@@ -131,6 +133,8 @@ def request_identity(request: Request) -> tuple[str | None, str]:
 def resolve_role(ctx: AgentContext, email: str) -> tuple[str, str | None, str]:
     """(role, display name, role source) for an email."""
     analyst = ctx.config.analyst(email)
+    if email in owner_admins():  # set on the back end: whatever People says, an owner is an admin
+        return "admin", (analyst.name if analyst else None), "owner"
     if analyst:
         return analyst.role, analyst.name, "config"
     access = ctx.config.platform.access

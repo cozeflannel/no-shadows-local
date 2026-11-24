@@ -22,6 +22,7 @@ ENV_VARS="$(common_env_vars)|TRIAGE_IAP_AUDIENCE=${AUDIENCE}|TRIAGE_OAUTH_CLIENT
 if [[ -n "${BOOTSTRAP_ADMIN:-}" ]]; then
   ENV_VARS="${ENV_VARS}|TRIAGE_BOOTSTRAP_ADMIN=${BOOTSTRAP_ADMIN}"
 fi
+# (The Console's owner, who is always an admin, is in common_env_vars: TRIAGE_OWNER_ADMIN, from OWNER_ADMIN.)
 if [[ -n "${EXISTING_URL}" ]]; then
   ENV_VARS="${ENV_VARS}|TRIAGE_CONSOLE_BASE_URL=${EXISTING_URL}"
 fi

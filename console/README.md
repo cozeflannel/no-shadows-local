@@ -180,6 +180,7 @@ token of the service account in `TRIAGE_SCHEDULER_SA` or in Settings, Delivery.
 | `TRIAGE_TOKEN_VAULT` | `local` (default) or `secretmanager` |
 | `TRIAGE_CONSOLE_DIST` | Built frontend directory (default `console/frontend/dist`) |
 | `TRIAGE_BOOTSTRAP_ADMIN` | The deployer's address: admin until an admin is named in Settings |
+| `TRIAGE_OWNER_ADMIN` | The owner's address (or several, with commas): always an admin, whatever People says. Set at deploy from `OWNER_ADMIN` in `infra/.env` (default: the deployer); People shows them as locked |
 | `TRIAGE_SCHEDULER_SA` | Worker only: the service account allowed to call it |
 | `VITE_API_TARGET` | Dev server only: where `/api` is proxied (default `http://127.0.0.1:8000`) |
 

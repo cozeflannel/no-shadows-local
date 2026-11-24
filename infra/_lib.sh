@@ -64,6 +64,14 @@ common_env_vars() {
     "TRIAGE_GMAIL_READ_SCOPE=${TRIAGE_GMAIL_READ_SCOPE:-metadata}"
     "TRIAGE_TOKEN_VAULT=secretmanager"
   )
+  # The Console's owner is always an admin, whatever People says: no page of the Console can change it, so the owner can't
+  # be locked out from there. OWNER_ADMIN (infra/.env, one address or several with commas) names them; left unset it is the
+  # person deploying (BOOTSTRAP_ADMIN). Set OWNER_ADMIN="" to have no owner. It is written on every deploy of the Console,
+  # the worker and the jobs, so a later deploy never drops it and every part of the back end counts the owner as an admin.
+  local owner="${OWNER_ADMIN-${BOOTSTRAP_ADMIN:-}}"
+  if [[ -n "${owner}" ]]; then
+    vars+=("TRIAGE_OWNER_ADMIN=${owner}")
+  fi
   local IFS='|'
   echo "${vars[*]}"
 }

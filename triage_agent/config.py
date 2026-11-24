@@ -1490,10 +1490,25 @@ class AgentConfig(ConfigModel):
         return [a.email for a in self.analysts]
 
     def admin_emails(self) -> list[str]:
-        return [a.email for a in self.analysts if a.role == "admin"]
+        """Everyone who is an admin: those People names, and the owners set on the back end (owner_admins)."""
+        listed = [a.email for a in self.analysts if a.role == "admin"]
+        return listed + [e for e in owner_admins() if e not in {x.lower() for x in listed}]
 
     def lead_emails(self) -> list[str]:
-        return [a.email for a in self.analysts if a.role in ("lead", "admin")]
+        listed = [a.email for a in self.analysts if a.role in ("lead", "admin")]
+        return listed + [e for e in owner_admins() if e not in {x.lower() for x in listed}]
+
+
+OWNER_ADMIN_ENV = "TRIAGE_OWNER_ADMIN"
+
+
+def owner_admins() -> list[str]:
+    """The Console's owners: always admins, whatever People says about them.
+
+    Set on the back end only (the TRIAGE_OWNER_ADMIN variable of the service, written by the deploy script from
+    OWNER_ADMIN): no page of the Console can change it, so an owner can't be locked out from there, by themselves or
+    by another admin. The addresses live in the deploy environment, never in this repository."""
+    return sorted({e.strip().lower() for e in os.environ.get(OWNER_ADMIN_ENV, "").split(",") if e.strip()})
 
 
 def _strip_variation(value: str | None) -> str:

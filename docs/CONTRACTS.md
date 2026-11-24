@@ -65,6 +65,7 @@ The Outbox flow calls `drain_outbox`, which atomically claims:
 | `TRIAGE_STEALTH_BURSON` | (none) | `1/true/yes` forces stealth mode (no `burson_text`; see §3 delivery rules) regardless of `burson_feedback.silent_in_burson_space` |
 | `TRIAGE_CONSOLE_BASE_URL` / `TRIAGE_CONSOLE_DIST` | (none) | Console: Gmail OAuth redirect base; built frontend directory |
 | `TRIAGE_BOOTSTRAP_ADMIN` | (none) | Console: this address is admin until an admin is named in Settings |
+| `TRIAGE_OWNER_ADMIN` | (none) | Console: the owner (one address, or several with commas) is **always** an admin, whatever People or Settings say. Checked before anything else (`auth.resolve_role`, role source `owner`); counted by `config.admin_emails()` / `lead_emails()`; People lists them as locked and refuses to change their role or remove them. Set only at deploy (`OWNER_ADMIN` in `infra/.env`, default the deployer), so nobody can be locked out of the Console from the Console |
 | `TRIAGE_SCHEDULER_SA` | (none) | Worker: the service account whose identity token may call it |
 
 ## 3. Operations API

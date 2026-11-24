@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, ValidationError
 
 from triage_agent import audit, chatlog, pubsub, safety, stories, storyread
-from triage_agent.config import switch_off
+from triage_agent.config import owner_admins, switch_off
 from triage_agent.context import ROSTER_IM, AgentContext
 from triage_agent.events import EventType as E
 from triage_agent.events import PlatformEvent as P
@@ -230,7 +230,7 @@ def people(ctx: AgentContext) -> list[dict[str, Any]]:
     def person(email: str) -> dict[str, Any]:
         key = email.strip().lower()
         return out.setdefault(key, {"email": key, "name": "", "role": "viewer", "role_source": "", "on_roster": False, "on_call": False,
-                                    "gmail_connected": None, "last_active": None, "actions": 0})
+                                    "gmail_connected": None, "last_active": None, "actions": 0, "locked": False})
 
     for a in cfg.analysts:
         person(a.email).update(name=a.name, role=a.role, role_source="people")
@@ -241,6 +241,8 @@ def people(ctx: AgentContext) -> list[dict[str, Any]]:
         for email in os.environ.get(BOOTSTRAP_ADMIN_ENV, "").split(","):
             if email.strip():
                 person(email).update(role="admin", role_source="deploy")
+    for email in owner_admins():  # set on the back end: an admin whatever their record says, and not changeable here
+        person(email).update(role="admin", role_source="owner", locked=True)
     try:
         roster = ctx.roster(ROSTER_IM)
         on_call = ctx.on_call(ROSTER_IM, ctx.now()).person
@@ -377,6 +379,9 @@ def put_person(email: str, body: PersonBody, request: Request, ctx: AgentContext
     was = ctx.config.analyst(email)
     name = body.name.strip() or (was.name if was else "") or _default_name(email)
     stored_role = "analyst" if body.role == "user" else body.role
+    if email in owner_admins() and stored_role != "admin":
+        raise HTTPException(422, {"error": f"{name} owns this Console and is always an admin. That is set on the back end and can't be changed here.",
+                                  "code": "validation_error"})
     analysts = [a.model_dump(mode="json") for a in ctx.config.analysts if a.email.lower() != email]
     if was and was.role == "admin" and stored_role != "admin" and not _other_admins(ctx, email):
         raise HTTPException(422, {"error": "This is the only admin. Make someone else an admin first.", "code": "validation_error"})
@@ -425,6 +430,9 @@ def delete_person(email: str, request: Request, ctx: AgentContext = Depends(get_
     known = next((p for p in people(ctx) if p["email"] == email), None)
     if known is None:
         raise HTTPException(404, {"error": f"{email} is not under People", "code": "not_found"})
+    if email in owner_admins():
+        raise HTTPException(422, {"error": f"{known['name'] or email} owns this Console and is always an admin. That is set on the back end, so they can't be removed here.",
+                                  "code": "validation_error"})
     if known["role"] == "admin" and not _other_admins(ctx, email):
         raise HTTPException(422, {"error": "This is the only admin. Make someone else an admin first.", "code": "validation_error"})
     _set_roster(ctx, user, email, known["name"], False)
