@@ -142,8 +142,9 @@ export function Layout({ children }: { children: ReactNode }) {
   const showSetup = setupOpen || collapsed || setup.some((e) => location.pathname.startsWith(e.to));
   const meRoleLabel = me?.role === "admin" ? "Admin" : me?.role === "viewer" ? "Viewer" : "User";
 
+  // min-h-full, not h-full: the shell must be as tall as the page, or the sticky menu leaves the screen with it
   return (
-    <div className="flex h-full">
+    <div className="flex min-h-full">
       {drawer && !wide && <button type="button" aria-label="Close the menu" onClick={() => setDrawer(false)} className="fixed inset-0 z-40 bg-black/50" />}
       <aside aria-label="Menu" className={cx("scroll-thin flex h-dvh shrink-0 flex-col overflow-y-auto px-3 py-4",
         wide ? cx("sticky top-0 bg-zinc-100/70 dark:bg-zinc-900/60", collapsed ? "w-[68px]" : "w-64")
