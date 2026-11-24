@@ -1223,6 +1223,20 @@ class ReportsConfig(ConfigModel):
     max_days: int = Field(62, ge=1, le=366, description="The longest stretch of time one report or one calendar view may cover.")
 
 
+class AnalyticsConfig(ConfigModel):
+    """How the Console itself is used, counted through Google Tag Manager. Blank = no tracking at all."""
+
+    gtm_container: str = Field(
+        "", title="Google Tag Manager container", pattern=r"^(GTM-[A-Z0-9]{4,12})?$",
+        description="The container that counts how the Console's work pages are used, written GTM-XXXXXXX. Blank = no usage tracking. "
+                    "It runs in a blank page of its own, out of sight, never in the page being worked in, and is told one thing for "
+                    "each work page opened: the page's name and kind (an alert is \"Review feed: an alert\"). An alert's number or "
+                    "text, what was searched for, and anyone's name or address are never sent. Settings, People, Integrations, "
+                    "Routing and AI are not counted. It counts pages opened, people and sessions; time spent on a page is not "
+                    "measured. Whoever can publish that container could still reach the Console through it: keep its publishing "
+                    "rights to people you would give an admin role. A change here applies the next time each person loads the Console.")
+
+
 class DecisionsConfig(ConfigModel):
     """Gemini Decisions: the decision maker. It answers set questions with probabilities and writes no text."""
 
@@ -1385,6 +1399,7 @@ class PlatformConfig(ConfigModel):
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     reports: ReportsConfig = Field(default_factory=ReportsConfig)
+    analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
     decisions: DecisionsConfig = Field(default_factory=DecisionsConfig)
     early: EarlyConfig = Field(default_factory=EarlyConfig)
     own_alerts: OwnAlertsConfig = Field(default_factory=OwnAlertsConfig)

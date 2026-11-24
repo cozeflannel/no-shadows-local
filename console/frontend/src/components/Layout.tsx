@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Link, NavLink, useLocation } from "react-router";
 
 import { useApp } from "../context";
+import { trackPage } from "../lib/analytics";
 import { AlertPopups } from "./AlertPopups";
 import { ChatWidget } from "./ChatWidget";
 import { GmailButton } from "./GmailButton";
@@ -83,8 +84,11 @@ const HIDE_AFTER_MS = 220;  // how long the menu stays once the pointer leaves i
  * is fixed to the window, scrolls on its own and never leaves with the page. On a narrow screen it is a drawer.
  */
 export function Layout({ children }: { children: ReactNode }) {
-  const { me, counts, theme, toggleTheme } = useApp();
+  const { me, counts, theme, toggleTheme, meta } = useApp();
   const location = useLocation();
+  // Usage tracking (Settings, Usage tracking): opening a tracked page is told to the container; the other pages never are
+  const container = meta?.analytics?.gtm_container;
+  useEffect(() => { trackPage(container, location.pathname, location.search); }, [container, location.pathname, location.search]);
   const wide = useWide();
   const [pinned, setPinned] = useState(() => {
     try { return localStorage.getItem("console-nav-pin") === "pinned"; } catch { return false; }

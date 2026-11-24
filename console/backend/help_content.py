@@ -597,7 +597,10 @@ TOPICS: list[dict[str, Any]] = [
             {"heading": "Change a setting", "steps": ["Open Settings, then Advanced, and pick a section. Find a setting filters the list.", "Edit the fields.",
                                                       "Save. A note is optional and is kept in the history.", "Reset returns a section to its defaults."]},
             {"heading": "Sections", "items": [
-                "Platform: switches, access, project, safety, delivery, BigQuery, forecasting, chat agent, classification, knowledge retrieval, temp check, campaigns & watches, costs, telemetry, stories, notifications.",
+                "Platform: switches, access, project, safety, delivery, BigQuery, forecasting, chat agent, classification, knowledge retrieval, temp check, campaigns & watches, costs, telemetry, stories, notifications, usage tracking.",
+                "Usage tracking: a Google Tag Manager container (GTM-XXXXXXX) that counts which work pages are opened. Blank, the default, tracks nothing. "
+                "It is told a page's name and kind only: never an alert's number or text, a search, or who is signed in. Settings, People, Integrations, "
+                "Routing and AI are not counted, and time spent on a page is not measured. It applies the next time each person loads the Console.",
                 "Agent: spaces, analysts & roles, shifts, distribution and recipients, actions, taxonomy and the rest. Rosters opens the Rosters page.",
                 "Tools: secrets & credentials, AI instructions, audit log, change history.",
                 "The values that connect a tool (project, dataset, topics, spaces) are set under Integrations and show here too.",

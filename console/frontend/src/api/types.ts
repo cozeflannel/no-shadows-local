@@ -49,6 +49,7 @@ export interface Meta {
   operations: string[];
   rosters: { name: string; label: string; description: string }[];
   kpi_count: number;
+  analytics?: { gtm_container: string };  // usage tracking (Settings, Usage tracking): "" = none
   switch_names: Record<string, string>;
   notifications: { enabled: boolean; event_types: string[]; sources: string[]; seconds: number; max_on_screen: number };
 }

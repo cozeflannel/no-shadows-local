@@ -722,6 +722,16 @@ not known) and its sentiment label. The map's time slider counts alerts, stories
 Settings. A check's result is kept in kv `connection:test:<key>` with a fingerprint of the values and dropped when they change.
 `GET /api/meta` carries `notifications` for the pop-ups. The tick records kv `tick:last`.
 
+**Usage tracking** (settings `platform.analytics`, the Console only): `gtm_container` is a Google Tag Manager container id
+(`GTM-XXXXXXX`, nothing else is accepted) or `""`, the default, for no tracking. `GET /api/meta` carries it as
+`analytics.gtm_container`. The browser (`console/frontend/src/lib/analytics.ts`) never loads the container into the Console's own page:
+a tag reads the address, the clicks and the forms of the page it is on. It loads it once into `GET /api/usage-frame`, a blank page with no
+script of its own, kept out of sight with no referrer, the first time a tracked page is opened, and tells it each tracked page opened as a
+`page_view` (`page_location` = the Console's origin + the route's shape, e.g. `/feed/:alert`; `page_title` = the page's name) and a
+`console_page_view` data layer event (`page_name`, `page_path`, `page_section`). An alert's number, a search and the person signed in are
+never sent. Not tracked: Settings, People & Admin, Integrations, Routing, AI, Welcome. Time on a page is not measured. A change to the
+setting applies at each person's next load of the Console.
+
 **The bot's replies and threads** (plan 6, step 1.2): a queued post may carry `thread` (`OutboxItem.thread`), the Chat thread it answers.
 When an operation was handed a message from the Routing page's source space, its post for that space carries the message's thread, and
 `chatdelivery` and `mirror.send` post into it. While the source space is closed (the Safety valve, or a second space set) such a post is held

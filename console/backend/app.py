@@ -41,6 +41,13 @@ log = logging.getLogger(__name__)
 
 DEFAULT_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
+# The page usage tracking runs in: blank, with no script of its own. The mark is what the browser looks for before it loads
+# a container into it, so a sign-in page or an error answered in its place is never mistaken for it.
+USAGE_FRAME = (
+    '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex">'
+    '<meta name="console-usage-frame" content="1"><title>Console</title></head><body></body></html>'
+)
+
 
 def _dist_dir() -> Path:
     return Path(os.environ.get("TRIAGE_CONSOLE_DIST") or DEFAULT_DIST).resolve()
@@ -134,12 +141,21 @@ def create_app(ctx: AgentContext | None = None, state: ConsoleState | None = Non
             "operations": ops,
             "rosters": [{"name": k, **v} for k, v in routes_rosters.ROSTERS.items()],
             "kpi_count": len(KPI_DEFINITIONS),
+            # Usage tracking (Settings, Usage tracking): the container the Console loads on its work pages, "" = none
+            "analytics": {"gtm_container": cfg.platform.analytics.gtm_container},
         }
 
     @app.get("/api/help", tags=["meta"])
     def help_topics(user: User = Depends(require_viewer)) -> dict[str, Any]:
         """Help pages: how to use each page and setting."""
         return {"topics": help_content.topics()}
+
+    @app.get("/api/usage-frame", include_in_schema=False)
+    def usage_frame(user: User = Depends(require_viewer)) -> HTMLResponse:
+        """The blank page usage tracking runs in (console/frontend/src/lib/analytics.ts), kept apart from the Console's own
+        page: a tag collects the address, the clicks and the forms of the page it is on, and here there are none. Nothing in
+        it changes with the settings; the browser loads the container into it only when one is set."""
+        return HTMLResponse(USAGE_FRAME, headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
 
     for module in (routes_metrics, routes_cases, routes_rosters, routes_admin, routes_settings, routes_learning, gmail_oauth, live,
                    routes_work, routes_insight, connections, chat_signin, routes_routing, routes_ai, routes_own, routes_velocity,

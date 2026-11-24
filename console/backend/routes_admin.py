@@ -46,6 +46,7 @@ PART_INFO: dict[str, tuple[str, str, str]] = {
     "bigquery": ("BigQuery", "Where events and reports are kept.", "tech"),
     "costs": ("Costs", "The prices used to estimate what the agent spends.", "tech"),
     "telemetry": ("Logs and record keeping", "How much is logged and how long records are kept.", "tech"),
+    "analytics": ("Usage tracking", "Google Tag Manager on the Console's work pages: which container, or none.", "tech"),
 }
 
 
