@@ -105,6 +105,11 @@ body {
     0 12px 36px -22px rgb(155 114 203 / calc(var(--glow-soft) * 4));
 }
 
+/* An alert's window is fixed in place; it keeps that place when it wears the lit edge (the edge only needs a positioned box). */
+.glow.fixed {
+  position: fixed;
+}
+
 .glow::before {
   content: "";
   position: absolute;

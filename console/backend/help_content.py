@@ -61,35 +61,63 @@ TOPICS: list[dict[str, Any]] = [
     },
     {
         "id": "review-feed", "page": "Review Feed", "title": "Review Feed", "audience": "IMs",
-        "summary": "Work alerts: see the agent's call, decide, escalate, assess.",
+        "summary": "Work alerts: a list with a line each. Open one to write its email, file its T&S form, run a temp check and grade the chatbot.",
         "sections": [
             {"heading": "Find an alert", "steps": [
-                "Needs action shows what is waiting for a person, most urgent first.",
-                "Switch the view: Review, Verified, Suppressed, Closed or All.",
-                "Search by case id, product, tag or issue."]},
-            {"heading": "Read a card", "items": [
-                "The first badge says what the alert is waiting for (Needs review, To acknowledge, SLA at risk, Waiting on Burson) or, when "
-                "nothing, where it is now (Verified, Suppressed, Closed).",
-                "A second badge is the agent's verdict, shown only when it adds something: Corrected, or Held for review on an alert an IM has "
-                "since suppressed. Needs review is never shown twice.",
-                "Why it was held for review: each reason as a sentence, with the field's name as the alert writes it.",
-                "Burson 3 of 5 right (60%): of the fields Burson filled in, how many stood up to the checks. Counted, not estimated.",
-                "72% likely to need a person: Gemini Decisions' probability, shown when the switch Gemini Decisions scores each alert is ON.",
-                "Kept 47 of 50, beside a field: how often incident managers kept the app's value for that field in their own assessments, last 30 days.",
-                "Class: the classification layer's class (when that switch is on).",
-                "Corrections: what the agent changed, old to new. Suggested corrections wait for you.",
-                "Sources: the knowledge passages the assessment cited. Click one to open the document.",
-                "Suggested actions: what the routing rules recommend."]},
+                "Each alert is one line: its name, where it stands, and the date and time it came in. Click a column heading to sort by it.",
+                "The tabs choose what is listed: All alerts, Burson's alerts, Agent alerts (what the agent raised itself) or Chat messages (what the agent read and posted in Chat).",
+                "Needs action shows what is waiting for a person, most urgent first. Switch the view: Review, Verified, Suppressed, Closed or All.",
+                "Tick Full messages to see each alert's whole message under its line.",
+                "Search by case id, product, tag or issue.",
+                "In All alerts, an alert the agent raised itself has a lit edge."]},
+            {"heading": "Open an alert", "items": [
+                "Click a line. The alert opens over the list and takes most of the page; the list stays in view on the right, to step to the next alert.",
+                "Left: a short brief (what the alert says, where it stands, what to do) and the details. Gemini words the brief; the to-do list and every figure come from the alert itself.",
+                "Middle: Email (the Social Alert email), Alert (the message as posted, the fields, what the agent changed and the knowledge it cited) and Activity (the timeline and what was said in Chat).",
+                "Right: Trust & Safety, Temp checks, Chatbot QA and the actions taken.",
+                "Details shows the counted figures: Burson 3 of 5 right (of the fields Burson filled in, how many stood up to the checks) and, when the switch "
+                "Gemini Decisions scores each alert is ON, how likely the alert is to need a person.",
+                "Kept 47 of 50, beside a field on the Alert tab: how often incident managers kept the app's value for that field in their own assessments, last 30 days.",
+                "Press Esc or the X to go back to the list."]},
+            {"heading": "Write the Social Alert email", "steps": [
+                "Open the alert. The email is already written from the alert, in the team's Social Alert template.",
+                "Click into the email and type: you edit it as it will look. The toolbar has bold, italic, underline, lists and links.",
+                "Check To, Cc, Bcc and the subject. Routed to shows the groups the routing rules chose.",
+                "Press Save as a draft in Gmail. The draft lands in your own Gmail; connect Gmail from the top bar first.",
+                "Open it in Gmail to send. The Console never sends an email.",
+                "Start over from the alert drops your edits and writes the email again.",
+                "While Testing is ON the draft is addressed only to the testing recipients."]},
+            {"heading": "Trust & Safety form", "steps": [
+                "When the agent recommends a report, the form is filled in as you open the alert.",
+                "Press Open the filled-in form to review it. Change what needs changing there, then submit it or close it.",
+                "Back on the alert, press I submitted it, or Discard.",
+                "When the agent did not recommend a report, Check it anyway and fill in the form does it on request."]},
+            {"heading": "Temp checks", "steps": [
+                "Temp checks made for the alert are listed on the right. The agent starts one on its own when an alert calls for it and that switch is on.",
+                "Click one to preview it over the alert.",
+                "Press Confirm and close, or Confirm and send to Chat: a message with its summary and the link to its document is queued for the analysts' space.",
+                "Edit in Google Docs opens its document, when it has one.",
+                "Ask Gemini to change the write-up: it rewords the summary, the drivers and the themes. The counts stay the ones that were counted.",
+                "Run a temp check starts a new one for any alert."]},
+            {"heading": "Grade the chatbot", "steps": [
+                "Press Grade the chatbot's work. Rate each thing from 1 to 5, or leave it Not rated.",
+                "Say what was right, what was wrong and what it should do next time.",
+                "Submit. The score is counted from your ratings and their weights; no model sets it.",
+                "You are shown what was understood and what was done with it: a checked example kept, and each lesson filed for a lead to approve.",
+                "Every evaluation is listed under Records, Chatbot QA evaluations."]},
             {"heading": "Decide an alert held for review", "steps": [
-                "Open the alert.", "Tick the proposed corrections to apply, then Apply and forward. Or Send back to Burson, or Suppress.",
+                "Open the alert and press Decide.", "Tick the proposed corrections to apply, then send it on. Or Send back to Burson, or Suppress.",
                 "Send back needs a reason."]},
-            {"heading": "Take an action", "steps": [
-                "Open the alert and pick an action: Acknowledge, Email (PAs), T&S form, add a team, crisis chat, close, superseded.",
-                "A draft lands in your own Gmail. Connect Gmail from the top bar first."]},
-            {"heading": "Assess the agent", "steps": [
-                "Open the alert and go to Was the agent right?",
-                "Click Right. Or pick the correct verdict or write a note, then click Wrong.",
-                "Your assessment is kept as a checked example of the right answer."]},
+            {"heading": "Record an action", "steps": [
+                "Open the alert and press Actions.",
+                "Tick what you did or want done: Acknowledge, Email (PAs), T&S form, add a team, crisis chat, close, superseded.",
+                "Press Apply. Each one is recorded on the alert as its emoji in Chat would be."]},
+            {"heading": "Agent alerts", "items": [
+                "To judge: alerts the agent raised that nobody has confirmed or marked a false positive yet.",
+                "Raised: every alert it raised, with each verdict.",
+                "Not raised: what Gemini looked at and decided not to raise, and why.",
+                "Open one to read the reason and the posts, then press Confirm or False positive. A verdict can be changed.",
+                "What the agent reads and the rules it reads by are under Settings: Sources and Rules."]},
             {"heading": "Add an alert by hand", "steps": ["Click Triage an alert.", "Paste the alert's text.", "It is triaged like any other and gets a case."]},
         ],
     },
@@ -97,10 +125,13 @@ TOPICS: list[dict[str, Any]] = [
         "id": "chat-spaces", "page": "Chat spaces", "title": "Chat spaces", "audience": "everyone",
         "summary": "Everything the agent received from Chat and posted back.",
         "sections": [
+            {"heading": "Where it is", "items": [
+                "The spaces and their counts: Dashboard, Chat spaces tab.",
+                "The messages themselves: Review feed, Chat messages tab."]},
             {"heading": "Browse", "steps": [
-                "Click a space's card to see only that space. Counts are for the period shown.",
+                "On the Dashboard's Chat spaces tab, click a space's card to see only that space. Counts are for the period shown.",
                 "Messages are grouped by thread, newest first.",
-                "Filter by direction (received or posted), or search the text."]},
+                "In the Review feed's Chat messages tab, pick a space and a window, or search the text. Full messages shows each conversation whole."]},
             {"heading": "Statuses", "items": [
                 "Received: a message, reaction or email the agent was handed.",
                 "Returned: a post the agent handed back to Chat to post.",
@@ -453,10 +484,10 @@ TOPICS: list[dict[str, Any]] = [
         "summary": "Alerts the agent raises itself from the sources it reads, reviewed before anyone is told.",
         "sections": [
             {"heading": "Work an alert", "steps": [
-                "Open Agent alerts. Raised holds what the review raised, newest first.",
+                "Open the Review feed, Agent alerts. To judge holds what the review raised and nobody has judged yet; Raised holds all of them, newest first.",
                 "Read the severity, who it goes to, the evidence and the reason. Open the post from its link.",
                 "Press Confirm when the alert was right, False positive when it was not. A verdict can be changed.",
-                "In Chat, the Confirm and False positive links on an alert open this page and record the verdict."]},
+                "In Chat, the Confirm and False positive links on an alert open it in the Review feed and record the verdict."]},
             {"heading": "How an alert is made", "items": [
                 "Every few minutes each source hands over its new posts: the tables ticked for Agent alerts on Integrations, the Brandwatch queries, and the Other alerts space.",
                 "Personal details are taken out of each post before it is kept: handles, emails, phone numbers and links by pattern, then names by Google's Sensitive Data Protection. Nothing is kept while that check cannot be reached.",
@@ -468,18 +499,20 @@ TOPICS: list[dict[str, Any]] = [
                 "Posts, links and names are deleted after 30 days at most.",
                 "Our own alerts is a different page: it takes alerts the team already chose from the team's own tables."]},
             {"heading": "Rules", "steps": [
-                "Open Agent alerts, Rules, and press Add a rule. Leads and admins can.",
+                "Open Settings, Rules, and press Add a rule. Leads and admins can.",
                 "Name the rule and say where it is in the process document.",
                 "Choose Mandatory (a matching post is always raised) or Candidate (Gemini reads the post first).",
                 "Give it at least one condition: words, a KOF author, followers, engagements, a source or a platform.",
                 "Set a severity and who it goes to, or leave both for the review.",
                 "Save. The rule applies from the next run."]},
-            {"heading": "The tabs", "items": [
-                "Raised: the alerts, with each verdict.", "Not raised: what Gemini looked at and decided not to raise, and why.",
-                "Sources: each source, when it was last read, and how many posts were kept.",
-                "Rules: what each new post is checked against."]},
+            {"heading": "Where things are", "items": [
+                "Review feed, Agent alerts, To judge and Raised: the alerts, with each verdict.",
+                "Review feed, Agent alerts, Not raised: what Gemini looked at and decided not to raise, and why.",
+                "Settings, Sources: each source, when it was last read, and how many posts were kept. Run now is there too.",
+                "Settings, Rules: what each new post is checked against.",
+                "Settings, Reading and review: how often it reads, the KOF sheet, the models, and the space raised alerts are posted in."]},
             {"heading": "When something goes wrong", "items": [
-                "A box above the tabs says what happened and what to do, in plain words. Blue means nothing is broken: the agent is waiting, or something needs setting. Red means a person should look.",
+                "A box on Settings, Sources says what happened and what to do, in plain words. Blue means nothing is broken: the agent is waiting, or something needs setting. Red means a person should look.",
                 "A problem in the agent's own check: press Run now. If it keeps failing, tell an admin.",
                 "A table the Console may not read: its owners let the Console's account in. The statement to send them is under Integrations, BigQuery. Nothing fails over it meanwhile.",
                 "Google Cloud busy or slow: wait a few minutes. Nothing is lost; the agent tries again on its own.",
@@ -487,12 +520,12 @@ TOPICS: list[dict[str, Any]] = [
                 "After an update to the Console the agent remakes its tables and checks in BigQuery on its next run, while Change BigQuery from here is on."]},
             {"heading": "Turn it on", "steps": [
                 "Open Integrations and press Find and fill. It adds the two tables only Agent alerts read, and ticks the tables it reads.",
-                "Open Settings, Agent alerts. Enter the KOF sheet's link, and share that sheet (Viewer) with the service's account. The deploy fills the BigQuery connection and the salt's secret: enter them only if they are blank. Add the Brandwatch queries and the Other alerts space if you use them.",
-                "Open Settings, Switches and turn on Change BigQuery from here. Then open Agent alerts and press Create the tables.",
-                "Open Agent alerts, Rules, and add your rules.",
+                "Open Settings, Reading and review. Enter the KOF sheet's link, and share that sheet (Viewer) with the service's account. The deploy fills the BigQuery connection and the salt's secret: enter them only if they are blank. Add the Brandwatch queries and the Other alerts space if you use them.",
+                "Open Settings, Switches and turn on Change BigQuery from here. Then open Settings, Sources and press Do it now.",
+                "Open Settings, Rules, and add your rules.",
                 "Open Settings, Switches and turn on Agent alerts.",
-                "Open Agent alerts and press Run now. Sources shows what each source handed over. A source that could not be read says why.",
-                "To post in Chat: choose the space under Settings, Agent alerts, then turn on Post agent alerts in Chat. An alert is never posted in the source space."]},
+                "Open Settings, Sources and press Run now. The list shows what each source handed over. A source that could not be read says why.",
+                "To post in Chat: choose the space under Settings, Reading and review, then turn on Post agent alerts in Chat. An alert is never posted in the source space."]},
         ],
     },
     {
@@ -555,7 +588,9 @@ TOPICS: list[dict[str, Any]] = [
                 "Agent: spaces, analysts & roles, shifts, distribution and recipients, actions, taxonomy and the rest. Rosters opens the Rosters page.",
                 "Tools: secrets & credentials, AI instructions, audit log, change history.",
                 "The values that connect a tool (project, dataset, topics, spaces) are set under Integrations and show here too.",
-                "Switches: what the agent may do. All start OFF."]},
+                "Switches: what the agent may do. All start OFF.",
+                "What the chatbot alerts on: Sources (where it reads posts, and Run now), Rules (what a post must say, or who must post it, for an alert to be "
+                "raised) and Reading and review (how often it reads, the models, and where a raised alert is posted)."]},
             {"heading": "History", "text": "Every change is listed with who made it and what changed, under Change history and in the audit log."},
         ],
     },

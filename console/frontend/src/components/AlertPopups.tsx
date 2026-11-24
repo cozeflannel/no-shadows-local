@@ -276,7 +276,7 @@ export function AlertPopups() {
         )}
       </div>
       {createPortal(
-      <div aria-live="polite" role="status" className="pointer-events-none fixed inset-x-3 bottom-20 z-50 flex flex-col items-end gap-2 sm:inset-x-auto sm:right-5 sm:bottom-24">
+      <div aria-live="polite" role="status" className="pointer-events-none fixed inset-x-3 bottom-20 z-[94] flex flex-col items-end gap-2 sm:inset-x-auto sm:right-5 sm:bottom-24">
         {popups.map((p) => (
           <div key={p.id} className="glow glow-live pointer-events-auto w-full rounded-2xl bg-white p-4 shadow-2xl sm:w-96 dark:bg-zinc-900">
             <div className="flex items-start gap-3">

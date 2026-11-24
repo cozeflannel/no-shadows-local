@@ -1347,7 +1347,7 @@ class OwnAlertsConfig(ConfigModel):
     surge_max_hours: int = Field(4, ge=1, le=72, title="Follow-up: latest, hours after the alert", description="...and no later than this.")
     surge_min_posts: int = Field(25, ge=1, le=100000, title="Follow-up: posts in 15 minutes", description="Follow-up: it needs at least this many posts in its last 15 minutes...")
     surge_ratio: float = Field(3.0, ge=1, le=100, title="Follow-up: pace", description="...running at this many times its hourly pace.")
-    console_keep_days: int = Field(30, ge=1, le=30, title="Days alerts stay in the Console", description="How long raised alerts stay on the Agent alerts page.")
+    console_keep_days: int = Field(30, ge=1, le=30, title="Days alerts stay in the Console", description="How long raised alerts stay in the Review feed, under Agent alerts.")
 
     @model_validator(mode="after")
     def _fallbacks_are_allowed(self) -> "OwnAlertsConfig":

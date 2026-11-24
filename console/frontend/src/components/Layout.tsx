@@ -1,8 +1,8 @@
 import {
-  BookOpen, BrainCircuit, CalendarClock, ChevronDown, CircleHelp, FileClock, Inbox, LayoutDashboard, Mail, Megaphone, Menu, MessagesSquare, Moon,
-  PanelLeftClose, PanelLeftOpen, Plug, Radar, Route, Scale, Settings, ShieldCheck, Siren, Sparkles, Sun, Thermometer, TrendingUp, UsersRound, Waypoints,
+  BookOpen, BrainCircuit, CalendarClock, ChevronDown, CircleHelp, ClipboardCheck, FileClock, Inbox, LayoutDashboard, Mail, Megaphone, Menu, Moon,
+  Pin, PinOff, Plug, Radar, Route, Scale, Settings, ShieldCheck, Sparkles, Sun, Thermometer, TrendingUp, UsersRound, Waypoints,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router";
 
 import { useApp } from "../context";
@@ -20,7 +20,7 @@ const HELP_TOPIC: Record<string, string> = {
   rosters: "rosters", knowledge: "knowledge", campaigns: "campaigns", cases: "cases", escalations: "cases", settings: "settings",
   suppressed: "cases", parity: "cases", learning: "knowledge", outbox: "delivery", activity: "audit", help: "getting-started",
   stories: "stories", compare: "compare", connections: "integrations", admin: "admin", early: "early-detection", routing: "routing", ai: "ai",
-  "own-alerts": "agent-alerts",
+  "own-alerts": "agent-alerts", "qa-evals": "review-feed",
 };
 
 export function helpPathFor(pathname: string): string {
@@ -59,61 +59,78 @@ function Mark({ className }: { className?: string }) {
   );
 }
 
-function Item({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
+function Item({ item }: { item: NavItem }) {
   return (
-    <NavLink to={item.to} end={item.to === "/"} title={collapsed ? item.label : item.hint}
+    <NavLink to={item.to} end={item.to === "/"} title={item.hint}
       className={({ isActive }) => cx("flex items-center gap-3 rounded-full px-3 py-2 text-sm transition-colors",
-        collapsed && "justify-center px-0",
         isActive ? "bg-blue-100 font-medium text-blue-800 dark:bg-blue-200/15 dark:text-blue-200" : "text-zinc-700 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800")}>
       <span className="shrink-0">{item.icon}</span>
-      {!collapsed && <span className="min-w-0 flex-1 truncate">{item.label}</span>}
-      {!collapsed && !!item.count && <span className="rounded-full bg-rose-500 px-1.5 text-xs font-medium tabular-nums text-white">{item.count}</span>}
-      {collapsed && !!item.count && <span className="sr-only">{item.count} waiting</span>}
+      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+      {!!item.count && <span className="rounded-full bg-rose-500 px-1.5 text-xs font-medium tabular-nums text-white">{item.count}</span>}
     </NavLink>
   );
 }
 
-function GroupLabel({ children, collapsed }: { children: ReactNode; collapsed: boolean }) {
-  if (collapsed) return null;
+function GroupLabel({ children }: { children: ReactNode }) {
   return <p className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-500">{children}</p>;
 }
 
+const HIDE_AFTER_MS = 220;  // how long the menu stays once the pointer leaves it, so brushing past its edge does not shut it
+
+/**
+ * The page with its menu. On a wide screen the menu is out of sight until the pointer reaches the left edge of the page
+ * (or the menu button is pressed); it leaves again when the pointer does. The pin at its top keeps it in view: pinned, it
+ * is fixed to the window, scrolls on its own and never leaves with the page. On a narrow screen it is a drawer.
+ */
 export function Layout({ children }: { children: ReactNode }) {
   const { me, counts, theme, toggleTheme } = useApp();
   const location = useLocation();
   const wide = useWide();
-  const [folded, setFolded] = useState(() => {
-    try { return localStorage.getItem("console-nav") === "collapsed"; } catch { return false; }
+  const [pinned, setPinned] = useState(() => {
+    try { return localStorage.getItem("console-nav-pin") === "pinned"; } catch { return false; }
   });
+  const [peek, setPeek] = useState(false);  // shown because the pointer (or the keyboard) is on it
   const [drawer, setDrawer] = useState(false);
   const [more, setMore] = useState(false);
   const [setupOpen, setSetupOpen] = useState(() => {
     try { return localStorage.getItem("console-nav-setup") !== "closed"; } catch { return true; }
   });
+  const hide = useRef<number | null>(null);
   useEffect(() => {
-    try { localStorage.setItem("console-nav", folded ? "collapsed" : "open"); } catch { /* private mode */ }
-  }, [folded]);
+    try { localStorage.setItem("console-nav-pin", pinned ? "pinned" : "auto"); } catch { /* private mode */ }
+  }, [pinned]);
   useEffect(() => {
     try { localStorage.setItem("console-nav-setup", setupOpen ? "open" : "closed"); } catch { /* private mode */ }
   }, [setupOpen]);
-  useEffect(() => { setDrawer(false); }, [location.pathname, location.search]);
-  const collapsed = folded && wide; // the drawer always shows labels
+  useEffect(() => { setDrawer(false); setPeek(false); }, [location.pathname, location.search]);
+  useEffect(() => {  // how much of the page a pinned menu takes: an alert's window opens beside it, not under it
+    document.documentElement.style.setProperty("--nav-w", wide && pinned ? "16rem" : "0rem");
+  }, [wide, pinned]);
+  useEffect(() => () => { if (hide.current) window.clearTimeout(hide.current); }, []);
+  const show = useCallback(() => {
+    if (hide.current) window.clearTimeout(hide.current);
+    hide.current = null;
+    setPeek(true);
+  }, []);
+  const hideSoon = useCallback(() => {
+    if (hide.current) window.clearTimeout(hide.current);
+    hide.current = window.setTimeout(() => setPeek(false), HIDE_AFTER_MS);
+  }, []);
+  const open = wide ? pinned || peek : drawer;
 
   const icon = "size-[18px]";
   // The analyst's day first; rarely used records fold away; setup pages (admins and leads) sit at the bottom.
   const groups: NavGroup[] = [
     { label: "Daily work", items: [
-      { to: "/", label: "Dashboard", icon: <LayoutDashboard className={icon} />, hint: "Alert messages, filters and response times" },
-      { to: "/feed", label: "Review feed", icon: <Inbox className={icon} />, count: counts.review, hint: "Alerts waiting for someone, and every alert" },
+      { to: "/", label: "Dashboard", icon: <LayoutDashboard className={icon} />, hint: "Alert messages, Chat spaces, filters and response times" },
+      { to: "/feed", label: "Review feed", icon: <Inbox className={icon} />, count: counts.review, hint: "Every alert to work: Burson's, the agent's own, and the messages in Chat" },
       { to: "/stories", label: "Stories", icon: <Waypoints className={icon} />, hint: "Alerts on the same story, grouped" },
       { to: "/agent", label: "Ask Gemini", icon: <Sparkles className={icon} />, hint: "The Console chat agent" },
-      { to: "/chat", label: "Chat spaces", icon: <MessagesSquare className={icon} />, hint: "What the agent read and posted in Chat" },
     ] },
     { label: "Look into", items: [
       { to: "/temp-check", label: "Temp check", icon: <Thermometer className={icon} />, hint: "How big a conversation is, right now" },
       { to: "/velocity", label: "Post velocity", icon: <TrendingUp className={icon} />, hint: "7-day post curves, peak spikes and comparisons" },
       { to: "/early", label: "Early Detection", icon: <Radar className={icon} />, hint: "Stories growing before anyone alerted them" },
-      { to: "/own-alerts", label: "Agent alerts", icon: <Siren className={icon} />, hint: "Alerts the agent raises from its own sources" },
       { to: "/escalations", label: "Emails & T&S", icon: <Mail className={icon} />, hint: "Social Alert emails and Trust & Safety reports" },
     ] },
     { label: "Team and knowledge", items: [
@@ -124,6 +141,7 @@ export function Layout({ children }: { children: ReactNode }) {
     ] },
   ];
   const records: NavItem[] = [
+    { to: "/qa-evals", label: "Chatbot QA evaluations", icon: <ClipboardCheck className={icon} />, hint: "How analysts graded the chatbot's work, and what was done with it" },
     { to: "/compare", label: "Agent, Burson and IMs compared", icon: <Scale className={icon} /> },
     { to: "/suppressed", label: "Suppressed alerts", icon: <FileClock className={icon} /> },
     { to: "/parity", label: "Our alerts vs Burson's", icon: <FileClock className={icon} /> },
@@ -132,71 +150,82 @@ export function Layout({ children }: { children: ReactNode }) {
   ];
   const setup: NavItem[] = [
     { to: "/admin", label: "People & Admin", icon: <ShieldCheck className={icon} />, hint: "Add or remove people and set Admin or User roles" },
-    { to: "/settings", label: "Settings", icon: <Settings className={icon} /> },
+    { to: "/settings", label: "Settings", icon: <Settings className={icon} />, hint: "Switches, Testing, and the sources and rules the chatbot alerts by" },
     { to: "/routing", label: "Routing", icon: <Route className={icon} /> },
     { to: "/ai", label: "AI", icon: <BrainCircuit className={icon} /> },
     { to: "/connections", label: "Integrations", icon: <Plug className={icon} /> },
   ];
   const recordsActive = records.some((e) => location.pathname.startsWith(e.to));
-  const showRecords = more || recordsActive || collapsed;
-  const showSetup = setupOpen || collapsed || setup.some((e) => location.pathname.startsWith(e.to));
+  const showRecords = more || recordsActive;
+  const showSetup = setupOpen || setup.some((e) => location.pathname.startsWith(e.to));
   const meRoleLabel = me?.role === "admin" ? "Admin" : me?.role === "viewer" ? "Viewer" : "User";
 
   return (
-    <div className="flex h-full">
-      {drawer && !wide && <button type="button" aria-label="Close the menu" onClick={() => setDrawer(false)} className="fixed inset-0 z-40 bg-black/50" />}
-      <aside aria-label="Menu" className={cx("scroll-thin flex h-dvh shrink-0 flex-col overflow-y-auto px-3 py-4",
-        wide ? cx("sticky top-0 bg-zinc-100/70 dark:bg-zinc-900/60", collapsed ? "w-[68px]" : "w-64")
-          : cx("fixed inset-y-0 left-0 z-50 w-72 bg-zinc-100 transition-transform duration-200 dark:bg-zinc-900", drawer ? "translate-x-0" : "-translate-x-full"))}>
-        <div className={cx("mb-5 flex items-center gap-2", collapsed ? "justify-center" : "px-2")}>
-          <Link to="/" className="flex min-w-0 items-center gap-2.5" aria-label="Dashboard">
+    <div className="flex min-h-full">
+      {drawer && !wide && <button type="button" aria-label="Close the menu" onClick={() => setDrawer(false)} className="fixed inset-0 z-[88] bg-black/50" />}
+      {wide && !pinned && (
+        <>
+          {/* the left edge of the page: pointing at it brings the menu in */}
+          <div aria-hidden onMouseEnter={show} className="fixed inset-y-0 left-0 z-[89] w-2.5" />
+          <div aria-hidden className={cx("bg-spark pointer-events-none fixed left-0 top-1/2 z-[89] h-20 w-1 -translate-y-1/2 rounded-r-full transition-opacity duration-200", peek ? "opacity-0" : "opacity-70")} />
+        </>
+      )}
+      <aside aria-label="Menu" aria-hidden={!open} inert={!open}
+        onMouseEnter={wide && !pinned ? show : undefined} onMouseLeave={wide && !pinned ? hideSoon : undefined}
+        onFocus={wide && !pinned ? show : undefined} onBlur={wide && !pinned ? hideSoon : undefined}
+        className={cx("scroll-thin fixed inset-y-0 left-0 z-[90] flex flex-col overflow-y-auto overscroll-contain px-3 py-4 transition-transform duration-200",
+          wide ? "w-64 bg-zinc-100 dark:bg-zinc-900" : "w-72 bg-zinc-100 dark:bg-zinc-900",
+          wide && !pinned && "border-r border-zinc-200 shadow-2xl dark:border-zinc-800",
+          open ? "translate-x-0" : "-translate-x-full")}>
+        <div className="mb-5 flex items-center gap-2 px-2">
+          <Link to="/" className="flex min-w-0 flex-1 items-center gap-2.5" aria-label="Dashboard">
             <Mark className="size-7 shrink-0" />
-            {!collapsed && <span className="truncate text-[15px] font-medium tracking-tight text-zinc-900 dark:text-zinc-50">SLRR Triage</span>}
+            <span className="truncate text-[15px] font-medium tracking-tight text-zinc-900 dark:text-zinc-50">SLRR Triage</span>
+            {me?.env && me.env !== "prod" && <span className="rounded-full border border-zinc-300 px-2 text-xs text-zinc-500 dark:border-zinc-700">{me.env}</span>}
           </Link>
-          {!collapsed && me?.env && me.env !== "prod" && <span className="rounded-full border border-zinc-300 px-2 text-xs text-zinc-500 dark:border-zinc-700">{me.env}</span>}
+          {wide && (
+            <button type="button" onClick={() => setPinned((v) => !v)} aria-pressed={pinned}
+              title={pinned ? "Unpin: hide the menu until the pointer reaches the left edge" : "Pin: keep the menu in view"}
+              aria-label={pinned ? "Unpin the menu" : "Pin the menu so it stays in view"}
+              className={cx("rounded-full p-1.5 transition-colors", pinned ? "bg-blue-100 text-blue-800 dark:bg-blue-200/15 dark:text-blue-200" : "text-zinc-500 hover:bg-zinc-200/70 dark:hover:bg-zinc-800")}>
+              {pinned ? <Pin className="size-4" /> : <PinOff className="size-4" />}
+            </button>
+          )}
         </div>
         <nav className="flex flex-1 flex-col gap-1" aria-label="Main">
           {groups.map((group, i) => (
             <div key={group.label} className={cx("flex flex-col gap-0.5", i > 0 && "mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800")}>
-              <GroupLabel collapsed={collapsed}>{group.label}</GroupLabel>
-              {group.items.map((item) => <Item key={item.to} item={item} collapsed={collapsed} />)}
+              <GroupLabel>{group.label}</GroupLabel>
+              {group.items.map((item) => <Item key={item.to} item={item} />)}
             </div>
           ))}
           <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-            {!collapsed && (
-              <button type="button" onClick={() => setMore((m) => !m)} aria-expanded={showRecords}
-                className="flex w-full items-center gap-2 rounded-full px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500 hover:bg-zinc-200/70 dark:hover:bg-zinc-800">
-                <span className="flex-1 text-left">Records</span><ChevronDown className={cx("size-3.5 transition-transform", showRecords && "rotate-180")} aria-hidden />
-              </button>
-            )}
-            {showRecords && <div className="mt-0.5 flex flex-col gap-0.5">{records.map((item) => <Item key={item.to} item={item} collapsed={collapsed} />)}</div>}
+            <button type="button" onClick={() => setMore((m) => !m)} aria-expanded={showRecords}
+              className="flex w-full items-center gap-2 rounded-full px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500 hover:bg-zinc-200/70 dark:hover:bg-zinc-800">
+              <span className="flex-1 text-left">Records</span><ChevronDown className={cx("size-3.5 transition-transform", showRecords && "rotate-180")} aria-hidden />
+            </button>
+            {showRecords && <div className="mt-0.5 flex flex-col gap-0.5">{records.map((item) => <Item key={item.to} item={item} />)}</div>}
           </div>
         </nav>
         <div className="mt-4 flex flex-col gap-0.5 border-t border-zinc-200 pt-3 dark:border-zinc-800">
           {!wide && <div className="px-1 pb-2"><GmailButton /></div>}
           {(me?.is_admin || me?.is_lead) && <>
-            {!collapsed && (
-              <button type="button" onClick={() => setSetupOpen((o) => !o)} aria-expanded={showSetup}
-                className="flex w-full items-center gap-2 rounded-full px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500 hover:bg-zinc-200/70 dark:hover:bg-zinc-800">
-                <span className="flex-1 text-left">Admin & setup</span><ChevronDown className={cx("size-3.5 transition-transform", showSetup && "rotate-180")} aria-hidden />
-              </button>
-            )}
-            {showSetup && setup.map((item) => <Item key={item.to} item={item} collapsed={collapsed} />)}
-          </>}
-          <Item item={{ to: "/help", label: "Help", icon: <CircleHelp className={icon} /> }} collapsed={collapsed} />
-          {wide && (
-            <button type="button" onClick={() => setFolded((c) => !c)} title={collapsed ? "Open the menu" : "Make the menu narrow"}
-              className={cx("flex items-center gap-3 rounded-full px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-200/70 dark:text-zinc-400 dark:hover:bg-zinc-800", collapsed && "justify-center px-0")}>
-              {collapsed ? <PanelLeftOpen className={icon} /> : <PanelLeftClose className={icon} />}{!collapsed && "Narrow menu"}
+            <button type="button" onClick={() => setSetupOpen((o) => !o)} aria-expanded={showSetup}
+              className="flex w-full items-center gap-2 rounded-full px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500 hover:bg-zinc-200/70 dark:hover:bg-zinc-800">
+              <span className="flex-1 text-left">Admin & setup</span><ChevronDown className={cx("size-3.5 transition-transform", showSetup && "rotate-180")} aria-hidden />
             </button>
-          )}
+            {showSetup && setup.map((item) => <Item key={item.to} item={item} />)}
+          </>}
+          <Item item={{ to: "/help", label: "Help", icon: <CircleHelp className={icon} /> }} />
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className={cx("flex min-w-0 flex-1 flex-col transition-[padding] duration-200", wide && pinned && "pl-64")}>
         <header className="sticky top-0 z-30 flex items-center gap-2 bg-zinc-50/85 px-4 py-3 backdrop-blur sm:px-6 dark:bg-zinc-950/85">
-          {!wide && (
-            <button type="button" onClick={() => setDrawer(true)} aria-label="Open the menu" aria-expanded={drawer} className="-ml-1 flex items-center gap-2 rounded-full p-2 text-zinc-700 hover:bg-zinc-200/70 dark:text-zinc-200 dark:hover:bg-zinc-800">
+          {!(wide && pinned) && (
+            <button type="button" onClick={() => (wide ? setPeek((v) => !v) : setDrawer(true))} onMouseEnter={wide ? show : undefined}
+              aria-label="Open the menu" aria-expanded={open} title={wide ? "Menu (or point at the left edge of the page)" : "Menu"}
+              className="-ml-1 flex items-center gap-2 rounded-full p-2 text-zinc-700 hover:bg-zinc-200/70 dark:text-zinc-200 dark:hover:bg-zinc-800">
               <Menu className="size-5" /><Mark className="size-6" />
             </button>
           )}

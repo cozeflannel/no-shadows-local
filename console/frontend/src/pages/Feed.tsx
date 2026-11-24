@@ -1,297 +1,125 @@
-import { ArrowLeft, ExternalLink, Inbox, Plus, Search, ThumbsDown, ThumbsUp, Undo2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { ArrowDown, ArrowUp, Inbox, Plus, Search, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { apiSend, type ApiError } from "../api/client";
 import { useApi } from "../api/hooks";
-import type { ActionDef } from "../api/types";
-import { Alert, Badge, Button, Card, CaseBadges, cx, EmptyState, ErrorState, Field, Input, Modal, PageHeader, Segmented, Select, Spinner, Textarea } from "../components/ui";
-import { useVelocityMap, VelocityBadge, type VelocitySummary } from "../components/VelocityInline";
+import { ChatThreads, type ChatSpace } from "../components/ChatActivity";
+import { Badge, Button, CaseBadges, cx, EmptyState, ErrorState, Input, Modal, PageHeader, Segmented, Select, Spinner, Tabs, Textarea, Toggle } from "../components/ui";
+import { useVelocityMap } from "../components/VelocityInline";
+import { AgentAlertWorkspace, AlertWorkspace } from "../components/workspace/AlertWorkspace";
+import type { AgentAlert, FeedCard, FeedList } from "../components/workspace/types";
 import { useApp } from "../context";
-import { fmtDateTime, fmtMinutes, fmtRelative, fmtValue, probability } from "../lib/format";
-import { humanize, plainReason, suppressionLabel, TARGET_LABEL, verdictLabel } from "../lib/labels";
+import { fmtDate, fmtNum, fmtTime } from "../lib/format";
 import { useLive } from "../lib/live";
 
-type View = "action" | "review" | "verified" | "suppressed" | "closed" | "all";
-interface Correction { field: string; old: unknown; new: unknown; reason: string; confidence: number | null; applied: boolean; reverted_by: string | null }
-interface Burson { filled: number; right: number; wrong: string[]; in_question: string[]; pct: number | null }
-interface Kept { kept: number; of: number; rate: number }
-interface FeedCard {
-  case_id: string; status: string; alert_name: string | null; issue_name: string | null; product: string | null; exposure_tag: string | null;
-  priority: string | null; platform: string | null; verdict: string | null; review_probability: number | null; burson: Burson | null; needs: string; waiting_min: number;
-  classification: { label: string; probability?: unknown; rationale: string; trusted: boolean; decided_by: string } | null;  // probability: older cases may lack it
-  field_agreement: { days: number; assessments: number; fields: Record<string, Kept> };
-  citations: { ref: string; title: string; link: string; kind: string; excerpt: string }[];
-  proposed_actions: { code: string; label: string; kind: string }[];
-  actions_taken: { code: string; actor: string; at: string; note: string | null; escalation_id: string | null }[];
-  applied_corrections: Correction[]; proposed_corrections: Correction[];
-  review_reasons: string[]; post_url: string | null; author: string | null; latest_received_at: string; acknowledged_at: string | null;
-  review_reasons_plain?: string[]; suppression_label?: string | null;  // the same two, in words (the server writes them)
-  sla_due_at: string | null; ts_recommended: boolean; suppression_reason: string | null;
-  normalized?: Record<string, unknown>;
-  issue_list?: { field: string | null; rule: string; severity: string; found: unknown; expected: unknown; fix: string | null }[];
-  alert_text?: string;
-  chat?: { activity_id: string; ts: string; direction: string; kind: string; space_key: string | null; actor: string; text: string; status: string; emoji: string | null }[];
-  golden?: { label: string; assessments: { actor: string; at: string; agree: boolean; verdict: string | null; note: string }[] } | null;
+type View = "action" | "review" | "verified" | "suppressed" | "closed" | "all" | "passed";
+type Kind = "all" | "burson" | "agent" | "chat";
+type SortKey = "name" | "status" | "product" | "network" | "priority" | "engagement" | "at";
+interface Row {
+  key: string; kind: "case" | "agent"; id: string; name: string; named: boolean; status: string; product: string; network: string; priority: string;
+  engagement: number | null; at: string; rank: number; card?: FeedCard; alert?: AgentAlert;
 }
-interface FeedList { cards: FeedCard[]; total: number; legend: ActionDef[]; verdicts: string[] }
 
 const VIEWS: { value: View; label: string }[] = [
   { value: "action", label: "Needs action" }, { value: "review", label: "Review" }, { value: "verified", label: "Verified" },
   { value: "suppressed", label: "Suppressed" }, { value: "closed", label: "Closed" }, { value: "all", label: "All" },
 ];
-const SEVERITY: Record<string, { label: string; tone: "rose" | "violet" }> = { blocking: { label: "Must fix", tone: "rose" }, warning: { label: "Check", tone: "violet" } };
+/** The agent's own alerts have their own three views: what waits for a verdict, all it raised, and what it looked at and did not raise. */
+const AGENT_VIEWS: { value: View; label: string }[] = [{ value: "action", label: "To judge" }, { value: "all", label: "Raised" }, { value: "passed", label: "Not raised" }];
+const NEED_RANK: Record<string, number> = { sla: 0, review: 1, verdict: 1, acknowledge: 2, source_fix: 3 };
+const COLS = "grid grid-cols-[2.25rem_minmax(0,1fr)_6.5rem_4.75rem] items-center gap-x-3 md:grid-cols-[2.25rem_minmax(0,1fr)_10rem_9rem_6.5rem_4.75rem] xl:grid-cols-[2.25rem_minmax(0,1fr)_10rem_9rem_7rem_4rem_6.5rem_6.5rem_4.75rem]";
+const HEAD: { key: SortKey; label: string; show: string }[] = [
+  { key: "name", label: "Alert", show: "flex" }, { key: "status", label: "Status", show: "hidden md:flex" }, { key: "product", label: "Product", show: "hidden md:flex" },
+  { key: "network", label: "Network", show: "hidden xl:flex" }, { key: "priority", label: "Priority", show: "hidden xl:flex" },
+  { key: "engagement", label: "Engagement", show: "hidden xl:flex justify-end" }, { key: "at", label: "Date and time", show: "flex col-span-2" },
+];
+const VERDICT: Record<string, string> = { TRUE_POSITIVE: "Confirmed", FALSE_POSITIVE: "False positive" };
 
-/** Why the alert was held, as sentences. The server sends them in words; plainReason covers older data. */
-function heldReasons(c: FeedCard, label: (field: string) => string): string[] {
-  return c.review_reasons_plain?.length ? c.review_reasons_plain : c.review_reasons.map((r) => plainReason(r, label));
+function rowsOf(list: FeedList | null): Row[] {
+  const cases: Row[] = (list?.cards ?? []).map((c) => ({
+    key: c.case_id, kind: "case", id: c.case_id, name: c.alert_name || c.issue_name || "No alert name yet", named: !!(c.alert_name || c.issue_name), status: c.needs || c.status,
+    product: c.product ?? "", network: c.platform ?? "", priority: c.priority ?? "", engagement: typeof c.engagement_total === "number" ? c.engagement_total : null,
+    at: c.latest_received_at, rank: NEED_RANK[c.needs] ?? 4, card: c,
+  }));
+  const agent: Row[] = (list?.agent_alerts ?? []).map((a) => ({
+    key: `agent:${a.id}`, kind: "agent", id: a.id, name: a.title, named: true, status: a.verdict ? VERDICT[a.verdict] : a.status === "passed" ? "Not raised" : "To judge", product: "", network: "",
+    priority: a.severity, engagement: null, at: a.at, rank: NEED_RANK[a.needs] ?? 4, alert: a,
+  }));
+  return [...cases, ...agent];
 }
 
-/** How the alert was classified, with Gemini Decisions' probability when there is a real one (never "NaN%"). */
-function ClassLine({ c }: { c: NonNullable<FeedCard["classification"]> }) {
-  const p = probability(c.probability);
+function sorted(rows: Row[], view: View, sort: { key: SortKey; desc: boolean } | null): Row[] {
+  const out = [...rows];
+  if (!sort) {  // as the work comes: what waits first (the longest wait on top), else the newest first
+    out.sort((a, b) => (view === "action" ? a.rank - b.rank || a.at.localeCompare(b.at) : b.at.localeCompare(a.at)));
+    return out;
+  }
+  const dir = sort.desc ? -1 : 1;
+  out.sort((a, b) => {
+    const x = a[sort.key], y = b[sort.key];
+    if (typeof x === "number" || typeof y === "number") return dir * ((x as number | null ?? -1) - (y as number | null ?? -1));
+    return dir * String(x ?? "").localeCompare(String(y ?? ""), undefined, { sensitivity: "base" });
+  });
+  return out;
+}
+
+function StatusCell({ row }: { row: Row }): ReactNode {
+  if (row.card) return <CaseBadges status={row.card.status} verdict={null} need={row.card.needs} />;
+  return <Badge tone={row.alert?.verdict === "TRUE_POSITIVE" ? "emerald" : row.alert?.verdict || row.alert?.status === "passed" ? "zinc" : "violet"}>{row.status}</Badge>;
+}
+
+/** One alert as one line: its name, where it stands, and when it came in. An alert the agent raised itself has the lit edge. */
+function Line({ row, n, selected, full, onOpen }: { row: Row; n: number; selected: boolean; full: boolean; onOpen: () => void }) {
+  const own = row.kind === "agent";
+  const agent = own && row.alert?.status !== "passed";  // what it did not raise is not an alert: no lit edge
   return (
-    <p className="mb-3 text-sm text-zinc-700 dark:text-zinc-300">
-      <span className="font-medium text-zinc-900 dark:text-zinc-100">Class: {c.label || "none"}</span>
-      {p !== null && <span className="mx-2 text-zinc-500" title={`${c.decided_by || "Gemini Decisions"}' probability for this class`}>{Math.round(p * 100)}% sure</span>}
-      {" "}{c.rationale}
-    </p>
-  );
-}
-
-function useRun(onDone: (card: FeedCard | null) => void) {
-  const { toast } = useApp();
-  const [busy, setBusy] = useState<string | null>(null);
-  const run = useCallback(async (key: string, method: "post", url: string, body: unknown, done: string) => {
-    setBusy(key);
-    try {
-      const res = await apiSend<{ summary?: string; card?: FeedCard | null; data?: { user_error?: string } }>(method, url, body);
-      if (res.data?.user_error) toast(res.data.user_error, "error");
-      else toast(res.summary || done);
-      onDone(res.card ?? null);
-    } catch (err) {
-      toast((err as ApiError).message, "error");
-    } finally {
-      setBusy(null);
-    }
-  }, [onDone, toast]);
-  return { busy, run };
-}
-
-function CardRow({ card, velocity, selected, onOpen }: { card: FeedCard; velocity?: VelocitySummary | null; selected: boolean; onOpen: () => void }) {
-  return (
-    <button type="button" onClick={onOpen} aria-current={selected}
-      className={cx("block w-full rounded-2xl border p-4 text-left transition-colors",
-        selected ? "border-blue-400 bg-blue-50/60 dark:border-blue-300/60 dark:bg-blue-200/10" : "border-zinc-200 bg-white hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800/60",
-        card.needs === "sla" && !selected && "glow border-transparent dark:border-transparent")}>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <CaseBadges status={card.status} verdict={card.verdict} need={card.needs} />
-        {card.priority && <Badge tone="zinc">{card.priority}</Badge>}
-        {velocity && velocity.tier !== "steady" && <Badge tone={velocity.tier === "surging" ? "rose" : "violet"}>{velocity.tier_label} · {velocity.peak_per_hour > 0 ? `${Math.round(velocity.peak_per_hour).toLocaleString()}/hr` : `+${velocity.delta_engagements.toLocaleString()}`}</Badge>}
-        <span className="ml-auto text-xs tabular-nums text-zinc-500">{card.needs ? `waiting ${fmtMinutes(card.waiting_min)}` : fmtRelative(card.latest_received_at)}</span>
-      </div>
-      <p className={cx("mt-2 line-clamp-2 text-sm font-medium", card.alert_name || card.issue_name ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-500 dark:text-zinc-400")}>
-        {card.alert_name || card.issue_name || "No alert name yet"}
-      </p>
-      <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
-        <span>{card.case_id}</span>{card.platform && <span>{card.platform}</span>}{card.product && <span>{card.product}</span>}{card.exposure_tag && <span className="truncate">{card.exposure_tag}</span>}
-        {card.classification && <span>Class: {card.classification.label}</span>}
-        <Numbers burson={card.burson} review={card.review_probability} />
-      </p>
-    </button>
-  );
-}
-
-function Detail({ caseId, velocity, onVelocityUpdated, legend, verdicts, onChanged }: {
-  caseId: string; velocity?: VelocitySummary | null; onVelocityUpdated?: (s: VelocitySummary) => void; legend: ActionDef[]; verdicts: string[]; onChanged: () => void;
-}) {
-  const { me, meta } = useApp();
-  const { data, error, loading, setData, reload } = useApi<FeedCard>(`/feed/${caseId}`);
-  const done = useCallback((card: FeedCard | null) => { if (card) setData(card); else reload(); onChanged(); }, [setData, reload, onChanged]);
-  const { busy, run } = useRun(done);
-  const [accept, setAccept] = useState<Record<string, boolean>>({});
-  const [reason, setReason] = useState("");
-  const [note, setNote] = useState("");
-  const [verdict, setVerdict] = useState("");
-  useEffect(() => { setAccept({}); setReason(""); setNote(""); setVerdict(""); }, [caseId]);
-
-  if (loading && !data) return <Spinner />;
-  if (error) return <ErrorState error={error} onRetry={reload} />;
-  if (!data) return null;
-  const c = data;
-  const canAct = !!me?.can_act;
-  const label = (f: string) => meta?.field_labels[f] ?? f;
-  const proposedCodes = new Set(c.proposed_actions.map((a) => a.code));
-  const taken = new Set(c.actions_taken.map((a) => a.code));
-  const fields = Object.entries(c.normalized ?? {}).filter(([, v]) => v !== null && v !== "" && !(Array.isArray(v) && v.length === 0));
-  const forwardFields = Object.fromEntries(c.proposed_corrections.filter((p) => accept[p.field] ?? true).map((p) => [p.field, p.new]));
-
-  return (
-    <div className="space-y-4">
-      <Card title={<span className="flex flex-wrap items-center gap-2">{c.case_id}<CaseBadges status={c.status} verdict={c.verdict} need={c.needs} /></span>}
-        subtitle={c.alert_name || c.issue_name || undefined}
-        actions={<>
-          <VelocityBadge summary={velocity} caseId={c.case_id} postUrl={c.post_url} onUpdated={onVelocityUpdated} />
-          {c.post_url && <a href={c.post_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 dark:text-blue-200">Post<ExternalLink className="size-3" /></a>}
-          <Link to={`/cases/${c.case_id}`} className="text-xs font-medium text-blue-600 dark:text-blue-200">Full case</Link>
-        </>}>
-        <p className="mb-3 flex flex-wrap gap-x-3 gap-y-1 text-sm text-zinc-700 dark:text-zinc-300"><Numbers burson={c.burson} review={c.review_probability} long /></p>
-        {c.classification && <ClassLine c={c.classification} />}
-        {c.review_reasons.length > 0 && (
-          <Alert tone="violet" title="Why it was held for review" className="mb-3">
-            <ul className="list-disc space-y-0.5 pl-4">{heldReasons(c, label).map((r, i) => <li key={i}>{r}</li>)}</ul>
-          </Alert>
-        )}
-        {c.status === "SUPPRESSED" && <Alert tone="blue" title="Why it was not posted" className="mb-3">{c.suppression_label || suppressionLabel(c.suppression_reason)}</Alert>}
-        <pre className="scroll-thin max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-zinc-100 p-3 font-sans text-sm leading-relaxed text-zinc-800 dark:bg-zinc-950 dark:text-zinc-200">{c.alert_text}</pre>
-      </Card>
-
-      {c.status === "NEEDS_REVIEW" && (
-        <Card className="glow border-transparent dark:border-transparent" title="Your decision">
-          {c.proposed_corrections.length > 0 && (
-            <ul className="mb-3 space-y-2">
-              {c.proposed_corrections.map((p) => (
-                <li key={p.field} className="flex items-start gap-3 text-sm">
-                  <input type="checkbox" className="mt-1 size-4 accent-blue-600" checked={accept[p.field] ?? true} disabled={!canAct}
-                    onChange={(e) => setAccept((a) => ({ ...a, [p.field]: e.target.checked }))} aria-label={`Apply the proposed ${label(p.field)}`} />
-                  <span className="min-w-0 flex-1">
-                    <span className="font-medium text-zinc-900 dark:text-zinc-100">{label(p.field)}</span>: <span className="text-zinc-500 line-through">{fmtValue(p.old)}</span> to <span className="font-medium">{fmtValue(p.new)}</span>
-                    <span className="ml-2 text-xs text-zinc-500">{probability(p.confidence) !== null ? `${Math.round((probability(p.confidence) ?? 0) * 100)}% likely right` : "no likelihood given: your call"}</span>
-                    <span className="block text-xs text-zinc-500">{p.reason}</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-          <Field label="Reason (needed to send back)"><Input value={reason} onChange={(e) => setReason(e.target.value)} disabled={!canAct} /></Field>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button variant="primary" disabled={!canAct} loading={busy === "forward"}
-              onClick={() => run("forward", "post", `/review-queue/${c.case_id}`, { decision: "forward", reason: reason.trim() || undefined, fields: Object.keys(forwardFields).length ? forwardFields : undefined }, "Forwarded")}>
-              {Object.keys(forwardFields).length ? `Apply ${Object.keys(forwardFields).length} and forward` : "Forward as received"}
-            </Button>
-            <Button disabled={!canAct || !reason.trim()} loading={busy === "bounce"} onClick={() => run("bounce", "post", `/review-queue/${c.case_id}`, { decision: "bounce", reason: reason.trim() }, "Sent back")}>Send back to Burson</Button>
-            <Button disabled={!canAct} loading={busy === "suppress"} onClick={() => run("suppress", "post", `/review-queue/${c.case_id}`, { decision: "suppress", reason: reason.trim() || undefined }, "Suppressed")}>Suppress</Button>
-          </div>
-        </Card>
-      )}
-
-      <Card title="Actions" subtitle={c.proposed_actions.length ? "Filled actions are the agent's suggestion." : undefined}>
-        <div className="flex flex-wrap gap-2">
-          {legend.map((a) => (
-            <Button key={a.code} size="sm" disabled={!canAct} loading={busy === a.code} variant={proposedCodes.has(a.code) ? "primary" : "secondary"}
-              className={cx(taken.has(a.code) && "opacity-60")} title={taken.has(a.code) ? "Already taken on this case" : undefined}
-              onClick={() => run(a.code, "post", `/feed/${c.case_id}/action`, { action: a.code }, a.label)}>{a.label}</Button>
-          ))}
-        </div>
-        {c.ts_recommended && <p className="mt-3 text-xs text-violet-700 dark:text-violet-300">A Trust & Safety escalation is recommended for this alert.</p>}
-        {c.actions_taken.length > 0 && (
-          <ul className="mt-4 space-y-1 border-t border-zinc-100 pt-3 text-xs text-zinc-500 dark:border-zinc-800">
-            {c.actions_taken.map((a, i) => <li key={i}>{fmtDateTime(a.at)}: {legend.find((l) => l.code === a.code)?.label ?? a.code} by {a.actor}{a.note ? ` (${a.note})` : ""}</li>)}
-          </ul>
-        )}
-      </Card>
-
-      <Card title="Fields" padded={false}
-        subtitle={c.field_agreement.assessments > 0 ? `Right column: how often incident managers kept the app's value, from ${c.field_agreement.assessments} assessments in the last ${c.field_agreement.days} days.` : "Once incident managers record assessments, each field shows how often they kept the app's value."}>
-        <table className="w-full text-sm">
-          <tbody>
-            {fields.map(([f, v]) => (
-              <tr key={f} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
-                <td className="w-28 px-5 py-2 align-top text-xs text-zinc-500 sm:w-44">{label(f)}</td>
-                <td className="break-words px-2 py-2 align-top text-zinc-800 dark:text-zinc-200">{fmtValue(v)}</td>
-                <td className="w-40 px-5 py-2 text-right align-top text-xs text-zinc-500">
-                  {c.burson?.wrong.includes(f) && <Badge tone="rose">Burson had it wrong</Badge>}
-                  {c.burson?.in_question.includes(f) && <Badge tone="violet">In question</Badge>}
-                  {c.field_agreement.fields[f] && <span className="block tabular-nums">kept {c.field_agreement.fields[f].kept} of {c.field_agreement.fields[f].of}</span>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
-
-      {(c.applied_corrections.length > 0 || (c.issue_list?.length ?? 0) > 0) && (
-        <Card title="What the agent changed and found">
-          <ul className="space-y-2 text-sm">
-            {c.applied_corrections.map((p) => (
-              <li key={`a-${p.field}`} className="flex items-start gap-2">
-                <span className="min-w-0 flex-1"><span className="font-medium">{label(p.field)}</span>: <span className="text-zinc-500 line-through">{fmtValue(p.old)}</span> to {fmtValue(p.new)}
-                  {p.reverted_by && <Badge tone="zinc" className="ml-2">reverted by {p.reverted_by}</Badge>}<span className="block text-xs text-zinc-500">{p.reason}</span></span>
-                {!p.reverted_by && <Button size="sm" variant="ghost" icon={<Undo2 className="size-3.5" />} disabled={!canAct} loading={busy === `rev-${p.field}`}
-                  onClick={() => run(`rev-${p.field}`, "post", `/cases/${c.case_id}/revert`, { field: p.field }, "Reverted")}>Revert</Button>}
-              </li>
-            ))}
-            {c.issue_list?.map((i, n) => (
-              <li key={`i-${n}`} className="text-zinc-700 dark:text-zinc-300">
-                <Badge tone={SEVERITY[i.severity]?.tone ?? "violet"}>{SEVERITY[i.severity]?.label ?? humanize(i.severity)}</Badge> {i.field ? `${label(i.field)}: ` : ""}{i.fix || humanize(i.rule)}
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
-
-      {c.citations.length > 0 && (
-        <Card title="Knowledge the agent cited">
-          <ul className="space-y-3 text-sm">
-            {c.citations.map((k) => (
-              <li key={k.ref}>
-                <p className="font-medium text-zinc-900 dark:text-zinc-100" title={k.ref}>{k.link ? <a className="text-blue-600 underline-offset-2 hover:underline dark:text-blue-200" href={k.link} target="_blank" rel="noreferrer">{k.title}</a> : k.title}</p>
-                <p className="mt-0.5 text-xs text-zinc-500">{k.excerpt}</p>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
-
-      <Card title="Was the agent right?" subtitle="Your answer is kept as an example the agent is checked against.">
-        {c.golden?.assessments.map((a, i) => (
-          <p key={i} className="mb-2 text-xs text-zinc-500">{fmtDateTime(a.at)}: {a.actor} {a.agree ? "agreed" : `disagreed${a.verdict ? ` (should be ${verdictLabel(a.verdict)})` : ""}`}{a.note ? `: ${a.note}` : ""}</p>
-        ))}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_12rem]">
-          <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="What was wrong, or a note" disabled={!canAct} aria-label="Note" />
-          <Select value={verdict} onChange={(e) => setVerdict(e.target.value)} disabled={!canAct} aria-label="Correct verdict">
-            <option value="">What it should have been (if wrong)</option>{verdicts.map((v) => <option key={v} value={v}>{verdictLabel(v)}</option>)}
-          </Select>
-        </div>
-        <div className="mt-3 flex gap-2">
-          <Button icon={<ThumbsUp className="size-4" />} disabled={!canAct} loading={busy === "agree"} onClick={() => run("agree", "post", `/feed/${c.case_id}/assessment`, { agree: true, note }, "Recorded")}>Right</Button>
-          <Button icon={<ThumbsDown className="size-4" />} disabled={!canAct || (!note.trim() && !verdict)} loading={busy === "disagree"}
-            onClick={() => run("disagree", "post", `/feed/${c.case_id}/assessment`, { agree: false, verdict: verdict || undefined, note }, "Recorded")}>Wrong</Button>
-        </div>
-      </Card>
-
-      {(c.chat?.length ?? 0) > 0 && (
-        <Card title="In Chat" padded={false}>
-          <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
-            {c.chat!.map((m) => (
-              <li key={m.activity_id} className="px-5 py-3 text-sm">
-                <p className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                  <Badge tone={m.direction === "inbound" ? "blue" : "zinc"}>{m.direction === "inbound" ? "Received" : "Sent"}</Badge>
-                  {m.space_key && <span>{TARGET_LABEL[m.space_key] ?? humanize(m.space_key)}</span>}<span>{m.actor}</span><span>{fmtDateTime(m.ts)}</span>
-                  {m.status !== "returned" && m.status !== "received" && <Badge tone={m.status === "held" ? "rose" : "zinc"}>{humanize(m.status)}</Badge>}
-                </p>
-                <p className="mt-1 line-clamp-4 whitespace-pre-wrap break-words text-zinc-700 dark:text-zinc-300">{m.kind === "reaction" ? `Reaction ${m.emoji ?? ""}` : m.text}</p>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
-    </div>
-  );
-}
-
-/** The two real numbers for an alert: Burson's fields counted against the checks, and Gemini Decisions' chance it needs a person. */
-function Numbers({ burson, review: raw, long = false }: { burson: Burson | null; review: number | null; long?: boolean }) {
-  const review = probability(raw);
-  return (
-    <>
-      {burson && burson.pct !== null && (
-        <span title="Counted: of the fields Burson filled in, how many stood up to the checks">
-          Burson {burson.right} of {burson.filled} right ({Math.round(burson.pct * 100)}%){long && burson.in_question.length > 0 ? `, ${burson.in_question.length} in question` : ""}
+    <li className={cx(agent && "glow my-1 rounded-xl", !agent && "border-b border-zinc-100 last:border-0 dark:border-zinc-800/70")}>
+      <button type="button" onClick={onOpen} aria-current={selected}
+        className={cx(COLS, "w-full px-3 py-1.5 text-left text-sm transition-colors", agent && "rounded-xl",
+          selected ? "bg-blue-50 dark:bg-blue-200/10" : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50")}>
+        <span className="text-right text-xs tabular-nums text-zinc-400">{n}</span>
+        <span className="flex min-w-0 items-center gap-2">
+          {own && <Sparkles className={cx("size-3.5 shrink-0", agent ? "text-violet-500" : "text-zinc-400")} aria-label={agent ? "Raised by the agent" : "Looked at by the agent, not raised"} />}
+          <span className={cx("truncate font-medium", row.named ? "text-blue-700 dark:text-blue-200" : "text-zinc-500")}>{row.name}</span>
+          <span className="hidden shrink-0 font-mono text-[11px] text-zinc-400 sm:inline">{agent ? "Agent alert" : own ? "Not raised" : row.id}</span>
         </span>
+        <span className="hidden min-w-0 items-center gap-1 md:flex"><StatusCell row={row} /></span>
+        <span className="hidden truncate text-zinc-700 md:block dark:text-zinc-300">{row.product}</span>
+        <span className="hidden truncate text-zinc-700 xl:block dark:text-zinc-300">{row.network}</span>
+        <span className="hidden text-zinc-700 xl:block dark:text-zinc-300">{row.priority}</span>
+        <span className="hidden text-right tabular-nums text-zinc-700 xl:block dark:text-zinc-300">{row.engagement === null ? "" : fmtNum(row.engagement)}</span>
+        <span className="tabular-nums text-zinc-600 dark:text-zinc-400">{fmtDate(row.at)}</span>
+        <span className="tabular-nums text-zinc-600 dark:text-zinc-400">{fmtTime(row.at)}</span>
+      </button>
+      {full && (
+        <pre className="scroll-thin mx-3 mb-2 ml-[3.75rem] max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-zinc-100 p-3 font-sans text-[13px] leading-relaxed text-zinc-800 dark:bg-zinc-950 dark:text-zinc-200">
+          {row.card ? row.card.alert_text || "The message was not kept." : [row.alert?.rationale, row.alert?.evidence].filter(Boolean).join("\n\n")}
+        </pre>
       )}
-      {review !== null && <span title="Gemini Decisions' probability that a person needs to look at this alert">{Math.round(review * 100)}% likely to need a person{long ? " (Gemini Decisions)" : ""}</span>}
-    </>
+    </li>
+  );
+}
+
+/** The list beside an open alert: name and time, to step to the next one without closing. It sits just under the alert's
+ *  window in the stacking order (they never overlap), so what the window opens over itself also covers this list. */
+function Rail({ rows, current, onOpen }: { rows: Row[]; current: string; onOpen: (row: Row) => void }) {
+  return (
+    <aside aria-label="Alerts" className="fixed inset-y-2 right-2 z-[64] hidden flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl xl:flex dark:border-zinc-800 dark:bg-zinc-900"
+      style={{ left: "calc(var(--nav-w, 0rem) + (100vw - var(--nav-w, 0rem)) * 0.8 + 1rem)" }}>
+      <p className="border-b border-zinc-200 px-3 py-2.5 text-xs font-medium text-zinc-500 dark:border-zinc-800">{rows.length} {rows.length === 1 ? "alert" : "alerts"}</p>
+      <ul className="scroll-thin min-h-0 flex-1 overflow-y-auto p-1">
+        {rows.map((r) => (
+          <li key={r.key} className={cx(r.kind === "agent" && r.alert?.status !== "passed" && "glow my-1 rounded-lg")}>
+            <button type="button" onClick={() => onOpen(r)} aria-current={r.key === current} title={r.name}
+              className={cx("flex w-full items-baseline gap-2 rounded-lg px-2 py-1.5 text-left text-[13px]", r.key === current ? "bg-blue-100 text-blue-900 dark:bg-blue-200/15 dark:text-blue-100" : "hover:bg-zinc-100 dark:hover:bg-zinc-800")}>
+              <span className={cx("min-w-0 flex-1 truncate", r.named ? "font-medium" : "text-zinc-500")}>{r.name}</span>
+              <span className="shrink-0 text-[11px] tabular-nums text-zinc-500">{fmtTime(r.at)}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </aside>
   );
 }
 
@@ -300,13 +128,23 @@ export default function FeedPage() {
   const { caseId } = useParams();
   const navigate = useNavigate();
   const [search, setSearch] = useSearchParams();
-  const view = (search.get("view") as View) || "action";
+  const kind = (search.get("kind") as Kind) || "all";
+  const wanted = (search.get("view") as View) || "action";
+  const views = kind === "agent" ? AGENT_VIEWS : VIEWS;
+  const view: View = views.some((v) => v.value === wanted) ? wanted : "action";  // a view of the other list falls back to what waits
+  const full = search.get("full") === "1";
+  const agentId = search.get("agent");
+  const space = search.get("space") ?? "";
   const [q, setQ] = useState("");
   const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean } | null>(null);
+  const [hours, setHours] = useState(72);
   const [intake, setIntake] = useState(false);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
-  const list = useApi<FeedList>("/feed", { view, q: query, hours: view === "action" ? 72 : 168 }, 60_000);
+  const chat = kind === "chat";
+  const list = useApi<FeedList>(chat ? null : "/feed", { view, q: query, hours: view === "action" ? 72 : kind === "agent" ? 720 : 168, kind, full, limit: 200 }, 60_000);
+  const spaces = useApi<{ spaces: ChatSpace[] }>(chat ? "/chat/spaces" : null, { hours });
   const live = useLive(20);
   const { reload } = list;
   useEffect(() => {
@@ -316,6 +154,23 @@ export default function FeedPage() {
   }, [live.lastEventAt, reload]);
   useEffect(() => { const id = window.setTimeout(() => setQuery(q.trim()), 300); return () => window.clearTimeout(id); }, [q]);
   const changed = useCallback(() => { reload(); refreshCounts(); }, [reload, refreshCounts]);
+
+  const set = useCallback((changes: Record<string, string | null>) => {
+    const next = new URLSearchParams(search);
+    for (const [k, v] of Object.entries(changes)) { if (v === null || v === "") next.delete(k); else next.set(k, v); }
+    setSearch(next, { replace: true });
+  }, [search, setSearch]);
+  const params = useCallback((drop: string[] = []) => {
+    const next = new URLSearchParams(search);
+    for (const k of drop) next.delete(k);
+    const s = next.toString();
+    return s ? `?${s}` : "";
+  }, [search]);
+  const open = useCallback((row: Row) => {
+    if (row.kind === "case") navigate(`/feed/${row.id}${params(["agent"])}`);
+    else { const next = new URLSearchParams(search); next.set("agent", row.id); navigate(`/feed?${next}`); }
+  }, [navigate, params, search]);
+  const close = useCallback(() => navigate(`/feed${params(["agent"])}`), [navigate, params]);
 
   const submit = async () => {
     setSending(true);
@@ -330,31 +185,94 @@ export default function FeedPage() {
     }
   };
 
-  const cards = list.data?.cards ?? [];
-  const vel = useVelocityMap({ caseIds: [caseId, ...cards.map((c) => c.case_id)] });
+  const rows = useMemo(() => sorted(rowsOf(list.data), view, sort), [list.data, view, sort]);
+  const vel = useVelocityMap({ caseIds: [caseId] });
+  // An agent alert opened by its link (from Chat, or an older one) may not be in the list on screen: it is fetched by its id.
+  const listed = agentId ? list.data?.agent_alerts.find((a) => a.id === agentId) : undefined;
+  const single = useApi<AgentAlert>(agentId && !caseId && list.data && !listed ? `/feed/agent-alerts/${encodeURIComponent(agentId)}` : null);
+  const agentAlert = listed ?? (agentId && single.data?.id === agentId ? single.data : undefined);
+  const opened = !!caseId || !!agentAlert;
+
+  // A Confirm or False positive link on the alert in Chat opens the feed with the alert and the verdict: it is recorded once.
+  const asked = search.get("verdict");
+  const canAct = !!me?.can_act;
+  const linked = useRef(false);
+  const reloadSingle = single.reload;
+  useEffect(() => {
+    if (linked.current || !agentId || !canAct || (asked !== "TRUE_POSITIVE" && asked !== "FALSE_POSITIVE")) return;
+    linked.current = true;
+    set({ verdict: null });
+    apiSend("post", `/own/decisions/${encodeURIComponent(agentId)}/verdict`, { verdict: asked })
+      .then(() => { toast(VERDICT[asked], "success"); changed(); reloadSingle(); })
+      .catch((err: unknown) => toast((err as ApiError).message, "error"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId, asked, canAct]);
+  const sortedBy = sort ? `${HEAD.find((h) => h.key === sort.key)?.label ?? ""} ${sort.desc ? "(Z to A)" : "(A to Z)"}` : view === "action" ? "what waits longest" : "newest first";
+  const total = (list.data?.total ?? 0) + (list.data?.agent_total ?? 0);
+
   return (
     <div>
-      <PageHeader title="Review feed"
+      <PageHeader title="Review feed" description="Every alert to work, a line each. Open one to write its email, file its Trust & Safety form, run a temp check and grade the chatbot."
         actions={<>
-          <div className="relative w-full sm:w-auto"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-zinc-400" /><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" aria-label="Search" className="w-full pl-9 sm:w-52" /></div>
-          <Segmented label="View" value={view} onChange={(v) => setSearch(v === "action" ? {} : { view: v }, { replace: true })} options={VIEWS} />
+          <div className="relative w-full sm:w-auto"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-zinc-400" /><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search this list" aria-label="Search" className="w-full pl-9 sm:w-56" /></div>
           {me?.can_act && <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setIntake(true)}>Triage an alert</Button>}
         </>} />
+      <Tabs<Kind> value={kind} onChange={(k) => set({ kind: k === "all" ? null : k })} tabs={[
+        { key: "all", label: "All alerts" }, { key: "burson", label: "Burson's alerts" },
+        { key: "agent", label: "Agent alerts", count: kind === "chat" ? undefined : list.data?.agent_total }, { key: "chat", label: "Chat messages" }]} />
       <ErrorState error={list.error} onRetry={list.reload} />
-      <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-[minmax(22rem,2fr)_3fr]">
-        <div className={cx("min-w-0 space-y-3", caseId && "hidden xl:block")}>
-          {list.loading && !list.data ? <Spinner /> : cards.length === 0 ? (
-            <Card><EmptyState icon={<Inbox className="size-8" />} title={view === "action" ? "Nothing is waiting" : "No alerts in this view"}>{view === "action" ? "New alerts appear here the moment they are triaged." : "Try another view or a wider search."}</EmptyState></Card>
-          ) : cards.map((c) => <CardRow key={c.case_id} card={c} velocity={vel.find(c.case_id)} selected={c.case_id === caseId} onOpen={() => navigate(`/feed/${c.case_id}${search.toString() ? `?${search}` : ""}`)} />)}
-          {list.data && list.data.total > cards.length && <p className="text-center text-xs text-zinc-500">Showing {cards.length} of {list.data.total}. Search to narrow.</p>}
-        </div>
-        <div className={cx("min-w-0", !caseId && "hidden xl:block")}>
-          {caseId ? <>
-            <button type="button" onClick={() => navigate(`/feed${search.toString() ? `?${search}` : ""}`)} className="mb-3 inline-flex items-center gap-1 text-sm text-blue-600 xl:hidden dark:text-blue-200"><ArrowLeft className="size-4" />Back to the feed</button>
-            <Detail key={caseId} caseId={caseId} velocity={vel.find(caseId)} onVelocityUpdated={vel.updateOne} legend={list.data?.legend ?? []} verdicts={list.data?.verdicts ?? []} onChanged={changed} />
-          </> : <Card><EmptyState title="Pick an alert">What the agent found, why, and what you can do about it open here.</EmptyState></Card>}
-        </div>
-      </div>
+      {agentId && !agentAlert && <ErrorState error={single.error} />}
+
+      <section className="rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800">
+          <p className="min-w-0 flex-1 text-xs text-zinc-500">
+            {chat ? "What the agent read and posted in Chat, a conversation a line" : <>
+              <span className="font-medium text-zinc-800 dark:text-zinc-200">{rows.length} {rows.length === 1 ? "item" : "items"}</span>
+              {total > rows.length && ` of ${total}`} · Sorted by {sortedBy} · Filtered by {views.find((v) => v.value === view)?.label}
+              {list.data?.as_of && ` · Updated ${fmtTime(list.data.as_of)}`}
+              {kind === "agent" && <> · What it alerts on is set by its <Link to="/settings/own-sources" className="font-medium text-blue-600 dark:text-blue-200">sources</Link> and <Link to="/settings/own-rules" className="font-medium text-blue-600 dark:text-blue-200">rules</Link>, in Settings</>}
+            </>}
+          </p>
+          <Toggle checked={full} onChange={(v) => set({ full: v ? "1" : null })} label="Full messages" />
+          {chat ? <>
+            <Select value={space} onChange={(e) => set({ space: e.target.value })} aria-label="Space" className="w-auto">
+              <option value="">Every space</option>{(spaces.data?.spaces ?? []).map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}
+            </Select>
+            <Segmented label="Window" value={hours} onChange={setHours} options={[{ value: 24, label: "24 h" }, { value: 72, label: "3 days" }, { value: 168, label: "7 days" }]} />
+          </> : <Segmented label="View" value={view} onChange={(v) => set({ view: v === "action" ? null : v })} options={views} />}
+        </header>
+
+        {chat ? <ChatThreads hours={hours} space={space} direction="" q={query} full={full} /> : (
+          <>
+            <div className={cx(COLS, "border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-medium text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900")}>
+              <span />
+              {HEAD.map((h) => (
+                <button key={h.key} type="button" onClick={() => setSort((s) => (s?.key === h.key ? (s.desc ? null : { key: h.key, desc: true }) : { key: h.key, desc: false }))}
+                  title={`Sort by ${h.label.toLowerCase()}`} className={cx("items-center gap-1 text-left hover:text-zinc-900 dark:hover:text-zinc-100", h.show)}>
+                  {h.label}{sort?.key === h.key && (sort.desc ? <ArrowDown className="size-3" /> : <ArrowUp className="size-3" />)}
+                </button>
+              ))}
+            </div>
+            {list.loading && !list.data ? <Spinner /> : rows.length === 0 ? (
+              <EmptyState icon={<Inbox className="size-8" />} title={view === "passed" ? "Nothing was turned down in the last 30 days" : view === "action" ? "Nothing is waiting" : "No alerts in this view"}>
+                {view === "passed" ? "Posts and stories Gemini looked at and decided not to raise show here, with the reason."
+                  : kind === "agent" ? (view === "action" ? "An alert the agent raises shows here until someone confirms it or marks it a false positive." : "When the agent raises an alert, it shows here with its posts and the reason.")
+                    : view === "action" ? "New alerts appear here the moment they are triaged." : "Try another view or a wider search."}
+              </EmptyState>
+            ) : (
+              <ul className="px-1 py-1">
+                {rows.map((r, i) => <Line key={r.key} row={r} n={i + 1} full={full} selected={r.kind === "case" ? r.id === caseId : r.id === agentId} onOpen={() => open(r)} />)}
+              </ul>
+            )}
+          </>
+        )}
+      </section>
+
+      {opened && <button type="button" aria-label="Close the alert" onClick={close} className="fixed inset-y-0 right-0 z-[64] cursor-default bg-zinc-950/45 backdrop-blur-[1px]" style={{ left: "var(--nav-w, 0rem)" }} />}
+      {caseId && <AlertWorkspace key={caseId} caseId={caseId} velocity={vel.find(caseId)} onVelocityUpdated={vel.updateOne} onClose={close} onChanged={changed} />}
+      {!caseId && agentAlert && <AgentAlertWorkspace key={agentAlert.id} alert={agentAlert} canAct={!!me?.can_act} onClose={close} onChanged={changed} />}
+      {opened && <Rail rows={rows} current={caseId ?? `agent:${agentId}`} onOpen={open} />}
+
       <Modal open={intake} title="Triage an alert" onClose={() => setIntake(false)} wide
         footer={<><Button onClick={() => setIntake(false)}>Cancel</Button><Button variant="primary" loading={sending} disabled={!text.trim()} onClick={submit}>Triage</Button></>}>
         <p className="mb-3 text-sm text-zinc-500">Paste the alert exactly as it was posted. It goes through the same triage as an alert from Chat and becomes a real case.</p>

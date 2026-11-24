@@ -299,7 +299,7 @@ def test_agent_alerts_has_a_help_page_that_leads_with_what_to_do(ctx, client):
     topic = topics["agent-alerts"]
     assert topic["title"] == "Agent alerts" and topic["page"] == "Agent alerts" and topic["summary"].endswith(".")
     headings = [s["heading"] for s in topic["sections"]]
-    assert headings == ["Work an alert", "How an alert is made", "Rules", "The tabs", "When something goes wrong", "Turn it on"]
+    assert headings == ["Work an alert", "How an alert is made", "Rules", "Where things are", "When something goes wrong", "Turn it on"]
     assert all(step[0].isupper() for s in topic["sections"] for step in s.get("steps", []))
     said = " ".join(str(v) for s in topic["sections"] for v in (*s.get("steps", []), *s.get("items", []), s.get("text", "")))
     assert "never posted in the source space" in said and "Our own alerts" in said, "it says how it differs from the page with the near name"

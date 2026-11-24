@@ -10,6 +10,7 @@ import { useModelCatalog } from "../components/settings/ModelSelect";
 import { Alert, Badge, Button, Card, cx, ErrorState, Input, PageHeader, Select, Spinner } from "../components/ui";
 import { useApp } from "../context";
 import { ConfigSection, HistoryList } from "./settings/ConfigSection";
+import { OwnRulesPanel, OwnSourcesPanel } from "./settings/OwnAlerts";
 import { AuditPanel, BigQueryPanel, CostsPanel, DeliveryPanel, PromptsPanel, RuntimePanel, SafetyPanel, SecretsPanel } from "./settings/Panels";
 
 interface PartList { parts: { key: string; label: string; description: string; group: string; overridden: boolean }[]; config_version: string; can_edit: boolean }
@@ -21,10 +22,22 @@ const TOOLS = [
   { key: "audit", label: "Who did what", admin: false },
   { key: "history", label: "Changes to settings", admin: false },
 ];
+/** What the chatbot alerts on by itself: the sources it reads, the rules it reads them by, and the part that tunes both. */
+const OWN = [
+  { key: "own-sources", to: "/settings/own-sources", label: "Sources" },
+  { key: "own-rules", to: "/settings/own-rules", label: "Rules" },
+  { key: "own_alerts", to: "/settings/own_alerts", label: "Reading and review" },
+];
+const OWN_LINK = "font-medium text-blue-700 hover:underline dark:text-blue-300";
 /** The parts whose main values connect a tool: those are set under Integrations. */
 const PART_TOOL: Record<string, string> = { gcp: "gcp", bigquery: "bigquery", pubsub: "delivery", temp_check: "brandwatch", campaigns: "campaigns" };
 const PART_PANEL: Record<string, () => React.ReactNode> = {
   bigquery: () => <BigQueryPanel />, pubsub: () => <DeliveryPanel />, safety: () => <SafetyPanel />, costs: () => <CostsPanel />, gcp: () => <RuntimePanel />,
+  own_alerts: () => (
+    <p className="text-sm text-zinc-600 dark:text-zinc-400">
+      What the chatbot reads is under <Link to="/settings/own-sources" className={OWN_LINK}>Sources</Link>; what it raises an alert on, under <Link to="/settings/own-rules" className={OWN_LINK}>Rules</Link>.
+    </p>
+  ),
 };
 
 function PartEditor({ part, onSaved }: { part: string; onSaved: () => void }) {
@@ -104,6 +117,16 @@ function StartCard({ n, title, state, to, action, done }: { n: number; title: st
   );
 }
 
+function OwnCard({ to, title, action, children }: { to: string; title: string; action: string; children: React.ReactNode }) {
+  return (
+    <Link to={to} className="block rounded-2xl border border-zinc-200 bg-white p-5 transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800/60">
+      <span className="block text-[15px] font-medium text-zinc-950 dark:text-zinc-50">{title}</span>
+      <span className="mt-0.5 block text-sm text-zinc-600 dark:text-zinc-400">{children}</span>
+      <span className="mt-2 block text-sm font-medium text-blue-700 dark:text-blue-300">{action}</span>
+    </Link>
+  );
+}
+
 /** What an admin fills in, in order. Everything else has a working default. */
 function SettingsHome({ tools, admin }: Glance) {
   const t = tools?.summary;
@@ -121,6 +144,12 @@ function SettingsHome({ tools, admin }: Glance) {
         <StartCard n={4} title="Safety and Testing" done={!!s && s.safety.passed} to="/settings/safety" action="Open Safety and Testing"
           state={s ? `Testing is ${s.safety.testing ? "ON: emails/DMs go only to testing recipients and live spaces are held" : "OFF: live mode (real recipients and spaces)"}.` : "Testing recipients, allow-lists and the leak guard."} />
       </div>
+      <h2 className="mb-1 mt-8 text-[15px] font-medium text-zinc-950 dark:text-zinc-50">What the chatbot alerts on</h2>
+      <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-400">The alerts the chatbot raises by itself come from the posts it reads and the rules it reads them by.</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <OwnCard to="/settings/own-sources" title="Sources" action="Open Sources">Where it reads posts, how the last read went, and a run by hand.</OwnCard>
+        <OwnCard to="/settings/own-rules" title="Rules" action="Open Rules">What a post must say, or who must post it, for an alert to be raised.</OwnCard>
+      </div>
     </div>
   );
 }
@@ -136,7 +165,8 @@ export default function SettingsPage() {
   const [find, setFind] = useState("");
   const [open, setOpen] = useState(false);
   const partKeys = new Set(parts.data?.parts.map((p) => p.key));
-  const taken = new Set([...partKeys, ...TOOLS.map((t) => t.key)]);
+  const own = OWN.map((o) => o.key);
+  const taken = new Set([...partKeys, ...TOOLS.map((t) => t.key), ...own]);
   const sections = (config.data?.sections ?? []).filter((s) => s.key !== "platform");
   const sectionPath = (k: string) => `/settings/${taken.has(k) ? `config.${k}` : k}`;
   const sectionKey = !key ? null : key.startsWith("config.") ? key.slice(7) : !taken.has(key) ? key : null;
@@ -144,7 +174,7 @@ export default function SettingsPage() {
   const needle = find.trim().toLowerCase();
   const match = (label: string) => !needle || label.toLowerCase().includes(needle);
   const pages = [
-    ...(parts.data?.parts ?? []).filter((p) => !start.includes(p.key)).map((p) => ({ group: p.group, to: `/settings/${p.key}`, label: p.label, marked: p.overridden })),
+    ...(parts.data?.parts ?? []).filter((p) => !start.includes(p.key) && !own.includes(p.key)).map((p) => ({ group: p.group, to: `/settings/${p.key}`, label: p.label, marked: p.overridden })),
     ...sections.map((x) => ({ group: x.group, to: sectionPath(x.key), label: x.label, marked: x.overridden })),
     { group: "day", to: "/rosters", label: "Rosters", marked: false },
   ].filter((i) => match(i.label));
@@ -152,7 +182,7 @@ export default function SettingsPage() {
     ...(config.data?.groups ?? []).map((g) => ({ title: g.title, items: pages.filter((i) => i.group === g.key).sort((x, y) => x.label.localeCompare(y.label)) })),
     { title: "Records and tools", items: TOOLS.filter((t) => (!t.admin || me?.is_admin) && match(t.label)).map((t) => ({ to: `/settings/${t.key}`, label: t.label })) },
   ];
-  const advanced = open || !!needle || (!!key && !start.includes(key));
+  const advanced = open || !!needle || (!!key && !start.includes(key) && !own.includes(key));
 
   if (key === "analysts" || sectionKey === "analysts" || key === "access") return <Navigate to="/admin" replace />;
 
@@ -162,6 +192,8 @@ export default function SettingsPage() {
   else if (key === "prompts") body = <PromptsPanel />;
   else if (key === "audit") body = <AuditPanel />;
   else if (key === "history") body = <Card title="Change history"><HistoryList /></Card>;
+  else if (key === "own-sources") body = <OwnSourcesPanel />;
+  else if (key === "own-rules") body = <OwnRulesPanel />;
   else if (sectionKey) body = config.loading && !config.data ? <Spinner /> : config.data && sections.some((s) => s.key === sectionKey)
     ? <ConfigSection section={sectionKey} data={config.data} setData={config.setData} /> : <Alert tone="violet" title="No such setting">Pick one from the list.</Alert>;
   else body = <div className="space-y-5"><PartEditor key={key} part={key} onSaved={parts.reload} />{PART_PANEL[key]?.()}</div>;
@@ -176,6 +208,7 @@ export default function SettingsPage() {
             <option value="/settings">What to fill in</option><option value="/connections">Integrations</option><option value="/admin">People</option>
             <option value="/settings/flags">Switches</option><option value="/settings/safety">Safety and Testing</option>
           </optgroup>
+          <optgroup label="What the chatbot alerts on">{OWN.map((o) => <option key={o.key} value={o.to}>{o.label}</option>)}</optgroup>
           {groups.map((g) => g.items.length > 0 && <optgroup key={g.title} label={g.title}>{g.items.map((i) => <option key={i.to} value={i.to}>{i.label}</option>)}</optgroup>)}
         </Select>
         <nav aria-label="Settings" className="scroll-thin hidden h-fit space-y-4 lg:sticky lg:top-16 lg:block lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
@@ -186,6 +219,10 @@ export default function SettingsPage() {
             <NavItem to="/admin" label="People" />
             <NavItem to="/settings/flags" label="Switches" marked={parts.data?.parts.find((p) => p.key === "flags")?.overridden} />
             <NavItem to="/settings/safety" label="Safety and Testing" marked={parts.data?.parts.find((p) => p.key === "safety")?.overridden} />
+          </div>
+          <div className="space-y-0.5">
+            <p className="px-3 pb-1 text-xs text-zinc-500">What the chatbot alerts on</p>
+            {OWN.map((o) => <NavItem key={o.key} to={o.to} label={o.label} marked={parts.data?.parts.find((p) => p.key === o.key)?.overridden} />)}
           </div>
           <div>
             <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={advanced} className="flex w-full items-center justify-between rounded-full px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800">

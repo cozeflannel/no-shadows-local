@@ -20,13 +20,13 @@ const CasesPage = lazy(() => import("./pages/Cases"));
 const ComparePage = lazy(() => import("./pages/Compare"));
 const ConnectionsPage = lazy(() => import("./pages/Connections"));
 const EarlyPage = lazy(() => import("./pages/Early"));
-const ChatSpacesPage = lazy(() => import("./pages/ChatSpaces"));
 const EscalationsPage = lazy(() => import("./pages/Escalations"));
 const HelpPage = lazy(() => import("./pages/Help"));
 const KnowledgePage = lazy(() => import("./pages/Knowledge"));
 const LearningPage = lazy(() => import("./pages/Learning"));
 const OutboxPage = lazy(() => import("./pages/Outbox"));
 const OwnAlertsPage = lazy(() => import("./pages/OwnAlerts"));
+const QaEvalsPage = lazy(() => import("./pages/QaEvals"));
 const OverviewPage = lazy(() => import("./pages/Overview"));
 const ParityPage = lazy(() => import("./pages/Parity"));
 const RostersPage = lazy(() => import("./pages/Rosters"));
@@ -91,7 +91,8 @@ export default function App() {
             <Route path="/connections/:toolKey" element={<ConnectionsPage />} />
             <Route path="/admin" element={<AdminPage />} />
             <Route path="/admin/:tab" element={<AdminPage />} />
-            <Route path="/chat" element={<ChatSpacesPage />} />
+            <Route path="/chat" element={<Navigate to="/feed?kind=chat" replace />} />
+            <Route path="/qa-evals" element={<QaEvalsPage />} />
             <Route path="/agent" element={<AgentPage />} />
             <Route path="/agent/:sessionId" element={<AgentPage />} />
             <Route path="/temp-check" element={<TempCheckPage />} />

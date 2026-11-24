@@ -543,36 +543,96 @@ def feed_card(ctx: AgentContext, case: Case, *, detail: bool = False) -> dict[st
     return card
 
 
+_AGENT_KEPT = ("severity", "path", "rationale", "evidence", "velocity", "links", "kof", "rule", "section", "trigger", "item_type", "posted_to",
+               "verdict", "verdict_by", "verdict_at", "note")
+
+
+def agent_alert_row(d: dict[str, Any]) -> dict[str, Any]:
+    """One decision of the agent's own alerting as a row of the feed: raised, or looked at and not raised (passed)."""
+    rationale = " ".join(str(d.get("rationale") or "").split())
+    status = "passed" if d.get("status") == "passed" else "raised"
+    return {"kind": "agent", "id": d.get("id"), "at": d.get("at"), "status": status,
+            "title": rationale[:140] or str(d.get("rule") or "Agent alert"),
+            "needs": "verdict" if status == "raised" and not d.get("verdict") else "",
+            **{k: d.get(k) or ("" if k != "links" else []) for k in _AGENT_KEPT}}
+
+
+def agent_alert_rows(ctx: AgentContext, view: str, hours: int, needle: str) -> list[dict[str, Any]]:
+    """The alerts the agent raised on its own, as rows of the feed. Needs action = raised and not yet given a verdict;
+    passed = what it looked at and did not raise, with the reason (its own view, never mixed in with the alerts)."""
+    if view not in ("action", "all", "passed"):
+        return []
+    try:
+        from triage_agent.ownalerts import review as own_review
+
+        keep = ctx.config.platform.own_alerts.console_keep_days
+        decisions = own_review.list_decisions(ctx, max(1, min(keep, -(-hours // 24))), "passed" if view == "passed" else "raised")
+    except Exception:  # noqa: BLE001 - the feed of Burson's alerts never waits on agent alerts
+        log.warning("agent alerts could not be listed for the feed", exc_info=True)
+        return []
+    floor = (ctx.now() - timedelta(hours=hours)).isoformat()
+    rows = []
+    for d in decisions:
+        if str(d.get("at") or "") < floor or (view == "action" and d.get("verdict")):
+            continue
+        row = agent_alert_row(d)
+        if needle and needle not in " ".join(str(row.get(k) or "") for k in ("title", "severity", "path", "rule", "evidence")).lower():
+            continue
+        rows.append(row)
+    return rows
+
+
 @router.get("/feed")
 def get_feed(
-    view: Literal["action", "all", "review", "verified", "suppressed", "closed"] = "action",
+    view: Literal["action", "all", "review", "verified", "suppressed", "closed", "passed"] = "action",
     q: str | None = None,
     hours: int = Query(72, ge=1, le=24 * 30),
     limit: int = Query(60, ge=1, le=300),
+    kind: Literal["all", "burson", "agent"] = "all",
+    full: bool = False,
     ctx: AgentContext = Depends(get_ctx),
     user: User = Depends(require_viewer),
 ) -> dict[str, Any]:
+    """The alerts to work: Burson's (and the other sources') cases and, with them, the alerts the agent raised itself.
+    kind narrows the list to one of the two; full adds each alert's message as it was posted, for the expanded list.
+    view=passed is the agent's own record of what it read and did not raise: no case is in it."""
     statuses = {"review": [CaseStatus.NEEDS_REVIEW], "verified": [CaseStatus.VERIFIED], "suppressed": [CaseStatus.SUPPRESSED],
                 "closed": [CaseStatus.CLOSED, CaseStatus.ABANDONED]}.get(view)
-    cases = ctx.store.list_cases(statuses=statuses, since=ctx.now() - timedelta(hours=hours), limit=1500)
     needle = (q or "").strip().lower()
     cards = []
-    for case in cases:
+    wanted = kind != "agent" and view != "passed"
+    for case in (ctx.store.list_cases(statuses=statuses, since=ctx.now() - timedelta(hours=hours), limit=1500) if wanted else []):
         if needle and needle not in " ".join(str(x or "") for x in (case.case_id, case.alert_name, case.issue_name, case.product,
                                                                     case.exposure_tag, case.platform)).lower():
             continue
         if view == "action" and not needs_of(ctx, case):
             continue
-        cards.append(feed_card(ctx, case))
+        card = feed_card(ctx, case)
+        if full:
+            card["alert_text"] = case.latest.message.text if case.latest else ""
+        cards.append(card)
     order = {"sla": 0, "review": 1, "acknowledge": 2, "source_fix": 3, "": 4}
     cards.sort(key=lambda c: (order.get(c["needs"], 4), -(c["waiting_min"] or 0)) if view == "action" else (-_ts(c["latest_received_at"]),))
+    agent = agent_alert_rows(ctx, view, hours, needle) if kind != "burson" else []
     return {"cards": cards[:limit], "total": len(cards), "view": view, "as_of": ctx.now(),
+            "agent_alerts": agent[:limit], "agent_total": len(agent),
             "legend": [x.model_dump(mode="json") for x in ctx.config.actions],
             "verdicts": ["PASS", "CORRECTED", "NEEDS_REVIEW", "SUPPRESSED", "FAIL"]}
 
 
 def _ts(value: Any) -> float:
     return value.timestamp() if isinstance(value, datetime) else 0.0
+
+
+@router.get("/feed/agent-alerts/{decision_id}")
+def get_agent_alert(decision_id: str, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> dict[str, Any]:
+    """One alert of the agent's own, by its id: a Confirm or False positive link in Chat opens it however old it is."""
+    from triage_agent.ownalerts import review as own_review
+
+    doc = ctx.store.get_doc(own_review.DECISIONS, decision_id)
+    if doc is None:
+        raise HTTPException(404, {"error": "That alert is no longer kept.", "code": "not_found"})
+    return agent_alert_row(doc)
 
 
 @router.get("/feed/{case_id}")

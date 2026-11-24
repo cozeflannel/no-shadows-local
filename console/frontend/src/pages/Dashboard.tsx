@@ -5,8 +5,9 @@ import { Link, useNavigate } from "react-router";
 import { useApi } from "../api/hooks";
 import type { KpiDefinition, KpiGroup } from "../api/types";
 import { TimeseriesChart } from "../components/charts";
+import { ChatSpaceCards, ChatThreads } from "../components/ChatActivity";
 import { ActiveFilters, FilterMenu, RangePicker } from "../components/DashboardFilters";
-import { Button, Card, cx, ErrorState, PageHeader, Segmented, Skeleton, Stat, Tooltip } from "../components/ui";
+import { Button, Card, cx, ErrorState, PageHeader, Segmented, Skeleton, Stat, Tabs, Tooltip } from "../components/ui";
 import { useApp } from "../context";
 import { DIMENSIONS, useDashboardQuery, type AlertLines, type Breakdown, type DimensionKey, type ResponseStep } from "../lib/dashboard";
 import { fmtDuration, fmtMinutes, fmtNum, fmtPct, fmtTime, tzAbbr } from "../lib/format";
@@ -116,11 +117,32 @@ function StepRow({ step }: { step: ResponseStep }) {
   );
 }
 
+/** The Chat spaces the agent works in: what came in and went out of each, and the conversations (it had its own page before). */
+function ChatSpacesTab() {
+  const navigate = useNavigate();
+  const [hours, setHours] = useState(24);
+  const [space, setSpace] = useState("");
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-zinc-500">Pick a space to see its conversations. The same messages are a view of the Review feed.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Segmented label="Window" value={hours} onChange={setHours} options={[{ value: 6, label: "6 h" }, { value: 24, label: "24 h" }, { value: 72, label: "3 days" }, { value: 168, label: "7 days" }]} />
+          <Button size="sm" onClick={() => navigate(`/feed?kind=chat${space ? `&space=${space}` : ""}`)}>Open in the Review feed</Button>
+        </div>
+      </div>
+      <ChatSpaceCards hours={hours} selected={space} onPick={(key) => setSpace(space === key ? "" : key)} />
+      <Card padded={false} title={space ? `Conversations in ${space}` : "Conversations"}><ChatThreads hours={hours} space={space} direction="" q="" /></Card>
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const { me } = useApp();
   const navigate = useNavigate();
   const tz = me?.timezone || "America/New_York";
   const q = useDashboardQuery(tz);
+  const [tab, setTab] = useState<"alerts" | "chat">(() => (new URLSearchParams(window.location.search).get("tab") === "chat" ? "chat" : "alerts"));
   const [chart, setChart] = useState<"triage" | "email">("triage");
   const [showSetup, setShowSetup] = useState(false);
   const [more, setMore] = useState(false);
@@ -154,6 +176,8 @@ export default function DashboardPage() {
       <PageHeader title="Dashboard"
         description="Alert messages, counted by the lines on the alert: Product, Social Network, Exposure Tag, Sensitive Topic and KOF. Pick a time range and filters; every number under them follows."
         actions={<Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={dash.reload} loading={dash.loading && !!d}>Refresh</Button>} />
+      <Tabs<"alerts" | "chat"> value={tab} onChange={setTab} tabs={[{ key: "alerts", label: "Alerts" }, { key: "chat", label: "Chat spaces" }]} />
+      {tab === "chat" ? <ChatSpacesTab /> : <>
 
       {todo.length > 0 && setup.data && (
         <Card className="mb-5" padded={false} title={`Setup: ${setup.data.done} of ${setup.data.total} steps done`} subtitle={`Next: ${todo[0].title}`}
@@ -311,7 +335,7 @@ export default function DashboardPage() {
             <div className="mt-4">
               <p className="mb-2 text-xs text-zinc-500">Console and AI use in this time range (the filters don't apply).</p>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-                <Stat label="Chat messages" value={fmtNum(d.extra.chat_messages)} hint="in and out" onClick={() => navigate("/chat")} />
+                <Stat label="Chat messages" value={fmtNum(d.extra.chat_messages)} hint="in and out" onClick={() => setTab("chat")} />
                 <Stat label="Console actions" value={fmtNum(d.extra.console_actions)} hint="in the audit log" onClick={() => navigate("/settings/audit")} />
                 <Stat label="Messages held" value={fmtNum(d.extra.blocked_messages)} hint="by a safety check" tone={d.extra.blocked_messages ? "rose" : undefined} onClick={() => navigate("/settings/safety")} />
                 <Stat label="Gemini calls" value={fmtNum(d.extra.llm_calls)} hint={d.extra.llm_errors ? `${d.extra.llm_errors} failed` : "none failed"} tone={d.extra.llm_errors ? "rose" : undefined} onClick={() => navigate("/settings/costs")} />
@@ -325,6 +349,7 @@ export default function DashboardPage() {
 
       {setup.data && todo.length === 0 && <p className="mt-6 flex items-center gap-1.5 text-xs text-zinc-500"><CircleCheck className="size-3.5 text-emerald-500" />Setup is complete.</p>}
       {d && <p className="mt-2 text-xs text-zinc-500">Numbers as of {fmtTime(d.as_of)}.</p>}
+      </>}
     </div>
   );
 }
