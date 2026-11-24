@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from . import audit, chatanswers, chatapi, chatlog, chatdelivery, chatreview, early, mirror, stories, storyread, tempcheck, incidents
+from . import audit, chatanswers, chatapi, chatlog, chatdelivery, chatreview, early, mirror, stories, storyread, tempcheck, incidents, handovers
 from .events import HOT_COLLECTION, TeeEventLogger
 from .ownalerts import review as own_review
 
@@ -35,6 +35,7 @@ def run(ctx: "AgentContext", force: bool = False) -> dict[str, Any]:
         (storyread.READS, "at", now - timedelta(days=cfg.stories.keep_days)),  # Gemini's read of a story that is over
         (mirror.COPIES, "at", now - timedelta(days=cfg.routing.keep_days)),  # the record of what was copied between spaces
         (incidents.ROWS, "last_at", now - timedelta(days=cfg.reports.keep_days)),  # incident reports, after their last activity
+        (handovers.ROWS, "made_at", now - timedelta(days=cfg.reports.keep_days)),  # handovers
         (mirror.QUEUE, "at", now - timedelta(days=cfg.routing.keep_days)),
         (mirror.OWN_REPLIES, "at", now - timedelta(days=cfg.routing.keep_days)),  # the bot's replies for the source space, shown in the copy spaces
         (chatreview.ROWS, "at", now - timedelta(days=cfg.routing.keep_days)),  # the record of what was read and reviewed from Chat

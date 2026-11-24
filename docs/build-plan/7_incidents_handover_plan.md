@@ -75,4 +75,5 @@ handover) is built here, as phase 3 of this plan.
 |---|---|
 | 1.1 to 1.3 | built (`tests/test_reports.py`, `tests/test_incidents.py`) |
 | 2.1 to 2.3 | built: one calendar component (month and week), the incident window, the calendar on Workforce's main tab and in the Review feed, an Incident report button on an alert. Seen in a browser in the dark theme; the light theme not looked at. The range list (last hour, 4 hours, day, week, two dates) is not built: the calendar's month and week are the ranges so far |
-| Phases 3 to 7 | not started |
+| 3.1 to 3.3 | built in part (`tests/test_handover_console.py`): one handover record per shift, made at the shift's end or by a person, posted to the team space through the queue, shown on Workforce (a list, a window, the calendar), notes by people, the shift's numbers, alerts and incident reports read from the event log. Not built: the sections that need sources not connected yet (who is on next from the Calendar, active monitoring from the temp checks doc, initiatives and process updates from the team chat, pinned live links); AI does not write any of it yet (phase 4.2) |
+| Phases 4 to 7 | not started |

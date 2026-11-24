@@ -751,7 +751,7 @@ class OutboxSettings(ConfigModel):
 class HandoverConfig(ConfigModel):
     enabled: bool = True
     post_to_team: bool = True  # 24/7 SL team chat
-    append_to_doc: bool = True  # Handover doc via the Outbox flow's "Add to a doc" step
+    append_to_doc: bool = False  # also the Handover doc, via the Outbox flow's "Add to a doc" step (the owner, 24 Nov 2026: the team space and the Console, not the doc)
     minutes_after_shift_end: int = 5
 
 

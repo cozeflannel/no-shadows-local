@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from triage_agent import audit, incidents
+from triage_agent import audit, handovers, incidents
 from triage_agent.context import AgentContext
 
 from .auth import User, get_ctx, require_analyst, require_viewer
@@ -23,7 +23,7 @@ def _refuse(why: str) -> HTTPException:
 @router.get("/calendar")
 def calendar(start: str, end: str, ctx: AgentContext = Depends(get_ctx), user: User = Depends(require_viewer)) -> dict[str, Any]:
     """What a calendar draws between two dates: each incident report as an event, from its alert's arrival to its end
-    (an open one runs to now)."""
+    (an open one runs to now), and each handover over its shift."""
     now = ctx.now()
     try:
         since, until = (datetime.fromisoformat(v) for v in (start, end))
@@ -37,6 +37,8 @@ def calendar(start: str, end: str, ctx: AgentContext = Depends(get_ctx), user: U
         raise _refuse(f"A calendar view covers at most {most} days.")
     events = [{"kind": "incident", "id": i["id"], "title": i["name"], "start": i["started_at"], "end": i["ended_at"] or max(now, since).isoformat(),
                "open": i["status"] == "open", "priority": i["priority"], "notes": i["notes"]} for i in incidents.between(ctx, since, until)]
+    events += [{"kind": "handover", "id": h["id"], "title": f"Handover: {h['shift']}", "start": h["start"], "end": h["end"], "open": False,
+                "priority": "", "notes": h["notes"]} for h in handovers.between(ctx, since, until)]
     why = incidents.why_off(ctx)
     return {"events": events, "incident_reports": {"on": not why, "why": why}, "can_open": user.has("analyst")}
 
