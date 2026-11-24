@@ -119,6 +119,12 @@ TOPICS: list[dict[str, Any]] = [
                 "Open one to read the reason and the posts, then press Confirm or False positive. A verdict can be changed.",
                 "What the agent reads and the rules it reads by are under Settings: Sources and Rules."]},
             {"heading": "Add an alert by hand", "steps": ["Click Triage an alert.", "Paste the alert's text.", "It is triaged like any other and gets a case."]},
+            {"heading": "Incident reports and the calendar", "items": [
+                "Open an alert in the Review feed and press Incident report. It shows everything that happened to the alert, in order, in four parts: arrival and review, response, escalation, outcome.",
+                "Add a note at the bottom. It is kept under your name and nothing rewrites it.",
+                "Press Calendar on the Review feed, or open Workforce, to see incident reports on a calendar by month or week. Each one runs from the alert's arrival to its end. Click one to open it.",
+                "Turn on Incident reports under Settings, Switches to have one opened automatically for every alert that is escalated (a draft, a sent email or a T&S form). With it OFF, an incident report exists only where a person opened one.",
+                "An incident report is removed 30 days after its last activity."]},
         ],
     },
     {
@@ -212,6 +218,13 @@ TOPICS: list[dict[str, Any]] = [
                 "Nothing changes the schedule until you accept."]},
             {"heading": "Methods", "text": "TimesFM (BigQuery AI.FORECAST) is the primary method. ARIMA_PLUS is the fallback and shows trend and daily and weekly patterns. Choose under Settings → Forecasting."},
             {"heading": "Reports", "steps": ["Open Reports and pick a period.", "Coverage, utilization, forecast accuracy (MAPE) and the gaps are shown.", "Export CSV downloads the report."]},
+            {"heading": "Handovers and the calendar", "items": [
+                "A handover is made for each shift when it ends, and posted to the team space. It is listed under Handovers on the Now tab and shows on the calendar below it.",
+                "Click a handover to open it: what was posted, the shift in numbers, its incident reports, and each alert with its timeline.",
+                "Add a note at the bottom of a handover. It is kept under your name.",
+                "Make the handover for the shift that just ended yourself with the button on the Handovers card. A shift is handed over once.",
+                "The calendar also shows incident reports. Click one to open it.",
+                "The Handover doc is no longer written. An admin can turn it back on under Settings."]},
         ],
     },
     {

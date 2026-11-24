@@ -5,6 +5,7 @@ import { Area, Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContai
 
 import { apiSend, type ApiError } from "../api/client";
 import { useApi } from "../api/hooks";
+import { ShiftHandovers } from "../components/ShiftHandovers";
 import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, Field, Input, Modal, OffNotice, PageHeader, Segmented, Select, Skeleton, Stat, Tabs, TD, TH, TR } from "../components/ui";
 import { useApp } from "../context";
 import { fmtDateTime, fmtDay, fmtNum, fmtTime } from "../lib/format";
@@ -77,6 +78,7 @@ function NowTab() {
       <Card title="Today against the forecast" subtitle={i.data ? (i.data.has_forecast ? `Forecast by ${i.data.method}` : "No forecast yet: run one on the Forecast tab.") : undefined}>
         {i.data ? <VolumeChart rows={i.data.hours.map((h) => ({ label: fmtTime(h.hour), actual: h.actual, forecast: h.forecast, band: h.lower !== null && h.upper !== null ? [h.lower, h.upper] : null, staff: h.staff, required: h.required }))} /> : <Skeleton className="h-[300px]" />}
       </Card>
+      <ShiftHandovers />
     </div>
   );
 }

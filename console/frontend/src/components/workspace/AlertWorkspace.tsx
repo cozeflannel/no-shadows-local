@@ -28,7 +28,11 @@ const SHELL_BOX = {
 /** The window an alert opens in: most of the page, with the list still in view beside it. */
 export function Shell({ onClose, header, children, glow = false }: { onClose: () => void; header: ReactNode; children: ReactNode; glow?: boolean }) {
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    // Escape closes what is on top first: with a dialog open over the alert (an incident report, a temp check, a post),
+    // the alert stays open.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) onClose();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
@@ -268,8 +272,9 @@ function QaPanel({ evals, rubric, canAct, onOpen, what }: { evals: QaEval[]; rub
 }
 
 // -- an alert (a case) ----------------------------------------------------------------------------------------------------------
-export function AlertWorkspace({ caseId, velocity, onVelocityUpdated, onClose, onChanged }: {
+export function AlertWorkspace({ caseId, velocity, onVelocityUpdated, onClose, onChanged, extra }: {
   caseId: string; velocity?: VelocitySummary | null; onVelocityUpdated?: (s: VelocitySummary) => void; onClose: () => void; onChanged: () => void;
+  extra?: ReactNode;  // buttons the page adds to the window's own (the incident report)
 }) {
   const { meta, toast } = useApp();
   const { data, error, loading, reload, setData } = useApi<Workspace>(`/workspace/${caseId}`);
@@ -338,6 +343,7 @@ export function AlertWorkspace({ caseId, velocity, onVelocityUpdated, onClose, o
             <DecisionMenu card={c} canAct={data.can_act} busy={busy} label={label}
               onDecide={async (decision, reason, fields) => { await send(decision, "post", `/review-queue/${c.case_id}`, { decision, reason: reason.trim() || undefined, fields: Object.keys(fields).length ? fields : undefined }, "Decided"); }} />
           )}
+          {extra}
           <ActionsMenu card={c} legend={data.legend} canAct={data.can_act} busy={busy === "actions"}
             onApply={async (codes) => { for (const code of codes) { if (!(await send("actions", "post", `/feed/${c.case_id}/action`, { action: code }, "Recorded"))) break; } }} />
         </div>

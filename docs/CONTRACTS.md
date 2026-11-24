@@ -764,6 +764,24 @@ again the next minute. A reply Chat does not take is tried again each minute, up
 `routing.max_tries`; the operation is not run again. A space that cannot be read is named in `answers.last_run.error` and does not stop
 the others.
 
+**Incident reports and the calendar** (plan 7, phases 1 and 2; switch `incident_reports`, OFF by default; `triage_agent/reports.py`,
+`triage_agent/incidents.py`): `reports.timeline` and `reports.build` read the event log (`agent_events`) and write nothing. An incident
+report is one doc (`incidents`, id = the alert's id): name, start (the alert's arrival), end (its close), status `open | closed`, notes
+`[{id, by, at, text}]`. With the switch ON the tick opens one for each alert with an escalation event (`escalation.started`, `email.drafted`,
+`email.sent`, `tns.prepared`, `tns.submitted`) since the last pass and keeps the open ones up to date; a person opens one for any alert with
+the switch ON or OFF. A note is never rewritten or dropped. `GET /api/calendar?start&end` (events `{kind: incident, id, title, start, end,
+open, priority, notes}`, at most `reports.max_days`), `GET /api/incidents/{id}` (facts, sections `Arrival and review | Response |
+Escalation | Outcome`, notes), `POST /api/incidents {case_id}` and `POST /api/incidents/{id}/notes {text}` (analysts; audit `incident.open`,
+`incident.note`). Removed `reports.keep_days` after the last activity.
+
+**The handover in the Console** (plan 7, phase 3; `triage_agent/handovers.py`): when a shift ends, `run_followups` posts the handover to
+the team space as before and keeps it as one doc (`handovers`, id = the shift's end and name): `shift`, `start`, `end`, `made_at`,
+`made_by`, `text` (what was posted), `notes`. `handover.append_to_doc` is now false in `config/default_config.yaml`: the Handover doc is
+written only where that is turned on. `POST /api/handovers` (analysts) makes the handover of the shift that ended last, once, through the
+same queue, and marks it done for the scheduled run. `GET /api/handovers`, `GET /api/handovers/{id}` (adds the shift read from the event
+log: `numbers`, `alerts` with timelines, `incidents`), `POST /api/handovers/{id}/notes`. `GET /api/calendar` also returns each handover as
+`{kind: handover}` over its shift. Audit `handover.make`, `handover.note`. Removed `reports.keep_days` after it was made.
+
 **A table waiting for access** (`bq_admin.no_access`): BigQuery's answer `Access Denied: Table|Dataset ...` means the table's owners have
 not let the runtime account read it yet. It is waiting, not failing. On Integrations its check line carries `waiting: true` and `grant`, the
 tool's `ok` and state leave waiting lines out, and `grants` holds one statement a dataset, each led by a `--` comment naming the tables it

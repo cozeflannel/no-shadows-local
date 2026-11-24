@@ -3,8 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { apiSend, type ApiError } from "../api/client";
-import { useApi } from "../api/hooks";
+import { useAction, useApi } from "../api/hooks";
 import { ChatThreads, type ChatSpace } from "../components/ChatActivity";
+import { CalendarCard } from "../components/EventCalendar";
+import { IncidentDialog } from "../components/IncidentDialog";
 import { Badge, Button, CaseBadges, cx, EmptyState, ErrorState, Input, Modal, PageHeader, Segmented, Select, Spinner, Tabs, Textarea, Toggle } from "../components/ui";
 import { useVelocityMap } from "../components/VelocityInline";
 import { AgentAlertWorkspace, AlertWorkspace } from "../components/workspace/AlertWorkspace";
@@ -142,6 +144,19 @@ export default function FeedPage() {
   const [intake, setIntake] = useState(false);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [calendar, setCalendar] = useState(false);
+  const [incident, setIncident] = useState<string | null>(null);
+  // An alert's incident report has the alert's own id. A person who may act opens one if there is none yet; a viewer sees one that exists.
+  const incidentFor = useApi<{ id: string }>(caseId && !me?.can_act ? `/incidents/${caseId}` : null).data;
+  const openIncident = useAction((id: string) => apiSend<{ id: string }>("post", "/incidents", { case_id: id }));
+  const onIncident = async () => {
+    if (!caseId) return;
+    if (!me?.can_act) { setIncident(caseId); return; }
+    const made = await openIncident.run(caseId);
+    if (made) setIncident(made.id);
+  };
+  const incidentError = openIncident.error;
+  useEffect(() => { if (incidentError) toast(incidentError.message, "error"); }, [incidentError, toast]);  // said over the open alert, which covers the page
   const chat = kind === "chat";
   const list = useApi<FeedList>(chat ? null : "/feed", { view, q: query, hours: view === "action" ? 72 : kind === "agent" ? 720 : 168, kind, full, limit: 200 }, 60_000);
   const spaces = useApi<{ spaces: ChatSpace[] }>(chat ? "/chat/spaces" : null, { hours });
@@ -215,13 +230,15 @@ export default function FeedPage() {
       <PageHeader title="Review feed" description="Every alert to work, a line each. Open one to write its email, file its Trust & Safety form, run a temp check and grade the chatbot."
         actions={<>
           <div className="relative w-full sm:w-auto"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-zinc-400" /><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search this list" aria-label="Search" className="w-full pl-9 sm:w-56" /></div>
+          <Button aria-pressed={calendar} onClick={() => setCalendar(!calendar)}>{calendar ? "Hide the calendar" : "Calendar"}</Button>
           {me?.can_act && <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setIntake(true)}>Triage an alert</Button>}
         </>} />
       <Tabs<Kind> value={kind} onChange={(k) => set({ kind: k === "all" ? null : k })} tabs={[
         { key: "all", label: "All alerts" }, { key: "burson", label: "Burson's alerts" },
         { key: "agent", label: "Agent alerts", count: kind === "chat" ? undefined : list.data?.agent_total }, { key: "chat", label: "Chat messages" }]} />
-      <ErrorState error={list.error} onRetry={list.reload} />
+      <ErrorState error={list.error ?? openIncident.error} onRetry={list.reload} />
       {agentId && !agentAlert && <ErrorState error={single.error} />}
+      {calendar && <CalendarCard className="mb-5" title="Incidents" />}
 
       <section className="rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
         <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800">
@@ -269,10 +286,12 @@ export default function FeedPage() {
       </section>
 
       {opened && <button type="button" aria-label="Close the alert" onClick={close} className="fixed inset-y-0 right-0 z-[64] cursor-default bg-zinc-950/45 backdrop-blur-[1px]" style={{ left: "var(--nav-w, 0rem)" }} />}
-      {caseId && <AlertWorkspace key={caseId} caseId={caseId} velocity={vel.find(caseId)} onVelocityUpdated={vel.updateOne} onClose={close} onChanged={changed} />}
+      {caseId && <AlertWorkspace key={caseId} caseId={caseId} velocity={vel.find(caseId)} onVelocityUpdated={vel.updateOne} onClose={close} onChanged={changed}
+        extra={<Button loading={openIncident.loading} disabled={!me?.can_act && !incidentFor} onClick={onIncident}>Incident report</Button>} />}
       {!caseId && agentAlert && <AgentAlertWorkspace key={agentAlert.id} alert={agentAlert} canAct={!!me?.can_act} onClose={close} onChanged={changed} />}
       {opened && <Rail rows={rows} current={caseId ?? `agent:${agentId}`} onOpen={open} />}
 
+      <IncidentDialog id={incident} onClose={() => setIncident(null)} />
       <Modal open={intake} title="Triage an alert" onClose={() => setIntake(false)} wide
         footer={<><Button onClick={() => setIntake(false)}>Cancel</Button><Button variant="primary" loading={sending} disabled={!text.trim()} onClick={submit}>Triage</Button></>}>
         <p className="mb-3 text-sm text-zinc-500">Paste the alert exactly as it was posted. It goes through the same triage as an alert from Chat and becomes a real case.</p>

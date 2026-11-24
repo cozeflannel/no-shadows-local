@@ -410,11 +410,14 @@ def run_followups(ctx: AgentContext, payload: dict[str, Any], rc: RequestContext
             ctx.emit(EventType.ERROR, payload={"op": f"run_followups.{name}", "error": str(exc)})
 
     def post_due_handovers(ctx: AgentContext) -> int:
+        from . import handovers
+
         posted = 0
         for name, start, end in handover_due(ctx):
             out = build_handover(ctx, name, start, end)
             posted += _send(ctx, out, "handover")
             ctx.store.put_kv(f"handover:{end.date().isoformat()}:{name}", {"at": ctx.now().isoformat()})
+            handovers.record(ctx, name, start, end, out.team_text or out.handover_text)  # kept for Workforce and its calendar
             ctx.emit(EventType.HANDOVER_POSTED, payload={"shift": name, "start": start.isoformat(), "end": end.isoformat()})
         return posted
 
