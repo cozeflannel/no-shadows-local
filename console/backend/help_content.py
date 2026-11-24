@@ -125,7 +125,7 @@ TOPICS: list[dict[str, Any]] = [
             {"heading": "Agent alerts", "items": [
                 "To judge: alerts the agent raised that nobody has confirmed or marked a false positive yet.",
                 "Raised: every alert it raised, with each verdict.",
-                "Not raised: what Gemini looked at and decided not to raise, and why.",
+                "Not raised: what Gemini looked at and decided not to raise, and why. These are done: nothing is asked of you. They are kept as a record.",
                 "Open one to read the reason and the posts, then press Confirm or False positive. A verdict can be changed.",
                 "What the agent reads and the rules it reads by are under Settings: Sources and Rules."]},
             {"heading": "Add an alert by hand", "steps": ["Click Triage an alert.", "Paste the alert's text.", "It is triaged like any other and gets a case."]},
@@ -530,7 +530,7 @@ TOPICS: list[dict[str, Any]] = [
                 "Save. The rule applies from the next run."]},
             {"heading": "Where things are", "items": [
                 "Review feed, Agent alerts, To judge and Raised: the alerts, with each verdict.",
-                "Review feed, Agent alerts, Not raised: what Gemini looked at and decided not to raise, and why.",
+                "Review feed, Agent alerts, Not raised: what Gemini looked at and decided not to raise, and why. A record only: nothing is asked of anyone.",
                 "Settings, Sources: each source, when it was last read, and how many posts were kept. Run now is there too.",
                 "Settings, Rules: what each new post is checked against.",
                 "Settings, Reading and review: how often it reads, the KOF sheet, the models, and the space raised alerts are posted in."]},

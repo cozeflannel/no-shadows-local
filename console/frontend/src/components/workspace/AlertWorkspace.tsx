@@ -483,7 +483,8 @@ export function AlertWorkspace({ caseId, velocity, onVelocityUpdated, onClose, o
   );
 }
 
-// -- an alert the agent raised itself ----------------------------------------------------------------------------------------------
+// -- an alert the agent raised itself, or the record of something it looked at and did not raise ---------------------------------
+// Something the agent did not raise is done: it asks nothing of anyone (no verdict, no grading). It is kept as a record.
 const pathLabel = (path: string) => path.split("_").filter(Boolean).map((w) => (w.length <= 2 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1).toLowerCase())).join(" ");
 
 /** Why the review looked at it, in a few words. */
@@ -497,12 +498,12 @@ function agentReason(d: AgentAlert): string {
 
 export function AgentAlertWorkspace({ alert, canAct, onClose, onChanged }: { alert: AgentAlert; canAct: boolean; onClose: () => void; onChanged: () => void }) {
   const { toast } = useApp();
-  const qa = useApi<{ rubric: Rubric; evals: QaEval[]; standing: QaStanding }>("/qa-evals/subject", { subject_type: "agent_alert", subject_id: alert.id });
+  const raised = alert.status !== "passed";
+  const qa = useApi<{ rubric: Rubric; evals: QaEval[]; standing: QaStanding }>(raised ? "/qa-evals/subject" : null, { subject_type: "agent_alert", subject_id: alert.id });
   const [layer, setLayer] = useState<Layer>(null);
   const [busy, setBusy] = useState("");
   const [verdict, setVerdict] = useState(alert.verdict);
   useEffect(() => { setVerdict(alert.verdict); }, [alert.verdict]);  // recorded from a link in Chat, or by someone else
-  const raised = alert.status !== "passed";
   const closeLayer = useCallback(() => setLayer(null), []);
   const judge = async (v: "TRUE_POSITIVE" | "FALSE_POSITIVE") => {
     setBusy(v);
@@ -527,10 +528,12 @@ export function AgentAlertWorkspace({ alert, canAct, onClose, onChanged }: { ale
           </p>
           <h2 className="mt-0.5 line-clamp-2 text-lg font-medium tracking-tight text-zinc-950 dark:text-zinc-50">{alert.title}</h2>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant={verdict === "TRUE_POSITIVE" ? "success" : "secondary"} disabled={!canAct} loading={busy === "TRUE_POSITIVE"} onClick={() => judge("TRUE_POSITIVE")}>Confirm</Button>
-          <Button disabled={!canAct} loading={busy === "FALSE_POSITIVE"} onClick={() => judge("FALSE_POSITIVE")}>False positive</Button>
-        </div>
+        {raised && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant={verdict === "TRUE_POSITIVE" ? "success" : "secondary"} disabled={!canAct} loading={busy === "TRUE_POSITIVE"} onClick={() => judge("TRUE_POSITIVE")}>Confirm</Button>
+            <Button disabled={!canAct} loading={busy === "FALSE_POSITIVE"} onClick={() => judge("FALSE_POSITIVE")}>False positive</Button>
+          </div>
+        )}
       </>}>
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 lg:grid-cols-[minmax(0,1fr)_19rem] lg:overflow-hidden">
         <div className="scroll-thin min-h-0 space-y-4 lg:overflow-y-auto lg:pr-1">
@@ -558,11 +561,17 @@ export function AgentAlertWorkspace({ alert, canAct, onClose, onChanged }: { ale
           </Box>
         </div>
         <div className="scroll-thin min-h-0 space-y-4 lg:overflow-y-auto lg:pr-1">
-          <Box title="Your verdict">
-            <p className="text-sm text-zinc-700 dark:text-zinc-300">{verdict ? `Recorded as ${verdict === "TRUE_POSITIVE" ? "confirmed" : "a false positive"}${alert.verdict_by && verdict === alert.verdict ? ` by ${alert.verdict_by}${alert.verdict_at ? `, ${fmtDateTime(alert.verdict_at)}` : ""}` : ""}.` : "Not judged yet. Confirm it, or mark it a false positive: the agent's reviewer is shown your verdict on alerts like it."}</p>
-            {alert.posted_to && <p className="mt-2 text-xs text-zinc-500">Posted in {alert.posted_to}.</p>}
-          </Box>
-          {qa.data && <QaPanel evals={qa.data.evals} rubric={qa.data.rubric} standing={qa.data.standing} canAct={canAct} onOpen={() => setLayer({ kind: "eval" })} what="this alert" />}
+          {raised ? (
+            <Box title="Your verdict">
+              <p className="text-sm text-zinc-700 dark:text-zinc-300">{verdict ? `Recorded as ${verdict === "TRUE_POSITIVE" ? "confirmed" : "a false positive"}${alert.verdict_by && verdict === alert.verdict ? ` by ${alert.verdict_by}${alert.verdict_at ? `, ${fmtDateTime(alert.verdict_at)}` : ""}` : ""}.` : "Not judged yet. Confirm it, or mark it a false positive: the agent's reviewer is shown your verdict on alerts like it."}</p>
+              {alert.posted_to && <p className="mt-2 text-xs text-zinc-500">Posted in {alert.posted_to}.</p>}
+            </Box>
+          ) : (
+            <Box title="Nothing to do">
+              <p className="text-sm text-zinc-700 dark:text-zinc-300">The agent looked at this and did not raise an alert, so it is done. It is kept here as a record of what the agent looked at, and why.</p>
+            </Box>
+          )}
+          {raised && qa.data && <QaPanel evals={qa.data.evals} rubric={qa.data.rubric} standing={qa.data.standing} canAct={canAct} onOpen={() => setLayer({ kind: "eval" })} what="this alert" />}
           <Box title="Temp check" icon={<Thermometer className="size-4 text-zinc-400" />}>
             <p className="text-sm text-zinc-500">See how big this conversation is right now.</p>
             <Button size="sm" className="mt-3" disabled={!canAct} onClick={() => setLayer({ kind: "temp-new" })}>Run a temp check</Button>
@@ -575,7 +584,7 @@ export function AgentAlertWorkspace({ alert, canAct, onClose, onChanged }: { ale
       </div>
       {layer?.kind === "temp-new" && <TempCheckNewLayer issue={alert.title} canAct={canAct} onClose={closeLayer} onDone={(id) => setLayer({ kind: "temp", id })} />}
       {layer?.kind === "temp" && <TempCheckLayer key={layer.id} id={layer.id} canAct={canAct} onClose={closeLayer} onChanged={() => undefined} onOpen={(id) => setLayer({ kind: "temp", id })} />}
-      {layer?.kind === "eval" && qa.data && <EvalLayer subjectType="agent_alert" subjectId={alert.id} title={alert.title} rubric={qa.data.rubric}
+      {raised && layer?.kind === "eval" && qa.data && <EvalLayer subjectType="agent_alert" subjectId={alert.id} title={alert.title} rubric={qa.data.rubric}
         evals={qa.data.evals} standing={qa.data.standing} verdicts={[]} canAct={canAct} onClose={closeLayer} onSubmitted={() => { qa.reload(); onChanged(); }} />}
     </Shell>
   );
