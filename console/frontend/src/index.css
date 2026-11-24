@@ -298,3 +298,42 @@ body {
 .doc-page td, .doc-page th { border: 1px solid #9aa0a6; padding: 0.35rem 0.6rem; vertical-align: top; }
 .doc-page td > p, .doc-page th > p { margin: 0; }
 .doc-page .selectedCell { background: rgb(66 133 244 / 0.15); }
+
+/* The incident window: a glass panel over the page. A native <dialog> opened as a modal, so the browser keeps focus
+   inside it, closes it on Esc and puts it above everything. */
+dialog.glass-dialog {
+  width: min(56rem, calc(100vw - 2rem));
+  max-height: min(88dvh, 60rem);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  color: inherit;
+  border: 1px solid rgb(255 255 255 / 0.55);
+  border-radius: 1.5rem;
+  background: rgb(255 255 255 / 0.7);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  backdrop-filter: blur(24px) saturate(1.5);
+  box-shadow: 0 24px 80px rgb(19 19 20 / 0.3), inset 0 1px 0 rgb(255 255 255 / 0.6);
+  overscroll-behavior: contain; /* a scroll that reaches the window's end does not move the page behind it */
+}
+.dark dialog.glass-dialog {
+  border-color: rgb(255 255 255 / 0.14);
+  background: rgb(30 31 32 / 0.62);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 0.55), inset 0 1px 0 rgb(255 255 255 / 0.08);
+}
+dialog.glass-dialog::backdrop {
+  background: rgb(19 19 20 / 0.35);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  overflow: hidden; /* makes the backdrop a scroll container, so the next line applies to it */
+  overscroll-behavior: contain;
+}
+/* Where the browser cannot blur what is behind, or the person asked for less transparency, the panel is solid. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  dialog.glass-dialog { background: #ffffff; }
+  .dark dialog.glass-dialog { background: #1e1f20; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  dialog.glass-dialog { background: #ffffff; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .dark dialog.glass-dialog { background: #1e1f20; }
+}

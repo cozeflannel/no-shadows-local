@@ -91,6 +91,12 @@ TOPICS: list[dict[str, Any]] = [
                 "Click Right. Or pick the correct verdict or write a note, then click Wrong.",
                 "Your assessment is kept as a checked example of the right answer."]},
             {"heading": "Add an alert by hand", "steps": ["Click Triage an alert.", "Paste the alert's text.", "It is triaged like any other and gets a case."]},
+            {"heading": "Incident reports and the calendar", "items": [
+                "Open an alert in the Review feed and press Incident report. It shows everything that happened to the alert, in order, in four parts: arrival and review, response, escalation, outcome.",
+                "Add a note at the bottom. It is kept under your name and nothing rewrites it.",
+                "Press Calendar on the Review feed, or open Workforce, to see incident reports on a calendar by month or week. Each one runs from the alert's arrival to its end. Click one to open it.",
+                "Turn on Incident reports under Settings, Switches to have one opened automatically for every alert that is escalated (a draft, a sent email or a T&S form). With it OFF, an incident report exists only where a person opened one.",
+                "An incident report is removed 30 days after its last activity."]},
         ],
     },
     {
