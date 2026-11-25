@@ -29,7 +29,7 @@ from fastapi.responses import RedirectResponse
 
 from triage_agent.context import AgentContext
 
-from .auth import User, current_user, get_ctx
+from .auth import ROLE_RANK, User, current_user, get_ctx, resolve_role
 
 log = logging.getLogger(__name__)
 
@@ -78,9 +78,13 @@ def _token_vault(mod: ModuleType) -> Any:
 
 
 def mailbox_kind(ctx: AgentContext, email: str) -> str:
-    """"agent" for the Triage Agent account (config.agent.email), else "im"."""
+    """"im" for any analyst/IM/lead/admin; "agent" only for a dedicated robot account (config.agent.email)."""
+    key = email.strip().lower()
+    role, _, _ = resolve_role(ctx, key)
+    if ROLE_RANK.get(role, 0) >= ROLE_RANK["analyst"]:
+        return "im"
     agent = (ctx.config.agent.email or "").strip().lower()
-    return "agent" if agent and email.strip().lower() == agent else "im"
+    return "agent" if agent and key == agent else "im"
 
 
 def _scopes(mod: ModuleType, mailbox: str = "im") -> list[str]:

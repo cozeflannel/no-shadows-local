@@ -84,16 +84,12 @@ function NowTab() {
 }
 
 function ScheduleTab() {
-  const [roster, setRoster] = useState("slrr_im");
-  const c = useApi<{ hours: CoverageHour[]; timezone: string; shifts: { name: string; start: string; end: string; tz: string }[] }>("/workforce/coverage", { days: 7, roster });
+  const c = useApi<{ hours: CoverageHour[]; timezone: string; shifts: { name: string; start: string; end: string; tz: string }[] }>("/workforce/coverage", { days: 7, roster: "slrr_im" });
   const byDay = new Map<string, CoverageHour[]>();
   for (const h of c.data?.hours ?? []) { const day = fmtDay(h.hour); byDay.set(day, [...(byDay.get(day) ?? []), h]); }
   return (
-    <Card title="Coverage for the next 7 days" subtitle={c.data ? `Each cell is an hour (${c.data.timezone}): the number scheduled. Red is under what the forecast needs.` : undefined}
-      actions={<>
-        <Segmented label="Roster" value={roster} onChange={setRoster} options={[{ value: "slrr_im", label: "Incident Managers" }, { value: "burson", label: "Burson" }]} />
-        <Link to="/rosters" className="inline-flex items-center gap-1.5 rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white dark:bg-blue-200 dark:text-blue-900"><CalendarClock className="size-4" />Edit rosters and shifts</Link>
-      </>}>
+    <Card title="Coverage for the next 7 days"
+      actions={<Link to="/rosters" className="inline-flex items-center gap-1.5 rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white dark:bg-blue-200 dark:text-blue-900"><CalendarClock className="size-4" />Edit shifts</Link>}>
       <ErrorState error={c.error} onRetry={c.reload} />
       {!c.data ? <Skeleton className="h-56" /> : (
         <div className="scroll-thin overflow-x-auto">
@@ -112,7 +108,6 @@ function ScheduleTab() {
           </table>
         </div>
       )}
-      {c.data && <p className="mt-4 text-xs text-zinc-500">Shifts: {c.data.shifts.map((s) => `${s.name} ${s.start} to ${s.end} (${s.tz})`).join(", ") || "none set"}. Recurring patterns, swaps and overrides are edited on the Rosters page.</p>}
     </Card>
   );
 }

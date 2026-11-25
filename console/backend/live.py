@@ -271,8 +271,9 @@ def operational_now(ctx: AgentContext) -> dict[str, Any]:
     from triage_agent import pubsub
 
     now = ctx.now()
-    open_cases = ctx.store.list_cases(statuses=[CaseStatus.VERIFIED, CaseStatus.NEEDS_REVIEW, CaseStatus.FAILED],
-                                      since=now - timedelta(days=3), limit=1000)
+    open_cases = [c for c in ctx.store.list_cases(statuses=[CaseStatus.VERIFIED, CaseStatus.NEEDS_REVIEW, CaseStatus.FAILED],
+                                                  since=now - timedelta(days=3), limit=1000)
+                  if not (c.source == "inhouse" and not (c.alert_name or c.issue_name))]
     review = [c for c in open_cases if c.status == CaseStatus.NEEDS_REVIEW]
     waiting = [c for c in open_cases if c.status == CaseStatus.VERIFIED and c.acknowledged_at is None]
     at_risk = [c for c in waiting if c.sla_due_at and c.sla_met is None and now >= c.sla_due_at - timedelta(minutes=5)]
@@ -602,6 +603,10 @@ def get_feed(
     cards = []
     wanted = kind != "agent" and view != "passed"
     for case in (ctx.store.list_cases(statuses=statuses, since=ctx.now() - timedelta(hours=hours), limit=1500) if wanted else []):
+        if kind == "burson" and case.source != "burson_chat":
+            continue
+        if case.source == "inhouse" and not (case.alert_name or case.issue_name):
+            continue
         if needle and needle not in " ".join(str(x or "") for x in (case.case_id, case.alert_name, case.issue_name, case.product,
                                                                     case.exposure_tag, case.platform)).lower():
             continue

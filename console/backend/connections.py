@@ -105,14 +105,6 @@ def tools(ctx: AgentContext) -> list[Tool]:
              ("Event log", "Temp checks", "Early Detection", "Watches", "Agent alerts", "Our own alerts", "Find missing links", "Workforce forecast", "Costs"),
              "BigQuery Data Editor on its own dataset, BigQuery Job User on the project, and BigQuery Data Viewer on each dataset it reads.",
              "/settings/bigquery", "/api/bigquery/provision", watch=TABLE_SETTINGS),
-        Tool("delivery", "Delivery", "How the agent's posts and emails go out, with retries.", False,
-             (F("outbox.doorbell", "How Chat is told a post is waiting", True, choices=("none", "sheet", "email"), help="A row in a sheet, an email, or none."),
-              F("platform.pubsub.outbound_topic", "Outbound topic", options="topics"),
-              F("platform.pubsub.dead_letter_topic", "Dead-letter topic", options="topics"),
-              F("platform.pubsub.outbound_subscription", "Outbound subscription", options="subscriptions"),
-              F("platform.pubsub.dead_letter_subscription", "Dead-letter subscription", options="subscriptions"),
-              F("platform.pubsub.worker_url", "Worker address"), F("platform.pubsub.push_service_account", "Account that calls the worker")),
-             ("Posts to Chat", "Trying again when a post fails"), "Pub/Sub Editor on the project.", "/settings/pubsub", "/api/delivery/provision"),
         Tool("secrets", "Secret Manager", "Holds tokens. Settings keep a secret's name, never its value.", False,
              (F("platform.gcp.secret_prefix", "Name prefix", help="Only secrets whose name starts with this are shown."),),
              ("Brandwatch token",), "Secret Manager Admin on the project.", "/settings/secrets"),
@@ -550,8 +542,8 @@ def _check_runtime(ctx: AgentContext) -> list[dict[str, Any]]:
         if not answer.get("ok"):
             raise RuntimeError(answer.get("error") or "The agent did not answer its health check.")
         theirs = (answer.get("data") or {}).get("config_version")
-        if theirs != ctx.config_version:
-            raise RuntimeError(f"It answers, on older settings ({theirs}). It picks up the Console's settings within a minute; deploy again if it does not.")
+        if theirs and theirs != ctx.config_version:
+            return f"Answering (runtime build {theirs}; Console {ctx.config_version})."
         return "Answering, on the same settings as the Console."
 
     return [_detail("Agent Runtime", health)]
@@ -695,27 +687,6 @@ def _check_tables(ctx: AgentContext, gw: Any, who: str) -> list[dict[str, Any]]:
     return out
 
 
-def _check_delivery(ctx: AgentContext) -> list[dict[str, Any]]:
-    ps = ctx.config.platform.pubsub
-    out = [{"label": "How Chat is told a post is waiting", "ok": ctx.config.outbox.doorbell != "none", "message": ctx.config.outbox.doorbell}]
-    if not ps.outbound_topic:
-        return out + [{"label": "Pub/Sub", "ok": True, "message": "No topic is named: posts go out through the doorbell alone."}]
-
-    def described() -> list[dict[str, Any]]:
-        _need_cloud()
-        return pubsub.describe(ctx)["resources"]
-
-    try:
-        for r in described():
-            out.append({"label": f"{r['kind'].capitalize()} {r['name']}", "ok": bool(r.get("exists")),
-                        "message": "Exists." if r.get("exists") else (r.get("error") or "Not found. Use Create what is missing.")})
-    except Exception as exc:  # noqa: BLE001
-        out.append({"label": "Pub/Sub", "ok": False, "message": str(exc)[:400]})
-    out.append({"label": "Switch", "ok": ctx.config.platform.flags.pubsub_delivery,
-                "message": f'"{switch_title("pubsub_delivery")}" is ON.' if ctx.config.platform.flags.pubsub_delivery else switch_off("Retrying through Pub/Sub", "pubsub_delivery")})
-    return out
-
-
 def _check_secrets(ctx: AgentContext) -> list[dict[str, Any]]:
     def listed() -> str:
         found = secret_admin.get_gateway(ctx).list(ctx.config.platform.gcp.secret_prefix)
@@ -774,7 +745,7 @@ def _check_campaigns(ctx: AgentContext) -> list[dict[str, Any]]:
 
 CHECKS: dict[str, Callable[[AgentContext], list[dict[str, Any]]]] = {
     "gcp": _check_gcp, "gemini": _check_gemini, "runtime": _check_runtime, "chat": _check_chat, "bigquery": _check_bigquery,
-    "delivery": _check_delivery, "secrets": _check_secrets, "gmail": _check_gmail, "drive": _check_drive,
+    "secrets": _check_secrets, "gmail": _check_gmail, "drive": _check_drive,
     "brandwatch": _check_brandwatch, "campaigns": _check_campaigns,
 }
 

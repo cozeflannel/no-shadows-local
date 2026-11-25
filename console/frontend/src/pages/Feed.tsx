@@ -16,7 +16,7 @@ import { fmtDate, fmtNum, fmtTime } from "../lib/format";
 import { useLive } from "../lib/live";
 
 type View = "action" | "review" | "verified" | "suppressed" | "closed" | "all" | "passed";
-type Kind = "all" | "burson" | "agent" | "chat";
+type Kind = "all" | "agent" | "chat";
 type SortKey = "name" | "status" | "product" | "network" | "priority" | "engagement" | "at";
 interface Row {
   key: string; kind: "case" | "agent"; id: string; name: string; named: boolean; status: string; product: string; network: string; priority: string;
@@ -37,6 +37,12 @@ const HEAD: { key: SortKey; label: string; show: string }[] = [
   { key: "engagement", label: "Engagement", show: "hidden xl:flex justify-end" }, { key: "at", label: "Date and time", show: "flex col-span-2" },
 ];
 const VERDICT: Record<string, string> = { TRUE_POSITIVE: "Confirmed", FALSE_POSITIVE: "False positive" };
+const CASE_SOURCE_TAG: Record<string, { label: string; tone: "blue" | "cyan" | "violet" | "zinc" }> = {
+  burson_chat: { label: "Burson", tone: "blue" },
+  inhouse: { label: "In-house", tone: "cyan" },
+  watchdog: { label: "Watchdog", tone: "violet" },
+  manual: { label: "Manual", tone: "zinc" },
+};
 
 function rowsOf(list: FeedList | null): Row[] {
   const cases: Row[] = (list?.cards ?? []).map((c) => ({
@@ -66,6 +72,16 @@ function sorted(rows: Row[], view: View, sort: { key: SortKey; desc: boolean } |
   return out;
 }
 
+function SourceTag({ row }: { row: Row }): ReactNode {
+  if (row.kind === "agent") {
+    const passed = row.alert?.status === "passed";
+    return <Badge tone={passed ? "zinc" : "violet"} className="shrink-0">{passed ? "Not raised" : "Agent"}</Badge>;
+  }
+  const src = row.card?.source ?? "";
+  const tag = CASE_SOURCE_TAG[src] ?? { label: src || "Alert", tone: "zinc" as const };
+  return <Badge tone={tag.tone} className="shrink-0">{tag.label}</Badge>;
+}
+
 function StatusCell({ row }: { row: Row }): ReactNode {
   if (row.card) return <CaseBadges status={row.card.status} verdict={null} need={row.card.needs} />;
   return <Badge tone={row.alert?.verdict === "TRUE_POSITIVE" ? "emerald" : row.alert?.verdict || row.alert?.status === "passed" ? "zinc" : "violet"}>{row.status}</Badge>;
@@ -82,9 +98,10 @@ function Line({ row, n, selected, full, onOpen }: { row: Row; n: number; selecte
           selected ? "bg-blue-50 dark:bg-blue-200/10" : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50")}>
         <span className="text-right text-xs tabular-nums text-zinc-400">{n}</span>
         <span className="flex min-w-0 items-center gap-2">
+          <SourceTag row={row} />
           {own && <Sparkles className={cx("size-3.5 shrink-0", agent ? "text-violet-500" : "text-zinc-400")} aria-label={agent ? "Raised by the agent" : "Looked at by the agent, not raised"} />}
           <span className={cx("truncate font-medium", row.named ? "text-blue-700 dark:text-blue-200" : "text-zinc-500")}>{row.name}</span>
-          <span className="hidden shrink-0 font-mono text-[11px] text-zinc-400 sm:inline">{agent ? "Agent alert" : own ? "Not raised" : row.id}</span>
+          {!own && <span className="hidden shrink-0 font-mono text-[11px] text-zinc-400 sm:inline">{row.id}</span>}
         </span>
         <span className="hidden min-w-0 items-center gap-1 md:flex"><StatusCell row={row} /></span>
         <span className="hidden truncate text-zinc-700 md:block dark:text-zinc-300">{row.product}</span>
@@ -114,7 +131,8 @@ function Rail({ rows, current, onOpen }: { rows: Row[]; current: string; onOpen:
         {rows.map((r) => (
           <li key={r.key} className={cx(r.kind === "agent" && r.alert?.status !== "passed" && "glow my-1 rounded-lg")}>
             <button type="button" onClick={() => onOpen(r)} aria-current={r.key === current} title={r.name}
-              className={cx("flex w-full items-baseline gap-2 rounded-lg px-2 py-1.5 text-left text-[13px]", r.key === current ? "bg-blue-100 text-blue-900 dark:bg-blue-200/15 dark:text-blue-100" : "hover:bg-zinc-100 dark:hover:bg-zinc-800")}>
+              className={cx("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px]", r.key === current ? "bg-blue-100 text-blue-900 dark:bg-blue-200/15 dark:text-blue-100" : "hover:bg-zinc-100 dark:hover:bg-zinc-800")}>
+              <SourceTag row={r} />
               <span className={cx("min-w-0 flex-1 truncate", r.named ? "font-medium" : "text-zinc-500")}>{r.name}</span>
               <span className="shrink-0 text-[11px] tabular-nums text-zinc-500">{fmtTime(r.at)}</span>
             </button>
@@ -130,7 +148,8 @@ export default function FeedPage() {
   const { caseId } = useParams();
   const navigate = useNavigate();
   const [search, setSearch] = useSearchParams();
-  const kind = (search.get("kind") as Kind) || "all";
+  const rawKind = search.get("kind");
+  const kind: Kind = rawKind === "agent" || rawKind === "chat" ? rawKind : "all";
   const wanted = (search.get("view") as View) || "action";
   const views = kind === "agent" ? AGENT_VIEWS : VIEWS;
   const view: View = views.some((v) => v.value === wanted) ? wanted : "action";  // a view of the other list falls back to what waits
@@ -227,14 +246,14 @@ export default function FeedPage() {
 
   return (
     <div>
-      <PageHeader title="Review feed" description="Every alert to work, a line each. Open one to write its email, file its Trust & Safety form, run a temp check and grade the chatbot."
+      <PageHeader title="Review feed"
         actions={<>
           <div className="relative w-full sm:w-auto"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-zinc-400" /><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search this list" aria-label="Search" className="w-full pl-9 sm:w-56" /></div>
           <Button aria-pressed={calendar} onClick={() => setCalendar(!calendar)}>{calendar ? "Hide the calendar" : "Calendar"}</Button>
           {me?.can_act && <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setIntake(true)}>Triage an alert</Button>}
         </>} />
       <Tabs<Kind> value={kind} onChange={(k) => set({ kind: k === "all" ? null : k })} tabs={[
-        { key: "all", label: "All alerts" }, { key: "burson", label: "Burson's alerts" },
+        { key: "all", label: "All alerts" },
         { key: "agent", label: "Agent alerts", count: kind === "chat" ? undefined : list.data?.agent_total }, { key: "chat", label: "Chat messages" }]} />
       <ErrorState error={list.error ?? openIncident.error} onRetry={list.reload} />
       {agentId && !agentAlert && <ErrorState error={single.error} />}

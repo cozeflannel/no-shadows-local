@@ -245,6 +245,8 @@ def get_review_queue(ctx: AgentContext = Depends(get_ctx), user: User = Depends(
     now = ctx.now()
     rows = []
     for c in ctx.store.list_cases(statuses=[CaseStatus.NEEDS_REVIEW], limit=1000):
+        if c.source == "inhouse" and not (c.alert_name or c.issue_name):
+            continue
         s = case_summary(c)
         latest = c.latest
         if latest:

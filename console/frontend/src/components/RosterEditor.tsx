@@ -60,7 +60,7 @@ export function RosterEditor({ view, open, onClose, onSaved }: { view: RosterVie
             <button type="button" aria-label="Remove person" className="col-span-1 rounded-md text-zinc-400 hover:text-rose-600" onClick={() => setDraft((d) => ({ ...d, people: d.people.filter((_, n) => n !== i) }))}><Trash className="mx-auto size-4" /></button>
           </div>
         ))}
-        <Button size="sm" variant="ghost" icon={<Plus className="size-3.5" />} onClick={() => setDraft((d) => ({ ...d, people: [...d.people, { id: "", name: "", email: "", org: view.name === "burson" ? "burson" : "insight_global" }] }))}>Add person</Button>
+        <Button size="sm" variant="ghost" icon={<Plus className="size-3.5" />} onClick={() => setDraft((d) => ({ ...d, people: [...d.people, { id: "", name: "", email: "", org: "insight_global" }] }))}>Add person</Button>
       </section>
 
       <section className="mt-5 space-y-2">
@@ -109,8 +109,8 @@ export function RosterEditor({ view, open, onClose, onSaved }: { view: RosterVie
             <Input value={draft.fallback?.email ?? ""} placeholder="email" onChange={(e) => setDraft((d) => ({ ...d, fallback: { id: d.fallback?.id || "fallback", org: d.fallback?.org || "", name: d.fallback?.name ?? "", email: e.target.value } }))} />
           </div>
         </Field>
-        {(["reping_after_min", "backup_after_min", "notify_analyst_after_min", "max_reminders"] as const).map((key) => (
-          <Field key={key} label={{ reping_after_min: "Re-ping after (min)", backup_after_min: "Backup after (min)", notify_analyst_after_min: "Notify IM after (min)", max_reminders: "Max reminders" }[key]}>
+        {(["reping_after_min", "backup_after_min", "max_reminders"] as const).map((key) => (
+          <Field key={key} label={{ reping_after_min: "Re-ping after (min)", backup_after_min: "Backup after (min)", max_reminders: "Max reminders" }[key]}>
             <Input type="number" min={0} value={draft.reminders[key]} onChange={(e) => setDraft((d) => ({ ...d, reminders: { ...d.reminders, [key]: Number(e.target.value) } }))} />
           </Field>
         ))}

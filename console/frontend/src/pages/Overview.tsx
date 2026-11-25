@@ -2,9 +2,9 @@ import { ArrowDownRight, ArrowUpRight, Clock, Gauge, Info, Minus, RefreshCw, Shi
 import { useMemo, useState, type ReactNode } from "react";
 
 import { useApi } from "../api/hooks";
-import type { Derived, ErrorsResponse, FailuresByOncallResponse, KpiResponse, TimeseriesResponse } from "../api/types";
+import type { Derived, ErrorsResponse, KpiResponse, TimeseriesResponse } from "../api/types";
 import { BarList, DonutChart, GroupedBars, TimeseriesChart } from "../components/charts";
-import { Badge, Button, Card, cx, ErrorState, PageHeader, Segmented, Skeleton, TD, TH, TR, Tooltip } from "../components/ui";
+import { Badge, Button, Card, cx, ErrorState, PageHeader, Segmented, Skeleton, Tooltip } from "../components/ui";
 import { useApp } from "../context";
 import { fmtMinutes, fmtNum, fmtPct } from "../lib/format";
 import { CHART_COLORS, humanize, PROTOCOL_LABEL, SOURCE_LABEL, suppressionLabel, TRACK_LABEL } from "../lib/labels";
@@ -79,7 +79,6 @@ export default function OverviewPage() {
   const tsDays = Math.max(days, 14);
   const ts = useApi<TimeseriesResponse>("/timeseries", { days: tsDays, bucket: "day" }, 300_000);
   const errors = useApi<ErrorsResponse>("/errors", { days });
-  const failures = useApi<FailuresByOncallResponse>("/failures-by-oncall", { days });
 
   const fieldLabel = (f: string) => meta?.field_labels[f] ?? f;
   const actionLabel = useMemo(() => {
@@ -87,7 +86,7 @@ export default function OverviewPage() {
     return (code: string) => map.get(code) ?? code;
   }, [meta]);
 
-  const reload = () => { kpis.reload(); ts.reload(); errors.reload(); failures.reload(); };
+  const reload = () => { kpis.reload(); ts.reload(); errors.reload(); };
   const k = kpis.data?.kpis;
   const d = kpis.data?.derived;
   const p = kpis.data?.previous;
@@ -198,16 +197,6 @@ export default function OverviewPage() {
               {errors.data.operation_errors.map((e) => <Badge key={e.op} tone="rose" title={e.op}>{humanize(e.op)} ×{e.count}</Badge>)}
             </div>
           )}
-        </Card>
-        <Card title="Sent back, by Burson on-call" padded={false}>
-          {failures.data && failures.data.rows.length > 0 ? (
-            <table className="w-full">
-              <thead><tr><th className={TH}>On-call</th><th className={cx(TH, "text-right")}>Alerts sent back</th></tr></thead>
-              <tbody>{failures.data.rows.map((r) => (
-                <tr key={r.oncall_email} className={TR}><td className={TD}>{r.oncall_email}</td><td className={cx(TD, "text-right font-mono")}>{r.count}</td></tr>
-              ))}</tbody>
-            </table>
-          ) : <p className="p-5 text-sm text-zinc-500">{failures.data ? "Nothing was sent back in this window." : "Loading…"}</p>}
         </Card>
       </div>
     </div>

@@ -8,7 +8,7 @@ import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, PageHeader, Sel
 import { fmtDateTime, fmtDuration } from "../lib/format";
 import { humanize, TARGET_LABEL, TARGET_TONE } from "../lib/labels";
 
-const TARGETS = ["clean", "burson", "dm", "team", "crisis", "youtube", "doodle", "handover"];
+const TARGETS = ["clean", "dm", "team", "crisis", "youtube", "doodle", "handover"];
 
 export default function OutboxPage() {
   const [undeliveredOnly, setUndeliveredOnly] = useState(false);
@@ -17,13 +17,11 @@ export default function OutboxPage() {
 
   return (
     <div>
-      <PageHeader title="Waiting to post" description="Posts the agent has ready that Chat has not posted yet. They go out when the Chat flow next picks them up."
+      <PageHeader title="Waiting to post"
         actions={<Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={reload}>Refresh</Button>} />
       {data && data.stale > 0 && (
         <Alert tone="violet" className="mb-4" title={`${data.stale} post${data.stale > 1 ? "s have" : " has"} waited more than 3 minutes`}>
-          {data.doorbell === "none"
-            ? "Chat is not told when a post is waiting, so each one waits for the Chat flow's own schedule. Choose how Chat is told under Integrations, Delivery."
-            : `Chat is told by ${data.doorbell} when a post is waiting, and told again for one that waits this long.`}
+          Posts go directly to Google Chat each minute once &ldquo;Post queued messages in Chat&rdquo; is turned on under Settings, Switches.
         </Alert>
       )}
       <Card className="mb-4">

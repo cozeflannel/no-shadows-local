@@ -40,7 +40,7 @@ export function GmailButton() {
     setBusy(true);
     try {
       await apiSend("delete", "/gmail");
-      toast(isAgent ? "The agent's mailbox is disconnected. Chat is no longer told by email when a post is waiting." : "Gmail disconnected. Auto-drafts are paused for you.", "info");
+      toast(isAgent ? "The agent's mailbox is disconnected." : "Gmail disconnected. Auto-drafts are paused for you.", "info");
       refreshGmail();
       setOpen(false);
     } catch (err) {
@@ -83,8 +83,8 @@ export function GmailButton() {
           <p className="mt-2 text-sm text-zinc-500">Account: <span className="font-mono">{gmail.email}</span> · mode <span className="font-mono">{gmail.mode}</span></p>
           <p className="mt-2 text-xs text-zinc-500">
             {isAgent
-              ? "From this account the agent only sends the email that tells Chat a post is waiting. It can't read the mailbox."
-              : "The agent only creates drafts and checks whether they were sent. You always send."}
+              ? "Dedicated agent mailbox (send-only; cannot read messages)."
+              : "Creates Social Alert drafts in your mailbox and sends only when you confirm."}
             {gmail.scopes?.length ? ` Permissions: ${gmail.scopes.map((s) => GMAIL_SCOPE_LABEL[s] ?? s).join("; ")}.` : ""}
           </p>
         </Modal>

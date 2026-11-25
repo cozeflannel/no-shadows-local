@@ -239,11 +239,11 @@ TOPICS: list[dict[str, Any]] = [
     },
     {
         "id": "rosters", "page": "Rosters", "title": "Rosters", "audience": "leads",
-        "summary": "The IM roster and the Burson on-call roster.",
+        "summary": "Incident Manager shift rotations, backups and temporary overrides.",
         "sections": [
-            {"heading": "Edit a roster", "steps": ["Open Workforce → Schedule, or Rosters.", "Pick IM shifts or Burson on-call.",
-                                                   "Edit people, recurring slots, the backup and the fallback. Save."]},
-            {"heading": "Cover a window", "steps": ["Click Add coverage.", "Pick the person, start and end.", "It takes effect at once and shows in the week view."]},
+            {"heading": "Edit shifts", "steps": ["Open Workforce → Schedule, or Rosters.",
+                                                 "Edit people, recurring slots, the backup and the fallback. Save."]},
+            {"heading": "Cover a window", "steps": ["Add an override with the person, start and end.", "It takes effect at once and shows in the week view."]},
             {"heading": "From Chat", "text": "`I'm on until 6pm ET` and `hand off to <email>` change the roster for the sender."},
         ],
     },

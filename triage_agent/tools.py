@@ -244,15 +244,13 @@ def metrics(ctx: "AgentContext", args: dict[str, Any], caller: Caller) -> dict[s
     return {"hours": hours, "counts": out.get("kpis"), "derived": out.get("derived")}
 
 
-@tool("who_is_on", "Who is on shift now, on the IM roster or the Burson on-call roster.",
-      {"roster": "string?: slrr_im (default) or burson"})
+@tool("who_is_on", "Who is on shift now on the Incident Manager roster.", {})
 def who_is_on(ctx: "AgentContext", args: dict[str, Any], caller: Caller) -> dict[str, Any]:
     from . import workforce
 
-    name = "burson" if str(args.get("roster") or "").lower().startswith("b") else "slrr_im"
-    res = ctx.on_call(name)
-    staffed = workforce.staff_at(ctx.roster(name), ctx.now())
-    return {"roster": name, "primary": res.person.name if res.person else None, "source": res.source,
+    res = ctx.on_call("slrr_im")
+    staffed = workforce.staff_at(ctx.roster("slrr_im"), ctx.now())
+    return {"roster": "slrr_im", "primary": res.person.name if res.person else None, "source": res.source,
             "until": res.until.isoformat() if res.until else None, "everyone_on": [p.name for p, _ in staffed]}
 
 

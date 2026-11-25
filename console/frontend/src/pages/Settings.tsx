@@ -30,7 +30,7 @@ const OWN = [
 ];
 const OWN_LINK = "font-medium text-blue-700 hover:underline dark:text-blue-300";
 /** The parts whose main values connect a tool: those are set under Integrations. */
-const PART_TOOL: Record<string, string> = { gcp: "gcp", bigquery: "bigquery", pubsub: "delivery", temp_check: "brandwatch", campaigns: "campaigns" };
+const PART_TOOL: Record<string, string> = { gcp: "gcp", bigquery: "bigquery", temp_check: "brandwatch", campaigns: "campaigns" };
 const PART_PANEL: Record<string, () => React.ReactNode> = {
   bigquery: () => <BigQueryPanel />, pubsub: () => <DeliveryPanel />, safety: () => <SafetyPanel />, costs: () => <CostsPanel />, gcp: () => <RuntimePanel />,
   own_alerts: () => (

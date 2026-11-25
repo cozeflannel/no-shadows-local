@@ -89,7 +89,7 @@ function DocsTab({ data, reload }: { data: KnowledgeList; reload: () => void }) 
                 <tr key={d.doc_id} className={cx(TR, !d.enabled && "opacity-60")}>
                   <td className={TD}>
                     <button type="button" className="text-left font-medium text-blue-600 hover:underline dark:text-blue-200" onClick={() => edit(d)}>{d.title}</button>
-                    <span className="block text-xs text-zinc-500">{d.doc_id} {d.kind === "guidance" ? "guidance" : SOURCE_LABEL[d.source_type] ?? d.source_type}{d.imported_from === "sheet" ? ", from the sheet" : d.imported_from === "folder" ? ", from a file" : ""}{d.external_ok ? ", may be quoted to Burson" : ""}{!d.enabled ? ", off" : ""}</span>
+                    <span className="block text-xs text-zinc-500">{d.doc_id} {d.kind === "guidance" ? "guidance" : SOURCE_LABEL[d.source_type] ?? d.source_type}{d.imported_from === "sheet" ? ", from the sheet" : d.imported_from === "folder" ? ", from a file" : ""}{!d.enabled ? ", off" : ""}</span>
                   </td>
                   <td className={TD}>{d.classes.length ? d.classes.join(", ") : <span className="text-zinc-500">all</span>}</td>
                   <td className={cx(TD, "tabular-nums")}>{fmtNum(d.chars)} chars, {d.chunks} parts{d.embedded ? ", embedded" : ""}</td>
@@ -127,7 +127,6 @@ function DocsTab({ data, reload }: { data: KnowledgeList; reload: () => void }) 
             </Field>
             <Field label="Tags" hint="Comma separated. A class can read by tag."><Input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} /></Field>
             <div className="flex flex-wrap gap-6">
-              <Toggle label="May be quoted in the Burson space" checked={form.external_ok} onChange={(v) => setForm({ ...form, external_ok: v })} />
               <Toggle label="In use" checked={form.enabled} onChange={(v) => setForm({ ...form, enabled: v })} />
             </div>
           </div>
@@ -140,13 +139,12 @@ function DocsTab({ data, reload }: { data: KnowledgeList; reload: () => void }) 
 function SearchTab({ classes }: { classes: ClassRow[] }) {
   const [query, setQuery] = useState("");
   const [label, setLabel] = useState("");
-  const [external, setExternal] = useState(false);
   const [result, setResult] = useState<Passage[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const run = async () => {
     setBusy(true); setError(null);
-    try { setResult((await apiSend<{ passages: Passage[] }>("post", "/knowledge/search", { query, label: label || undefined, external })).passages); }
+    try { setResult((await apiSend<{ passages: Passage[] }>("post", "/knowledge/search", { query, label: label || undefined, external: false })).passages); }
     catch (err) { setError(err as ApiError); } finally { setBusy(false); }
   };
   return (
@@ -154,7 +152,6 @@ function SearchTab({ classes }: { classes: ClassRow[] }) {
       <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); void run(); }}>
         <Field label="Question or alert text" className="min-w-64 flex-1"><Input value={query} onChange={(e) => setQuery(e.target.value)} /></Field>
         <Field label="As class"><Select value={label} onChange={(e) => setLabel(e.target.value)}><option value="">Any</option>{classes.map((c) => <option key={c.name}>{c.name}</option>)}</Select></Field>
-        <Toggle label="As the Burson space" checked={external} onChange={setExternal} />
         <Button type="submit" variant="primary" icon={<Search className="size-4" />} loading={busy} disabled={!query.trim()}>Search</Button>
       </form>
       <ErrorState error={error} />

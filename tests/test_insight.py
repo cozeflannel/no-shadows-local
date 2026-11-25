@@ -158,7 +158,7 @@ def test_admin_overview(ctx, client, clock):
 def test_integrations_catalog_says_what_each_tool_still_needs(ctx, client):
     got = client.get("/api/connections", headers=iap(IM)).json()
     by = {c["key"]: c for c in got["connections"]}
-    assert set(by) == {"gcp", "gemini", "runtime", "chat", "bigquery", "delivery", "secrets", "gmail", "drive", "brandwatch", "campaigns"}, \
+    assert set(by) == {"gcp", "gemini", "runtime", "chat", "bigquery", "secrets", "gmail", "drive", "brandwatch", "campaigns"}, \
         "BigQuery is one card: its own dataset and every table it reads"
     assert by["bigquery"]["state"] == "incomplete" and by["bigquery"]["missing"] == ["Dataset"] and by["bigquery"]["required"] is True
     assert {"tool": "bigquery", "name": "BigQuery", "text": "Set Dataset", "required": True} in got["todo"]
@@ -642,3 +642,54 @@ def test_no_setting_on_a_settings_page_is_left_unexplained():
 
     walk(PlatformConfig, "platform")
     assert missing == []
+
+
+def test_runtime_check_succeeds_on_older_build_hash_and_delivery_is_removed(ctx, client, monkeypatch):
+    from console.backend import connections, routes_admin
+
+    monkeypatch.setattr(connections, "_on_cloud", lambda: True)
+    client.put("/api/connections/runtime",
+               json={"values": {"platform.gcp.agent_runtime_resource": "projects/1/locations/us-central1/reasoningEngines/9"}},
+               headers=iap(ADMIN))
+    monkeypatch.setattr(routes_admin, "query_agent_runtime",
+                        lambda *a, **kw: {"ok": True, "data": {"config_version": "2026-10-13.2+older123"}})
+    checked = client.post("/api/connections/runtime/test", headers=iap(ADMIN)).json()
+    assert checked["test"]["ok"] is True and checked["connection"]["state"] == "connected"
+    assert "older123" in checked["test"]["details"][0]["message"]
+    assert client.get("/api/connections/delivery", headers=iap(ADMIN)).status_code in (404, 405)
+
+
+def test_human_admin_or_im_keeps_im_mailbox_even_when_named_as_agent_email(ctx, client):
+    from console.backend import gmail_oauth
+
+    ctx.config.agent.email = ADMIN
+    assert gmail_oauth.mailbox_kind(ctx, ADMIN) == "im"
+    ctx.config.agent.email = IM
+    assert gmail_oauth.mailbox_kind(ctx, IM) == "im"
+    ctx.config.agent.email = "dedicated-bot@runner.test"
+    assert gmail_oauth.mailbox_kind(ctx, "dedicated-bot@runner.test") == "agent"
+
+
+def test_burson_and_outbox_settings_are_not_editable_and_unnamed_inhouse_rows_stay_off_feed(ctx, client):
+    from triage_agent.models import Case, CaseStatus
+
+    keys = {s["key"] for s in client.get("/api/settings", headers=iap(ADMIN)).json()["sections"]}
+    assert keys.isdisjoint({"burson_feedback", "burson_qa", "seed_rosters", "outbox"})
+    for hidden in ("burson_feedback", "burson_qa", "seed_rosters", "outbox"):
+        assert client.put(f"/api/settings/{hidden}", json={"value": {}}, headers=iap(ADMIN)).status_code == 422
+
+    now = ctx.now()
+    ctx.store.save_case(Case(case_id="TRG-9001", source="inhouse", status=CaseStatus.NEEDS_REVIEW,
+                             alert_name=None, issue_name=None, product="YouTube", created_at=now, updated_at=now))
+    ctx.store.save_case(Case(case_id="TRG-9002", source="inhouse", status=CaseStatus.NEEDS_REVIEW,
+                             alert_name="[URGENT] [NEW] Pixel – alert", issue_name=None, product="Pixel", created_at=now, updated_at=now))
+    ctx.store.save_case(Case(case_id="TRG-9003", source="burson_chat", status=CaseStatus.NEEDS_REVIEW,
+                             alert_name="Waymo incident / New", issue_name="Waymo incident", product="Waymo", created_at=now, updated_at=now))
+
+    feed_ids = {c["case_id"] for c in client.get("/api/feed", params={"view": "all"}, headers=iap(IM)).json()["cards"]}
+    assert "TRG-9001" not in feed_ids and {"TRG-9002", "TRG-9003"} <= feed_ids
+    burson_ids = {c["case_id"] for c in client.get("/api/feed", params={"view": "all", "kind": "burson"}, headers=iap(IM)).json()["cards"]}
+    assert "TRG-9003" in burson_ids and "TRG-9002" not in burson_ids
+    queue_ids = {c["case_id"] for c in client.get("/api/review-queue", headers=iap(IM)).json()["cases"]}
+    assert "TRG-9001" not in queue_ids and {"TRG-9002", "TRG-9003"} <= queue_ids
+

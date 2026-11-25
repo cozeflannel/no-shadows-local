@@ -23,8 +23,8 @@ from .auth import User, get_ctx, require_admin, require_viewer
 
 router = APIRouter(prefix="/api", tags=["settings"])
 
-NOT_EDITABLE = {"version", "env"}
-STRUCTURED_SECTIONS = ("thresholds", "corrections", "burson_feedback", "outbox", "handover", "metrics", "models")
+NOT_EDITABLE = {"version", "env", "burson_feedback", "burson_qa", "seed_rosters", "outbox"}
+STRUCTURED_SECTIONS = ("thresholds", "corrections", "handover", "metrics", "models")
 TABLE_SECTIONS = ("distribution", "actions")
 
 # The groups Settings lists its pages under, in order.
@@ -33,7 +33,6 @@ GROUPS: list[dict[str, str]] = [
     {"key": "decide", "title": "How the agent decides"},
     {"key": "people", "title": "Who gets what"},
     {"key": "tech", "title": "Connections and upkeep"},
-    {"key": "sheet", "title": "Sheet-based bot"},
 ]
 
 # Each section: its name, what it is for in one sentence, and its group.
@@ -42,14 +41,14 @@ SECTION_INFO: dict[str, tuple[str, str, str]] = {
     "shifts": ("Shift names and hours", "The named shifts a handover summary is written for.", "day"),
     "handover": ("Shift handover", "The summary posted when a shift ends.", "day"),
     "actions": ("Emoji legend", "What the agent does when an IM reacts to an alert with each emoji.", "day"),
-    "alert_template": ("Alert format", "The fields a Burson alert must have, and how each one is checked.", "decide"),
+    "alert_template": ("Alert format", "The fields an incoming alert must have, and how each one is checked.", "decide"),
     "collection": ("Collection Requirements", "Exposure tags, sensitive topics, what is left out, and the time allowed on each platform.", "decide"),
     "thresholds": ("How sure the agent must be", "The confidence it needs before acting, how long it waits, and when it reminds people.", "decide"),
     "corrections": ("Auto-correct", "Which mistakes in an alert the agent fixes on its own.", "decide"),
     "protocols": ("Escalation protocols", "YouTube, Doodle and leadership: who is told, and when.", "decide"),
     "tns": ("Trust & Safety", "The T&S form, when T&S should see an alert, and the confirmation emails that come back.", "decide"),
     "reference_lists": ("Lists the checks use", "Names the checks compare an alert against.", "decide"),
-    "sonar_lookup": ("Find missing links", "Look for a missing link or author in the listening data before asking Burson.", "decide"),
+    "sonar_lookup": ("Find missing links", "Look for a missing link or author in the listening data.", "decide"),
     "inhouse": ("Our own alerts", "Alerts taken straight from the team's tables, next to Burson's.", "decide"),
     "knowledge": ("Built-in answers", "Common questions the agent can answer. Documents are added on the Knowledge page.", "decide"),
     "models": ("Gemini models", "Which Gemini model does each job.", "decide"),
@@ -58,16 +57,12 @@ SECTION_INFO: dict[str, tuple[str, str, str]] = {
     "distribution": ("Who gets each alert email", "For each product: the contacts and groups a Social Alert goes to.", "people"),
     "stakeholders": ("Who answers which question", "Teams, their topics and their contacts, used to send a question to the right people.", "people"),
     "escalation": ("Social Alert email", "The sender name, subject, signature and templates of the Social Alert email.", "people"),
-    "burson_feedback": ("What Burson is told", "How a fix is reported back to Burson.", "people"),
     "watchdog": ("Watchdog emails", "How Watchdog Anti-Abuse emails are handled.", "people"),
     "agent": ("The agent's account", "The account the agent posts as, and the mark at the start of its messages.", "tech"),
     "spaces": ("Chat spaces", "The spaces the agent reads and posts in. Connect them under Integrations, Google Chat.", "tech"),
-    "outbox": ("Waiting to post", "How posts that are waiting to go out reach Chat.", "tech"),
     "case_id_prefix": ("Alert number prefix", "The letters before each alert's number (TRG-1042).", "tech"),
     "escalation_id_prefix": ("Email number prefix", "The letters before each Social Alert email's number (ESC-1207).", "tech"),
-    "seed_rosters": ("Starting rosters", "Used once, when no roster exists yet. Change rosters on the Rosters page.", "tech"),
     "platform": ("Everything under the other headings", "Kept for the record. Each part has its own page.", "tech"),
-    "burson_qa": ("Sheet-based bot", "Settings of the sheet-based Burson QA bot. A change here reaches that bot only when its script is rebuilt.", "sheet"),
 }
 
 _NOTHING = object()

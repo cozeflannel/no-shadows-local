@@ -76,7 +76,6 @@ export function KnowledgeImportModal({ open, onClose, onDone }: { open: boolean;
     } catch (err) { setError(err as ApiError); setProgress(done ? `${done} brought over before it stopped. Check again to see what is left.` : ""); }
     finally { setBusy(""); }
   };
-  const burson = preview?.items.filter((i) => (i.action === "add" || i.action === "update") && i.external_ok) ?? [];
   const rows = preview ? sortByAction(preview.items).filter((i) => filter === "all" || i.action === filter) : [];
   return (
     <Modal open={open} wide="xl" title={<span className="inline-flex items-center gap-2"><FileSpreadsheet className="size-5 text-emerald-600" aria-hidden />Bring the sheet's documents over</span>} onClose={() => { if (busy !== "apply") onClose(); }}
@@ -97,11 +96,6 @@ export function KnowledgeImportModal({ open, onClose, onDone }: { open: boolean;
         {progress && <Alert tone="blue">{progress}</Alert>}
         {preview && <>
           <Summary counts={preview.counts} sheet={preview.sheet} noun="document" />
-          {burson.length > 0 && (
-            <Alert tone="blue" title={`${burson.length} of them may be quoted to Burson, as on the sheet`}>
-              {burson.map((i) => i.title).join(", ")}. Untick “May be quoted in the Burson space” on a document afterwards if Burson should not see it.
-            </Alert>
-          )}
           {preview.notes.length > 0 && <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-600 dark:text-zinc-300">{preview.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
           <FilterBar value={filter} onChange={setFilter} counts={preview.counts} />
           <div className="max-h-[30vh] overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
@@ -110,7 +104,7 @@ export function KnowledgeImportModal({ open, onClose, onDone }: { open: boolean;
                 <tr key={`${i.action}-${i.row ?? "x"}-${n}`} className={TR}>
                   <td className={cx(TD, "max-w-80")}>
                     <span className="font-medium">{i.title}</span>
-                    <span className="block text-xs text-zinc-500">{[i.row ? `Resources row ${i.row}` : "", i.chars ? `${fmtNum(i.chars)} characters` : "", i.external_ok ? "Burson may see it" : ""].filter(Boolean).join(" · ")}</span>
+                    <span className="block text-xs text-zinc-500">{[i.row ? `Resources row ${i.row}` : "", i.chars ? `${fmtNum(i.chars)} characters` : ""].filter(Boolean).join(" · ")}</span>
                   </td>
                   <td className={TD}><Badge tone={ACTION[i.action].tone}>{ACTION[i.action].label}</Badge></td>
                   <td className={cx(TD, "text-xs text-zinc-600 dark:text-zinc-300")}>{i.reason}</td>

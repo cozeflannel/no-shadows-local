@@ -379,8 +379,8 @@ export default function AdminPage() {
                 <p>{s.agent.runtime ? `Runtime ${short(s.agent.runtime)}` : "No Agent Runtime is connected."}</p>
                 <p>Model {s.agent.model} · {s.agent.env} · settings {s.agent.config_version.slice(0, 12)}</p>
               </StatusCard>
-              <StatusCard title="Delivery" ok={s.delivery.dead_letters === 0} to="/settings/pubsub" link="Open Delivery">
-                <p>{s.delivery.pubsub ? "Posts that fail are tried again." : s.delivery.doorbell === "none" ? "Posts wait for the Chat flow to pick them up." : `Chat is told by ${s.delivery.doorbell} when a post is waiting.`}</p>
+              <StatusCard title="Chat posts" ok={s.delivery.dead_letters === 0} to="/outbox" link="Open Waiting to post">
+                <p>{s.delivery.pubsub ? "Posts go directly to Google Chat; failed posts are tried again." : "Posts go directly to Google Chat."}</p>
                 <p>{s.delivery.waiting} waiting to post{s.delivery.waiting ? `, the oldest for ${Math.round(s.delivery.oldest_waiting_min)} min` : ""} · {s.delivery.dead_letters} could not be delivered.</p>
               </StatusCard>
               <StatusCard title="Safety" ok={s.safety.passed} to="/settings/safety" link="Open Safety">

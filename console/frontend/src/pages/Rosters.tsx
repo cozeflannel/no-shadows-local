@@ -1,18 +1,15 @@
 import { Pencil, Plus, RefreshCw, Trash, TriangleAlert } from "lucide-react";
 import { useState } from "react";
-import { useSearchParams } from "react-router";
 
 import { apiSend } from "../api/client";
 import { useApi } from "../api/hooks";
 import type { Override, RosterView, ScheduleView } from "../api/types";
 import { RosterEditor } from "../components/RosterEditor";
-import { Alert, Badge, Button, Card, cx, ErrorState, Field, Input, PageHeader, Segmented, Select, Spinner, Tabs, TD, TH, TR } from "../components/ui";
+import { Alert, Badge, Button, Card, cx, ErrorState, Field, Input, PageHeader, Segmented, Select, Spinner, TD, TH, TR } from "../components/ui";
 import { personColor, WeekSchedule } from "../components/WeekSchedule";
 import { useApp } from "../context";
 import { fmtDateTime, fmtDuration, fmtTime, tzAbbr } from "../lib/format";
 import { ONCALL_SOURCE_TONE } from "../lib/labels";
-
-type Name = "slrr_im" | "burson";
 
 function OverrideForm({ view, onSaved, disabled }: { view: RosterView; onSaved: (v: RosterView) => void; disabled: boolean }) {
   const { toast } = useApp();
@@ -49,8 +46,7 @@ function OverrideForm({ view, onSaved, disabled }: { view: RosterView; onSaved: 
 
 export default function RostersPage() {
   const { me, toast } = useApp();
-  const [search, setSearch] = useSearchParams();
-  const name: Name = search.get("tab") === "burson" ? "burson" : "slrr_im";
+  const name = "slrr_im";
   const [days, setDays] = useState(7);
   const [editing, setEditing] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -80,10 +76,8 @@ export default function RostersPage() {
 
   return (
     <div>
-      <PageHeader title="Rosters" description="Who the agent @mentions: Incident Managers on shift (reviews, SLA nudges, drafts) and the Burson on-call (alerts that need a corrected rerun)."
+      <PageHeader title="Rosters"
         actions={<Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={() => refresh()}>Refresh</Button>} />
-      <Tabs<Name> value={name} onChange={(v) => setSearch(v === "burson" ? { tab: "burson" } : {}, { replace: true })}
-        tabs={[{ key: "slrr_im", label: "IM shifts" }, { key: "burson", label: "Burson on-call" }]} />
       <ErrorState error={roster.error} onRetry={roster.reload} />
       {!view ? <Spinner /> : (
         <div className="space-y-4">
@@ -102,7 +96,7 @@ export default function RostersPage() {
               ) : <Alert tone="rose" title="Nobody is on call" />}
               <p className="mt-3 text-xs text-zinc-500">Escalation chain: {view.escalation_chain.map((p) => p.name).join(" → ") || "—"}</p>
             </Card>
-            <Card className="lg:col-span-2" title="People" subtitle={view.description}
+            <Card className="lg:col-span-2" title="People"
               actions={me?.is_admin && <Button size="sm" icon={<Pencil className="size-3.5" />} onClick={() => setEditing(true)}>Edit roster</Button>}>
               <div className="flex flex-wrap gap-2">
                 {people.map((p) => (
@@ -125,8 +119,6 @@ export default function RostersPage() {
                   </tr>
                 ))}</tbody>
               </table>
-              <p className="mt-3 text-xs text-zinc-500">Reminders: re-ping after {view.roster.reminders.reping_after_min} min · backup after {view.roster.reminders.backup_after_min} min · IM after {view.roster.reminders.notify_analyst_after_min} min · max {view.roster.reminders.max_reminders}
-                {view.roster.updated_by && <> · last edited by {view.roster.updated_by} {fmtDateTime(view.roster.updated_at)}</>}</p>
             </Card>
           </div>
 

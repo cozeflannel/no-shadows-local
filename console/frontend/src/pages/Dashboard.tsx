@@ -174,7 +174,6 @@ export default function DashboardPage() {
   return (
     <div>
       <PageHeader title="Dashboard"
-        description="Alert messages, counted by the lines on the alert: Product, Social Network, Exposure Tag, Sensitive Topic and KOF. Pick a time range and filters; every number under them follows."
         actions={<Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={dash.reload} loading={dash.loading && !!d}>Refresh</Button>} />
       <Tabs<"alerts" | "chat"> value={tab} onChange={setTab} tabs={[{ key: "alerts", label: "Alerts" }, { key: "chat", label: "Chat spaces" }]} />
       {tab === "chat" ? <ChatSpacesTab /> : <>
@@ -201,7 +200,6 @@ export default function DashboardPage() {
       <section aria-labelledby="now-title">
         <div className="mb-2 flex flex-wrap items-baseline gap-x-3">
           <h2 id="now-title" className="text-base font-medium text-zinc-900 dark:text-zinc-100">Right now</h2>
-          <p className="text-xs text-zinc-500">Live, for every alert: the time range and filters don't change these.</p>
         </div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
           <Stat label="Held for review" value={now ? now.review_queue : "…"} hint={now?.review_queue ? `oldest waiting ${fmtMinutes(now.oldest_review_min)}` : "none waiting"} tone={now?.review_queue ? "rose" : undefined} glow={!!now?.review_queue} onClick={() => navigate("/feed?view=review")} />
@@ -251,7 +249,7 @@ export default function DashboardPage() {
             </>
           )}
         </div>
-        <Card title="KOF" subtitle="[KOF] line, and which KOF list the author is on" className="lg:col-span-1">
+        <Card title="KOF" className="lg:col-span-1">
           {lines ? <>
             <BarRows rows={lines.breakdowns.kof} total={total} color={VIOLET} selected={selected("kof")} onPick={(v) => q.toggle("kof", v)} />
             {lines.breakdowns.kof_list.length > 0 && <div className="mt-4 border-t border-zinc-100 pt-3 dark:border-zinc-800">
@@ -260,7 +258,7 @@ export default function DashboardPage() {
             </div>}
           </> : <Skeleton className="h-28" />}
         </Card>
-        <Card title="Sentiment" subtitle="Gemini's read of each post on the Stories page" className="lg:col-span-1">
+        <Card title="Sentiment" className="lg:col-span-1">
           {lines ? <>
             <BarRows rows={lines.breakdowns.sentiment} total={total} color={ROSE} selected={selected("sentiment")} onPick={(v) => q.toggle("sentiment", v)} />
             {total > 0 && lines.breakdowns.sentiment.every((b) => b.value === "") && <p className="mt-3 text-xs text-zinc-500">No post here is rated yet. Gemini labels posts when “Gemini reads each story” is on.</p>}

@@ -7,7 +7,7 @@ import { ListInput } from "./StructuredEditor";
 export interface ActionRow { emoji: string; code: string; label: string; kind: string; group?: string | null; target?: string | null; recipients: string[] }
 
 const KINDS = ["ack", "email_pa", "tns", "add_group", "post_space", "dm", "close", "superseded", "feedback", "none"];
-const TARGETS = ["crisis", "team", "youtube", "doodle", "clean", "burson"];
+const TARGETS = ["crisis", "team", "youtube", "doodle", "clean"];
 const SM = "px-2 py-1.5 text-xs";
 
 /** Emoji legend editor: what the agent does when an IM reacts on a clean-space alert. */
